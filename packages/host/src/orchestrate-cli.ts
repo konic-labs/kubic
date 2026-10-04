@@ -662,6 +662,22 @@ export interface OrchestrateCommandDeps {
   // always wires it (the lifecycle layer's reap, which kills the detached
   // process group first).
   cancelWorker?: (agentId: string) => void | Promise<void>;
+  // §81 worker replacement (issue #175). Called when a worker failed with the
+  // run-level failure code (exit 1) — never for a budget/approval/workspace/
+  // provider terminus — and returns the generations the replacement spans
+  // (`from` → `to`), or undefined when THIS worker is not replaceable (a
+  // launch that never became ready, a missing lifecycle row). The run then
+  // retries the worker in the SAME session and worktree through `runWorker`,
+  // up to WORKER_REPLACEMENT_LIMIT times, and the failure message names the
+  // generations when the retries are exhausted. Absent means no replacement —
+  // the shipped behaviour for an embedder that does not wire the lifecycle
+  // layer.
+  replaceWorker?: (
+    agentId: string,
+  ) =>
+    | { from: number; to: number }
+    | undefined
+    | Promise<{ from: number; to: number } | undefined>;
   // Lifecycle observations for an embedder (issue #94): the live rows, the
   // §78 code a failed worker reported, and the §61 launch samples with
   // their budget verdict. The composition root (apps/kubic) supplies these
@@ -888,6 +904,12 @@ export const MANAGER_LANE_SEQUENCE = [
   'wait_for_agent',
   'collect_result',
 ] as const;
+
+// The bounded §81 replacement count (issue #175): a crash-class worker
+// failure is retried ONCE. A second crash is the worker's terminus, named
+// with both generations — a run that retried forever would spend the user's
+// budget on a crash loop.
+export const WORKER_REPLACEMENT_LIMIT = 1;
 
 // The §45.2 inspect-before-dispatch toolset (issue #106): the manager reads
 // the conflict with the reviewer's read-only set, and that same set is what
@@ -2185,6 +2207,10 @@ export async function runOrchestrateCommand(
   // agent, in agent order, each with the named terminus the envelope and the
   // partial-failure exit report.
   const partialFailures = new Map<string, WorkerFailureOutcome>();
+  // §81 replacement generations (issue #175): per agent, the generations the
+  // run has seen, in order. A failure that exhausted the replacement limit
+  // names them.
+  const replacementGenerations = new Map<string, number[]>();
   let denied: WorkerFailureOutcome | undefined;
 
   // A worker-level failure is exactly that unless the run must stop. Under
@@ -2236,7 +2262,9 @@ export async function runOrchestrateCommand(
     if (started.has(agentId) || finished.has(agentId)) return;
     const worktree = prepared.get(agentId) as OrchestrateWorktree;
     started.add(agentId);
-    spawned.push(agentId);
+    // A replaced worker (issue #175) starts a second time: `spawned` is the
+    // set of agents this run launched, so it must not list it twice.
+    if (!spawned.includes(agentId)) spawned.push(agentId);
     const task = (async () => {
       // `runWorkerOnce` converts every terminus into an outcome; this outer
       // guard is the belt for a bug in that conversion, so a concurrent
@@ -2347,7 +2375,44 @@ export async function runOrchestrateCommand(
       handled.add(agentId);
       advanced = true;
       if (!outcome.ok) {
-        if (failWorker(agentId, outcome) === 'stop') break;
+        // §81 replacement (issue #175): a crash-class failure is retried
+        // through the composition root's replacement seam, bounded by
+        // WORKER_REPLACEMENT_LIMIT. The seam decides whether this worker is
+        // replaceable at all (it knows the lifecycle status); the run owns
+        // the count and the retry.
+        const generations = replacementGenerations.get(agentId) ?? [];
+        if (
+          deps.replaceWorker !== undefined &&
+          outcome.exitCode === RUN_EXIT_FAILED &&
+          generations.length <= WORKER_REPLACEMENT_LIMIT
+        ) {
+          const replaced = await deps.replaceWorker(agentId);
+          if (replaced !== undefined) {
+            replacementGenerations.set(agentId, [
+              ...(generations.length === 0 ? [replaced.from] : generations),
+              replaced.to,
+            ]);
+            debug(
+              `replace: worker '${agentId}' generation ${replaced.from} → ${replaced.to} — retrying in the same session`,
+            );
+            // The retry IS this worker's next attempt: clear the settled
+            // bookkeeping (its failure record is upserted by the attempt
+            // that follows) and start it again.
+            finished.delete(agentId);
+            handled.delete(agentId);
+            started.delete(agentId);
+            startWorker(agentId);
+            continue;
+          }
+        }
+        const failure =
+          generations.length === 0
+            ? outcome
+            : {
+                ...outcome,
+                message: `${outcome.message} (generations ${generations.join(' → ')})`,
+              };
+        if (failWorker(agentId, failure) === 'stop') break;
         // The run continues (issue #169): free the failed worker's slot so
         // the queue keeps draining, and move on to the next settled worker.
         releaseSlot(agentId);

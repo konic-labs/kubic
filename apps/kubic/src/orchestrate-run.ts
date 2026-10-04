@@ -119,6 +119,12 @@ import {
   reconcileWorkerRows,
 } from '../../../packages/worker/src/lifecycle/orphans.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
+// §81 replacement (issue #175): the crash → terminate → reopen → resume
+// protocol. Its generation allocation names the next number; the launcher's
+// registry CAS (inside launchWorker) is what actually allocates it, so there
+// is one allocator — the protocol's stale-generation check reads the number
+// the relaunch will take.
+import { replaceWorker } from '../../../packages/worker/src/lifecycle/replace.js';
 import {
   readWorkerRows,
   updateWorkerRowsFile,
@@ -2335,6 +2341,57 @@ export async function orchestrateDepsWithDefaults(
       if (launched !== undefined) {
         void launched.reap().catch(() => undefined);
       }
+    },
+    // §81 worker replacement (issue #175): a crash-class worker is terminated
+    // (its detached group is already gone — reap is idempotent), its session
+    // is reopened to prove it can be resumed, and the registry allocates the
+    // next generation for the retry the host then starts. A launch that never
+    // became ready, or a budget/approval/workspace/provider terminus, is not
+    // replaceable and returns undefined: a fresh child cannot fix a decision
+    // or a setup failure.
+    replaceWorker: async (
+      agentId: string,
+    ): Promise<{ from: number; to: number } | undefined> => {
+      const crashed = launchedByAgent.get(agentId);
+      if (crashed === undefined) return undefined;
+      if (
+        crashed.status() !== 'crashed' ||
+        crashed.failure()?.kind !== 'process'
+      ) {
+        debug(
+          `replace: worker '${agentId}' is not replaceable (status ${crashed.status()})`,
+        );
+        return undefined;
+      }
+      const from = crashed.generation;
+      const workerSession = crashed.sessionId;
+      const outcome = await replaceWorker(
+        { workerId: agentId, sessionId: workerSession, oldGeneration: from },
+        {
+          allocateGeneration: () =>
+            (workerRegistry.get(agentId)?.generation ?? from) + 1,
+          terminate: async () => {
+            await crashed.reap().catch(() => undefined);
+          },
+          // The session must still be openable: the replacement child
+          // attaches it, and a session that cannot be resumed must fail here
+          // rather than at the child's attach (exit 5).
+          openSession: async (sessionId) => {
+            const session = await attachSession(
+              sessionStore,
+              sessionId,
+              BACKGROUND_CONTEXT,
+            );
+            await session.release(BACKGROUND_CONTEXT);
+            return { laneId: sessionId };
+          },
+          resumeLane: async () => ({ resumed: true }),
+        },
+      );
+      debug(
+        `replace: worker '${agentId}' generation ${from} → ${outcome.generation} (session ${workerSession} reopened)`,
+      );
+      return { from, to: outcome.generation };
     },
     requestApproval: mergeApprovalSeat,
     ...(options.yesHint === false ? { yesHint: false } : {}),

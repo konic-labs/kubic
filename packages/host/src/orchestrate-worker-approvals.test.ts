@@ -101,6 +101,12 @@ interface HarnessOptions {
   triggerFor?: (agentId: string) => string;
   /** How many asks each worker raises (the child's own drive). */
   asksPerWorker?: number;
+  /**
+   * Fail the worker's FIRST attempt after its asks were answered (issue
+   * #175): the run must replace it and the replacement must re-ask — same
+   * key, answered from the manager's memoized decision.
+   */
+  crashFirstAttempt?: boolean;
   /** The merge gate's decider; default approves every merge. */
   mergeDecider?: () => boolean;
 }
@@ -120,6 +126,9 @@ function harness(
   const raised: OrchestratorApprovalRequest[] = [];
   const published: PublishedWorkerAsk[] = [];
   const merges: MergeDecisionRecord[] = [];
+  // How many times each worker has been launched (issue #175): the fake
+  // child's own attempt counter, the replacement's `from` generation.
+  const attempts = new Map<string, number>();
   let mergeAskCount = 0;
   let built: WorkerApprovalsRun | undefined;
   // The child is told the run's own mailbox (`KUBIC_APPROVALS_DIR`), which is
@@ -145,6 +154,8 @@ function harness(
     // here (a child-process stand-in), but the CONTRACT is the prod one —
     // the same files, the same bound, the same denial-as-data.
     runWorker: async (agentId, worktree, _prompt, info) => {
+      const attempt = (attempts.get(agentId) ?? 0) + 1;
+      attempts.set(agentId, attempt);
       const trigger =
         options.triggerFor?.(agentId) ??
         (agentId === 'worker-2' ? 'destructive-shell' : 'network');
@@ -187,11 +198,26 @@ function harness(
           lines.push(`worker ${agentId}: ${answer.code} — ${answer.reason}`);
         }
       }
+      if (options.crashFirstAttempt === true && attempt === 1) {
+        // A crash-class terminus (issue #175): no approval/budget code, so
+        // the run replaces this worker and retries it.
+        throw Object.assign(new Error('worker crashed'), {
+          code: 'worker_failed',
+        });
+      }
       const hunks: MergedHunk[] = [
         { path: `${agentId}.txt`, hunk: `@@ -0,0 +1 @@ +${agentId}` },
       ];
       return hunks;
     },
+    ...(options.crashFirstAttempt === true
+      ? {
+          replaceWorker: (agentId: string) => {
+            const from = attempts.get(agentId) ?? 1;
+            return { from, to: from + 1 };
+          },
+        }
+      : {}),
     mergeBranch: () => undefined,
     reapWorker: () => undefined,
     requestApproval: () => {
@@ -362,6 +388,30 @@ describe('per-worker approvals on the delegation path (issue #105)', () => {
     }
     expect(h.approvals.decisions.pendingKeys()).toEqual([]);
     expect(h.published).toHaveLength(2);
+  });
+
+  it('AC (issue #175): an approval granted before a crash is not re-asked after replacement', async () => {
+    // The worker asks, is approved, then crashes; the run replaces it
+    // (generation 1 → 2) and the replacement publishes the SAME ask again.
+    const h = harness(() => ({ approved: true }), {
+      crashFirstAttempt: true,
+    });
+    const code = await runOrchestrateCommand(ORCHESTRATE_ARGS, h.deps);
+
+    expect(code).toBe(0);
+    // Both generations published their ask — the same key, because the ask is
+    // the same operation in the same session/worktree.
+    expect(h.published).toHaveLength(2);
+    expect(h.published[0]?.request.key).toBe(h.published[1]?.request.key);
+    // The seat was consulted exactly ONCE: the replacement's ask was answered
+    // from the manager's memoized decision, never re-presented to the user.
+    expect(h.raised).toHaveLength(1);
+    expect(
+      h.approvals.decisions.decided(h.published[0]?.request.key ?? ''),
+    ).toEqual({ approved: true, by: 'user' });
+    expect(h.approvals.decisions.pendingKeys()).toEqual([]);
+    // The replacement is reported, with both generations named.
+    expect(h.debugLines.join('\n')).toMatch(/generation 1 → 2/);
   });
 
   it('AC2: a bounded wait times out to a denial with the named reason and never hangs', async () => {

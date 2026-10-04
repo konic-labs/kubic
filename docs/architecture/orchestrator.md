@@ -212,6 +212,20 @@ requested lane that differs from it refuses to start with the named
 still the CLI process rather than a model-driven agent; what the lane adds is
 the toolset gate and the plan.
 
+## Worker lifecycle: crash and replacement
+
+A worker that dies crash-class (signal-killed, or an unclassified non-zero
+exit) is **replaced once** (§81, issue #175): the composition root terminates
+the dead generation, reopens the worker's session, and the registry allocates
+the next generation for a relaunch in the same worktree and session. The row
+in `workers.json` and the worker's §68 provenance name the generation that
+actually ran, and a retry's approval ask is answered from the run's memoized
+decisions — an approval granted before the crash is never re-presented. The
+bound is one replacement: a second crash is terminal (`worker_failed`, naming
+both generations). A launch that never became ready, and every budget /
+approval / workspace / provider terminus, is **not** replaceable — a fresh
+child cannot fix a decision or a setup failure.
+
 ## Concurrency
 
 The shipped default is **two** agents (`worker-1,worker-2`, D12) and they run

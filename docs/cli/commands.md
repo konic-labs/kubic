@@ -362,6 +362,16 @@ report must be `ok`, `completed`, name the worker's own session and carry a
 summary, and the §68 AgentResult built from it must validate — otherwise the
 run fails with `code=result_invalid`.
 
+A **crashed** worker is replaced once (§81, issue #175). A crash-class death —
+signal-killed or an unclassified non-zero exit, never a budget (3), approval
+(4), workspace (5) or provider (6) terminus, and never a launch that failed to
+become ready — is retried in the **same** session and worktree at the next
+generation: the row in `workers.json` and the worker's §68 provenance both name
+generation 2, and the replacement's ask is answered from the run's memoized
+decisions, so an approval already granted is never re-presented to you. A
+second crash is terminal: the run fails `code=worker_failed` naming both
+generations. The bound is one replacement per worker.
+
 **The delegation model, as shipped (issues #95, #103, #104, #106).** The CLI process is the
 manager: it registers the manager lane's toolset through the §40 allowlist
 before anything spawns, derives a plan from `-p` (one step per worker), creates

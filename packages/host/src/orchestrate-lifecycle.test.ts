@@ -47,6 +47,9 @@ const PROVENANCE: Provenance = {
 //   SILENT          never print the marker (a boot that never announces)
 //   SLEEP=<ms>      stay alive after announcing (so a timeout can fire)
 //   EXIT=<n>        exit with n (default 6, the provider-less boundary)
+//   CRASH_GEN=<n>   SIGKILL itself AFTER announcing when the generation the
+//                   launcher handed it (KUBIC_WORKER_GENERATION) is n
+//   CRASH_ALWAYS    SIGKILL itself after announcing, every generation
 const FIXTURE = `
 import { writeFileSync } from 'node:fs';
 const argv = process.argv.slice(2);
@@ -64,6 +67,14 @@ if (dumpDir !== null) {
 }
 if (!prompt.includes('SILENT')) {
   process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
+}
+const crashGen = /CRASH_GEN=(\\d+)/.exec(prompt)?.[1];
+if (
+  prompt.includes('CRASH_ALWAYS') ||
+  (crashGen !== undefined && process.env.KUBIC_WORKER_GENERATION === crashGen)
+) {
+  // A crash-class death: signal-killed after the readiness handshake.
+  process.kill(process.pid, 'SIGKILL');
 }
 if (sleep === null || sleep === undefined) {
   if (exitCode === 0 && !prompt.includes('NOREPORT')) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
@@ -476,4 +487,76 @@ describe('prod orchestrate path: §68 result contract', () => {
     expect(typeof error.result?.provenance.pid).toBe('number');
     expect(typeof error.result?.provenance.model).toBe('string');
   });
+});
+
+describe('prod orchestrate path: §81 worker replacement (issue #175)', () => {
+  it('replaces a crashed worker once and completes the run at generation 2', async () => {
+    const h = await harness();
+    // The child announces itself, then SIGKILLs itself at generation 1 and
+    // exits clean with a §68 report at generation 2.
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the thing CRASH_GEN=1 EXIT=0',
+        agents: ['worker-1'],
+        session: 'lifecycle',
+        yes: true,
+        json: true,
+      },
+      h.deps,
+    );
+    expect(code).toBe(0);
+    const row = h.registry.get('worker-1');
+    expect(row?.generation).toBe(2);
+    expect(row?.status).toBe('completed');
+    // The envelope names the generation that actually ran.
+    const envelope = JSON.parse(
+      h.lines.filter((line) => line.startsWith('{')).pop() as string,
+    ) as {
+      workers: { agentId: string; provenance?: { generation?: number } }[];
+    };
+    expect(envelope.workers[0]?.provenance?.generation).toBe(2);
+    // The replacement is recorded where `kubic workers` reads it.
+    const rows = readWorkerRows(
+      createNodeFileBridge(join(h.root, '.kubic', 'orchestrator')),
+      WORKER_ROWS_FILE,
+    );
+    const persisted = rows.find((entry) => entry.workerId === 'worker-1');
+    expect(persisted?.generation).toBe(2);
+    expect(persisted?.status).toBe('completed');
+  }, 60_000);
+
+  it('fails worker_failed after the replacement limit, naming both generations', async () => {
+    const h = await harness();
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the thing CRASH_ALWAYS',
+        agents: ['worker-1'],
+        session: 'lifecycle',
+        yes: true,
+      },
+      h.deps,
+    );
+    expect(code).toBe(1);
+    const text = h.lines.join('\n');
+    expect(text).toContain('worker_failed');
+    // Both generations are named: the run replaced once and stopped.
+    expect(text).toMatch(/generations 1 → 2/);
+    expect(h.registry.get('worker-1')?.generation).toBe(2);
+  }, 60_000);
+
+  it('does not replace a launch that never became ready (spawn_failed is terminal)', async () => {
+    const h = await harness({ readyTimeoutMs: 100 });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'say hi SILENT SLEEP=30000',
+        agents: ['worker-1'],
+        session: 'lifecycle',
+        yes: true,
+      },
+      h.deps,
+    );
+    expect(code).toBe(1);
+    // One launch only: the silent child was never replaced.
+    expect(h.registry.get('worker-1')?.generation).toBe(1);
+  }, 60_000);
 });

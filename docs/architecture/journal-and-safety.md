@@ -63,6 +63,11 @@ default) or to deny. The rules are fail-closed:
   session decision is reused instead of asked again.
 - Decisions are session-scoped unless the host explicitly wires a
   shared store.
+- The session's state files are corrupt-tolerant: an `approvals.json` or
+  `posture.json` that is unreadable or parses to the wrong shape (`null`,
+  an array, a string) falls back to the safe default — no decisions,
+  approvals enforced — and a malformed individual decision entry is
+  dropped rather than erasing the valid ones beside it (issue #233).
 
 ### Kubic's own control plane (issue #324, §59)
 

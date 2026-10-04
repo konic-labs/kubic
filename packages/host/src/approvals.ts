@@ -1451,6 +1451,70 @@ export interface AccessPosture {
   enabledBy?: string;
 }
 
+// Shape validation for the on-disk state (issue #233). Load is
+// corrupt-tolerant by contract — a file that PARSES but is the wrong shape
+// (`null`, `[]`, `"x"`, `3`) must fall back to the documented safe default,
+// never be cast and then crash the boot (`Object.entries(null)` in the
+// service constructor, `.fullAccess` on null in installedPolicyPosture).
+// Malformed INDIVIDUAL entries are dropped, not the whole file: one bad key
+// must not erase every decision beside it. Each reader rebuilds the object
+// field by field, so unknown keys never ride along.
+function verdictFrom(value: unknown): ApprovalVerdict | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.approved === true) {
+    if (typeof record.by !== 'string') return undefined;
+    return {
+      approved: true,
+      by: record.by,
+      // A malformed optional field is dropped, never fabricated: without
+      // `justified: true` the service's requireJustification staleness rule
+      // re-asks, which is the fail-safe direction.
+      ...(typeof record.justified === 'boolean'
+        ? { justified: record.justified }
+        : {}),
+    };
+  }
+  if (record.approved === false) {
+    if (typeof record.reason !== 'string') return undefined;
+    return { approved: false, reason: record.reason };
+  }
+  return undefined;
+}
+
+function decisionsFrom(value: unknown): Record<string, ApprovalVerdict> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return {};
+  }
+  const out: Record<string, ApprovalVerdict> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const verdict = verdictFrom(entry);
+    if (verdict !== undefined) out[key] = verdict;
+  }
+  return out;
+}
+
+function postureFrom(value: unknown): AccessPosture {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return { fullAccess: false };
+  }
+  const record = value as Record<string, unknown>;
+  // `true` exactly: `"yes"`, `1` and a missing field are all not a grant.
+  if (record.fullAccess !== true) return { fullAccess: false };
+  return {
+    fullAccess: true,
+    ...(typeof record.enabledAt === 'number' &&
+    Number.isFinite(record.enabledAt)
+      ? { enabledAt: record.enabledAt }
+      : {}),
+    ...(typeof record.enabledBy === 'string'
+      ? { enabledBy: record.enabledBy }
+      : {}),
+  };
+}
+
 export class FileApprovalStore implements ApprovalStore {
   private readonly file: string;
   private readonly postureFile: string;
@@ -1464,10 +1528,7 @@ export class FileApprovalStore implements ApprovalStore {
     const bridge = createNodeFileBridge('/');
     if (!bridge.exists(this.file)) return {};
     try {
-      return JSON.parse(bridge.readTextFile(this.file)) as Record<
-        string,
-        ApprovalVerdict
-      >;
+      return decisionsFrom(JSON.parse(bridge.readTextFile(this.file)));
     } catch {
       return {};
     }
@@ -1493,7 +1554,7 @@ export class FileApprovalStore implements ApprovalStore {
     const bridge = createNodeFileBridge('/');
     if (!bridge.exists(this.postureFile)) return { fullAccess: false };
     try {
-      return JSON.parse(bridge.readTextFile(this.postureFile)) as AccessPosture;
+      return postureFrom(JSON.parse(bridge.readTextFile(this.postureFile)));
     } catch {
       return { fullAccess: false };
     }

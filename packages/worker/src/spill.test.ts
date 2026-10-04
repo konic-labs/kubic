@@ -44,13 +44,27 @@ describe('session spill sink (issue #182)', () => {
     expect(first).not.toBe(second);
     expect(readFileSync(first, 'utf8')).toBe('head\ntail\n');
     expect(readFileSync(second, 'utf8')).toBe('boom\n');
-    expect(readdirSync(join(sessionDir, SPILL_DIR_NAME))).toEqual([
-      '0001-stdout.log',
-      '0002-stderr.log',
+    const names = readdirSync(join(sessionDir, SPILL_DIR_NAME));
+    expect(names).toEqual([
+      `0001-stdout-${process.pid}.log`,
+      `0002-stderr-${process.pid}.log`,
     ]);
     // A command's output can carry secrets: the spill is never wider than
     // the session directory it lives in.
     expect(statSync(first).mode & 0o777).toBe(0o600);
+  });
+
+  it('never reuses a path a previous sink returned (a resumed session)', () => {
+    const sessionDir = tmp('spill-resume-');
+    const first = createSessionSpillSink(sessionDir);
+    const before = first.write('stdout', 'first run\n');
+    // A resumed session builds a NEW sink over the same directory; its first
+    // write must not truncate the file an earlier tool result still names.
+    const second = createSessionSpillSink(sessionDir);
+    const after = second.write('stdout', 'second run\n');
+    expect(after).not.toBe(before);
+    expect(readFileSync(before, 'utf8')).toBe('first run\n');
+    expect(readFileSync(after, 'utf8')).toBe('second run\n');
   });
 
   it('goes away with the session: the prune removes the directory it lives in', () => {

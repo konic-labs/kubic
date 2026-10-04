@@ -191,9 +191,12 @@ pi-durable's `DEFAULT_MAX_LINES`) and its last `BASH_RESULT_MAX_CHARS`
 (64 KiB), writes the untruncated stream through `OpContext.spill` — the
 session-scoped sink the lane builds from its session directory
 (`createSessionSpillSink`, `spill.ts`, one 0600 file per clipped stream under
-`<sessionDir>/spill/`) — and names the path in the header
+`<sessionDir>/spill/`, named `<n>-<stream>-<pid>.log`) — and names the path in the header
 (`[kubic: N leading chars dropped — full output: <path>]`) and in
-`BashResult.spillPath`. Because the files live inside the session directory,
+`BashResult.spillPath`. A name is never reused for the life of the session —
+the counter starts after the highest index already in `spill/`, so a resumed
+session cannot truncate a file an earlier tool result still names. Because the
+files live inside the session directory,
 `kubic sessions prune`'s one recursive remove takes them with the session and
 nothing lands in the workspace (where the end-of-run sweep would journal it)
 or in `$TMPDIR`. No sink (tests, journal-free contexts) or a sink that throws

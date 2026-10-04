@@ -227,11 +227,15 @@ restores the CRLF/BOM file exactly as it was.
   always uses the 120 s / 600 s limits and kills its background jobs.
 - **Output:** each stream keeps its last **64 KiB** and its last **2000
   lines**, whichever is smaller — the tail is where a failure usually ends,
-  and the head is one read away (issue #182): a clipped stream is written in
-  full to a spill file inside the session directory and the header names it —
+  and the head is one command away (issue #182): a clipped stream is written
+  in full to a spill file inside the session directory and the header names
+  it —
   `[kubic: N leading chars dropped — full output: <path>]` — with the same
   path on `BashResult.spillPath` (`stdout`'s spill when both streams were
-  clipped; each stream's own header names its own file). The file holds the
+  clipped; each stream's own header names its own file). Read it back through
+  the shell — `bash cat <path>`, or `tail`/`sed` for a window — because
+  `read` is confined to the workspace and the spill lives in the session
+  directory (outside it). The file holds the
   stream up to the seam's 10 MiB per-stream cap and is removed with the
   session (`kubic sessions prune`); it is created `0600`, because a command's
   output can carry secrets. A run whose lane injected no sink (tests, a

@@ -266,6 +266,7 @@ describe('sessions CLI (issue #14, slice F)', () => {
     await harness.commit(
       (tx) =>
         tx.appendEntry(ToolResultEntry, conversation.id, {
+          data: { diagnostics: [] },
           model: [
             {
               role: 'toolResult',

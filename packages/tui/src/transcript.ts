@@ -16,6 +16,7 @@ import {
   type MarkdownTheme,
   ScrollView,
   truncateToWidth,
+  visibleWidth,
   wrapTextWithAnsi,
 } from './tui-boundary.js';
 
@@ -163,7 +164,18 @@ class TranscriptDocument implements Component {
           const name = stripPrefix(cell.markdown, 'tool ');
           const detail =
             cell.detail === undefined ? '' : ` ${theme.muted(cell.detail)}`;
-          out.push(fit(`${glyph} ${theme.bold(name)}${detail}`, w));
+          const callLine = `${glyph} ${theme.bold(name)}${detail}`;
+          if (!this.expanded) {
+            out.push(fit(callLine, w));
+          } else {
+            // Issue #300: expanded, the args summary wraps too (a long path
+            // or command is exactly what the operator opened this for), with
+            // the continuation rows indented under the call's 2-column lead.
+            const wrapped = wrapTextWithAnsi(callLine, Math.max(1, w - 2));
+            wrapped.forEach((row, index) => {
+              out.push(fit(index === 0 ? row : `  ${row}`, w));
+            });
+          }
           if (result !== undefined) this.renderOutput(out, result, w, theme);
           break;
         }
@@ -235,15 +247,38 @@ class TranscriptDocument implements Component {
       ? lines
       : lines.slice(0, TOOL_OUTPUT_PREVIEW_LINES);
     const style = cell.isError === true ? theme.error : theme.muted;
+    // Issue #300: expanded, every line WRAPS (the operator expands to read a
+    // whole diagnostic, so no character may be cut); collapsed, the preview
+    // stays compact and its hint says that the shown rows are clipped.
+    const plainLead = `  ${OUTPUT_ELBOW}  `;
+    const indent = ' '.repeat(plainLead.length);
+    let clipped = false;
     shown.forEach((line, index) => {
-      const lead = index === 0 ? `  ${theme.muted(OUTPUT_ELBOW)}  ` : '     ';
-      out.push(fit(`${lead}${style(line)}`, width));
+      const lead = index === 0 ? `  ${theme.muted(OUTPUT_ELBOW)}  ` : indent;
+      if (this.expanded) {
+        const wrapped = wrapTextWithAnsi(
+          line,
+          Math.max(1, width - indent.length),
+        );
+        wrapped.forEach((row, rowIndex) => {
+          out.push(
+            fit(`${rowIndex === 0 ? lead : indent}${style(row)}`, width),
+          );
+        });
+        return;
+      }
+      const rendered = `${lead}${style(line)}`;
+      if (visibleWidth(rendered) > width) clipped = true;
+      out.push(fit(rendered, width));
     });
     const hidden = lines.length - shown.length;
-    if (hidden > 0) {
+    if (hidden > 0 || clipped) {
+      const parts: string[] = [];
+      if (hidden > 0) parts.push(`+${hidden} lines`);
+      if (clipped) parts.push('lines clipped');
       out.push(
         fit(
-          `     ${theme.dim(`… +${hidden} lines (ctrl+x to expand)`)}`,
+          `${indent}${theme.dim(`… ${parts.join(' · ')} (ctrl+x to expand)`)}`,
           width,
         ),
       );

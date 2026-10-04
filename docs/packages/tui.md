@@ -71,7 +71,11 @@ module owns arrangement only.
   the terminal narrows.
 - **Transcript** (`transcript.ts`): `TranscriptEntryKind` is
   `text|tool|output`; `TranscriptView` applies snapshot/delta ops
-  (`TranscriptOp`) and replays via `replayTranscript`.
+  (`TranscriptOp`) and replays via `replayTranscript`. Tool output is
+  collapsed to `TOOL_OUTPUT_PREVIEW_LINES` rows (cut at the width, with a
+  hint naming hidden or clipped rows); Ctrl-X expands it, and then every
+  output line and the tool call's args summary wrap with a hanging indent
+  instead of being cut (issue #300).
 - **Tree** (`tree.ts`): `RunStatus` is `idle|running|done`;
   `AgentTreeState` toggles (`toggleTree`), consumes lane events
   (`LaneEventLike` via `applyLaneEvent` — run status, tool start/end, usage

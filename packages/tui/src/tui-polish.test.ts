@@ -173,10 +173,13 @@ describe('transcript blocks', () => {
       1,
     );
     const lines = view.render(30);
-    expect(lines).toHaveLength(2);
+    // Collapsed: both rows are CUT at the width (no wrap), and the output's
+    // hint says so instead of pretending the row is complete (issue #300).
+    expect(lines).toHaveLength(3);
     for (const line of lines)
       expect(plain(line).length).toBeLessThanOrEqual(30);
     expect(plain(lines[0] ?? '').endsWith('…')).toBe(true);
+    expect(plain(lines[2] ?? '')).toContain('lines clipped');
   });
 });
 

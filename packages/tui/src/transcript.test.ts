@@ -9,7 +9,9 @@ import {
   createTranscriptView,
   QUEUED_LABEL,
   replayTranscript,
+  TOOL_OUTPUT_PREVIEW_LINES,
 } from './transcript.js';
+import { visibleWidth } from './tui-boundary.js';
 
 afterEach(() => {
   setTuiTheme(createTuiTheme('none'));
@@ -271,5 +273,81 @@ describe('queued follow-ups (issue #334)', () => {
     expect(view.render(80).join('\n')).toContain('queued: second');
     view.setQueuedPrompts([]);
     expect(view.render(80).join('\n')).not.toContain(QUEUED_LABEL);
+  });
+});
+
+describe('expanded tool output wraps instead of clipping (issue #300)', () => {
+  function outputView(
+    text: string,
+    detail?: string,
+  ): ReturnType<typeof createTranscriptView> {
+    const view = createTranscriptView();
+    view.applyLaneSnapshot(
+      { laneId: 'lane-1' },
+      [
+        {
+          id: 'tool-1',
+          kind: 'tool',
+          markdown: 'tool bash',
+          toolCallId: 'c1',
+          ...(detail === undefined ? {} : { detail }),
+        },
+        { id: 'o1', kind: 'output', markdown: text, toolCallId: 'c1' },
+      ],
+      1,
+    );
+    return view;
+  }
+
+  it('renders a 300-char output line in full when expanded', () => {
+    const text = `E${'x'.repeat(298)}Z`;
+    const view = outputView(text);
+    view.toggleExpanded();
+    const lines = view.render(80);
+    for (const line of lines) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(80);
+    }
+    const doc = lines.join('\n');
+    // Every character survives the wrap: the first and last of the line are
+    // there, and no `…` cut the tail.
+    expect(doc.split('x').length - 1).toBe(298);
+    expect(doc).toContain('E');
+    expect(doc).toContain('Z');
+    expect(doc).not.toContain('…');
+    // Hanging indent: continuation rows align under the block's 5-column
+    // lead (`  ⎿  `).
+    expect(lines.some((line) => line.startsWith('     '))).toBe(true);
+  });
+
+  it('keeps the collapsed preview inside its row budget and says when clipped', () => {
+    const text = Array.from(
+      { length: 20 },
+      (_, i) => `line ${i} ${'y'.repeat(200)}`,
+    ).join('\n');
+    const view = outputView(text);
+    const lines = view.render(80);
+    for (const line of lines) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(80);
+    }
+    // The preview shows at most TOOL_OUTPUT_PREVIEW_LINES output rows plus
+    // its hint row.
+    const previewRows = lines.filter((line) => /^\s*(⎿| {5})/.test(line));
+    expect(previewRows.length).toBeLessThanOrEqual(
+      TOOL_OUTPUT_PREVIEW_LINES + 1,
+    );
+    // The collapsed rows are clipped, and the hint says so instead of
+    // pretending the text is complete.
+    expect(lines.join('\n')).toContain('clipped');
+  });
+
+  it('wraps the tool-call detail line when expanded', () => {
+    const detail = `path/${'d'.repeat(200)}.ts`;
+    const view = outputView('ok', detail);
+    view.toggleExpanded();
+    const lines = view.render(80);
+    for (const line of lines) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(80);
+    }
+    expect(lines.join('\n').split('d').length - 1).toBe(200);
   });
 });

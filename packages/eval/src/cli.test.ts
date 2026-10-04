@@ -64,7 +64,7 @@ describe('eval command (issue #53)', () => {
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '3',
-        tier: 'standard',
+        size: 'standard',
       },
       { ...deps, out: o.write, err: o.err },
     );
@@ -81,7 +81,7 @@ describe('eval command (issue #53)', () => {
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '3',
-        tier: 'standard',
+        size: 'standard',
         json: true,
       },
       { ...deps, out: o.write, err: o.err },
@@ -89,14 +89,21 @@ describe('eval command (issue #53)', () => {
     expect(exit).toBe(0);
     const envelope = JSON.parse(o.lines.join('\n')) as {
       ok: boolean;
-      record: { suite: string; worktree: string; tier: string };
+      record: {
+        suite: string;
+        worktree: string;
+        size: string;
+        determinism: string;
+      };
     };
     expect(envelope.ok).toBe(true);
     expect(envelope.record.suite).toBe('swe-bench-mini');
-    expect(envelope.record.tier).toBe('standard');
+    expect(envelope.record.size).toBe('standard');
+    // The --task path executes a model-backed suite: the live tier.
+    expect(envelope.record.determinism).toBe('live');
   });
 
-  it('exits 2 when worktree/generation/tier are missing', async () => {
+  it('exits 2 when worktree/generation/size are missing', async () => {
     const o = out();
     const exit = await runEvalCommand(
       { suite: 'swe-bench-mini', task: 'fix', model: 'acme/m1' },
@@ -104,7 +111,7 @@ describe('eval command (issue #53)', () => {
     );
     expect(exit).toBe(2);
     expect(o.lines).toEqual([]);
-    expect(o.errs.join('\n')).toMatch(/worktree|generation|tier/i);
+    expect(o.errs.join('\n')).toMatch(/worktree|generation|size/i);
   });
 
   it('exits 2 on an invalid --workspace instead of coercing to inline', async () => {
@@ -116,7 +123,7 @@ describe('eval command (issue #53)', () => {
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '3',
-        tier: 'standard',
+        size: 'standard',
         workspace: 'worktreee',
       },
       { ...deps, out: o.write, err: o.err },
@@ -180,7 +187,7 @@ describe('eval command (issue #53)', () => {
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '3',
-        tier: 'standard',
+        size: 'standard',
       },
       {
         out: o.write,
@@ -194,6 +201,7 @@ describe('eval command (issue #53)', () => {
     expect(exit).toBe(0);
     expect(ran).toBe(false);
     expect(o.lines.join('\n')).toMatch(/swe-bench-mini/);
+    expect(o.lines.join('\n')).toMatch(/determinism=recorded/);
   });
 });
 
@@ -208,19 +216,26 @@ describe('eval --trajectory provenance (issue #256)', () => {
       {
         suite: 'swe-bench-mini',
         trajectory: exported,
-        tier: 'standard',
+        size: 'standard',
         json: true,
       },
       { ...deps, out: o.write, err: o.err },
     );
     expect(exit).toBe(0);
     const envelope = JSON.parse(o.lines.join('\n')) as {
-      record: { model: string; worktree: string; generation: number };
+      record: {
+        model: string;
+        worktree: string;
+        generation: number;
+        determinism: string;
+      };
     };
     expect(envelope.record).toMatchObject({
       model: 'acme/m1',
       worktree: '/wt/agent-1',
       generation: 3,
+      // Scoring an existing export re-executes nothing (issue #260, §47.1).
+      determinism: 'recorded',
     });
   });
 
@@ -237,7 +252,7 @@ describe('eval --trajectory provenance (issue #256)', () => {
       {
         suite: 'swe-bench-mini',
         trajectory: red,
-        tier: 'standard',
+        size: 'standard',
         json: true,
       },
       { ...deps, out: o.write, err: o.err },
@@ -258,7 +273,7 @@ describe('eval --trajectory provenance (issue #256)', () => {
         suite: 'swe-bench-mini',
         trajectory: exported,
         model: 'faux/faux',
-        tier: 'standard',
+        size: 'standard',
       },
       { ...deps, out: o.write, err: o.err },
     );
@@ -274,7 +289,7 @@ describe('eval --trajectory provenance (issue #256)', () => {
         suite: 'swe-bench-mini',
         task: 'fix',
         worktree: '/wt/a',
-        tier: 'standard',
+        size: 'standard',
       },
       { ...deps, out: o.write, err: o.err },
     );
@@ -293,7 +308,7 @@ describe('benchmark command (issue #53)', () => {
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '3',
-        tier: 'standard',
+        size: 'standard',
         json: true,
       },
       { ...deps, out: o.write, err: o.err },
@@ -328,6 +343,11 @@ describe('benchmark command (issue #53)', () => {
       expect(stub.success).toBe(false);
       expect((stub as { skipped?: boolean }).skipped).toBe(true);
     }
+    // Issue #260: every row publishes the determinism tier it ran (or would
+    // run) at.
+    for (const row of envelope.results) {
+      expect((row as { determinism?: string }).determinism).toBe('live');
+    }
   });
 
   it('runs a single suite via --suite swe', async () => {
@@ -339,7 +359,7 @@ describe('benchmark command (issue #53)', () => {
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '1',
-        tier: 'smoke',
+        size: 'smoke',
         workspace: 'worktree',
       },
       {
@@ -365,7 +385,7 @@ describe('benchmark command (issue #53)', () => {
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '1',
-        tier: 'smoke',
+        size: 'smoke',
         json: true,
       },
       { ...deps, out: json.write, err: json.err },
@@ -387,7 +407,7 @@ describe('benchmark command (issue #53)', () => {
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '1',
-        tier: 'smoke',
+        size: 'smoke',
       },
       { ...deps, out: text.write, err: text.err },
     );
@@ -400,7 +420,7 @@ describe('benchmark command (issue #53)', () => {
   });
 
   it('validates provenance once before the matrix (issue #264)', async () => {
-    // The stub branch never reached runEvalTask, so the tier check was
+    // The stub branch never reached runEvalTask, so the size check was
     // skipped entirely and the run exited 0.
     const o = out();
     const exit = await runBenchmarkCommand(
@@ -421,8 +441,8 @@ describe('benchmark command (issue #53)', () => {
     };
     expect(envelope.ok).toBe(false);
     expect(envelope.exitCode).toBe(2);
-    expect(envelope.error.code).toBe('missing-tier');
-    expect(envelope.error.message).toMatch(/tier is required/);
+    expect(envelope.error.code).toBe('missing-size');
+    expect(envelope.error.message).toMatch(/size is required/);
   });
 
   it('keeps a mixed matrix green when every executed suite passes (issue #264)', async () => {
@@ -432,7 +452,7 @@ describe('benchmark command (issue #53)', () => {
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '1',
-        tier: 'smoke',
+        size: 'smoke',
       },
       { ...deps, out: o.write, err: o.err },
     );
@@ -449,7 +469,7 @@ describe('benchmark command (issue #53)', () => {
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '1',
-        tier: 'smoke',
+        size: 'smoke',
         workspace: 'worktreee',
       },
       { ...deps, out: o.write, err: o.err },
@@ -465,7 +485,7 @@ describe('eval/benchmark semantics over parsed options', () => {
     model: 'acme/m1',
     worktree: '/wt/a',
     generation: '3',
-    tier: 'standard',
+    size: 'standard',
   };
 
   it('prints the record line on stdout and nothing on stderr', async () => {
@@ -477,7 +497,7 @@ describe('eval/benchmark semantics over parsed options', () => {
     expect(exit).toBe(0);
     expect(o.lines).toHaveLength(1);
     expect(o.lines[0]).toMatch(
-      /^eval ok: suite swe-bench-mini success=true .* model=acme\/m1 worktree=\/wt\/a generation=3 tier=standard$/,
+      /^eval ok: suite swe-bench-mini success=true .* model=acme\/m1 worktree=\/wt\/a generation=3 size=standard determinism=live$/,
     );
     expect(o.errs).toEqual([]);
   });
@@ -604,7 +624,7 @@ describe('eval/benchmark semantics over parsed options', () => {
   it('exits 2 when benchmark runs without --generation, before any suite runs', async () => {
     const o = out();
     const exit = await runBenchmarkCommand(
-      { tier: 'standard' },
+      { size: 'standard' },
       {
         ...deps,
         runSuite: async () => {

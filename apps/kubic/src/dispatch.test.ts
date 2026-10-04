@@ -931,7 +931,7 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
         suite: 'swe-bench-mini',
         worktree: '/tmp/w',
         generation: '1',
-        tier: 'smoke',
+        size: 'smoke',
       },
       loadedConfig(),
     );

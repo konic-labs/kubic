@@ -19,7 +19,8 @@ function input(overrides: Partial<EvalRecordInput> = {}): EvalRecordInput {
     thinking: null,
     worktree: '/wt/agent-1',
     generation: 3,
-    tier: 'standard',
+    size: 'standard',
+    determinism: 'recorded',
     ...overrides,
   };
 }
@@ -40,7 +41,7 @@ describe('validateEvalRecord (issue #53)', () => {
     }
   });
 
-  it('rejects a record missing generation or tier', () => {
+  it('rejects a record missing generation, size or determinism', () => {
     const noGeneration = validateEvalRecord({
       ...input(),
       generation: undefined as unknown as number,
@@ -51,14 +52,25 @@ describe('validateEvalRecord (issue #53)', () => {
         'generation is required: record which worker generation ran (§73)',
       ]);
     }
-    const noTier = validateEvalRecord({
+    const noSize = validateEvalRecord({
       ...input(),
-      tier: undefined as unknown as string,
+      size: undefined as unknown as string,
     });
-    expect(noTier.valid).toBe(false);
-    if (!noTier.valid) {
-      expect(noTier.errors).toHaveLength(1);
-      expect(noTier.errors[0]).toMatch(/^tier is required/);
+    expect(noSize.valid).toBe(false);
+    if (!noSize.valid) {
+      expect(noSize.errors).toEqual([
+        'size is required: one of smoke, standard, extended — refusing to store an unsized record',
+      ]);
+    }
+    const noDeterminism = validateEvalRecord({
+      ...input(),
+      determinism: undefined as unknown as string,
+    });
+    expect(noDeterminism.valid).toBe(false);
+    if (!noDeterminism.valid) {
+      expect(noDeterminism.errors).toEqual([
+        'determinism is required: one of recorded, deterministic, live (§47.1/§72) — refusing to store a record whose comparisons cannot be trusted',
+      ]);
     }
   });
 
@@ -146,11 +158,12 @@ describe('reconcileUsage §39 (issue #53)', () => {
 });
 
 describe('validateEvalRecord exact outputs (issue #70)', () => {
-  it('stamps a valid record with an ISO recordedAt and the tier (issue #70)', () => {
+  it('stamps a valid record with an ISO recordedAt, the size and the determinism tier (issues #70, #260)', () => {
     const result = validateEvalRecord(input());
     expect(result.valid).toBe(true);
     if (result.valid) {
-      expect(result.record.tier).toBe('standard');
+      expect(result.record.size).toBe('standard');
+      expect(result.record.determinism).toBe('recorded');
       expect(Number.isNaN(Date.parse(result.record.recordedAt))).toBe(false);
       expect(result.record.recordedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     }
@@ -216,19 +229,24 @@ describe('validateEvalRecord exact outputs (issue #70)', () => {
     }
   });
 
-  it('rejects an unknown tier naming the allowed set (issue #70)', () => {
-    const result = validateEvalRecord({ ...input(), tier: 'full' });
+  it('rejects an unknown size naming the allowed set (issue #70)', () => {
+    const result = validateEvalRecord({ ...input(), size: 'full' });
     expect(result.valid).toBe(false);
     if (!result.valid) {
       expect(result.errors.join(' ')).toMatch(/smoke.*standard.*extended/);
     }
   });
 
-  it('accepts every tier and keeps extra signal payloads (issue #70)', () => {
-    for (const tier of ['smoke', 'standard', 'extended']) {
-      const result = validateEvalRecord({ ...input(), tier });
+  it('accepts every size and determinism tier, keeping extra signal payloads (issues #70, #260)', () => {
+    for (const size of ['smoke', 'standard', 'extended']) {
+      const result = validateEvalRecord({ ...input(), size });
       expect(result.valid).toBe(true);
-      if (result.valid) expect(result.record.tier).toBe(tier);
+      if (result.valid) expect(result.record.size).toBe(size);
+    }
+    for (const determinism of ['recorded', 'deterministic', 'live']) {
+      const result = validateEvalRecord({ ...input(), determinism });
+      expect(result.valid, determinism).toBe(true);
+      if (result.valid) expect(result.record.determinism).toBe(determinism);
     }
     const signals = {
       tests: 'pass',

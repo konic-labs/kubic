@@ -1658,11 +1658,11 @@ flag, a stray operand, or a value on a boolean flag (`--json=1`) prints one
   which is a usage error, leaves stdout empty and prints its `error:`
   line on stderr.
 
-## `kubic eval --suite <id> (--task <prompt> | --trajectory <json>) [--generation <n>] [--worktree <path>] [--tier <tier>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
+## `kubic eval --suite <id> (--task <prompt> | --trajectory <json>) [--generation <n>] [--worktree <path>] [--size <size>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
 
 Scores one suite against a task prompt or an existing trajectory
 export. Every record needs its provenance (`model`, `thinking`,
-`worktree`, `generation`) and a `--tier`; a record missing any of them
+`worktree`, `generation`) and a `--size`; a record missing any of them
 is refused with exit 2 and is never stored.
 
 - With `--task`, the provenance comes from the flags: `--worktree` and
@@ -1672,12 +1672,16 @@ is refused with exit 2 and is never stored.
   `worktree` and `generation` from `provenance`. These flags become
   optional cross-checks. A flag that disagrees with the export is
   refused with exit 2 and `[provenance-mismatch]`, and no record is
-  printed. The tier is not part of an export, so `--tier` stays
-  mandatory.
+  printed. The size is not part of an export, so `--size` stays
+  mandatory; the determinism tier is derived from the path.
 
 Every record carries `success`, `costUsd`, `tokens`,
 `latencyMs`, `toolCalls`, `model`, `thinking`, `worktree`,
-`generation` and `tier`.
+`generation`, `size` and `determinism`. `determinism` is the §47.1 tier,
+derived from the path: `--trajectory` scores a recorded export without
+re-executing anything → `recorded`; `--task` executes a model-backed
+suite → `live`. Benchmark rows publish the same field (`live` — including
+a skipped stub, which names the tier it would run at).
 
 | Flag | Meaning |
 | --- | --- |
@@ -1686,7 +1690,7 @@ Every record carries `success`, `costUsd`, `tokens`,
 | `--trajectory <json>` | Scores an existing trajectory export, given as inline JSON, without re-running anything. Fully live: exits 0 with the record, or 1 when the gates fail it. Text that is not JSON exits 2. |
 | `--generation <n>` | The worker generation that ran. Must be an integer; anything else exits 2. **Required with `--task`.** With `--trajectory` it is read from `provenance.generation`; a different value exits 2 (`provenance-mismatch`). |
 | `--worktree <path>` | Where the run executed. With `--task`, a record without it is refused with exit 2. With `--trajectory` it is read from `provenance.worktree`; a different value exits 2 (`provenance-mismatch`). |
-| `--tier <smoke\|standard\|extended>` | Published on every record. Provenance: a missing or unknown tier exits 2 on both paths. |
+| `--size <smoke\|standard\|extended>` | The record's size class (how much was run) — an implementation-side label, not a §47.1 tier. Published on every record; a missing or unknown size exits 2 on both paths. |
 | `--model <id>` | `provider/id` of the run. With `--task` it defaults to `faux/faux`. With `--trajectory` it is read from `provenance.model`, and a different value exits 2 (`provenance-mismatch`). |
 | `--workspace inline\|worktree` | `worktree` refuses with exit 2 unless `git status --porcelain` in `--worktree` is clean. Any other value exits 2. Default `inline`. |
 | `--thinking <level>` | With `--task`, recorded on the record verbatim (default none). With `--trajectory` it is read from `model.thinking`, and a different value exits 2 (`provenance-mismatch`). |
@@ -1695,7 +1699,7 @@ Every record carries `success`, `costUsd`, `tokens`,
 Text mode prints one `eval ok: suite …` line on stdout. A refusal prints
 `error: [<code>] <message>` on stderr.
 
-## `kubic benchmark --generation <n> [--suite <id>] [--worktree <path>] [--tier <tier>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
+## `kubic benchmark --generation <n> [--suite <id>] [--worktree <path>] [--size <size>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
 
 Runs the reproducible matrix: every suite, or a single one with
 `--suite`. The output is a `SUITE / CATEGORY / STATUS` table followed by
@@ -1704,7 +1708,7 @@ the verdict line: `benchmark ok|FAILED: <passed>/<executed> suites passed,
 
 Stub suites show as `skipped (stub)` with `success:false`, so they are
 never reported as passing work, and they never count toward the verdict.
-Provenance (`--generation`, `--tier`, `--worktree`) is validated once
+Provenance (`--generation`, `--size`, `--worktree`) is validated once
 before the matrix, so even a stub-only selection cannot skip it. A matrix
 with **no executable suite** (only stubs selected) refuses with
 `error: [no-executable-suites] benchmark: no executable suites selected`

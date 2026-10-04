@@ -195,7 +195,7 @@ const PROVENANCE_ARGV = [
   'wt',
   '--generation',
   '1',
-  '--tier',
+  '--size',
   'smoke',
 ];
 
@@ -246,7 +246,7 @@ describe('analysis commands: generated help', () => {
         '--model <id>',
         '--worktree <path>',
         '--generation <n>',
-        '--tier <tier>',
+        '--size <size>',
         '--workspace <kind>',
         '--thinking <level>',
         '--json',
@@ -368,7 +368,7 @@ describe('analysis commands: usage errors exit 2 (§78)', () => {
       's',
       '--trajectory',
       '{}',
-      '--tier',
+      '--size',
       'smoke',
     ]);
     expect(run.err).toEqual([]);

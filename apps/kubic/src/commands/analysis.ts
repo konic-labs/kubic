@@ -65,7 +65,8 @@ const ENVELOPE_HELP =
 const MODEL_HELP = 'provider/id of the run';
 const WORKTREE_HELP = 'where the run executed (provenance)';
 const GENERATION_HELP = 'worker generation that ran (provenance, integer)';
-const TIER_HELP = 'published tier: smoke|standard|extended (provenance)';
+const SIZE_HELP =
+  'record size: smoke|standard|extended (the §47.1 determinism tier is derived)';
 const WORKSPACE_HELP =
   'inline|worktree (default inline; worktree needs a clean --worktree)';
 const THINKING_HELP = 'thinking level, recorded verbatim';
@@ -157,7 +158,7 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     'eval',
     'score one suite against a task prompt or a recorded trajectory',
     [
-      'kubic eval --trajectory "$(cat t.json)" --suite bugfix-repro --tier smoke',
+      'kubic eval --trajectory "$(cat t.json)" --suite bugfix-repro --size smoke',
     ],
   )
     .requiredOption('--suite <id>', 'built-in suite to score')
@@ -172,7 +173,7 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
       '--generation <n>',
       `${GENERATION_HELP}; required with --task${FROM_EXPORT}`,
     )
-    .option('--tier <tier>', TIER_HELP)
+    .option('--size <size>', SIZE_HELP)
     .option('--workspace <kind>', WORKSPACE_HELP)
     .option('--thinking <level>', `${THINKING_HELP}${FROM_EXPORT}`)
     .option('--json', ENVELOPE_HELP)
@@ -182,13 +183,13 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     program,
     'benchmark',
     'run the reproducible suite matrix (stub suites are reported, never passed)',
-    ['kubic benchmark --worktree wt --generation 1 --tier smoke --json'],
+    ['kubic benchmark --worktree wt --generation 1 --size smoke --json'],
   )
     .option('--suite <id>', 'one suite instead of the whole matrix')
     .option('--model <id>', MODEL_HELP, EVAL_DEFAULT_MODEL)
     .option('--worktree <path>', WORKTREE_HELP)
     .requiredOption('--generation <n>', GENERATION_HELP)
-    .option('--tier <tier>', TIER_HELP)
+    .option('--size <size>', SIZE_HELP)
     .option('--workspace <kind>', WORKSPACE_HELP)
     .option('--thinking <level>', THINKING_HELP)
     .option('--json', ENVELOPE_HELP)

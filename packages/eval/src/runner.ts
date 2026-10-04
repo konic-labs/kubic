@@ -6,15 +6,17 @@
 //   parseTrajectoryExport, read-only) without re-running anything.
 // Both paths are pure: worktree cleanliness is checked through the
 // injected ensureCleanWorktree hook (this package never touches node:fs,
-// per dep-lint I/O confinement). Missing worktree/generation/tier is a
-// fail-closed EvalRunnerError (exit 2), never a stored record.
+// per dep-lint I/O confinement). Missing worktree/generation/size (and,
+// for the trajectory path, an invalid determinism tier) is a fail-closed
+// EvalRunnerError (exit 2), never a stored record.
 
 import type { TrajectoryExport } from '../../trajectory/src/schema.js';
 import { parseTrajectoryExport } from '../../trajectory/src/schema.js';
 import {
+  type EvalDeterminism,
   type EvalRecord,
-  type EvalTier,
-  isEvalTier,
+  type EvalSize,
+  isEvalSize,
   reconcileUsage,
   type UsageRowLike,
   validateEvalRecord,
@@ -28,8 +30,8 @@ export type EvalRunnerErrorCode =
   | 'no-executable-suites'
   | 'missing-worktree'
   | 'missing-generation'
-  | 'missing-tier'
-  | 'invalid-tier'
+  | 'missing-size'
+  | 'invalid-size'
   | 'dirty-worktree'
   | 'usage-mismatch'
   | 'missing-usage-rows'
@@ -72,7 +74,7 @@ export interface EvalTaskOptions {
   thinking: string | null;
   worktree: string;
   generation: number;
-  tier: string;
+  size: string;
   workspace: EvalWorkspace;
 }
 
@@ -84,8 +86,9 @@ export interface EvalTaskDeps {
 // The trajectory path takes model/thinking/worktree/generation from the
 // export itself (§48, §73): the flags are optional cross-checks, and a
 // flag that disagrees with the export is refused (provenance-mismatch)
-// rather than silently stamped over it. The tier is not recorded in an
-// export, so it stays required.
+// rather than silently stamped over it. The record size is not recorded in
+// an export, so it stays required; the determinism tier is DERIVED from the
+// path (`recorded` here, §47.1) rather than asked of the caller.
 export interface EvalTrajectoryOptions {
   suite: string;
   trajectory: unknown;
@@ -93,23 +96,23 @@ export interface EvalTrajectoryOptions {
   thinking?: string | null;
   worktree?: string;
   generation?: number;
-  tier?: string;
+  size?: string;
 }
 
-function requireTier(tier: string | undefined): EvalTier {
-  if (typeof tier !== 'string' || tier.trim() === '') {
+function requireSize(size: string | undefined): EvalSize {
+  if (typeof size !== 'string' || size.trim() === '') {
     throw new EvalRunnerError(
-      'missing-tier',
-      'tier is required (smoke|standard|extended, §72) — refusing to store an untiered record',
+      'missing-size',
+      'size is required (smoke|standard|extended) — refusing to store an unsized record',
     );
   }
-  if (!isEvalTier(tier)) {
+  if (!isEvalSize(size)) {
     throw new EvalRunnerError(
-      'invalid-tier',
-      `unknown tier ${JSON.stringify(tier)}: one of smoke, standard, extended`,
+      'invalid-size',
+      `unknown size ${JSON.stringify(size)}: one of smoke, standard, extended`,
     );
   }
-  return tier;
+  return size;
 }
 
 // Exported for the benchmark path (issue #264): the matrix validates
@@ -118,8 +121,8 @@ function requireTier(tier: string | undefined): EvalTier {
 export function checkEvalProvenance(options: {
   worktree: string;
   generation: number;
-  tier: string;
-}): EvalTier {
+  size: string;
+}): EvalSize {
   if (typeof options.worktree !== 'string' || options.worktree.trim() === '') {
     throw new EvalRunnerError(
       'missing-worktree',
@@ -136,7 +139,7 @@ export function checkEvalProvenance(options: {
       'generation is required: eval records which worker generation ran (§73)',
     );
   }
-  return requireTier(options.tier);
+  return requireSize(options.size);
 }
 
 // One flag checked against the export's own value: absent means "take the
@@ -179,7 +182,8 @@ function toRecord(
     thinking: string | null;
     worktree: string;
     generation: number;
-    tier: EvalTier;
+    size: EvalSize;
+    determinism: EvalDeterminism;
     success: boolean;
     signals: EvalSignals;
   },
@@ -198,7 +202,8 @@ function toRecord(
     thinking: options.thinking,
     worktree: options.worktree,
     generation: options.generation,
-    tier: options.tier,
+    size: options.size,
+    determinism: options.determinism,
     signals: options.signals,
   });
   if (!validated.valid) {
@@ -227,7 +232,7 @@ export async function runEvalTask(
       `suite ${JSON.stringify(options.suite)} is a stub — refusing to score unimplemented work`,
     );
   }
-  const tier = checkEvalProvenance(options);
+  const size = checkEvalProvenance(options);
   requireCleanWorktree(
     options.workspace,
     options.worktree,
@@ -259,7 +264,10 @@ export async function runEvalTask(
   // Gate success on the signals: a run that completed with a red
   // tests/build/lint/typecheck gate stores success=false.
   const success = outcome.success && gatesPass(outcome.signals);
-  return toRecord({ ...options, tier, ...outcome, success }, suite.category);
+  return toRecord(
+    { ...options, size, determinism: 'live', ...outcome, success },
+    suite.category,
+  );
 }
 
 export async function runEvalTrajectory(
@@ -278,7 +286,7 @@ export async function runEvalTrajectory(
       `suite ${JSON.stringify(options.suite)} is a stub — refusing to score unimplemented work`,
     );
   }
-  const tier = requireTier(options.tier);
+  const size = requireSize(options.size);
   let parsed: TrajectoryExport;
   try {
     parsed = parseTrajectoryExport(options.trajectory);
@@ -297,7 +305,7 @@ export async function runEvalTrajectory(
   crossCheck('thinking', options.thinking, thinking);
   crossCheck('worktree', options.worktree, worktree);
   crossCheck('generation', options.generation, generation);
-  checkEvalProvenance({ worktree, generation, tier });
+  checkEvalProvenance({ worktree, generation, size });
   const signals = computeSignals(parsed);
   return toRecord(
     {
@@ -306,7 +314,8 @@ export async function runEvalTrajectory(
       thinking,
       worktree,
       generation,
-      tier,
+      size,
+      determinism: 'recorded',
       success: signals.completion && gatesPass(signals),
       signals,
     },

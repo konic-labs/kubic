@@ -14,7 +14,7 @@ import { type CliLogger, createLineLogger } from '../../core/src/cli/logger.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
-import type { EvalRecord } from './records.js';
+import type { EvalDeterminism, EvalRecord } from './records.js';
 import {
   checkEvalProvenance,
   EvalRunnerError,
@@ -60,7 +60,7 @@ export interface EvalOptions {
   readonly thinking?: string;
   readonly worktree?: string;
   readonly generation?: string;
-  readonly tier?: string;
+  readonly size?: string;
   readonly json?: boolean;
 }
 
@@ -77,7 +77,7 @@ interface Parsed {
   thinking: string | undefined;
   worktree: string | undefined;
   generation: number | undefined;
-  tier: string;
+  size: string;
   json: boolean;
 }
 
@@ -132,7 +132,7 @@ function normalize(options: EvalOptions): Parsed | string {
     thinking: options.thinking,
     worktree: options.worktree,
     generation,
-    tier: options.tier ?? '',
+    size: options.size ?? '',
     json: options.json === true,
   };
 }
@@ -157,7 +157,7 @@ function emitRecord(
     return;
   }
   out(
-    `eval ok: suite ${record.suite} success=${String(record.success)} cost=${record.costUsd} tokens=${record.tokens} latencyMs=${record.latencyMs} tools=${record.toolCalls} model=${record.model} worktree=${record.worktree} generation=${record.generation} tier=${record.tier}`,
+    `eval ok: suite ${record.suite} success=${String(record.success)} cost=${record.costUsd} tokens=${record.tokens} latencyMs=${record.latencyMs} tools=${record.toolCalls} model=${record.model} worktree=${record.worktree} generation=${record.generation} size=${record.size} determinism=${record.determinism}`,
   );
 }
 
@@ -233,7 +233,7 @@ export async function runEvalCommand(
         ...(parsed.generation === undefined
           ? {}
           : { generation: parsed.generation }),
-        tier: parsed.tier,
+        size: parsed.size,
       });
       emitRecord(deps.out, record, parsed.json);
       return record.success ? EVAL_EXIT_OK : EVAL_EXIT_FAILED;
@@ -248,7 +248,7 @@ export async function runEvalCommand(
         suite: parsed.suite,
         task: parsed.task as string,
         ...provenance,
-        tier: parsed.tier,
+        size: parsed.size,
         workspace: parsed.workspace,
       },
       deps,
@@ -266,6 +266,9 @@ export interface BenchmarkResult {
   stub: boolean;
   skipped: boolean;
   success: boolean;
+  // Issue #260 (§47.1/§72): the executed row publishes the record's own
+  // determinism tier; a skipped stub names the tier it would run at (live).
+  determinism: EvalDeterminism;
 }
 
 // kubic benchmark [--suite <id>|all] (design §82): the reproducible
@@ -289,10 +292,10 @@ export async function runBenchmarkCommand(
   }
   // Issue #264: validate provenance once, before the matrix. A stub-only
   // selection never reaches runEvalTask (which owns this check), so without
-  // it `benchmark --suite agentic-live` reported `ok` with no tier or
+  // it `benchmark --suite agentic-live` reported `ok` with no size or
   // worktree at all.
   try {
-    checkEvalProvenance({ ...provenance, tier: parsed.tier });
+    checkEvalProvenance({ ...provenance, size: parsed.size });
   } catch (error) {
     if (error instanceof EvalRunnerError) {
       return emitError(deps.out, log, error, parsed.json);
@@ -322,6 +325,7 @@ export async function runBenchmarkCommand(
         stub: true,
         skipped: true,
         success: false,
+        determinism: 'live',
       });
       continue;
     }
@@ -331,7 +335,7 @@ export async function runBenchmarkCommand(
           suite: suite.id,
           task: parsed.task ?? `benchmark:${suite.id}`,
           ...provenance,
-          tier: parsed.tier,
+          size: parsed.size,
           workspace: parsed.workspace,
         },
         deps,
@@ -342,6 +346,7 @@ export async function runBenchmarkCommand(
         stub: false,
         skipped: false,
         success: record.success,
+        determinism: record.determinism,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

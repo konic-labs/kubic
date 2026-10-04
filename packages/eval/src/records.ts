@@ -1,18 +1,35 @@
 // Eval records (issue #53; design §48, §72, §73).
 // Every stored result carries how it ran: model/thinking/worktree/
-// generation/tier. Records missing worktree, generation, or tier are
-// rejected (never stored) — a result that cannot be attributed to a
-// worktree + generation + tier cannot be reproduced. Cost/latency/tokens
-// reconcile against §39 usage rows before a record is accepted.
+// generation, the record SIZE (smoke|standard|extended — an
+// implementation-side classification, not a design term; issue #260) and
+// the §47.1/§72 DETERMINISM tier (recorded|deterministic|live). Records
+// missing worktree, generation, size or determinism are rejected (never
+// stored) — a result that cannot be attributed cannot be reproduced, and a
+// reader must be able to tell how far to trust a comparison. Cost/latency/
+// tokens reconcile against §39 usage rows before a record is accepted.
 import { type EvalCategory, isEvalCategory } from './categories.js';
 import type { EvalSignals } from './signals.js';
 
-export const EVAL_TIERS = ['smoke', 'standard', 'extended'] as const;
+// The record's size class (how much was run). Deliberately NOT called a
+// tier: §47.1's tiers are the determinism tiers below, and the two were
+// conflated before issue #260.
+export const EVAL_SIZES = ['smoke', 'standard', 'extended'] as const;
 
-export type EvalTier = (typeof EVAL_TIERS)[number];
+export type EvalSize = (typeof EVAL_SIZES)[number];
 
-export function isEvalTier(value: string): value is EvalTier {
-  return (EVAL_TIERS as readonly string[]).includes(value);
+export function isEvalSize(value: string): value is EvalSize {
+  return (EVAL_SIZES as readonly string[]).includes(value);
+}
+
+// §47.1 determinism tiers, published with every result (§72): recorded
+// scores an existing trajectory without re-executing anything;
+// deterministic re-executes pinned; live executes a model-backed suite.
+export const DETERMINISM_TIERS = ['recorded', 'deterministic', 'live'] as const;
+
+export type EvalDeterminism = (typeof DETERMINISM_TIERS)[number];
+
+export function isEvalDeterminism(value: string): value is EvalDeterminism {
+  return (DETERMINISM_TIERS as readonly string[]).includes(value);
 }
 
 export interface EvalRecordInput {
@@ -28,12 +45,14 @@ export interface EvalRecordInput {
   thinking: string | null;
   worktree: string;
   generation: number;
-  tier: string;
+  size: string;
+  determinism: string;
   signals?: EvalSignals;
 }
 
 export interface EvalRecord extends EvalRecordInput {
-  tier: EvalTier;
+  size: EvalSize;
+  determinism: EvalDeterminism;
   recordedAt: string;
 }
 
@@ -86,20 +105,30 @@ export function validateEvalRecord(input: unknown): RecordValidation {
       'generation is required: record which worker generation ran (§73)',
     );
   }
-  if (typeof candidate.tier !== 'string' || !isEvalTier(candidate.tier)) {
+  if (typeof candidate.size !== 'string' || !isEvalSize(candidate.size)) {
     errors.push(
-      `tier is required: one of ${EVAL_TIERS.join(', ')} (§72) — refusing to store an untiered record`,
+      `size is required: one of ${EVAL_SIZES.join(', ')} — refusing to store an unsized record`,
+    );
+  }
+  if (
+    typeof candidate.determinism !== 'string' ||
+    !isEvalDeterminism(candidate.determinism)
+  ) {
+    errors.push(
+      `determinism is required: one of ${DETERMINISM_TIERS.join(', ')} (§47.1/§72) — refusing to store a record whose comparisons cannot be trusted`,
     );
   }
   if (errors.length > 0) return { valid: false, errors };
   const complete = candidate as unknown as EvalRecordInput & {
-    tier: EvalTier;
+    size: EvalSize;
+    determinism: EvalDeterminism;
   };
   return {
     valid: true,
     record: {
       ...complete,
-      tier: complete.tier,
+      size: complete.size,
+      determinism: complete.determinism,
       recordedAt: new Date().toISOString(),
     },
   };

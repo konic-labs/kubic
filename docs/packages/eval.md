@@ -7,9 +7,9 @@
 > Source: `packages/eval/src` (read-only — this page quotes it, never moves it).
 
 `@kubic/eval` is the benchmark harness (issue #53; §48, §72, §73). Every
-stored result carries how it ran — model/thinking/worktree/generation/
-tier; records missing worktree, generation, or tier are rejected (exit
-2), never stored. Cost/latency/tokens reconcile against §39 usage rows
+stored result carries how it ran — model/thinking/worktree/generation,
+the record size, and the §47.1 determinism tier; records missing any of
+them are rejected (exit 2), never stored. Cost/latency/tokens reconcile against §39 usage rows
 before a record is accepted. Suites run faux-only in CI (zero network,
 zero paid tokens); anything needing a live PTY or model stays
 `stub: true` and reports `skipped`, never passing work.
@@ -19,7 +19,7 @@ append one row to `EVAL_SUITES` in `suites.ts` (`{ id` — unique,
 lowercase, hyphenated; `category` — one of the 8 `EVAL_CATEGORIES`;
 `title`; `stub: true`; `description` — what signal it measures `}`),
 flip `stub` to `false` when it runs faux-only. `--worktree`,
-`--generation`, and `--tier` are mandatory on every CLI invocation.
+`--generation`, and `--size` are mandatory on every CLI invocation.
 `--json` shapes: eval success `{ ok: true, exitCode: 0, record: {
 suite, success } }`; rejection `{ ok: false, exitCode: 2, error: {
 code, message } }`; benchmark matrix `{ ok: true, exitCode, results: [{
@@ -32,7 +32,7 @@ ci` clean, usage reconciliation, RL export fields untouched (#54).
 
 | Module | Exports |
 | --- | --- |
-| `records.ts` | `EvalRecord`, `EvalRecordInput`, `EvalTier`, `EVAL_TIERS`, `isEvalTier`, `RecordValidation`, `validateEvalRecord`, `UsageRowLike`, `ReconcileResult`, `reconcileUsage` |
+| `records.ts` | `EvalRecord`, `EvalRecordInput`, `EvalSize`, `EVAL_SIZES`, `isEvalSize`, `EvalDeterminism`, `DETERMINISM_TIERS`, `isEvalDeterminism`, `RecordValidation`, `validateEvalRecord`, `UsageRowLike`, `ReconcileResult`, `reconcileUsage` |
 | `suites.ts` | `EvalSuite`, `EVAL_SUITES`, `findSuite` |
 | `categories.ts` | `EvalCategory`, `EVAL_CATEGORIES`, `isEvalCategory` |
 | `signals.ts` | `EvalSignals`, `GateSignal`, `computeSignals`, `gatesPass`, `patchQuality` |
@@ -61,7 +61,8 @@ ci` clean, usage reconciliation, RL export fields untouched (#54).
 | `thinking` | `string \| null` | string or null only |
 | `worktree` | `string` (non-empty) | required (§73) |
 | `generation` | `number` (integer ≥ 0) | required (§73) |
-| `tier` | `EvalTier` | required; `smoke \| standard \| extended` |
+| `size` | `EvalSize` | required; `smoke \| standard \| extended` — the record's size class (an implementation-side label, not a §47.1 tier) |
+| `determinism` | `EvalDeterminism` | required; `recorded \| deterministic \| live` (§47.1) — derived from the path: `recorded` for `--trajectory`, `live` for `--task`; benchmark rows publish `live` |
 | `signals` | `EvalSignals` | optional on input |
 | `recordedAt` | `string` (ISO) | set on accept |
 

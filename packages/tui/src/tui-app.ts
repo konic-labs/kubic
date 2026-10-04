@@ -89,6 +89,7 @@ import {
   isKeyRelease,
   isKeyRepeat,
   parseKey,
+  ScrollView,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
@@ -256,6 +257,15 @@ export interface TuiApp {
   setDiffToolCall(toolCallId: string | null): void;
   panelMode(): PanelMode;
   openPanel(mode: PanelMode): void;
+  // Issue #301: the panel's own scroll surface. The panel row is a
+  // ScrollView (the wheel and alt+up / alt+down move it), and these expose
+  // the same API to the composition root and to tests.
+  panelScrollBy(lines: number): void;
+  panelScrollTo(line: number): void;
+  panelScrollTop(): number;
+  // Cycle the diff panel's files (wrapping); false when there is nothing to
+  // cycle (panel closed, journal panel, no rows).
+  panelJumpFile(delta: number): boolean;
   // Issue #96: the approval surface. The composition root hands the app the
   // live alt-screen's overlay seat at boot (before that, or on a terminal with
   // no overlay seat, the inline body is the surface).
@@ -478,13 +488,43 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const diffPanel = new DiffPanel();
   const journalPanel = new JournalPanel();
   let mode: PanelMode = 'closed';
-  const panelBody: Component = {
+  // Issue #301: the panel body is a ScrollView over whichever panel is open,
+  // so a multi-file or long change is reachable (the wheel and the panel's
+  // own keys move it). The row component must BE the ScrollView — the layout
+  // engine sizes a scroll node itself, exactly as the transcript row does.
+  const panelDocument: Component = {
     render: (width: number): string[] =>
-      mode === 'diff' ? diffPanel.render(width) : journalPanel.render(width),
+      mode === 'diff' ? diffPanel.lines(width) : journalPanel.lines(width),
     invalidate: (): void => {
       diffPanel.invalidate();
       journalPanel.invalidate();
     },
+  };
+  const panelScroll = new ScrollView(panelDocument, {
+    // No follow: the operator's viewport stays where they left it while the
+    // run keeps appending journal rows.
+    follow: 'none',
+    scrollbar: 'auto',
+  });
+  // Issue #301: the file the diff panel is showing. `file k/N` lives on each
+  // file's own header line, and alt+up / alt+down cycle the files, so the
+  // header always names the file the viewport was last moved to.
+  let panelFile = 0;
+  const panelJumpFile = (delta: number): boolean => {
+    if (mode !== 'diff') return false;
+    const offsets = diffPanel.fileOffsets();
+    if (offsets.length === 0) return false;
+    panelFile = (panelFile + delta + offsets.length) % offsets.length;
+    panelScroll.scrollTo(offsets[panelFile] ?? 0);
+    return true;
+  };
+  // The panel's page step: one row less than the visible body so the jump
+  // never loses the operator's place (the journal panel's alt+up/down).
+  const panelPageLines = (): number =>
+    Math.max(1, panelScroll.viewportHeight - 1);
+  const panelStep = (delta: number): void => {
+    if (panelJumpFile(delta)) return;
+    panelScroll.scrollBy(delta * panelPageLines());
   };
   const root = buildLayoutRoot({
     tree,
@@ -494,7 +534,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     transcript: transcript.component,
     status,
     editor: editorRow,
-    panel: { component: panelBody, isOpen: () => mode !== 'closed' },
+    panel: { component: panelScroll, isOpen: () => mode !== 'closed' },
   });
   let busy = false;
   let revision = 0;
@@ -652,6 +692,14 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         return { quit: false, consumed: true, cancel: false };
       }
       if (approvalSurface.isShowing() && !isGlobalKey(keyId)) {
+        return { quit: false, consumed: true, cancel: false };
+      }
+      // Issue #301: the open panel's navigation. alt+up / alt+down cycle the
+      // diff panel's files (and page the journal panel); neither key is
+      // claimed by pi-tui's editor or alt-screen bindings, so the draft keeps
+      // its own keys. A closed panel does not claim them at all.
+      if (mode !== 'closed' && (keyId === 'alt+up' || keyId === 'alt+down')) {
+        panelStep(keyId === 'alt+down' ? 1 : -1);
         return { quit: false, consumed: true, cancel: false };
       }
       if (keyId === 'ctrl+c') {
@@ -828,7 +876,19 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     panelMode: (): PanelMode => mode,
     openPanel: (next: PanelMode): void => {
       mode = next;
+      // Issue #301: a freshly opened panel starts at its first file, never at
+      // the previous visit's viewport.
+      panelFile = 0;
+      panelScroll.scrollTo(0);
     },
+    panelScrollBy: (lines: number): void => {
+      panelScroll.scrollBy(Math.trunc(lines));
+    },
+    panelScrollTo: (line: number): void => {
+      panelScroll.scrollTo(Math.trunc(line));
+    },
+    panelScrollTop: (): number => panelScroll.scrollTop,
+    panelJumpFile: (delta: number): boolean => panelJumpFile(delta),
     attachApprovalOverlay: (host: ApprovalOverlayTui): void => {
       overlayHost = host;
       // Issue #96: the live screen's render request, so an ask that arrives

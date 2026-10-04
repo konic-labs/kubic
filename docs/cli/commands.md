@@ -875,8 +875,8 @@ stdout (`FORCE_COLOR=0..3` overrides).
 | `Ctrl-J`, `Shift+Enter`, `\` then `Enter` | Insert a newline (multi-line entry). |
 | `Ctrl-T` | Toggle the tree (collapsed summary ↔ per-call rows). |
 | `Ctrl-G` | Switch the session mode between **solo** and **orchestrator** between turns — the next submitted prompt takes the selected lane. Refused (with the reason on the footer) while a turn runs. |
-| `Ctrl-O` | Toggle the **diff panel** — the most recent change, rendered as unified hunks: the last tool call that changed files, or — when a `bash` call changed something the file tools did not journal — that turn's reconciled change. |
-| `Ctrl-R` | Toggle the **journal panel** — every change in the session journal, including changes made with `bash` (filter by path or agent on the command line with `kubic diff --path/--agent`). |
+| `Ctrl-O` | Toggle the **diff panel** — the last tool call that changed files (or, when a `bash` call changed something the file tools did not journal, that turn's reconciled change), rendered as unified hunks. Every file of the call is rendered under its own `path — op (file k/N)` header; the panel scrolls, and `Alt-↓` / `Alt-↑` cycle its files. |
+| `Ctrl-R` | Toggle the **journal panel** — every change in the session journal, including changes made with `bash` (filter by path or agent on the command line with `kubic diff --path/--agent`). `Alt-↓` / `Alt-↑` page through it. |
 | `Ctrl-X` | Expand / collapse every tool output block (collapsed blocks show the first 5 lines and a `… +N lines` count). |
 | `a` | Approval overlay: **allow once** — this call only, after the arming delay and the quiet period, and only while the overlay can show the whole command. Nothing is stored: the next identical call asks again. |
 | `Ctrl-S` | Approval overlay: **allow for the session** — after the arming delay and the quiet period, and only while the overlay can show the whole command; never a bare letter. Latched in `<session>/approvals.json`; identical calls in this session are not asked again (also after re-attach). |
@@ -893,6 +893,12 @@ Both panels read the session's own journal through the same projection
 opens — after each tool call (throttled to one read per 100 ms burst) and
 when a turn settles. Paths and file content are stripped of terminal
 control sequences before they are drawn.
+
+Both panel rows scroll: the mouse wheel over the panel moves it (it does not
+chain to the transcript while the panel can still scroll), and
+`Alt-↓` / `Alt-↑` move through the open panel — the diff panel's files, or a
+page of the journal panel. A freshly opened panel starts at its first file,
+and a repaint (new journal rows arriving) never yanks the viewport.
 
 A challenged call opens the **approval overlay** instead of being refused: it
 names the tool class and the exact command, so the decision is made on what

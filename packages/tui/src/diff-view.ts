@@ -31,6 +31,11 @@ export interface DiffRenderOptions {
   readonly context?: number;
   readonly width?: number;
   readonly maxLines?: number;
+  // Issue #301: `(file k/N)` appended to the op-labelled header, so a
+  // multi-file panel says which file of how many it is showing. Only the TUI
+  // diff panel sets it — `kubic diff` parity output never carries it (the
+  // journal view drops the op-labelled header line entirely).
+  readonly fileOrdinal?: { readonly index: number; readonly total: number };
 }
 
 // Binary detection: journal blobs are text; a NUL byte means the
@@ -137,8 +142,11 @@ export function renderDiffLines(
     change.unattributed ? 'unattributed' : null,
     change.reversible ? null : 'non-reversible',
   ].filter((f) => f !== null);
+  const header = renderDiffHeader(change);
   let lines = [
-    renderDiffHeader(change),
+    options.fileOrdinal === undefined
+      ? header
+      : `${header} (file ${options.fileOrdinal.index}/${options.fileOrdinal.total})`,
     `--- a/${change.path}`,
     `+++ b/${change.path}`,
     `# ${who}${flags.length > 0 ? ` [${flags.join(', ')}]` : ''}`,

@@ -11,8 +11,13 @@
 // below NARROW_COLUMNS, so a "the sequence is absent" assertion at a narrow
 // width would be vacuous.
 import { describe, expect, it } from 'vitest';
+// One shared fake Terminal (issue #403): the panel's ScrollView is laid out
+// only by the live alt-screen, so its scrolling is asserted on real frames.
+import { fakeTerminal } from '../../../test/fake-terminal.js';
+import { bootScreen } from './screen.js';
 import type { JournalChangeLike } from './tui-app.js';
 import { createTuiApp } from './tui-app.js';
+import { DiffPanel } from './view-panel.js';
 
 const SESSION = 'sess-96';
 const MODEL = 'test-model';
@@ -154,6 +159,143 @@ describe('diff panel (issue #96, criterion 3)', () => {
     const app = appWithRun([]);
     app.handleInput(OPEN_DIFF);
     expect(app.render(100).join('\n')).toContain('no changes');
+  });
+});
+
+describe('diff panel multi-file and scrolling (issue #301)', () => {
+  const ALT_UP = '\u001bp';
+  const ALT_DOWN = '\u001bn';
+  const ALT_DOWN_KITTY = '\u001b[1;3B';
+
+  // Every line differs, so the hunk carries all 40 lines (a one-line edit
+  // would produce a short hunk that already fits the panel).
+  function longChange(): JournalChangeLike {
+    const before = `${Array.from({ length: 40 }, (_, i) => `line ${i}`).join('\n')}\n`;
+    const after = `${Array.from({ length: 40 }, (_, i) => `changed ${i}`).join('\n')}\n`;
+    return change({ path: 'big.txt', before, after });
+  }
+
+  // The live alt-screen is the only place the panel's ScrollView is laid out
+  // (the layout engine sizes and windows it there), so scrolling is asserted
+  // on real frames — the same path the wheel uses.
+  function live(app: ReturnType<typeof appWithRun>) {
+    const terminal = fakeTerminal(100, 30);
+    const screen = bootScreen(terminal, app.root);
+    screen.render();
+    return {
+      frame: (): string => screen.tui.getScreenLines().join('\n'),
+      render: (): void => screen.render(),
+      stop: (): void => screen.stop(() => {}),
+    };
+  }
+
+  it('renders every file of the selected call, with a file k/N header', () => {
+    // Panel-level: the DOCUMENT carries every file (the frame windows it).
+    const panel = new DiffPanel([
+      change(),
+      change({
+        path: 'other/file.md',
+        op: 'write',
+        before: null,
+        after: 'hello\n',
+      }),
+    ]);
+    const doc = panel.lines(100).join('\n');
+    expect(doc).toContain('--- a/src/app.ts');
+    expect(doc).toContain('--- a/other/file.md');
+    expect(doc).toContain('(file 1/2)');
+    expect(doc).toContain('(file 2/2)');
+  });
+
+  it('reveals the second file by scrolling the panel', () => {
+    const app = appWithRun([
+      longChange(),
+      change({
+        path: 'other/file.md',
+        op: 'write',
+        before: null,
+        after: 'hello\n',
+      }),
+    ]);
+    app.handleInput(OPEN_DIFF);
+    const screen = live(app);
+    expect(screen.frame()).toContain('(file 1/2)');
+    expect(screen.frame()).not.toContain('--- a/other/file.md');
+    app.panelScrollTo(10_000);
+    screen.render();
+    expect(screen.frame()).toContain('--- a/other/file.md');
+    expect(screen.frame()).toContain('(file 2/2)');
+    screen.stop();
+  });
+
+  it('scrolls a 40-line diff to its last line through the panel scroll API', () => {
+    const app = appWithRun([longChange()]);
+    app.handleInput(OPEN_DIFF);
+    const screen = live(app);
+    expect(screen.frame()).not.toContain('changed 39');
+    app.panelScrollTo(10_000);
+    expect(app.panelScrollTop()).toBeGreaterThan(0);
+    screen.render();
+    expect(screen.frame()).toContain('changed 39');
+    // Back to the top: the panel does not follow the end (no auto-scroll).
+    app.panelScrollTo(0);
+    expect(app.panelScrollTop()).toBe(0);
+    screen.render();
+    expect(screen.frame()).toContain('-line 0');
+    screen.stop();
+  });
+
+  it('cycles files on alt+down / alt+up in both key encodings', () => {
+    const app = appWithRun([
+      longChange(),
+      change({
+        path: 'other/file.md',
+        op: 'write',
+        before: null,
+        after: 'hello\n',
+      }),
+    ]);
+    app.handleInput(OPEN_DIFF);
+    const screen = live(app);
+    expect(app.handleInput(ALT_DOWN_KITTY).consumed).toBe(true);
+    screen.render();
+    expect(screen.frame()).toContain('--- a/other/file.md');
+    app.handleInput(ALT_UP);
+    screen.render();
+    expect(screen.frame()).toContain('--- a/big.txt');
+    // Cycling wraps: from the first file, alt+up reaches the last one.
+    app.handleInput(ALT_UP);
+    screen.render();
+    expect(screen.frame()).toContain('--- a/other/file.md');
+    screen.stop();
+  });
+
+  it('pages the journal panel with the same keys', () => {
+    const rows = Array.from({ length: 30 }, (_, i) =>
+      change({
+        path: `file-${String(i).padStart(2, '0')}.txt`,
+        before: `old ${i}\n`,
+        after: `new ${i}\n`,
+      }),
+    );
+    const app = appWithRun(rows);
+    app.handleInput(OPEN_JOURNAL);
+    const screen = live(app);
+    expect(screen.frame()).not.toContain('file-29.txt');
+    for (let i = 0; i < 30; i += 1) app.handleInput(ALT_DOWN);
+    screen.render();
+    expect(screen.frame()).toContain('file-29.txt');
+    screen.stop();
+  });
+
+  it('keeps the panel viewport where the operator left it on a repaint', () => {
+    const app = appWithRun([longChange()]);
+    app.handleInput(OPEN_DIFF);
+    const screen = live(app);
+    app.panelScrollTo(5);
+    app.setJournalChanges([longChange(), change({ path: 'extra.txt' })]);
+    expect(app.panelScrollTop()).toBe(5);
+    screen.stop();
   });
 });
 

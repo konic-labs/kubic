@@ -101,7 +101,23 @@ function prodBoot(
 ): TuiRunDeps['bootLane'] {
   return (sessionId, answer) => {
     const faux = fauxProvider();
-    faux.setResponses(steps.map((step) => fauxAssistantMessage(step)));
+    faux.setResponses(
+      steps.map((step) => {
+        // pi-durable dispatches the calls of a `toolUse` turn.
+        const toolUse =
+          Array.isArray(step) &&
+          step.some(
+            (part) =>
+              typeof part === 'object' &&
+              part !== null &&
+              (part as { type?: unknown }).type === 'toolCall',
+          );
+        return fauxAssistantMessage(
+          step,
+          toolUse ? { stopReason: 'toolUse' } : undefined,
+        );
+      }),
+    );
     const models = createModels();
     models.setProvider(faux.provider);
     return bootTuiLane(sessionId, {

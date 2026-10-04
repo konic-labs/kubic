@@ -16,11 +16,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
 import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
-import { driveToSettled } from '../../../packages/worker/src/lane/solo.js';
 import { ModelSelectError } from '../../../packages/worker/src/model-select.js';
 import {
-  AgentHarness,
-  type Context,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
@@ -100,6 +97,7 @@ function cliConfig(
 
 function providers(
   spec: { provider: string; models: string[] }[],
+  captured: CapturedRequest[] = [],
 ): MutableModels {
   const models = createModels();
   for (const entry of spec) {
@@ -107,7 +105,12 @@ function providers(
       provider: entry.provider,
       models: entry.models.map((id) => ({ id })),
     });
-    faux.setResponses([fauxAssistantMessage('ok')]);
+    faux.setResponses([
+      (context: unknown) => {
+        captured.push(capturedRequestOf(context));
+        return fauxAssistantMessage('ok');
+      },
+    ]);
     models.setProvider(faux.provider);
   }
   return models;
@@ -133,15 +136,48 @@ function rerooted(
 
 const IO = { out: (): void => {}, debug: (): void => {} };
 
-// The real solo lane behind the loop's narrower LaneDriver view: the two
-// reads the assertions below need.
-interface LiveLane {
-  getActiveTools(context: Context): Promise<string[]>;
-  getModel(
-    context: Context,
-  ): Promise<{ provider: string; id: string } | undefined>;
+// One request's model-visible facts. The durable lane materializes the
+// assembled prompt and the offered tool set at REQUEST time (a positional
+// prompt section, not a boot argument), so the faux provider's own request
+// context is where the enterprise gates can be observed end to end.
+interface CapturedRequest {
+  prompt: string;
+  tools: string[];
 }
-const liveLane = (lane: unknown): LiveLane => lane as LiveLane;
+
+function capturedRequestOf(context: unknown): CapturedRequest {
+  const messages = (
+    context as {
+      messages?: readonly {
+        role?: unknown;
+        content?: unknown;
+        sections?: Record<string, unknown>;
+        toolsAdded?: readonly { name?: unknown }[];
+      }[];
+    }
+  ).messages;
+  const system = messages?.find((message) => message.role === 'system');
+  const parts: string[] = [];
+  if (typeof system?.content === 'string' && system.content !== '') {
+    parts.push(system.content);
+  }
+  for (const section of Object.values(system?.sections ?? {})) {
+    if (typeof section === 'string' && section !== '') parts.push(section);
+  }
+  return {
+    prompt: parts.join('\n\n'),
+    tools: (system?.toolsAdded ?? []).map((tool) => String(tool.name)),
+  };
+}
+
+// The offered tools of the last request, in the order the prompt advertises
+// them (`tools:` line) — the same set the conversation configured.
+function advertisedTools(prompt: string): string[] {
+  return (/^tools: (.*)$/m.exec(prompt)?.[1] ?? '')
+    .split(',')
+    .map((name) => name.trim())
+    .filter((name) => name !== '');
+}
 
 describe('prodTuiDeps hands bootTuiLane every config seam (issues #230, #288, #295)', () => {
   it('forwards the enterprise policy, the model pin, the approvals and the journal projections', async () => {
@@ -239,49 +275,54 @@ describe('the prod tui builder enforces the enterprise gates on the real boot (i
     const cfg = cliConfig({
       [ENTERPRISE]: '[policy]\ndenied_tools = ["bash"]\n',
     });
-    const createSpy = vi.spyOn(AgentHarness, 'create');
+    const captured: CapturedRequest[] = [];
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cfg),
       rerooted(
         tmpRoot(),
         tmpRoot(),
-        providers([{ provider: 'fx', models: ['a'] }]),
+        providers([{ provider: 'fx', models: ['a'] }], captured),
       ),
     );
     const boot = await deps.bootLane();
     const loop = boot.loop;
     if (loop === undefined) throw new Error('the prod boot returned no loop');
-    const active = await liveLane(loop.lane).getActiveTools(loop.context);
+    await loop.runTurn('hi', {
+      requestId: 'enterprise-tools',
+      context: loop.context,
+      whenBusy: 'reject',
+    });
     await boot.close?.();
-    expect(active).not.toContain('bash');
-    expect(active).toContain('read');
-    const calls = (createSpy as unknown as { mock: { calls: unknown[][] } })
-      .mock.calls;
-    const prompt =
-      (calls.at(-1)?.[0] as { systemPrompt?: string } | undefined)
-        ?.systemPrompt ?? '';
-    const advertised = (/^tools: (.*)$/m.exec(prompt)?.[1] ?? '')
-      .split(',')
-      .map((name) => name.trim());
+    const request = captured.at(-1);
+    expect(request?.tools).not.toContain('bash');
+    expect(request?.tools).toContain('read');
+    // The prompt advertises exactly the set the conversation offers: the
+    // model is told the truth about its own tools.
+    const advertised = advertisedTools(request?.prompt ?? '');
     expect(advertised).not.toContain('bash');
     expect(advertised).toContain('read');
   });
 
   it('leaves the tool set alone when no tool policy is configured (control)', async () => {
+    const captured: CapturedRequest[] = [];
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cliConfig({})),
       rerooted(
         tmpRoot(),
         tmpRoot(),
-        providers([{ provider: 'fx', models: ['a'] }]),
+        providers([{ provider: 'fx', models: ['a'] }], captured),
       ),
     );
     const boot = await deps.bootLane();
     const loop = boot.loop;
     if (loop === undefined) throw new Error('the prod boot returned no loop');
-    const active = await liveLane(loop.lane).getActiveTools(loop.context);
+    await loop.runTurn('hi', {
+      requestId: 'no-policy-tools',
+      context: loop.context,
+      whenBusy: 'reject',
+    });
     await boot.close?.();
-    expect(active).toContain('bash');
+    expect(captured.at(-1)?.tools).toContain('bash');
   });
 
   it('refuses a --role that declares an enterprise-denied tool', async () => {
@@ -389,14 +430,12 @@ describe('/model switch under the enterprise policy (issue #288)', () => {
       "model 'other/m1' refused by enterprise policy (allowed_models/allowed_providers): no provider call was made",
     );
     // The lane kept the model it had.
-    const live = await liveLane(loop.lane).getModel(loop.context);
-    expect(`${live?.provider}/${live?.id}`).toBe('faux/big');
+    expect(await loop.model?.(loop.context)).toBe('faux/big');
     // A switch the policy allows still works (the gate is not a blanket block).
     await expect(
       loop.switchModel({ provider: 'faux', modelId: 'small' }, loop.context),
     ).resolves.toBe('faux/small');
-    const moved = await liveLane(loop.lane).getModel(loop.context);
-    expect(`${moved?.provider}/${moved?.id}`).toBe('faux/small');
+    expect(await loop.model?.(loop.context)).toBe('faux/small');
     await boot.close?.();
   });
 
@@ -464,8 +503,7 @@ describe('/model cannot leave a frozen enterprise model pin (issues #227, #295)'
         `model '${target.provider}/${target.modelId}' refused: the model is pinned by enterprise policy (faux/big); /model cannot change it`,
       );
     }
-    const live = await liveLane(loop.lane).getModel(loop.context);
-    expect(`${live?.provider}/${live?.id}`).toBe('faux/big');
+    expect(await loop.model?.(loop.context)).toBe('faux/big');
     // Naming the pin itself changes nothing, so it is not refused.
     await expect(
       loop.switchModel({ provider: 'faux', modelId: 'big' }, loop.context),
@@ -532,10 +570,14 @@ describe('advertised skills outside the workspace stay readable on the tui lane 
     writeFileSync(join(home, 'secret.txt'), 'top secret\n');
     const faux = fauxProvider({ provider: 'fx', models: [{ id: 'a' }] });
     faux.setResponses([
-      fauxAssistantMessage([
-        fauxToolCall('read', { path: skillFile }),
-        fauxToolCall('read', { path: join(home, 'secret.txt') }),
-      ]),
+      // pi-durable dispatches the calls of a `toolUse` turn.
+      fauxAssistantMessage(
+        [
+          fauxToolCall('read', { path: skillFile }),
+          fauxToolCall('read', { path: join(home, 'secret.txt') }),
+        ],
+        { stopReason: 'toolUse' },
+      ),
       fauxAssistantMessage('done'),
     ]);
     const models = createModels();
@@ -548,23 +590,27 @@ describe('advertised skills outside the workspace stay readable on the tui lane 
     });
     const loop = boot.loop;
     if (loop === undefined) throw new Error('the prod boot returned no loop');
-    const admitted = await loop.accept('load the skill', loop.context);
-    if (!admitted.ok) throw new Error('prompt refused');
-    await driveToSettled(loop.lane, admitted.value.operationId, loop.context);
-    const entries = (await loop.findEntries(undefined, loop.context)) as {
-      message?: {
-        role?: string;
-        isError?: boolean;
-        content?: { type: string; text?: string }[];
-      };
-    }[];
+    const turn = await loop.runTurn('load the skill', {
+      requestId: 'skill-read',
+      context: loop.context,
+      whenBusy: 'reject',
+    });
+    expect(turn.kind).toBe('completed');
+    // The durable transcript: tool results are pi.tool-result entries whose
+    // one message carries isError and the rendered content.
+    const entries = await loop.entries(loop.context);
     await boot.close?.();
     const results = entries
-      .filter((entry) => entry.message?.role === 'toolResult')
-      .map((entry) => ({
-        isError: entry.message?.isError,
-        text: JSON.stringify(entry.message?.content ?? []),
-      }));
+      .filter((entry) => entry.kind === 'pi.tool-result')
+      .map((entry) => {
+        const message = entry.model?.[0] as
+          | { isError?: boolean; content?: unknown }
+          | undefined;
+        return {
+          isError: message?.isError,
+          text: JSON.stringify(message?.content ?? []),
+        };
+      });
     expect(results).toHaveLength(2);
     const skillRead = results.find((r) => r.text.includes('Body for a.'));
     expect(skillRead?.isError, JSON.stringify(results)).toBe(false);
@@ -737,9 +783,9 @@ describe('a resumed TUI session never keeps a model the enterprise gate refuses 
     )(created.sessionId, { modelPolicy: cfg.runtime?.policy });
     const loop = resumed.loop;
     if (loop === undefined) throw new Error('the prod boot returned no loop');
-    const live = await liveLane(loop.lane).getModel(loop.context);
+    const live = await loop.model?.(loop.context);
     await resumed.close?.();
-    expect(`${live?.provider}/${live?.id}`).toBe('faux/a');
+    expect(live).toBe('faux/a');
     expect(resumed.model).toBe('faux/a');
   });
 
@@ -766,9 +812,9 @@ describe('a resumed TUI session never keeps a model the enterprise gate refuses 
     )(created.sessionId, { modelPolicy: cfg.runtime?.policy });
     const loop = resumed.loop;
     if (loop === undefined) throw new Error('the prod boot returned no loop');
-    const live = await liveLane(loop.lane).getModel(loop.context);
+    const live = await loop.model?.(loop.context);
     await resumed.close?.();
-    expect(`${live?.provider}/${live?.id}`).toBe('other/m1');
+    expect(live).toBe('other/m1');
   });
 });
 

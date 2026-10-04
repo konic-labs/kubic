@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   runTuiCommand,
+  soloTuiLoop,
   type TuiApprovalSeat,
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
@@ -34,7 +35,6 @@ import {
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-  type Session,
 } from '../../worker/src/pi-boundary.js';
 
 const made: string[] = [];
@@ -52,13 +52,20 @@ afterEach(() => {
 
 type FauxMessage = ReturnType<typeof fauxAssistantMessage>;
 
+// A message carrying a tool call must say so: pi-durable dispatches the calls
+// of a `toolUse` turn (0.87 inferred them from the parts alone).
+function toolUse(message: FauxMessage): FauxMessage {
+  const hasCall = message.content.some((part) => part.type === 'toolCall');
+  return hasCall ? { ...message, stopReason: 'toolUse' } : message;
+}
+
 function fauxModels(steps: FauxMessage[]): {
   models: MutableModels;
 } {
   const faux = fauxProvider();
   const models = createModels();
   models.setProvider(faux.provider);
-  faux.setResponses(steps);
+  faux.setResponses(steps.map(toolUse));
   return { models };
 }
 
@@ -74,8 +81,8 @@ function fauxLaneBoot(
     const bridge = createNodeFileBridge(root);
     const store = openSessionStore(root, bridge);
     const context = BACKGROUND_CONTEXT;
-    const session: Session = await createSession(store, root, context);
-    const id = sessionId ?? session.metadata.id;
+    const session = await createSession(store, { cwd: root }, context);
+    const id = sessionId ?? session.id;
     bridge.createDir(join(id, 'journal'));
     const provider = models.getProviders()[0];
     if (provider === undefined) throw new Error('no provider registered');
@@ -106,19 +113,10 @@ function fauxLaneBoot(
     return {
       sessionId: id,
       model: `${provider.id}/${model.id}`,
-      loop: {
-        accept: (prompt, ctx) =>
-          solo.lane.accept({ kind: 'prompt', prompt }, ctx),
-        lane: solo.lane,
-        requestAbort: (operationId, ctx) =>
-          solo.lane.requestAbort(operationId, ctx),
-        findEntries: (query, ctx) => solo.lane.findEntries(query, ctx),
-        events: solo.harness.events,
-        kills: solo.kills,
-        context,
-      },
+      loop: soloTuiLoop(solo),
       close: async () => {
-        await session.close(context);
+        await solo.close(context);
+        await session.release(context);
       },
     };
   };

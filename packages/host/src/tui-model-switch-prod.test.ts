@@ -13,19 +13,11 @@ import {
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
-  attachSession,
-  openSessionStore,
-} from '../../worker/src/lane/session-store.js';
-import { SOLO_LANE_NAME } from '../../worker/src/lane/solo.js';
-import {
-  BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-  laneConfig,
   type MutableModels,
 } from '../../worker/src/pi-boundary.js';
 import { auditLedgerDir, readAuditLedger } from './policy/audit-ledger.js';
@@ -65,7 +57,14 @@ function twoProviders(
     provider: 'alt',
     models: [{ id: 'm1', contextWindow: 100000 }],
   });
-  alt.setResponses(altResponses);
+  alt.setResponses(
+    altResponses.map((message) =>
+      // pi-durable dispatches the calls of a `toolUse` turn.
+      message.content.some((part) => part.type === 'toolCall')
+        ? { ...message, stopReason: 'toolUse' as const }
+        : message,
+    ),
+  );
   models.setProvider(alt.provider);
   return models;
 }
@@ -132,23 +131,22 @@ function sessionDirs(root: string): string[] {
   );
 }
 
+// The model a fresh attach resumes on: the committed `pi.agent` document,
+// read through the #148 'stored' rule (a boot with no pin keeps it).
 async function storedModel(
   sessionsRoot: string,
   id: string,
 ): Promise<{ provider?: string; modelId?: string } | undefined> {
-  const store = openSessionStore(
+  const boot = await bootTuiLane(id, {
     sessionsRoot,
-    createNodeFileBridge(sessionsRoot),
-  );
-  const session = await attachSession(store, id, BACKGROUND_CONTEXT);
+    models: twoProviders(),
+    env: new NodeExecutionEnv(sessionsRoot),
+  });
   try {
-    const stored = await session.getValue(
-      laneConfig(SOLO_LANE_NAME),
-      BACKGROUND_CONTEXT,
-    );
-    return stored?.value.model;
+    const [provider, modelId] = boot.model.split('/');
+    return { provider, modelId };
   } finally {
-    await session.close(BACKGROUND_CONTEXT);
+    await boot.close?.();
   }
 }
 

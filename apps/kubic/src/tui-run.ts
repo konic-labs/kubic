@@ -634,6 +634,28 @@ export interface TuiRunOptions {
   approvalPolicy?: ApprovalSnapshot;
 }
 
+// The durable loop surface over one booted solo lane — exactly what
+// bootTuiLane installs. Exported so the prod boot, embedders and the tests
+// share ONE wiring: a lane member the loop needs cannot be forgotten in a
+// hand-spread fake (the failure mode that hides a dropped dep).
+export function soloTuiLoop(solo: SoloLane): TuiLaneLoop {
+  return {
+    runTurn: (prompt, opts) => runTurn(solo, prompt, opts),
+    subscribe: (sink, context) =>
+      subscribeLaneEvents(solo.harness, solo.conversation.id, sink, context),
+    entries: (context) => readConversationEntries(solo.conversation, context),
+    // D6.2: the shared abort+drain (conversation.abort, every kill
+    // attempted, failures aggregated) and the settled-turn forget.
+    abort: async (context) => {
+      await abortLane(solo, context);
+    },
+    forgetKills: () => forgetLaneKills(solo),
+    killsKey: String(solo.conversation.id),
+    kills: solo.kills,
+    context: BACKGROUND_CONTEXT,
+  };
+}
+
 // Prod solo boot: same session/model setup as the headless runner
 // (create-or-attach, journal dir, assembled models, default select, lane
 // boot) plus the loop surface the interactive path drives.
@@ -1068,25 +1090,7 @@ export async function bootTuiLane(
       }),
 
       loop: {
-        runTurn: (prompt, opts) => runTurn(booted, prompt, opts),
-        subscribe: (sink, loopContext) =>
-          subscribeLaneEvents(
-            booted.harness,
-            booted.conversation.id,
-            sink,
-            loopContext,
-          ),
-        entries: (loopContext) =>
-          readConversationEntries(booted.conversation, loopContext),
-        // D6.2: the shared abort+drain (conversation.abort, every kill
-        // attempted, failures aggregated) and the settled-turn forget.
-        abort: async (loopContext) => {
-          await abortLane(booted, loopContext);
-        },
-        forgetKills: () => forgetLaneKills(booted),
-        killsKey: String(booted.conversation.id),
-        kills: booted.kills,
-        context,
+        ...soloTuiLoop(booted),
         // Issue #227: resolve against the live catalog before touching the
         // conversation, so `/model typo/nope` fails by name and the lane
         // keeps the model it had; configure then commits the change to the
@@ -2206,27 +2210,31 @@ export async function runTuiCommand(
     // terminal status. The screen stays up (footer: cancelling…) until the
     // drain ends, bounded by drainTimeoutMs.
     const draining = activeTurn?.isRunning() === true;
+    // Issue #312: ONE quit budget. The bound ends the drain wait, and the
+    // close then shares what is left of it: pi-durable's `Harness.close`
+    // joins live task invocations (`beforeClose`), so a provider that ignores
+    // the abort must not hang the quit after the drain gave up on it. A quit
+    // with no turn to drain gets its own bound at the close.
+    let drainBound: Promise<void> | undefined;
+    let endBound: () => void = () => {};
     if (draining) {
+      drainBound = new Promise<void>((resolve) => {
+        endDrain = resolve;
+        endBound = (deps.setDrainTimer ?? defaultDrainTimer)(
+          deps.drainTimeoutMs ?? TUI_DRAIN_TIMEOUT_MS,
+          resolve,
+        );
+      });
       app.setEditorFooter('cancelling…');
       screen?.render();
     }
     void (async () => {
-      if (draining && activeTurn !== undefined) {
-        let cancelTimer: () => void = () => {};
-        const bound = new Promise<void>((resolve) => {
-          endDrain = resolve;
-          cancelTimer = (deps.setDrainTimer ?? defaultDrainTimer)(
-            deps.drainTimeoutMs ?? TUI_DRAIN_TIMEOUT_MS,
-            resolve,
-          );
-        });
+      if (draining && activeTurn !== undefined && drainBound !== undefined) {
         try {
-          await activeTurn.drainForQuit(bound);
+          await activeTurn.drainForQuit(drainBound);
         } catch {
           // The drain is best-effort; the sweep and close still run.
         }
-        cancelTimer();
-        endDrain = undefined;
       }
       if (fatalHandled) return;
       // Issue #313: pop the Kitty protocol and let late input (the quitting
@@ -2244,11 +2252,25 @@ export async function runTuiCommand(
         // Restore failures never mask the clean quit.
       }
       detachSignals();
+      // The close joins the harness's live task invocations: a close that
+      // cannot finish inside the quit's budget is abandoned — the process is
+      // leaving anyway, and the next attach reclaims the stale lock by pid
+      // liveness. The harness's own storage may stay open until then.
+      const closeBound =
+        drainBound ??
+        new Promise<void>((resolve) => {
+          endBound = (deps.setDrainTimer ?? defaultDrainTimer)(
+            deps.drainTimeoutMs ?? TUI_DRAIN_TIMEOUT_MS,
+            resolve,
+          );
+        });
       try {
-        await boot.close?.();
+        await Promise.race([boot.close?.(), closeBound]);
       } catch {
         // Close failures never mask the clean quit.
       }
+      endBound();
+      endDrain = undefined;
       detachFatal();
       resolveExit();
     })();

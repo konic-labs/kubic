@@ -60,7 +60,11 @@ afterEach(() => {
 type FauxMessage = ReturnType<typeof fauxAssistantMessage>;
 
 const DESTRUCTIVE = (): FauxMessage =>
-  fauxAssistantMessage([fauxToolCall('bash', { command: 'rm -rf /tmp/x' })]);
+  fauxAssistantMessage(
+    [fauxToolCall('bash', { command: 'rm -rf /tmp/x' })],
+    // pi-durable dispatches the calls of a `toolUse` turn.
+    { stopReason: 'toolUse' },
+  );
 
 // Two faux models on one provider; the default (unpinned) pick is `big`.
 function catalog(steps: FauxMessage[]): MutableModels {

@@ -10,6 +10,7 @@
 import {
   existsSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -25,9 +26,15 @@ import {
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
+import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../exec/src/journal.js';
+import { inspectStoredWork } from '../../worker/src/lane/pending.js';
 import {
-  type AgentLane,
+  attachSession,
+  openSessionStore,
+} from '../../worker/src/lane/session-store.js';
+import {
+  BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
@@ -41,6 +48,18 @@ function tmpRoot(): string {
   const dir = mkdtempSync(join(tmpdir(), 'tui-quit-drain-'));
   made.push(dir);
   return dir;
+}
+
+// The durable session's own records: any jsonl under the root holding the
+// needle (the JSONL storage writes <id>/main.jsonl plus document sidecars).
+function sessionLogIncludes(root: string, needle: string): boolean {
+  for (const entry of readdirSync(root, { recursive: true, encoding: 'utf8' }))
+    if (
+      entry.endsWith('.jsonl') &&
+      readFileSync(join(root, entry), 'utf8').includes(needle)
+    )
+      return true;
+  return false;
 }
 
 function alive(pid: number): boolean {
@@ -146,9 +165,22 @@ function harness(steps: Step[]): Harness {
   const bootLane: TuiRunDeps['bootLane'] = async (sessionId, answer) => {
     const faux = fauxProvider();
     faux.setResponses(
-      steps.map((step) =>
-        typeof step === 'function' ? step : fauxAssistantMessage(step),
-      ),
+      steps.map((step) => {
+        if (typeof step === 'function') return step;
+        // pi-durable dispatches the calls of a `toolUse` turn.
+        const toolUse =
+          Array.isArray(step) &&
+          step.some(
+            (part) =>
+              typeof part === 'object' &&
+              part !== null &&
+              (part as { type?: unknown }).type === 'toolCall',
+          );
+        return fauxAssistantMessage(
+          step,
+          toolUse ? { stopReason: 'toolUse' } : undefined,
+        );
+      }),
     );
     const models = createModels();
     models.setProvider(faux.provider);
@@ -166,14 +198,18 @@ function harness(steps: Step[]): Harness {
       ...boot,
       loop: {
         ...loop,
-        accept: async (prompt, context) => {
-          const result = await loop.accept(prompt, context);
-          if (result.ok) admitted.push(result.value.operationId);
-          return result;
+        // The placement signal (D1 keys the kill registry by the
+        // conversation id, so that IS the admitted operation here).
+        subscribe: async (sink, context) => {
+          const stop = await loop.subscribe((event) => {
+            if (event.type === 'run-start') admitted.push(loop.killsKey);
+            sink(event);
+          }, context);
+          return stop;
         },
-        requestAbort: async (operationId, context) => {
-          events.push(`requestAbort:${operationId}`);
-          return loop.requestAbort(operationId, context);
+        abort: async (context) => {
+          events.push(`abort:${loop.killsKey}`);
+          await loop.abort(context);
         },
       },
       close: async () => {
@@ -239,20 +275,24 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     await waitFor(() => !alive(pid), 500);
     expect(existsSync(join(h.workspace, 'late.txt'))).toBe(false);
     const opId = h.admitted[0] ?? '';
-    expect(h.events).toEqual([`requestAbort:${opId}`, 'close']);
-    // Resume: the operation settled with a terminal status, nothing dangles.
-    const resumed = await h.bootLane(h.boots[0]?.sessionId);
-    const lane = resumed.loop?.lane as unknown as AgentLane;
-    const info = await lane.inspectExecution(
-      resumed.loop?.context as Parameters<AgentLane['inspectExecution']>[0],
+    expect(h.events).toEqual([`abort:${opId}`, 'close']);
+    // Resume: the interrupted work settled, nothing dangles (#396's durable
+    // read), and the settlement is the abort the quit asked for.
+    const sessionId = h.boots[0]?.sessionId ?? '';
+    const store = openSessionStore(
+      h.sessionsRoot,
+      createNodeFileBridge(h.sessionsRoot),
     );
-    expect(info.current).toBeNull();
-    const record = await lane.getResult(
-      opId,
-      resumed.loop?.context as Parameters<AgentLane['getResult']>[1],
-    );
-    expect(record?.status).toBe('aborted');
-    await resumed.close?.();
+    const session = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
+    try {
+      const work = await inspectStoredWork(session.storage, BACKGROUND_CONTEXT);
+      expect(work.pending).toBe(false);
+      expect(sessionLogIncludes(h.sessionsRoot, '"reason":"aborted"')).toBe(
+        true,
+      );
+    } finally {
+      await session.release(BACKGROUND_CONTEXT);
+    }
   });
 
   it('invokes requestAbort for the active op and every registered kill before close', async () => {
@@ -280,12 +320,7 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     });
     fake.feed('\x04'); // Ctrl-D on an empty draft quits
     expect(await exit).toBe(0);
-    expect(h.events).toEqual([
-      `requestAbort:${opId}`,
-      'kill:1',
-      'kill:2',
-      'close',
-    ]);
+    expect(h.events).toEqual([`abort:${opId}`, 'kill:1', 'kill:2', 'close']);
   });
 
   it('the sweep runs after the operation settles, so a late write is journaled', async () => {
@@ -387,7 +422,7 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
   // request. A requestAbort that never settles blocked the quit (and the kill
   // drain queued behind it) with no way out — a second Ctrl-C ended a wait
   // nobody was in.
-  describe('a requestAbort that never settles', () => {
+  describe('an abort request that never settles', () => {
     function hungAbort(h: Harness): void {
       const inner = h.bootLane;
       h.bootLane = async (sessionId, answer, flags) => {
@@ -398,7 +433,7 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
           ...boot,
           loop: {
             ...loop,
-            requestAbort: () => new Promise(() => {}),
+            abort: () => new Promise(() => {}),
           },
         };
       };

@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import {
   runTuiCommand,
+  soloTuiLoop,
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
@@ -35,7 +36,6 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-  type Session,
 } from '../../worker/src/pi-boundary.js';
 import { FAUX_FOOTER, FAUX_MODEL_REF } from './faux-provider.js';
 import {
@@ -272,8 +272,8 @@ function fauxLaneBoot(
     const bridge = createNodeFileBridge(root);
     const store = openSessionStore(root, bridge);
     const context = BACKGROUND_CONTEXT;
-    const session: Session = await createSession(store, root, context);
-    const id = sessionId ?? session.metadata.id;
+    const session = await createSession(store, { cwd: root }, context);
+    const id = sessionId ?? session.id;
     bridge.createDir(join(id, 'journal'));
     const provider = models.getProviders()[0];
     if (provider === undefined) throw new Error('no provider registered');
@@ -291,19 +291,10 @@ function fauxLaneBoot(
     return {
       sessionId: id,
       model: `${provider.id}/${model.id}`,
-      loop: {
-        accept: (prompt, ctx) =>
-          solo.lane.accept({ kind: 'prompt', prompt }, ctx),
-        lane: solo.lane,
-        requestAbort: (operationId, ctx) =>
-          solo.lane.requestAbort(operationId, ctx),
-        findEntries: (query, ctx) => solo.lane.findEntries(query, ctx),
-        events: solo.harness.events,
-        kills: solo.kills,
-        context,
-      },
+      loop: soloTuiLoop(solo),
       close: async () => {
-        await session.close(context);
+        await solo.close(context);
+        await session.release(context);
       },
     };
   };

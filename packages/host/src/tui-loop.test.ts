@@ -15,21 +15,17 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   runTuiCommand,
-  type TuiLaneLoop,
+  soloTuiLoop,
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../exec/src/journal.js';
-import { abortLane, forgetLaneKills } from '../../worker/src/lane/abort.js';
-import { subscribeLaneEvents } from '../../worker/src/lane/events.js';
 import {
   createSession,
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
-import { bootSoloLane, type SoloLane } from '../../worker/src/lane/solo.js';
-import { readConversationEntries } from '../../worker/src/lane/transcript.js';
-import { runTurn } from '../../worker/src/lane/turn.js';
+import { bootSoloLane } from '../../worker/src/lane/solo.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -89,31 +85,6 @@ function fauxModels(steps: FauxStep[]): {
   return { models, setResponses };
 }
 
-// A real solo boot's loop surface, exactly the wiring bootTuiLane builds
-// (the durable seam of #395): one turn, the conversation's event watch, the
-// transcript read, and the shared abort/forget pair (D6.2).
-function soloLoop(solo: SoloLane): TuiLaneLoop {
-  return {
-    runTurn: (prompt, opts) => runTurn(solo, prompt, opts),
-    subscribe: (sink, loopContext) =>
-      subscribeLaneEvents(
-        solo.harness,
-        solo.conversation.id,
-        sink,
-        loopContext,
-      ),
-    entries: (loopContext) =>
-      readConversationEntries(solo.conversation, loopContext),
-    abort: async (loopContext) => {
-      await abortLane(solo, loopContext);
-    },
-    forgetKills: () => forgetLaneKills(solo),
-    killsKey: String(solo.conversation.id),
-    kills: solo.kills,
-    context: BACKGROUND_CONTEXT,
-  };
-}
-
 // A real solo boot against a temp sessions root with the faux provider —
 // the prod boot shape (bootTuiLane) with the sessions root and models
 // injected, exactly like headless-run.ts accepts its deps.
@@ -144,7 +115,7 @@ function fauxLaneBoot(
     return {
       sessionId: id,
       model: `${provider.id}/${model.id}`,
-      loop: soloLoop(solo),
+      loop: soloTuiLoop(solo),
       close: async () => {
         await solo.close(context);
         await session.release(context);

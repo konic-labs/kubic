@@ -96,7 +96,7 @@ The pure assembler is `packages/host/src/trajectory/run-trajectory.ts`
 
 | Field | Type |
 | --- | --- |
-| `schema_version` | `string` (`"1.0"`; `SCHEMA_MAJOR` 1, `SCHEMA_MINOR` 0) |
+| `schema_version` | `string` (`"1.1"`; `SCHEMA_MAJOR` 1, `SCHEMA_MINOR` 1) |
 | `task` | `TrajectoryTask` |
 | `identity` | `TrajectoryIdentity` |
 | `model` | `TrajectoryModel` |

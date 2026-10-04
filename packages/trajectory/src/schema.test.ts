@@ -295,59 +295,110 @@ describe('trajectory schema 1.1 (issue #329)', () => {
     expect(parsed.result.artifacts).toBeUndefined();
   });
 
-  it('type-checks the 1.1 fields when present, naming the JSON path', () => {
+  it('type-checks every 1.1 field when present, naming the JSON path', () => {
     const record = validExport();
-    const cases: Array<[Record<string, unknown>, RegExp]> = [
+    const identity = record.identity as Record<string, unknown>;
+    const model = record.model as Record<string, unknown>;
+    const state = record.state as Record<string, unknown>;
+    const result = record.result as Record<string, unknown>;
+    const escalation = { reason: 'r', at: 't', toModel: 'acme/m2' };
+    const approval = {
+      approvalId: 'a',
+      capability: 'c',
+      verdict: 'approved',
+      by: null,
+    };
+    // One wrong-type case per entry of the optional-field tables (identity,
+    // state, result, escalation, approval, operation): dropping an entry
+    // from a table would let its case pass, so every entry stays pinned.
+    const cases: Array<[string, Record<string, unknown>, RegExp]> = [
       [
-        { identity: { ...(record.identity as object), parentSessionId: 5 } },
-        /trajectory\.identity\.parentSessionId must be a string or null/,
+        'identity.parentSessionId',
+        { identity: { ...identity, parentSessionId: 5 } },
+        /trajectory\.identity\.parentSessionId must be a string or null \(got number\)/,
       ],
       [
-        { identity: { ...(record.identity as object), role: null } },
+        'identity.role',
+        { identity: { ...identity, role: null } },
         /trajectory\.identity\.role must be a string \(got null\)/,
       ],
       [
-        { state: { ...(record.state as object), memos: ['a', 2] } },
-        /trajectory\.state\.memos must be an array of strings/,
+        'state.operations',
+        { state: { ...state, operations: {} } },
+        /trajectory\.state\.operations must be an array \(got object\)/,
       ],
       [
-        { result: { ...(record.result as object), tests: 'x' } },
-        /trajectory\.result\.tests must be an array of strings/,
+        'state.memos',
+        { state: { ...state, memos: ['a', 2] } },
+        /trajectory\.state\.memos must be an array of strings \(got array\)/,
       ],
       [
+        'result.tests',
+        { result: { ...result, tests: 'x' } },
+        /trajectory\.result\.tests must be an array of strings \(got string\)/,
+      ],
+      [
+        'result.artifacts',
+        { result: { ...result, artifacts: [1] } },
+        /trajectory\.result\.artifacts must be an array of strings \(got array\)/,
+      ],
+      [
+        'model.escalations[0].fromModel',
         {
-          model: {
-            ...(record.model as object),
-            escalations: [{ reason: 'r', at: 't', toModel: 1 }],
-          },
+          model: { ...model, escalations: [{ ...escalation, fromModel: 1 }] },
         },
-        /trajectory\.model\.escalations\[0\]\.toModel must be a string/,
+        /trajectory\.model\.escalations\[0\]\.fromModel must be a string \(got number\)/,
       ],
       [
-        {
-          approvals: [
-            {
-              approvalId: 'a',
-              capability: 'c',
-              verdict: 'approved',
-              by: null,
-              justification: 5,
-            },
-          ],
-        },
-        /trajectory\.approvals\[0\]\.justification must be a string or null/,
+        'model.escalations[0].toModel',
+        { model: { ...model, escalations: [{ ...escalation, toModel: 1 }] } },
+        /trajectory\.model\.escalations\[0\]\.toModel must be a string \(got number\)/,
       ],
       [
-        {
-          state: { ...(record.state as object), operations: [{ id: 'op-1' }] },
-        },
+        'model.escalations[0].thinking',
+        { model: { ...model, escalations: [{ ...escalation, thinking: 5 }] } },
+        /trajectory\.model\.escalations\[0\]\.thinking must be a string or null \(got number\)/,
+      ],
+      [
+        'model.escalations[0] (non-object)',
+        { model: { ...model, escalations: [5] } },
+        /trajectory\.model\.escalations\[0\] must be an object \(got number\)/,
+      ],
+      [
+        'approvals[0].requested',
+        { approvals: [{ ...approval, requested: 5 }] },
+        /trajectory\.approvals\[0\]\.requested must be a string or null \(got number\)/,
+      ],
+      [
+        'approvals[0].justification',
+        { approvals: [{ ...approval, justification: 5 }] },
+        /trajectory\.approvals\[0\]\.justification must be a string or null \(got number\)/,
+      ],
+      [
+        'approvals[0] (non-object)',
+        { approvals: [5] },
+        /trajectory\.approvals\[0\] must be an object \(got number\)/,
+      ],
+      [
+        'state.operations[0].id',
+        { state: { ...state, operations: [{ kind: 'read' }] } },
+        /trajectory\.state\.operations\[0\]\.id is required/,
+      ],
+      [
+        'state.operations[0].kind',
+        { state: { ...state, operations: [{ id: 'op-1' }] } },
         /trajectory\.state\.operations\[0\]\.kind is required/,
       ],
+      [
+        'state.operations[0] (non-object)',
+        { state: { ...state, operations: [5] } },
+        /trajectory\.state\.operations\[0\] must be an object \(got number\)/,
+      ],
     ];
-    for (const [override, message] of cases) {
+    for (const [label, override, message] of cases) {
       const err = parseError({ ...record, ...override });
-      expect(err.code, JSON.stringify(override)).toBe('malformed');
-      expect(err.message, JSON.stringify(override)).toMatch(message);
+      expect(err.code, label).toBe('malformed');
+      expect(err.message, label).toMatch(message);
     }
   });
 });

@@ -123,6 +123,9 @@ export interface DoctorDeps extends CliIo {
   // reports a warn note (concurrent different-session runs are legal; the
   // note states the sweep blind spot). Absent: no overlap check.
   probeSessionOverlap?: () => SessionOverlapProbe;
+  // Issue #361: a state directory that other local users can read (session
+  // transcripts, journaled file content). undefined means private or absent.
+  probeStatePermissions?: () => StatePermissionProbe | undefined;
 }
 
 // The installed posture, described once in host/approvals.ts. Host owns the
@@ -333,6 +336,38 @@ function sessionOverlapCheck(probe: SessionOverlapProbe): DoctorCheck {
       probe.sessionIds.length === 1
         ? `1 session recorded against ${probe.workspace} — no sweep overlap`
         : `no sessions recorded against ${probe.workspace} — no sweep overlap`,
+  };
+}
+
+// Issue #361: a group- or world-accessible state directory. The probe
+// reports it (and the next open tightens it); doctor warns, never fails —
+// a loose directory is a real exposure but not a broken installation.
+export interface StatePermissionProbe {
+  path: string;
+  mode: number;
+}
+
+function statePermissionCheck(
+  probe: StatePermissionProbe | undefined,
+): DoctorCheck {
+  const base = { id: 'state:permissions', label: 'state permissions' };
+  if (probe === undefined) {
+    return {
+      ...base,
+      status: 'pass',
+      reason: 'ok',
+      detail:
+        'session and journal state directories are private (0700) or absent',
+    };
+  }
+  return {
+    ...base,
+    status: 'warn',
+    reason: 'ok',
+    detail:
+      `${probe.path} is ${probe.mode.toString(8).padStart(3, '0')} — every local user can read ` +
+      'session transcripts and journaled file content; the next open tightens it to 0700 ' +
+      '(or run chmod 700 on it)',
   };
 }
 
@@ -626,6 +661,25 @@ export function collectDoctorChecks(
   // reports warn with the named reason, never fail: the note is
   // informational by design (overlap is legal), so a store hiccup must not
   // flip doctor's exit code.
+  // Issue #361: always present — a clean posture is a pass, so the matrix
+  // shape stays stable and a loose directory is named rather than silent.
+  try {
+    checks.push(
+      statePermissionCheck(
+        deps.probeStatePermissions === undefined
+          ? undefined
+          : deps.probeStatePermissions(),
+      ),
+    );
+  } catch (error) {
+    checks.push({
+      id: 'state:permissions',
+      label: 'state permissions',
+      status: 'warn',
+      reason: 'ok',
+      detail: `state permissions unverified: ${probeMessage(error)}`,
+    });
+  }
   if (deps.probeSessionOverlap !== undefined) {
     try {
       checks.push(sessionOverlapCheck(deps.probeSessionOverlap()));

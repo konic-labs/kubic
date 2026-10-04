@@ -27,7 +27,16 @@ gets one before the new entry — so the entry lands on a line of its own
 and is never glued to the fragment and dropped with it — and a failed
 append truncates the partial write back to the pre-append length. Dropped
 fragments are named as `corrupt index lines` in `kubic status` and removed
-by the next retention rewrite. Cross-process coordination (issue #337): every
+by the next retention rewrite. Private state (issue #361): the journal directory and `blobs/` are created
+0700, the index and every blob 0600 — a blob is a copy of file content,
+including 0600 sources like `.env`, and the index names every path of the run.
+An existing group- or world-accessible state directory (the sessions root, a
+journal directory) is tightened to 0700 when the next lock is taken, and
+`kubic doctor`'s `state:permissions` check names it while it stays loose. The
+undo restore keeps the target file's own mode — Kubic never widens a file it
+writes back.
+
+Cross-process coordination (issue #337): every
 journal mutation — append, retention rewrite, blob sweep — runs under an
 O_EXCL lock beside the index (stale after ten seconds, so a crashed holder
 never wedges the journal), the rewrite abandons itself when the index changed

@@ -155,6 +155,14 @@ content, or the delta stored for a large after-side; a no-op write counts
 its single blob once), measured before dedupe — an entry that could never
 fit is refused whether or not its bytes happen to be in the store already.
 
+State permissions (issue #361): the bridge's `writeFile`/`appendFile`/
+`appendDurably`/`createDir` take an optional `mode`, applied only where they
+CREATE a path (an existing file or directory keeps its own); the journal uses
+it for 0700 directories and 0600 files, `lock-file.ts`'s `createLockFile` for
+the session lock (0700/0600), and `looseStateDirMode`/`tightenStateDir` are the
+read-and-close pair (`kubic doctor` warns, the next open tightens). Undo
+restores keep the target's mode — never widened.
+
 Cross-process coordination (issue #337): every mutation — `append`,
 `enforceRetention` (rewrite + blob sweep) — runs under an O_EXCL lock beside
 the index (`journalMutationLockPath`, pid recorded, stale after ten seconds,

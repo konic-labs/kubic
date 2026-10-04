@@ -78,7 +78,16 @@ export interface FileBridge {
     content: string | Uint8Array,
     options?: { mode?: number },
   ): void;
-  appendFile(path: string, content: string | Uint8Array): void;
+  /**
+   * Append, creating the file with `mode` when it does not exist (issue
+   * #361: the journal index and the session JSONL are private state, and
+   * `mode` is applied only at creation — an existing file keeps its own).
+   */
+  appendFile(
+    path: string,
+    content: string | Uint8Array,
+    options?: { mode?: number },
+  ): void;
   /**
    * Append with fsync (issue #117): the change journal's crash-safety seam.
    * The content is on platter before the call returns — an index append a
@@ -87,7 +96,11 @@ export interface FileBridge {
    * back to `appendFile` when a bridge does not implement it, and its
    * `durable` retention knob can opt out of the fsync cost explicitly.
    */
-  appendDurably?(path: string, content: string | Uint8Array): void;
+  appendDurably?(
+    path: string,
+    content: string | Uint8Array,
+    options?: { mode?: number },
+  ): void;
   /**
    * Truncate (or extend) a file to exactly `size` bytes (issue #392): the
    * pi-durable JSONL storage core drops a torn trailing record with this on
@@ -131,7 +144,7 @@ export interface FileBridge {
    * doubles stay valid; throws when the path does not exist.
    */
   realPath?(path: string): string;
-  createDir(path: string, recursive?: boolean): void;
+  createDir(path: string, recursive?: boolean, mode?: number): void;
   remove(path: string, recursive?: boolean, force?: boolean): void;
   createTempDir(prefix?: string): string;
   createTempFile(prefix?: string, suffix?: string): string;
@@ -168,8 +181,15 @@ function sanitizePrefix(prefix: string): string {
 
 export function createNodeFileBridge(cwd: string): FileBridge {
   const absolutePath = (path: string): string => resolve(cwd, path);
-  const ensureParent = (abs: string): void => {
-    mkdirSync(dirname(abs), { recursive: true });
+  const ensureParent = (abs: string, mode?: number): void => {
+    // Issue #361: `mode` is for state directories (0700) and applies only to
+    // directories this call creates; a workspace write keeps the umask
+    // default, because a user's new directory is not Kubic's to make private.
+    if (mode === undefined) {
+      mkdirSync(dirname(abs), { recursive: true });
+      return;
+    }
+    mkdirSync(dirname(abs), { recursive: true, mode });
   };
   return {
     cwd,
@@ -211,7 +231,7 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       options?: { mode?: number },
     ): void => {
       const abs = absolutePath(path);
-      ensureParent(abs);
+      ensureParent(abs, options?.mode);
       // Creation mode (issue #117 review): `writeFileSync`'s mode only
       // applies when the file is created, which is exactly what the restore
       // tmp needs (0600 so crash residue is never world-readable). Omitted
@@ -223,10 +243,18 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       }
       writeFileSync(abs, content, { mode: options.mode });
     },
-    appendFile: (path: string, content: string | Uint8Array): void => {
+    appendFile: (
+      path: string,
+      content: string | Uint8Array,
+      options?: { mode?: number },
+    ): void => {
       const abs = absolutePath(path);
-      ensureParent(abs);
-      appendFileSync(abs, content);
+      ensureParent(abs, options?.mode);
+      if (options?.mode === undefined) {
+        appendFileSync(abs, content);
+        return;
+      }
+      appendFileSync(abs, content, { mode: options.mode });
     },
     // Durable append (issue #117): one fd, one write, one fsync — the line
     // is on platter before the call returns. `writeSync` may write short on
@@ -234,10 +262,17 @@ export function createNodeFileBridge(cwd: string): FileBridge {
     // fsync then covers the whole append. Directory-entry durability of the
     // file's own creation is deliberately out of scope (rename atomicity is
     // the journal's write guarantee — see docs/architecture).
-    appendDurably: (path: string, content: string | Uint8Array): void => {
+    appendDurably: (
+      path: string,
+      content: string | Uint8Array,
+      options?: { mode?: number },
+    ): void => {
       const abs = absolutePath(path);
-      ensureParent(abs);
-      const fd = openSync(abs, 'a');
+      ensureParent(abs, options?.mode);
+      const fd =
+        options?.mode === undefined
+          ? openSync(abs, 'a')
+          : openSync(abs, 'a', options.mode);
       try {
         const buffer =
           typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
@@ -315,8 +350,14 @@ export function createNodeFileBridge(cwd: string): FileBridge {
         throw error;
       }
     },
-    createDir: (path: string, recursive = true): void => {
-      mkdirSync(absolutePath(path), { recursive });
+    createDir: (path: string, recursive = true, mode?: number): void => {
+      // Issue #361: `mode` (0700 for state dirs) applies only to directories
+      // this call creates; existing ones keep their own.
+      if (mode === undefined) {
+        mkdirSync(absolutePath(path), { recursive });
+        return;
+      }
+      mkdirSync(absolutePath(path), { recursive, mode });
     },
     remove: (path: string, recursive = false, force = false): void => {
       rmSync(absolutePath(path), { recursive, force });

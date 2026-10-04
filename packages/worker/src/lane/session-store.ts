@@ -44,6 +44,7 @@ import {
   createLockFile,
   readLockFile,
   removeLockFile,
+  tightenStateDir,
 } from '../../../exec/src/lock-file.js';
 import {
   type Context,
@@ -237,6 +238,9 @@ export function acquireSessionLock(
   sessionDir: string,
   sessionId: string,
 ): void {
+  // Issue #361: a session directory is private state; an existing loose one
+  // (created before this, or by hand) is closed on the way in.
+  tightenStateDir(sessionDir);
   const lockPath = join(sessionDir, 'lock.json');
   const payload = JSON.stringify({ pid: process.pid, startedAt: Date.now() });
   // O_EXCL test-and-set via the exec seam (I/O confinement, §9; the
@@ -397,6 +401,8 @@ function writeSessionHeader(
   id: string,
   meta: KubicSessionMeta,
 ): void {
+  // Issue #361: the header carries the session's workspace and metadata —
+  // private state, 0600 at creation.
   store.bridge.writeFile(
     headerPathOf(sessionDir),
     `${JSON.stringify({
@@ -407,6 +413,7 @@ function writeSessionHeader(
       createdAt: meta.createdAt,
       ...(meta.workspace === undefined ? {} : { workspace: meta.workspace }),
     })}\n`,
+    { mode: 0o600 },
   );
 }
 

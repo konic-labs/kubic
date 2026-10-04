@@ -118,12 +118,15 @@ export function bridgeToPiFileSystem(bridge: FileBridge): FileSystem {
       path: string,
       content: string | Uint8Array,
       _context: Context,
-    ) => attempt(path, () => bridge.writeFile(path, content)),
+    ) =>
+      // Issue #361: session state is private — 0600 at creation (an existing
+      // file keeps its own mode).
+      attempt(path, () => bridge.writeFile(path, content, { mode: 0o600 })),
     appendFile: async (
       path: string,
       content: string | Uint8Array,
       _context: Context,
-    ) => attempt(path, () => bridge.appendFile(path, content)),
+    ) => attempt(path, () => bridge.appendFile(path, content, { mode: 0o600 })),
     // Torn-line recovery (issue #392): the JSONL core truncates a partial
     // trailing record before it parses, so a crash mid-append costs the
     // newest commit and never the session.

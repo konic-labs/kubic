@@ -190,6 +190,8 @@ describe('runDoctorCommand', () => {
       'provider:local',
       'dep:node',
       'policy:approvals',
+      // Issue #361: private-state posture is part of the matrix.
+      'state:permissions',
       // Issue #59 license identity rides the same command.
       'license:kubic',
       // Issue #58 honest-limits registration rides the same command.
@@ -561,5 +563,45 @@ describe('runDoctorCommand mutation hardening (issue #68)', () => {
     expect(lines.join('\n')).toContain(
       'FAIL provider:probe (provider-down): string boom',
     );
+  });
+});
+
+// Issue #361: session transcripts and journaled file content are private
+// state; a group- or world-accessible state directory is named, warned
+// about (never exit-flipping), and tightened by the next open.
+describe('state permissions (issue #361)', () => {
+  it('warns on a world-readable sessions root, and passes when private', async () => {
+    const loose: string[] = [];
+    const looseCode = await runDoctorCommand(
+      {},
+      {
+        ...cleanDeps((line: string) => loose.push(line)),
+        probeStatePermissions: () => ({
+          path: '/home/u/.kubic/sessions',
+          mode: 0o755,
+        }),
+      },
+    );
+    expect(looseCode).toBe(0);
+    const text = loose.join('\n');
+    expect(text).toContain('state:permissions');
+    expect(text).toContain('WARN');
+    expect(text).toMatch(/\/home\/u\/\.kubic\/sessions is 755 .*chmod 700/);
+
+    const clean: string[] = [];
+    const cleanCode = await runDoctorCommand(
+      { json: true },
+      {
+        ...cleanDeps((line: string) => clean.push(line)),
+        probeStatePermissions: () => undefined,
+      },
+    );
+    expect(cleanCode).toBe(0);
+    const report = JSON.parse(clean.join('\n')) as {
+      checks: Array<{ id: string; status: string; detail: string }>;
+    };
+    const check = report.checks.find((c) => c.id === 'state:permissions');
+    expect(check?.status).toBe('pass');
+    expect(check?.detail).toMatch(/private \(0700\) or absent/);
   });
 });

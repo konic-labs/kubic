@@ -21,6 +21,7 @@ import {
   withFileLocked,
 } from './file-bridge.js';
 import { type IgnoreRule, isIgnored, parseIgnoreFile } from './ignore.js';
+import { tightenStateDir } from './lock-file.js';
 
 export type JournalOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
 
@@ -481,6 +482,29 @@ export class FileJournalStore {
   // the file lock is not re-entrant, and the O_EXCL create would deadlock
   // against itself.
   private mutationLockHeld = false;
+  // Issue #361: the state directories are prepared (and tightened) once per
+  // store, not once per append.
+  private stateDirsReady = false;
+
+  /**
+   * Issue #361: the store's own directories are Kubic's private state — the
+   * journal directory and `blobs/` are created 0700 (the index and every blob
+   * hold file content, including copies of 0600 files), and an existing loose
+   * one is tightened on the way in. Called before a mutation writes anything;
+   * a read never creates a directory.
+   */
+  private ensureStateDirs(bridge: FileBridge): void {
+    // Once per store instance: the hot path (an append per tool write) must
+    // not stat and mkdir on every line. A directory that appears later is
+    // covered by the next store's first mutation, and doctor keeps naming a
+    // loose one in the meantime.
+    if (this.stateDirsReady) return;
+    bridge.createDir(dirname(this.indexPath), true, 0o700);
+    bridge.createDir(this.blobsDir, true, 0o700);
+    tightenStateDir(dirname(this.indexPath));
+    tightenStateDir(this.blobsDir);
+    this.stateDirsReady = true;
+  }
 
   /**
    * Issue #337: run a mutation under the cross-process lock beside the index.
@@ -512,6 +536,7 @@ export class FileJournalStore {
 
   private appendLocked(input: JournalEntryInput): JournalEntry {
     const bridge = this.bridge();
+    this.ensureStateDirs(bridge);
     // Issue #348: an entry the store could never keep is refused before a
     // single blob is written, so the caller's file write is aborted with
     // the target untouched rather than landing a change whose record the
@@ -644,9 +669,10 @@ export class FileJournalStore {
     const payload = (tail.fragment ? '\n' : '') + line;
     try {
       if (this.durable && bridge.appendDurably !== undefined) {
-        bridge.appendDurably(this.indexPath, payload);
+        // Issue #361: 0600 at creation; an existing index keeps its mode.
+        bridge.appendDurably(this.indexPath, payload, { mode: 0o600 });
       } else {
-        bridge.appendFile(this.indexPath, payload);
+        bridge.appendFile(this.indexPath, payload, { mode: 0o600 });
       }
     } catch (error) {
       if (tail.size !== null) this.truncateIndexTo(bridge, tail.size);
@@ -950,13 +976,14 @@ export class FileJournalStore {
     }
     const before = this.blobBytes(bridge, all);
     const referenced = new Set(refs.keys());
+    this.ensureStateDirs(bridge);
     const tmp = `${this.indexPath}.${process.pid}.tmp`;
     // Issue #350: the same serialization is measured and written, so the
     // tracked index size after the rewrite is exact.
     const serialized =
       kept.map((e) => JSON.stringify(e)).join('\n') +
       (kept.length > 0 ? '\n' : '');
-    bridge.writeFile(tmp, serialized);
+    bridge.writeFile(tmp, serialized, { mode: 0o600 });
     try {
       // Issue #337: abandon the rewrite when the index changed under it. The
       // pass keeps nothing it cannot prove is still current: the next pass
@@ -1065,7 +1092,9 @@ export class FileJournalStore {
     // bytes were still in the page cache when the power went.
     const tmp = join(this.blobsDir, `${hash}.${process.pid}.tmp`);
     try {
-      bridge.writeFile(tmp, content);
+      // Issue #361: 0600 at creation — a blob is a copy of file content,
+      // including 0600 sources like `.env`; the rename keeps the mode.
+      bridge.writeFile(tmp, content, { mode: 0o600 });
       this.flushDurably(() => bridge.flushFile?.(tmp));
       bridge.renameFile(tmp, path);
       this.flushDurably(() => bridge.flushDir?.(this.blobsDir));

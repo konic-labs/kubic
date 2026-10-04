@@ -35,6 +35,7 @@ import { runExportCommand as runTrajectoryExportCommand } from '../../../package
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { isGitWorktreeClean } from '../../../packages/exec/src/git-clean.js';
+import { looseStateDirMode } from '../../../packages/exec/src/lock-file.js';
 import { readStdinText } from '../../../packages/exec/src/stdin.js';
 import { installedPolicyPosture } from '../../../packages/host/src/approvals.js';
 import { runConfigCommand } from '../../../packages/host/src/config/config-cli.js';
@@ -467,6 +468,14 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       // an unlistable store makes NO claim (the probe stays un-injected)
       // rather than crashing doctor — the note is informational, so an
       // unreadable store must not turn into a failure of its own.
+      // Issue #361: the sessions root's mode, when it is group- or
+      // world-accessible. Best-effort like the overlap probe: an unreadable
+      // root makes no claim.
+      const statePermissionProbe = () => {
+        const root = defaultSessionsRoot();
+        const mode = looseStateDirMode(root);
+        return mode === undefined ? undefined : { path: root, mode };
+      };
       let sessionOverlapProbe: (() => SessionOverlapProbe) | undefined;
       try {
         const overlapRoot = defaultSessionsRoot();
@@ -632,6 +641,9 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         ...(sessionOverlapProbe === undefined
           ? {}
           : { probeSessionOverlap: sessionOverlapProbe }),
+        // Issue #361: always injected — the check itself is a pass when the
+        // state directories are private.
+        probeStatePermissions: statePermissionProbe,
       });
     },
     orchestrate: async (options, cliConfig) => {

@@ -14,7 +14,10 @@ import {
   attachSession,
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
-import { readSessionEntries } from '../../worker/src/lane/transcript.js';
+import {
+  entriesToTranscript,
+  readSessionEntries,
+} from '../../worker/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -111,7 +114,6 @@ async function readTranscript(root: string, id: string): Promise<unknown[]> {
 describe('prod run path, live lane (issue #28, E1)', () => {
   it('drives a faux lane to completed with the assistant summary', async () => {
     const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
     const result = await runHeadlessPrompt(
       'do it',
       {},
@@ -172,6 +174,44 @@ describe('prod run path, resume chain (issue #28, E4)', () => {
     expect(entryTexts(entries).join('\n')).toMatch(/second prompt/);
     expect(entryTexts(entries).join('\n')).toMatch(/first done/);
     expect(entryTexts(entries).join('\n')).toMatch(/second done/);
+  });
+});
+
+describe('prod run path, durable retry (issue #395, §20.6)', () => {
+  it('settles completed after a transient provider error, with both attempts counted', {
+    timeout: 20_000,
+  }, async () => {
+    const root = tmpRoot();
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    // The first attempt is a retryable provider error; the harness owns the
+    // backoff and retries inside the durable generation task.
+    faux.setResponses([
+      fauxAssistantMessage('failed attempt', {
+        stopReason: 'error',
+        errorMessage: 'server error 500',
+      }),
+      fauxAssistantMessage('recovered'),
+    ]);
+    const result = await runHeadlessPrompt(
+      'retry please',
+      {},
+      { sessionsRoot: root, models, env: new FakeExecutionEnv({}) },
+    );
+    expect(result.terminus).toBe('completed');
+    // The ANSWER is the second response: the retry happened, and it happened
+    // inside the harness (Kubic has no drive loop and no sleep of its own).
+    expect(result.summary).toBe('recovered');
+    expect(faux.state.callCount).toBe(2);
+    // The failed attempt spent tokens: the run's usage counts both requests.
+    expect(result.usage?.input).toBeGreaterThan(0);
+    const entries = await readTranscript(root, result.sessionId);
+    const assistantTexts = entriesToTranscript(entries)
+      .filter((item) => item.kind === 'assistant')
+      .map((item) => item.text);
+    expect(assistantTexts).toContain('failed attempt');
+    expect(assistantTexts).toContain('recovered');
   });
 });
 
@@ -534,7 +574,6 @@ describe('prod run path, result refs (issue #68; mutation hardening)', () => {
       },
     );
     expect(result.terminus).toBe('provider_probe_failed');
-    const store = openSessionStore(root, createNodeFileBridge(root));
     const entries = await readTranscript(root, result.sessionId);
     expect(entryTexts(entries).join('\n')).toMatch(/durable hello/);
   });

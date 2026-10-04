@@ -26,10 +26,7 @@ import {
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
 import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
-import {
-  entriesToTranscript,
-  readSessionEntries,
-} from '../../worker/src/lane/transcript.js';
+import { readSessionEntries } from '../../worker/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,

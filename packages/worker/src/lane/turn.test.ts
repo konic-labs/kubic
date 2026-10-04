@@ -16,7 +16,9 @@ import {
 } from '../pi-boundary.js';
 import type { AbortableLane } from './abort.js';
 import { abortLane, forgetLaneKills, OperationKillRegistry } from './abort.js';
+import { type KubicLaneEvent, subscribeLaneEvents } from './events.js';
 import { bootSoloLane, type SoloLane } from './solo.js';
+import { entriesToTranscript, readConversationEntries } from './transcript.js';
 import {
   runTurn,
   TURN_BUSY_REASON,
@@ -68,6 +70,7 @@ function catalog() {
 async function boot(
   responses: Parameters<Faux['setResponses']>[0],
   env = new FakeExecutionEnv({}),
+  extra: Partial<Parameters<typeof bootSoloLane>[0]> = {},
 ): Promise<{ solo: SoloLane; faux: Faux }> {
   const { faux, models } = catalog();
   faux.setResponses(responses);
@@ -79,6 +82,7 @@ async function boot(
     env,
     sessionId: session.id,
     agentId: 'root',
+    ...extra,
   });
   SOLOS.push(solo);
   return { solo, faux };
@@ -230,6 +234,61 @@ describe('runTurn on pi-durable (issue #395)', () => {
     });
     expect(first).toEqual(second);
     expect(userTexts(await transcript(solo))).toHaveLength(1);
+  });
+});
+
+describe('durable retry (issue #395, §20.6)', () => {
+  it('retries a transient provider error inside the harness, with no Kubic sleep', async () => {
+    const { solo, faux } = await boot(
+      [
+        fauxAssistantMessage('failed attempt', {
+          stopReason: 'error',
+          errorMessage: 'server error 500',
+        }),
+        fauxAssistantMessage('recovered'),
+      ],
+      new FakeExecutionEnv({}),
+      // The delay is the harness's; a test does not want to wait out the
+      // shipped 2 s backoff to prove the retry happened.
+      { settings: { retry: { baseDelayMs: 1 } } },
+    );
+    const events: KubicLaneEvent[] = [];
+    const stop = await subscribeLaneEvents(
+      solo.harness,
+      solo.conversation.id,
+      (event) => events.push(event),
+      BACKGROUND_CONTEXT,
+    );
+    try {
+      const outcome = await runTurn(solo, 'try again', {
+        requestId: 'retry-1',
+        context: BACKGROUND_CONTEXT,
+      });
+      expect(outcome.kind).toBe('completed');
+      // Both attempts hit the provider, and the retry is visible in the
+      // lane's own events — not in a Kubic sleep loop that no longer exists.
+      expect(faux.state.callCount).toBe(2);
+      const starts = events.filter(
+        (event) => event.type === 'retry' && event.phase === 'start',
+      );
+      expect(starts).toHaveLength(1);
+      expect(
+        starts[0]?.type === 'retry' ? starts[0].error : undefined,
+      ).toContain('500');
+      const assistant = (
+        await entriesToTranscript(
+          await readConversationEntries(solo.conversation, BACKGROUND_CONTEXT),
+        )
+      ).filter((item) => item.kind === 'assistant');
+      // The failed attempt is committed (it spent tokens) and the answer is
+      // the SECOND response.
+      expect(assistant.map((item) => item.text)).toEqual([
+        'failed attempt',
+        'recovered',
+      ]);
+    } finally {
+      await stop();
+    }
   });
 });
 

@@ -478,8 +478,9 @@ describe('solo-lane projections reach the live path (issue #133)', () => {
     expect(debug.join('\n')).toContain('[policy] role=implementer tools=read');
   });
 
-  it('the wiring itself: both production runners consume the projection', async () => {
-    // One projection, two one-line consumers (`kubic run` + `kubic tui`).
+  it('the wiring itself: every production runner consumes the projection', async () => {
+    // One projection, three one-line consumers (`kubic run`, `kubic tui`, and
+    // the live `kubic replay` re-execution — issue #272).
     // The defect class this issue closes is "the mechanism exists and
     // nothing populates it", so the composition root's own spreads are
     // pinned: a dropped consumer would silently un-name a lane again.
@@ -499,6 +500,6 @@ describe('solo-lane projections reach the live path (issue #133)', () => {
     );
     expect(
       source.match(/\.\.\.runtimeLaneDeps\(cliConfig\)/g) ?? [],
-    ).toHaveLength(2);
+    ).toHaveLength(3);
   });
 });

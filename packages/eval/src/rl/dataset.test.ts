@@ -213,6 +213,45 @@ describe('exportDataset (issue #270)', () => {
     expect(manifest.excluded).toEqual({});
   });
 
+  it('counts a task with no counterpart instead of emitting nothing silently', () => {
+    const m = memoryFs({
+      'traj/a.json': JSON.stringify(passing({ taskId: 'task-1' })),
+      'traj/b.json': JSON.stringify(passing({ taskId: 'task-1' })),
+    });
+    const manifest = exportDataset({
+      type: 'dpo',
+      dataset: 'traj',
+      out: 'out.jsonl',
+      fs: m.fs,
+    });
+    expect(manifest.records).toBe(0);
+    expect(manifest.excluded['no-counterpart-excluded']).toBe(1);
+    expect(manifest.exclusions[0]).toMatchObject({
+      tag: 'no-counterpart-excluded',
+      file: 'traj/a.json',
+    });
+    expect(manifest.exclusions[0]?.reason).toMatch(/2 passing and 0 failing/);
+  });
+
+  it('counts a GRPO group with fewer than two candidates as singleton-excluded', () => {
+    const m = memoryFs({
+      'traj/a.json': JSON.stringify(passing({ taskId: 'task-1' })),
+    });
+    const manifest = exportDataset({
+      type: 'grpo',
+      dataset: 'traj',
+      out: 'out.jsonl',
+      fs: m.fs,
+    });
+    expect(manifest.records).toBe(0);
+    expect(manifest.excluded['singleton-excluded']).toBe(1);
+    expect(manifest.exclusions[0]).toMatchObject({
+      tag: 'singleton-excluded',
+      file: 'traj/a.json',
+    });
+    expect(manifest.exclusions[0]?.reason).toMatch(/1 candidate\(s\)/);
+  });
+
   it('writes the manifest with counts, provenance summary and schema version', () => {
     const m = memoryFs({
       'traj/a.json': JSON.stringify(passing({ taskId: 'task-1' })),

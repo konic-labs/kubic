@@ -603,6 +603,34 @@ describe('export --dataset (issue #270)', () => {
     expect(manifest.excluded).toEqual({});
   });
 
+  it('maps an unexpected write failure to export-failed (exit 1, envelope)', async () => {
+    const { deps } = datasetDeps({
+      'traj/a.json': JSON.stringify(passing({ taskId: 'task-1' })),
+    });
+    const o = out();
+    const exit = await runExportCommand(
+      { dataset: 'traj', type: 'sft', out: 'out.jsonl', json: true },
+      {
+        ...deps,
+        appendFile: () => {
+          throw new Error('ENOSPC: no space left on device');
+        },
+        out: o.write,
+        err: o.err,
+      },
+    );
+    expect(exit).toBe(1);
+    expect(o.errs).toEqual([]);
+    expect(JSON.parse(o.lines.join('\n'))).toEqual({
+      ok: false,
+      exitCode: 1,
+      error: {
+        code: 'export-failed',
+        message: 'ENOSPC: no space left on device',
+      },
+    });
+  });
+
   it('emits the manifest in the --json envelope', async () => {
     const { deps } = datasetDeps({
       'traj/a.json': JSON.stringify(passing({ taskId: 'task-1' })),

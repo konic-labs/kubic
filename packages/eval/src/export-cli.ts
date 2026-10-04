@@ -315,7 +315,15 @@ export async function runExportCommand(
       if (error instanceof DatasetError) {
         return fail(error.code, error.message, error.exitCode);
       }
-      throw error;
+      // Mirror the single-file path: an unexpected failure (an --out that
+      // names a directory, EACCES/ENOSPC on the JSONL or the manifest) is
+      // `export-failed` (exit 1) with its envelope, never a raw throw past
+      // the command's error contract.
+      return fail(
+        'export-failed',
+        error instanceof Error ? error.message : String(error),
+        EXPORT_EXIT_FAILED,
+      );
     }
   }
 

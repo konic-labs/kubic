@@ -1864,8 +1864,11 @@ prints one `dataset: …` summary line; `--json` wraps the manifest in
 `{ok, exitCode, type, dataset, out, manifest}`.
 
 Exit codes: 0 exported; 1 a matched trajectory failed to parse or build
-(`dataset-invalid`, the file is named); 2 a usage error or an empty match
-(`dataset-empty`).
+(`dataset-invalid`, the file is named), or the JSONL/manifest could not be
+written (`export-failed`); 2 a usage error or an empty match
+(`dataset-empty`). The JSONL is truncated before the first record and the
+manifest is written last, so a failed batch leaves a partial JSONL and no
+`<out>.manifest.json` — the missing manifest is the completeness marker.
 
 ## `kubic cost [--session <id>] [--json]`
 

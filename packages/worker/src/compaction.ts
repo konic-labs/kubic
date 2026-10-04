@@ -23,6 +23,7 @@ import type {
   Harness,
   TaskId,
 } from './pi-boundary.js';
+import { estimateContextTokens } from './pi-boundary.js';
 
 export const DEFAULT_RESERVE_TOKENS = 16384;
 
@@ -134,6 +135,14 @@ export interface SoloCompactionLane {
   readonly conversation: Conversation;
 }
 
+export interface ManualCompactionAdmission {
+  taskId: TaskId<CompactionResult>;
+  // The context estimate at admission (Pi's own estimate over the derived
+  // model context), so the caller can report what the cut removed. Read
+  // BEFORE the task is admitted: after placement the context is the summary.
+  tokensBefore: number;
+}
+
 /**
  * §27.2 manual compaction: `/compact [focus]` (issue #330) admits Pi's
  * `CompactionTask` and returns its id. Pi summarizes while the conversation
@@ -149,10 +158,71 @@ export async function compactSoloLane(
   solo: SoloCompactionLane,
   focus: string | undefined,
   context: Context,
-): Promise<{ taskId: TaskId<CompactionResult> }> {
+): Promise<ManualCompactionAdmission> {
   const instructions = buildCompactPrompt(focus === undefined ? {} : { focus });
+  const view = await solo.conversation.context(context);
+  const tokensBefore = estimateContextTokens(view.messages).tokens;
   const taskId = await solo.conversation.compact(instructions, context);
-  return { taskId };
+  return { taskId, tokensBefore };
+}
+
+// §27.2 (issue #330): how a manual compaction ended. `aborted` is the
+// operator's cancel (Esc/Ctrl-C -> conversation.abort()), `orphaned` a task
+// whose abort protocol could not run; `faulted` is Pi's runtime-detected
+// contract failure (an uncaught throw), reported as a failure by name.
+export type ManualCompactionStatus =
+  | 'completed'
+  | 'failed'
+  | 'aborted'
+  | 'orphaned'
+  | 'faulted';
+
+export interface ManualCompactionOutcome {
+  status: ManualCompactionStatus;
+  // The context estimate before the cut; 0 when the admission itself failed.
+  tokensBefore: number;
+  // The harness' own failure message — never an invented one.
+  error?: string;
+}
+
+/**
+ * One manual compaction, admitted and awaited to terminal (#330):
+ * `compactSoloLane` plus `harness.waitForTask`, reported in Kubic's own
+ * vocabulary. Never throws for a refused admission, a failed summary or a
+ * cancellation — the caller reports the outcome, it never has to catch.
+ */
+export async function runManualCompaction(
+  solo: SoloCompactionLane,
+  focus: string | undefined,
+  context: Context,
+): Promise<ManualCompactionOutcome> {
+  let admitted: ManualCompactionAdmission;
+  try {
+    admitted = await compactSoloLane(solo, focus, context);
+  } catch (error) {
+    return { status: 'failed', tokensBefore: 0, error: messageOf(error) };
+  }
+  const settled = await solo.harness.waitForTask(admitted.taskId, context);
+  const outcome = settled.state.outcome;
+  if (outcome.status === 'completed') {
+    return { status: 'completed', tokensBefore: admitted.tokensBefore };
+  }
+  if (outcome.status === 'failed' || outcome.status === 'faulted') {
+    return {
+      status: outcome.status,
+      tokensBefore: admitted.tokensBefore,
+      error: outcome.error.message,
+    };
+  }
+  return {
+    status: outcome.status,
+    tokensBefore: admitted.tokensBefore,
+    error: outcome.reason ?? `compaction ${outcome.status}`,
+  };
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export interface BranchSummaryEntry {

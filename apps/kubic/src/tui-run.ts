@@ -122,6 +122,9 @@ import {
 import {
   DEFAULT_RESERVE_TOKENS,
   effectiveReserveTokens,
+  type ManualCompactionOutcome,
+  parseCompactCommand,
+  runManualCompaction,
 } from '../../../packages/worker/src/compaction.js';
 import {
   abortLane,
@@ -216,6 +219,16 @@ export interface TuiLaneLoop {
       onSubmitted?: (submissionId: string) => void;
     },
   ): Promise<TurnOutcome>;
+  /**
+   * #330: one manual compaction (`/compact [focus]`), admitted and awaited
+   * to terminal — the pre-cut context estimate, or the harness' own failure.
+   * Absent means this boot has no live lane to compact (the orchestrator
+   * viewer shell).
+   */
+  compact?(
+    focus: string | undefined,
+    context: Context,
+  ): Promise<ManualCompactionOutcome>;
   /**
    * #398/D2: the conversation's committed lane events. The attach snapshot
    * REPLACES the feed's committed entries; every later event is appended.
@@ -332,6 +345,12 @@ export interface TuiTurnDriver {
   run(prompt: string, options?: TuiTurnOptions): Promise<TuiTurnOutcome>;
   cancel(): Promise<boolean>;
   drainForQuit(bound: Promise<void>): Promise<void>;
+  /**
+   * #330: the settlement line this driver reports INSTEAD of the generic turn
+   * outcome — a compaction is not a turn (`compacted: …`), and its failure
+   * text is the harness' own. Absent means the loop's `footerForOutcome`.
+   */
+  settlementFooter?(): string | undefined;
 }
 
 // Issue #327: the orchestrator lane a session can switch to with Ctrl-G.
@@ -406,6 +425,100 @@ export class TuiOrchestratorTurn implements TuiTurnDriver {
     // The abort is a call into the drive and can hang: the bound covers it,
     // not only the wait for the run to settle (issue #312).
     await Promise.race([Promise.resolve(this.drive.abort?.()), bound]);
+    const settled = (this.running ?? Promise.resolve()).then(
+      () => undefined,
+      () => undefined,
+    );
+    await Promise.race([settled, bound]);
+  }
+}
+
+// Issue #330: `/compact [focus]` is a lane operation, not a prompt — Pi's
+// manual compaction task (lane/compaction.ts). It is driven through the same
+// busy/cancel wrapper as a turn, so the spinner shows, Ctrl-C aborts the
+// conversation (Pi settles the task aborted/orphaned) and the quit drain
+// waits on it; its settlement line is the compaction's own, never a turn
+// outcome.
+export class TuiCompactionTurn implements TuiTurnDriver {
+  private readonly loop: TuiLaneLoop;
+  private readonly focus: string | undefined;
+  private running: Promise<TuiTurnOutcome> | undefined;
+  private outcome: ManualCompactionOutcome | undefined;
+  private aborted = false;
+
+  constructor(loop: TuiLaneLoop, focus: string | undefined) {
+    this.loop = loop;
+    this.focus = focus;
+  }
+
+  isRunning(): boolean {
+    return this.running !== undefined;
+  }
+
+  isCancelling(): boolean {
+    return this.aborted && this.isRunning();
+  }
+
+  canCancel(): boolean {
+    return true;
+  }
+
+  // The prompt argument is the submitted draft; the focus it carries was
+  // parsed before construction, so the command text never reaches the model.
+  run(_prompt: string): Promise<TuiTurnOutcome> {
+    this.aborted = false;
+    const compact = this.loop.compact;
+    if (compact === undefined) {
+      return Promise.resolve({
+        status: 'failed',
+        detail: 'compaction needs the solo lane',
+      });
+    }
+    const running = (async (): Promise<TuiTurnOutcome> => {
+      const outcome = await compact(this.focus, this.loop.context);
+      this.outcome = outcome;
+      if (outcome.status === 'completed') return { status: 'completed' };
+      if (outcome.status === 'aborted' || outcome.status === 'orphaned') {
+        return { status: 'cancelled' };
+      }
+      return {
+        status: 'failed',
+        detail: outcome.error ?? `compaction ${outcome.status}`,
+      };
+    })().finally(() => {
+      if (this.running === running) this.running = undefined;
+    });
+    this.running = running;
+    return running;
+  }
+
+  settlementFooter(): string | undefined {
+    const outcome = this.outcome;
+    if (outcome === undefined) return undefined;
+    if (outcome.status === 'completed') {
+      return `compacted: ${outcome.tokensBefore} tokens → summary`;
+    }
+    if (outcome.status === 'aborted' || outcome.status === 'orphaned') {
+      return 'compaction cancelled';
+    }
+    return `compaction failed: ${outcome.error ?? outcome.status}`;
+  }
+
+  async cancel(): Promise<boolean> {
+    if (!this.isRunning()) return false;
+    this.aborted = true;
+    // The durable stop: Pi marks the compaction task and settles it aborted.
+    await this.loop.abort(this.loop.context);
+    return true;
+  }
+
+  async drainForQuit(bound: Promise<void>): Promise<void> {
+    if (!this.isRunning()) return;
+    this.aborted = true;
+    await Promise.race([
+      this.loop.abort(this.loop.context).catch(() => undefined),
+      bound,
+    ]);
     const settled = (this.running ?? Promise.resolve()).then(
       () => undefined,
       () => undefined,
@@ -748,6 +861,10 @@ export function soloTuiLoop(
       ),
     entries: (loopContext) =>
       readConversationEntries(solo.conversation, loopContext),
+    // Issue #330: `/compact [focus]` — Pi's manual compaction task with
+    // Kubic's compact prompt as the summarizer instructions.
+    compact: (focus, loopContext) =>
+      runManualCompaction(solo, focus, loopContext),
     // D6.2: the shared abort+drain (conversation.abort, every kill
     // attempted, failures aggregated) and the settled-turn forget.
     abort: async (loopContext) => {
@@ -2121,6 +2238,26 @@ export function parseModelCommand(prompt: string): TuiModelCommand | undefined {
   }
 }
 
+// The `/compact [instructions]` command of the interactive loop (#330;
+// §27.2). `undefined` means the draft is a prompt, not the command; the
+// focus is the instructions Pi hands the summarizer (verbatim, via
+// compaction.ts's compact prompt), absent when the operator typed `/compact`
+// alone. One parser for the dispatch and its tests.
+export interface TuiCompactCommand {
+  readonly focus: string | undefined;
+}
+
+export function parseTuiCompactCommand(
+  prompt: string,
+): TuiCompactCommand | undefined {
+  const trimmed = prompt.trim();
+  if (trimmed !== '/compact' && !trimmed.startsWith('/compact ')) {
+    return undefined;
+  }
+  const focus = parseCompactCommand(trimmed).trim();
+  return { focus: focus === '' ? undefined : focus };
+}
+
 // The parsed `kubic tui` invocation (commander owns the argv:
 // ./commands/solo.ts). The parity flags (issue #113) carry the same names
 // and value rules as their `kubic run` counterparts.
@@ -2779,6 +2916,9 @@ export async function runTuiCommand(
             if (outcome.status === 'cancelled' && droppedOnCancel > 0) {
               footer = `${footer} · dropped ${droppedOnCancel} queued prompt${droppedOnCancel === 1 ? '' : 's'}`;
             }
+            // A driver with its own settlement line (the compaction's
+            // `compacted: …`, #330) reports it instead of a turn outcome.
+            footer = driver.settlementFooter?.() ?? footer;
           })
           .catch((error: unknown) => {
             const message =
@@ -2807,6 +2947,28 @@ export async function runTuiCommand(
       ): TuiSubmitOutcome => {
         if (stopped) return 'refused';
         const busy = activeTurn?.isRunning() === true;
+        // Issue #330: `/compact [instructions]` is a lane operation, never a
+        // prompt. It runs through the same busy/cancel wrapper as a turn, so
+        // the spinner shows and Ctrl-C aborts it; the command text itself
+        // never reaches the model or the transcript.
+        const compactCommand = parseTuiCompactCommand(prompt);
+        if (compactCommand !== undefined) {
+          const lane = boot.loop;
+          if (busy) {
+            app.setEditorFooter(
+              'compact: finish the current turn before compacting',
+            );
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
+          if (lane?.compact === undefined) {
+            app.setEditorFooter('compaction needs the solo lane');
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
+          startTurn(new TuiCompactionTurn(lane, compactCommand.focus), prompt);
+          return 'accepted';
+        }
         const modelCommand = parseModelCommand(prompt);
         if (modelCommand !== undefined) {
           // A live switch is a conversation.configure: it never races a run.

@@ -26,13 +26,14 @@ import {
   createSession,
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
-import { bootSoloLane } from '../../worker/src/lane/solo.js';
+import { bootSoloLane, type SoloLane } from '../../worker/src/lane/solo.js';
 import {
   bootFauxLane,
   fauxToolUse,
 } from '../../worker/src/lane/test-harness.js';
 import {
   BACKGROUND_CONTEXT,
+  CompactionEntry,
   ConversationBusy,
   createModels,
   fauxAssistantMessage,
@@ -100,6 +101,13 @@ function fauxModels(steps: FauxStep[]): {
 function fauxLaneBoot(
   root: string,
   models: MutableModels,
+  options: {
+    // #330: a smaller keep-recent window lets a test-sized context compact.
+    compaction?: Parameters<typeof bootSoloLane>[0]['compaction'];
+    // The booted lane, for tests that read its transcript (the /compact
+    // acceptance counts pi.compaction entries).
+    onBoot?: (solo: SoloLane) => void;
+  } = {},
 ): TuiRunDeps['bootLane'] {
   return async (sessionId?: string) => {
     const bridge = createNodeFileBridge(root);
@@ -120,7 +128,11 @@ function fauxLaneBoot(
       sessionId: id,
       agentId: 'root',
       journal: new FileJournalStore(join(root, id, 'journal')),
+      ...(options.compaction === undefined
+        ? {}
+        : { compaction: options.compaction }),
     });
+    options.onBoot?.(solo);
     return {
       sessionId: id,
       model: `${provider.id}/${model.id}`,
@@ -595,6 +607,180 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(fake.writes.join('')).not.toContain('queued answer');
     expect(calls()).toBe(1);
     // The session is alive and idle again: a second Ctrl-C quits.
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    expect(fake.counts.stopped).toBe(1);
+  });
+
+  it('runs /compact [instructions] as a compaction, never as a prompt (#330)', async () => {
+    // Acceptance (#330): the command never reaches the model as text. The
+    // lane admits Pi's manual compaction task with the focus as the
+    // summarizer's instructions, exactly one `pi.compaction` entry lands, and
+    // the footer reports what the cut did.
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    const seen: string[] = [];
+    let lane: SoloLane | undefined;
+    const { models, calls } = fauxModels([
+      'first answer',
+      (context) => {
+        seen.push(
+          context.messages.map((message) => JSON.stringify(message)).join('\n'),
+        );
+        return fauxAssistantMessage('## Goal\nsummarized');
+      },
+    ]);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        // A test-sized keep-recent window: one 500-token turn is enough to
+        // have something to cut (the shipped default is 20000).
+        bootLane: fauxLaneBoot(root, models, {
+          compaction: { keepRecentTokens: 200 },
+          onBoot: (booted) => {
+            lane = booted;
+          },
+        }),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'first prompt') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('first answer'));
+    for (const ch of '/compact focus on the auth bug') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() =>
+      /compacted: \d+ tokens → summary/.test(fake.writes.join('')),
+    );
+    // The session is read while it is still open: quitting closes the lane.
+    if (lane === undefined) throw new Error('the lane never booted');
+    const page = await lane.conversation.entries(
+      {},
+      200,
+      undefined,
+      BACKGROUND_CONTEXT,
+    );
+    const entries = page.items;
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    // The summarizer saw the operator's instructions (and the agent turn
+    // never saw the command text).
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain('focus on the auth bug');
+    expect(calls()).toBe(2);
+    expect(entries.filter((entry) => CompactionEntry.is(entry))).toHaveLength(
+      1,
+    );
+    // No user message carries the command: it was a lane operation.
+    const users = entries.filter((entry) => entry.kind === 'pi.user');
+    expect(users.length).toBeGreaterThan(0);
+    expect(JSON.stringify(users)).not.toContain('/compact');
+  });
+
+  it('refuses /compact while a turn runs, with the reason on the footer (#330)', async () => {
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    let release: () => void = () => {};
+    const gated = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let lane: SoloLane | undefined;
+    const { models } = fauxModels([
+      async () => {
+        await gated;
+        return fauxAssistantMessage('first answer');
+      },
+      '## Goal\nsummarized',
+    ]);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models, {
+          compaction: { keepRecentTokens: 200 },
+          onBoot: (booted) => {
+            lane = booted;
+          },
+        }),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'first prompt') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('first prompt'));
+    for (const ch of '/compact') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() =>
+      fake.writes
+        .join('')
+        .includes('compact: finish the current turn before compacting'),
+    );
+    release();
+    await waitFor(() => fake.writes.join('').includes('first answer'));
+    if (lane === undefined) throw new Error('the lane never booted');
+    const page = await lane.conversation.entries(
+      {},
+      200,
+      undefined,
+      BACKGROUND_CONTEXT,
+    );
+    expect(
+      page.items.filter((entry) => CompactionEntry.is(entry)),
+    ).toHaveLength(0);
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+
+  it('cancels a running compaction with Ctrl-C and says so (#330)', async () => {
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    let releaseSummary: () => void = () => {};
+    const summaryGate = new Promise<void>((resolve) => {
+      releaseSummary = resolve;
+    });
+    let summaryStarted: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      summaryStarted = resolve;
+    });
+    const { models } = fauxModels([
+      'first answer',
+      async () => {
+        summaryStarted();
+        await summaryGate;
+        return fauxAssistantMessage('## Goal\nsummarized');
+      },
+    ]);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models, {
+          compaction: { keepRecentTokens: 200 },
+        }),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'first prompt') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('first answer'));
+    for (const ch of '/compact') fake.feed(ch);
+    fake.feed('\r');
+    // The compaction task is live (its summarization request is gated):
+    // Ctrl-C aborts the conversation and Pi settles the task aborted.
+    await started;
+    fake.feed('\x03');
+    releaseSummary();
+    await waitFor(() => fake.writes.join('').includes('compaction cancelled'));
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);

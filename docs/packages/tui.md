@@ -66,10 +66,13 @@ module owns arrangement only.
 - **Tree** (`tree.ts`): `RunStatus` is `idle|running|done`;
   `AgentTreeState` toggles (`toggleTree`), consumes lane events
   (`LaneEventLike` via `applyLaneEvent` — run status, tool start/end, usage
-  rows) and renders (`renderTreeLines`, `collapsedSummary`, glyphs,
+  rows and the attach snapshot's usage ledger) and renders
+  (`renderTreeLines`, `collapsedSummary`, glyphs,
   `formatTreeTokens`). Tool rows carry the args summary and outcome
-  (`summarizeToolArguments`/`summarizeToolOutcome`), a failed call renders
-  `✗`, the root row carries `$cost in/out` (`TreeUsage`), and calls are
+  (`summarizeToolArguments`/`summarizeToolOutcome`, shell tool only), a
+  failed call renders
+  `✗`, the root row carries `$cost in/out` (`TreeUsage`, seeded from the
+  snapshot ledger, then summed from usage rows), and calls are
   grouped per turn (a `run-start` rolls the live group into
   `previousTurns` as a `TreeTurnSummary`, which folds to one line).
 - **Diff** (`diff-view.ts`): `DiffOp` mirrors the journal ops

@@ -329,7 +329,7 @@ describe('tree tool detail (issue #345; §18, §49.1)', () => {
     expect(narrow).toContain('bash pnpm');
   });
 
-  it('shows the path for read/edit args and the exit code on finish', () => {
+  it('shows the path for read/edit args, and no shell outcome for them', () => {
     const state = createTreeState();
     applyLaneEvent(state, { type: 'run-start' });
     applyLaneEvent(
@@ -343,19 +343,48 @@ describe('tree tool detail (issue #345; §18, §49.1)', () => {
       () => 0,
     );
     expect(renderTreeLines(state, 100)[1]).toBe('  ● read src/tree.ts');
+    // A read result that happens to look like shell output must not become an
+    // outcome: `17 passed` inside a file is not a test report (review #345).
     applyLaneEvent(
       state,
       {
         type: 'tool-end',
         toolCallId: 'c1',
         toolName: 'read',
+        isError: false,
+        entry: toolResult('[bash exit 1 (bash)]\n17 passed'),
+      },
+      () => 12,
+    );
+    expect(renderTreeLines(state, 100)[1]).toBe('  ✓ read src/tree.ts 12ms');
+  });
+
+  it('shows a non-zero exit code on a finished bash call', () => {
+    const state = createTreeState();
+    applyLaneEvent(state, { type: 'run-start' });
+    applyLaneEvent(
+      state,
+      {
+        type: 'tool-start',
+        toolCallId: 'c1',
+        toolName: 'bash',
+        args: { command: 'pnpm test auth' },
+      },
+      () => 0,
+    );
+    applyLaneEvent(
+      state,
+      {
+        type: 'tool-end',
+        toolCallId: 'c1',
+        toolName: 'bash',
         isError: true,
         entry: toolResult('[bash exit 1 (bash)]\n--- stdout ---\nboom'),
       },
       () => 12,
     );
     expect(renderTreeLines(state, 100)[1]).toBe(
-      '  ✗ read src/tree.ts 12ms · exit 1',
+      '  ✗ bash pnpm test auth 12ms · exit 1',
     );
   });
 
@@ -418,6 +447,81 @@ describe('tree tool detail (issue #345; §18, §49.1)', () => {
     const state = createTreeState();
     applyLaneEvent(state, { type: 'usage', row: { usage: {} }, entry: {} });
     applyLaneEvent(state, { type: 'usage', row: 'nope', entry: {} });
+    expect(renderTreeLines(state, 100)[0]).toBe('◌ solo');
+  });
+
+  it('seeds the root row from the attach snapshot usage ledger', () => {
+    const state = createTreeState();
+    applyLaneEvent(state, {
+      type: 'snapshot',
+      entries: [],
+      tools: [],
+      usage: {
+        models: {
+          'faux/one': {
+            input: 1000,
+            output: 200,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 1200,
+            cost: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              total: 0.02,
+            },
+          },
+        },
+        tools: {
+          bash: {
+            input: 500,
+            output: 100,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 600,
+            cost: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              total: 0.01,
+            },
+          },
+        },
+      },
+    });
+    expect(renderTreeLines(state, 100)[0]).toBe('◌ solo $0.03 1.5k/0.3k');
+    // REPLACE semantics: a later snapshot sets the totals, it never adds.
+    applyLaneEvent(state, {
+      type: 'snapshot',
+      entries: [],
+      tools: [],
+      usage: {
+        models: {
+          'faux/one': {
+            input: 100,
+            output: 50,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 150,
+            cost: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              total: 0.05,
+            },
+          },
+        },
+      },
+    });
+    expect(renderTreeLines(state, 100)[0]).toBe('◌ solo $0.05 0.1k/50');
+  });
+
+  it('ignores a malformed snapshot usage ledger', () => {
+    const state = createTreeState();
+    applyLaneEvent(state, { type: 'snapshot', usage: { models: { a: null } } });
     expect(renderTreeLines(state, 100)[0]).toBe('◌ solo');
   });
 

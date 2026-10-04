@@ -113,6 +113,7 @@ export interface LaneEventLike {
   readonly args?: unknown;
   readonly entry?: unknown;
   readonly row?: unknown;
+  readonly usage?: unknown;
   readonly [key: string]: unknown;
 }
 
@@ -150,6 +151,32 @@ function usageTotalsOf(
   };
 }
 
+// The snapshot's `UsageState` ledger: `models` and `tools`, each keyed by
+// provider/model or tool name, every bucket a counter set. Untrusted JSON —
+// a malformed bucket contributes nothing.
+function usageLedgerTotals(
+  usage: unknown,
+): { cost: number; input: number; output: number } | undefined {
+  if (typeof usage !== 'object' || usage === null) return undefined;
+  const ledger = usage as { models?: unknown; tools?: unknown };
+  let cost = 0;
+  let input = 0;
+  let output = 0;
+  let seen = false;
+  for (const buckets of [ledger.models, ledger.tools]) {
+    if (typeof buckets !== 'object' || buckets === null) continue;
+    for (const bucket of Object.values(buckets as Record<string, unknown>)) {
+      const counters = usageTotalsOf({ usage: bucket });
+      if (counters === undefined) continue;
+      seen = true;
+      cost += counters.cost;
+      input += counters.input;
+      output += counters.output;
+    }
+  }
+  return seen ? { cost, input, output } : undefined;
+}
+
 export function applyLaneEvent(
   state: AgentTreeState,
   event: LaneEventLike,
@@ -176,6 +203,22 @@ export function applyLaneEvent(
     }
     case 'run-end': {
       state.rootStatus = 'done';
+      return;
+    }
+    case 'snapshot': {
+      // The attach snapshot carries the conversation's cumulative usage
+      // ledger (`UsageState`, per model and per tool), so a late join or a
+      // resumed session shows the spend it already has instead of starting at
+      // zero. The snapshot is REPLACE semantics: it sets the totals, never
+      // adds them (review finding, #345).
+      const totals = usageLedgerTotals(event.usage);
+      if (totals === undefined) return;
+      state.usage = {
+        seen: true,
+        costTotal: totals.cost,
+        inputTokens: totals.input,
+        outputTokens: totals.output,
+      };
       return;
     }
     case 'usage': {
@@ -226,7 +269,7 @@ export function applyLaneEvent(
       if (typeof event.toolCallId !== 'string') return;
       if (typeof event.toolName !== 'string') return;
       const toolName = sanitizeLaneText(event.toolName);
-      const outcome = summarizeToolOutcome(event.entry);
+      const outcome = summarizeToolOutcome(event.entry, toolName);
       const at = now();
       const existing = state.tools.find((t) => t.id === event.toolCallId);
       if (existing === undefined) {

@@ -95,10 +95,16 @@ export function summarizeToolArguments(args: unknown): string {
 
 // The one-line OUTCOME of a finished tool call (issue #345; §18): the test
 // summary the operator reads first (`17 passed`), else a non-zero shell exit
-// code. Both are derived from the tool-result entry, which is untrusted tool
-// output, so the returned text is sanitized and newline-collapsed before it
-// reaches the tree.
+// code. Only the shell tool has either — a `read` of a file whose text
+// happens to contain `17 passed` must not turn into a test report (review
+// finding, #345) — so the caller names the tool and anything else yields no
+// outcome. Both fields come from untrusted tool output, so the returned text
+// is sanitized and newline-collapsed before it reaches the tree.
 export const TOOL_OUTCOME_MAX_CHARS = 60;
+
+// The one shell tool Kubic registers (`packages/worker/src/ops/bash.ts`);
+// exit codes and test summaries are its results' vocabulary.
+const SHELL_TOOL_NAME = 'bash';
 
 // A tool-result entry carries its message as the first model message
 // (pi-durable's EntryRecord) or as a plain `message` (the coarse lane cell
@@ -144,7 +150,11 @@ function testSummaryOf(text: string): string | undefined {
 const BASH_EXIT_HEAD = /\[bash exit (\d+)\b/u;
 const JSON_EXIT_LINE = /^exit (\d+)$/mu;
 
-export function summarizeToolOutcome(entry: unknown): string | undefined {
+export function summarizeToolOutcome(
+  entry: unknown,
+  toolName?: string,
+): string | undefined {
+  if (toolName !== SHELL_TOOL_NAME) return undefined;
   const text = toolResultText(entry);
   if (text === undefined) return undefined;
   const body = unpackShellRecord(text);

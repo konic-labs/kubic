@@ -269,7 +269,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     // The refusal reason never appeared: the call was really approved, and
     // the tree shows the bash call succeeded.
     expect(fake.frame).not.toContain('no approval surface is installed');
-    expect(lines.join('\n')).toMatch(/✓ bash \d+ms/);
+    expect(lines.join('\n')).toMatch(/✓ bash rm -rf \/tmp\/x \d+ms/);
   });
 
   it('denies the gated call on Esc without quitting the session', async () => {
@@ -315,7 +315,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     const doc = lines.join('\n');
     expect(doc).toContain('after the denial');
     expect(doc).not.toContain('Approval required');
-    expect(doc).not.toMatch(/✓ bash \d+ms/);
+    expect(doc).not.toMatch(/✓ bash /);
   });
 
   it('quits cleanly with no approval ever asked (criterion 6)', async () => {

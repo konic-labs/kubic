@@ -811,7 +811,8 @@ a large workspace pays it (and the screen pauses) after every turn that used
 **Screen layout.** Top to bottom: a one-line header (the Konic `■ kubic`
 wordmark, mode and model); the agent tree, sized to its content (at most 6
 rows). The tree's root row carries the run glyph plus the session's
-`$cost in/out` tokens once usage arrives (`● solo $0.02 2.0k/1.0k`); each
+`$cost in/out` tokens (`● solo $0.02 2.0k/1.0k`) — seeded from the session's
+usage ledger when the TUI attaches, then summed from each response; each
 tool row shows the glyph, the tool name, a one-line summary of its key
 argument (the `bash` command, the `read`/`edit` path), the duration and a
 short outcome (a detected test summary like `17 passed`, or a non-zero

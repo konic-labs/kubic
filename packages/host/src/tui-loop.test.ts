@@ -248,11 +248,11 @@ describe('kubic tui prompt loop (issue #88)', () => {
     const doc = lines.join('\n');
     // The tree reflects the tool call: applyLaneEvent has a production
     // caller on the loop path. Asserted on the TREE's own rendering — the
-    // glyph + duration line ('✓ bash 1ms') that only AgentTreeView produces
-    // (the transcript writes 'tool bash', with no glyph and no duration), so
-    // deleting `this.app.applyLaneEvent(event)` from TuiTurnRunner turns
-    // this red. Verified by mutation: it does.
-    expect(doc).toMatch(/✓ bash \d+ms/);
+    // glyph + name + args + duration line ('✓ bash echo hi 1ms') that only
+    // AgentTreeView produces (the transcript writes 'tool bash', with no
+    // glyph and no duration), so deleting `this.app.applyLaneEvent(event)`
+    // from TuiTurnRunner turns this red. Verified by mutation: it does.
+    expect(doc).toMatch(/✓ bash echo hi \d+ms/);
     // The status bar carries a real usage row: setUsage has a production
     // caller too. The row values come from the lane's usage event, so a
     // dropped `setUsage` call must also turn this red (verified).

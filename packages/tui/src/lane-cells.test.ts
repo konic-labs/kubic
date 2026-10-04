@@ -168,31 +168,51 @@ describe('tool outcome summary (issue #345)', () => {
 
   it('reads the pi-durable bash header, the JSON record and the lane shape', () => {
     expect(
-      summarizeToolOutcome(resultEntry('[bash exit 1 (bash)]\nboom')),
+      summarizeToolOutcome(resultEntry('[bash exit 1 (bash)]\nboom'), 'bash'),
     ).toBe('exit 1');
     expect(
       summarizeToolOutcome(
         resultEntry(JSON.stringify({ stdout: 'x', exitCode: 3 })),
+        'bash',
       ),
     ).toBe('exit 3');
     expect(
-      summarizeToolOutcome({
-        message: {
-          role: 'toolResult',
-          content: [{ type: 'text', text: 'Tests: 3 passed, 1 failed' }],
+      summarizeToolOutcome(
+        {
+          message: {
+            role: 'toolResult',
+            content: [{ type: 'text', text: 'Tests: 3 passed, 1 failed' }],
+          },
         },
-      }),
+        'bash',
+      ),
     ).toBe('3 passed, 1 failed');
+  });
+
+  it('only summarises the shell tool, never a read of shell-shaped text', () => {
+    const text = '[bash exit 1 (bash)]\n17 passed';
+    // The shell tool gets the summary (it wins over the exit code) …
+    expect(summarizeToolOutcome(resultEntry(text), 'bash')).toBe('17 passed');
+    // … while a file's shell-shaped text is not the file tool's outcome.
+    expect(summarizeToolOutcome(resultEntry(text))).toBeUndefined();
+    expect(summarizeToolOutcome(resultEntry(text), 'read')).toBeUndefined();
+    expect(
+      summarizeToolOutcome(resultEntry('17 passed'), 'grep'),
+    ).toBeUndefined();
   });
 
   it('prefers a test summary over a zero exit and hides a clean exit', () => {
     expect(
       summarizeToolOutcome(
         resultEntry('[bash exit 0 (bash)]\n--- stdout ---\n17 passed'),
+        'bash',
       ),
     ).toBe('17 passed');
     expect(
-      summarizeToolOutcome(resultEntry('[bash exit 0 (bash)]\nnothing')),
+      summarizeToolOutcome(
+        resultEntry('[bash exit 0 (bash)]\nnothing'),
+        'bash',
+      ),
     ).toBeUndefined();
   });
 
@@ -200,6 +220,7 @@ describe('tool outcome summary (issue #345)', () => {
     const ESC = String.fromCharCode(27);
     const summary = summarizeToolOutcome(
       resultEntry(`\n\nTests ${'9'.repeat(80)} passed${ESC}[2J`),
+      'bash',
     );
     expect(summary).toBeDefined();
     expect(summary?.length).toBeLessThanOrEqual(TOOL_OUTCOME_MAX_CHARS);
@@ -207,14 +228,17 @@ describe('tool outcome summary (issue #345)', () => {
   });
 
   it('ignores anything that is not a tool result', () => {
-    expect(summarizeToolOutcome(undefined)).toBeUndefined();
-    expect(summarizeToolOutcome('nope')).toBeUndefined();
+    expect(summarizeToolOutcome(undefined, 'bash')).toBeUndefined();
+    expect(summarizeToolOutcome('nope', 'bash')).toBeUndefined();
     expect(
-      summarizeToolOutcome(resultEntry('text', 'assistant')),
+      summarizeToolOutcome(resultEntry('text', 'assistant'), 'bash'),
     ).toBeUndefined();
-    expect(summarizeToolOutcome({ model: [] })).toBeUndefined();
+    expect(summarizeToolOutcome({ model: [] }, 'bash')).toBeUndefined();
     expect(
-      summarizeToolOutcome({ model: [{ role: 'toolResult', content: [] }] }),
+      summarizeToolOutcome(
+        { model: [{ role: 'toolResult', content: [] }] },
+        'bash',
+      ),
     ).toBeUndefined();
   });
 });

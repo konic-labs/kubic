@@ -178,7 +178,9 @@ unregister fn the op calls once `wait()` settles, because a lane reuses one
 registry for a whole session — a handle left per completed call kept that
 call's output alive for the life of the run. `kill()` on a settled handle is
 a no-op, and a group SIGKILL escalation is scheduled only when the leader
-was still alive at kill time (a leader that already exited owns no pgid).
+was still alive at kill time (a leader that already exited has had its pgid
+recycled; the group itself lives while any member does, which is why the
+SIGTERM is still sent).
 The test seam
 `__setResolvedShellForTests` (exported from `ops/bash.ts`, never
 re-exported) pins or resets the per-process resolution.

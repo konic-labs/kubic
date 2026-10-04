@@ -406,16 +406,37 @@ describe('a settled process handle', () => {
         signalled.push([signalledPid, signal]);
         return true;
       }) as typeof process.kill);
+      // The escalation is the only timer kill() schedules, so observing the
+      // timers it registers is deterministic: waiting for a SIGKILL that
+      // must not come would race the drain window (and let the settle path's
+      // own reap be recorded instead).
+      const realSetTimeout = globalThis.setTimeout;
+      const timers: number[] = [];
+      const timerSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
+        fn: () => void,
+        ms?: number,
+        ...args: unknown[]
+      ) => {
+        timers.push(ms ?? 0);
+        return realSetTimeout(fn, ms, ...args);
+      }) as typeof setTimeout);
       try {
         handle.kill();
-        // Give a would-be escalation timer (killGraceMs = 5) time to fire,
-        // still inside the drain window.
-        await new Promise((resolveTick) => setTimeout(resolveTick, 30));
       } finally {
+        timerSpy.mockRestore();
         spy.mockRestore();
+        // The pipe holder must not outlive the test even when an assertion
+        // above throws: the settle path reaps it, and this makes it certain.
+        try {
+          realKill(-(pid as number), 'SIGKILL');
+        } catch {
+          // Already gone.
+        }
       }
-      // The group is gone, so the SIGTERM attempt is harmless — but a delayed
-      // group SIGKILL could hit a recycled pgid and must not be scheduled.
+      // A dead leader owns no group: the SIGTERM attempt is harmless (ESRCH
+      // when the group is gone), but the delayed group SIGKILL — the one
+      // that could hit a recycled pgid — must not even be scheduled.
+      expect(timers).not.toContain(5);
       expect(signalled.filter(([, signal]) => signal === 'SIGKILL')).toEqual(
         [],
       );

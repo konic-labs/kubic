@@ -410,6 +410,29 @@ describe('trajectory review fixes (round 2)', () => {
     });
   });
 
+  it('defaults usage.byModel to an empty record when the caller omits it (issue #331)', () => {
+    const exported = buildTrajectoryExport(
+      completeInput({
+        // A runtime caller that never built the per-model rollup: the
+        // declared TrajectoryUsage contract still requires the field, so
+        // the exporter must supply it rather than emit a record the
+        // parser refuses.
+        usage: {
+          inputTokens: 10,
+          outputTokens: 5,
+          cachedTokens: 0,
+          requests: 1,
+          costUsd: 0.01,
+        } as BuildTrajectoryInput['usage'],
+      }),
+    );
+    expect(exported.usage.byModel).toEqual({});
+    const revived = parseTrajectoryExport(
+      JSON.parse(JSON.stringify(exported)) as unknown,
+    );
+    expect(revived.usage.byModel).toEqual({});
+  });
+
   // Issue #359 replaces the old "records the used env VERBATIM" premise: the
   // spawn env DOES carry role grants (KUBIC_ROLE_*), so the exporter redacts
   // every secret-classified key with the classifier the spawn path uses. The

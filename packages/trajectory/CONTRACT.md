@@ -37,6 +37,14 @@ with `unknown-major` (exit 3). Breaking changes mint major 2.
   a `failureCategory` or `error` is `contradictory-result` (exit 2).
 - `usage.byModel` rows are validated (`requests`/`input`/`output`/
   `costTotal` non-negative numbers); otherwise `invalid-usage` (exit 2).
+  A caller that omits the rollup gets `byModel: {}` — the exporter never
+  emits a record the parser would refuse.
+- Structural validation (issue #331): every §46 section is type-checked
+  with its required nested keys (`model.provider`/`model`, `result.status`
+  in `RESULT_STATUSES`, `actions`/`observations`/`approvals` arrays, the
+  `usage` numbers, …). A null or mistyped section/key is `malformed`
+  (exit 3) naming the JSON path (`trajectory.actions must be an array`),
+  never a raw `TypeError` downstream. Unknown extra keys are preserved.
 - Observations over 8 KiB are truncated on a UTF-8 character boundary
   (byte cap holds exactly, no U+FFFD) with `bytesOriginal` kept.
 

@@ -32,9 +32,16 @@ worker spawn env uses too (#359: role grants ride in the spawn env, so it is
 not secret-free); every
 non-`completed` result carries a §52 `failureCategory` (else
 `missing-failure-category`), while a `completed` result carrying one is
-`contradictory-result`; bad `usage.byModel` rows → `invalid-usage`;
-observations over 8 KiB truncate on a UTF-8 boundary with
-`bytesOriginal` kept. Consumers read via `parseTrajectoryExport` /
+`contradictory-result`; bad `usage.byModel` rows → `invalid-usage` (a
+caller that omits the rollup gets `byModel: {}`); observations over 8 KiB
+truncate on a UTF-8 boundary with
+`bytesOriginal` kept. Every §46 section is type-checked with its required
+nested keys (`model.provider`/`model`, `result.status` in
+`RESULT_STATUSES`, the `actions`/`observations`/`approvals` arrays, the
+`usage` numbers): a null or mistyped section/key is `malformed` (exit 3)
+naming the JSON path (`trajectory.actions must be an array`) — never a raw
+`TypeError` downstream — and unknown extra keys are preserved. Consumers
+read via `parseTrajectoryExport` /
 `parseTrajectoryExportJSON` — no shim. The `eval` slot (`{ suite,
 caseId, labels }`, null-labelled until #53 fills it) is reserved.
 

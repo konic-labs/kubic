@@ -225,6 +225,45 @@ describe('replay recorded exact (§47 exact; §47.1 Recorded)', () => {
     expect(envelope.error.code).toBe('trajectory-malformed');
   });
 
+  it('exits 2 with trajectory-malformed when a §46 section is structurally wrong', async () => {
+    // Issue #331: actions:null used to reach the describe/compare code and
+    // die as a raw TypeError (generic exit 1). It is now refused by the
+    // parser with a named path, on the same exit-2 code as any other
+    // malformed trajectory.
+    const dir = tmpRoot();
+    const path = join(dir, 'null-actions.json');
+    writeFileSync(
+      path,
+      JSON.stringify({ ...fixtureTrajectory(), actions: null }),
+    );
+    const o = out();
+    const exit = await runReplayCommand(
+      { trajectory: path, json: true },
+      deps(o),
+    );
+    expect(exit).toBe(2);
+    expect(o.errs).toEqual([]);
+    expect(o.lines).toHaveLength(1);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      ok: boolean;
+      exitCode: number;
+      error: { code: string; message: string };
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.exitCode).toBe(2);
+    expect(envelope.error.code).toBe('trajectory-malformed');
+    expect(envelope.error.message).toMatch(
+      /trajectory\.actions must be an array \(got null\)/,
+    );
+    // Text mode: one machine-readable `error: [code] message` line on stderr.
+    const text = out();
+    expect(await runReplayCommand({ trajectory: path }, deps(text))).toBe(2);
+    expect(text.lines).toEqual([]);
+    expect(text.errs).toEqual([
+      'error: [trajectory-malformed] trajectory.actions must be an array (got null)',
+    ]);
+  });
+
   it('exits 2 with the code preserved when the major is unsupported', async () => {
     const dir = tmpRoot();
     const path = join(dir, 'future.json');

@@ -318,6 +318,178 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+// §46 structural validation (issue #331): presence is not enough. A
+// published contract read from community files must fail closed with a
+// named path BEFORE a consumer dereferences a section — an `actions:
+// null` used to reach replay and die as a raw TypeError (generic exit 1)
+// instead of TrajectorySchemaError 'malformed'. Types only: unknown extra
+// keys survive (additive-only within major 1), and internals beyond the
+// required keys stay the exporter's job.
+type FieldType =
+  | 'object'
+  | 'array'
+  | 'string'
+  | 'number'
+  | 'string|null'
+  | 'number|null'
+  | 'object|null'
+  | 'string[]'
+  // `state.snapshot` is JsonValue: any JSON value, but the key must exist.
+  | 'json';
+
+// The required nested keys of every §46 object section. `transfer` is
+// object|null and `actions`/`observations`/`approvals` are arrays, so
+// they are listed separately below.
+const SECTION_FIELDS: Readonly<
+  Record<string, Readonly<Record<string, FieldType>>>
+> = {
+  task: { taskId: 'string', objective: 'string', role: 'string' },
+  identity: { sessionId: 'string', agentId: 'string', workerId: 'string|null' },
+  model: {
+    provider: 'string',
+    model: 'string',
+    thinking: 'string|null',
+    escalations: 'array',
+  },
+  prompt: { text: 'string', constraints: 'string[]' },
+  resources: { skills: 'string[]', promptTemplates: 'string[]' },
+  state: { phase: 'string', snapshot: 'json' },
+  provenance: {
+    sessionId: 'string',
+    agentId: 'string',
+    pid: 'number|null',
+    generation: 'number',
+    worktree: 'string',
+    model: 'string',
+  },
+  environment: { capturedFrom: 'string', cwd: 'string', env: 'object' },
+  worktree: { path: 'string', baseRevision: 'string', branch: 'string|null' },
+  diff: { filesChanged: 'string[]', files: 'array' },
+  timestamps: { startedAt: 'string', endedAt: 'string', durationMs: 'number' },
+  usage: {
+    inputTokens: 'number',
+    outputTokens: 'number',
+    cachedTokens: 'number',
+    requests: 'number',
+    costUsd: 'number',
+    byModel: 'object',
+  },
+  result: {
+    status: 'string',
+    summary: 'string',
+    failureCategory: 'string|null',
+    error: 'object|null',
+  },
+  eval: { suite: 'string|null', caseId: 'string|null', labels: 'object' },
+};
+
+const ARRAY_SECTIONS = ['actions', 'observations', 'approvals'] as const;
+
+function describeValue(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
+function malformed(path: string, detail: string): never {
+  throw new TrajectorySchemaError('malformed', `trajectory.${path} ${detail}`);
+}
+
+function fieldMatches(type: FieldType, value: unknown): boolean {
+  switch (type) {
+    case 'object':
+      return isRecord(value);
+    case 'array':
+      return Array.isArray(value);
+    case 'string':
+      return typeof value === 'string';
+    case 'number':
+      return typeof value === 'number';
+    case 'string|null':
+      return value === null || typeof value === 'string';
+    case 'number|null':
+      return value === null || typeof value === 'number';
+    case 'object|null':
+      return value === null || isRecord(value);
+    case 'string[]':
+      return (
+        Array.isArray(value) &&
+        value.every((entry) => typeof entry === 'string')
+      );
+    case 'json':
+      return true;
+  }
+}
+
+function expectedOf(type: FieldType): string {
+  switch (type) {
+    case 'object':
+      return 'an object';
+    case 'array':
+      return 'an array';
+    case 'string':
+      return 'a string';
+    case 'number':
+      return 'a number';
+    case 'string|null':
+      return 'a string or null';
+    case 'number|null':
+      return 'a number or null';
+    case 'object|null':
+      return 'an object or null';
+    case 'string[]':
+      return 'an array of strings';
+    case 'json':
+      return 'a JSON value';
+  }
+}
+
+function checkTrajectoryShape(input: Record<string, unknown>): void {
+  for (const [section, fields] of Object.entries(SECTION_FIELDS)) {
+    const value = input[section];
+    if (!isRecord(value)) {
+      malformed(section, `must be an object (got ${describeValue(value)})`);
+    }
+    for (const [field, type] of Object.entries(fields)) {
+      if (!(field in value)) {
+        malformed(`${section}.${field}`, 'is required');
+      }
+      const fieldValue = value[field];
+      if (!fieldMatches(type, fieldValue)) {
+        malformed(
+          `${section}.${field}`,
+          `must be ${expectedOf(type)} (got ${describeValue(fieldValue)})`,
+        );
+      }
+    }
+  }
+  for (const section of ARRAY_SECTIONS) {
+    const value = input[section];
+    if (!Array.isArray(value)) {
+      malformed(section, `must be an array (got ${describeValue(value)})`);
+    }
+  }
+  const transfer = input.transfer;
+  if (transfer !== null && !isRecord(transfer)) {
+    malformed(
+      'transfer',
+      `must be an object or null (got ${describeValue(transfer)})`,
+    );
+  }
+  // Guaranteed to be an object by the section loop above.
+  const result = input.result as Record<string, unknown>;
+  const status = result.status;
+  if (
+    typeof status !== 'string' ||
+    !(RESULT_STATUSES as readonly string[]).includes(status)
+  ) {
+    malformed(
+      'result.status',
+      `must be one of ${RESULT_STATUSES.join('|')} (got ${JSON.stringify(status)})`,
+    );
+  }
+}
+
 // Consumer entry for replay (#52) and eval (#53): strict major gate,
 // tolerant minor — same-major records parse with no shim; unknown fields
 // are preserved, unknown majors are refused loudly.
@@ -356,6 +528,7 @@ export function parseTrajectoryExport(input: unknown): TrajectoryExport {
       );
     }
   }
+  checkTrajectoryShape(input);
   return input as unknown as TrajectoryExport;
 }
 

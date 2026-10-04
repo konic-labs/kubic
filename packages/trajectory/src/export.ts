@@ -262,7 +262,13 @@ function checkUsage(input: BuildTrajectoryInput): TrajectoryUsage {
       }
     }
   }
-  return usage;
+  // Issue #331: the declared contract requires usage.byModel (a record of
+  // per-model rows). A caller that omits it gets the empty record, never
+  // an export the parser (and every consumer) would refuse.
+  return {
+    ...usage,
+    byModel: (isRecord(byModel) ? byModel : {}) as TrajectoryUsage['byModel'],
+  };
 }
 
 // §52 on failures: every non-completed result carries its failure

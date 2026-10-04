@@ -222,6 +222,89 @@ describe('retention fast path (issue #124, slice 2)', () => {
   });
 });
 
+describe('retention fast path with an age policy (issue #349)', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  it('100 appends with an age policy read the index at most once', () => {
+    const store = new FileJournalStore(tmpRoot(), {
+      ...FAST,
+      maxBytes: 10 * 1024 * 1024,
+      maxAgeMs: 7 * DAY_MS,
+    });
+    counts.indexReads = 0;
+    for (let i = 0; i < 100; i++) {
+      // Stamped now, so the 7-day window is what the cached oldest proves.
+      store.append(
+        entry({
+          path: `f${i}.txt`,
+          after: uniqueContent(i),
+          timestamp: Date.now(),
+        }),
+      );
+    }
+    // The first pass seeds the oldest timestamp; every later append proves
+    // from cache that nothing can have aged out (7 days against a session
+    // that is milliseconds old), so the whole index is never re-read.
+    expect(counts.indexReads).toBeLessThanOrEqual(1);
+  });
+
+  it('prunes an entry that crosses the age boundary on the next append', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir, {
+      maxBytes: 10 * 1024 * 1024,
+      maxAgeMs: 1000,
+    });
+    // Pin the wall clock so the boundary is crossed without a sleep.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(1_000_000);
+      store.append(
+        entry({ path: 'aged.txt', after: 'a\n', timestamp: 1_000_000 }),
+      );
+      expect(store.entries().map((e) => e.path)).toEqual(['aged.txt']);
+      // The window passes; the next append's pass must notice, even though
+      // the fast path was the state it left behind.
+      vi.setSystemTime(1_005_000);
+      store.append(
+        entry({ path: 'fresh.txt', after: 'f\n', timestamp: 1_005_000 }),
+      );
+      expect(store.entries().map((e) => e.path)).toEqual(['fresh.txt']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps pruning on later appends once the boundary has been crossed', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir, {
+      maxBytes: 10 * 1024 * 1024,
+      maxAgeMs: 15_000,
+    });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(2_000_000);
+      store.append(
+        entry({ path: 'a.txt', after: 'a\n', timestamp: 2_000_000 }),
+      );
+      // Ten seconds later a.txt is still inside the 15-second window: the
+      // cached oldest proves it and the pass is skipped.
+      vi.setSystemTime(2_010_000);
+      store.append(
+        entry({ path: 'b.txt', after: 'b\n', timestamp: 2_010_000 }),
+      );
+      // Twenty seconds after a.txt, the boundary is crossed: the pass runs
+      // and drops it while keeping b.txt and c.txt.
+      vi.setSystemTime(2_020_000);
+      store.append(
+        entry({ path: 'c.txt', after: 'c\n', timestamp: 2_020_000 }),
+      );
+      expect(store.entries().map((e) => e.path)).toEqual(['b.txt', 'c.txt']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('prune stats bound (issue #124, slice 2)', () => {
   it('a genuine prune on a cold store stats at most once per unique blob', () => {
     const dir = tmpRoot();

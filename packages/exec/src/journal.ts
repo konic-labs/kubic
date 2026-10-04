@@ -323,6 +323,19 @@ export function applyDelta(before: string, delta: string): string | null {
   }
 }
 
+// Issue #349: the minimum timestamp in a kept set — what an age policy's
+// fast path compares against `now`. The minimum, not the first entry: a
+// journal can carry entries appended out of timestamp order (reconciliation
+// writes real clock stamps into a session whose other entries were seeded),
+// and only the minimum proves that nothing has aged out.
+function oldestTimestampOf(entries: JournalEntry[]): number | null {
+  let oldest: number | null = null;
+  for (const entry of entries) {
+    if (oldest === null || entry.timestamp < oldest) oldest = entry.timestamp;
+  }
+  return oldest;
+}
+
 export class FileJournalStore {
   readonly indexPath: string;
   private readonly blobsDir: string;
@@ -359,6 +372,14 @@ export class FileJournalStore {
   // one pass, or a journal left near the bound by a previous session would
   // never be pruned again.
   private trackedBytes: number | null = null;
+  // Issue #349: the oldest timestamp in the index (the minimum, not the
+  // first — entries can carry non-monotonic timestamps). Seeded by every
+  // slow pass and updated on every rewrite, it is what lets an age policy
+  // take the fast path: `now - oldest <= maxAgeMs` proves from cache that no
+  // entry can have aged out, so the index needs no read at all. null means
+  // "unknown" (never seeded, or the last rewrite failed) and forces the
+  // slow pass.
+  private oldestTimestamp: number | null = null;
 
   constructor(dir: string, retention: JournalRetention = {}) {
     this.indexPath = join(dir, 'index.jsonl');
@@ -655,19 +676,26 @@ export class FileJournalStore {
     overBound: number;
   } {
     const bridge = this.bridge();
-    // Fast path (issue #124): with no age policy and the tracked byte
-    // total comfortably under the bound, no entry can be dropped — skip the
-    // whole pass, index reads included. A session far from the bound pays
-    // zero retention I/O per append.
+    const now = policy.now ?? Date.now();
+    // Fast path (issues #124, #349): the pass can be skipped outright —
+    // index reads included — when both bounds are provable from cache. The
+    // byte total must sit comfortably under the bound, and the oldest entry
+    // in the index must be inside the age window (`oldestTimestamp` is the
+    // minimum, so `now - oldest <= maxAgeMs` proves nothing can have aged
+    // out). A session far from either bound pays zero retention I/O per
+    // append, whether or not an age policy is configured.
+    const ageProven =
+      policy.maxAgeMs === undefined ||
+      (this.oldestTimestamp !== null &&
+        now - this.oldestTimestamp <= policy.maxAgeMs);
     if (
-      policy.maxAgeMs === undefined &&
+      ageProven &&
       policy.maxBytes !== undefined &&
       this.trackedBytes !== null &&
       this.trackedBytes <= policy.maxBytes * 0.9
     ) {
       return { entries: 0, bytes: 0, overBound: 0 };
     }
-    const now = policy.now ?? Date.now();
     const all = this.entries();
     // `kept` must not alias `all`: the drop loop shifts entries out of
     // `kept` while `all` stays the pre-drop index for `removed`/`before`.
@@ -731,8 +759,10 @@ export class FileJournalStore {
       // Re-base the tracked total on derived truth at the end of every
       // slow pass — age-only ones included — so the fast path resumes
       // proving "nothing can drop" from live truth (issue #124 review
-      // fix 2).
+      // fix 2). The index was not rewritten, so the kept set IS what is on
+      // disk: the oldest timestamp can be re-seeded from it (issue #349).
       this.syncTracking(refs.keys(), this.blobBytes(bridge, kept));
+      this.oldestTimestamp = oldestTimestampOf(kept);
       return { entries: 0, bytes: 0, overBound };
     }
     const before = this.blobBytes(bridge, all);
@@ -777,8 +807,13 @@ export class FileJournalStore {
     }
     const after = this.blobBytes(bridge, kept);
     // The rewrite moved the index onto `kept`: re-base the tracked total on
-    // its truth so the fast path resumes proving "nothing can drop".
+    // its truth so the fast path resumes proving "nothing can drop", and
+    // re-seed the oldest timestamp from the entries that survived
+    // (issue #349). Not done on the failure path above: there the index
+    // still holds the dropped entries, and a stale-older value only costs
+    // the next pass its fast path, never correctness.
     this.syncTracking(referenced, after);
+    this.oldestTimestamp = oldestTimestampOf(kept);
     return { entries: removed, bytes: before - after, overBound };
   }
 

@@ -76,7 +76,8 @@ module owns arrangement only.
   (`summarizeToolArguments`/`summarizeToolOutcome`, shell tool only), a
   failed call renders
   `✗`, the root row carries `$cost in/out` (`TreeUsage`, seeded from the
-  snapshot ledger, then summed from usage rows), and calls are
+  attach snapshot's ledger — the tree picks it up when the lane attaches,
+  not at boot — then summed from usage rows), and calls are
   grouped per turn (a `run-start` rolls the live group into
   `previousTurns` as a `TreeTurnSummary`, which folds to one line).
 - **Diff** (`diff-view.ts`): `DiffOp` mirrors the journal ops

@@ -153,7 +153,13 @@ function renderRow1(
   if (statusVisibleWidth(full) <= width) return full;
   const bare = `${shortModel(state.model, width, ` • ${tokens} • ${cost}`)} • ${tokens} • ${cost}`;
   if (statusVisibleWidth(bare) <= width) return bare;
-  return truncateLine(` • ${tokens} • ${cost}`, width);
+  // The last rung keeps the cost (#346 review): truncating the tail would
+  // drop the one number the bar exists for, so the token half is cut to the
+  // room left over and the cost is always appended.
+  const tail = ` • ${cost}`;
+  const room = width - statusVisibleWidth(tail);
+  if (room < 2) return truncateLine(cost, width);
+  return `${truncateLine(` • ${tokens}`, room)}${tail}`;
 }
 
 // Row 2: always-visible posture indicator. OFF is warning-themed and

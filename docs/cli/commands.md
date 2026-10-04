@@ -792,8 +792,9 @@ The loop is real: type a prompt, press `Enter` to submit, and the solo
 lane drives it with events streaming into the views — tool calls appear in
 the tree, the transcript grows with the committed conversation, and the
 status bar fills with usage rows. A resumed session (`--session <id>`)
-starts from its committed spend: the bar and the tree's root row are
-seeded from the session's `pi.usage` ledger before the first frame, so
+starts from its committed spend: the status bar is seeded from the
+session's `pi.usage` ledger before the first frame, and the tree's root row
+picks the same ledger up when the lane attaches on the first turn — so
 `$0.00` means an unspent session, never a lost one. While a turn runs the editor disables
 submit; `Ctrl-C` cancels the in-flight solo turn and keeps the session
 alive, and a second `Ctrl-C` (or `Ctrl-C` while idle) quits. An orchestrator

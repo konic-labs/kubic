@@ -341,6 +341,25 @@ describe('status bar mutation hardening (issue #68)', () => {
     expect(bar.getState().rows.length).toBe(1);
   });
 
+  it('keeps the cost on the last rung at 40 columns (#346 review)', () => {
+    // A realistic resumed session: the token counters are wide enough that
+    // the old tail-truncating rung cut the `$` off entirely.
+    const rows = [
+      row({
+        usage: {
+          ...priced().usage,
+          input: 120345,
+          output: 7890,
+          cacheRead: 90000,
+        },
+      }),
+    ];
+    const lines = renderStatusLines(state({ rows }), 40);
+    expect(statusVisibleWidth(lines[0])).toBeLessThanOrEqual(40);
+    expect(lines[0]).toContain('$');
+    expect(lines[0]).toContain('…');
+  });
+
   it('never renders a TTFT or tool-ms segment (issue #346 deleted them)', () => {
     const lines = renderStatusLines(state({ rows: [priced()] }), 100);
     expect(lines[0]).not.toContain('TTFT');

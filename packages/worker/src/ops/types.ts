@@ -73,8 +73,14 @@ export interface OpContext {
   toolCallId?: string;
   journal?: FileJournalStore;
   // Lane abort support (issue #11): the op hands its process kill to the
-  // lane's kill registry so requestLaneAbort drains in-flight trees.
-  trackHandle?: (kill: () => void, invocation: ToolInvocation) => void;
+  // lane's kill registry so requestLaneAbort drains in-flight trees. The
+  // return value is the registry's unregister fn (issue #142): the op calls
+  // it once the handle settles, so a finished call does not keep its handle
+  // (and its output) in a registry the lane reuses for the whole session.
+  trackHandle?: (
+    kill: () => void,
+    invocation: ToolInvocation,
+  ) => (() => void) | undefined;
   // Issue #339: bash default/max timeout and background-job policy.
   // Absent ⇒ resolved from the documented KUBIC_BASH_* env overrides.
   bashPolicy?: import('./bash.js').BashPolicy;

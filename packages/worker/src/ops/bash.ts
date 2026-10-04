@@ -241,6 +241,8 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
       args.timeout ?? policy.defaultTimeoutSec,
       policy.maxTimeoutSec,
     );
+    // Issue #142: the unregister fn of whichever handle is currently live.
+    let untrack: (() => void) | undefined;
     const spawnShell = (shellName: string): ProcessHandle => {
       const shellArgs =
         process.platform === 'win32'
@@ -254,8 +256,11 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
         keepBackground: policy.keepBackground,
       });
       // First attempt and any retry both land in the lane's kill registry
-      // (issue #11) so timeout/abort kill whichever handle is live.
-      ctx.trackHandle?.(() => handle.kill(), inv);
+      // (issue #11) so timeout/abort kill whichever handle is live — and the
+      // settled one leaves it again (issue #142): the registry is reused for
+      // a whole session, so a handle left per call was an unbounded leak.
+      untrack?.();
+      untrack = ctx.trackHandle?.(() => handle.kill(), inv) ?? undefined;
       return handle;
     };
     let shellName = shellFor();
@@ -294,6 +299,10 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
       live = spawnShell(shellName);
       result = await live.wait();
     }
+    // The live handle has settled: drop its kill from the registry before
+    // anything else can retain it (issue #142).
+    untrack?.();
+    untrack = undefined;
     clearTimeout(timer);
     ctx.signal?.removeEventListener('abort', onAbort);
     const aborted =

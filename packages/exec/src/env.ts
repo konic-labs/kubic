@@ -513,6 +513,19 @@ function groupAlive(pgid: number): boolean {
   }
 }
 
+// Is the LEADER still a process? Asked of the OS, not of the child object:
+// `exitCode`/`signalCode` are set when the 'exit' event is delivered, which
+// can lag the process's actual death — and the delayed group SIGKILL this
+// guards against (issue #142) is scheduled in exactly that window.
+function leaderAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
 function signalGroup(pgid: number, signal: NodeJS.Signals): void {
   try {
     process.kill(-pgid, signal);
@@ -791,7 +804,16 @@ class NodeShell implements Shell {
         // holds the event loop open, and it is a no-op once settled.
         // The group, not just the leader: a leader that exits on SIGTERM
         // settles the handle while group members that ignore it live on,
-        // so the group SIGKILL is unconditional (ESRCH = group gone).
+        // so the escalation is not gated on the leader surviving the grace.
+        //
+        // Issue #142: it IS gated on the leader being alive when kill() was
+        // called (asked of the OS — see leaderAlive). A leader that has
+        // already exited owns no process group any more — its pgid may be
+        // recycled — so a delayed group SIGKILL could hit a stranger.
+        // Nothing is orphaned by skipping it: the settle path reaps whatever
+        // the group still holds (reapGroup, unless the caller opted into
+        // keepBackground).
+        if (!leaderAlive(pid)) return;
         const timer = setTimeout(() => {
           if (process.platform !== 'win32') {
             try {

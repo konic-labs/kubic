@@ -687,6 +687,24 @@ describe('kubicToolsToPiTools on the pi-durable surface (issue #393)', () => {
     const out = await pending;
     expect(out.text).toBe('[bash exit 143 (bash)]\n(no output)\n');
   });
+
+  it('drops the kill handle once the call settles (issue #142)', async () => {
+    const shell = shellEnv({});
+    const kills = new OperationKillRegistry();
+    const api = drive({ conversationId: 7 });
+    for (let i = 0; i < 3; i += 1) {
+      const out = await run(
+        'bash',
+        { command: 'true' },
+        toolContext({ env: shell.env, kills }),
+        api,
+      );
+      expect(out.text).toBe('[bash exit 0 (bash)]\n(no output)\n');
+    }
+    // One registry lives for the whole TUI session: a handle retained per
+    // completed call kept that call's output alive for the life of the run.
+    expect(kills.drain('7')).toEqual([]);
+  });
 });
 
 describe('renderGrepText (issue #172)', () => {

@@ -448,7 +448,11 @@ describe('bash shell resolution (issue #123)', () => {
       'bash',
       { command: 'echo hi' },
       inv('inv-sh8'),
-      ctxFor(env, { trackHandle: (kill) => tracked.push(kill) }),
+      ctxFor(env, {
+        trackHandle: (kill) => {
+          tracked.push(kill);
+        },
+      }),
     );
     expect(out.ok).toBe(true);
     // First attempt handle + retry handle — the lane's kill registry must

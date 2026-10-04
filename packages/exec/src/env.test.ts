@@ -358,6 +358,71 @@ describe('a settled process handle', () => {
       expect(signalled).toEqual([]);
     },
   );
+
+  it.runIf(process.platform !== 'win32')(
+    'kill() does not schedule a group SIGKILL once the leader has exited (issue #142)',
+    async () => {
+      const { env } = makeNodeEnv();
+      // The leader exits at once but leaves a background member holding the
+      // inherited pipes, so the handle stays unsettled through its drain
+      // window (EXIT_DRAIN_MS) — the exact window in which a kill() used to
+      // schedule a group SIGKILL for a leader that no longer owns a group.
+      const leader = [
+        "require('node:child_process')",
+        ".spawn(process.execPath,['-e','setInterval(()=>{},1000)'],",
+        "{stdio:['ignore','inherit','inherit']})",
+        '.unref();',
+      ].join('');
+      const handle = env.shell.spawn(process.execPath, ['-e', leader], {
+        provenance: PROV,
+        killGraceMs: 5,
+      });
+      const pid = handle.pid;
+      expect(typeof pid).toBe('number');
+      // Wait until the LEADER is gone — reaped, so its pid owns no group any
+      // more. The probe is the same one the handle's gate uses, so the test
+      // and the code agree on "the leader is dead"; a bounded poll on the
+      // OS's own condition, never a fixed sleep for synchronization.
+      const deadline = Date.now() + 2000;
+      for (;;) {
+        try {
+          process.kill(pid as number, 0);
+        } catch {
+          break;
+        }
+        if (Date.now() > deadline) throw new Error('child never exited');
+        await new Promise((resolveTick) => setTimeout(resolveTick, 5));
+      }
+      const signalled: Array<[number, unknown]> = [];
+      const realKill = process.kill.bind(process);
+      const spy = vi.spyOn(process, 'kill').mockImplementation(((
+        signalledPid: number,
+        signal?: string | number,
+      ) => {
+        // A liveness probe (signal 0) must answer truthfully — the handle
+        // asks the OS whether the leader is still there — while every real
+        // signal is recorded instead of sent.
+        if (signal === 0) return realKill(signalledPid, 0);
+        signalled.push([signalledPid, signal]);
+        return true;
+      }) as typeof process.kill);
+      try {
+        handle.kill();
+        // Give a would-be escalation timer (killGraceMs = 5) time to fire,
+        // still inside the drain window.
+        await new Promise((resolveTick) => setTimeout(resolveTick, 30));
+      } finally {
+        spy.mockRestore();
+      }
+      // The group is gone, so the SIGTERM attempt is harmless — but a delayed
+      // group SIGKILL could hit a recycled pgid and must not be scheduled.
+      expect(signalled.filter(([, signal]) => signal === 'SIGKILL')).toEqual(
+        [],
+      );
+      // Settling reaps whatever the group still held (the pipe holder).
+      await handle.wait();
+    },
+  );
 });
 
 describe('execution env spawn failures (issue #85)', () => {

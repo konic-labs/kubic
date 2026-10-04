@@ -430,6 +430,32 @@ describe('runManualCompaction (issue #330: the TUI /compact path)', () => {
     expect(entryReason(entries[0] ?? {})).toBe('manual');
   });
 
+  it('reports Pi\'s "nothing to compact" completion as nothing, not a cut (#330 review)', async () => {
+    // The shipped TUI keep-recent window is 20000 tokens: a session below it
+    // has nothing to cut, and Pi completes the task without placing a
+    // `pi.compaction` entry (CompactionResult's entryId/submissionId both
+    // absent). Claiming `compacted` there would be a lie.
+    const result = await openSolo({
+      models: [{ id: 'large', contextWindow: 100000, maxTokens: 20000 }],
+      compaction: soloCompactionSettings({
+        configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
+        keepRecentTokens: SOLO_KEEP_RECENT_TOKENS,
+        currentWindow: () => 100000,
+      }),
+      reply: () => text('a', 500),
+    });
+    await turn(result.root, text('u1', 200));
+    const outcome = await runManualCompaction(
+      { harness: result.harness, conversation: result.root },
+      'focus',
+      BACKGROUND_CONTEXT,
+    );
+    expect(outcome.status).toBe('nothing');
+    expect(outcome.tokensBefore).toBeGreaterThan(0);
+    expect(outcome.error).toBeUndefined();
+    expect(await compactionEntries(result.root)).toHaveLength(0);
+  });
+
   it('reports a cancelled compaction as aborted, never as a silent no-op', async () => {
     const result = await openSolo({
       models: [{ id: 'large', contextWindow: 100000, maxTokens: 20000 }],

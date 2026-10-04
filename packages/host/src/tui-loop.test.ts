@@ -16,6 +16,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   runTuiCommand,
   soloTuiLoop,
+  TuiCompactionTurn,
+  type TuiLaneLoop,
   type TuiRunDeps,
   TuiTurnRunner,
 } from '../../../apps/kubic/src/tui-run.js';
@@ -965,6 +967,129 @@ describe('kubic tui prompt loop (issue #88)', () => {
     // not keep the session busy.
     expect(doc).toContain('enter send');
     expect(doc).not.toContain('working…');
+  });
+
+  it('replays a cancel that lands in the compaction admission window (#330 review)', async () => {
+    // #312/#334 solved the same race for turns: a Ctrl-C before the durable
+    // submit lands is latched and replayed. A compaction's admission window
+    // is the context read plus the admission commit; a cancel there must
+    // abort the task that appears, not be lost.
+    let releaseAdmission: () => void = () => {};
+    const admissionGate = new Promise<void>((resolve) => {
+      releaseAdmission = resolve;
+    });
+    let aborts = 0;
+    const loop = {
+      compact: async (
+        _focus: string | undefined,
+        _context: unknown,
+        options?: {
+          onAdmitted?: (taskId: string) => void | Promise<void>;
+        },
+      ) => {
+        await admissionGate;
+        await options?.onAdmitted?.('7');
+        // Only a second abort (the replay) cancels the admitted task.
+        return aborts > 1
+          ? { status: 'aborted' as const, tokensBefore: 42 }
+          : { status: 'completed' as const, tokensBefore: 42 };
+      },
+      abort: async () => {
+        aborts += 1;
+      },
+      context: {},
+    } as unknown as TuiLaneLoop;
+    const turn = new TuiCompactionTurn(loop, 'focus');
+    const running = turn.run('/compact focus');
+    // The key lands while the task is still being admitted.
+    await turn.cancel();
+    expect(aborts).toBe(1);
+    releaseAdmission();
+    await expect(running).resolves.toEqual({ status: 'cancelled' });
+    // cancel + the replay on admission.
+    expect(aborts).toBe(2);
+    expect(turn.settlementFooter()).toBe('compaction cancelled');
+  });
+
+  it('reports /compact with nothing to cut as nothing to compact (#330 review)', async () => {
+    // The shipped keep-recent window is 20000 tokens, so a small session has
+    // nothing to cut: Pi completes the task without placing a summary entry,
+    // and the footer must not claim a compaction that never happened.
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    let lane: SoloLane | undefined;
+    const { models } = fauxModels(['first answer']);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models, {
+          onBoot: (booted) => {
+            lane = booted;
+          },
+        }),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'first prompt') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('first answer'));
+    for (const ch of '/compact') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() =>
+      /nothing to compact: \d+ tokens/.test(fake.writes.join('')),
+    );
+    if (lane === undefined) throw new Error('the lane never booted');
+    const page = await lane.conversation.entries(
+      {},
+      200,
+      undefined,
+      BACKGROUND_CONTEXT,
+    );
+    expect(
+      page.items.filter((entry) => CompactionEntry.is(entry)),
+    ).toHaveLength(0);
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+
+  it('refuses /compact on the orchestrator lane and keeps the draft (#330 review)', async () => {
+    // The session's own transcript belongs to the solo lane; while the
+    // operator watches the orchestrator report, compacting that conversation
+    // silently would act on the wrong lane.
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    const { models } = fauxModels(['first answer']);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    // Ctrl-G (0x07) switches the session mode to orchestrator.
+    fake.feed('\x07');
+    await waitFor(() => fake.writes.join('').includes('orchestrator ·'));
+    const mark = fake.writes.length;
+    for (const ch of '/compact') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() =>
+      fake.writes
+        .slice(mark)
+        .join('')
+        .includes('the orchestrator lane has no session transcript to compact'),
+    );
+    // Refused, so the draft came back (finding 1 of the #334 review).
+    await waitFor(() => fake.writes.slice(mark).join('').includes('/compact'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
   });
 
   it('a durably busy conversation refuses the second turn with the busy failure', async () => {

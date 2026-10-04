@@ -169,9 +169,14 @@ export async function compactSoloLane(
 // §27.2 (issue #330): how a manual compaction ended. `aborted` is the
 // operator's cancel (Esc/Ctrl-C -> conversation.abort()), `orphaned` a task
 // whose abort protocol could not run; `faulted` is Pi's runtime-detected
-// contract failure (an uncaught throw), reported as a failure by name.
+// contract failure (an uncaught throw), reported as a failure by name;
+// `nothing` is Pi's own "nothing to compact" completion — the task ran, the
+// cut selection found no older history to summarize, and NO `pi.compaction`
+// entry was placed (`CompactionResult`'s `entryId`/`submissionId` both
+// absent, pi-durable's types.ts). Reporting that as a cut would be a lie.
 export type ManualCompactionStatus =
   | 'completed'
+  | 'nothing'
   | 'failed'
   | 'aborted'
   | 'orphaned'
@@ -191,10 +196,21 @@ export interface ManualCompactionOutcome {
  * vocabulary. Never throws for a refused admission, a failed summary or a
  * cancellation — the caller reports the outcome, it never has to catch.
  */
+export interface ManualCompactionOptions {
+  /**
+   * Called the moment the task is ADMITTED, before the wait: a caller that
+   * latched a cancellation during the admission window (the context read and
+   * the admission commit) replays it here, so a Ctrl-C is never lost
+   * (#330 review; the same placement race #312/#334 solved for turns).
+   */
+  onAdmitted?: (taskId: string) => void | Promise<void>;
+}
+
 export async function runManualCompaction(
   solo: SoloCompactionLane,
   focus: string | undefined,
   context: Context,
+  options: ManualCompactionOptions = {},
 ): Promise<ManualCompactionOutcome> {
   let admitted: ManualCompactionAdmission;
   try {
@@ -202,10 +218,26 @@ export async function runManualCompaction(
   } catch (error) {
     return { status: 'failed', tokensBefore: 0, error: messageOf(error) };
   }
+  if (options.onAdmitted !== undefined) {
+    try {
+      await options.onAdmitted(String(admitted.taskId));
+    } catch {
+      // The replay is best-effort: the task's own settlement still decides.
+    }
+  }
   const settled = await solo.harness.waitForTask(admitted.taskId, context);
   const outcome = settled.state.outcome;
   if (outcome.status === 'completed') {
-    return { status: 'completed', tokensBefore: admitted.tokensBefore };
+    // Pi's "nothing to compact": the task completed without placing a
+    // summary entry. Distinguish it from a real cut — the footer must never
+    // claim a compaction that did not happen.
+    const result = outcome.result;
+    const placed =
+      result?.entryId !== undefined || result?.submissionId !== undefined;
+    return {
+      status: placed ? 'completed' : 'nothing',
+      tokensBefore: admitted.tokensBefore,
+    };
   }
   if (outcome.status === 'failed' || outcome.status === 'faulted') {
     return {

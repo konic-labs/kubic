@@ -122,6 +122,7 @@ import {
 import {
   DEFAULT_RESERVE_TOKENS,
   effectiveReserveTokens,
+  type ManualCompactionOptions,
   type ManualCompactionOutcome,
   parseCompactCommand,
   runManualCompaction,
@@ -230,6 +231,7 @@ export interface TuiLaneLoop {
   compact?(
     focus: string | undefined,
     context: Context,
+    options?: ManualCompactionOptions,
   ): Promise<ManualCompactionOutcome>;
   /**
    * #398/D2: the conversation's committed lane events. The attach snapshot
@@ -477,9 +479,19 @@ export class TuiCompactionTurn implements TuiTurnDriver {
       });
     }
     const running = (async (): Promise<TuiTurnOutcome> => {
-      const outcome = await compact(this.focus, this.loop.context);
+      const outcome = await compact(this.focus, this.loop.context, {
+        // A Ctrl-C that landed while the task was still being admitted hit
+        // an idle conversation: replay it now that the task exists, so the
+        // cancel is never lost (#330 review).
+        onAdmitted: async () => {
+          if (this.aborted) await this.loop.abort(this.loop.context);
+        },
+      });
       this.outcome = outcome;
       if (outcome.status === 'completed') return { status: 'completed' };
+      // Pi's own "nothing to compact" completion: the turn succeeded, the
+      // footer says what really happened (no entry was placed).
+      if (outcome.status === 'nothing') return { status: 'completed' };
       if (outcome.status === 'aborted' || outcome.status === 'orphaned') {
         return { status: 'cancelled' };
       }
@@ -499,6 +511,11 @@ export class TuiCompactionTurn implements TuiTurnDriver {
     if (outcome === undefined) return undefined;
     if (outcome.status === 'completed') {
       return `compacted: ${outcome.tokensBefore} tokens → summary`;
+    }
+    if (outcome.status === 'nothing') {
+      // Pi found no older history to cut: no summary entry was placed, and
+      // saying `compacted` would claim work that never happened.
+      return `nothing to compact: ${outcome.tokensBefore} tokens`;
     }
     if (outcome.status === 'aborted' || outcome.status === 'orphaned') {
       return 'compaction cancelled';
@@ -865,8 +882,8 @@ export function soloTuiLoop(
       readConversationEntries(solo.conversation, loopContext),
     // Issue #330: `/compact [focus]` — Pi's manual compaction task with
     // Kubic's compact prompt as the summarizer instructions.
-    compact: (focus, loopContext) =>
-      runManualCompaction(solo, focus, loopContext),
+    compact: (focus, loopContext, options) =>
+      runManualCompaction(solo, focus, loopContext, options),
     // D6.2: the shared abort+drain (conversation.abort, every kill
     // attempted, failures aggregated) and the settled-turn forget.
     abort: async (loopContext) => {
@@ -3047,6 +3064,17 @@ export async function runTuiCommand(
         const compactCommand = parseTuiCompactCommand(prompt);
         if (compactCommand !== undefined) {
           const lane = boot.loop;
+          // The session's own transcript is the SOLO lane's; in orchestrator
+          // mode the visible lane is the run report, so the command is
+          // refused by name instead of compacting a conversation the
+          // operator is not looking at (#330 review).
+          if (app.mode() === 'orchestrator') {
+            app.setEditorFooter(
+              'compact: the orchestrator lane has no session transcript to compact',
+            );
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
           if (busy) {
             app.setEditorFooter(
               'compact: finish the current turn before compacting',

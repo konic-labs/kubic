@@ -418,12 +418,33 @@ export interface TranscriptView {
   // entries and how many parses (constructor + setText) the document forced.
   markdownCacheSize(): number;
   markdownParses(): number;
+  // Issue #297: the live cell objects (a copy of the ARRAY; the objects are
+  // the live ones). Tests pin that an identical snapshot preserves identity.
+  liveCells(): ReadonlyArray<TranscriptEntry>;
 }
 
 export interface TranscriptViewOptions {
   // Replaces the whole document while it returns lines (the approval's
   // inline fallback below the overlay's minimum width).
   readonly inline?: (width: number) => string[] | undefined;
+  // Issue #297: the op log is OPT-IN. It exists for `replayTranscript` and
+  // the tests that drive it; production applies a snapshot on every lane
+  // event, so an always-on log retained a deep copy of every one (O(N·E)
+  // cells, tool outputs up to 20k chars). Absent means no log at all.
+  readonly ops?: boolean;
+}
+
+// Issue #297: two cells are the same entry when every field the transcript
+// renders matches — then a re-applied snapshot can keep the live object.
+function sameCell(left: TranscriptEntry, right: TranscriptEntry): boolean {
+  return (
+    left.id === right.id &&
+    left.kind === right.kind &&
+    left.markdown === right.markdown &&
+    left.detail === right.detail &&
+    left.isError === right.isError &&
+    left.toolCallId === right.toolCallId
+  );
 }
 
 export function createTranscriptView(
@@ -436,22 +457,20 @@ export function createTranscriptView(
     primary: true,
     overscroll: 'chain',
   });
-  const entries: Array<{
-    id: string;
-    kind: TranscriptEntryKind;
-    markdown: string;
-    detail?: string;
-    isError?: boolean;
-    toolCallId?: string;
-  }> = [];
+  const entries: TranscriptEntry[] = [];
+  // The live object per id: a re-applied snapshot reuses it (#297), and the
+  // delta path mutates it in place.
+  const byId = new Map<string, TranscriptEntry>();
+  const logOps = options.ops === true;
   let rebuilds = 0;
   let laneId: string | undefined;
   let revision = -1;
-  const log: Array<TranscriptOp> = [];
+  const log: TranscriptOp[] = [];
   const paint = (): void => {
     // Issue #298: through setCells, so a cell that left the snapshot also
-    // leaves the markdown/line caches.
-    document.setCells(entries.map((entry) => ({ ...entry })));
+    // leaves the markdown/line caches. Issue #297: only the ARRAY is copied
+    // (cheap references) — the cell objects themselves are reused.
+    document.setCells(entries.slice());
     rebuilds += 1;
   };
   return {
@@ -481,20 +500,32 @@ export function createTranscriptView(
     appendDelta(delta: TranscriptDelta): void {
       // NOTE: callers must call updateLayout after arrivals — ScrollView
       // contentHeight is synced there, and scrollBy-from-tail uses it.
-      const found = entries.find((entry) => entry.id === delta.id);
+      const found = byId.get(delta.id);
       if (found === undefined) {
-        entries.push({
+        const entry: TranscriptEntry = {
           id: delta.id,
           kind: delta.kind,
           markdown: delta.append,
-        });
+        };
+        entries.push(entry);
+        byId.set(entry.id, entry);
       } else {
-        found.markdown += delta.append;
+        // Entries are immutable: a streamed chunk replaces the object (the
+        // delta path is rare next to a snapshot re-apply).
+        const grown: TranscriptEntry = {
+          ...found,
+          markdown: found.markdown + delta.append,
+        };
+        const at = entries.indexOf(found);
+        if (at !== -1) entries[at] = grown;
+        byId.set(grown.id, grown);
       }
-      log.push({
-        op: 'delta',
-        delta: { id: delta.id, kind: delta.kind, append: delta.append },
-      });
+      if (logOps) {
+        log.push({
+          op: 'delta',
+          delta: { id: delta.id, kind: delta.kind, append: delta.append },
+        });
+      }
       paint();
     },
     applyLaneSnapshot(
@@ -508,16 +539,33 @@ export function createTranscriptView(
       if (lane.laneId === laneId && next <= revision) return;
       laneId = lane.laneId;
       revision = next;
-      entries.length = 0;
+      // Issue #297: diff by id and keep the object of every unchanged cell.
+      // The TUI applies a snapshot per lane event, so copying every cell each
+      // time allocated the whole document per event (and invalidated the
+      // render caches keyed on the object's text).
+      const nextEntries: TranscriptEntry[] = [];
+      const nextById = new Map<string, TranscriptEntry>();
       for (const cell of cells) {
-        entries.push({ ...cell });
+        const previous = byId.get(cell.id);
+        const entry =
+          previous !== undefined && sameCell(previous, cell)
+            ? previous
+            : { ...cell };
+        nextEntries.push(entry);
+        nextById.set(cell.id, entry);
       }
-      log.push({
-        op: 'snapshot',
-        laneId: lane.laneId,
-        cells: cells.map((cell) => ({ ...cell })),
-        revision: next,
-      });
+      entries.length = 0;
+      entries.push(...nextEntries);
+      byId.clear();
+      for (const [id, entry] of nextById) byId.set(id, entry);
+      if (logOps) {
+        log.push({
+          op: 'snapshot',
+          laneId: lane.laneId,
+          cells: cells.map((cell) => ({ ...cell })),
+          revision: next,
+        });
+      }
       paint();
     },
     render(width: number): string[] {
@@ -528,6 +576,9 @@ export function createTranscriptView(
     },
     markdownParses(): number {
       return document.markdownParses();
+    },
+    liveCells(): ReadonlyArray<TranscriptEntry> {
+      return entries.slice();
     },
     setWelcome(lines: ReadonlyArray<string>): void {
       document.welcome = [...lines];

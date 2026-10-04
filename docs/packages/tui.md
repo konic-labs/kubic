@@ -80,7 +80,11 @@ module owns arrangement only.
   level are unchanged — a steady frame (the 100 ms spinner repaint) parses
   nothing — and a snapshot that drops cells prunes their cache entries;
   `markdownCacheSize()`/`markdownParses()` expose the counters the perf
-  tests assert on.
+  tests assert on. Snapshot reuse (issue #297): `applyLaneSnapshot` diffs by
+  cell id and keeps the object of every unchanged cell, so a re-applied
+  snapshot allocates nothing; the op log behind `writeLog` is opt-in
+  (`createTranscriptView({ ops: true })`, for `replayTranscript` and tests)
+  — production applies a snapshot per lane event and keeps no copy of it.
 - **Tree** (`tree.ts`): `RunStatus` is `idle|running|done`;
   `AgentTreeState` toggles (`toggleTree`), consumes lane events
   (`LaneEventLike` via `applyLaneEvent` — run status, tool start/end, usage

@@ -146,7 +146,7 @@ describe('transcript view (issue #23, slice A)', () => {
   });
 
   it('replays the write log to an identical final document', () => {
-    const view = createTranscriptView();
+    const view = createTranscriptView({ ops: true });
     view.appendDelta({ id: 'a', kind: 'text', append: 'alpha ' });
     view.appendDelta({ id: 'a', kind: 'text', append: 'one' });
     view.appendDelta({ id: 'b', kind: 'tool', append: 'run tests' });
@@ -454,5 +454,61 @@ describe('steady-state markdown caching (issue #298)', () => {
     // Best of five: the machine is shared with other agents, and the point is
     // the steady-state cost, not one scheduler hiccup.
     expect(best).toBeLessThan(10);
+  });
+});
+describe('transcript op log and snapshot reuse (issue #297)', () => {
+  const cells = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      id: `c${i}`,
+      kind: 'text' as const,
+      markdown: `cell ${i}`,
+    }));
+
+  it('keeps no op log in production mode, and logs only when asked', () => {
+    const view = createTranscriptView();
+    const hundred = cells(100);
+    for (let i = 0; i < 1000; i += 1) {
+      view.applyLaneSnapshot({ laneId: 'l' }, hundred, i + 1);
+    }
+    // The TUI applies a snapshot on every lane event: a log holding a deep
+    // copy of each one retains O(N·E) cells for no production reader.
+    expect(view.writeLog).toHaveLength(0);
+    // Replay and tests opt in explicitly.
+    const logged = createTranscriptView({ ops: true });
+    logged.applyLaneSnapshot({ laneId: 'l' }, hundred, 1);
+    logged.appendDelta({ id: 'c0', kind: 'text', append: '!' });
+    expect(logged.writeLog).toHaveLength(2);
+  });
+
+  it('reuses the unchanged cells of a re-applied snapshot', () => {
+    const view = createTranscriptView();
+    const first = [
+      { id: 'a', kind: 'text' as const, markdown: 'one' },
+      {
+        id: 'b',
+        kind: 'tool' as const,
+        markdown: 'tool read',
+        detail: 'x.ts',
+        toolCallId: 'c1',
+      },
+    ];
+    view.applyLaneSnapshot({ laneId: 'l' }, first, 1);
+    const before = view.liveCells();
+    view.applyLaneSnapshot({ laneId: 'l' }, first, 2);
+    const same = view.liveCells();
+    expect(same).toHaveLength(2);
+    // Identity, not equality: the second apply allocates nothing for cells
+    // whose content did not change.
+    expect(same[0]).toBe(before[0]);
+    expect(same[1]).toBe(before[1]);
+    view.applyLaneSnapshot(
+      { laneId: 'l' },
+      [{ ...first[0], markdown: 'one changed' }, first[1]],
+      3,
+    );
+    const changed = view.liveCells();
+    expect(changed[0]).not.toBe(before[0]);
+    expect(changed[0]?.markdown).toBe('one changed');
+    expect(changed[1]).toBe(before[1]);
   });
 });

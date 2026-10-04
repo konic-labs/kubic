@@ -438,15 +438,33 @@ export async function runCleanCommand(
 
   // Outside a git repo the refusal is explicit and non-destructive: exit 5
   // before any list or mutation (§78, issue #372), never a silent
-  // solo-like no-op.
+  // solo-like no-op. Under `--json` the same one-document envelope a run
+  // emits is printed (nothing planned, nothing touched, exitCode 5) so the
+  // refusal is machine-readable too; text mode keeps stdout empty and the
+  // one stderr `error:` line.
+  const refuseNonRepo = (message: string): number => {
+    log.error(message);
+    if (options.json === true) {
+      deps.out(
+        formatJson({
+          ok: false,
+          exitCode: CLEAN_EXIT_WORKSPACE,
+          dryRun: options.dryRun === true,
+          worktrees: [],
+          branches: [],
+          journal: noopPrune(),
+        }),
+      );
+    }
+    return CLEAN_EXIT_WORKSPACE;
+  };
   const repoRoot =
     deps.repoRoot ??
     (await (deps.resolveRepoRoot ?? defaultResolveRepoRoot)(deps.env));
   if (repoRoot === undefined) {
-    log.error(
+    return refuseNonRepo(
       '`kubic clean` needs a git repository — it disposes retained `kubic/<session>/<agent>` worktrees and branches only; nothing was removed. Run solo here (`kubic run -p`) or retry inside a git checkout',
     );
-    return CLEAN_EXIT_WORKSPACE;
   }
 
   let plan: CleanPlan;
@@ -509,8 +527,7 @@ export async function runCleanCommand(
   } catch (error) {
     if (isWorktreeError(error)) {
       if (error.code === 'not_a_repo') {
-        log.error(`${error.message} — nothing was removed`);
-        return CLEAN_EXIT_WORKSPACE;
+        return refuseNonRepo(`${error.message} — nothing was removed`);
       }
       log.error(error.message);
       return error.exitCode;

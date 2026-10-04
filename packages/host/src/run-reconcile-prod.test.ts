@@ -143,8 +143,9 @@ describe('end-of-run reconciliation, prod path (issue #87)', () => {
     ).toBe(0);
     expect(statusOut.join('\n')).toContain('unattributed: 1 of 1');
 
-    // (e) `kubic undo --session <id>` reports it non-reversible, exits 2,
-    // and writes nothing.
+    // (e) `kubic undo --session <id>` reports it non-reversible, exits 1
+    // (issue #372 — the partial outcome never reuses the usage code), and
+    // writes nothing.
     const undoOut: string[] = [];
     expect(
       await runJournalCommand(
@@ -155,7 +156,7 @@ describe('end-of-run reconciliation, prod path (issue #87)', () => {
           out: (line) => undoOut.push(line),
         },
       ),
-    ).toBe(2);
+    ).toBe(1);
     // The exact documented skip line, plus the summary: the entry is named,
     // and the exit code says the run could not be fully reversed.
     expect(undoOut).toContain('non-reversible (skipped): mutated.txt');

@@ -307,7 +307,8 @@ manager only merges. Worktrees and branches stay retained after the merge
 as evidence (only `kubic clean` disposes) — that claim is asserted by
 `packages/host/src/orchestrator/worktree/clean-docs.test.ts`, which fails
 if this sentence or the `clean` command goes missing. Requires a git repo:
-outside one the command refuses with exit 2 and never silently runs solo.
+outside one the command refuses with exit 5 (§78, issue #372) and never
+silently runs solo.
 Worker runs need a configured provider (each worker is a child `kubic run -p`).
 Worktree names carry the session, so a later run with the same agents
 (e.g. the default `worker-1`/`worker-2`) always starts on fresh worktrees at
@@ -1372,7 +1373,7 @@ composition paths therefore capture a **baseline** when the lane boots and
 - Before-content is unknowable for these finds — the baseline holds hashes,
   not copies — so they are recorded **hashes only** and the badge is
   `[unattributed, non-reversible]`: `kubic undo` skips them naming the path
-  (`non-reversible (skipped): <p>`), exiting **2** without writing. The sweep
+  (`non-reversible (skipped): <p>`), exiting **1** without writing. The sweep
   never invents a pre-image. If an earlier attributed entry in the same run
   already stored that path's pre-image, the entry *is* reversible and `undo`
   restores it — the badge then reads `[unattributed]` alone.

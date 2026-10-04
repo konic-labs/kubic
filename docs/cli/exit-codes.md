@@ -123,7 +123,9 @@
   `error:` line per failure and nothing half-disposed (a worktree that
   survived keeps its branch); 2 usage errors (unknown flag, missing or
   invalid flag value, `--all` with `--session`); 5 the non-repo refusal
-  (`… needs a git repository … nothing was removed`, nothing touched).
+  (`… needs a git repository … nothing was removed`, nothing touched —
+  under `--json` the refusal is the same envelope with `exitCode: 5` and
+  empty `worktrees`/`branches`).
   `--json` emits `{ok, exitCode, dryRun, worktrees, branches, journal,
   failures?}` and reports the same code in `exitCode`.
 - **`kubic workers`**: 0 (an empty record included); 2 usage errors

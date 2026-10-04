@@ -211,13 +211,26 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     const dir = plainDir();
     writeFileSync(join(dir, 'keep.txt'), 'keep\n');
 
-    for (const options of [{}, { dryRun: true }]) {
+    for (const options of [{}, { dryRun: true }, { json: true }]) {
       const { code, lines, errs } = await clean(dir, options);
-      expect(lines).toEqual([]);
       const text = errs.join('\n');
       expect(code).toBe(5);
       expect(text).toContain('needs a git repository');
       expect(text).toContain('nothing was removed');
+      if (options.json === true) {
+        // The refusal is machine-readable under --json too (issue #372).
+        expect(lines).toHaveLength(1);
+        expect(JSON.parse(lines[0] as string)).toMatchObject({
+          ok: false,
+          exitCode: 5,
+          dryRun: false,
+          worktrees: [],
+          branches: [],
+          journal: { entries: 0, bytes: 0 },
+        });
+      } else {
+        expect(lines).toEqual([]);
+      }
     }
     expect(existsSync(join(dir, 'keep.txt'))).toBe(true);
   });

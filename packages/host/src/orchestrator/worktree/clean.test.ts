@@ -404,6 +404,35 @@ describe('kubic clean (issue #45, #92)', () => {
     expect(errs).toHaveLength(1);
     expect(errs[0]).toMatch(/^error: `kubic clean` needs a git repository/);
     expect(errs[0]).toContain('nothing was removed');
+
+    // Under --json the refusal is the same one-document envelope a run
+    // emits (issue #372): exitCode 5, nothing planned, nothing touched.
+    const jsonLines: string[] = [];
+    const jsonErrs: string[] = [];
+    const jsonCode = await runCleanCommand(
+      { json: true },
+      {
+        env,
+        out: (line: string) => jsonLines.push(line),
+        err: (line: string) => jsonErrs.push(line),
+        remover: async () => {
+          removals += 1;
+        },
+      },
+    );
+    expect(jsonCode).toBe(5);
+    expect(removals).toBe(0);
+    expect(jsonLines).toHaveLength(1);
+    expect(JSON.parse(jsonLines[0] as string)).toEqual({
+      ok: false,
+      exitCode: 5,
+      dryRun: false,
+      worktrees: [],
+      branches: [],
+      journal: { entries: 0, bytes: 0 },
+    });
+    expect(jsonErrs).toHaveLength(1);
+    expect(jsonErrs[0]).toMatch(/needs a git repository/);
   });
 
   it('reports a hard failure when a dirty worktree refuses removal', async () => {

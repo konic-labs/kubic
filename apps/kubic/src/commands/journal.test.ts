@@ -127,6 +127,7 @@ describe('journal commands: usage errors exit 2 on stderr, no runner', () => {
     [['log', '--nope'], /^error: unknown option '--nope'/],
     [['status', '--path', 'a'], /^error: unknown option '--path'/],
     [['diff', '--agent'], /^error: option '--agent <id>' argument missing/],
+    [['diff', '--path'], /^error: option '--path <path>' argument missing/],
     [['log', '--session'], /^error: option '--session <id>' argument missing/],
     [['diff', '--max-content-bytes', 'abc'], /non-negative integer/],
     [['diff', '--max-content-bytes', '-1'], /non-negative integer/],

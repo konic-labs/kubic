@@ -94,7 +94,13 @@ export type SurfaceRequest = ApprovalViewRequest;
 export interface ApprovalSurface {
   // Called by the decider. Resolves when the user decides (or when the
   // session gives up); never rejects.
-  ask(request: SurfaceRequest): Promise<ApprovalDecision>;
+  //
+  // Issue #232: the optional AbortSignal is the asker's own bound. An abort
+  // WITHDRAWS exactly this ask — the shown one is cleared and the next queued
+  // ask is shown, a queued one is dropped from the queue — and resolves it as
+  // a deny, so a stale question never blocks the surface and a decision
+  // pressed later settles the next real ask, never the withdrawn one.
+  ask(request: SurfaceRequest, signal?: AbortSignal): Promise<ApprovalDecision>;
   // Feeds one keypress. True when it settled the shown request, false when the
   // key is not a decision (the caller then routes it normally).
   decide(data: string): boolean;
@@ -150,12 +156,18 @@ export interface ApprovalSurface {
   // through `seat` is the ONLY way in: it delegates to ask(), so the ingress
   // sanitiser above cannot be bypassed by a caller that reaches for the seat
   // directly.
-  seat(request: SurfaceRequest): Promise<ApprovalDecision>;
+  seat(
+    request: SurfaceRequest,
+    signal?: AbortSignal,
+  ): Promise<ApprovalDecision>;
 }
 
 interface PendingAsk {
   readonly request: SurfaceRequest;
   readonly resolve: (decision: ApprovalDecision) => void;
+  // Issue #232: detaches the abort listener an ask installed. A settled ask
+  // must not react to a signal that fires later.
+  detach?: () => void;
 }
 
 // Sanitise a request at ingress: capability, tool name, command, paths and
@@ -272,12 +284,29 @@ export function createApprovalSurface(
     notify();
   };
   const settle = (ask: PendingAsk, decision: ApprovalDecision): void => {
+    ask.detach?.();
+    ask.detach = undefined;
     if (shown === ask) {
       shown = undefined;
       showNext();
       if (shown === undefined) notify();
     }
     ask.resolve(decision);
+  };
+  // Issue #232: the asker's bound expired (or the asker went away). Withdraw
+  // THIS ask — the shown one clears and the next queued ask takes the screen,
+  // a queued one leaves the queue — and resolve it as a deny. Nothing else on
+  // the surface changes: the withdrawal is not a decision the user made.
+  const withdraw = (ask: PendingAsk): void => {
+    if (shown === ask) {
+      shown = undefined;
+      showNext();
+      if (shown === undefined) notify();
+    } else {
+      const at = queue.indexOf(ask);
+      if (at !== -1) queue.splice(at, 1);
+    }
+    settle(ask, { approved: false, reason: APPROVAL_CANCELLED_REASON });
   };
   const isAllowable = (): boolean => hooks.fitCheck?.() ?? true;
   const findAction = (data: string): ApprovalAction | undefined => {
@@ -313,10 +342,30 @@ export function createApprovalSurface(
     return undefined;
   };
   const surface: ApprovalSurface = {
-    ask: (request: SurfaceRequest): Promise<ApprovalDecision> => {
+    ask: (
+      request: SurfaceRequest,
+      signal?: AbortSignal,
+    ): Promise<ApprovalDecision> => {
       const clean = sanitizeRequest(request);
+      // Already given up before the question was asked: never queue it.
+      if (signal?.aborted === true) {
+        return Promise.resolve({
+          approved: false,
+          reason: APPROVAL_CANCELLED_REASON,
+        });
+      }
       return new Promise<ApprovalDecision>((resolve) => {
-        queue.push({ request: clean, resolve });
+        const ask: PendingAsk = { request: clean, resolve };
+        if (signal !== undefined) {
+          const onAbort = (): void => {
+            if (ask.detach === undefined) return;
+            ask.detach = undefined;
+            withdraw(ask);
+          };
+          signal.addEventListener('abort', onAbort, { once: true });
+          ask.detach = () => signal.removeEventListener('abort', onAbort);
+        }
+        queue.push(ask);
         showNext();
       });
     },
@@ -369,8 +418,13 @@ export function createApprovalSurface(
       queue.length = 0;
       const current = shown;
       shown = undefined;
-      if (current !== undefined) current.resolve(decision);
-      for (const ask of waiting) ask.resolve(decision);
+      const settleAll = [current, ...waiting];
+      for (const ask of settleAll) {
+        if (ask === undefined) continue;
+        ask.detach?.();
+        ask.detach = undefined;
+        ask.resolve(decision);
+      }
       if (current !== undefined || waiting.length > 0) notify();
     },
     renderInline: (width: number): string[] => {
@@ -413,10 +467,13 @@ export function createApprovalSurface(
       ],
       deny: [...(overrides?.deny ?? APPROVAL_DEFAULT_KEYS.deny)],
     }),
-    // Delegates to ask() so the sanitiser and the queue are always in the
-    // path. `seat` is also the value runTuiCommand hands the boot.
-    seat: (request: SurfaceRequest): Promise<ApprovalDecision> =>
-      surface.ask(request),
+    // Delegates to ask() so the sanitiser, the queue and the abort path are
+    // always in the path. `seat` is also the value runTuiCommand hands the
+    // boot (and what the host's service calls with its own AbortSignal).
+    seat: (
+      request: SurfaceRequest,
+      signal?: AbortSignal,
+    ): Promise<ApprovalDecision> => surface.ask(request, signal),
   };
   return surface;
 }

@@ -443,7 +443,10 @@ never answer each other's asks even though both use `worker-1`, and a worker
 that settles has its ask and answer files swept (asks left by an earlier
 process are retired when the next run of that session starts), so a killed
 session's unanswered ask cannot be routed — let alone fail — during a later
-run (issue #152). A challenged call — network, destructive shell,
+run (issue #152). In a worker child the mailbox seat's bound and the lane's
+own approval bound are the same number, and when it elapses the child stops
+polling and withdraws the ask it published (issue #232), so the manager never
+presents a question whose asker has given up. A challenged call — network, destructive shell,
 outside-write, install, push — publishes its ask, the manager presents it to
 you, and your verdict travels back to the worker (sealed, so only the manager
 can produce one):
@@ -723,7 +726,10 @@ after the stored-model rule of a `--session` resume and after any `/model`
 switch, never the pre-boot pick — the same audit identity the headless
 runner records. A challenged call surfaces the approval overlay — the
 interactive path can actually collect a verdict on it — and an unanswered
-ask denies on the same bounded wait.
+ask denies on the same bounded wait. That bound also **withdraws the
+question** (issue #232): when it elapses the dialog for exactly that ask
+closes, the next queued ask takes the screen, and a decision pressed later
+settles the next ask — never the one nobody is waiting for anymore.
 
 **Orchestrator mode (`--orchestrator`, issue #327).** `kubic tui
 --orchestrator` — and the bare `kubic --orchestrator` on a terminal — opens

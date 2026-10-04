@@ -395,15 +395,20 @@ export function createWorkerMailboxSeat(options: {
   role?: string;
   pollMs?: number;
   onRefused?: (detail: string) => void;
-}): (request: {
-  key: string;
-  capability: string;
-  toolName: string;
-  summary: string;
-  command?: string;
-  justification?: string;
-}) => Promise<OrchestratorVerdict | undefined> {
-  return async (request) => {
+}): (
+  request: {
+    key: string;
+    capability: string;
+    toolName: string;
+    summary: string;
+    command?: string;
+    justification?: string;
+  },
+  // Issue #232: the service's AbortSignal. When the bound that denies the call
+  // expires, the seat stops polling and withdraws the ask it published.
+  signal?: AbortSignal,
+) => Promise<OrchestratorVerdict | undefined> {
+  return async (request, signal) => {
     const identity = workerAskIdentity();
     const published = publishWorkerAsk(options.dir, {
       trigger: request.capability,
@@ -437,6 +442,7 @@ export function createWorkerMailboxSeat(options: {
         ...(options.onRefused === undefined
           ? {}
           : { onRefused: options.onRefused }),
+        ...(signal === undefined ? {} : { signal }),
       },
     );
     return outcome.approved
@@ -613,6 +619,16 @@ export function askFilePath(key: string): string {
 
 export function answerFilePath(key: string): string {
   return join(ASKS_DIR, `${key}.answer.json`);
+}
+
+// Removes one ask's files — the ask and its answer, if any (issue #232). Used
+// when the question is WITHDRAWN (the asker's bound expired, or its caller
+// aborted): nobody will read an answer, and the manager must not route a
+// question whose asker is gone. The §60 ledger keeps the durable record.
+export function removeAskFiles(dir: string, key: string): void {
+  const bridge = createNodeFileBridge(dir);
+  bridge.remove(askFilePath(key), false, true);
+  bridge.remove(answerFilePath(key), false, true);
 }
 
 // Removes the mailbox files of ONE settled worker (issue #152): its ask and
@@ -894,43 +910,78 @@ export async function awaitWorkerAskAnswer(
     pollMs?: number;
     clock?: () => number;
     onRefused?: (detail: string) => void;
+    signal?: AbortSignal;
   },
 ): Promise<WorkerAskOutcome> {
   const clock = options.clock ?? Date.now;
   const pollMs = options.pollMs ?? 25;
   const deadline = clock() + options.maxPendingMs;
   const refused = new Set<string>();
-  for (;;) {
-    const answer = readWorkerAskAnswer(dir, key, {
-      verifyKey: options.verifyKey,
-      nonce: options.nonce,
-    });
-    if (answer.state === 'verified')
-      return classifyVerdict(key, answer.verdict);
-    if (
-      answer.state === 'refused' &&
-      refused.size < 8 &&
-      !refused.has(answer.detail)
-    ) {
-      refused.add(answer.detail);
-      options.onRefused?.(answer.detail);
+  const signal = options.signal;
+  // ONE listener for the whole wait (an abort listener per poll iteration
+  // would pile up on a long bound and trip Node's listener warning).
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<void>((resolve) => {
+    if (signal === undefined) return;
+    if (signal.aborted) {
+      resolve();
+      return;
     }
-    if (clock() >= deadline) {
-      return {
-        approved: false,
-        key,
-        code: APPROVAL_TIMEOUT_CODE,
-        reason: `approval ${TIMEOUT_REASON_MARKER} after ${options.maxPendingMs}ms with no user presentation — denied`,
-      };
+    onAbort = () => resolve();
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    for (;;) {
+      const answer = readWorkerAskAnswer(dir, key, {
+        verifyKey: options.verifyKey,
+        nonce: options.nonce,
+      });
+      if (answer.state === 'verified')
+        return classifyVerdict(key, answer.verdict);
+      if (
+        answer.state === 'refused' &&
+        refused.size < 8 &&
+        !refused.has(answer.detail)
+      ) {
+        refused.add(answer.detail);
+        options.onRefused?.(answer.detail);
+      }
+      if (signal?.aborted === true) {
+        removeAskFiles(dir, key);
+        return {
+          approved: false,
+          key,
+          code: APPROVAL_DENIED_CODE,
+          reason: `approval withdrawn ${TIMEOUT_REASON_MARKER} — the waiting turn ended without an answer`,
+        };
+      }
+      if (clock() >= deadline) {
+        // The child's own bound expired first: the same withdrawal, so the
+        // manager stops presenting a question nobody is waiting for.
+        removeAskFiles(dir, key);
+        return {
+          approved: false,
+          key,
+          code: APPROVAL_TIMEOUT_CODE,
+          reason: `approval ${TIMEOUT_REASON_MARKER} after ${options.maxPendingMs}ms with no user presentation — denied`,
+        };
+      }
+      // NOT unref'd on purpose: the wait IS live work. A child whose only
+      // pending task is waiting for its answer must stay alive until the bound
+      // elapses; an unref'd timer lets node drain the loop and exit with an
+      // unsettled top-level await (13) — a silent exit instead of the named
+      // denial this bound promises. The abort clears it, so a withdrawal
+      // leaves no timer behind.
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, pollMs);
+        void aborted.then(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
     }
-    // NOT unref'd on purpose: the wait IS live work. A child whose only
-    // pending task is waiting for its answer must stay alive until the bound
-    // elapses; an unref'd timer lets node drain the loop and exit with an
-    // unsettled top-level await (13) — a silent exit instead of the named
-    // denial this bound promises.
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, pollMs);
-    });
+  } finally {
+    if (onAbort !== undefined) signal?.removeEventListener('abort', onAbort);
   }
 }
 

@@ -10,6 +10,7 @@
 // against a real TuiAltScreen on the composition path.
 import { describe, expect, it } from 'vitest';
 import {
+  APPROVAL_CANCELLED_REASON,
   createApprovalSurface,
   INLINE_APPROVAL_HEADER,
 } from './approval-surface.js';
@@ -190,5 +191,73 @@ describe('approval surface: untrusted content (issue #96, criterion 1)', () => {
     expect(frame).not.toContain(BEL);
     surface.decide('d');
     await pending;
+  });
+});
+
+// Issue #232: the asker's own bound can expire while its question is on
+// screen (the host service aborts the seat on maxPendingMs). The surface must
+// withdraw exactly that ask — not the queue around it — or the obsolete
+// question keeps the screen (and blocks the next real ask) while a decision
+// pressed later would settle a question nobody is waiting for.
+describe('approval surface: an aborted ask is withdrawn (issue #232)', () => {
+  const second: ApprovalViewRequest = { ...REQUEST, key: 'k-2' };
+
+  it('withdraws the shown ask, resolves it as cancelled, and shows the next', async () => {
+    const surface = createApprovalSurface({ armingMs: 0 });
+    const controller = new AbortController();
+    const first = surface.ask(REQUEST, controller.signal);
+    const queued = surface.ask(second);
+    expect(surface.pending()?.key).toBe('k-1');
+
+    controller.abort();
+
+    await expect(first).resolves.toEqual({
+      approved: false,
+      reason: APPROVAL_CANCELLED_REASON,
+    });
+    expect(surface.pending()?.key).toBe('k-2');
+    // The withdrawal settled NOTHING the user pressed: the next ask is still
+    // answerable, and answering now settles IT.
+    expect(surface.decide('a')).toBe(true);
+    await expect(queued).resolves.toEqual({ approved: true, by: 'allow-once' });
+  });
+
+  it('withdraws a QUEUED ask without disturbing the shown one', async () => {
+    const surface = createApprovalSurface({ armingMs: 0 });
+    const shown = surface.ask(REQUEST);
+    const controller = new AbortController();
+    const queued = surface.ask(second, controller.signal);
+    expect(surface.pending()?.key).toBe('k-1');
+
+    controller.abort();
+
+    await expect(queued).resolves.toMatchObject({ approved: false });
+    expect(surface.pending()?.key).toBe('k-1');
+    expect(surface.decide('d')).toBe(true);
+    await expect(shown).resolves.toMatchObject({ approved: false });
+  });
+
+  it('never queues an ask whose signal is already aborted', async () => {
+    const surface = createApprovalSurface({ armingMs: 0 });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(surface.ask(REQUEST, controller.signal)).resolves.toEqual({
+      approved: false,
+      reason: APPROVAL_CANCELLED_REASON,
+    });
+    expect(surface.pending()).toBeUndefined();
+  });
+
+  it('a withdrawal after cancelPending is a no-op (the ask settled once)', async () => {
+    const surface = createApprovalSurface({ armingMs: 0 });
+    const controller = new AbortController();
+    const pending = surface.ask(REQUEST, controller.signal);
+    surface.cancelPending('quit');
+    controller.abort();
+    await expect(pending).resolves.toEqual({
+      approved: false,
+      reason: 'quit',
+    });
+    expect(surface.pending()).toBeUndefined();
   });
 });

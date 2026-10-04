@@ -198,6 +198,10 @@ import {
 // object, so a verdict collected on screen is the verdict the lane receives.
 export type TuiApprovalSeat = (
   request: ApprovalRequest,
+  // Issue #232: the installed service's own bound. The surface withdraws the
+  // ask it is showing when it aborts, so a timed-out question never blocks the
+  // next one.
+  signal?: AbortSignal,
 ) => Promise<ApprovalVerdict | undefined>;
 // The lane surface the loop drives (pi-durable, #395). Narrow on purpose:
 // one turn (submit + wait), the conversation's committed event stream, the

@@ -1778,7 +1778,10 @@ export interface SoloPolicyInput {
    * `undefined` is a seat that could not answer — the service's own
    * maxPendingMs bound denies it rather than hanging the turn.
    */
-  answer?: (request: ApprovalRequest) => Promise<ApprovalVerdict | undefined>;
+  answer?: (
+    request: ApprovalRequest,
+    signal?: AbortSignal,
+  ) => Promise<ApprovalVerdict | undefined>;
   /** Trigger sink (debug/trajectory), never consulted for the decision. */
   onTrigger?: (trigger: PolicyTrigger) => void;
   clock?: () => number;
@@ -2320,8 +2323,15 @@ export interface ApprovalServiceOptions {
   store?: ApprovalStore;
   // Resolves the pending request when a user answers. Never resolves on
   // its own in headless runs — the wait below times out into a denial.
+  //
+  // Issue #232: the service hands the seat an AbortSignal and aborts it when
+  // its own bound expires. A surface that honours it withdraws the obsolete
+  // question instead of leaving a modal nobody can answer (and a worker's
+  // mailbox seat stops polling and cleans up after itself); a seat that
+  // ignores the signal still works — the race below is what decides.
   awaitAnswer?: (
     request: ApprovalRequest,
+    signal?: AbortSignal,
   ) => Promise<ApprovalVerdict | undefined>;
   clock?: () => number;
 }
@@ -2331,6 +2341,7 @@ export class ApprovalService {
   private readonly store: ApprovalStore;
   private readonly awaitAnswer?: (
     request: ApprovalRequest,
+    signal?: AbortSignal,
   ) => Promise<ApprovalVerdict | undefined>;
   private readonly decisions: Map<string, ApprovalVerdict>;
   private readonly pending = new Map<string, ApprovalRequest>();
@@ -2447,10 +2458,22 @@ export class ApprovalService {
   private waitForAnswer(
     request: ApprovalRequest,
   ): Promise<ApprovalVerdict | undefined> {
-    const answer = this.awaitAnswer?.(request);
+    // Issue #232: the bound that denies the call is the bound that withdraws
+    // the QUESTION. Without this the surface kept showing an ask the service
+    // had already given up on: the TUI dialog stayed up (and blocked the next
+    // one), and a worker child's mailbox seat kept polling a turn that ended.
+    const controller = new AbortController();
+    const answer = this.awaitAnswer?.(request, controller.signal);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<undefined>((resolve) => {
-      timer = setTimeout(() => resolve(undefined), this.policy.maxPendingMs);
+      timer = setTimeout(() => {
+        // Resolve the BOUND first, then withdraw the question: the abort makes
+        // the seat resolve too (with its cancelled verdict), and the race must
+        // settle on the timeout — otherwise a withdrawal would latch a denial
+        // the user never gave (#110).
+        resolve(undefined);
+        controller.abort();
+      }, this.policy.maxPendingMs);
       timer.unref?.();
     });
     const notified = new Promise<ApprovalVerdict | undefined>((resolve) => {

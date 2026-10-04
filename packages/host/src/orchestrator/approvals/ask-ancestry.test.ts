@@ -216,14 +216,15 @@ describe("the manager's §60 row carries that ancestry (issue #159)", () => {
     workerEnv();
     vi.stubEnv('KUBIC_NO_NOTICE', '1');
     const mailbox = tmpDir();
+    const signer = createApprovalSigner();
     vi.stubEnv('KUBIC_APPROVALS_DIR', mailbox);
-    vi.stubEnv('KUBIC_APPROVALS_VERIFY_KEY', createApprovalSigner().verifyKey);
-    vi.stubEnv('KUBIC_APPROVALS_BOUND_MS', '60');
+    vi.stubEnv('KUBIC_APPROVALS_VERIFY_KEY', signer.verifyKey);
+    vi.stubEnv('KUBIC_APPROVALS_BOUND_MS', '2_000');
     const workspace = tmpDir();
     const rolesDir = join(workspace, '.kubic', 'roles');
     mkdirSync(rolesDir, { recursive: true });
     writeFileSync(join(rolesDir, 'implementer.md'), IMPLEMENTER_ROLE);
-    const result = await runHeadlessPrompt(
+    const running = runHeadlessPrompt(
       'clean up',
       { role: 'implementer' },
       {
@@ -236,17 +237,32 @@ describe("the manager's §60 row carries that ancestry (issue #159)", () => {
         notice: () => undefined,
       },
     );
-    expect(result.terminus).not.toBe('completed');
-    // Nobody answers the mailbox here, so the child denied on its own bound —
-    // the ask it published is still there, naming its ancestry.
-    const [published] = readPendingWorkerAsks(mailbox, {
-      verifyKey: process.env.KUBIC_APPROVALS_VERIFY_KEY as string,
-    });
+    // This test IS the manager here: pick the published ask up and answer it.
+    // (Reading it only afterwards would not work: a bound that elapses
+    // withdraws the ask — issue #232 — and a real answer is what the child
+    // waits for anyway.)
+    let published = readPendingWorkerAsks(mailbox, {
+      verifyKey: signer.verifyKey,
+    })[0];
+    for (let attempt = 0; published === undefined && attempt < 400; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      published = readPendingWorkerAsks(mailbox, {
+        verifyKey: signer.verifyKey,
+      })[0];
+    }
     if (published === undefined) throw new Error('no ask published');
     expect(published.request.sessionId).toBe('orch-9-worker-1');
     expect(published.request.agentId).toBe('worker-1');
     expect(published.request.role).toBe('implementer');
     expect(published.request.provenance.parentSessionId).toBe('orch-9');
+    answerWorkerAsk(
+      mailbox,
+      published,
+      { approved: false, reason: 'the test denied it' },
+      signer,
+    );
+    const result = await running;
+    expect(result.terminus).not.toBe('completed');
   });
 });
 

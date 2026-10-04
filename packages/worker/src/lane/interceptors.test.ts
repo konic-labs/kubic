@@ -704,12 +704,20 @@ describe('read-only shell allowlist (issue #161)', () => {
     // launder another command through it (fail closed on `$`).
     ['cat $(git commit -m x)', 'command substitution'],
     ['cat `npm test`', 'command substitution'],
+    // Review round 2: process substitution runs a command too.
+    ['cat <(git commit -m x)', 'process substitution'],
+    ['cat <(sed -i s/a/b/ f)', 'process substitution'],
     ["R='> out'; cat a $R", 'shell-expanded'],
     ['cat a $R', 'shell-expanded'],
     ['cat "$R"', 'shell-expanded'],
     // Write/exec flags under an allowed verb.
     ['git diff --output=out.patch', '--output'],
     ['rg --pre "cat" pattern', '--pre'],
+    // Review round 2: git global options that execute code.
+    ['git -c diff.external=x diff', '-c'],
+    ['git -c core.pager=x log', '-c'],
+    ['git --exec-path=/tmp log', '--exec-path'],
+    ['git --upload-pack=/tmp/x log', '--upload-pack'],
   ])('blocks %s naming %s', (command, needle) => {
     const reason = readOnlyViolation(command);
     expect(reason, command).toBeDefined();

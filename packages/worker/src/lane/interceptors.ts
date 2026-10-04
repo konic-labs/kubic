@@ -15,8 +15,9 @@
 //   shell read-only-allowlist — bash present, destructive AND network
 //     commands blocked, and every `|`/`&&`/`;`/`&`/newline segment must pass
 //     the explicit read-only verb allowlist (issue #161): redirection,
-//     in-place edits, find write actions, write/exec flags, shell expansion
-//     and any non-allowlisted verb are refused by name.
+//     in-place edits, find write actions, write/exec flags, git options that
+//     execute code, shell expansion, process substitution and any
+//     non-allowlisted verb are refused by name.
 //   shell false — bash absent via allowlist.
 //   network none (and a domain-less allowlist, enforced as none — issue
 //     #166) — network-command verbs blocked in bash. full
@@ -280,18 +281,25 @@ const READ_ONLY_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
 ]);
 
 // git global options that take a separate argument, so the option's value is
-// not mistaken for the subcommand.
+// not mistaken for the subcommand. Options that can execute code are NOT
+// here: they are refused before this set is consulted.
 const GIT_OPTION_ARGUMENTS: ReadonlySet<string> = new Set([
   '-C',
-  '-c',
   '--git-dir',
   '--work-tree',
   '--namespace',
-  '--config-env',
-  '--exec-path',
   '--super-prefix',
   '--attr-source',
 ]);
+
+// git global options that can execute arbitrary code (review round 2 of
+// #161): `-c`/`--config-env` set any config git then honours (`core.pager`,
+// `diff.external`, `alias.*`), and `--exec-path`/`--upload-pack`/
+// `--receive-pack` name a binary git runs. A read-only role never needs
+// them, so they are refused by name — over-blocking is the correct
+// direction here.
+const GIT_EXECUTING_OPTION =
+  /^(?:-c|--(?:config-env|exec-path|upload-pack|receive-pack)(?:=|$))/;
 
 // find actions that write or run another command.
 const FIND_WRITE_ACTION =
@@ -325,6 +333,9 @@ function gitReadOnlyViolation(tokens: readonly string[]): string | undefined {
     const token = tokens[i] ?? '';
     if (token === '--') break;
     if (token.startsWith('-')) {
+      if (GIT_EXECUTING_OPTION.test(token)) {
+        return `git ${token} can execute code`;
+      }
       i += GIT_OPTION_ARGUMENTS.has(token) ? 2 : 1;
       continue;
     }
@@ -393,6 +404,11 @@ export function readOnlyViolation(command: string): string | undefined {
     const unquoted = segment.replace(SINGLE_QUOTED_SPAN, ' ');
     if (unquoted.includes('$(') || unquoted.includes('`')) {
       return 'a command substitution is not read-only';
+    }
+    // Process substitution runs a command too (`<(…)`; the output form
+    // `>(…)` is already caught by the redirect scan above). Review round 2.
+    if (unquoted.includes('<(')) {
+      return 'a process substitution is not read-only';
     }
     if (unquoted.includes('$')) {
       return 'a shell-expanded value is not read-only';

@@ -47,6 +47,15 @@ export const ENV_ALLOWLIST: readonly string[] = [
   // The child's approval bound (issue #230): derived from the manager's
   // config maxPendingMs and kept below it. A number, not a secret.
   'KUBIC_APPROVALS_BOUND_MS',
+  // The documented runtime env overrides (issue #201; RUNTIME_ENV_OVERRIDES
+  // in host/config/runtime.ts). The child loads its own config from its
+  // worktree, so an override the manager resolved — approval route, thinking
+  // level, journal retention — must reach it too, or the worker runs a
+  // different policy than the manager reports. Non-secret values; a frozen
+  // enterprise key still wins inside the child's own load.
+  'KUBIC_MODEL_THINKING',
+  'KUBIC_APPROVALS_ROUTE',
+  'KUBIC_JOURNAL_RETENTION_DAYS',
   // Per-spawn budget (issue #208, §71): the orchestration run hands its child
   // the resolved spec (JSON) so the child's own lane enforces maxToolCalls /
   // maxTokens / maxCostUsd — non-secret limits, the same class as the

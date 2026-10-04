@@ -47,6 +47,26 @@ describe('spawn env allowlist §3.8 (issue #42)', () => {
     });
   });
 
+  it("carries the manager's documented runtime env overrides (issue #201)", () => {
+    // RUNTIME_ENV_OVERRIDES (host/config/runtime.ts) is part of the config
+    // contract: a worker's own load must resolve the same approval route,
+    // thinking level and journal retention the manager reports, or the child
+    // silently runs a different policy.
+    const out = filterSpawnEnv({
+      PATH: '/bin',
+      KUBIC_MODEL_THINKING: 'high',
+      KUBIC_APPROVALS_ROUTE: 'deny',
+      KUBIC_JOURNAL_RETENTION_DAYS: '7',
+      KUBIC_UNRELATED_NOPE: 'x',
+    });
+    expect(out).toEqual({
+      PATH: '/bin',
+      KUBIC_MODEL_THINKING: 'high',
+      KUBIC_APPROVALS_ROUTE: 'deny',
+      KUBIC_JOURNAL_RETENTION_DAYS: '7',
+    });
+  });
+
   it('injects the role grant on top of the filtered base', () => {
     const out = buildSpawnEnv(
       { PATH: '/bin', PARENT_TOKEN: 'nope' },

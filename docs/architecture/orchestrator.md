@@ -82,6 +82,30 @@ solo) — and `run` never delegates.
   registers. `.kubic/roles/*.md` therefore decide what a worker is asked to
   do and which tools exist on its lane; a contradictory document refuses the
   run before anything spawns, and `kubic doctor` prints the same refusal.
+- **What reaches a worker's env (issue
+  [#201](https://github.com/konic-labs/kubic/issues/201); §3.8, §35.1, §36.3).**
+  A worker child starts from a fresh env built by the spawn allowlist
+  (`ENV_ALLOWLIST` in `packages/worker/src/lifecycle/env.ts`) — the parent's
+  environment never crosses wholesale. What it carries: the process basics
+  (`PATH`, `HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TERM`, `TZ`, `CI`,
+  `NO_COLOR`, `CLICOLOR`); the model/provider selection (`KUBIC_MODEL`,
+  `KUBIC_PROVIDER`) and `KUBIC_DEBUG`; the worker's own identity
+  (`KUBIC_WORKER_ID`, `KUBIC_WORKER_GENERATION`); the run's plumbing the
+  manager writes itself (the worker session, the approval mailbox
+  `KUBIC_APPROVALS_DIR` and `KUBIC_ORCHESTRATOR_SESSION`, the approval bound
+  `KUBIC_APPROVALS_BOUND_MS`, and the `KUBIC_BUDGET` spec); the manager's repo
+  root (`KUBIC_MODELS_ROOT`) with its project-trust decision
+  (`KUBIC_TRUST_PROJECT`, synthesized from the durable store when the operator
+  did not export it); and the documented runtime config overrides
+  (`KUBIC_MODEL_THINKING`, `KUBIC_APPROVALS_ROUTE`,
+  `KUBIC_JOURNAL_RETENTION_DAYS`). The child loads its own config in its
+  worktree, so those overrides are what keeps its thinking level, approval
+  route and journal retention the ones the manager resolved; without them a
+  worker would silently run a different policy. A manager with no trust
+  decision mints none for its child, and the child's own load then refuses the
+  worktree's committed `.kubic/config.toml` with exit 1. Credentials are the
+  one thing that never travels this way — they arrive as the role grant
+  below.
 - **A worker's provider key travels as its role grant, not as ambient env
   (issue [#200](https://github.com/konic-labs/kubic/issues/200); §36.3,
   §58, §59).** A worker child starts behind the §3.8 allowlist, which carries

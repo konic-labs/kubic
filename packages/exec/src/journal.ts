@@ -98,6 +98,17 @@ export interface JournalEntryInput {
   unattributed?: boolean;
 }
 
+export interface JournalIndexRead {
+  entries: JournalEntry[];
+  /**
+   * Index lines whose JSON.parse failed — a torn fragment from a crash or a
+   * full disk (issue #343). `entries()` drops them (a corrupt line must
+   * never poison the journal read) and `kubic status` reports the count, so
+   * the drop is visible instead of silent.
+   */
+  corruptLines: number;
+}
+
 export interface JournalEntry {
   path: string;
   op: JournalOp;
@@ -200,6 +211,15 @@ export function sha256HexOfFile(
 }
 
 type DeltaOp = { eq: number } | { del: number } | { ins: string[] };
+
+// The index's tail, as `readIndexTail` reports it (issue #343): `size` is the
+// byte length a failed append truncates back to, null when it could not be
+// read; `fragment` means the last byte is not a newline, so the next append
+// must close the line first.
+interface IndexTail {
+  size: number | null;
+  fragment: boolean;
+}
 
 // The unique blobs an entry references: its before pre-image plus either its
 // delta or its after-blob (a delta entry has no after-blob — issue #111).
@@ -383,12 +403,7 @@ export class FileJournalStore {
     // Durable append (issue #117): the crash-safety seam. Production takes
     // `appendDurably` (fsync before this returns); a bridge double without
     // it keeps the plain append, and `durable: false` opts out explicitly.
-    const line = `${JSON.stringify(entry)}\n`;
-    if (this.durable && bridge.appendDurably !== undefined) {
-      bridge.appendDurably(this.indexPath, line);
-    } else {
-      bridge.appendFile(this.indexPath, line);
-    }
+    this.appendIndexLine(bridge, `${JSON.stringify(entry)}\n`);
     // Bounded by construction: every append enforces the store's limits,
     // so there is no path that grows the journal without checking.
     this.enforceRetention({ ...this.limits });
@@ -396,19 +411,98 @@ export class FileJournalStore {
   }
 
   entries(): JournalEntry[] {
+    return this.readIndex().entries;
+  }
+
+  // The index as read (issue #343): the parseable entries plus the count of
+  // lines dropped on the way. `entries()` stays the entry-only view every
+  // caller uses; `kubic status` needs both, so it reads the index once.
+  readIndex(): JournalIndexRead {
     const bridge = this.bridge();
-    if (!bridge.exists(this.indexPath)) return [];
     const out: JournalEntry[] = [];
+    if (!bridge.exists(this.indexPath)) {
+      return { entries: out, corruptLines: 0 };
+    }
+    let corruptLines = 0;
     for (const line of bridge.readTextFile(this.indexPath).split('\n')) {
       if (line.trim() === '') continue;
       try {
         out.push(JSON.parse(line) as JournalEntry);
       } catch {
-        // Corrupt lines never poison the journal; they are skipped and
-        // dropped by the next retention rewrite.
+        // Corrupt lines never poison the journal; they are skipped, counted
+        // for `status` (issue #343), and dropped by the next retention
+        // rewrite.
+        corruptLines++;
       }
     }
-    return out;
+    return { entries: out, corruptLines };
+  }
+
+  // Append one index line (issue #343). The line is written as ONE append
+  // with a repair prefix, so a crash can never interleave the repair and
+  // the entry:
+  //
+  //   - a torn tail (crash mid-append, ENOSPC, EIO) leaves the index
+  //     without its terminating newline. Appending blind would glue the new
+  //     entry onto that fragment, JSON.parse would fail on the merged line,
+  //     and entries() would drop both — the write happened but the record
+  //     is unreadable. One pread of the last byte decides whether the tail
+  //     needs the newline.
+  //   - a failed append truncates the partial write back to the pre-append
+  //     length, so the index is exactly as it was: no half-line to repair,
+  //     no unreadable entry, and the repair byte goes with it.
+  private appendIndexLine(bridge: FileBridge, line: string): void {
+    // One stat per append: the pre-append length is both the truncate
+    // target and the position the tail probe reads (issue #343).
+    const tail = this.readIndexTail(bridge);
+    const payload = (tail.fragment ? '\n' : '') + line;
+    try {
+      if (this.durable && bridge.appendDurably !== undefined) {
+        bridge.appendDurably(this.indexPath, payload);
+      } else {
+        bridge.appendFile(this.indexPath, payload);
+      }
+    } catch (error) {
+      if (tail.size !== null) this.truncateIndexTo(bridge, tail.size);
+      throw error;
+    }
+  }
+
+  // The index's tail as an append needs it (issue #343): its byte length —
+  // the truncate target for a failed append — and whether it ends in a
+  // fragment. One stat plus one pread of the last byte. Anything unreadable
+  // reports `size: null, fragment: true`: never guess a length to truncate
+  // to (losing the index is worse than a partial line the next append
+  // repairs), and repair the tail (a needless newline costs a blank line
+  // readIndex skips and the next rewrite drops, while a missing one loses
+  // the entry this append is writing).
+  private readIndexTail(bridge: FileBridge): IndexTail {
+    let size: number;
+    try {
+      size = bridge.exists(this.indexPath)
+        ? bridge.fileInfo(this.indexPath).size
+        : 0;
+    } catch {
+      return { size: null, fragment: true };
+    }
+    if (size === 0) return { size, fragment: false };
+    try {
+      const last = bridge.readFileRange?.(this.indexPath, size - 1, size);
+      return { size, fragment: last?.[0] !== 0x0a };
+    } catch {
+      return { size, fragment: true };
+    }
+  }
+
+  // Best-effort: `truncateFile` is optional on the bridge and can fail on
+  // its own (the failed append's error is the one the caller must see). A
+  // bridge without it degrades to the tail repair on the next append.
+  private truncateIndexTo(bridge: FileBridge, size: number): void {
+    try {
+      bridge.truncateFile?.(this.indexPath, size);
+    } catch {
+      // Left as-is.
+    }
   }
 
   hasBlob(hash: string): boolean {

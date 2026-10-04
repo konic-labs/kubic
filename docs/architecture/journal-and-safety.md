@@ -19,7 +19,13 @@ so undo works after the terminal closes. Durability is claimed exactly
 where it is implemented: the appended index line is fsynced before
 `append` returns (one fsync per tool write — the price of "reversible";
 the store's `durable` knob, default `true`, trades that for a crash
-window of one truncated last line). Everything else is atomicity, not
+window of one truncated last line). An append also repairs a torn tail:
+one pread decides whether the index's last byte is a newline, a fragment
+gets one before the new entry — so the entry lands on a line of its own
+and is never glued to the fragment and dropped with it — and a failed
+append truncates the partial write back to the pre-append length. Dropped
+fragments are named as `corrupt index lines` in `kubic status` and removed
+by the next retention rewrite. Everything else is atomicity, not
 fsync: blobs and undo restores are written tmp+rename in the target's
 own directory, so a crash never leaves a half-written file visible
 under its real name, but their bytes are not fsynced before the rename,

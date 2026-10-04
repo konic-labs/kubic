@@ -22,7 +22,7 @@ import {
   sha256Hex,
 } from './journal.js';
 
-const counts = vi.hoisted(() => ({ fileInfo: 0, indexReads: 0 }));
+const counts = vi.hoisted(() => ({ fileInfo: 0, blobInfo: 0, indexReads: 0 }));
 
 vi.mock('./file-bridge.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./file-bridge.js')>();
@@ -34,6 +34,10 @@ vi.mock('./file-bridge.js', async (importOriginal) => {
         ...bridge,
         fileInfo: (path: string) => {
           counts.fileInfo += 1;
+          // Blob stats are the O(M) cost this issue removed; the append's
+          // own index tail probe (issue #343) is one lstat per append and
+          // is deliberately not counted here.
+          if (path.includes(`${'/'}blobs${'/'}`)) counts.blobInfo += 1;
           return bridge.fileInfo(path);
         },
         readTextFile: (path: string) => {
@@ -110,11 +114,11 @@ describe('blob size cache (issue #124, slice 1)', () => {
       store.append(entry({ path: `f${i}.txt`, after: uniqueContent(i) }));
     }
     expect(store.blobCount()).toBe(30);
-    counts.fileInfo = 0;
+    counts.blobInfo = 0;
     store.append(entry({ path: 'f50.txt', after: uniqueContent(50) }));
     // Before the size cache this append stat'd every unique referenced blob
     // (30 here, growing per entry); sizes recorded at write time make it 0.
-    expect(counts.fileInfo).toBe(0);
+    expect(counts.blobInfo).toBe(0);
   });
 });
 
@@ -181,13 +185,13 @@ describe('retention fast path (issue #124, slice 2)', () => {
       ...FAST,
       maxBytes: 10 * 1024 * 1024,
     });
-    counts.fileInfo = 0;
+    counts.blobInfo = 0;
     counts.indexReads = 0;
     for (let i = 0; i < 100; i++) {
       store.append(entry({ path: `f${i}.txt`, after: uniqueContent(i) }));
     }
-    // Sizes are recorded at write time and no prune runs: zero stats.
-    expect(counts.fileInfo).toBe(0);
+    // Sizes are recorded at write time and no prune runs: zero blob stats.
+    expect(counts.blobInfo).toBe(0);
     // And the pass is skipped outright: no per-append index reads — one
     // seeding pass at most, never one scan per append.
     expect(counts.indexReads).toBeLessThanOrEqual(2);

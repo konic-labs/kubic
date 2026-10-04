@@ -1,6 +1,7 @@
 // Slice D: `kubic diff / undo / log / status` CLI (issue #18; §42.2, §78).
 // RED: runJournalCommand does not exist yet.
 import {
+  appendFileSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -295,6 +296,55 @@ describe('journal CLI corrupt content (issue #111)', () => {
     );
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('corrupt: 1');
+  });
+});
+
+// Torn index lines (issue #343): a fragment left by a crash or a full disk
+// is dropped from the read, and `status` names the count so an operator
+// does not read the loss as an empty journal.
+describe('journal CLI corrupt index lines (issue #343)', () => {
+  function seed(seedTorn: boolean): { journalDir: string; root: string } {
+    const journalDir = mkTmp('j-');
+    const root = mkTmp('ws-');
+    new FileJournalStore(journalDir).append({
+      path: 'a.txt',
+      op: 'create',
+      before: null,
+      after: 'x\n',
+      bytesDelta: 2,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      timestamp: 100,
+    });
+    if (seedTorn) {
+      appendFileSync(join(journalDir, 'index.jsonl'), '{"path":"torn\n');
+    }
+    return { journalDir, root };
+  }
+
+  it('status counts the dropped index lines', async () => {
+    const { journalDir, root } = seed(true);
+    const lines: string[] = [];
+    const code = await runJournalCommand(
+      { command: 'status' },
+      { journalDir, root, out: (l) => lines.push(l) },
+    );
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toContain('corrupt index lines: 1');
+    // The dropped line is not content corruption: the two counts are
+    // separate lines with separate meanings.
+    expect(lines.join('\n')).toContain('corrupt: 0');
+  });
+
+  it('status prints the count as 0 for a clean index', async () => {
+    const { journalDir, root } = seed(false);
+    const lines: string[] = [];
+    await runJournalCommand(
+      { command: 'status' },
+      { journalDir, root, out: (l) => lines.push(l) },
+    );
+    expect(lines).toContain('corrupt index lines: 0');
   });
 });
 

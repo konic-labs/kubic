@@ -102,7 +102,16 @@ Journal durability (issue #117): index appends go through the bridge's
 before `append` returns — one fsync per tool write is the price of
 "reversible", and it is the default (`JournalRetention.durable`; `false`
 trades it for a crash window of one truncated last line, and a bridge
-without `appendDurably` always falls back to a plain append). The fsync
+without `appendDurably` always falls back to a plain append). Index
+appends repair a torn tail first (issue #343): one stat plus one pread of
+the last byte, and a fragment left by a crash or a full disk gets its own
+newline before the new entry, so the entry lands on a line of its own
+instead of being glued to the fragment and dropped with it. A failed
+append truncates the partial write back to the pre-append length — the
+repair byte included — so the index is exactly as it was and the retry
+repairs the tail again. `readIndex()` returns the parseable entries plus
+the `corruptLines` count, which `kubic status` prints as `corrupt index
+lines: N` (separate from `corrupt`, which counts lost content). The fsync
 covers the appended index line only — blob payloads and the retention
 compaction rewrite are renamed without one, so a crash right after a
 compaction can lose more than the last line. Blob writes and undo

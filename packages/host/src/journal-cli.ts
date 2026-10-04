@@ -629,6 +629,12 @@ function journalStatusCommand(
   // honest answer") so a corrupt store is visible at a glance.
   const corrupt = `corrupt: ${status.corrupt}`;
   deps.out(status.corrupt > 0 ? theme.error(corrupt) : corrupt);
+  // Issue #343: index lines dropped because they do not parse — a torn tail
+  // from a crash or a full disk. Named separately from `corrupt`: that
+  // counts lost content, this counts unreadable lines, and an operator
+  // cannot infer one from the other.
+  const corruptLines = `corrupt index lines: ${status.corruptLines}`;
+  deps.out(status.corruptLines > 0 ? theme.error(corruptLines) : corruptLines);
   if (status.repo === null) {
     deps.out('repo: non-repo directory (journal works without git)');
   } else {

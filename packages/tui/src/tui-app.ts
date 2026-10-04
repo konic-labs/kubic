@@ -134,6 +134,11 @@ export interface TuiAppSeed {
   // to 'approvals:on'.
   readonly mode: StatusMode;
   readonly approvalsSkipped: boolean;
+  // Issue #347 (§18): the boot model's context window and the token level at
+  // which the solo lane compacts. Absent when the catalog does not know the
+  // window — the context gauge then stays off.
+  readonly contextWindow?: number;
+  readonly compactionThreshold?: number;
 }
 
 // §66 replication: the TUI holds no authority — it reads the replicated
@@ -213,6 +218,14 @@ export interface TuiApp {
   // bar show. Called after a `/model` switch lands; presentation only — the
   // lane switch itself happens through the lane's own setModel.
   setModel(model: string, thinking?: string): void;
+  // Issue #347: the context gauge follows a `/model` switch. The limits are
+  // the NEW model's window and compaction threshold; a model whose window is
+  // unknown clears them, so the gauge disappears rather than showing the old
+  // model's percentage.
+  setContextLimits(limits: {
+    contextWindow?: number;
+    compactionThreshold?: number;
+  }): void;
   // Issue #327: orchestrator report lines (the manager-lane run's own
   // output) rendered as transcript text. Presentation only: the report
   // never drives state, and a solo lane snapshot replaces it.
@@ -444,6 +457,12 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     mode: sessionMode.current,
     approvalsSkipped: seed.approvalsSkipped,
     sessionId: seed.sessionId,
+    ...(seed.contextWindow === undefined
+      ? {}
+      : { contextWindow: seed.contextWindow }),
+    ...(seed.compactionThreshold === undefined
+      ? {}
+      : { compactionThreshold: seed.compactionThreshold }),
   };
   const status = new StatusBar(barState);
   const setMode = (next: StatusMode): void => {
@@ -735,6 +754,13 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         thinking: thinkingLabel,
       });
       refreshWelcome();
+    },
+    setContextLimits: (limits): void => {
+      status.setState({
+        ...status.getState(),
+        contextWindow: limits.contextWindow,
+        compactionThreshold: limits.compactionThreshold,
+      });
     },
     appendReport: (lines: ReadonlyArray<string>): void => {
       const clean = lines

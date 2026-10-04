@@ -51,6 +51,12 @@ export interface StatusSummary {
   readonly cacheRead: number;
   readonly cacheWrite: number;
   readonly costTotal: number;
+  // Issue #347: the prompt size of the last COMMITTED request (its input plus
+  // the cache-read tokens it reused — pi's `input` excludes the cached
+  // prefix). Undefined until a row names its committed entry: the seeded
+  // `pi.usage` buckets (#346) are cumulative, so reading them here would show
+  // total spend as context pressure.
+  readonly contextTokens?: number;
 }
 
 export function summarizeStatusRows(
@@ -62,6 +68,7 @@ export function summarizeStatusRows(
   let cacheRead = 0;
   let cacheWrite = 0;
   let costTotal = 0;
+  let contextTokens: number | undefined;
   for (const row of rows) {
     requests += 1;
     input += row.usage.input;
@@ -69,6 +76,9 @@ export function summarizeStatusRows(
     cacheRead += row.usage.cacheRead;
     cacheWrite += row.usage.cacheWrite;
     costTotal += row.usage.cost.total;
+    if (row.entryId !== undefined) {
+      contextTokens = row.usage.input + row.usage.cacheRead;
+    }
   }
   return {
     requests,
@@ -77,6 +87,7 @@ export function summarizeStatusRows(
     cacheRead,
     cacheWrite,
     costTotal,
+    contextTokens,
   };
 }
 
@@ -97,6 +108,12 @@ export interface StatusBarState {
   readonly mode: StatusMode;
   readonly approvalsSkipped: boolean;
   readonly sessionId: string;
+  // Issue #347 (§18): the model's context window and the token level at
+  // which the solo lane compacts (window − reserve, #399's policy; #239 will
+  // make the reserve configurable). Both absent means the gauge stays off —
+  // an unknown window must never render a made-up percentage.
+  readonly contextWindow?: number;
+  readonly compactionThreshold?: number;
 }
 
 export interface StatusBarTheme {
@@ -140,17 +157,44 @@ function shortModel(model: string, width: number, rest: string): string {
   return `${model.slice(0, room - 1)}…`;
 }
 
-// Row 1 segments, highest truncation priority last: model goes first,
-// thinking drops next, tokens + session cost never go.
+// Issue #347: the context gauge. `undefined` (unknown window, or no
+// committed request yet) means no segment at all — a wrong percentage is
+// worse than a missing one. At or above the compaction threshold the segment
+// takes the warning colour: the next turn is about to compact.
+function contextSegment(
+  state: StatusBarState,
+  summary: StatusSummary,
+  theme: StatusBarTheme,
+): string | undefined {
+  const window = state.contextWindow;
+  const used = summary.contextTokens;
+  if (window === undefined || !(window > 0) || used === undefined) {
+    return undefined;
+  }
+  const percent = Math.min(100, Math.max(0, Math.round((used / window) * 100)));
+  const text = `ctx ${percent}%`;
+  const threshold = state.compactionThreshold;
+  return threshold !== undefined && used >= threshold
+    ? theme.warning(text)
+    : text;
+}
+
+// Row 1 segments, highest truncation priority last: the context gauge drops
+// first, then thinking, then the model shrinks; tokens + session cost never
+// go.
 function renderRow1(
   state: StatusBarState,
   summary: StatusSummary,
   width: number,
+  theme: StatusBarTheme,
 ): string {
   const tokens = `in ${summary.input} out ${summary.output} (cached ${summary.cacheRead})`;
   const cost = formatStatusCost(summary.costTotal);
-  const full = `${state.model} • thinking ${state.thinking} • ${tokens} • ${cost}`;
+  const base = `${state.model} • thinking ${state.thinking} • ${tokens} • ${cost}`;
+  const ctx = contextSegment(state, summary, theme);
+  const full = ctx === undefined ? base : `${base} • ${ctx}`;
   if (statusVisibleWidth(full) <= width) return full;
+  if (statusVisibleWidth(base) <= width) return base;
   const bare = `${shortModel(state.model, width, ` • ${tokens} • ${cost}`)} • ${tokens} • ${cost}`;
   if (statusVisibleWidth(bare) <= width) return bare;
   // The last rung keeps the cost (#346 review): truncating the tail would
@@ -210,7 +254,7 @@ export function renderStatusLines(
 ): string[] {
   const w = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
   const summary = summarizeStatusRows(state.rows);
-  return [renderRow1(state, summary, w), renderRow2(state, theme, w)];
+  return [renderRow1(state, summary, w, theme), renderRow2(state, theme, w)];
 }
 
 // Inner body: renders the exact pre-truncated lines (no padding/wrap)

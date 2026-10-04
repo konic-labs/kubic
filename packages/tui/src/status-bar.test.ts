@@ -90,6 +90,23 @@ describe('status aggregates (issue #27, slice A)', () => {
     expect(summary.requests).toBe(0);
     expect(formatStatusCost(summary.costTotal)).toBe('$0.00');
   });
+
+  it('reports the last committed request as the context size (issue #347)', () => {
+    const summary = summarizeStatusRows([
+      // Seeded cumulative buckets (#346) are not a request: no entry id.
+      row({ usage: { ...priced().usage, input: 5000, cacheRead: 900 } }),
+      row({
+        entryId: 'e1',
+        usage: { ...priced().usage, input: 300, cacheRead: 120 },
+      }),
+      row({
+        entryId: 'e2',
+        usage: { ...priced().usage, input: 420, cacheRead: 0 },
+      }),
+    ]);
+    expect(summary.contextTokens).toBe(420);
+    expect(summarizeStatusRows([priced()]).contextTokens).toBeUndefined();
+  });
 });
 
 function state(over: Partial<StatusBarState>): StatusBarState {
@@ -125,6 +142,85 @@ function priced(over: Partial<StatusUsageRow> = {}): StatusUsageRow {
     ...over,
   };
 }
+
+describe('context-window gauge (issue #347; §18)', () => {
+  // A committed request whose prompt was 420 tokens (300 new + 120 cached)
+  // against a 1000-token window: `ctx 42%`.
+  function requestRow(input: number, cacheRead: number): StatusUsageRow {
+    return row({
+      entryId: 'e1',
+      usage: { ...priced().usage, input, cacheRead },
+    });
+  }
+
+  const warn = (text: string): string => `[WARN:${text}]`;
+
+  it('renders ctx 42% for a 1000-token window and a 420-token request', () => {
+    const lines = renderStatusLines(
+      state({ rows: [requestRow(300, 120)], contextWindow: 1000 }),
+      100,
+    );
+    expect(lines[0]).toContain('ctx 42%');
+  });
+
+  it('hides the gauge when the context window is unknown', () => {
+    const lines = renderStatusLines(
+      state({ rows: [requestRow(300, 120)] }),
+      100,
+    );
+    expect(lines[0]).not.toContain('ctx ');
+  });
+
+  it('hides the gauge until a committed request reports its prompt size', () => {
+    // A seeded cumulative bucket (#346) is not context pressure.
+    const lines = renderStatusLines(
+      state({ rows: [priced()], contextWindow: 1000 }),
+      100,
+    );
+    expect(lines[0]).not.toContain('ctx ');
+  });
+
+  it('warns at or above the compaction threshold, never below it', () => {
+    const rows = [requestRow(300, 120)];
+    const below = renderStatusLines(
+      state({ rows, contextWindow: 1000, compactionThreshold: 500 }),
+      100,
+      { warning: warn },
+    );
+    expect(below[0]).toContain('ctx 42%');
+    expect(below[0]).not.toContain('[WARN:');
+    const at = renderStatusLines(
+      state({ rows, contextWindow: 1000, compactionThreshold: 420 }),
+      100,
+      { warning: warn },
+    );
+    expect(at[0]).toContain('[WARN:ctx 42%]');
+  });
+
+  it('drops the gauge before the model when the terminal is narrow', () => {
+    const full = renderStatusLines(
+      state({ rows: [requestRow(300, 120)], contextWindow: 1000 }),
+      100,
+    );
+    expect(full[0]).toContain('ctx 42%');
+    expect(full[0]).toContain('thinking medium');
+    const narrow = renderStatusLines(
+      state({ rows: [requestRow(300, 120)], contextWindow: 1000 }),
+      80,
+    );
+    expect(narrow[0]).not.toContain('ctx ');
+    expect(narrow[0]).toContain('thinking medium');
+    expect(narrow[0]).toContain('$0.03');
+  });
+
+  it('clamps a window smaller than the request instead of exceeding 100%', () => {
+    const lines = renderStatusLines(
+      state({ rows: [requestRow(300, 120)], contextWindow: 100 }),
+      100,
+    );
+    expect(lines[0]).toContain('ctx 100%');
+  });
+});
 
 describe('status bar rows (issue #27, slice B)', () => {
   it('renders model/thinking/tokens/cache/cost + mode/approvals/session', () => {

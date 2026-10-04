@@ -164,6 +164,46 @@ describe('tui app root (issue #75)', () => {
     expect(app.render(100).join('\n')).toContain('$0.02');
   });
 
+  it('renders the context gauge from the seed and follows setContextLimits (#347)', () => {
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+      contextWindow: 1000,
+      compactionThreshold: 500,
+    });
+    // A committed request (an entry id) whose prompt was 420 tokens.
+    app.setUsage([
+      {
+        model: MODEL,
+        provider: 'faux',
+        entryId: 'e1',
+        usage: {
+          input: 300,
+          output: 5,
+          cacheRead: 120,
+          cacheWrite: 0,
+          totalTokens: 425,
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 0.02,
+          },
+        },
+      },
+    ]);
+    expect(app.render(120).join('\n')).toContain('ctx 42%');
+    // A switch to a model with a wider window moves the gauge.
+    app.setContextLimits({ contextWindow: 4000, compactionThreshold: 3000 });
+    expect(app.render(120).join('\n')).toContain('ctx 11%');
+    // A model whose window is unknown clears it: no made-up percentage.
+    app.setContextLimits({});
+    expect(app.render(120).join('\n')).not.toContain('ctx ');
+  });
+
   it('prints the final document with transcript and status', () => {
     const app = createTuiApp({
       sessionId: SESSION,

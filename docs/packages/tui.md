@@ -63,7 +63,12 @@ module owns arrangement only.
   model/thinking/tokens/cache/cost only: the TTFT and tool-ms segments
   were deleted in #346 (Pi 1.0 routes no timing Kubic could read), and
   `kubic tui --session` seeds the rows from the session's `pi.usage`
-  ledger before the first frame.
+  ledger before the first frame. Issue #347 adds the context gauge: when
+  `StatusBarState.contextWindow` is known and a committed request reported
+  its prompt size (`StatusSummary.contextTokens`), row 1 carries
+  `ctx NN%` — warning-coloured at or above
+  `StatusBarState.compactionThreshold` — and drops before the model when
+  the terminal narrows.
 - **Transcript** (`transcript.ts`): `TranscriptEntryKind` is
   `text|tool|output`; `TranscriptView` applies snapshot/delta ops
   (`TranscriptOp`) and replays via `replayTranscript`.

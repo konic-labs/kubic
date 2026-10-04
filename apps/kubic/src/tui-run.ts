@@ -119,6 +119,10 @@ import {
   parseKey,
 } from '../../../packages/tui/src/tui-boundary.js';
 import {
+  DEFAULT_RESERVE_TOKENS,
+  effectiveReserveTokens,
+} from '../../../packages/worker/src/compaction.js';
+import {
   abortLane,
   forgetLaneKills,
   type OperationKillRegistry,
@@ -248,6 +252,11 @@ export interface TuiLaneLoop {
   ) => Promise<string>;
   /** The live model label (provider/id) — the status bar and usage rows. */
   model?: (context: Context) => Promise<string>;
+  // Issue #347: the resolved model's context window and compaction
+  // threshold, so the gauge follows a `/model` switch. Absent (injected
+  // viewer loops) leaves the seeded limits in place — the gauge never keeps
+  // a window that belongs to a model the session no longer runs.
+  contextLimits?: (provider: string, id: string) => ContextLimits;
   // §46 trajectory per settled turn (issue #383): the prod boot persists
   // <sessions-root>/<id>/trajectory.json here. Absent (injected test loops)
   // means no trajectory; a failure never changes the turn's outcome.
@@ -434,6 +443,38 @@ export interface TuiLaneBoot {
   // ledger before the first frame, so a resumed session never renders
   // $0.00. Absent for a fresh session and for injected viewer boots.
   usageRows?: StatusUsageRow[];
+  // Issue #347: the running model's context window and compaction threshold,
+  // so the status bar's gauge can render from the first committed request.
+  // Absent when the catalog does not know the window.
+  contextLimits?: ContextLimits;
+}
+
+// Issue #347: a model's context window and the token level at which the solo
+// lane compacts (window − reserve, the same policy the harness reads, #399).
+// `undefined` means the catalog does not know the window: the gauge then
+// stays off rather than showing a made-up percentage. #239 will make the
+// reserve configurable; until then this is Kubic's default.
+export interface ContextLimits {
+  contextWindow?: number;
+  compactionThreshold?: number;
+}
+
+export function contextLimitsOf(
+  models: MutableModels,
+  provider: string,
+  id: string,
+): ContextLimits {
+  const definition = models
+    .getModels(provider)
+    .find((model) => model.id === id);
+  const contextWindow = definition?.contextWindow;
+  if (contextWindow === undefined || !(contextWindow > 0)) return {};
+  return {
+    contextWindow,
+    compactionThreshold:
+      contextWindow -
+      effectiveReserveTokens(contextWindow, DEFAULT_RESERVE_TOKENS),
+  };
 }
 
 // Issue #346: a session's `pi.usage` buckets as status-bar rows. A model
@@ -1072,14 +1113,20 @@ export async function bootTuiLane(
     }
     const fullAccess = installed.posture.fullAccess;
     settlePolicy = installed.settle;
+    // The model the lane actually runs (issue #148): the status bar, the
+    // usage rows the turn runner records and the #347 context gauge all
+    // read this.
+    const runningModel = await liveModelOf(solo, context);
     return {
       sessionId: id,
-      // The model the lane actually runs (issue #148): the status bar and
-      // the usage rows the turn runner records both read this.
-      model: await (async () => {
-        const running = await liveModelOf(solo, context);
-        return `${running.provider}/${running.id}`;
-      })(),
+      model: `${runningModel.provider}/${runningModel.id}`,
+      // Issue #347: the gauge needs the running model's window; a catalog
+      // that does not know it yields none and the gauge stays off.
+      contextLimits: contextLimitsOf(
+        models,
+        runningModel.provider,
+        runningModel.id,
+      ),
       journal,
       reconcile: () => {
         reconciliation?.sweep();
@@ -1149,6 +1196,9 @@ export async function bootTuiLane(
 
       loop: {
         ...soloTuiLoop(booted, context),
+        // Issue #347: a `/model` switch moves the context window with it, so
+        // the gauge never keeps the old model's percentage.
+        contextLimits: (provider, id) => contextLimitsOf(models, provider, id),
         // Issue #227: resolve against the live catalog before touching the
         // conversation, so `/model typo/nope` fails by name and the lane
         // keeps the model it had; configure then commits the change to the
@@ -1644,6 +1694,10 @@ export class TuiTurnRunner {
     );
     this.model = label;
     this.app.setModel(label);
+    // Issue #347: the gauge follows the model. A loop without the lookup
+    // (injected viewer shells) leaves the seeded limits alone.
+    const limits = this.loop.contextLimits?.(selection.provider, selection.id);
+    if (limits !== undefined) this.app.setContextLimits(limits);
     return label;
   }
 
@@ -2075,6 +2129,12 @@ export async function runTuiCommand(
     // still comes from the installed policy.
     mode,
     approvalsSkipped: boot.approvalsSkipped?.() ?? boot.fullAccess === true,
+    ...(boot.contextLimits?.contextWindow === undefined
+      ? {}
+      : { contextWindow: boot.contextLimits.contextWindow }),
+    ...(boot.contextLimits?.compactionThreshold === undefined
+      ? {}
+      : { compactionThreshold: boot.contextLimits.compactionThreshold }),
   });
   // Issue #346: the resumed session's committed spend is on the bar from the
   // first frame, not only after the next turn's usage event.

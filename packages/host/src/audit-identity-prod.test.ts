@@ -107,9 +107,13 @@ function hermeticBoot(workspace: string) {
 // A session whose lane was created on faux/small (the stored model).
 async function sessionOnSmall(root: string): Promise<string> {
   const store = openSessionStore(root, createNodeFileBridge(root));
-  const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-  const id = session.metadata.id;
-  await session.close(BACKGROUND_CONTEXT);
+  const session = await createSession(
+    store,
+    { cwd: '/work' },
+    BACKGROUND_CONTEXT,
+  );
+  const id = session.id;
+  await session.release(BACKGROUND_CONTEXT);
   const first = await runHeadlessPrompt(
     'first',
     { sessionId: id },

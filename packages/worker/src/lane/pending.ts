@@ -1,182 +1,347 @@
-// Pending operations on re-attach (issue #147; §21, §20.7).
+// Pending work on re-attach (issue #147, EPIC K #396; §21, §20.7).
 //
 // A process that dies mid-turn (SIGKILL, OOM, power loss, orphan reaping)
-// leaves its lane's operation open in the durable session: Pi restores it on
-// the next attach and refuses every new prompt with LaneBusy until it
-// settles. §21 says attach resumes the in-flight operation, so this module is
-// the one place Kubic decides what happens to it:
+// leaves its durable work unfinished: the reopened Harness restores every
+// live task as pending and holds the placed submission until the scheduler
+// runs again. `harness.inspect()` reports that work without resuming it;
+// this module is the one place Kubic decides what happens to it:
 //
-// - `resume` drives the restored operation to settlement through the same
-//   §20.7 loop a fresh prompt uses (a caller may pass a bounded driver — the
-//   headless run passes its turn/wall-clock guards). Never-replay tools that
-//   were mid-flight are not re-executed: Pi reports them interrupted, and
-//   Kubic's memoized results answer a replayed invocation id.
-// - `abort` durably requests the abort (recorded in-session, kill registry
-//   drained) and drives the operation to its `aborted` settlement.
+// - `resume` enables the scheduler (`harness.resume()`), then waits under
+//   the caller's bound — for the placed input submissions, and for the
+//   conversation to go idle. An `unsafe` tool interrupted mid-call is not
+//   re-executed: pi-durable settles it with an `interrupted` error result
+//   carrying its committed output (K3 #393 never-replay semantics). The
+//   durable settlement is reported (`settled` + `reason`), so a run that
+//   ended `unanswered` is never named a clean resume.
+// - work a dead process had already marked aborted is aborted, never
+//   started: the mark is durable, and #147 honours the operator's cancel.
+// - `abort` durably stops the work (`conversation.abort(context)`), drains
+//   the lane's kill registry (D1: the bash group is keyed by the
+//   conversation id) and confirms the conversation is idle.
 //
-// A resume that cannot settle — it suspends on a deferred approval, or its
-// driver throws (a guard fired, the drive failed) — falls back to the
-// durable abort, so the lane is always free for the next prompt afterwards.
+// A resume that cannot settle — the guard was already exhausted, the wait
+// failed — falls back to the abort on a FRESH context (`abortContext`,
+// defaulting to BACKGROUND_CONTEXT). The context that failed the resume is
+// cancelled by definition, and pi-durable rejects a commit on a cancelled
+// context, which would leave the interrupted turn running. The lane is
+// always free for the next prompt afterwards.
+//
+// The decisions are driven by the pi-durable Harness only; the parameter is
+// the structural subset of #394's SoloLane (built in parallel), so this
+// module lands and compiles before that issue does.
 
-import type {
-  AgentLane,
-  Context,
-  OpenOperation,
-  OperationResultRecord,
-  Session,
+import {
+  BACKGROUND_CONTEXT,
+  type Context,
+  type Conversation,
+  type EntryRecord,
+  type Harness,
+  type Storage,
 } from '../pi-boundary.js';
-import { AgentHarness, createModels } from '../pi-boundary.js';
-import { type OperationKillRegistry, requestLaneAbort } from './abort.js';
-import { driveToSettled, type SettledDrive } from './solo.js';
+import type { OperationKillRegistry } from './abort.js';
 
 export type PendingPolicy = 'resume' | 'abort';
 
-export interface PendingSettlement {
-  operationId: string;
-  kind: OpenOperation['kind'];
-  startedAt: number;
-  // What Kubic did with the operation.
-  action: 'resumed' | 'aborted';
-  // The lane's own terminal status for it (completed / failed / aborted…).
-  status: string;
-  // Why a resume fell back to the abort, when it did.
+// Pick<SoloLane, 'harness' | 'conversation' | 'kills'> — structural, so the
+// tests and the solo lane both satisfy it.
+export interface PendingLane {
+  readonly harness: Harness;
+  readonly conversation: Conversation;
+  readonly kills: OperationKillRegistry;
+}
+
+export interface PendingReport {
+  readonly pending: boolean;
+  readonly summary?: string;
+}
+
+export interface PendingSettlementResult {
+  readonly outcome: 'resumed' | 'aborted' | 'none';
+  readonly fellBack: boolean;
+  // How the resumed work durably ended; absent when Kubic aborted it.
+  readonly settled?: 'done' | 'unanswered';
+  // The durable settlement reason (`unanswered`), or the failure that
+  // forced the fallback abort. Absent for a clean resume.
+  readonly reason?: string;
+}
+
+export interface SettlePendingOptions {
+  readonly context: Context;
+  readonly kills: OperationKillRegistry;
+  // Bounds the resume wait (headless turn/wall-clock guards). Callers derive
+  // it from their own context, so cancelling the run stops the wait too.
+  readonly guard?: Context;
+  // Runs the abort and the idle confirmation — never the cancelled context a
+  // failed resume was stopped by. Default BACKGROUND_CONTEXT; pass a bounded
+  // context to cap the cleanup.
+  readonly abortContext?: Context;
+}
+
+type HarnessInspection = Awaited<ReturnType<Harness['inspect']>>;
+type SubmissionRecord = HarnessInspection['submissions'][number];
+
+// One page is enough for a session's live work; a scan that fills it is
+// already far beyond anything a lane can be carrying.
+const STORED_WORK_LIMIT = 100;
+const UNFINISHED_TASK_STATUSES = [
+  'pending',
+  'running',
+  'waiting',
+  'completing',
+] as const;
+const UNFINISHED_SUBMISSION_STATUSES = ['queued', 'placed'] as const;
+
+export async function inspectPending(
+  solo: PendingLane,
+  context: Context,
+): Promise<PendingReport> {
+  return reportInspection(await solo.harness.inspect(context));
+}
+
+function reportInspection(inspection: HarnessInspection): PendingReport {
+  if (inspection.tasks.length === 0 && inspection.submissions.length === 0) {
+    return { pending: false };
+  }
+  const parts = [
+    ...inspection.tasks.map(
+      (task) => `${task.record.kind} ${task.record.id} (${task.state.kind})`,
+    ),
+    ...inspection.submissions.map(
+      (submission) => `submission ${submission.id} (${submission.status})`,
+    ),
+  ];
+  return { pending: true, summary: `pending work: ${parts.join(', ')}` };
+}
+
+export async function settlePending(
+  solo: PendingLane,
+  policy: PendingPolicy,
+  opts: SettlePendingOptions,
+): Promise<PendingSettlementResult> {
+  const inspection = await solo.harness.inspect(opts.context);
+  if (!reportInspection(inspection).pending) {
+    return { outcome: 'none', fellBack: false };
+  }
+  // An abort the dead process already requested stays an abort (0.87's
+  // op.aborting): the durable mark is the operator's cancel, so the
+  // interrupted run is never started for it.
+  if (policy === 'abort' || abortedPending(inspection)) {
+    await abortPending(solo, opts);
+    return { outcome: 'aborted', fellBack: false };
+  }
+  const bound = opts.guard ?? opts.context;
+  const exhaustion = exhausted(bound);
+  if (exhaustion !== undefined) {
+    // Never start a paid generation the guard would abandon at once.
+    await abortPending(solo, opts);
+    return { outcome: 'aborted', fellBack: true, reason: exhaustion };
+  }
+  solo.harness.resume();
+  let settled: ResumedSettlement;
+  try {
+    settled = await resumePending(solo, inspection, opts, bound);
+  } catch (error) {
+    await abortPending(solo, opts);
+    return { outcome: 'aborted', fellBack: true, reason: failureText(error) };
+  }
+  if (settled.status === undefined) {
+    return { outcome: 'resumed', fellBack: false };
+  }
+  if (settled.reason === undefined) {
+    return { outcome: 'resumed', fellBack: false, settled: settled.status };
+  }
+  return {
+    outcome: 'resumed',
+    fellBack: false,
+    settled: settled.status,
+    reason: settled.reason,
+  };
+}
+
+interface ResumedSettlement {
+  status?: 'done' | 'unanswered';
   reason?: string;
 }
 
-export interface PendingLane {
-  lane: Pick<AgentLane, 'drive' | 'requestAbort'>;
-  kills: OperationKillRegistry;
-}
-
-export type PendingDriver = (operationId: string) => Promise<SettledDrive>;
-
-function statusOf(drive: SettledDrive): string {
-  if (drive.kind !== 'settled') return 'suspended';
-  const record = drive.outcome as Partial<OperationResultRecord> | null;
-  return typeof record?.status === 'string' ? record.status : 'settled';
-}
-
-async function abortToSettled(
+async function resumePending(
   solo: PendingLane,
-  op: OpenOperation,
-  context: Context,
-): Promise<string> {
-  if (op.aborting !== true) {
-    await requestLaneAbort(solo.lane, solo.kills, op.operationId, context);
-  }
-  return statusOf(await driveToSettled(solo.lane, op.operationId, context));
-}
-
-export async function settlePendingOperation(
-  solo: PendingLane,
-  op: OpenOperation,
-  policy: PendingPolicy,
-  context: Context,
-  drive: PendingDriver = (operationId) =>
-    driveToSettled(solo.lane, operationId, context),
-): Promise<PendingSettlement> {
-  const base = {
-    operationId: op.operationId,
-    kind: op.kind,
-    startedAt: op.startedAt,
-  };
-  // An abort the dead process already requested is honoured as an abort:
-  // the operator's cancel outlives the crash.
-  if (policy === 'abort' || op.aborting === true) {
-    return {
-      ...base,
-      action: 'aborted',
-      status: await abortToSettled(solo, op, context),
-    };
-  }
-  let reason: string;
-  try {
-    const driven = await drive(op.operationId);
-    if (driven.kind === 'settled') {
-      return { ...base, action: 'resumed', status: statusOf(driven) };
+  inspection: HarnessInspection,
+  opts: SettlePendingOptions,
+  bound: Context,
+): Promise<ResumedSettlement> {
+  const pending: readonly SubmissionRecord[] = inspection.submissions.filter(
+    (submission) =>
+      submission.type === 'input' &&
+      (submission.status === 'queued' || submission.status === 'placed'),
+  );
+  let settlement: ResumedSettlement = {};
+  for (const record of pending) {
+    const submission = await solo.harness.submission(record.id, opts.context);
+    if (submission === undefined) continue;
+    const settled = await submission.wait(bound);
+    if (settled.status === 'unanswered') {
+      if (settlement.status !== 'unanswered') {
+        settlement = { status: 'unanswered', reason: settled.reason };
+      }
+    } else if (settlement.status === undefined) {
+      settlement = { status: 'done' };
     }
-    reason = 'suspended waiting on an approval';
+  }
+  // Confirm the lane is free when no input carried the work (a compaction
+  // task, a stray task) or a submission resolved before its tasks drained.
+  await solo.conversation.waitForIdle(bound);
+  return settlement;
+}
+
+async function abortPending(
+  solo: PendingLane,
+  opts: SettlePendingOptions,
+): Promise<void> {
+  // The abort must commit: a context cancelled by the failed resume would be
+  // rejected by pi-durable and leave the interrupted turn running.
+  const abortContext = opts.abortContext ?? BACKGROUND_CONTEXT;
+  // Start the durable abort first (mark, signal, join); the kill drain then
+  // unblocks a process that ignores cancellation, and awaiting the abort
+  // joins every task it marked.
+  const aborting = solo.conversation.abort(abortContext);
+  const failures = drainKills(opts.kills, String(solo.conversation.id));
+  try {
+    await aborting;
+    await solo.conversation.waitForIdle(abortContext);
   } catch (error) {
-    reason = error instanceof Error ? error.message : String(error);
+    const abortFailure = `lane abort failed: ${failureText(error) ?? 'unknown error'}`;
+    throw failures.length === 0
+      ? new Error(abortFailure)
+      : new Error(`${abortFailure}; kills failed: ${failures.join('; ')}`);
   }
-  return {
-    ...base,
-    action: 'aborted',
-    status: await abortToSettled(solo, op, context),
-    reason,
-  };
+  if (failures.length > 0) {
+    throw new Error(`lane abort kills failed: ${failures.join('; ')}`);
+  }
 }
 
-// The line `kubic sessions attach` prints for an open operation.
-export function describePendingOperation(op: OpenOperation): string {
-  return `pending operation: ${op.operationId} (${op.kind}, started ${new Date(
-    op.startedAt,
-  ).toISOString()}${op.aborting === true ? ', abort requested' : ''})`;
+function abortedPending(inspection: HarnessInspection): boolean {
+  return inspection.tasks.some((task) => task.record.abortRequested === true);
 }
 
-// `pending operation <id> (<kind>, started <iso>)` — the head every
-// pending-op line shares.
-export function pendingHead(
-  op: Pick<OpenOperation, 'operationId' | 'kind' | 'startedAt'>,
+function exhausted(bound: Context): string | undefined {
+  const signal = bound.abortSignal;
+  if (signal === undefined || !signal.aborted) return undefined;
+  return failureText(signal.reason) ?? 'the resume bound was already exhausted';
+}
+
+function failureText(cause: unknown): string | undefined {
+  if (cause === undefined || cause === null) return undefined;
+  if (typeof cause === 'string') return cause;
+  if (cause instanceof Error) return cause.message;
+  const message = (cause as { message?: unknown }).message;
+  return typeof message === 'string' ? message : String(cause);
+}
+
+function drainKills(
+  kills: OperationKillRegistry,
+  operationId: string,
+): string[] {
+  const failures: string[] = [];
+  for (const kill of kills.drain(operationId)) {
+    try {
+      kill();
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  return failures;
+}
+
+// The one-line notice `kubic run` (stderr) and the TUI (footer) print for
+// the pending work `inspectPending` reported.
+export function describePendingSettlement(
+  summary: string | undefined,
+  settlement: PendingSettlementResult,
 ): string {
-  return `pending operation ${op.operationId} (${op.kind}, started ${new Date(
-    op.startedAt,
-  ).toISOString()})`;
-}
-
-// The one-line outcome run (stderr) and tui (footer) report.
-export function describeSettlement(settled: PendingSettlement): string {
-  const head = pendingHead(settled);
-  if (settled.action === 'resumed') {
-    return `${head} resumed after an interrupted run: ${settled.status}`;
+  if (settlement.outcome === 'none') return 'no pending work to settle';
+  const head = summary ?? 'pending work';
+  if (settlement.outcome === 'resumed') {
+    if (settlement.settled === undefined) {
+      return `${head} resumed after an interrupted run`;
+    }
+    const detail =
+      settlement.reason === undefined
+        ? settlement.settled
+        : `${settlement.settled} (${settlement.reason})`;
+    return `${head} resumed after an interrupted run: ${detail}`;
   }
-  return settled.reason === undefined
-    ? `${head} aborted after an interrupted run`
-    : `${head} aborted after an interrupted run (resume could not settle: ${settled.reason})`;
+  if (!settlement.fellBack) {
+    return `${head} aborted after an interrupted run`;
+  }
+  const cause = settlement.reason === undefined ? '' : `: ${settlement.reason}`;
+  return `${head} aborted after an interrupted run (resume could not settle${cause})`;
 }
 
-// Read-only probe for `kubic sessions attach`: Pi restores every lane's
-// operation state when a harness attaches, and reports the open ones. No
-// lane is acquired and nothing is written — the model registry is empty and
-// the placeholder model is never resolved.
-export async function inspectOpenOperations(
-  session: Session,
+// #147's "the pending run carries this very prompt: resume it as this run,
+// never re-prompt" decision needs the text the dead process admitted. The
+// placed input submission's own entry is that text; undefined when nothing
+// is placed (nothing to resume-as-this-run).
+export async function pendingInputText(
+  solo: PendingLane,
   context: Context,
-): Promise<OpenOperation[]> {
-  const { open } = await AgentHarness.create(
-    {
-      session,
-      models: createModels(),
-      model: { provider: 'kubic-inspect', id: 'kubic-inspect' } as never,
-      tools: [],
-    },
+): Promise<string | undefined> {
+  const inspection = await solo.harness.inspect(context);
+  const placed = inspection.submissions.find(
+    (submission) =>
+      submission.type === 'input' && submission.status === 'placed',
+  );
+  if (placed?.entry === undefined) return undefined;
+  const page = await solo.conversation.entries(
+    { minEntryId: placed.entry, maxEntryId: placed.entry },
+    1,
+    undefined,
     context,
   );
-  return open;
+  return userText(page.items[0]);
 }
 
-// The text of the newest user message on the lane: the prompt an open run
-// operation was admitted with (Pi commits the prompt entry at admission).
-export function lastUserPromptText(
-  entries: readonly unknown[],
-): string | undefined {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i] as {
-      type?: unknown;
-      message?: { role?: unknown; content?: unknown };
-    } | null;
-    if (entry?.type !== 'message' || entry.message?.role !== 'user') continue;
-    const content = entry.message.content;
-    if (typeof content === 'string') return content;
-    if (!Array.isArray(content)) return undefined;
-    return content
-      .filter(
-        (part): part is { type: 'text'; text: string } =>
-          (part as { type?: unknown })?.type === 'text' &&
-          typeof (part as { text?: unknown }).text === 'string',
-      )
-      .map((part) => part.text)
-      .join('');
+function userText(entry: EntryRecord | undefined): string | undefined {
+  const message = entry?.model?.[0];
+  if (message === undefined || message.role !== 'user') return undefined;
+  const content = message.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return undefined;
+  return content
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
+    .join('');
+}
+
+// Read-only probe for `kubic sessions attach`: reports unfinished work
+// straight from a session's storage, without opening a Harness (which would
+// move running tasks back to pending) or acquiring the lane.
+export async function inspectStoredWork(
+  storage: Storage,
+  context: Context,
+): Promise<PendingReport> {
+  const parts: string[] = [];
+  for (const status of UNFINISHED_TASK_STATUSES) {
+    const page = await storage.scanTasks(
+      { status },
+      STORED_WORK_LIMIT,
+      undefined,
+      context,
+    );
+    for (const task of page.items) {
+      parts.push(`${task.kind} ${task.id} (${task.state.status})`);
+    }
   }
-  return undefined;
+  for (const status of UNFINISHED_SUBMISSION_STATUSES) {
+    const page = await storage.scanSubmissions(
+      { status },
+      STORED_WORK_LIMIT,
+      undefined,
+      context,
+    );
+    for (const submission of page.items) {
+      parts.push(`submission ${submission.id} (${submission.status})`);
+    }
+  }
+  if (parts.length === 0) return { pending: false };
+  return { pending: true, summary: `pending work: ${parts.join(', ')}` };
 }

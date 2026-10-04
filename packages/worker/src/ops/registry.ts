@@ -3,10 +3,13 @@
 // uncallable by construction — dispatch is a record lookup, and unknown
 // names (or invalid args) become structured errors, never throws.
 //
-// Never-replay guard (§20.2, §20.3): effects (replay:"never") memoize
-// their result under the invocation id. A worker retry or crash replay
-// with the same invocation id returns the memoized result instead of
-// re-executing — effects never re-invoke.
+// Never-replay guard (§20.2, §20.3): a caller WITHOUT its own replay gate
+// (`ToolInvocation.keepEffectMemo`) memoizes an effect's result under the
+// invocation id, so a retry or crash replay with the same invocation id
+// returns the memoized result instead of re-executing. On the lane the
+// memo is skipped: pi-durable's `replay: 'unsafe'` already settles an
+// interrupted effect without re-entering execute, so the copy could never
+// be read and would cost a second durable write per effect (EPIC K #393).
 
 import { type TSchema, Type } from '../pi-boundary.js';
 import type { BashResult } from './bash.js';
@@ -312,10 +315,8 @@ export async function callOperation(
   }
   try {
     const args = op.validateArgs(rawArgs);
-    if (op.replay === 'never') {
-      // Pi forbids ':' in memo names (validateMemoName) — the dash keeps
-      // this key legal on a real lane, where the faux ids already proved
-      // a colon key fails every never-replay op.
+    if (op.replay === 'never' && inv.keepEffectMemo) {
+      // The memo key is legal for pi-durable's memo validation (no ':').
       const memoKey = `op-result-${name}`;
       const memoized = await inv.getMemo(memoKey);
       if (memoized !== undefined) {
@@ -329,6 +330,9 @@ export async function callOperation(
       await inv.setMemo(memoKey, result as unknown as JsonValue);
       return { ok: true, invocation: refOf(inv), result };
     }
+    // A caller whose engine refuses to re-execute the op
+    // (`keepEffectMemo: false`) skips the memo entirely — see
+    // ToolInvocation.keepEffectMemo.
     const result = await op.execute(inv, args, ctx);
     return { ok: true, invocation: refOf(inv), result };
   } catch (err) {

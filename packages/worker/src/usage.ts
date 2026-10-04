@@ -1,10 +1,12 @@
 // Per-request usage rollups (issue #20, slice C; §39).
-// Rows arrive from the lane's routed usage events (§15); Pi sessions
+// Rows arrive from the lane's routed usage events (§15); pi sessions
 // persist them. This module is pure: summarize any row list (including
 // fixtures — cost tests never need network or paid tokens) and format the
-// one-line model/thinking/cost readout the run status consumes.
+// one-line model/thinking/cost readout the run status consumes. Since
+// #398 the rows are built from committed pi.assistant entries, so the
+// provider/model are the ones that really answered (#287).
 
-import type { ModelThinkingLevel, Usage } from './pi-boundary.js';
+import type { EntryRecord, ModelThinkingLevel, Usage } from './pi-boundary.js';
 
 export interface KubicUsageRow {
   model: string;
@@ -14,6 +16,24 @@ export interface KubicUsageRow {
   latencyMs?: number;
   toolCallId?: string;
   entryId?: string;
+}
+
+// The per-response row of one committed assistant entry: the message's own
+// provider/model (never the lane name or the boot model — #287) and its
+// usage, plus the transcript handle the row came from. Non-assistant
+// entries (user input, tool results, compaction summaries) have no model
+// response to bill and yield nothing.
+export function usageRowFromEntry(
+  entry: EntryRecord,
+): KubicUsageRow | undefined {
+  const message = entry.model?.[0];
+  if (message?.role !== 'assistant') return undefined;
+  return {
+    provider: message.provider,
+    model: message.model,
+    usage: message.usage,
+    entryId: String(entry.id),
+  };
 }
 
 export interface ModelUsageSummary {

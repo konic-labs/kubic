@@ -324,6 +324,43 @@ export { err, FileError, ok } from '@earendil-works/pi-durable/env';
 //   review: issue #391 (K2 #392)
 export { openNodeJsonlStorage } from '@earendil-works/pi-durable/storage/jsonl/node';
 
+// --- #398 additions ---
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-durable#SnapshotEvent, #UsageState,
+//     #ConversationId, #SubmissionId, #TaskId, #EntryId, #JsonObject
+//   used by: packages/worker/src/lane/events.ts (the KubicLaneEvent union
+//     and the watchEvents snapshot mapping) and packages/worker/src/usage.ts
+//     (per-response rows built from a committed assistant entry)
+//   why Pi has no alternative: these are the exact types of the events
+//     watchEvents delivers and of the ids Kubic keys its own lane events
+//     by; structural copies would drift from the committed stream (§15.3)
+//     and fail to type-check where Harness/watchEvents are called.
+//   review: issue #391 (K9 #398; CONTRACT decision D2)
+export type {
+  ConversationId,
+  EntryId,
+  JsonObject,
+  SnapshotEvent,
+  SubmissionId,
+  TaskId,
+  UsageState,
+} from '@earendil-works/pi-durable';
+
+// --- #399 additions ---
+
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-durable#TaskId, #CompactionResult (types)
+//   used by: packages/worker/src/compaction.ts (compactSoloLane returns the
+//     admitted manual compaction's id; callers wait with
+//     harness.waitForTask and match LiveDoc.compactions entries)
+//   why Pi has no alternative: TaskId is the branded id the durable task
+//     graph hands back from Conversation.compact(); a Kubic string handle
+//     would not type-check against waitForTask/getTask and would drift from
+//     the ids in LiveDoc.compactions and the pi.compaction entries.
+//   review: issue #399 (CONTRACT D3)
+// TaskId is re-exported by the #398 block above (deduped at merge).
+export type { CompactionResult } from '@earendil-works/pi-durable';
+
 // --- #394 additions ---
 
 // JUSTIFICATION:

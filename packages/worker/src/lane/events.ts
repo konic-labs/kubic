@@ -1,114 +1,222 @@
-// Solo-lane harness event consumer (issue #11, slice B; §15, §15.3).
-// Exactly one consumer subscribes to the harness, and only to the §15
-// groups Kubic routes: run status, tool status, usage, faults. Everything
-// else (message deltas, queue updates, compaction, navigation, config)
-// stays inside Pi — Kubic defines no parallel event vocabulary. Events
-// from other lanes never reach the sink.
+// Solo-lane event consumer on pi-durable's committed watch (issues #11,
+// #398; §15, §15.3, §20.6, §27.1). Exactly one subscription per
+// conversation relays the §15 groups Kubic routes — run status, tool
+// status, usage, faults — plus the retry and compaction state the 1.0
+// harness commits. Everything else (message deltas, inbox updates,
+// navigation, config) stays inside Pi: Kubic defines no parallel event
+// vocabulary.
+//
+// `watchEvents` is experimental upstream, so it is isolated here: every
+// Kubic consumer sees `KubicLaneEvent`, and `viewState()` (`pi.live`) can
+// replace the watch without touching a sink. The watch is bound to one
+// conversation, so another conversation's events can never reach the
+// sink. The snapshot is the late-join path: it is delivered at
+// subscription and again when a fallen-behind consumer overflows the
+// watch's pending bound (>100 batches), and it means REPLACE, not append.
 
 import type {
-  AgentLane,
+  AgentEvent,
   Context,
-  Events,
-  HarnessEvent,
-  Usage,
-  UsageRow,
+  ConversationId,
+  EntryId,
+  EntryRecord,
+  Harness,
+  JsonObject,
+  SnapshotEvent,
+  SubmissionId,
+  TaskId,
+  UsageState,
 } from '../pi-boundary.js';
+import { watchEvents } from '../pi-boundary.js';
+import { type KubicUsageRow, usageRowFromEntry } from '../usage.js';
+
+// One tool call of a snapshot: the live slot plus, once done, the result
+// entry that carries the transcript cell.
+export interface KubicLaneTool {
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly status: 'pending' | 'running' | 'done';
+  readonly isError: boolean;
+  readonly entry?: EntryRecord;
+}
+
+// One live compaction of a snapshot.
+export interface KubicLaneCompaction {
+  readonly taskId: TaskId;
+  readonly reason: string;
+  readonly blocking: boolean;
+  readonly attempt: number;
+  readonly error?: string;
+}
 
 export type KubicLaneEvent =
-  | { type: 'run-start'; lane: string; runId: string; startedAt: number }
-  | {
-      type: 'run-end';
-      lane: string;
-      runId: string;
-      status: 'completed' | 'aborted' | 'failed';
-      endedAt: number;
-      error?: unknown;
-    }
+  | { type: 'run-start'; inputs: readonly SubmissionId[] }
+  | { type: 'run-end'; inputs: readonly SubmissionId[] }
   | {
       type: 'tool-start';
-      lane: string;
-      runId: string;
-      turnId: string;
       toolCallId: string;
       toolName: string;
-      args: unknown;
+      args: JsonObject;
     }
   | {
       type: 'tool-end';
-      lane: string;
-      runId: string;
-      turnId: string;
       toolCallId: string;
       toolName: string;
+      // Pi reports no result entry for a faulted or orphaned tool task;
+      // that is the error signal the tree shows.
       isError: boolean;
-      terminate: boolean;
+      entry?: EntryRecord;
     }
-  | { type: 'usage'; lane: string; row: UsageRow; totals: Usage }
-  | { type: 'fault'; code: string; message: string };
+  | {
+      type: 'usage';
+      // The committed assistant response, labelled with the provider/model
+      // that answered (#287); `entry` carries its transcript cell.
+      row: KubicUsageRow;
+      entry: EntryRecord;
+    }
+  | { type: 'fault'; code: string; message: string }
+  | {
+      type: 'retry';
+      phase: 'start' | 'end';
+      attempt?: number;
+      error?: string;
+    }
+  | { type: 'compaction'; phase: 'start' | 'end'; reason?: string }
+  | {
+      type: 'snapshot';
+      // Committed transcript at the snapshot. REPLACE the sink's cells.
+      entries: readonly EntryRecord[];
+      run?: readonly SubmissionId[];
+      tools: readonly KubicLaneTool[];
+      retry?: { attempt: number; error: string };
+      compactions: readonly KubicLaneCompaction[];
+      usage: UsageState;
+    };
 
 export type LaneEventSink = (event: KubicLaneEvent) => void;
 
+function entryOf(
+  snapshot: SnapshotEvent,
+  id: EntryId | undefined,
+): EntryRecord | undefined {
+  return id === undefined
+    ? undefined
+    : snapshot.entries.find((entry) => entry.id === id);
+}
+
+function toolOf(
+  snapshot: SnapshotEvent,
+  slot: SnapshotEvent['tools'][number],
+): KubicLaneTool {
+  const entry = entryOf(snapshot, slot.entry);
+  const message = entry?.model?.[0];
+  const isError =
+    slot.status === 'done' &&
+    (entry === undefined ||
+      (message?.role === 'toolResult' && message.isError));
+  return {
+    toolCallId: slot.callId,
+    toolName: slot.name,
+    status: slot.status,
+    isError,
+    ...(entry === undefined ? {} : { entry }),
+  };
+}
+
+function compactionOf(
+  status: SnapshotEvent['compactions'][number],
+): KubicLaneCompaction {
+  return {
+    taskId: status.taskId,
+    reason: status.reason,
+    blocking: status.blocking,
+    attempt: status.attempt,
+    ...(status.retry === undefined ? {} : { error: status.retry.error }),
+  };
+}
+
+function snapshotEvent(snapshot: SnapshotEvent): KubicLaneEvent {
+  const generation = snapshot.generation;
+  return {
+    type: 'snapshot',
+    entries: snapshot.entries,
+    ...(snapshot.run === undefined ? {} : { run: snapshot.run.inputs }),
+    tools: snapshot.tools.map((slot) => toolOf(snapshot, slot)),
+    ...(generation?.retry === undefined
+      ? {}
+      : {
+          retry: {
+            attempt: generation.attempt,
+            error: generation.retry.error,
+          },
+        }),
+    compactions: snapshot.compactions.map(compactionOf),
+    usage: snapshot.usage,
+  };
+}
+
+// One pi-durable agent event in Kubic's vocabulary; undefined for the
+// kinds Kubic does not route (message deltas, inbox, deferred polls — a
+// deferred turn is surfaced by the submission, #395).
 export function toKubicLaneEvent(
-  event: HarnessEvent,
-  laneName: string,
+  event: AgentEvent,
 ): KubicLaneEvent | undefined {
   switch (event.type) {
+    case 'snapshot': {
+      return snapshotEvent(event);
+    }
     case 'run_start': {
-      if (event.lane !== laneName) return undefined;
-      return {
-        type: 'run-start',
-        lane: event.lane,
-        runId: event.runId,
-        startedAt: event.startedAt,
-      };
+      return { type: 'run-start', inputs: event.inputs };
     }
     case 'run_end': {
-      if (event.lane !== laneName) return undefined;
-      return {
-        type: 'run-end',
-        lane: event.lane,
-        runId: event.runId,
-        status: event.status,
-        endedAt: event.endedAt,
-        ...(event.status === 'failed' ? { error: event.error } : {}),
-      };
+      return { type: 'run-end', inputs: event.inputs };
     }
-    case 'tool_start': {
-      if (event.lane !== laneName) return undefined;
+    case 'tool_execution_start': {
       return {
         type: 'tool-start',
-        lane: event.lane,
-        runId: event.runId,
-        turnId: event.turnId,
         toolCallId: event.toolCallId,
         toolName: event.toolName,
         args: event.args,
       };
     }
-    case 'tool_end': {
-      if (event.lane !== laneName) return undefined;
+    case 'tool_execution_end': {
+      const message = event.entry?.model?.[0];
+      const isError =
+        event.entry === undefined ||
+        (message?.role === 'toolResult' && message.isError);
       return {
         type: 'tool-end',
-        lane: event.lane,
-        runId: event.runId,
-        turnId: event.turnId,
         toolCallId: event.toolCallId,
         toolName: event.toolName,
-        isError: event.isError,
-        terminate: event.terminate,
+        isError,
+        ...(event.entry === undefined ? {} : { entry: event.entry }),
       };
     }
-    case 'usage': {
-      if (event.lane !== laneName) return undefined;
+    case 'message_end': {
+      const row = usageRowFromEntry(event.entry);
+      return row === undefined
+        ? undefined
+        : { type: 'usage', row, entry: event.entry };
+    }
+    case 'auto_retry_start': {
       return {
-        type: 'usage',
-        lane: event.lane,
-        row: event.row,
-        totals: event.totals,
+        type: 'retry',
+        phase: 'start',
+        attempt: event.attempt,
+        error: event.errorMessage,
       };
     }
-    case 'fault': {
-      return { type: 'fault', code: event.code, message: event.message };
+    case 'auto_retry_end': {
+      return { type: 'retry', phase: 'end', attempt: event.attempt };
+    }
+    case 'compaction_start': {
+      return { type: 'compaction', phase: 'start', reason: event.reason };
+    }
+    case 'compaction_end': {
+      return { type: 'compaction', phase: 'end', reason: event.reason };
+    }
+    case 'task_failed': {
+      return { type: 'fault', code: event.kind, message: event.message };
     }
     default: {
       return undefined;
@@ -116,41 +224,26 @@ export function toKubicLaneEvent(
   }
 }
 
-export interface EventSource {
-  events: Events;
-}
-
-const SUBSCRIBED_TYPES = [
-  'run_start',
-  'run_end',
-  'tool_start',
-  'tool_end',
-  'usage',
-  'fault',
-] as const;
-
-export function attachLaneEvents(
-  source: EventSource,
-  laneName: string,
+// The single event subscription for one conversation (§15.3). The attachment
+// snapshot is delivered through the sink first (late join), then every
+// commit's batch in order, so no event between the snapshot and the
+// listener's activation can be lost. The returned stop is idempotent.
+export async function subscribeLaneEvents(
+  harness: Harness,
+  conversationId: ConversationId,
   sink: LaneEventSink,
-): () => void {
-  const detach: Array<() => void> = [];
-  for (const type of SUBSCRIBED_TYPES) {
-    detach.push(
-      source.events.on(type, (event) => {
-        const mapped = toKubicLaneEvent(event, laneName);
-        if (mapped !== undefined) sink(mapped);
-      }),
-    );
-  }
-  return () => {
-    for (const off of detach.splice(0)) off();
+  context: Context,
+): Promise<() => Promise<void>> {
+  const stream = await watchEvents(harness, conversationId, context);
+  const initial = toKubicLaneEvent(stream.snapshot);
+  if (initial !== undefined) sink(initial);
+  stream.start(async (events) => {
+    for (const event of events) {
+      const mapped = toKubicLaneEvent(event);
+      if (mapped !== undefined) sink(mapped);
+    }
+  });
+  return async () => {
+    await stream.stop();
   };
-}
-
-// Gap-free watch primitive (§9.1): watch captures the lane snapshot;
-// resnapshot re-reads it after a drop so a re-watch replays from the
-// same snapshot instead of skipping entries.
-export function watchLane(lane: Pick<AgentLane, 'watch'>, context: Context) {
-  return lane.watch(context);
 }

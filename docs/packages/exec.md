@@ -189,20 +189,32 @@ after-side is a designed absence, never `corrupt`.
 
 There is **no Kubic-side replay kernel**. `effects.ts` (the `ToolCall`
 state machine, `EffectGate`, replay policies) and `checkpoint-store.ts`
-(`FileCheckpointStore`) were deleted: both reimplemented machinery the Pi
-harness already owns — the tool-call machine
-(`planned → effect_pending → outcome_ready → completed`, `replay:
-"never" | "safe"`, `pi-agent-core` `session/types.ts`) and the
-abort-aware admission gate (`execution/effect-gate.ts`).
+(`FileCheckpointStore`) were deleted: both reimplemented machinery the
+execution engine already owns — the tool-call machine and its replay
+policy, and the abort-aware admission gate. In Pi 1.0 that engine is
+`@earendil-works/pi-durable`'s `pi.tool` task over a
+`ToolRegistration` (`packages/worker/src/pi-boundary.ts` is the only file
+that may import it, §65); the 0.87 `AgentHarnessTool.replay`,
+`planned → effect_pending → outcome_ready → completed` machine and
+`execution/effect-gate.ts` are gone.
 
 What actually ships in Kubic:
 
 - **Replay policy declaration.** `Operation.replay` is `'never' | 'safe'`
-  per operation (`packages/worker/src/ops/*`), mapped straight onto
-  `AgentHarnessTool.replay` by `@kubic/worker` `lane/tools-adapter.ts`.
-  Never-replay operations memoize their result under the invocation id
-  (`ops/registry.ts`), so a retry with the same invocation id returns the
-  recorded result instead of re-executing.
+  per operation (`packages/worker/src/ops/*`), mapped onto pi-durable's
+  `ToolRegistration.replay` by `@kubic/worker` `lane/tools-adapter.ts`:
+  `never → 'unsafe'`, `safe → 'safe'`. The untranslated name would be a
+  crash-safety change — pi-durable runs each call as its own durable task,
+  commits its intent before `execute()`, and on recovery **reruns only a
+  call whose stored and current policy both say `safe`**; an interrupted
+  `unsafe` call is settled as an error result, carrying the output it had
+  committed to the live slot, and is never re-entered. A Kubic-side memo of
+  a never-replay result would be a second durable copy nothing can read,
+  so `callOperation` (`ops/registry.ts`) keeps its memo guard only for
+  callers without a replay gate of their own (`kubic git`, the op suites),
+  which opt in through `ToolInvocation.keepEffectMemo`; the lane sets it
+  `false`. Explicit op memos (`getMemo`/`setMemo`/`memoOnce`) still map onto
+  pi-durable's durable per-task `api.memo` where a call provides them.
 - **`MemoryCheckpointStore`** (`env.ts`) is the `CheckpointStore` seam
   behind `SpawnOptions.checkpointKey`/`checkpointStore`, exercised by the
   exec and lane tests. No production caller supplies one, so **a

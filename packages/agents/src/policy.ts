@@ -160,6 +160,18 @@ export function effectiveNetworkLevel(level: NetworkLevel): NetworkLevel {
   return level === 'allowlist' ? 'none' : level;
 }
 
+// The credentials level the lane enforces (issue #275, mirroring
+// effectiveNetworkLevel). §40.2 (issue #166): `allowlist` carries no
+// credential list and no credential tool exists, so it is enforced as
+// `none` — the credential-path detector stays gated and every credential
+// access raises the trigger, never the unrestricted access the level name
+// used to imply.
+export function effectiveCredentialLevel(
+  level: CredentialLevel,
+): CredentialLevel {
+  return level === 'allowlist' ? 'none' : level;
+}
+
 export function checkExpressible(
   classes: PermissionClasses,
 ): UnsupportedLevel[] {

@@ -164,7 +164,8 @@ interceptors wired to an approval ask. `kubic doctor` prints this same
 installed object as `policy:installed` — as a `WARN (unsupported-level)`
 naming each level the tool set cannot express (issue #166): network
 `allowlist` is enforced as `none` (the network guard blocks and the
-network trigger fires), credentials `allowlist` as `none`, filesystem
+network trigger fires), credentials `allowlist` as `none` (a listed
+credential path raises the credential trigger, issue #275), filesystem
 `full` as `workspace-write`, git `full` as `workspace`.
 
 A destructive or network-raising call needs an approval. `kubic run` has

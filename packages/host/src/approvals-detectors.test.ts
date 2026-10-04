@@ -662,3 +662,131 @@ describe('every redirect is scanned (issue #326)', () => {
     ).toEqual(['outside-write']);
   });
 });
+
+// Issue #275: `credentials` had no detector at all — its installed `none`
+// default was informational, so `cat ~/.aws/credentials` or a read of a
+// committed `.env` ran with no approval. The detector is lexical and
+// documented as detection, not enforcement (§59.1): over-triggering becomes
+// an ask, never a silent grant.
+describe('credential-access detector (issue #275)', () => {
+  it('raises credentials for home credential paths in a bash command', () => {
+    const ctx = triggerContext();
+    for (const command of [
+      'cat ~/.aws/credentials',
+      'cat ${HOME}/.netrc',
+      'cp ~/.netrc .',
+      'base64 ~/.docker/config.json',
+      'cat /home/x/.config/gh/hosts.yml',
+      'cat ~/.config/gcloud/credentials.db',
+      'cat ~/.kube/config',
+      'cat ~/.npmrc',
+      'cat ~/.pypirc',
+      'cat ~/.git-credentials',
+      'cat ~/.azure/accessTokens.json',
+      'cat ~/.aws',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toEqual([
+        'credentials',
+      ]);
+    }
+    // The `.ssh` directory name also matches the network verb matcher
+    // (`\bssh\b`), so those commands raise both — over-triggering by design.
+    for (const command of [
+      'cat $HOME/.ssh/id_rsa',
+      'cat ~/.ssh/id_ed25519',
+      'cat ~/.ssh/deploy.pem',
+      'cat /Users/x/.ssh/id_ed25519',
+    ]) {
+      const found = detectTriggers('bash', { command }, ctx);
+      expect(found, command).toContain('credentials');
+    }
+  });
+
+  it('raises credentials for workspace credential files in a bash command', () => {
+    const ctx = triggerContext();
+    for (const command of [
+      'cat .env',
+      'cat src/.env.local',
+      'cat "$PWD/.env.production"',
+      'base64 deploy.pem',
+      'cat id_rsa',
+      'cat secrets/id_ed25519.pub',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toEqual([
+        'credentials',
+      ]);
+    }
+  });
+
+  it('keeps ordinary commands and credential templates quiet', () => {
+    const ctx = triggerContext();
+    for (const command of [
+      'cat src/index.ts',
+      'cat .env.example',
+      'cat .env.sample',
+      'cat .env.template',
+      'ls -la',
+      'echo $PATH',
+      'cat known_hosts',
+      'node -e "console.log(process.env.HOME)"',
+      'grep -r TODO src',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toEqual([]);
+    }
+    // `~/.ssh/known_hosts` is not credential material — but the path spells
+    // the `ssh` verb, so the PRE-EXISTING network detector raises anyway.
+    expect(
+      detectTriggers('bash', { command: 'cat ~/.ssh/known_hosts' }, ctx),
+    ).toEqual(['network']);
+  });
+
+  it('raises credentials for a read-family tool path onto a credential file', () => {
+    const ctx = triggerContext();
+    for (const [tool, args] of [
+      ['read', { path: '/work/.env' }],
+      ['read', { path: '.env.local' }],
+      ['read', { path: 'config/deploy.pem' }],
+      ['ls', { path: 'id_ed25519' }],
+      ['grep', { root: '.env' }],
+      ['find', { root: '/work/sub/.env.production' }],
+      ['read', { path: '/Users/x/.ssh/id_rsa' }],
+    ] as Array<[string, Record<string, unknown>]>) {
+      expect(detectTriggers(tool, args, ctx), `${tool} ${args.path}`).toEqual([
+        'credentials',
+      ]);
+    }
+    for (const [tool, args] of [
+      ['read', { path: '/work/src/index.ts' }],
+      ['read', { path: '.env.example' }],
+      ['read', { path: '/etc/passwd' }],
+      ['ls', { path: '.' }],
+      ['grep', { root: 'src' }],
+      ['find', { root: '.' }],
+    ] as Array<[string, Record<string, unknown>]>) {
+      expect(detectTriggers(tool, args, ctx), `${tool} ${args.path}`).toEqual(
+        [],
+      );
+    }
+  });
+
+  it('gates on the effective credentials level (§40.2, issue #166)', () => {
+    // The installed safe default (and an absent level) asks.
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'cat ~/.aws/credentials' },
+        triggerContext({ credentials: 'none' }),
+      ),
+    ).toEqual(['credentials']);
+    // §40.2: `allowlist` carries no credential list and no credential tool
+    // exists, so the lane enforces it as `none` — it asks too, exactly like
+    // the domain-less network allowlist, never a silent grant.
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'cat ~/.aws/credentials' },
+        triggerContext({ credentials: 'allowlist' }),
+      ),
+    ).toEqual(['credentials']);
+  });
+});

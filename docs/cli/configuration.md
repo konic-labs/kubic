@@ -234,8 +234,10 @@ of these cannot be expressed by the tool set and are reported as
 unsupported by `kubic doctor` and `kubic policy`, enforced as the named
 narrower level (§40.2, issue #166): network `allowlist` → `none` (no domain
 list exists, so every network command is blocked and raises the network
-approval trigger), credentials `allowlist` → `none`, filesystem `full` →
-`workspace-write`, git `full` → `workspace` ·
+approval trigger), credentials `allowlist` → `none` (no credential list
+exists, so every access to a listed credential path raises the credential
+trigger — issue #275), filesystem `full` → `workspace-write`, git
+`full` → `workspace` ·
 `[journal]` retentionDays/outOfScope · `[roles.<name>]` model/tools ·
 `[orchestrator]` root/maxWorkers · `[ui]` theme/statusBar ·
 `[session]` store/dir/retentionDays · `[policy]` (the §58 enterprise policy,
@@ -286,7 +288,7 @@ quietly stop configuring anything.
 | Capability | Raised by |
 | --- | --- |
 | `network` | A network command under `network = "none"` (`curl`, `wget`, `ssh`, `scp`, …) — including one hidden inside `$(…)` (nested substitutions included), backticks, or after `eval`. |
-| `credentials` | Credential-tool overreach — no detector yet; fires via `requires:<tool>` or its owning tool. |
+| `credentials` | An access to a listed credential location (issue #275), under the effective `credentials` class — which §40.2 enforces as `none`, `allowlist` included. Bash: home credential paths (`~/.aws/`, `~/.ssh/` key material and `config`, `~/.config/gh/`, `~/.config/gcloud/`, `~/.docker/config.json`, `~/.kube/config`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.git-credentials`, `~/.azure/`) spelled `~`, `$HOME`, `${HOME}`, `/Users/<user>` or `/home/<user>`, plus workspace credential files (`.env`, `.env.*` except `.env.example`/`.env.sample`/`.env.template`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`). Read-family tools (`read`, `ls`, `find`, `grep`): the same names in the `path`/`root` argument, as typed before the confine rewrite (a home path is rewritten before the tool opens it, but the ask sees it). Lexical detection, not enforcement (§59.1): an obfuscated or built-up path is a stated miss. Also fires via `requires:<tool>`. |
 | `git-push` | `git push`, `git remote add/set-url/remove/rename` — in any command segment (`ls; git push`, `cd x && git push`), after git global options (`git -C . push`, `git -c k=v push`, `--git-dir=…`, `--work-tree=…`, `--no-pager`; an option argument may be quoted: `git -C "my dir" push`) and after any command-position boundary: whitespace, `\| ; &`, `(` (`$(git push)`), a path (`/usr/bin/git push`), a backslash (`\git push`), a quote (`bash -c 'git push'`, `sh -c "git push"`) or a backtick. The word must be exactly `git` followed by whitespace — `mygit push`, `digit push`, `gitpush` and `git-lfs push` do not raise. |
 | `destructive-shell` | The destructive matcher (`rm -rf`, `mkfs`, `dd of=/dev/…`, `shred`, `git clean -f`, `chmod/chown -R`, force pushes — `git push --force`/`-f`/`--force-with-lease`/`--force-if-includes`/`+refspec` — `find … -delete`, `git reset --hard`, `git checkout -- <path>`/`.`/`-f`, and `git restore` of the working tree; a staged-only `git restore --staged` is not destructive), including a destructive verb unwrapped through `$(…)` (nested substitutions included), backticks, or after `eval`. |
 | `install` | Package installs and fetch-and-run launchers, in any segment: `npm install/i/add/ci/exec/x`, `npx`, `pnpm install/i/add/dlx`, `yarn` (bare), `yarn add/install/dlx/global add`, `bun install/i/add`, `bunx`, `pip install`, `pipx install/run`, `uv add`, `uv pip install`, `uv tool install`, `uvx`, `gem install`, `composer require/install`, `brew install`, `apt install`, `cargo install/add`, `go install`. Scripts such as `npm test`, `npm run build`, `yarn build` and `uv run` are not installs. |
@@ -301,7 +303,8 @@ quietly stop configuring anything.
 outside this set is reported by `kubic doctor` (`policy:approvals`), never
 silently ignored.
 
-Detection is a literal-pattern heuristic over the command string, not
+Detection is a literal-pattern heuristic over the command string and the
+read-family tool paths, not
 sandbox-grade shell parsing — the posture is stated, not silent. Documented
 heuristics:
 
@@ -412,6 +415,19 @@ heuristics:
   so the effective nesting threshold is 2× the cap — 31 nesting levels
   raise, 32 stay unraised, pinned in the detector tests) — a stated bound,
   never a fabricated unwrap.
+- **Credential paths** (issue #275) — the `credentials` trigger is lexical,
+  like every detector here: it recognizes the listed home locations in a
+  bash command (`~/.aws/credentials`, `$HOME/.ssh/id_rsa`, `/Users/x/.netrc`;
+  the `~`, `$HOME`, `${HOME}` and absolute home spellings) and the listed
+  file names in a read-family tool path. Over-triggering is deliberate
+  (`*.pem` and `id_rsa.pub` are flagged too) and a raised credential
+  capability is an ask, never a silent grant. Stated misses: a path the list
+  does not name, an obfuscated or split spelling
+  (`~/.a''ws/credentials`, `p=~/.ssh; cat $p/id_rsa`), a Windows-style
+  backslash spelling, and a credential reached indirectly (`bash -c`, a
+  script, a symlink). The `~/.ssh/*`
+  directory name also matches the network verb scan, so those commands raise
+  `network` as well.
 
 What remains out of scope — documented gaps, not silently handled:
 interpreter-based verbs (`bash -c "rm -rf …"`, `python3 -c`, `node -e` —

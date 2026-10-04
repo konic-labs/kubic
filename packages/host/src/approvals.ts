@@ -9,12 +9,14 @@ import {
   resolve,
 } from 'node:path';
 import type {
+  CredentialLevel,
   PermissionClasses,
   UnsupportedLevel,
 } from '../../agents/src/policy.js';
 import {
   checkAgreement,
   checkExpressible,
+  effectiveCredentialLevel,
   effectiveNetworkLevel,
   toolsForClasses,
   validateClasses,
@@ -35,6 +37,10 @@ import {
 import type { ToolContribution } from '../../worker/src/lane/wrap.js';
 import { withTelemetry } from '../../worker/src/lane/wrap.js';
 import { approvalCommandText, summarizeCommand } from './approval-display.js';
+import {
+  credentialAccessInCommand,
+  credentialAccessInPath,
+} from './approvals-credentials.js';
 import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
 import {
   appendToLedger,
@@ -222,9 +228,14 @@ export class MemoryApprovalStore implements ApprovalStore {
 // whitespace tricks around redirection targets, and flag-reordered copy
 // targets (`cp -t /etc a b`) the last-argument heuristic misses. Detector
 // ownership for the rest:
-//   credentials overreach, spawn-agents — no detector: fire only via an
-//     explicit `requires` entry, or via their owners (credentials with
-//     issue #19 git/credential tools, spawn-agents with the orchestrator).
+//   credentials overreach — the credential-path detector (issue #275,
+//     approvals-credentials.ts): well-known home credential locations in a
+//     bash command, and the read-family tool paths onto in-workspace
+//     credential files (.env*, *.pem, *.key, id_rsa*/id_ed25519*). Gated on
+//     the effective `credentials` class, which §40.2 enforces as `none`
+//     (issue #166: `allowlist` carries no list), so a credential path asks.
+//   spawn-agents — no detector: fires only via an explicit `requires`
+//     entry, or via its owner (the orchestrator).
 //   budget/concurrency overrun — the `budgetOverrun` flag; no live
 //     producer yet (orchestrator opt-in budgets #48, worker perf budgets
 //     #55). Until one wires up, the flag is test-only: documented, silent
@@ -233,15 +244,29 @@ export class MemoryApprovalStore implements ApprovalStore {
 //     tool exists to remove). A domain-less `allowlist` is enforced as
 //     `none` (issue #166, §40.2): it fires like `none`, never silently
 //     unrestricted.
-//   sensitive reads — deliberately not a trigger: §41.1 governs writes,
-//     the filesystem read class governs reads.
+//   sensitive reads — the filesystem read class governs reads inside the
+//     workspace; credential-shaped reads are the one carve-out, raised as
+//     the `credentials` capability above (issue #275), not as a filesystem
+//     event.
 function networkGated(level: TriggerContext['network']): boolean {
   return effectiveNetworkLevel(level) === 'none';
+}
+
+// The credentials class gates its detector exactly like network (issue
+// #275): §40.2 (issue #166) enforces `allowlist` as `none`, and a hand-built
+// context that names no level reads as the safe default. Both keep the
+// detector on — a credential path asks, never a silent grant.
+function credentialGated(level: TriggerContext['credentials']): boolean {
+  return effectiveCredentialLevel(level ?? 'none') === 'none';
 }
 
 export interface TriggerContext {
   workspace: string;
   network: 'none' | 'allowlist' | 'full';
+  // The installed credentials class (issue #275). Absent reads as `none`,
+  // the safe default, so a hand-built context still challenges credential
+  // paths instead of silently allowing them.
+  credentials?: CredentialLevel;
   isDestructive: (command: string, workspace: string) => boolean;
   isNetworkCommand: (command: string) => boolean;
   isOutsideWorkspace: (path: string) => boolean;
@@ -1218,6 +1243,16 @@ function shellTargetOutside(
   );
 }
 
+// The read-family tools and the argument naming what they open (the same
+// mapping the worker confines with, CONFINED_TOOLS in interceptors.ts). The
+// ask runs before that rewrite, so an as-typed home path is still seen here.
+const READ_PATH_ARGS: Record<string, string> = {
+  read: 'path',
+  ls: 'path',
+  grep: 'root',
+  find: 'root',
+};
+
 export function detectTriggers(
   toolName: string,
   args: Record<string, unknown>,
@@ -1300,6 +1335,24 @@ export function detectTriggers(
         found.push('network');
       }
     }
+    if (
+      credentialGated(ctx.credentials) &&
+      credentialAccessInCommand(command) !== undefined
+    ) {
+      found.push('credentials');
+    }
+  }
+  // In-workspace credential files (issue #275): confinement already keeps
+  // the tools inside the workspace, but `.env*` and key material committed
+  // there are exactly the files the class is about.
+  const readPathArg = READ_PATH_ARGS[toolName];
+  if (
+    readPathArg !== undefined &&
+    typeof args[readPathArg] === 'string' &&
+    credentialGated(ctx.credentials) &&
+    credentialAccessInPath(args[readPathArg]) !== undefined
+  ) {
+    found.push('credentials');
   }
   if (
     (toolName === 'write' || toolName === 'edit') &&
@@ -2180,6 +2233,7 @@ export function triggerContextFor(
     ...(controlPlane === undefined ? {} : { controlPlane }),
 
     network: classes.network,
+    credentials: classes.credentials,
     isDestructive: defaultIsDestructive,
     isNetworkCommand,
     isOutsideWorkspace: (path: string) =>

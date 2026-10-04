@@ -97,10 +97,22 @@ const BOM = '\uFEFF';
 // multi-line oldText is `no_match`, a first-line edit can mix endings, and a
 // model whose reader stripped the BOM cannot match the first line at all.
 
-/** The dominant ending of `content`; a tie goes to LF. */
+/**
+ * The dominant ending of `content`; a tie goes to LF. One `indexOf` pass
+ * with O(1) extra memory — `match(/\n/g)` allocates an array element per
+ * newline, ~8x a newline-dense 8 MiB file at the bound this op accepts.
+ */
 function detectLineEnding(content: string): '\r\n' | '\n' {
-  const lf = (content.match(/\n/g) ?? []).length;
-  const crlf = (content.match(/\r\n/g) ?? []).length;
+  let lf = 0;
+  let crlf = 0;
+  for (
+    let at = content.indexOf('\n');
+    at !== -1;
+    at = content.indexOf('\n', at + 1)
+  ) {
+    lf += 1;
+    if (at > 0 && content.charCodeAt(at - 1) === 13) crlf += 1;
+  }
   return crlf > lf - crlf ? '\r\n' : '\n';
 }
 
@@ -119,7 +131,7 @@ function stripBom(content: string): string {
 export const editOperation: Operation<EditArgs, EditResult> = {
   name: 'edit',
   description:
-    'Replace exact text in a file atomically (tmp + rename). oldText must match byte for byte, whitespace included, and occur exactly expectCount times (default 1) or the edit is refused (no_match / ambiguous_match). Matching is done on LF-normalized text with any leading BOM stripped, and the file keeps its own line ending and BOM on write (a CRLF file stays CRLF). Files over 8 MiB are refused.',
+    'Replace exact text in a file atomically (tmp + rename). oldText must match exactly (after line-ending/BOM normalization), whitespace included, and occur exactly expectCount times (default 1) or the edit is refused (no_match / ambiguous_match). Matching is done on LF-normalized text with any leading BOM stripped, and the file keeps its own line ending and BOM on write (a CRLF file stays CRLF). Files over 8 MiB are refused.',
   replay: 'never',
   validateArgs: validateEditArgs,
   execute: async (_inv: ToolInvocation, args: EditArgs, ctx: OpContext) => {

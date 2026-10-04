@@ -242,8 +242,20 @@ refusal names targeted shell tooling as the actionable alternative.
 
 ### Edit line endings and BOM (issue #195)
 
-`edit` (`ops/edit.ts`) normalizes before matching and restores on write, the
-way Pi's `edit-diff.ts` does:
+`edit` (`ops/edit.ts`) normalizes before matching and restores on write,
+following Pi's `edit-diff.ts` shape with three deliberate deviations from
+the installed Pi 1.0.2 (`edit-diff.js`, `tools/edit.js`), so nobody
+"aligns with Pi" later and reintroduces the `no_match` this issue fixes:
+
+- `detectLineEnding` takes the **dominant** ending (Pi takes the first
+  line's), which is what the issue asks for; a tie goes to LF.
+- `normalizeToLF` folds **`\r\n` only**, not Pi's lone `\r` as well: an
+  old-Mac file keeps its bytes rather than being silently rewritten.
+- The model's `oldText`/`newText` are BOM-stripped too (Pi strips only the
+  file body): Kubic's `read` keeps the BOM, so a needle copied from the
+  first line carries it and must still match.
+
+Beyond that:
 
 - `detectLineEnding` counts CRLF against bare LF and takes the dominant one
   (a tie goes to LF); `normalizeToLF` puts the file body, `oldText` and

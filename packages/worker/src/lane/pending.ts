@@ -10,24 +10,33 @@
 //   the caller's bound — for the placed input submissions, and for the
 //   conversation to go idle. An `unsafe` tool interrupted mid-call is not
 //   re-executed: pi-durable settles it with an `interrupted` error result
-//   carrying its committed output (K3 #393 never-replay semantics).
+//   carrying its committed output (K3 #393 never-replay semantics). The
+//   durable settlement is reported (`settled` + `reason`), so a run that
+//   ended `unanswered` is never named a clean resume.
+// - work a dead process had already marked aborted is aborted, never
+//   started: the mark is durable, and #147 honours the operator's cancel.
 // - `abort` durably stops the work (`conversation.abort(context)`), drains
 //   the lane's kill registry (D1: the bash group is keyed by the
 //   conversation id) and confirms the conversation is idle.
 //
-// A resume that cannot settle — the guard fired, the wait failed — falls
-// back to the abort, so the lane is always free for the next prompt
-// afterwards.
+// A resume that cannot settle — the guard was already exhausted, the wait
+// failed — falls back to the abort on a FRESH context (`abortContext`,
+// defaulting to BACKGROUND_CONTEXT). The context that failed the resume is
+// cancelled by definition, and pi-durable rejects a commit on a cancelled
+// context, which would leave the interrupted turn running. The lane is
+// always free for the next prompt afterwards.
 //
 // The decisions are driven by the pi-durable Harness only; the parameter is
 // the structural subset of #394's SoloLane (built in parallel), so this
 // module lands and compiles before that issue does.
 
-import type {
-  Context,
-  Conversation,
-  Harness,
-  Storage,
+import {
+  BACKGROUND_CONTEXT,
+  type Context,
+  type Conversation,
+  type EntryRecord,
+  type Harness,
+  type Storage,
 } from '../pi-boundary.js';
 import type { OperationKillRegistry } from './abort.js';
 
@@ -49,6 +58,11 @@ export interface PendingReport {
 export interface PendingSettlementResult {
   readonly outcome: 'resumed' | 'aborted' | 'none';
   readonly fellBack: boolean;
+  // How the resumed work durably ended; absent when Kubic aborted it.
+  readonly settled?: 'done' | 'unanswered';
+  // The durable settlement reason (`unanswered`), or the failure that
+  // forced the fallback abort. Absent for a clean resume.
+  readonly reason?: string;
 }
 
 export interface SettlePendingOptions {
@@ -57,6 +71,10 @@ export interface SettlePendingOptions {
   // Bounds the resume wait (headless turn/wall-clock guards). Callers derive
   // it from their own context, so cancelling the run stops the wait too.
   readonly guard?: Context;
+  // Runs the abort and the idle confirmation — never the cancelled context a
+  // failed resume was stopped by. Default BACKGROUND_CONTEXT; pass a bounded
+  // context to cap the cleanup.
+  readonly abortContext?: Context;
 }
 
 type HarnessInspection = Awaited<ReturnType<Harness['inspect']>>;
@@ -104,54 +122,119 @@ export async function settlePending(
   if (!reportInspection(inspection).pending) {
     return { outcome: 'none', fellBack: false };
   }
-  if (policy === 'abort') {
+  // An abort the dead process already requested stays an abort (0.87's
+  // op.aborting): the durable mark is the operator's cancel, so the
+  // interrupted run is never started for it.
+  if (policy === 'abort' || abortedPending(inspection)) {
     await abortPending(solo, opts);
     return { outcome: 'aborted', fellBack: false };
   }
-  solo.harness.resume();
-  try {
-    await resumePending(solo, inspection, opts);
-  } catch {
+  const bound = opts.guard ?? opts.context;
+  const exhaustion = exhausted(bound);
+  if (exhaustion !== undefined) {
+    // Never start a paid generation the guard would abandon at once.
     await abortPending(solo, opts);
-    return { outcome: 'aborted', fellBack: true };
+    return { outcome: 'aborted', fellBack: true, reason: exhaustion };
   }
-  return { outcome: 'resumed', fellBack: false };
+  solo.harness.resume();
+  let settled: ResumedSettlement;
+  try {
+    settled = await resumePending(solo, inspection, opts, bound);
+  } catch (error) {
+    await abortPending(solo, opts);
+    return { outcome: 'aborted', fellBack: true, reason: failureText(error) };
+  }
+  if (settled.status === undefined) {
+    return { outcome: 'resumed', fellBack: false };
+  }
+  if (settled.reason === undefined) {
+    return { outcome: 'resumed', fellBack: false, settled: settled.status };
+  }
+  return {
+    outcome: 'resumed',
+    fellBack: false,
+    settled: settled.status,
+    reason: settled.reason,
+  };
+}
+
+interface ResumedSettlement {
+  status?: 'done' | 'unanswered';
+  reason?: string;
 }
 
 async function resumePending(
   solo: PendingLane,
   inspection: HarnessInspection,
   opts: SettlePendingOptions,
-): Promise<void> {
-  const bound = opts.guard ?? opts.context;
+  bound: Context,
+): Promise<ResumedSettlement> {
   const pending: readonly SubmissionRecord[] = inspection.submissions.filter(
     (submission) =>
       submission.type === 'input' &&
       (submission.status === 'queued' || submission.status === 'placed'),
   );
+  let settlement: ResumedSettlement = {};
   for (const record of pending) {
     const submission = await solo.harness.submission(record.id, opts.context);
-    if (submission !== undefined) await submission.wait(bound);
+    if (submission === undefined) continue;
+    const settled = await submission.wait(bound);
+    if (settled.status === 'unanswered') {
+      if (settlement.status !== 'unanswered') {
+        settlement = { status: 'unanswered', reason: settled.reason };
+      }
+    } else if (settlement.status === undefined) {
+      settlement = { status: 'done' };
+    }
   }
   // Confirm the lane is free when no input carried the work (a compaction
   // task, a stray task) or a submission resolved before its tasks drained.
   await solo.conversation.waitForIdle(bound);
+  return settlement;
 }
 
 async function abortPending(
   solo: PendingLane,
   opts: SettlePendingOptions,
 ): Promise<void> {
+  // The abort must commit: a context cancelled by the failed resume would be
+  // rejected by pi-durable and leave the interrupted turn running.
+  const abortContext = opts.abortContext ?? BACKGROUND_CONTEXT;
   // Start the durable abort first (mark, signal, join); the kill drain then
   // unblocks a process that ignores cancellation, and awaiting the abort
   // joins every task it marked.
-  const aborting = solo.conversation.abort(opts.context);
+  const aborting = solo.conversation.abort(abortContext);
   const failures = drainKills(opts.kills, String(solo.conversation.id));
-  await aborting;
-  await solo.conversation.waitForIdle(opts.context);
+  try {
+    await aborting;
+    await solo.conversation.waitForIdle(abortContext);
+  } catch (error) {
+    const abortFailure = `lane abort failed: ${failureText(error) ?? 'unknown error'}`;
+    throw failures.length === 0
+      ? new Error(abortFailure)
+      : new Error(`${abortFailure}; kills failed: ${failures.join('; ')}`);
+  }
   if (failures.length > 0) {
     throw new Error(`lane abort kills failed: ${failures.join('; ')}`);
   }
+}
+
+function abortedPending(inspection: HarnessInspection): boolean {
+  return inspection.tasks.some((task) => task.record.abortRequested === true);
+}
+
+function exhausted(bound: Context): string | undefined {
+  const signal = bound.abortSignal;
+  if (signal === undefined || !signal.aborted) return undefined;
+  return failureText(signal.reason) ?? 'the resume bound was already exhausted';
+}
+
+function failureText(cause: unknown): string | undefined {
+  if (cause === undefined || cause === null) return undefined;
+  if (typeof cause === 'string') return cause;
+  if (cause instanceof Error) return cause.message;
+  const message = (cause as { message?: unknown }).message;
+  return typeof message === 'string' ? message : String(cause);
 }
 
 function drainKills(
@@ -177,13 +260,56 @@ export function describePendingSettlement(
 ): string {
   if (settlement.outcome === 'none') return 'no pending work to settle';
   const head = summary ?? 'pending work';
-  const verb =
-    settlement.outcome === 'resumed'
-      ? 'resumed after an interrupted run'
-      : 'aborted after an interrupted run';
-  return settlement.fellBack
-    ? `${head} ${verb} (resume could not settle)`
-    : `${head} ${verb}`;
+  if (settlement.outcome === 'resumed') {
+    if (settlement.settled === undefined) {
+      return `${head} resumed after an interrupted run`;
+    }
+    const detail =
+      settlement.reason === undefined
+        ? settlement.settled
+        : `${settlement.settled} (${settlement.reason})`;
+    return `${head} resumed after an interrupted run: ${detail}`;
+  }
+  if (!settlement.fellBack) {
+    return `${head} aborted after an interrupted run`;
+  }
+  const cause = settlement.reason === undefined ? '' : `: ${settlement.reason}`;
+  return `${head} aborted after an interrupted run (resume could not settle${cause})`;
+}
+
+// #147's "the pending run carries this very prompt: resume it as this run,
+// never re-prompt" decision needs the text the dead process admitted. The
+// placed input submission's own entry is that text; undefined when nothing
+// is placed (nothing to resume-as-this-run).
+export async function pendingInputText(
+  solo: PendingLane,
+  context: Context,
+): Promise<string | undefined> {
+  const inspection = await solo.harness.inspect(context);
+  const placed = inspection.submissions.find(
+    (submission) =>
+      submission.type === 'input' && submission.status === 'placed',
+  );
+  if (placed?.entry === undefined) return undefined;
+  const page = await solo.conversation.entries(
+    { minEntryId: placed.entry, maxEntryId: placed.entry },
+    1,
+    undefined,
+    context,
+  );
+  return userText(page.items[0]);
+}
+
+function userText(entry: EntryRecord | undefined): string | undefined {
+  const message = entry?.model?.[0];
+  if (message === undefined || message.role !== 'user') return undefined;
+  const content = message.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return undefined;
+  return content
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
+    .join('');
 }
 
 // Read-only probe for `kubic sessions attach`: reports unfinished work

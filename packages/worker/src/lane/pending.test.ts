@@ -31,6 +31,7 @@ import {
   describePendingSettlement,
   inspectPending,
   inspectStoredWork,
+  pendingInputText,
   settlePending,
 } from './pending.js';
 
@@ -98,11 +99,19 @@ function blockingWork() {
   return { tool, started: started.promise, state };
 }
 
-async function openLane(fixture: ReturnType<typeof laneFixture>, dir: string) {
+async function openLane(
+  fixture: ReturnType<typeof laneFixture>,
+  dir: string,
+  settings?: { retry?: { enabled?: boolean } },
+) {
   const storage = await openNodeJsonlStorage(dir, BACKGROUND_CONTEXT);
   const harness = await Harness.open(
     storage,
-    { models: fixture.models, registry: fixture.registry },
+    {
+      models: fixture.models,
+      registry: fixture.registry,
+      ...(settings === undefined ? {} : { settings }),
+    },
     BACKGROUND_CONTEXT,
   );
   const conversation = await harness.root(BACKGROUND_CONTEXT, {
@@ -230,7 +239,11 @@ describe('settlePending', () => {
       context: BACKGROUND_CONTEXT,
       kills: second.kills,
     });
-    expect(settled).toEqual({ outcome: 'resumed', fellBack: false });
+    expect(settled).toEqual({
+      outcome: 'resumed',
+      fellBack: false,
+      settled: 'done',
+    });
     // Never-replay: the interrupted tool ran once and its durable result is
     // the interrupted error, not a rerun.
     expect(work.state.runs).toBe(1);
@@ -243,6 +256,47 @@ describe('settlePending', () => {
       'done',
     );
     // The lane is free: the next prompt is accepted and answered.
+    const next = await second.conversation.submit(
+      { type: 'input', content: 'second' },
+      BACKGROUND_CONTEXT,
+    );
+    expect((await next.wait(BACKGROUND_CONTEXT)).status).toBe('done');
+  });
+
+  it('reports a resumed turn that ended unanswered, never as a clean resume', async () => {
+    const fixture = laneFixture();
+    const work = blockingWork();
+    fixture.registry.install(
+      defineExtension({ name: 'kubic', tools: [work.tool] }),
+    );
+    fixture.faux.setResponses([toolCall('work'), fauxAssistantMessage('x')]);
+    const dir = scratch();
+    const first = await openLane(fixture, dir);
+    await blockTurn(first, work);
+    // No durable retry here: the provider failure must land in one attempt.
+    const second = await openLane(fixture, dir, { retry: { enabled: false } });
+    fixture.faux.setResponses([
+      fauxAssistantMessage('', {
+        stopReason: 'error',
+        errorMessage: 'provider unavailable',
+      }),
+      fauxAssistantMessage('second reply'),
+    ]);
+
+    const settled = await settlePending(second.solo, 'resume', {
+      context: BACKGROUND_CONTEXT,
+      kills: second.kills,
+    });
+    expect(settled).toEqual({
+      outcome: 'resumed',
+      fellBack: false,
+      settled: 'unanswered',
+      reason: 'model_error',
+    });
+    expect(describePendingSettlement('pending work: run', settled)).toBe(
+      'pending work: run resumed after an interrupted run: unanswered (model_error)',
+    );
+    // The failed turn did not wedge the lane.
     const next = await second.conversation.submit(
       { type: 'input', content: 'second' },
       BACKGROUND_CONTEXT,
@@ -325,7 +379,7 @@ describe('settlePending', () => {
     expect((await next.wait(BACKGROUND_CONTEXT)).status).toBe('done');
   });
 
-  it('resume under an exhausted guard falls back to abort', async () => {
+  it('resume under an exhausted guard aborts without starting the run', async () => {
     const fixture = laneFixture();
     const work = blockingWork();
     fixture.registry.install(
@@ -339,15 +393,26 @@ describe('settlePending', () => {
     const first = await openLane(fixture, dir);
     const submission = await blockTurn(first, work);
     const second = await openLane(fixture, dir);
+    fixture.faux.setResponses([fauxAssistantMessage('must not run')]);
+    const requests = fixture.faux.state.callCount;
     const bound = guard();
     bound.cancel();
+    const resume = vi.spyOn(second.harness, 'resume');
 
     const settled = await settlePending(second.solo, 'resume', {
       context: BACKGROUND_CONTEXT,
       kills: second.kills,
       guard: bound.context,
     });
-    expect(settled).toEqual({ outcome: 'aborted', fellBack: true });
+    expect(settled).toEqual({
+      outcome: 'aborted',
+      fellBack: true,
+      reason: 'turn budget exhausted',
+    });
+    // The exhausted bound skipped harness.resume(): no scheduler, no paid
+    // generation, no re-run of the interrupted tool.
+    expect(resume).not.toHaveBeenCalled();
+    expect(fixture.faux.state.callCount).toBe(requests);
     expect(work.state.runs).toBe(1);
     const stored = await second.harness.submission(
       submission.id,
@@ -364,7 +429,47 @@ describe('settlePending', () => {
     expect((await next.wait(BACKGROUND_CONTEXT)).status).toBe('done');
   });
 
-  it('a guard that fires mid-resume aborts the pending turn', async () => {
+  it('falls back to a fresh abort context when the caller context is dead', async () => {
+    const fixture = laneFixture();
+    const work = blockingWork();
+    fixture.registry.install(
+      defineExtension({ name: 'kubic', tools: [work.tool] }),
+    );
+    fixture.faux.setResponses([
+      toolCall('work'),
+      fauxAssistantMessage('second reply'),
+    ]);
+    const dir = scratch();
+    const first = await openLane(fixture, dir);
+    await blockTurn(first, work);
+    const second = await openLane(fixture, dir);
+    const bound = guard();
+    bound.cancel();
+
+    // guard === opts.context, already cancelled: pi-durable rejects a commit
+    // on this context, so the abort must run on its own live context.
+    const settled = await settlePending(second.solo, 'resume', {
+      context: bound.context,
+      kills: second.kills,
+      guard: bound.context,
+    });
+    expect(settled).toEqual({
+      outcome: 'aborted',
+      fellBack: true,
+      reason: 'turn budget exhausted',
+    });
+    // The abort committed despite the dead caller context.
+    expect(
+      (await second.harness.inspect(BACKGROUND_CONTEXT)).tasks,
+    ).toHaveLength(0);
+    const next = await second.conversation.submit(
+      { type: 'input', content: 'second' },
+      BACKGROUND_CONTEXT,
+    );
+    expect((await next.wait(BACKGROUND_CONTEXT)).status).toBe('done');
+  });
+
+  it('a guard that fires mid-resume aborts the pending turn and names the cause', async () => {
     const fixture = laneFixture();
     const work = blockingWork();
     fixture.registry.install(
@@ -391,9 +496,66 @@ describe('settlePending', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     bound.cancel();
     const settled = await settling;
-    expect(settled).toEqual({ outcome: 'aborted', fellBack: true });
+    expect(settled).toEqual({
+      outcome: 'aborted',
+      fellBack: true,
+      reason: 'turn budget exhausted',
+    });
+    expect(describePendingSettlement('pending work: run', settled)).toBe(
+      'pending work: run aborted after an interrupted run (resume could not settle: turn budget exhausted)',
+    );
     expect(kill).toHaveBeenCalledTimes(1);
     const next = await lane.conversation.submit(
+      { type: 'input', content: 'second' },
+      BACKGROUND_CONTEXT,
+    );
+    expect((await next.wait(BACKGROUND_CONTEXT)).status).toBe('done');
+  });
+
+  it('honours an abort a dead process already requested', async () => {
+    const fixture = laneFixture();
+    const work = blockingWork();
+    fixture.registry.install(
+      defineExtension({ name: 'kubic', tools: [work.tool] }),
+    );
+    fixture.faux.setResponses([
+      toolCall('work'),
+      fauxAssistantMessage('must not run'),
+    ]);
+    const dir = scratch();
+    const first = await openLane(fixture, dir);
+    await blockTurn(first, work);
+    const second = await openLane(fixture, dir);
+    // The durable abort mark the dead process left: committed while the
+    // scheduler is still paused, so nothing signals the blocked tool.
+    const generation = (
+      await second.harness.inspect(BACKGROUND_CONTEXT)
+    ).tasks.find((task) => task.record.kind === 'pi.generation');
+    if (generation === undefined) throw new Error('no generation task');
+    await second.harness.commit(async (tx) => {
+      const record = await tx.task(generation.record.id);
+      if (record === undefined) throw new Error('no generation record');
+      // The public Tx hides direct task writes; this is the same idiom
+      // pi-durable's own recovery tests use to leave a durable abort mark.
+      (tx as unknown as { setTask(value: unknown): void }).setTask({
+        ...record,
+        abortRequested: true,
+      });
+    }, BACKGROUND_CONTEXT);
+    const kill = vi.fn();
+    second.kills.track(String(second.conversation.id), kill);
+    const requests = fixture.faux.state.callCount;
+
+    const settled = await settlePending(second.solo, 'resume', {
+      context: BACKGROUND_CONTEXT,
+      kills: second.kills,
+    });
+    expect(settled).toEqual({ outcome: 'aborted', fellBack: false });
+    // The operator's cancel was honoured: no model request, no re-run.
+    expect(fixture.faux.state.callCount).toBe(requests);
+    expect(work.state.runs).toBe(1);
+    expect(kill).toHaveBeenCalledTimes(1);
+    const next = await second.conversation.submit(
       { type: 'input', content: 'second' },
       BACKGROUND_CONTEXT,
     );
@@ -411,6 +573,59 @@ describe('settlePending', () => {
         }),
       ).toEqual({ outcome: 'none', fellBack: false });
     }
+  });
+});
+
+describe('pendingInputText', () => {
+  it('names the prompt the dead process admitted', async () => {
+    const fixture = laneFixture();
+    const work = blockingWork();
+    fixture.registry.install(
+      defineExtension({ name: 'kubic', tools: [work.tool] }),
+    );
+    fixture.faux.setResponses([
+      toolCall('work'),
+      fauxAssistantMessage('finished'),
+    ]);
+    const dir = scratch();
+    const first = await openLane(fixture, dir);
+    await blockTurn(first, work, 'the interrupted prompt');
+    const second = await openLane(fixture, dir);
+    expect(await pendingInputText(second.solo, BACKGROUND_CONTEXT)).toBe(
+      'the interrupted prompt',
+    );
+  });
+
+  it('joins text parts and reports nothing without a placed input', async () => {
+    const fixture = laneFixture();
+    const work = blockingWork();
+    fixture.registry.install(
+      defineExtension({ name: 'kubic', tools: [work.tool] }),
+    );
+    fixture.faux.setResponses([
+      toolCall('work'),
+      fauxAssistantMessage('finished'),
+    ]);
+    const lane = await openLane(fixture, scratch());
+    expect(
+      await pendingInputText(lane.solo, BACKGROUND_CONTEXT),
+    ).toBeUndefined();
+    lane.harness.resume();
+    await lane.conversation.submit(
+      {
+        type: 'input',
+        content: [
+          { type: 'text', text: 'new ' },
+          { type: 'image', data: 'aGk=', mimeType: 'image/png' },
+          { type: 'text', text: 'prompt' },
+        ],
+      },
+      BACKGROUND_CONTEXT,
+    );
+    await work.started;
+    expect(await pendingInputText(lane.solo, BACKGROUND_CONTEXT)).toBe(
+      'new prompt',
+    );
   });
 });
 
@@ -500,12 +715,12 @@ describe('settlePending decision paths', () => {
         context: BACKGROUND_CONTEXT,
         kills: lane.kills,
       }),
-    ).toEqual({ outcome: 'resumed', fellBack: false });
+    ).toEqual({ outcome: 'resumed', fellBack: false, settled: 'done' });
     expect(wait).toHaveBeenCalledTimes(1);
     expect(lane.calls).toEqual(['resume', 'idle']);
   });
 
-  it('a failing resume wait falls back to the durable abort', async () => {
+  it('a failing resume wait falls back to the durable abort, naming the cause', async () => {
     const kill = vi.fn();
     const lane = stubLane({
       inspection: {
@@ -523,9 +738,58 @@ describe('settlePending decision paths', () => {
         context: BACKGROUND_CONTEXT,
         kills: lane.kills,
       }),
-    ).toEqual({ outcome: 'aborted', fellBack: true });
+    ).toEqual({
+      outcome: 'aborted',
+      fellBack: true,
+      reason: 'storage exploded',
+    });
     expect(lane.calls).toEqual(['resume', 'abort', 'idle']);
     expect(kill).toHaveBeenCalledTimes(1);
+  });
+
+  it('a non-Error resume failure is named verbatim', async () => {
+    const lane = stubLane({
+      inspection: {
+        scheduling: 'paused',
+        tasks: [READY_TOOL],
+        submissions: [PLACED_INPUT],
+      },
+      wait: async () => {
+        throw 'plain refusal';
+      },
+    });
+    expect(
+      await settlePending(lane.solo, 'resume', {
+        context: BACKGROUND_CONTEXT,
+        kills: lane.kills,
+      }),
+    ).toEqual({
+      outcome: 'aborted',
+      fellBack: true,
+      reason: 'plain refusal',
+    });
+  });
+
+  it('an abort-marked task is aborted without resuming', async () => {
+    const lane = stubLane({
+      inspection: {
+        scheduling: 'paused',
+        tasks: [
+          {
+            ...READY_TOOL,
+            record: { ...READY_TOOL.record, abortRequested: true },
+          },
+        ],
+        submissions: [PLACED_INPUT],
+      },
+    });
+    expect(
+      await settlePending(lane.solo, 'resume', {
+        context: BACKGROUND_CONTEXT,
+        kills: lane.kills,
+      }),
+    ).toEqual({ outcome: 'aborted', fellBack: false });
+    expect(lane.calls).toEqual(['abort', 'idle']);
   });
 
   it('aborts with no submission by waiting for the conversation to go idle', async () => {
@@ -570,6 +834,35 @@ describe('settlePending decision paths', () => {
     ).rejects.toThrow(/kills failed.*kill EPERM/);
     expect(first).toHaveBeenCalledTimes(1);
     expect(second).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps kill failures visible when the abort itself rejects', async () => {
+    const lane = stubLane({
+      inspection: {
+        scheduling: 'paused',
+        tasks: [READY_TOOL],
+        submissions: [],
+      },
+    });
+    (
+      lane.solo.conversation as unknown as {
+        abort: () => Promise<void>;
+      }
+    ).abort = async () => {
+      throw new Error('abort refused');
+    };
+    lane.kills.track(
+      '7',
+      vi.fn(() => {
+        throw new Error('kill EPERM');
+      }),
+    );
+    await expect(
+      settlePending(lane.solo, 'abort', {
+        context: BACKGROUND_CONTEXT,
+        kills: lane.kills,
+      }),
+    ).rejects.toThrow(/abort refused.*kill EPERM/);
   });
 
   it('drains only the conversation key, never stale operation keys', async () => {
@@ -640,25 +933,43 @@ describe('inspectStoredWork', () => {
 
 describe('describePendingSettlement', () => {
   it('names the pending work and what happened to it', () => {
+    const head = 'pending work: pi.tool 12 (ready)';
     expect(
-      describePendingSettlement('pending work: pi.tool 12 (ready)', {
+      describePendingSettlement(head, {
         outcome: 'resumed',
         fellBack: false,
+        settled: 'done',
       }),
-    ).toBe('pending work: pi.tool 12 (ready) resumed after an interrupted run');
+    ).toBe(`${head} resumed after an interrupted run: done`);
     expect(
-      describePendingSettlement('pending work: pi.tool 12 (ready)', {
-        outcome: 'aborted',
+      describePendingSettlement(head, {
+        outcome: 'resumed',
         fellBack: false,
-      }),
-    ).toBe('pending work: pi.tool 12 (ready) aborted after an interrupted run');
-    expect(
-      describePendingSettlement('pending work: pi.tool 12 (ready)', {
-        outcome: 'aborted',
-        fellBack: true,
+        settled: 'unanswered',
+        reason: 'model_error',
       }),
     ).toBe(
-      'pending work: pi.tool 12 (ready) aborted after an interrupted run (resume could not settle)',
+      `${head} resumed after an interrupted run: unanswered (model_error)`,
+    );
+    expect(
+      describePendingSettlement(head, { outcome: 'resumed', fellBack: false }),
+    ).toBe(`${head} resumed after an interrupted run`);
+    expect(
+      describePendingSettlement(head, { outcome: 'aborted', fellBack: false }),
+    ).toBe(`${head} aborted after an interrupted run`);
+    expect(
+      describePendingSettlement(head, {
+        outcome: 'aborted',
+        fellBack: true,
+        reason: 'turn budget exhausted',
+      }),
+    ).toBe(
+      `${head} aborted after an interrupted run (resume could not settle: turn budget exhausted)`,
+    );
+    expect(
+      describePendingSettlement(head, { outcome: 'aborted', fellBack: true }),
+    ).toBe(
+      `${head} aborted after an interrupted run (resume could not settle)`,
     );
     expect(
       describePendingSettlement(undefined, {

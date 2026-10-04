@@ -288,7 +288,7 @@ quietly stop configuring anything.
 | Capability | Raised by |
 | --- | --- |
 | `network` | A network command under `network = "none"` (`curl`, `wget`, `ssh`, `scp`, …) — including one hidden inside `$(…)` (nested substitutions included), backticks, or after `eval`. |
-| `credentials` | An access to a listed credential location (issue #275), under the effective `credentials` class — which §40.2 enforces as `none`, `allowlist` included. Bash: home credential paths (`~/.aws/`, `~/.ssh/` key material and `config`, `~/.config/gh/`, `~/.config/gcloud/`, `~/.docker/config.json`, `~/.kube/config`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.git-credentials`, `~/.azure/`) spelled `~`, `$HOME`, `${HOME}`, `/Users/<user>` or `/home/<user>`, plus workspace credential files (`.env`, `.env.*` except `.env.example`/`.env.sample`/`.env.template`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`). Read-family tools (`read`, `ls`, `find`, `grep`): the same names in the `path`/`root` argument, as typed before the confine rewrite (a home path is rewritten before the tool opens it, but the ask sees it). Lexical detection, not enforcement (§59.1): an obfuscated or built-up path is a stated miss. Also fires via `requires:<tool>`. |
+| `credentials` | An access to a listed credential location (issue #275), under the effective `credentials` class — which §40.2 enforces as `none`, `allowlist` included. Bash: home credential paths (`~/.aws/`, `~/.ssh/` — every child except the known-public `known_hosts*`, `authorized_keys*` and `*.pub`, so `~/.ssh/github` and `~/.ssh/*` raise, `~/.config/gh/`, `~/.config/gcloud/`, `~/.docker/config.json`, `~/.kube/config`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.git-credentials`, `~/.azure/`) spelled `~`, `$HOME`, `${HOME}`, `/Users/<user>` or `/home/<user>`, plus workspace credential files (`.env`, `.env.*` except `.env.example`/`.env.sample`/`.env.template`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*` — the public `*.pub` halves excluded). Read-family tools (`read`, `ls`, `find`, `grep`): the same names in the `path`/`root` argument, as typed before the confine rewrite (a home path is rewritten before the tool opens it, but the ask sees it), and the name filters `grep.include` / `find.nameContains` when the filter is a substring of a credential name or contains one (`include: "env"` reaches `.env`, `include: "src/.env.local"` too) — filters shorter than 3 characters are not treated as credential selectors. Matching is case-folded, like the default macOS/Windows volumes. Lexical detection, not enforcement (§59.1): an obfuscated or built-up path is a stated miss. Also fires via `requires:<tool>`. |
 | `git-push` | `git push`, `git remote add/set-url/remove/rename` — in any command segment (`ls; git push`, `cd x && git push`), after git global options (`git -C . push`, `git -c k=v push`, `--git-dir=…`, `--work-tree=…`, `--no-pager`; an option argument may be quoted: `git -C "my dir" push`) and after any command-position boundary: whitespace, `\| ; &`, `(` (`$(git push)`), a path (`/usr/bin/git push`), a backslash (`\git push`), a quote (`bash -c 'git push'`, `sh -c "git push"`) or a backtick. The word must be exactly `git` followed by whitespace — `mygit push`, `digit push`, `gitpush` and `git-lfs push` do not raise. |
 | `destructive-shell` | The destructive matcher (`rm -rf`, `mkfs`, `dd of=/dev/…`, `shred`, `git clean -f`, `chmod/chown -R`, force pushes — `git push --force`/`-f`/`--force-with-lease`/`--force-if-includes`/`+refspec` — `find … -delete`, `git reset --hard`, `git checkout -- <path>`/`.`/`-f`, and `git restore` of the working tree; a staged-only `git restore --staged` is not destructive), including a destructive verb unwrapped through `$(…)` (nested substitutions included), backticks, or after `eval`. |
 | `install` | Package installs and fetch-and-run launchers, in any segment: `npm install/i/add/ci/exec/x`, `npx`, `pnpm install/i/add/dlx`, `yarn` (bare), `yarn add/install/dlx/global add`, `bun install/i/add`, `bunx`, `pip install`, `pipx install/run`, `uv add`, `uv pip install`, `uv tool install`, `uvx`, `gem install`, `composer require/install`, `brew install`, `apt install`, `cargo install/add`, `go install`. Scripts such as `npm test`, `npm run build`, `yarn build` and `uv run` are not installs. |
@@ -418,11 +418,16 @@ heuristics:
 - **Credential paths** (issue #275) — the `credentials` trigger is lexical,
   like every detector here: it recognizes the listed home locations in a
   bash command (`~/.aws/credentials`, `$HOME/.ssh/id_rsa`, `/Users/x/.netrc`;
-  the `~`, `$HOME`, `${HOME}` and absolute home spellings) and the listed
-  file names in a read-family tool path. Over-triggering is deliberate
-  (`*.pem` and `id_rsa.pub` are flagged too) and a raised credential
-  capability is an ask, never a silent grant. Stated misses: a path the list
-  does not name, an obfuscated or split spelling
+  the `~`, `$HOME`, `${HOME}` and absolute home spellings), the listed file
+  names in a read-family tool path, and the `grep.include`/`find.nameContains`
+  name filters that select those files by substring (`include: "env"`
+  reaches `.env`; a filter shorter than 3 characters is not treated as a
+  credential selector). Matching is case-folded, like the filesystems it
+  guards (`.ENV`, `~/.AWS/credentials`). Over-triggering is deliberate
+  (`*.pem` is flagged whether or not it holds a key) and a raised credential
+  capability is an ask, never a silent grant; the known-public files
+  (`*.pub`, `authorized_keys*`, `known_hosts*`) stay quiet. Stated misses: a
+  path the list does not name, an obfuscated or split spelling
   (`~/.a''ws/credentials`, `p=~/.ssh; cat $p/id_rsa`), a Windows-style
   backslash spelling, and a credential reached indirectly (`bash -c`, a
   script, a symlink). The `~/.ssh/*`

@@ -31,11 +31,15 @@ const HOME_PREFIX = String.raw`(?:~|\$HOME|\$\{HOME(?::?-[^}]*)?\}|\/Users\/[^\/
 // The credential locations the list fixes, as the part below the home
 // directory. Directory entries match the directory itself and everything
 // below it; file entries allow a trailing extension (a copy beside the
-// original is the same secret), except `.ssh`, where only key material
-// matches — `known_hosts` is not a credential.
+// original is the same secret). `~/.ssh` is key material by default: every
+// child matches except the known-public files (`known_hosts*`,
+// `authorized_keys*`, `*.pub`) — a common key name like `~/.ssh/github` and
+// the `~/.ssh/*` glob used to be silent misses (issue #275 review). `config`
+// stays in, as the issue's pattern list names it; an over-trigger is an ask,
+// never a grant.
 const HOME_CREDENTIAL_PATHS = [
   String.raw`\.aws(?:\/|(?![-\w]))`,
-  String.raw`\.ssh\/(?:id_[^\/\s"']*|config|(?:[^\/\s"']*)\.(?:pem|key))`,
+  String.raw`\.ssh\/(?!known_hosts|authorized_keys)(?![^\/\s"']*\.pub(?![\-\w]))[^\/\s"']+`,
   String.raw`\.config\/gh(?:\/|(?![-\w]))`,
   String.raw`\.config\/gcloud(?:\/|(?![-\w]))`,
   String.raw`\.docker\/config\.json(?![-\w])`,
@@ -47,7 +51,11 @@ const HOME_CREDENTIAL_PATHS = [
   String.raw`\.azure(?:\/|(?![-\w]))`,
 ].join('|');
 
-// Token start: the prefix must not be glued to a longer word.
+// Token start: the prefix must not be glued to a longer word. The `i` flag
+// folds case, because the default macOS/Windows volumes open `.ENV` and
+// `~/.AWS/credentials` exactly like their lower-case spellings (issue #275
+// review) — case-sensitive matching on a case-insensitive filesystem would
+// be a silent miss, not a conservative one.
 const HOME_CREDENTIAL = new RegExp(
   String.raw`(?:^|[\s"'=(])` +
     HOME_PREFIX +
@@ -55,6 +63,7 @@ const HOME_CREDENTIAL = new RegExp(
     String.raw`(?:` +
     HOME_CREDENTIAL_PATHS +
     String.raw`)`,
+  'i',
 );
 
 // `.env.example` and its siblings are templates, not credentials; every
@@ -63,12 +72,17 @@ const HOME_CREDENTIAL = new RegExp(
 const ENV_TEMPLATE = /^\.env\.(?:example|sample|template)$/;
 
 // Project-level credential files: `*.pem` and `*.key` of any name, and the
-// conventional private-key names (`id_rsa.pub` included — flagging a public
-// half costs an ask, missing a private half costs the key).
+// conventional private-key names. Public material is not a credential —
+// `*.pub` (the public half beside a private key), `known_hosts*` and
+// `authorized_keys*` stay quiet, so a public half costs no ask and the
+// detector still names the private half. Case-folded, for the same reason as
+// HOME_CREDENTIAL.
 function credentialFileBase(base: string): boolean {
-  if (base === '.env') return true;
-  if (base.startsWith('.env.')) return !ENV_TEMPLATE.test(base);
-  return /^(?:id_rsa.*|id_ed25519.*|.+?\.(?:pem|key))$/.test(base);
+  const name = base.toLowerCase();
+  if (name.endsWith('.pub')) return false;
+  if (name === '.env') return true;
+  if (name.startsWith('.env.')) return !ENV_TEMPLATE.test(name);
+  return /^(?:id_rsa.*|id_ed25519.*|.+?\.(?:pem|key))$/.test(name);
 }
 
 // A command's words, quote-stripped, with a leading `--flag=` removed.
@@ -85,6 +99,39 @@ function commandTokens(command: string): string[] {
 
 function baseName(token: string): string {
   return token.slice(token.lastIndexOf('/') + 1);
+}
+
+// The credential name PARTS a name filter can select: a filter is matched by
+// substring against the walked path (`grep.include`) or the base name
+// (`find.nameContains`), so `env` reaches `.env` and `key` reaches `*.key`.
+const CREDENTIAL_NAME_PARTS = [
+  '.env',
+  'id_rsa',
+  'id_ed25519',
+  '.pem',
+  '.key',
+] as const;
+
+// A name filter shorter than this is not treated as a credential selector:
+// `e` or `en` would match half a repository, and the ask cost of that is not
+// worth the miss it closes. Stated bound, not a silent one.
+const MIN_CREDENTIAL_FILTER = 3;
+
+// The credential name a `grep.include` / `find.nameContains` filter can
+// select, or undefined. Either direction counts: a needle inside a credential
+// name (`env` in `.env`, `pem` in `*.pem`) and a credential name inside the
+// needle (`my.pem.bak`, `src/.env.local`, whose base name is taken first).
+// Case-folded like every other match here.
+export function credentialAccessInNameFilter(
+  value: string,
+): string | undefined {
+  const needle = baseName(value).toLowerCase();
+  if (needle.length < MIN_CREDENTIAL_FILTER) return undefined;
+  return CREDENTIAL_NAME_PARTS.some(
+    (part) => needle.includes(part) || part.includes(needle),
+  )
+    ? value
+    : undefined;
 }
 
 // The credential path a bash command names, or undefined. Bash cannot be

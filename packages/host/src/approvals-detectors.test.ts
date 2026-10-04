@@ -674,6 +674,7 @@ describe('credential-access detector (issue #275)', () => {
     for (const command of [
       'cat ~/.aws/credentials',
       'cat ${HOME}/.netrc',
+      'cat /Users/x/.netrc',
       'cp ~/.netrc .',
       'base64 ~/.docker/config.json',
       'cat /home/x/.config/gh/hosts.yml',
@@ -710,12 +711,15 @@ describe('credential-access detector (issue #275)', () => {
       'cat "$PWD/.env.production"',
       'base64 deploy.pem',
       'cat id_rsa',
-      'cat secrets/id_ed25519.pub',
     ]) {
       expect(detectTriggers('bash', { command }, ctx), command).toEqual([
         'credentials',
       ]);
     }
+    // The public half is not a credential.
+    expect(
+      detectTriggers('bash', { command: 'cat secrets/id_ed25519.pub' }, ctx),
+    ).toEqual([]);
   });
 
   it('keeps ordinary commands and credential templates quiet', () => {
@@ -766,6 +770,85 @@ describe('credential-access detector (issue #275)', () => {
       expect(detectTriggers(tool, args, ctx), `${tool} ${args.path}`).toEqual(
         [],
       );
+    }
+  });
+
+  it('flags ~/.ssh children except the known-public files', () => {
+    const ctx = triggerContext();
+    // A widened arm (issue #275 review): `~/.ssh/github` is a common key
+    // name and `~/.ssh/*` a common glob — both used to be silent misses.
+    for (const command of [
+      'cat ~/.ssh/github',
+      'cat ~/.ssh/*',
+      'cat ~/.ssh/config',
+      'cat ~/.ssh/id_rsa',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toContain(
+        'credentials',
+      );
+    }
+    // Public material is not a credential: the network scan still fires on
+    // the `ssh` word, but the credential class must not.
+    for (const command of [
+      'cat ~/.ssh/known_hosts',
+      'cat ~/.ssh/authorized_keys',
+      'cat ~/.ssh/id_rsa.pub',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).not.toContain(
+        'credentials',
+      );
+    }
+  });
+
+  it('matches credential names case-insensitively (case-folding filesystems)', () => {
+    const ctx = triggerContext();
+    // macOS's default volume opens `.ENV` and `~/.AWS/credentials` exactly
+    // like their lower-case spellings, so the detector folds case too.
+    for (const command of [
+      'cat ~/.AWS/credentials',
+      'cat .ENV.local',
+      'cat ID_RSA',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toEqual([
+        'credentials',
+      ]);
+    }
+    for (const [tool, args] of [
+      ['read', { path: '.ENV' }],
+      ['read', { path: 'deploy.PEM' }],
+      ['read', { path: 'ID_RSA' }],
+    ] as Array<[string, Record<string, unknown>]>) {
+      expect(detectTriggers(tool, args, ctx), `${tool} ${args.path}`).toEqual([
+        'credentials',
+      ]);
+    }
+  });
+
+  it('raises credentials for a grep/find name filter that selects credential files', () => {
+    const ctx = triggerContext();
+    // `include`/`nameContains` select files by SUBSTRING, so a short filter
+    // reaches a committed `.env` without naming a path at all.
+    for (const [tool, args] of [
+      ['grep', { pattern: '.*', root: '.', include: '.env' }],
+      ['grep', { pattern: 'KEY', root: 'src', include: 'env' }],
+      ['grep', { pattern: '.*', root: '.', include: 'src/.env.local' }],
+      ['grep', { pattern: '.*', root: '.', include: 'id_rsa' }],
+      ['find', { root: '.', nameContains: '.pem' }],
+      ['find', { root: '.', nameContains: 'key' }],
+      ['find', { root: '.', nameContains: 'ID_RSA' }],
+    ] as Array<[string, Record<string, unknown>]>) {
+      expect(detectTriggers(tool, args, ctx), JSON.stringify(args)).toEqual([
+        'credentials',
+      ]);
+    }
+    // Ordinary filters and too-short needles stay quiet.
+    for (const [tool, args] of [
+      ['grep', { pattern: 'x', root: '.', include: '.ts' }],
+      ['grep', { pattern: 'x', root: 'src', include: 'en' }],
+      ['grep', { pattern: 'x', root: 'src' }],
+      ['find', { root: '.', nameContains: 'test' }],
+    ] as Array<[string, Record<string, unknown>]>) {
+      expect(detectTriggers(tool, args, ctx), JSON.stringify(args)).toEqual([]);
     }
   });
 

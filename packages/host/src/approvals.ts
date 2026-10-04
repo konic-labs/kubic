@@ -39,6 +39,7 @@ import { withTelemetry } from '../../worker/src/lane/wrap.js';
 import { approvalCommandText, summarizeCommand } from './approval-display.js';
 import {
   credentialAccessInCommand,
+  credentialAccessInNameFilter,
   credentialAccessInPath,
 } from './approvals-credentials.js';
 import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
@@ -1243,15 +1244,22 @@ function shellTargetOutside(
   );
 }
 
-// The read-family tools and the argument naming what they open (the same
-// mapping the worker confines with, CONFINED_TOOLS in interceptors.ts). The
-// ask runs before that rewrite, so an as-typed home path is still seen here.
-const READ_PATH_ARGS: Record<string, string> = {
-  read: 'path',
-  ls: 'path',
-  grep: 'root',
-  find: 'root',
+// The read-family arguments that name what a call opens (the same path/root
+// mapping the worker confines with, CONFINED_TOOLS in interceptors.ts) plus
+// the name FILTERS: `grep.include` and `find.nameContains` select files by
+// substring, so `include: '.env'` reaches a committed `.env` without naming
+// a path at all (issue #275 review). The ask runs before that rewrite, so an
+// as-typed home path is still seen here.
+const READ_PATH_ARGS: Record<string, readonly string[]> = {
+  read: ['path'],
+  ls: ['path'],
+  grep: ['root', 'include'],
+  find: ['root', 'nameContains'],
 };
+const READ_FILTER_ARGS: ReadonlySet<string> = new Set([
+  'include',
+  'nameContains',
+]);
 
 export function detectTriggers(
   toolName: string,
@@ -1345,14 +1353,19 @@ export function detectTriggers(
   // In-workspace credential files (issue #275): confinement already keeps
   // the tools inside the workspace, but `.env*` and key material committed
   // there are exactly the files the class is about.
-  const readPathArg = READ_PATH_ARGS[toolName];
-  if (
-    readPathArg !== undefined &&
-    typeof args[readPathArg] === 'string' &&
-    credentialGated(ctx.credentials) &&
-    credentialAccessInPath(args[readPathArg]) !== undefined
-  ) {
-    found.push('credentials');
+  const readArgs = READ_PATH_ARGS[toolName];
+  if (readArgs !== undefined && credentialGated(ctx.credentials)) {
+    for (const arg of readArgs) {
+      const value = args[arg];
+      if (typeof value !== 'string') continue;
+      const hit = READ_FILTER_ARGS.has(arg)
+        ? (credentialAccessInPath(value) ?? credentialAccessInNameFilter(value))
+        : credentialAccessInPath(value);
+      if (hit !== undefined) {
+        found.push('credentials');
+        break;
+      }
+    }
   }
   if (
     (toolName === 'write' || toolName === 'edit') &&

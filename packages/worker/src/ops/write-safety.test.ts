@@ -165,6 +165,45 @@ describe('write/edit safety on the node seam', () => {
     expect(journalStatus(journal, root).corrupt).toBe(0);
   });
 
+  it('keeps a pre-image exactly at the bound reversible, and one byte over hash-only (issue #139)', async () => {
+    const { root, journal, c } = setup();
+    // Exactly at the bound: whole-file path, before-content recorded, undo
+    // can restore it. This is the one off-by-one (`>` vs `>=`) that would
+    // silently change reversibility.
+    writeFileSync(join(root, 'at.txt'), Buffer.alloc(PREIMAGE_MAX_BYTES, 0x61));
+    const at = await callOperation(
+      'write',
+      { path: 'at.txt', content: 'new\n' },
+      inv(),
+      c,
+    );
+    expect(at.ok).toBe(true);
+    const atEntry = journal.entries()[0];
+    expect(atEntry?.beforeOmitted).toBeUndefined();
+    expect(
+      atEntry === undefined ? 'x' : journal.readBefore(atEntry),
+    ).not.toBeNull();
+    expect(planUndo(journal, {}, root).nonReversible).toEqual([]);
+    // One byte over: hash-only and non-reversible.
+    writeFileSync(
+      join(root, 'over.txt'),
+      Buffer.alloc(PREIMAGE_MAX_BYTES + 1, 0x61),
+    );
+    const over = await callOperation(
+      'write',
+      { path: 'over.txt', content: 'new\n' },
+      inv(),
+      c,
+    );
+    expect(over.ok).toBe(true);
+    const overEntry = journal.entries()[1];
+    expect(overEntry?.beforeOmitted).toBe(true);
+    expect(
+      overEntry === undefined ? 'x' : journal.readBefore(overEntry),
+    ).toBeNull();
+    expect(planUndo(journal, {}, root).nonReversible).toEqual(['over.txt']);
+  });
+
   it('records the journal intent before the rename: a failed journal leaves the file untouched', async () => {
     const { root, c } = setup();
     writeFileSync(join(root, 'a.txt'), 'old\n');

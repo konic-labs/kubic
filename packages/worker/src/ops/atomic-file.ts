@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import type { FileSystem } from '../../../exec/src/env.js';
 import type { JournalEntryInput } from '../../../exec/src/journal.js';
+import { HASH_CHUNK_BYTES } from '../../../exec/src/journal.js';
 import type { OpContext } from './types.js';
 import { OpError } from './types.js';
 
@@ -27,9 +28,10 @@ export interface PreImage {
 // does for a binary pre-image or the sweep's hash-only after-side (#120).
 export const PREIMAGE_MAX_BYTES = 8 * 1024 * 1024;
 
-// Chunk size for that streamed hashing (issue #107's HASH_CHUNK_BYTES): peak
-// memory is one chunk, never the file.
-export const PREIMAGE_CHUNK_BYTES = 4 * 1024 * 1024;
+// Chunk size for that streamed hashing: the journal's own streamed-hash chunk
+// (issue #107), imported rather than re-declared so there is one source of
+// truth for "how much of a file is held at once".
+export const PREIMAGE_CHUNK_BYTES = HASH_CHUNK_BYTES;
 
 // Reads the file's bytes when the seam can (readFileRange), so the recorded
 // hash is of the real bytes and binary content is detected instead of being
@@ -89,9 +91,11 @@ export function readPreImage(ctx: OpContext, path: string): PreImage {
 }
 
 // The sha256 of a file's raw bytes, one PREIMAGE_CHUNK_BYTES chunk at a
-// time (issue #139): peak memory is the chunk, never the file. Returns the
-// bytes actually read, so a file that changed size mid-flight is reported
-// as it was, not as `stat` claimed.
+// time (issue #139): peak memory is the chunk, never the file. The loop
+// advances by what a chunk actually delivered (a short read — the file
+// shrank after `stat` — must not be counted as hashed, nor skipped over),
+// and returns the bytes really read, so `bytesDelta` describes the file as
+// it was.
 function hashRawBytes(
   readRange: NonNullable<FileSystem['readFileRange']>,
   path: string,
@@ -102,8 +106,9 @@ function hashRawBytes(
   while (at < size) {
     const end = Math.min(at + PREIMAGE_CHUNK_BYTES, size);
     const chunk = readRange(path, at, end);
+    if (chunk.length === 0) break;
     hash.update(chunk);
-    at = end;
+    at += chunk.length;
   }
   return { hash: hash.digest('hex'), bytes: at };
 }

@@ -30,7 +30,24 @@ export interface CustomModelSpec {
   /** Input modalities (§37.2); default text only. */
   input?: ('text' | 'image')[];
   reasoning?: boolean;
+  /** Request-body sampling defaults Pi applies to every request. */
+  samplingParams?: SamplingParams;
+  /**
+   * Sampling overrides per thinking level (pi-ai 1.0.2; issue #402), merged
+   * over `samplingParams` for the effective level at request time.
+   */
+  samplingParamsByThinkingLevel?: SamplingParamsByThinkingLevel;
 }
+
+// Pi's `SamplingParams` / `SamplingParamsByThinkingLevel`, mirrored here
+// because pi-boundary.ts (the only file allowed to import @earendil-works/*)
+// does not re-export them yet. They move there — and this copy goes — when
+// it does; the shapes are pi-ai's verbatim.
+/** Merged into the provider request body verbatim (provider-specific keys). */
+export type SamplingParams = Record<string, unknown>;
+export type SamplingParamsByThinkingLevel = Partial<
+  Record<ModelThinkingLevel, SamplingParams>
+>;
 
 export interface CustomProviderSpec {
   id: string;
@@ -200,6 +217,42 @@ function parseInput(
   return value as Modality[];
 }
 
+// Per-thinking-level sampling overrides (issue #402; pi-ai 1.0.2): a plain
+// object for `samplingParams`, an object keyed by thinking level for
+// `samplingParamsByThinkingLevel`. Values are provider request fields Pi
+// assigns into the body verbatim (nested values are legitimate), so only the
+// shape is validated — an unknown level or a non-object body is refused by
+// name, never silently dropped.
+function parseSamplingParams(
+  raw: Record<string, unknown>,
+  key: 'samplingParams' | 'samplingParamsByThinkingLevel',
+  what: string,
+): SamplingParams | SamplingParamsByThinkingLevel | undefined {
+  const value = raw[key];
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) {
+    throw new ModelsJsonError(
+      `${what}: '${key}' must be an object of sampling parameters (got ${JSON.stringify(value)})`,
+    );
+  }
+  if (key === 'samplingParams') return { ...value };
+  const byLevel: SamplingParamsByThinkingLevel = {};
+  for (const [level, params] of Object.entries(value)) {
+    if (!isThinkingLevel(level)) {
+      throw new ModelsJsonError(
+        `${what}: 'samplingParamsByThinkingLevel' names unknown thinking level '${level}' (levels: ${THINKING_LEVELS.join(', ')})`,
+      );
+    }
+    if (!isRecord(params)) {
+      throw new ModelsJsonError(
+        `${what}: 'samplingParamsByThinkingLevel.${level}' must be an object of sampling parameters (got ${JSON.stringify(params)})`,
+      );
+    }
+    byLevel[level] = { ...params };
+  }
+  return byLevel;
+}
+
 function parseModel(raw: unknown, providerId: string): CustomModelSpec {
   if (!isRecord(raw))
     throw new ModelsJsonError(
@@ -220,6 +273,12 @@ function parseModel(raw: unknown, providerId: string): CustomModelSpec {
     );
   }
   const input = parseInput(raw, what);
+  const samplingParams = parseSamplingParams(raw, 'samplingParams', what);
+  const samplingParamsByThinkingLevel = parseSamplingParams(
+    raw,
+    'samplingParamsByThinkingLevel',
+    what,
+  );
   return {
     id,
     ...(typeof raw.name === 'string' && raw.name !== ''
@@ -230,6 +289,10 @@ function parseModel(raw: unknown, providerId: string): CustomModelSpec {
     ...parseCosts(raw, what),
     ...(input === undefined ? {} : { input }),
     ...(raw.reasoning === true ? { reasoning: true as const } : {}),
+    ...(samplingParams === undefined ? {} : { samplingParams }),
+    ...(samplingParamsByThinkingLevel === undefined
+      ? {}
+      : { samplingParamsByThinkingLevel }),
   };
 }
 
@@ -519,6 +582,17 @@ export function registerCustomProviders(
         baseUrl: spec.baseUrl,
         reasoning: m.reasoning ?? false,
         input: m.input ?? (['text'] as ('text' | 'image')[]),
+        // Issue #402: the model-level sampling defaults and their
+        // per-thinking-level overrides reach Pi's request builder, which
+        // merges the effective level over the defaults.
+        ...(m.samplingParams === undefined
+          ? {}
+          : { samplingParams: m.samplingParams }),
+        ...(m.samplingParamsByThinkingLevel === undefined
+          ? {}
+          : {
+              samplingParamsByThinkingLevel: m.samplingParamsByThinkingLevel,
+            }),
         // Static per-provider headers ride on each model too: pi-ai's stream
         // path merges model.headers into every request (gateway routing
         // headers like opencode-go's x-opencode-session must reach the wire).

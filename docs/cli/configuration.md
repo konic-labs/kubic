@@ -583,6 +583,7 @@ of entries with their own `id` is accepted as an alias):
 | `contextWindow`, `maxTokens` | Positive integers; `maxTokens` must be **less than** `contextWindow`, judged on the effective values (defaults `8192`/`2048`), so `contextWindow: 1024` alone is refused too. A `0` or fractional value is refused with the field named. |
 | `cost` | `{input, output, cacheRead, cacheWrite}` in USD per 1M tokens (§37.2); cache reads and writes are priced separately (§39) and reach `kubic models --json` as `cacheReadCost`/`cacheWriteCost`. The flat `inputCost`/`outputCost` keys still work — one place per field, never both. |
 | `input` | Input modalities: a non-empty list from `text`, `image` (default `["text"]`). |
+| `samplingParams`, `samplingParamsByThinkingLevel` | Extra request-body fields Pi assigns into the provider request verbatim (`temperature`, `top_p`, …). The by-level form is keyed by thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`); at request time the effective level's object is merged over `samplingParams`. An unknown level or a non-object body is refused with the field named. Supported for the OpenAI-compatible APIs this file declares (`openai-completions`, `openai-responses`). |
 
 ## Secrets (never in config)
 

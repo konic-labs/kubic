@@ -101,7 +101,6 @@ import type {
   RoleLayerInput,
 } from '../../../packages/host/src/roles/resolver.js';
 import {
-  roleDocPath,
   rolePromptFor,
   type SelectedRole,
   selectRole,

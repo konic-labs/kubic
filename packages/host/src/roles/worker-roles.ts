@@ -12,12 +12,7 @@
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import type { EffectivePolicy } from '../policy/enterprise.js';
 import type { RoleLayerInput } from './resolver.js';
-import {
-  loadRoles,
-  roleDocPath,
-  rolePromptFor,
-  selectRole,
-} from './roles-boot.js';
+import { loadRoles, rolePromptFor, selectRole } from './roles-boot.js';
 import {
   BUILTIN_ROLE_NAMES,
   type BuiltinRoleName,
@@ -155,9 +150,10 @@ export function composeWorkerPrompt(
 // per §40.3: a document that fails to resolve, or a role with no
 // `## Prompt` section, is reported with its named reason and its worker is
 // left unassigned — the caller refuses the run rather than composing a
-// prompt from invented text. A workspace with no role documents at all is
-// the normal case (the solo default is unaffected): no assignment, no
-// refusal, and the plan prompt stands.
+// prompt from invented text. A workspace with no role documents is not a
+// special case: the five §12 presets ship with the binary (issue #203), so
+// every worker is assigned a role — the default implementer for an unbound
+// agent (issue #178) — from the embedded documents.
 export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
   // A role directory that cannot be loaded at all (an unparseable document,
   // an unreadable directory) is a §40.3 refusal too, never a thrown crash
@@ -189,7 +185,6 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
   for (const refusal of loaded.refused) {
     refusedByName.set(refusal.name, refusal.reason);
   }
-  if (loaded.docs.length === 0) return { assignments: [], refused: [] };
   const assignments: WorkerRoleAssignment[] = [];
   for (const agentId of input.agents) {
     const role = roleForAgent(input.agents, agentId, input.roles);

@@ -85,7 +85,6 @@ import {
 import { PresentationProjector } from '../../../packages/host/src/presentation/projector.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
 import {
-  roleDocPath,
   rolePromptFor,
   selectRole,
 } from '../../../packages/host/src/roles/roles-boot.js';

@@ -453,9 +453,3 @@ No budget by default — absent means no limits. Example opt-in at spawn
 \`\`\`
 `,
 };
-
-// The embedded document for a role name, or undefined when the name is not
-// one of the five built-ins (a custom document is repo-only).
-export function builtinPresetText(name: string): string | undefined {
-  return (BUILTIN_ROLE_PRESETS as Record<string, string>)[name];
-}

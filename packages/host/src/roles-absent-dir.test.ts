@@ -152,4 +152,53 @@ describe('an absent roles directory is not an error (#99 wiring follow-up)', () 
       /^repo role/,
     );
   });
+
+  // Review finding (#203): the repo text used to be re-read from
+  // `.kubic/roles/<parsed role name>.md`, so a document whose file stem
+  // differs from its `role:` line (a rename, a copy whose frontmatter was not
+  // updated) threw a raw ENOENT for EVERY consumer — doctor red, orchestrate
+  // refused, every `--role` boot dead. The text must come from the path that
+  // was listed, and the role registers under its DECLARED name.
+  it('reads a document whose file stem differs from its declared role', () => {
+    const root = withRoles({
+      'myplanner.md': PLANNER.replace(
+        'Decompose the objective.',
+        'Renamed but declared.',
+      ),
+    });
+    const loaded = loadRoles({
+      cwd: root,
+      bridge: createNodeFileBridge(root),
+    });
+    // Registered under the DECLARED name (`planner`), replacing its preset.
+    expect(loaded.sources.planner).toBe('repo');
+    expect(loaded.texts.planner).toContain('Renamed but declared.');
+    expect(loaded.resolved.map((r) => r.name)).toContain('planner');
+    // No `planner.md` exists: the old re-derivation read it and threw.
+    const checks = rolesDoctorProbe({
+      cwd: root,
+      bridge: createNodeFileBridge(root),
+    });
+    expect(checks.filter((check) => check.status === 'fail')).toEqual([]);
+    expect(checks.find((check) => check.id === 'role:planner')?.detail).toMatch(
+      /^repo role/,
+    );
+  });
+
+  it('reports an unreadable document with its own path, not an ENOENT', () => {
+    // The listed path is what is read; a document that cannot be read fails
+    // with that path named (never as another document's missing file).
+    const root = withRoles({ 'planner.md': PLANNER });
+    const bridge = createNodeFileBridge(root);
+    const broken = {
+      listDir: (dir: string) => bridge.listDir(dir),
+      readTextFile: (path: string) => {
+        if (path.endsWith('planner.md')) throw new Error('EIO: i/o error');
+        return bridge.readTextFile(path);
+      },
+    };
+    expect(() => loadRoles({ cwd: root, bridge: broken })).toThrow(
+      /role document .*planner\.md is unreadable: EIO/,
+    );
+  });
 });

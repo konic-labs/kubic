@@ -1122,13 +1122,15 @@ describe('journal CLI default session workspaces over the durable store (issue #
   it('finds the latest journal of a session the store recorded for this workspace', async () => {
     const sessionsRoot = mkTmp('sr-');
     const root = mkTmp('ws-');
+    // The session ran in a subdirectory but declared the repo as its
+    // workspace: `kubic diff` from the repo must still find it.
     const store = openSessionStore(
       sessionsRoot,
       createNodeFileBridge(sessionsRoot),
     );
     const session = await createSession(
       store,
-      { cwd: root },
+      { cwd: join(root, 'pkg'), workspace: root },
       BACKGROUND_CONTEXT,
     );
     await session.release(BACKGROUND_CONTEXT);

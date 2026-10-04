@@ -15,6 +15,7 @@ import {
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
 import {
+  AssistantEntry,
   BACKGROUND_CONTEXT,
   createModels,
   createRegistry,
@@ -70,7 +71,7 @@ async function seededSession(
   const models = createModels();
   models.setProvider(faux.provider);
   const harness = await Harness.open(
-    session.storage,
+    session.adopt(),
     { models, registry: createRegistry() },
     BACKGROUND_CONTEXT,
   );
@@ -254,32 +255,65 @@ describe('sessions CLI (issue #14, slice F)', () => {
       BACKGROUND_CONTEXT,
     );
     const harness = await Harness.open(
-      session.storage,
+      session.adopt(),
       { models: fauxModels(), registry: createRegistry() },
       BACKGROUND_CONTEXT,
     );
     const conversation = await harness.root(BACKGROUND_CONTEXT, {
       agent: { model: { provider: 'faux', modelId: 'faux-1' } },
     });
-    // A hostile tool result: clearing the screen and recolouring the
-    // operator's terminal is the payload, not the text.
-    await harness.commit(
-      (tx) =>
-        tx.appendEntry(ToolResultEntry, conversation.id, {
-          data: { diagnostics: [] },
-          model: [
-            {
-              role: 'toolResult',
-              toolCallId: 'call-evil',
-              toolName: 'bash',
-              content: [{ type: 'text', text: '\u001b[2J\u001b[31mowned' }],
-              isError: false,
-              timestamp: Date.now(),
+    // A hostile turn: clearing the screen and recolouring the operator's
+    // terminal is the payload, in the text AND in the model-authored tool
+    // name (pi-durable persists a call the registry never offered).
+    await harness.commit(async (tx) => {
+      await tx.appendEntry(AssistantEntry, conversation.id, {
+        model: [
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'toolCall',
+                id: 'call-evil',
+                name: '\u001b[31mevil',
+                arguments: {},
+              },
+            ],
+            api: 'faux',
+            provider: 'faux',
+            model: 'faux-1',
+            usage: {
+              input: 1,
+              output: 1,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 2,
+              cost: {
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                total: 0,
+              },
             },
-          ],
-        }),
-      BACKGROUND_CONTEXT,
-    );
+            stopReason: 'toolUse',
+            timestamp: Date.now(),
+          },
+        ],
+      });
+      await tx.appendEntry(ToolResultEntry, conversation.id, {
+        data: { diagnostics: [] },
+        model: [
+          {
+            role: 'toolResult',
+            toolCallId: 'call-evil',
+            toolName: '\u001b[2Jbash',
+            content: [{ type: 'text', text: '\u001b[2J\u001b[31mowned' }],
+            isError: false,
+            timestamp: Date.now(),
+          },
+        ],
+      });
+    }, BACKGROUND_CONTEXT);
     await harness.close(BACKGROUND_CONTEXT);
     await session.release(BACKGROUND_CONTEXT);
 
@@ -291,6 +325,8 @@ describe('sessions CLI (issue #14, slice F)', () => {
     expect(code).toBe(0);
     const text = o.lines.join('\n');
     expect(text).toContain('owned');
+    // The name survives as inert text; the control byte never does.
+    expect(text).toContain('evil');
     expect(text).not.toContain('\u001b');
   });
 
@@ -303,7 +339,7 @@ describe('sessions CLI (issue #14, slice F)', () => {
       BACKGROUND_CONTEXT,
     );
     const harness = await Harness.open(
-      session.storage,
+      session.adopt(),
       { models: fauxModels(), registry: createRegistry() },
       BACKGROUND_CONTEXT,
     );
@@ -337,8 +373,12 @@ describe('sessions CLI (issue #14, slice F)', () => {
       { sessionsRoot: root, out: o.write },
     );
     expect(code).toBe(0);
-    expect(o.lines).toContain('pending task: pi.generation (pending)');
-    expect(o.lines).toContain('pending submission: input (queued)');
+    // #396's storage-level probe owns the format, so this is the same line
+    // the run path prints when it settles the work.
+    const pending = o.lines.filter((line) => line.startsWith('pending work:'));
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toContain('pi.generation');
+    expect(pending[0]).toContain('submission');
   });
 
   it('fails cleanly for unknown sessions and unsafe ids', async () => {

@@ -133,11 +133,16 @@ async function defaultSessionWorkspaces(
       BACKGROUND_CONTEXT,
     );
     for (const entry of listed) {
-      // The recorded cwd lives in the session's metadata (issue #392); a
-      // session that recorded none — a 0.87 transcript, a hand-made dir —
-      // stays unassociated rather than guessing one.
-      const cwd = entry.meta?.cwd;
-      if (cwd !== undefined && cwd !== '') out.set(entry.id, cwd);
+      // The session's workspace, as the durable model defines it (issue
+      // #392): a declared `workspace`, else the recorded `cwd` — the same
+      // rule `sessionsTouchingWorkspace` and doctor's overlap probe use, so
+      // a session created in a subdirectory associates with its repo. A
+      // session that recorded neither — a 0.87 transcript, a hand-made dir
+      // — stays unassociated rather than guessing one.
+      const workspace = entry.meta?.workspace ?? entry.meta?.cwd;
+      if (workspace !== undefined && workspace !== '') {
+        out.set(entry.id, workspace);
+      }
     }
   } catch {
     // No readable sessions root — no recorded workspaces.

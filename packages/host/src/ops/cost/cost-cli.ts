@@ -166,6 +166,9 @@ export async function readSessionUsage(
       ['tool', state.tools],
     ] as const) {
       for (const [key, raw] of Object.entries(map ?? {})) {
+        // A stored bucket is untrusted JSON: a torn or foreign value is
+        // skipped, never merged into the totals (and never a crash).
+        if (typeof raw !== 'object' || raw === null) continue;
         const id = `${kind}:${key}`;
         const row = rows.get(id) ?? {
           key,
@@ -225,11 +228,16 @@ export async function loadSessionCostRows(
     try {
       session = await attachSession(store, entry.id, BACKGROUND_CONTEXT);
     } catch (error) {
-      // An explicit --session that does not exist is the documented exit-1
-      // refusal (`error: unknown session: <id>`), never a silent skip; the
-      // marker rows are for sessions the readout did find but could not
-      // read.
-      if (error instanceof SessionAttachError && sessionId !== undefined) {
+      // A session the operator NAMED is never silently skipped: an unknown
+      // id, a live lock and a 0.87 transcript all escape so
+      // `runCostCommand` prints the refusal and exits 1, as it did before
+      // the durable store. Marker rows are for the listing sweep only.
+      if (
+        sessionId !== undefined &&
+        (error instanceof SessionAttachError ||
+          error instanceof SessionLockError ||
+          error instanceof SessionFormatError)
+      ) {
         throw error;
       }
       if (

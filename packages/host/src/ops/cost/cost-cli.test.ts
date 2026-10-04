@@ -1,6 +1,6 @@
 // `kubic cost` CLI tests (issue #79; §62). RED first: cost-cli.ts lands
 // after this file. Faux-only, zero network — rows are injected.
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -22,6 +22,7 @@ import {
   MemoryStorage,
   type Storage,
   Type,
+  UsageDoc,
 } from '../../../../worker/src/pi-boundary.js';
 import { FAUX_PROVIDER_ID } from '../../faux-provider.js';
 import { REDACTED_SECRET } from '../../policy/secret-shapes.js';
@@ -528,7 +529,7 @@ describe('kubic cost durable usage (issue #400)', () => {
       { cwd: '/work' },
       BACKGROUND_CONTEXT,
     );
-    await fauxRun(session.storage);
+    await fauxRun(session.adopt());
     // The harness closed the storage with it; the lock is still held.
     await session.release(BACKGROUND_CONTEXT);
 
@@ -548,6 +549,61 @@ describe('kubic cost durable usage (issue #400)', () => {
     await expect(loadSessionCostRows(root, 'missing')).rejects.toMatchObject({
       name: 'SessionAttachError',
     });
+  });
+
+  it('refuses an explicit --session held live, instead of a zero (locked) row', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    try {
+      await expect(loadSessionCostRows(root, session.id)).rejects.toMatchObject(
+        { name: 'SessionLockError' },
+      );
+    } finally {
+      await session.release(BACKGROUND_CONTEXT);
+    }
+  });
+
+  it('refuses an explicit --session written by Pi 0.87, instead of an (unreadable) row', async () => {
+    const root = tmpRoot();
+    // Exactly what 0.87's JsonlSessionRepo wrote.
+    const dir = join(root, '--work--');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, '2026-01-01T00-00-00-000Z_legacy-1.jsonl'),
+      `${JSON.stringify({
+        v: 4,
+        kind: 'header',
+        id: 'legacy-1',
+        storageVersion: 1,
+        createdAt: 1_700_000_000_000,
+        cwd: '/work',
+      })}\n`,
+    );
+    await expect(loadSessionCostRows(root, 'legacy-1')).rejects.toMatchObject({
+      name: 'SessionFormatError',
+    });
+  });
+
+  it('skips a torn usage bucket instead of dying on it', async () => {
+    const storage = new MemoryStorage();
+    const harness = await fauxRun(storage);
+    // A committed document whose bucket is not an object: the reader must
+    // skip it and still report the real rows.
+    const conversation = await harness.root(BACKGROUND_CONTEXT);
+    await harness.commit(async (tx) => {
+      const usage = await tx.doc(UsageDoc, conversation.id);
+      (usage.models as Record<string, unknown>)['broken/model'] = null;
+    }, BACKGROUND_CONTEXT);
+    const rows = await readSessionUsage(storage, BACKGROUND_CONTEXT);
+    expect(rows.some((row) => row.key === 'broken/model')).toBe(false);
+    expect(rows.some((row) => row.key === `${FAUX_PROVIDER_ID}/faux-1`)).toBe(
+      true,
+    );
   });
 
   it('skips a session whose storage a live run owns, without opening it', async () => {
@@ -584,7 +640,7 @@ describe('kubic cost durable usage (issue #400)', () => {
       { cwd: '/work' },
       BACKGROUND_CONTEXT,
     );
-    await fauxRun(session.storage);
+    await fauxRun(session.adopt());
     await session.release(BACKGROUND_CONTEXT);
 
     const measured = await readSessionRunUsage(root, session.id);

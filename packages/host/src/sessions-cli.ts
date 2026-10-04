@@ -9,6 +9,7 @@ import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { stripUnsafeCharacters } from '../../exec/src/runtime-exclude.js';
+import { inspectStoredWork } from '../../worker/src/lane/pending.js';
 import {
   attachSession,
   createSession,
@@ -23,11 +24,7 @@ import {
   readSessionEntries,
   type TranscriptItem,
 } from '../../worker/src/lane/transcript.js';
-import {
-  BACKGROUND_CONTEXT,
-  type Context,
-  type Storage,
-} from '../../worker/src/pi-boundary.js';
+import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import { enableSessionFullAccess, FileApprovalStore } from './approvals.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
@@ -286,13 +283,16 @@ export async function runSessionsCommand(
       );
       // Issue #147 (§21): unfinished durable work a crashed process left
       // behind is named, so the operator knows the next `kubic run --session`
-      // / `kubic tui --session` settles it before taking a new prompt. Read
-      // straight from the storage (#400): attach must not boot a harness.
-      for (const line of await pendingLines(
+      // / `kubic tui --session` settles it before taking a new prompt. The
+      // storage-level probe (#396 `inspectStoredWork`) owns the format, so
+      // this line and the run path's settlement line are the same string;
+      // attach must not boot a harness.
+      const pending = await inspectStoredWork(
         session.storage,
         BACKGROUND_CONTEXT,
-      )) {
-        deps.out(line);
+      );
+      if (pending.pending && pending.summary !== undefined) {
+        deps.out(pending.summary);
       }
       // The transcript through the shared adapter (#400): one readable line
       // per turn instead of a truncated JSON entry (#318).
@@ -324,53 +324,6 @@ export async function runSessionsCommand(
   return 0;
 }
 
-// The task statuses that mean work is still live: a task in one of these
-// states is what a crashed run left open.
-const UNFINISHED_TASK_STATUSES: ReadonlySet<string> = new Set([
-  'pending',
-  'running',
-  'waiting',
-  'completing',
-]);
-
-// Unfinished durable work in one session, as `pending …` lines: live tasks
-// (a generation a dead process left mid-flight) and unsettled submissions.
-// The same durable state `Harness.inspect()` reports, read without a harness
-// — a CLI reader owns the storage, not the lane.
-async function pendingLines(
-  storage: Storage,
-  context: Context,
-): Promise<string[]> {
-  const lines: string[] = [];
-  // Bounded paged scans, no unbounded query; the cursor's type comes from
-  // the storage's own signature.
-  let cursor: Awaited<ReturnType<Storage['scanTasks']>>['next'];
-  for (;;) {
-    const page = await storage.scanTasks({}, 256, cursor, context);
-    for (const task of page.items) {
-      if (!UNFINISHED_TASK_STATUSES.has(task.state.status)) continue;
-      lines.push(`pending task: ${task.kind} (${task.state.status})`);
-    }
-    if (page.next === undefined) break;
-    cursor = page.next;
-  }
-  let submissions: Awaited<ReturnType<Storage['scanSubmissions']>>['next'];
-  for (;;) {
-    const page = await storage.scanSubmissions({}, 256, submissions, context);
-    for (const submission of page.items) {
-      if (submission.status !== 'queued' && submission.status !== 'placed') {
-        continue;
-      }
-      lines.push(
-        `pending submission: ${submission.type} (${submission.status})`,
-      );
-    }
-    if (page.next === undefined) break;
-    submissions = page.next;
-  }
-  return lines;
-}
-
 // One attach line per transcript item (#318): role + text, one line each.
 // Whitespace is collapsed so a multi-line message or tool output stays one
 // readable row, and the line keeps the documented 300-character bound.
@@ -392,12 +345,14 @@ function renderTranscriptItem(item: TranscriptItem): string {
       return `user: ${oneLine(item.text)}`;
     case 'assistant': {
       const text = oneLine(item.text);
-      const calls = item.toolCalls.map((call) => call.name).join(', ');
+      // Tool names are model-authored (pi-durable persists a call the
+      // registry never offered), so they are sanitized like the text.
+      const calls = item.toolCalls.map((call) => oneLine(call.name)).join(', ');
       const tools = calls === '' ? '' : ` [tools: ${calls}]`;
       return `assistant: ${text === '' ? '(no text)' : text}${tools}`;
     }
     case 'tool-result':
-      return `tool-result ${item.name}: ${oneLine(item.text)}${
+      return `tool-result ${oneLine(item.name)}: ${oneLine(item.text)}${
         item.isError ? ' (error)' : ''
       }`;
     case 'system':

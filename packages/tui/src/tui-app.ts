@@ -434,6 +434,9 @@ export interface TuiApp {
   mode(): StatusMode;
   setMode(mode: StatusMode): void;
   // Issue #96: the §17 inspectable pair.
+  // Issue #296: the streamed draft of the in-flight assistant message; the
+  // committed entry replaces it (undefined clears it).
+  setStream(text: string | undefined): void;
   setJournalChanges(rows: ReadonlyArray<JournalChangeLike>): void;
   setJournalFilter(filter: JournalFilterLike): void;
   setDiffToolCall(toolCallId: string | null): void;
@@ -1260,6 +1263,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     },
     setUsage: (rows: ReadonlyArray<StatusUsageRow>): void => {
       status.setRows(rows);
+    },
+    setStream: (text: string | undefined): void => {
+      transcript.setStream(text);
     },
     setModel: (next: string, thinking?: string): void => {
       applyModel(next, thinking);

@@ -586,7 +586,9 @@ variants: `run-start`/`run-end` (`inputs: SubmissionId[]`),
 `entry?`), `usage` (`row: KubicUsageRow`, real provider/model from the
 assistant entry, + `entry`), `fault` (`code`, `message`),
 `retry` (`phase`, `attempt?`, `error?`), `compaction` (`phase`,
-`reason?`), and `snapshot` — the attach / late-join / overflow path,
+`reason?`), `message-delta` (`text`: the in-flight generation's streamed
+text, issue #296; a whole-message or thinking-only batch maps to nothing),
+and `snapshot` — the attach / late-join / overflow path,
 carrying the committed `entries`, live tools, retry, compactions and
 `pi.usage`; a snapshot REPLACES the consumer's state, it never appends.
 

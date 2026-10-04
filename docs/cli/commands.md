@@ -952,8 +952,10 @@ same context the headless one does:
   relocates state in-repo leaves `git status` clean.
 
 The loop is real: type a prompt, press `Enter` to submit, and the solo
-lane drives it with events streaming into the views — tool calls appear in
-the tree, the transcript grows with the committed conversation, and the
+lane drives it with events streaming into the views — the assistant's
+answer appears as it is generated (a plain draft, replaced by the
+markdown-rendered committed entry when the message lands), tool calls appear
+in the tree, the transcript grows with the committed conversation, and the
 status bar fills with usage rows. A resumed session (`--session <id>`)
 starts from its committed spend: the status bar is seeded from the
 session's `pi.usage` ledger before the first frame, and the tree's root row

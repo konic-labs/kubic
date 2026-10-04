@@ -2,9 +2,10 @@
 // #398; §15, §15.3, §20.6, §27.1). Exactly one subscription per
 // conversation relays the §15 groups Kubic routes — run status, tool
 // status, usage, faults — plus the retry and compaction state the 1.0
-// harness commits and the inbox queue the TUI renders (#334). Everything
-// else (message deltas, navigation, config) stays inside Pi: Kubic defines
-// no parallel event vocabulary.
+// harness commits, the inbox queue the TUI renders (#334) and the
+// in-flight generation's text deltas (#296). Everything else (thinking
+// deltas, navigation, config) stays inside Pi: Kubic defines no parallel
+// event vocabulary.
 //
 // `watchEvents` is experimental upstream, so it is isolated here: every
 // Kubic consumer sees `KubicLaneEvent`, and `viewState()` (`pi.live`) can
@@ -75,6 +76,14 @@ export type KubicLaneEvent =
       // that is the error signal the tree shows.
       isError: boolean;
       entry?: EntryRecord;
+    }
+  | {
+      // Issue #296: the running generation's text, appended as it streams.
+      // The partial is not committed yet, so there is no entry to name; the
+      // consumer renders it as a draft and the committed `message_end` entry
+      // replaces it. Only text deltas are routed — thinking stays Pi's.
+      type: 'message-delta';
+      text: string;
     }
   | {
       type: 'usage';
@@ -206,6 +215,15 @@ export function toKubicLaneEvent(
         isError,
         ...(event.entry === undefined ? {} : { entry: event.entry }),
       };
+    }
+    case 'message_update': {
+      // Issue #296: the streamed text of the in-flight generation (§61:
+      // deltas render as they arrive). A whole-message change or a thinking
+      // delta carries no text for the transcript, so it maps to nothing.
+      const text = event.changes
+        .map((change) => (change.type === 'text_delta' ? change.delta : ''))
+        .join('');
+      return text === '' ? undefined : { type: 'message-delta', text };
     }
     case 'message_end': {
       const row = usageRowFromEntry(event.entry);

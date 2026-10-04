@@ -2225,12 +2225,28 @@ export class TuiTurnRunner {
     }
     if (event.type === 'snapshot') {
       // REPLACE semantics (D2): the attach snapshot is the transcript.
+      // Issue #296: it is also the rebase — a consumer that fell behind the
+      // watch gets a fresh snapshot, so the streamed draft is stale and goes.
+      this.clearStream();
       this.replaceLaneEntries(event.entries);
+      return;
+    }
+    if (event.type === 'message-delta') {
+      // Issue #296: the in-flight generation's text, rendered as a draft
+      // while it streams (§61). The committed entry replaces it at
+      // `message_end`, so this only ever appends to the draft.
+      this.streamText += event.text;
+      this.app.setStream(this.streamText);
+      this.onUpdate?.();
       return;
     }
     if (event.type === 'usage') {
       // The row names the provider/model that answered (#287); the status
       // bar reads tokens + cost only.
+      // Issue #296: the committed assistant entry is here — the draft it
+      // replaces is dropped before the feed is applied, so the text is never
+      // rendered twice.
+      this.clearStream();
       this.usageRows.push({
         model: event.row.model,
         provider: event.row.provider,
@@ -2252,6 +2268,17 @@ export class TuiTurnRunner {
       this.foldLaneEntries([event.entry]);
     }
   };
+
+  // Issue #296: the text streamed for the in-flight generation. Cleared when
+  // the committed entry lands, on a snapshot rebase and at settlement.
+  private streamText = '';
+
+  private clearStream(): void {
+    if (this.streamText === '') return;
+    this.streamText = '';
+    this.app.setStream(undefined);
+    this.onUpdate?.();
+  }
 
   private readonly usageRows: StatusUsageRow[];
 
@@ -2499,6 +2526,9 @@ export class TuiTurnRunner {
       // One settling read completes the feed (the user entry the submit
       // committed is not carried by any mapped event): events drive the live
       // transcript, this single read is the turn's full one.
+      // Issue #296: a turn that ends without a committed assistant entry
+      // (an abort mid-stream) leaves no draft behind.
+      this.clearStream();
       await this.refreshTranscript();
       // The lane's own terminal record is authoritative: an abort that raced
       // a completing turn must not be relabelled as cancelled (the work

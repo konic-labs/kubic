@@ -71,7 +71,11 @@ module owns arrangement only.
   the terminal narrows.
 - **Transcript** (`transcript.ts`): `TranscriptEntryKind` is
   `text|tool|output`; `TranscriptView` applies snapshot/delta ops
-  (`TranscriptOp`) and replays via `replayTranscript`. Tool output is
+  (`TranscriptOp`) and replays via `replayTranscript`. The in-flight
+  assistant message streams live (issue #296): `setStream(text)` renders a
+  plain draft after the committed cells while `message-delta` events arrive,
+  and the committed entry replaces it (clearing the draft — the text is
+  never rendered twice); a rebase snapshot also clears it. Tool output is
   collapsed to `TOOL_OUTPUT_PREVIEW_LINES` rows (cut at the width, with a
   hint naming hidden or clipped rows); Ctrl-X expands it, and then every
   output line and the tool call's args summary wrap with a hanging indent

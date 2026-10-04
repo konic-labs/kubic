@@ -136,6 +136,44 @@ describe('toKubicLaneEvent (§15.3)', () => {
     });
   });
 
+  it('maps a streamed text delta into the live draft (issue #296)', () => {
+    expect(
+      toKubicLaneEvent({
+        type: 'message_update',
+        usage: { input: 1, output: 1 } as never,
+        changes: [{ type: 'text_delta', contentIndex: 0, delta: 'Hel' }],
+      }),
+    ).toEqual({ type: 'message-delta', text: 'Hel' });
+    // Several text deltas in one batch concatenate, in order.
+    expect(
+      toKubicLaneEvent({
+        type: 'message_update',
+        usage: { input: 1, output: 1 } as never,
+        changes: [
+          { type: 'text_delta', contentIndex: 0, delta: 'lo ' },
+          { type: 'thinking_delta', contentIndex: 1, delta: 'hmm' },
+          { type: 'text_delta', contentIndex: 0, delta: 'world' },
+        ],
+      }),
+    ).toEqual({ type: 'message-delta', text: 'lo world' });
+    // Nothing for the transcript: a thinking-only batch, or a whole-message
+    // replacement (the committed entry follows).
+    expect(
+      toKubicLaneEvent({
+        type: 'message_update',
+        usage: { input: 1, output: 1 } as never,
+        changes: [{ type: 'thinking_delta', contentIndex: 0, delta: 'hmm' }],
+      }),
+    ).toBeUndefined();
+    expect(
+      toKubicLaneEvent({
+        type: 'message_update',
+        usage: { input: 1, output: 1 } as never,
+        changes: [{ type: 'message', message: { role: 'assistant' } as never }],
+      }),
+    ).toBeUndefined();
+  });
+
   it('maps a failed tool result to isError', () => {
     const failed = toolResultEntry(2, true);
     expect(

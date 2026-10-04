@@ -108,6 +108,10 @@ class TranscriptDocument implements Component {
   // placed yet. Rendered dim under the transcript (and under the pending
   // echo), so the operator sees the prompt was accepted — never dropped.
   queued: string[] = [];
+  // Issue #296: the in-flight generation's text (the lane's message deltas).
+  // Rendered as a plain draft after the committed cells; the committed
+  // assistant entry replaces it, so it is never part of the cell list.
+  stream: string | undefined;
   expanded = false;
   inline: ((width: number) => string[] | undefined) | undefined;
   private readonly markdownCache = new Map<string, Markdown>();
@@ -409,6 +413,9 @@ export interface TranscriptView {
   // echoed before the lane commits it, and the expand-all toggle.
   setWelcome(lines: ReadonlyArray<string>): void;
   setPendingPrompt(prompt: string | undefined): void;
+  // Issue #296: the streamed draft of the in-flight generation (undefined
+  // clears it). The committed entry replaces it.
+  setStream(text: string | undefined): void;
   // Issue #334: the queued follow-ups (`pi.inbox`), newest last. A fresh
   // call REPLACES the rows — the inbox event is a snapshot, not a delta.
   setQueuedPrompts(prompts: readonly string[]): void;
@@ -585,6 +592,9 @@ export function createTranscriptView(
     },
     setPendingPrompt(prompt: string | undefined): void {
       document.pending = prompt;
+    },
+    setStream(text: string | undefined): void {
+      document.stream = text;
     },
     setQueuedPrompts(prompts: readonly string[]): void {
       // Issue #334 (review): a queued draft is untrusted terminal input like

@@ -925,6 +925,14 @@ export async function orchestrateDepsWithDefaults(
 ): Promise<OrchestrateCommandDeps> {
   const cwd = options.cwd ?? process.cwd();
   const debug = options.debug ?? (() => undefined);
+  // Issue #202 (§38.1): the run's explicit thinking level — the documented
+  // `KUBIC_MODEL_THINKING` runtime override, when the operator set one. It
+  // outranks each role's own thinking default for that role's worker.
+  const thinkingOverrideRaw = process.env.KUBIC_MODEL_THINKING;
+  const thinkingOverride =
+    thinkingOverrideRaw === undefined || thinkingOverrideRaw === ''
+      ? undefined
+      : thinkingOverrideRaw;
   // Issue #133: the runtime `[orchestrator]` projection — the worktree
   // parent and the worker cap, both already validated at config load. The
   // shipped defaults apply when the config sets neither: `.kubic/wt` for
@@ -1482,6 +1490,13 @@ export async function orchestrateDepsWithDefaults(
         bridge: createNodeFileBridge(cwd),
         cwd,
         agents,
+        // §38.1 (#202): the manager's own effective model is the fallback
+        // level under each role's `[roles.<r>].model`, and the run's explicit
+        // thinking level (`KUBIC_MODEL_THINKING`) outranks the role default.
+        ...(options.model === undefined
+          ? {}
+          : { parentModel: `${options.model.provider}/${options.model.id}` }),
+        ...(thinkingOverride === undefined ? {} : { thinkingOverride }),
         ...(options.toolPolicy === undefined
           ? {}
           : { toolPolicy: options.toolPolicy }),
@@ -1701,12 +1716,18 @@ export async function orchestrateDepsWithDefaults(
         workerSessionFor(info?.sessionId ?? 'orch', agentId);
       // §68 provenance (issue #185): the model the child was pinned to (its
       // own report names the one it actually ran, and wins) and thinking.
+      // §38.1 (#202): the pin is the role's own `[roles.<r>].model` when its
+      // worker got one, then the manager's effective model — the same value
+      // the child's `KUBIC_MODEL` carries below.
       const modelPin = modelFrozen
         ? options.model === undefined
           ? undefined
           : `${options.model.provider}/${options.model.id}`
-        : (process.env.KUBIC_MODEL ?? info?.modelRef);
-      const thinking = process.env.KUBIC_MODEL_THINKING;
+        : (info?.modelRef ?? process.env.KUBIC_MODEL);
+      // Issue #202: the child's thinking level is the resolved per-worker one
+      // (the run's explicit `KUBIC_MODEL_THINKING`, else the role's default);
+      // the manager's ambient value is the fallback.
+      const thinking = info?.thinking ?? process.env.KUBIC_MODEL_THINKING;
       // Issue #94: the worker starts through the lifecycle layer, never by
       // reaching for the exec Shell here. launchWorker refuses a stale
       // generation, registers the row `kubic workers` reads, builds the
@@ -1772,11 +1793,21 @@ export async function orchestrateDepsWithDefaults(
                   !(modelFrozen && entry[0] === 'KUBIC_MODEL'),
               ),
             ),
-            ...(modelFrozen ||
-            info?.modelRef === undefined ||
-            process.env.KUBIC_MODEL !== undefined
+            // §38.1 (issue #202): the resolved worker model — the role's
+            // `[roles.<r>].model` pin, else the manager's effective model —
+            // rides the existing `KUBIC_MODEL` pin, OVERWRITING any ambient
+            // value so a role pin is not outranked by the manager's env pin.
+            // No level resolved one: no pin is invented, and the child keeps
+            // its own selection default.
+            ...(modelFrozen || info?.modelRef === undefined
               ? {}
               : { KUBIC_MODEL: info.modelRef }),
+            // The role's thinking default (or the run's explicit level) is
+            // per worker; absent leaves the child's own `[model].thinking`
+            // (and the manager's ambient value, when it has one) in force.
+            ...(info?.thinking === undefined
+              ? {}
+              : { KUBIC_MODEL_THINKING: info.thinking }),
             ...approvalsChildEnv(
               workerSession,
               info?.sessionId ?? orchestratorSessionId ?? 'orch',

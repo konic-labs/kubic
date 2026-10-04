@@ -486,10 +486,22 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       // NAMES only: no key name, no value.
       const workerCredentialProbe = (): DepProbe => {
         const cwd = process.cwd();
+        const pin = runtimeModelPin(cliConfig);
         const plan = planWorkerRoles({
           bridge: createNodeFileBridge(cwd),
           cwd,
           agents: ORCHESTRATE_DEFAULT_AGENTS,
+          // §38.1 (#202): the same model levels the run resolves — the
+          // manager's own pin under each role's `[roles.<r>].model`, and the
+          // run's explicit thinking level over the role default — so the
+          // posture describes the assignments that run would actually make.
+          ...(pin === undefined
+            ? {}
+            : { parentModel: `${pin.provider}/${pin.id}` }),
+          ...(process.env.KUBIC_MODEL_THINKING === undefined ||
+          process.env.KUBIC_MODEL_THINKING === ''
+            ? {}
+            : { thinkingOverride: process.env.KUBIC_MODEL_THINKING }),
           // The same enterprise role gate the orchestrate run applies, so the
           // posture describes the assignments that run would actually make.
           ...(enterprisePolicy === undefined
@@ -504,7 +516,6 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
             modelRef: assignment.modelRef,
           }),
         );
-        const pin = runtimeModelPin(cliConfig);
         return {
           id: 'credentials:roles',
           ...workerCredentialDoctorProbe(requests, {

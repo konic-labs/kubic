@@ -38,8 +38,13 @@ solo) — and `run` never delegates.
   the worker prompt is the role document's `## Prompt` text plus the worker's
   step, the child `kubic run` is told `--role <name>` so its own lane
   registers exactly the role's tools (a withheld tool is never registered —
-  absence, not approval), and the role's model default travels through the
-  existing `KUBIC_MODEL` pin. The plan is stored with the session, so
+  absence, not approval), and the role's resolved model and thinking levels
+  travel through the existing `KUBIC_MODEL` / `KUBIC_MODEL_THINKING` pins
+  (issue [#202](https://github.com/konic-labs/kubic/issues/202): the role's
+  `[roles.<name>].model` config pin first, else the manager's own effective
+  model — never a hardcoded provider — with the role's thinking default under
+  the run's explicit `KUBIC_MODEL_THINKING`). The plan is stored with the
+  session, so
   `--resume` replays each worker's own composed prompt instead of
   re-deriving one shared text.
 - **The CLI commits for the worker; the worker never commits.** A worker child

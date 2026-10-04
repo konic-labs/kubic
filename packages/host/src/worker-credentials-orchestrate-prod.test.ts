@@ -510,10 +510,13 @@ describe('prod orchestrate under a frozen enterprise model (issue #295)', () => 
     expect(env.KUBIC_ROLE_PLANNER_GW_API_KEY).toBe(SECRET);
   });
 
-  it('still injects the role default and follows the operator pin without a freeze (control)', async () => {
+  it('hands the manager model to the worker without a freeze (control)', async () => {
+    // §38.1 (#202): no role pin, so the manager's effective model is what the
+    // child is told — the role preset no longer invents `local/llama3`.
     const unpinned = await run({ modelPinFrozen: false }, undefined);
-    expect(unpinned.env.KUBIC_MODEL).toBe('local/llama3');
-    // The operator's own pin travels as it always did.
+    expect(unpinned.env.KUBIC_MODEL).toBe('gw/m1');
+    // The operator's own pin travels as it always did (in prod the same
+    // config load feeds the manager model and `KUBIC_MODEL`).
     const pinned = await run({ modelPinFrozen: false }, 'gw/m1');
     expect(pinned.env.KUBIC_MODEL).toBe('gw/m1');
     expect(pinned.env.KUBIC_ROLE_PLANNER_GW_API_KEY).toBe(SECRET);

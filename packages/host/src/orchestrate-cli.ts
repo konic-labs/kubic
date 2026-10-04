@@ -466,6 +466,8 @@ export interface WorkerSpawnInfo {
   role?: string;
   tools?: string[];
   modelRef?: string;
+  /** §38.1 (issue #202): the thinking level this worker's child is told. */
+  thinking?: string;
 }
 
 // The §54 delegation DAG (§49.1 projection): the shipped run is one manager
@@ -1554,18 +1556,20 @@ export async function runOrchestrateCommand(
     return step === undefined ? prompt : step.prompt;
   };
   // The role half of a worker's spawn info (issue #104): the assigned role,
-  // its resolved tool set and its model default. Empty for a worker with no
-  // assignment (no role documents), so the spawn info keeps its #85 shape.
+  // its resolved tool set and its resolved model/thinking levels (issue
+  // #202). Empty for a worker with no assignment (no role documents), so the
+  // spawn info keeps its #85 shape.
   const spawnRoleInfo = (
     agentId: string,
     roles: WorkerRolesPlan,
-  ): Pick<WorkerSpawnInfo, 'role' | 'tools' | 'modelRef'> => {
+  ): Pick<WorkerSpawnInfo, 'role' | 'tools' | 'modelRef' | 'thinking'> => {
     const assignment = workerRoleAssignment(roles, agentId);
     if (assignment === undefined) return {};
     return {
       role: assignment.role,
       tools: [...assignment.tools],
       modelRef: assignment.modelRef,
+      thinking: assignment.thinking,
     };
   };
   // §36.3 credential preflight (issue #200): the same role/model inputs

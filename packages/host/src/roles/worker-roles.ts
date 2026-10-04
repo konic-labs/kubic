@@ -21,7 +21,7 @@ import {
 import {
   BUILTIN_ROLE_NAMES,
   isBuiltinRole,
-  ROLE_MODEL_DEFAULTS,
+  ROLE_THINKING_DEFAULTS,
 } from './roles-data.js';
 
 export interface WorkerRoleAssignment {
@@ -32,8 +32,19 @@ export interface WorkerRoleAssignment {
   promptText: string;
   /** The resolver's resolved tool set: what the worker lane registers. */
   tools: string[];
-  /** §12.1 model default as the existing `provider/model` pin. */
-  modelRef: string;
+  /**
+   * The resolved `provider/model` pin the worker child is told, or undefined
+   * when no level chose one (issue #202): the child then keeps its own
+   * selection default instead of being forced onto an invented provider.
+   * Precedence: `[roles.<r>].model` config > the manager's effective model.
+   */
+  modelRef: string | undefined;
+  /**
+   * The thinking level the worker child is told (issue #202): the run's
+   * explicit level (`KUBIC_MODEL_THINKING`) when set, else the role's own
+   * §12 default. Undefined leaves the child's `[model].thinking` in force.
+   */
+  thinking: string | undefined;
 }
 
 export interface WorkerRolesPlan {
@@ -73,6 +84,13 @@ export interface WorkerRolesInput {
   cwd: string;
   agents: readonly string[];
   layers?: RoleLayerInput[];
+  // §38.1 model levels (issue #202): the manager's own effective model pin
+  // (`provider/id`) is the fallback under the role's `[roles.<r>].model`,
+  // and the run's explicit thinking level (`KUBIC_MODEL_THINKING`) outranks
+  // the role's own thinking default. Both absent means the child keeps its
+  // own selection/thinking defaults — never a hardcoded role provider.
+  parentModel?: string;
+  thinkingOverride?: string;
   // §58 enterprise policy (issue #288): each ASSIGNED role's declared tools
   // are checked against it, so the manager refuses — by name, before any
   // worktree or process exists — the assignment a worker's own
@@ -161,18 +179,19 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
         selected.doc,
         input.bridge.readTextFile(roleDocPath(input.cwd, role)),
       );
-      const fallback = isBuiltinRole(role)
-        ? ROLE_MODEL_DEFAULTS[role]
+      const fallbackThinking = isBuiltinRole(role)
+        ? ROLE_THINKING_DEFAULTS[role]
         : undefined;
       assignments.push({
         agentId,
         role,
         promptText,
         tools: [...selected.resolved.tools],
-        modelRef:
-          fallback === undefined
-            ? `${selected.resolved.name}`
-            : `${fallback.provider}/${fallback.model}`,
+        // §38.1 (issue #202): the role's own config pin, then the manager's
+        // model — never the role NAME (a non-built-in role resolves no
+        // model of its own) and never a hardcoded provider.
+        modelRef: selected.resolved.model ?? input.parentModel,
+        thinking: input.thinkingOverride ?? fallbackThinking,
       });
     } catch (error) {
       refusedByName.set(

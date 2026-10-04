@@ -1547,6 +1547,7 @@ describe('worker credential preflight (issue #200)', () => {
         promptText: 'You are the planner.',
         tools: ['read'],
         modelRef: 'gw/m1',
+        thinking: undefined,
       },
     ],
     refused: [],

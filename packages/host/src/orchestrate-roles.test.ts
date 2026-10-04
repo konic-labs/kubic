@@ -158,6 +158,10 @@ function roleLoaderFor(files: Record<string, string>) {
       bridge: memBridge(files),
       cwd: REPO,
       agents,
+      // §38.1 (#202): the manager's effective model is the fallback under a
+      // role's own `[roles.<r>].model` pin — the run's plan resolves the
+      // value the child is then told.
+      parentModel: 'acme/manager',
     });
 }
 
@@ -197,10 +201,13 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
     expect(alpha?.prompt?.indexOf('You are the planner.')).toBeLessThan(
       alpha?.prompt?.indexOf('Plan step 1 of 2') as number,
     );
-    // The role and its model default travel to the child spawn (§12.1).
+    // The role and its resolved model/thinking levels travel to the child
+    // spawn (§12.1, §38.1): no role pin here, so the manager's model is what
+    // the worker is told.
     expect(world.spawnInfo[0]?.info?.role).toBe('planner');
     expect(world.spawnInfo[1]?.info?.role).toBe('implementer');
-    expect(world.spawnInfo[0]?.info?.modelRef).toBe('local/llama3');
+    expect(world.spawnInfo[0]?.info?.modelRef).toBe('acme/manager');
+    expect(world.spawnInfo[0]?.info?.thinking).toBe('medium');
   });
 
   it('stores the composed prompt per worker and replays it on --resume', async () => {

@@ -66,9 +66,9 @@ file that no longer exists, or when a row's file has become reachable
   `packages/host/src/roles/roles-boot.ts` (loaded by
   `apps/kubic/src/headless-run.ts` for `kubic run --role`, with
   `roleDoctorChecks` surfaced through doctor's `probeRoles` seam), so its
-  row is gone. `roles-data.ts` keeps a row: its spawn-side data
-  (`spawnForRole` + model defaults) belongs to the delegation path (#104)
-  — wiring it here would be a fabricated caller.
+  row is gone. `roles-data.ts` is reachable too: the delegation path (#104)
+  consumes its role list and thinking defaults through `worker-roles.ts`, so
+  its row is gone as well.
 - Issue #99 executed the **delete** half of its table as well: `packages/agents/src/artifacts.ts`, `memory.ts`, `transfer.ts` and `packages/host/src/handoff.ts` had zero non-test importers and no honest consumer on the shipped path, so they were deleted with their tests rather than wired to an invented caller (the sibling issues' standard: a fabricated caller is worse than a deletion). The design sections those modules implemented — §24/§25 (context isolation/sharing, transfer grants) are enforced by structure instead: the shipped delegation hands each worker PROCESS an argv prompt and a session id, never a parent transcript, so there is nothing to validate at object level; §28 (memory lifetimes) has no live path — the harness session store is the only persistence; §69 (no-transcript guarantee) holds by construction on the process boundary. The sections are recorded as **not-yet-implemented** in [design-drift](design-drift.md) because the design document itself is local-only.
 - Issue #99 executed the skills half of its scope: **wired**
   `packages/agents/src/skills/skills.ts` (`discoverSkills` +

@@ -383,8 +383,16 @@ role that worker was assigned — `-p` is the objective the plan is derived from
 never copied to a worker verbatim. The role also decides the worker's lane: the
 child is told `--role <name>` and registers exactly that role's resolved tool
 set, so a tool the role does not hold is never registered (absence, not
-approval, withholds it), and the role's model default travels through the
-existing `KUBIC_MODEL` pin. A contradictory role document (or one with no
+approval, withholds it). Each worker's model and thinking level are resolved
+per role (§38.1, issue #202): `[roles.<name>].model` wins for its own worker,
+otherwise the worker inherits the manager's effective model — never a
+hardcoded provider — and the winner travels through the existing `KUBIC_MODEL`
+pin, while the role's thinking default (or the run's explicit
+`KUBIC_MODEL_THINKING`, which outranks it) travels on `KUBIC_MODEL_THINKING`.
+A worker whose levels resolve no model at all keeps its own selection default
+instead of being forced onto one. The config `[roles.<name>].tools` layer
+narrows the orchestrated worker exactly as it narrows `kubic run --role`. A
+contradictory role document (or one with no
 `## Prompt` section) refuses the run with the resolver's named reason under
 `code=role_refused` before anything spawns — the same refusal `kubic doctor`
 prints. The plan persists with the session, so `--resume` replays each

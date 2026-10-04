@@ -136,14 +136,67 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     expect(composed[1]).toContain("Plan step 2 of 2 for agent 'beta': ship it");
   });
 
-  it('carries the role-resolved tool set and the role model default', () => {
+  it('carries the role-resolved tool set and no invented model pin (issue #202)', () => {
     const plan = planFor(['alpha', 'beta']);
     const [planner, implementer] = plan.assignments;
     // §12.1/§40: the tool set is the resolver's own resolved set.
     expect(planner?.tools).toEqual(['find', 'grep', 'ls', 'read']);
     expect(implementer?.tools).toContain('write');
-    // §12.1 model default travels as the existing model-pin ref.
-    expect(planner?.modelRef).toBe('local/llama3');
+    // §38.1: the model comes from the levels that actually set one — the
+    // `[roles.<r>].model` config pin, then the manager's own effective model
+    // — never a hardcoded provider. With neither, the child keeps its own
+    // selection default instead of being forced onto `local/llama3`.
+    expect(planner?.modelRef).toBeUndefined();
+    // The role's own thinking default still travels per worker.
+    expect(planner?.thinking).toBe('medium');
+  });
+
+  it('resolves the worker model as [roles.<r>].model, then the manager model (issue #202)', () => {
+    const plan = planWorkerRoles({
+      bridge: memBridge(twoRoleCwd()),
+      cwd: CWD,
+      agents: ['alpha', 'beta'],
+      layers: [{ layer: 'project', roles: { planner: { model: 'acme/p1' } } }],
+      parentModel: 'anthropic/claude',
+    });
+    const [planner, implementer] = plan.assignments;
+    // The role's config pin outranks the manager's model for its own worker…
+    expect(planner?.modelRef).toBe('acme/p1');
+    // …and a role with no pin inherits the manager's effective model.
+    expect(implementer?.modelRef).toBe('anthropic/claude');
+  });
+
+  it("the run's explicit thinking level outranks the role's own default (issue #202)", () => {
+    const overridden = planWorkerRoles({
+      bridge: memBridge(twoRoleCwd()),
+      cwd: CWD,
+      agents: ['alpha', 'beta'],
+      thinkingOverride: 'xhigh',
+    });
+    expect(overridden.assignments.map((entry) => entry.thinking)).toEqual([
+      'xhigh',
+      'xhigh',
+    ]);
+    // Without an explicit level the defaults are per role, not one value for
+    // every worker.
+    const files = twoRoleCwd();
+    files[`${CWD}/.kubic/roles/tester.md`] = roleText(
+      'tester',
+      WRITER,
+      'You are the tester.',
+    );
+    const bare = planWorkerRoles({
+      bridge: memBridge(files),
+      cwd: CWD,
+      agents: ['alpha', 'beta', 'gamma'],
+    });
+    expect(
+      bare.assignments.map((entry) => [entry.role, entry.thinking]),
+    ).toEqual([
+      ['planner', 'medium'],
+      ['implementer', 'medium'],
+      ['tester', 'low'],
+    ]);
   });
 
   it('refuses a contradictory role document by the resolver name, assigning nothing', () => {

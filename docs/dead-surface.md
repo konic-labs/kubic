@@ -163,7 +163,7 @@ file that no longer exists, or when a row's file has become reachable
 | 5 | `packages/tui/src/views.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 5 | `packages/worker/src/approval-client.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/worker/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 432 | `packages/worker/src/lane/test-harness.ts` | #401 | keep: test-only faux-lane factory (boots the real `bootSoloLane` over MemoryStorage / temp-dir JSONL) imported exclusively by `*.test.ts` files, which the value-import walk excludes by rule — a test seam can never be `reachable` |
+| 435 | `packages/worker/src/lane/test-harness.ts` | #401 | keep: test-only faux-lane factory (boots the real `bootSoloLane` over MemoryStorage / temp-dir JSONL) imported exclusively by `*.test.ts` files, which the value-import walk excludes by rule — a test seam can never be `reachable` |
 | 4 | `packages/worker/src/session.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/worker/src/tools.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 58 | `apps/kubic/src/cli/context.ts` | cli-foundation | keep: type-only registry contract (`CommandContext`, `CommandRegistrar`, `DispatchRunners`) consumed through `import type` by `dispatch.ts`, `cli/program.ts` and every `commands/*.ts` module — a types-only module is never `reachable` by the value-import rule |

@@ -179,6 +179,7 @@ describe('skill discovery (issue #36)', () => {
 
   it('checks trust per ancestor: a child grant never reaches the parent (issue #228 review)', () => {
     const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
     env.fs.writeFile(
       '/repo/.pi/skills/far/SKILL.md',
       skillMd('name: far\ndescription: Far skill'),
@@ -201,6 +202,7 @@ describe('skill discovery (issue #36)', () => {
 
   it('lets a parent grant cover the parent tree from a child cwd (issue #228 review)', () => {
     const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
     env.fs.writeFile(
       '/repo/.pi/skills/far/SKILL.md',
       skillMd('name: far\ndescription: Far skill'),
@@ -223,6 +225,7 @@ describe('skill discovery (issue #36)', () => {
 
   it('loads ancestor project dirs far-to-near with nearer shadowing', () => {
     const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
     env.fs.writeFile(
       '/repo/.agents/skills/deep/SKILL.md',
       skillMd('name: deep\ndescription: Far skill'),
@@ -239,6 +242,123 @@ describe('skill discovery (issue #36)', () => {
     });
     expect(result.skills.map((skill) => skill.name)).toEqual(['deep']);
     expect(result.skills[0]?.description).toBe('Near skill');
+  });
+
+  it('stops the ancestor walk at the git top level (issue #189)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/parent/.agents/skills/outsider/SKILL.md',
+      skillMd('name: outsider\ndescription: Above the repo'),
+    );
+    env.fs.writeFile(
+      '/repo/.agents/skills/insider/SKILL.md',
+      skillMd('name: insider\ndescription: At the root'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/pkg/sub',
+      trusted: true,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['insider']);
+  });
+
+  it('loads repo-root skills from a nested cwd (issue #189)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/repo/.agents/skills/rooted/SKILL.md',
+      skillMd('name: rooted\ndescription: Repo root skill'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/a/b',
+      trusted: true,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['rooted']);
+  });
+
+  it('searches only the cwd outside a repository (issue #189)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      '/plain/.agents/skills/parent-skill/SKILL.md',
+      skillMd('name: parent-skill\ndescription: Parent skill'),
+    );
+    env.fs.writeFile(
+      '/plain/sub/.agents/skills/own-skill/SKILL.md',
+      skillMd('name: own-skill\ndescription: Own skill'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/plain/sub',
+      trusted: true,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['own-skill']);
+  });
+
+  it('ignores a package.json above the git root (issue #189)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/package.json',
+      JSON.stringify({ skills: ['./evil-skills/pwn'] }),
+    );
+    env.fs.writeFile(
+      '/evil-skills/pwn/SKILL.md',
+      skillMd('name: pwn\ndescription: Above-root package skill'),
+    );
+    env.fs.writeFile(
+      '/repo/package.json',
+      JSON.stringify({ skills: ['./repo-skills/ok'] }),
+    );
+    env.fs.writeFile(
+      '/repo/repo-skills/ok/SKILL.md',
+      skillMd('name: ok\ndescription: In-repo package skill'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/sub',
+      trusted: true,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['ok']);
+  });
+
+  it('keeps home skills user-only, never relabelled project (issue #189)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/home-skill/SKILL.md`,
+      skillMd('name: home-skill\ndescription: Home skill'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: `${HOME}/proj`,
+      trusted: true,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['home-skill']);
+    expect(result.skills[0]?.source).toBe('user');
+  });
+
+  it('never lists a user root as a project root when the repo root is $HOME (issue #189)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(`${HOME}/.git/HEAD`, 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/home-skill/SKILL.md`,
+      skillMd('name: home-skill\ndescription: Home skill'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: `${HOME}/proj`,
+      trusted: true,
+    });
+    const hits = result.skills.filter((skill) => skill.name === 'home-skill');
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.source).toBe('user');
   });
 
   it('--skill appends under --no-skills', () => {

@@ -91,7 +91,9 @@ advertised in the `<skills>` block names its absolute `<filePath>`. Paths
 outside the workspace are normally re-rooted under it, so one narrow,
 read-only exception applies to exactly the advertised skills that live
 outside the cwd: user skills (`~/.pi/agent/skills`, `~/.agents/skills`),
-trusted ancestor project skills, and explicit `--skill` paths. For a
+trusted project skills (the cwd up to the repository top level — the cwd
+alone outside a repository, and a user root is never relabelled `project`),
+and explicit `--skill` paths. For a
 `SKILL.md`, `read` may open anything inside that skill's own directory
 (so the skill's relative references resolve); a flat skill file opens
 only itself. Nothing else changes: `write`, `edit`, `ls`, `find` and

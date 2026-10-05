@@ -1,8 +1,10 @@
 // Skills loader (issue #36; design §29). Markdown-only skills from
 // own-config + repo only: user roots (~/.pi/agent/skills,
 // ~/.agents/skills), project roots (.pi/skills + .agents/skills in the cwd
-// and its ancestors, post-trust only), package-declared skill dirs
-// (`skills` + `pi.skills` in the nearest trusted package.json), the
+// up to the git top-level — the cwd alone outside a repository —
+// post-trust only, never relabelling a user root as 'project'),
+// package-declared skill dirs (`skills` + `pi.skills` in the trusted
+// package.json files at or under that same top level), the
 // settings array, and repeatable --skill paths (additive even under
 // --no-skills). Later sources shadow earlier ones on name conflict.
 //
@@ -115,6 +117,37 @@ function ancestorsOf(cwd: string): string[] {
     current = dirnameOf(current);
   }
   return out;
+}
+
+// Issue #189 (§29.2): the repository top level, Pi-style — the nearest
+// ancestor (itself included) holding a `.git` entry. Probed through the
+// injected bridge (I/O confinement: no node:fs here); an unreadable path
+// reads as "no marker", never fatal.
+function findRepoRoot(bridge: FileBridge, cwd: string): string | undefined {
+  for (const ancestor of ancestorsOf(cwd)) {
+    let hasMarker = false;
+    try {
+      hasMarker = bridge.exists(joinPosix(ancestor, '.git'));
+    } catch {
+      hasMarker = false;
+    }
+    if (hasMarker) return ancestor;
+  }
+  return undefined;
+}
+
+// Issue #189: the trusted-ancestor chain for project + package skills is
+// the repo root down to the cwd, far-to-near — the cwd alone outside a
+// repository. Trusting one repo must not trust instructions from a parent
+// directory, a shared /tmp, or $HOME, and a package.json above the root
+// contributes nothing (it is never walked to).
+function projectChain(bridge: FileBridge, cwd: string): string[] {
+  const root = findRepoRoot(bridge, cwd);
+  if (root === undefined) return [cwd.replace(/\/*$/, '') || '/'];
+  if (root === '/') return ancestorsOf(cwd).reverse();
+  return ancestorsOf(cwd)
+    .filter((dir) => dir === root || dir.startsWith(`${root}/`))
+    .reverse();
 }
 
 type FrontmatterValue = string | boolean | string[];
@@ -330,6 +363,11 @@ export function discoverSkills(
       joinPosix(homeDir, '.pi/agent/skills'),
       joinPosix(homeDir, '.agents/skills'),
     ];
+    // Issue #189: a user root is never relabelled 'project'. When the
+    // repo root is $HOME itself (or $HOME is otherwise on the chain),
+    // the project probe would re-list ~/.agents/skills under 'project'
+    // and shadow the user entry — skip those exact roots here.
+    const userRootSet = new Set(userRoots);
     for (const root of userRoots) {
       roots.push(root);
       for (const dir of listSkillDirs(bridge, root)) {
@@ -338,11 +376,12 @@ export function discoverSkills(
     }
     const trustFor = trustProject ?? (() => trusted);
     if (trustProject !== undefined || trusted) {
-      const chain = ancestorsOf(cwd).reverse();
+      const chain = projectChain(bridge, cwd);
       for (const ancestor of chain) {
         if (!trustFor(ancestor)) continue;
         for (const rootName of ['.pi/skills', '.agents/skills']) {
           const root = joinPosix(ancestor, rootName);
+          if (userRootSet.has(root)) continue;
           roots.push(root);
           for (const dir of listSkillDirs(bridge, root)) {
             add(loadSkillDir(bridge, dir, 'project', log));

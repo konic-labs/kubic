@@ -30,7 +30,8 @@ are instructions the model follows. Grant trust only to a repository whose
 root, so the decision is checked against **the directory the file lives
 in**: a grant for `/repo` covers `/repo`'s committed `models.json` and
 skills even when a run starts in `/repo/pkg`, while a grant for `/repo/pkg`
-never reaches `/repo`. The decision is threaded to every consuming lane
+never reaches `/repo`. Outside a repository only the cwd itself is
+searched, and a user skill root is never reported as a project skill. The decision is threaded to every consuming lane
 (`run`, `tui`, `replay`, `models`, `doctor`, and orchestrate worker
 children).
 

@@ -396,6 +396,9 @@ describe('advertised skills outside the workspace are readable (issue #173, §29
   it('reads a trusted ancestor project skill', async () => {
     const home = tmpRoot('skills-home-');
     const ancestor = tmpRoot('skills-ancestor-');
+    // Ancestor project skills load inside a repository (issue #189:
+    // the walk stops at the git top level), so mark the ancestor root.
+    mkdirSync(join(ancestor, '.git'), { recursive: true });
     const cwd = join(ancestor, 'pkg');
     mkdirSync(cwd, { recursive: true });
     const skillFile = writeSkill(

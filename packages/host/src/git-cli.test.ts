@@ -93,6 +93,20 @@ describe('git guard + CLI + reconciliation (issue #19, slice D)', () => {
     expect(lines).toContain('untracked: new.txt');
   });
 
+  it('kubic git status renders conflicts on their own line (issue #380)', async () => {
+    const { lines, deps } = fakeGitCli(
+      [
+        '# branch.oid abc1234\0',
+        '# branch.head main\0',
+        'u UU N... 100644 100644 100644 100644 1111111 2222222 3333333 cl.txt\0',
+      ].join(''),
+    );
+    expect(await runGitCommand({ command: 'status' }, deps)).toBe(0);
+    expect(lines).toContain('conflicts: cl.txt');
+    expect(lines.some((line) => line.includes('staged:'))).toBe(false);
+    expect(lines.some((line) => line.includes('modified:'))).toBe(false);
+  });
+
   it('kubic git status prints a detached HEAD instead of a null branch', async () => {
     const { lines, deps } = fakeGitCli(
       '# branch.oid abc1234\0# branch.head (detached)\0',

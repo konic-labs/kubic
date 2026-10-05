@@ -872,11 +872,23 @@ function journalStatusCommand(
   } else {
     const dirty =
       status.repo.dirty === null ? 'unknown' : status.repo.dirty ? 'yes' : 'no';
-    deps.out(
-      `repo: branch ${status.repo.branch}, dirty: ${
-        dirty === 'yes' ? theme.warning(dirty) : dirty
-      }`,
-    );
+    // Issue #380: the repo line carries the root, ahead/behind and
+    // conflicts alongside branch and dirty — each part omitted when
+    // unknown, so repos without an upstream read as before.
+    const parts = [
+      `branch ${status.repo.branch}`,
+      `dirty: ${dirty === 'yes' ? theme.warning(dirty) : dirty}`,
+    ];
+    if (status.repo.repoRoot !== null) {
+      parts.push(`root ${status.repo.repoRoot}`);
+    }
+    if (status.repo.ahead !== null && status.repo.behind !== null) {
+      parts.push(`ahead ${status.repo.ahead}, behind ${status.repo.behind}`);
+    }
+    if (status.repo.conflicts.length > 0) {
+      parts.push(`conflicts: ${status.repo.conflicts.join(', ')}`);
+    }
+    deps.out(`repo: ${parts.join(', ')}`);
   }
   return EXIT_OK;
 }

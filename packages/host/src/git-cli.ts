@@ -110,6 +110,10 @@ export async function runGitCommand(
       }
       for (const p of s.untracked)
         deps.out(`${theme.muted('untracked:')} ${p}`);
+      // Issue #380: conflicted paths render on their own line — they are
+      // resolver work, not staged or modified work.
+      for (const p of s.conflicts)
+        deps.out(`${theme.error('conflicts:')} ${p}`);
       if (s.clean) deps.out(theme.success('clean'));
       return EXIT_OK;
     }

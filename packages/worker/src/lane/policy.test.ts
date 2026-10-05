@@ -112,7 +112,7 @@ async function offered(solo: SoloLane): Promise<string[]> {
 }
 
 describe('tool policy allowlisting (issue #15, slice B; extended #19)', () => {
-  it('allowlists all fifteen tools active under solo defaults', async () => {
+  it('allowlists all eighteen tools active under solo defaults', async () => {
     const solo = await booted();
     const allowed = await applyToolPolicy(
       solo.registry,
@@ -128,11 +128,14 @@ describe('tool policy allowlisting (issue #15, slice B; extended #19)', () => {
         'git_branch',
         'git_checkpoint',
         'git_commit',
+        'git_conflict_status',
         'git_diff',
         'git_log',
+        'git_merge',
         'git_show',
         'git_stage',
         'git_status',
+        'git_worktree_list',
         'grep',
         'ls',
         'read',

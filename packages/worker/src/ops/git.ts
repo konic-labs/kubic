@@ -125,6 +125,13 @@ export interface GitStatus {
   staged: string[];
   unstaged: string[];
   untracked: string[];
+  // Issue #380: paths with unresolved merge conflicts (UU, AA, DD, and
+  // the U-in-either-slot pairs). A conflicted path is conflict work, not
+  // staged or unstaged work — it appears here only.
+  conflicts: string[];
+  // Issue #380: the repo root, and one record per submodule.
+  repoRoot: string;
+  submodules: GitSubmodule[];
   /** Rename/copy records: the new path plus the optional old path. */
   renames: GitRename[];
   clean: boolean;
@@ -151,12 +158,20 @@ export function parsePorcelainStatus(out: string): GitStatus {
   let ahead = 0;
   let behind = 0;
 
+  const conflicts: string[] = [];
   const pushChange = (xy: string, path: string, oldPath?: string): void => {
     if (path === '') return;
     const x = xy[0] ?? '';
     const y = xy[1] ?? '';
-    if (x !== '' && x !== '.') staged.push(path);
-    if (y !== '' && y !== '.') unstaged.push(path);
+    // Unmerged XY codes (issue #380): a `U` in either slot, or the
+    // both-added / both-deleted pairs. Conflict work only — never staged
+    // or unstaged. The rename relation still records when git reports one.
+    if (x === 'U' || y === 'U' || xy === 'AA' || xy === 'DD') {
+      conflicts.push(path);
+    } else {
+      if (x !== '' && x !== '.') staged.push(path);
+      if (y !== '' && y !== '.') unstaged.push(path);
+    }
     if (oldPath !== undefined && oldPath !== '') {
       renames.push({ path, oldPath, staged: x === 'R' || x === 'C' });
     }
@@ -217,10 +232,50 @@ export function parsePorcelainStatus(out: string): GitStatus {
     staged,
     unstaged,
     untracked,
+    conflicts,
+    // The parser sees no repo root and no submodules (issue #380): the
+    // status op fills them from its own queries; other consumers
+    // (orchestrator worktree status) keep the empty defaults.
+    repoRoot: '',
+    submodules: [],
     renames,
+    // A conflicted tree is not clean: there is resolver work outstanding.
     clean:
-      staged.length === 0 && unstaged.length === 0 && untracked.length === 0,
+      staged.length === 0 &&
+      unstaged.length === 0 &&
+      untracked.length === 0 &&
+      conflicts.length === 0,
   };
+}
+
+export interface GitSubmodule {
+  path: string;
+  state: 'clean' | 'modified' | 'uninitialized' | 'conflict';
+}
+
+// One `git submodule status` line: a flag char, the sha, the path, and an
+// optional describe suffix. `+` checked out at a different commit,
+// `-` uninitialized, `U` conflicted, anything else clean.
+export function parseSubmoduleStatus(out: string): GitSubmodule[] {
+  const rows: GitSubmodule[] = [];
+  for (const line of out.split('\n')) {
+    if (line === '') continue;
+    const flag = line[0] ?? ' ';
+    const path = (line.slice(1).trim().split(/\s+/)[1] ?? '').trim();
+    if (path === '') continue;
+    rows.push({
+      path,
+      state:
+        flag === '+'
+          ? 'modified'
+          : flag === '-'
+            ? 'uninitialized'
+            : flag === 'U'
+              ? 'conflict'
+              : 'clean',
+    });
+  }
+  return rows;
 }
 
 export type GitStatusResult = GitStatus;
@@ -231,7 +286,7 @@ export const gitStatusOperation: Operation<
 > = {
   name: 'git_status',
   description:
-    'Structured working-tree status (branch or detached HEAD, ahead/behind, staged/unstaged/untracked, renames)',
+    'Structured working-tree status (branch or detached HEAD, ahead/behind, staged/unstaged/untracked, conflicts, renames)',
   replay: 'safe',
   validateArgs: (raw: unknown) => {
     if (typeof raw !== 'object' || raw === null)
@@ -257,7 +312,20 @@ export const gitStatusOperation: Operation<
         `git_status failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
       );
     }
-    return parsePorcelainStatus(run.stdout);
+    // The root and submodule summary ride along: both are cheap, local,
+    // read-only queries, and a status without them drops the context a
+    // worker needs to interpret the paths. Either may fail on an exotic
+    // repo — the status itself still stands.
+    let repoRoot = '';
+    const root = await runGit(ctx, inv, 'git_status', [
+      'rev-parse',
+      '--show-toplevel',
+    ]);
+    if (root.exitCode === 0) repoRoot = root.stdout.trim();
+    let submodules: GitSubmodule[] = [];
+    const subs = await runGit(ctx, inv, 'git_status', ['submodule', 'status']);
+    if (subs.exitCode === 0) submodules = parseSubmoduleStatus(subs.stdout);
+    return { ...parsePorcelainStatus(run.stdout), repoRoot, submodules };
   },
 };
 
@@ -808,5 +876,184 @@ export const gitBranchOperation: Operation<GitBranchArgs, GitBranchResult> = {
         .map((b) => b.trim())
         .filter((b) => b !== ''),
     };
+  },
+};
+
+export interface GitMergeArgs {
+  branch: string;
+}
+
+export interface GitMergeResult {
+  merged: boolean;
+  /** Conflicted paths, when the merge stopped on conflicts. */
+  conflicts: string[];
+}
+
+export const gitMergeOperation: Operation<GitMergeArgs, GitMergeResult> = {
+  name: 'git_merge',
+  description:
+    'Merge a local branch into the current one (local refs only, never fetches); on conflict returns the conflicted paths and leaves the merge state for the resolver',
+  replay: 'never',
+  validateArgs: (raw: unknown): GitMergeArgs => {
+    if (typeof raw !== 'object' || raw === null)
+      throw new OpError('invalid_args', 'git_merge args must be an object');
+    rejectUnknownArgs('git_merge', raw, ['branch']);
+    const branch = (raw as Record<string, unknown>).branch;
+    if (typeof branch !== 'string' || !isValidBranchName(branch)) {
+      throw new OpError(
+        'invalid_args',
+        'git_merge branch must be a plain branch name',
+      );
+    }
+    return { branch };
+  },
+  execute: async (
+    inv: ToolInvocation,
+    args: GitMergeArgs,
+    ctx: OpContext,
+  ): Promise<GitMergeResult> => {
+    const run = await runGit(ctx, inv, 'git_merge', ['merge', args.branch]);
+    if (run.exitCode !== 0) {
+      if (isNotARepo(run.stderr)) throw notARepoError('git_merge', run.stderr);
+      // A conflicting merge exits non-zero with the tree in merge state:
+      // report the conflicted paths and leave the state for the resolver
+      // (no abort — resolving is the caller's job). Any other failure is
+      // git's own words.
+      const status = await runGit(ctx, inv, 'git_merge', [
+        'status',
+        '--porcelain=v2',
+        '-z',
+        '-b',
+      ]);
+      if (status.exitCode === 0) {
+        const conflicts = parsePorcelainStatus(status.stdout).conflicts;
+        if (conflicts.length > 0) return { merged: false, conflicts };
+      }
+      throw new OpError(
+        'tool_failed',
+        `git_merge failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
+      );
+    }
+    return { merged: true, conflicts: [] };
+  },
+};
+
+export interface GitConflictStatusResult {
+  conflicts: string[];
+}
+
+export const gitConflictStatusOperation: Operation<
+  Record<string, never>,
+  GitConflictStatusResult
+> = {
+  name: 'git_conflict_status',
+  description: 'List paths with unresolved merge conflicts',
+  replay: 'safe',
+  validateArgs: (raw: unknown) => {
+    if (typeof raw !== 'object' || raw === null)
+      throw new OpError(
+        'invalid_args',
+        'git_conflict_status args must be an object',
+      );
+    rejectUnknownArgs('git_conflict_status', raw, []);
+    return {};
+  },
+  execute: async (
+    inv: ToolInvocation,
+    _args: Record<string, never>,
+    ctx: OpContext,
+  ): Promise<GitConflictStatusResult> => {
+    const run = await runGit(ctx, inv, 'git_conflict_status', [
+      'status',
+      '--porcelain=v2',
+      '-z',
+      '-b',
+    ]);
+    if (run.exitCode !== 0) {
+      if (isNotARepo(run.stderr))
+        throw notARepoError('git_conflict_status', run.stderr);
+      throw new OpError(
+        'tool_failed',
+        `git_conflict_status failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
+      );
+    }
+    return { conflicts: parsePorcelainStatus(run.stdout).conflicts };
+  },
+};
+
+export interface GitWorktreeRow {
+  path: string;
+  head: string;
+  /** Branch short name, or null when detached or bare. */
+  branch: string | null;
+  bare: boolean;
+  detached: boolean;
+}
+
+export interface GitWorktreeListResult {
+  worktrees: GitWorktreeRow[];
+}
+
+// One `git worktree list --porcelain` block per worktree: `worktree <path>`,
+// `HEAD <sha>`, then `branch <ref>` or `detached` or `bare`. Blocks are
+// blank-line separated; paths are never quoted in this format.
+export function parseWorktreeList(out: string): GitWorktreeRow[] {
+  const rows: GitWorktreeRow[] = [];
+  for (const block of out.split('\n\n')) {
+    let path = '';
+    let head = '';
+    let branch: string | null = null;
+    let bare = false;
+    let detached = false;
+    for (const line of block.split('\n')) {
+      if (line.startsWith('worktree ')) path = line.slice('worktree '.length);
+      else if (line.startsWith('HEAD ')) head = line.slice('HEAD '.length);
+      else if (line.startsWith('branch ')) {
+        branch = line.slice('branch '.length).replace(/^refs\/heads\//, '');
+      } else if (line === 'detached') detached = true;
+      else if (line === 'bare') bare = true;
+    }
+    if (path === '') continue;
+    if (detached || bare) branch = null;
+    rows.push({ path, head, branch, bare, detached });
+  }
+  return rows;
+}
+
+export const gitWorktreeListOperation: Operation<
+  Record<string, never>,
+  GitWorktreeListResult
+> = {
+  name: 'git_worktree_list',
+  description: 'List attached worktrees (path, branch, HEAD)',
+  replay: 'safe',
+  validateArgs: (raw: unknown) => {
+    if (typeof raw !== 'object' || raw === null)
+      throw new OpError(
+        'invalid_args',
+        'git_worktree_list args must be an object',
+      );
+    rejectUnknownArgs('git_worktree_list', raw, []);
+    return {};
+  },
+  execute: async (
+    inv: ToolInvocation,
+    _args: Record<string, never>,
+    ctx: OpContext,
+  ): Promise<GitWorktreeListResult> => {
+    const run = await runGit(ctx, inv, 'git_worktree_list', [
+      'worktree',
+      'list',
+      '--porcelain',
+    ]);
+    if (run.exitCode !== 0) {
+      if (isNotARepo(run.stderr))
+        throw notARepoError('git_worktree_list', run.stderr);
+      throw new OpError(
+        'tool_failed',
+        `git_worktree_list failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
+      );
+    }
+    return { worktrees: parseWorktreeList(run.stdout) };
   },
 };

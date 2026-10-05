@@ -65,6 +65,16 @@ export interface RepoState {
   // null when git is unavailable or the query fails: reported as unknown,
   // never guessed.
   dirty: boolean | null;
+  // Issue #380: the repo root (`rev-parse --show-toplevel`), null when it
+  // cannot be read.
+  repoRoot: string | null;
+  // Ahead/behind against the upstream: null when there is no upstream or
+  // it cannot be read.
+  ahead: number | null;
+  behind: number | null;
+  // Paths with unresolved merge conflicts (never null: no conflicts is
+  // the empty list).
+  conflicts: string[];
 }
 
 export interface JournalStatus {
@@ -166,7 +176,63 @@ function readRepo(root: string): RepoState | null {
   } catch {
     dirty = null;
   }
-  return { branch, dirty };
+  // Each query degrades independently: a repo without an upstream still
+  // reports its root, and a failed rev-list never takes conflicts with it.
+  let repoRoot: string | null = null;
+  try {
+    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: root,
+      timeout: 10_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .toString()
+      .trim();
+    repoRoot = top === '' ? null : top;
+  } catch {
+    repoRoot = null;
+  }
+  let ahead: number | null = null;
+  let behind: number | null = null;
+  try {
+    const counts = execFileSync(
+      'git',
+      ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'],
+      { cwd: root, timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] },
+    )
+      .toString()
+      .trim()
+      .split(/\s+/);
+    if (counts.length === 2) {
+      ahead = Number(counts[0]);
+      behind = Number(counts[1]);
+      if (!Number.isInteger(ahead) || !Number.isInteger(behind)) {
+        ahead = null;
+        behind = null;
+      }
+    }
+  } catch {
+    ahead = null;
+    behind = null;
+  }
+  let conflicts: string[] = [];
+  try {
+    conflicts = execFileSync(
+      'git',
+      ['diff', '--name-only', '--diff-filter=U'],
+      {
+        cwd: root,
+        timeout: 10_000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    )
+      .toString()
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '');
+  } catch {
+    conflicts = [];
+  }
+  return { branch, dirty, repoRoot, ahead, behind, conflicts };
 }
 
 export function journalStatus(

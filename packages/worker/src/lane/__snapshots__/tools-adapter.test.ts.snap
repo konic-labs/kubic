@@ -142,6 +142,14 @@ exports[`kubicToolsToPiTools (issue #168) > git_commit: schema snapshot 1`] = `
 }
 `;
 
+exports[`kubicToolsToPiTools (issue #168) > git_conflict_status: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {},
+  "type": "object",
+}
+`;
+
 exports[`kubicToolsToPiTools (issue #168) > git_diff: schema snapshot 1`] = `
 {
   "additionalProperties": false,
@@ -177,6 +185,23 @@ exports[`kubicToolsToPiTools (issue #168) > git_log: schema snapshot 1`] = `
       "type": "string",
     },
   },
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools (issue #168) > git_merge: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "branch": {
+      "description": "Local branch to merge into the current one.",
+      "minLength": 1,
+      "type": "string",
+    },
+  },
+  "required": [
+    "branch",
+  ],
   "type": "object",
 }
 `;
@@ -219,6 +244,14 @@ exports[`kubicToolsToPiTools (issue #168) > git_stage: schema snapshot 1`] = `
 `;
 
 exports[`kubicToolsToPiTools (issue #168) > git_status: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {},
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools (issue #168) > git_worktree_list: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {},

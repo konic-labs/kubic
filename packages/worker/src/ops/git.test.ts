@@ -57,6 +57,109 @@ const STATUS_OUT = [
   '? new.txt\0',
 ].join('');
 
+describe('git conflict routing (issue #380)', () => {
+  // RED first: unmerged XY codes land in staged+unstaged with no
+  // conflicts field at all.
+  it.each([['UU'], ['AA'], ['DD'], ['AU'], ['UA'], ['DU'], ['UD']])(
+    'routes %s to conflicts only',
+    async (code) => {
+      const out = await callOperation(
+        'git_status',
+        {},
+        inv(),
+        ctx({
+          'git status --porcelain=v2 -z -b': {
+            exitCode: 0,
+            stdout: [
+              '# branch.oid abc1234\0',
+              '# branch.head main\0',
+              `# branch.ab +0 -0\0`,
+              `u ${code} N... 100644 100644 100644 100644 1111111 2222222 3333333 cl.txt\0`,
+            ].join(''),
+            stderr: '',
+          },
+        }),
+      );
+      expect(out.ok).toBe(true);
+      if (out.ok) {
+        expect(out.result.conflicts).toEqual(['cl.txt']);
+        expect(out.result.staged).toEqual([]);
+        expect(out.result.unstaged).toEqual([]);
+        expect(out.result.clean).toBe(false);
+      }
+    },
+  );
+});
+
+describe('git status root and submodules (issue #380)', () => {
+  it('carries the repo root and submodule summary', async () => {
+    const out = await callOperation(
+      'git_status',
+      {},
+      inv(),
+      ctx({
+        'git status --porcelain=v2 -z -b': {
+          exitCode: 0,
+          stdout: '# branch.oid abc1234\0# branch.head main\0',
+          stderr: '',
+        },
+        'git rev-parse --show-toplevel': {
+          exitCode: 0,
+          stdout: '/repo\n',
+          stderr: '',
+        },
+        'git submodule status': {
+          exitCode: 0,
+          stdout:
+            ' 1111111111111111111111111111111111111111 libs/clean (v1.0)\n+2222222222222222222222222222222222222222 libs/dirty\n-3333333333333333333333333333333333333333 libs/empty\nU4444444444444444444444444444444444444444 libs/conflicted\n',
+          stderr: '',
+        },
+      }),
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.result.repoRoot).toBe('/repo');
+      expect(out.result.submodules).toEqual([
+        { path: 'libs/clean', state: 'clean' },
+        { path: 'libs/dirty', state: 'modified' },
+        { path: 'libs/empty', state: 'uninitialized' },
+        { path: 'libs/conflicted', state: 'conflict' },
+      ]);
+    }
+  });
+
+  it('stands without the root and submodules on an exotic repo', async () => {
+    const out = await callOperation(
+      'git_status',
+      {},
+      inv(),
+      ctx({
+        'git status --porcelain=v2 -z -b': {
+          exitCode: 0,
+          stdout: '# branch.oid abc1234\0# branch.head main\0',
+          stderr: '',
+        },
+        'git rev-parse --show-toplevel': {
+          exitCode: 128,
+          stdout: '',
+          stderr: 'fatal: this operation must be run in a work tree',
+        },
+        'git submodule status': {
+          exitCode: 128,
+          stdout: '',
+          stderr: 'fatal: no git dir',
+        },
+      }),
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.result.repoRoot).toBe('');
+      expect(out.result.submodules).toEqual([]);
+      expect(out.result.clean).toBe(true);
+    }
+  });
+});
+
 describe('git ops (issue #19, slice A)', () => {
   it('git_status returns structured state', async () => {
     const out = await callOperation(
@@ -80,13 +183,11 @@ describe('git ops (issue #19, slice A)', () => {
         'staged.txt',
         'both.txt',
         'renamed.txt',
-        'conflict.txt',
       ]);
-      expect(out.result.unstaged).toEqual([
-        'unstaged.txt',
-        'both.txt',
-        'conflict.txt',
-      ]);
+      expect(out.result.unstaged).toEqual(['unstaged.txt', 'both.txt']);
+      // Issue #380: a conflicted path lives in conflicts only — it is
+      // neither staged nor unstaged work.
+      expect(out.result.conflicts).toEqual(['conflict.txt']);
       expect(out.result.untracked).toEqual(['new.txt']);
       expect(out.result.renames).toEqual([
         { path: 'renamed.txt', oldPath: 'original.txt', staged: true },

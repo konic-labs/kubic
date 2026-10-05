@@ -42,13 +42,22 @@ export const SOLO_DEFAULTS: PermissionClasses = {
 const FS_READ_TOOLS = ['read', 'ls', 'find', 'grep'];
 const FS_WRITE_TOOLS = ['write', 'edit'];
 // Read-only git tools are safe to replay; effect tools (stage/commit/
-// checkpoint) mutate the repo but stay inside it — no init, no push tool.
-const GIT_READ_TOOLS = ['git_status', 'git_diff', 'git_log', 'git_show'];
+// branch/checkpoint/merge) mutate the repo but stay inside it — no init,
+// no push tool.
+const GIT_READ_TOOLS = [
+  'git_status',
+  'git_diff',
+  'git_log',
+  'git_show',
+  'git_conflict_status',
+  'git_worktree_list',
+];
 const GIT_WRITE_TOOLS = [
   'git_stage',
   'git_commit',
   'git_branch',
   'git_checkpoint',
+  'git_merge',
 ];
 
 export function toolsForClasses(classes: PermissionClasses): string[] {

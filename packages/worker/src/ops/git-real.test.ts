@@ -13,7 +13,7 @@
 // activated into process.env per repo; every scratch directory is removed
 // in afterEach; nothing touches the network.
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { NodeExecutionEnv } from '../../../exec/src/env.js';
@@ -471,5 +471,124 @@ describe('git read/effect ops over real git (issue #193)', () => {
 
     const shown = await ok('git_show', { ref: 'HEAD' }, repo.path, 'show');
     expect(shown.patch).toContain('+two');
+  });
+});
+
+// Structured merge/conflict/worktree tools (issue #380).
+// RED first: the operations do not exist yet.
+describe('git_merge over real git (issue #380)', () => {
+  function conflictingRepo(): GitSandbox {
+    const repo = scratchRepo();
+    commitFile(repo, 'f.txt', 'base\n');
+    repo.git(['checkout', '-qb', 'feature']);
+    commitFile(repo, 'f.txt', 'theirs\n');
+    repo.git(['checkout', '-q', 'main']);
+    commitFile(repo, 'f.txt', 'ours\n');
+    return repo;
+  }
+
+  it('merges cleanly when there is nothing to conflict', async () => {
+    const repo = scratchRepo();
+    commitFile(repo, 'a.txt', 'one\n');
+    repo.git(['checkout', '-qb', 'feature']);
+    commitFile(repo, 'b.txt', 'two\n');
+    repo.git(['checkout', '-q', 'main']);
+
+    const merged = await ok(
+      'git_merge',
+      { branch: 'feature' },
+      repo.path,
+      'mg-clean',
+    );
+    expect(merged).toEqual({ merged: true, conflicts: [] });
+    expect(readFileSync(join(repo.path, 'b.txt'), 'utf8')).toBe('two\n');
+  });
+
+  it('returns a structured conflict list and leaves the merge state', async () => {
+    const repo = conflictingRepo();
+    const out = await callOperation(
+      'git_merge',
+      { branch: 'feature' },
+      inv('mg-conf'),
+      ctx(repo.path),
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.result.merged).toBe(false);
+      expect(out.result.conflicts).toEqual(['f.txt']);
+    }
+    // The repo stays in merge state for the resolver: MERGE_HEAD present.
+    expect(existsSync(join(repo.path, '.git', 'MERGE_HEAD'))).toBe(true);
+  });
+
+  it("refuses a missing branch with git's own words", async () => {
+    const repo = scratchRepo();
+    commitFile(repo, 'a.txt', 'one\n');
+    const out = await callOperation(
+      'git_merge',
+      { branch: 'nope' },
+      inv('mg-missing'),
+      ctx(repo.path),
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.error.message).toContain('git_merge failed (exit 1)');
+    }
+  });
+});
+
+describe('git_conflict_status over real git (issue #380)', () => {
+  it('lists conflicted paths, empty when clean', async () => {
+    const repo = scratchRepo();
+    commitFile(repo, 'f.txt', 'base\n');
+    expect(
+      (await ok('git_conflict_status', {}, repo.path, 'cs-clean')).conflicts,
+    ).toEqual([]);
+
+    repo.git(['checkout', '-qb', 'feature']);
+    commitFile(repo, 'f.txt', 'theirs\n');
+    repo.git(['checkout', '-q', 'main']);
+    commitFile(repo, 'f.txt', 'ours\n');
+    // A conflicting merge exits 1: the non-throwing variant.
+    repo.gitResult(['merge', 'feature']);
+    expect(
+      (await ok('git_conflict_status', {}, repo.path, 'cs-conf')).conflicts,
+    ).toEqual(['f.txt']);
+  });
+});
+
+describe('git_worktree_list over real git (issue #380)', () => {
+  it('returns path/branch/head rows for the main checkout', async () => {
+    const repo = scratchRepo();
+    commitFile(repo, 'a.txt', 'one\n');
+    const listed = await ok('git_worktree_list', {}, repo.path, 'wl-main');
+    expect(listed.worktrees).toHaveLength(1);
+    expect(listed.worktrees[0]).toMatchObject({
+      path: repo.path,
+      branch: 'main',
+    });
+    expect(listed.worktrees[0]?.head).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it('git_status carries the real root and an empty submodule list', async () => {
+    const repo = scratchRepo();
+    commitFile(repo, 'a.txt', 'one\n');
+    const status = await ok('git_status', {}, repo.path, 'st-root380');
+    expect(status.repoRoot).toBe(repo.path);
+    expect(status.submodules).toEqual([]);
+  });
+
+  it('lists an attached worktree alongside the main checkout', async () => {
+    const repo = scratchRepo();
+    commitFile(repo, 'a.txt', 'one\n');
+    // Inside the sandbox's scratch dir, so disposeAllGitSandboxes removes it.
+    const wt = join(repo.path, '..', 'linked-wt');
+    repo.git(['worktree', 'add', '--detach', wt]);
+    const listed = await ok('git_worktree_list', {}, repo.path, 'wl-linked');
+    expect(listed.worktrees.map((row) => row.path).sort()).toEqual(
+      [repo.path, wt].sort(),
+    );
+    const linked = listed.worktrees.find((row) => row.path === wt);
+    expect(linked?.detached).toBe(true);
   });
 });

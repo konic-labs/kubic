@@ -217,7 +217,7 @@ describe('solo boot installs the extension stack in hook order (issues #208, #98
     ]);
     // The Kubic extension carries tools and the prompt section.
     const kubic = solo.registry.snapshot().extension('kubic');
-    expect(kubic?.tools).toHaveLength(15);
+    expect(kubic?.tools).toHaveLength(18);
     expect(kubic?.sections?.map((section) => section.key)).toEqual([
       SOLO_PROMPT_SECTION,
     ]);

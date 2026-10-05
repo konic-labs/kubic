@@ -51,7 +51,7 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
   },
   git_status: {
     description:
-      'Structured working-tree status (branch or detached HEAD, ahead/behind, staged/unstaged/untracked, renames)',
+      'Structured working-tree status (branch or detached HEAD, ahead/behind, staged/unstaged/untracked, conflicts, renames)',
     replay: 'safe',
   },
   git_diff: {
@@ -86,10 +86,23 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
       'Create a restorable stash point WITHOUT touching the tree (git stash create); restore with git stash apply <sha>',
     replay: 'never',
   },
+  git_merge: {
+    description:
+      'Merge a local branch into the current one (local refs only, never fetches); on conflict returns the conflicted paths and leaves the merge state for the resolver',
+    replay: 'never',
+  },
+  git_conflict_status: {
+    description: 'List paths with unresolved merge conflicts',
+    replay: 'safe',
+  },
+  git_worktree_list: {
+    description: 'List attached worktrees (path, branch, HEAD)',
+    replay: 'safe',
+  },
 };
 
 describe('operation tool contract (issue #67)', () => {
-  it('registers exactly the fifteen solo tools', () => {
+  it('registers exactly the eighteen solo tools', () => {
     expect(Object.keys(OPERATIONS).sort()).toEqual(
       Object.keys(EXPECTED).sort(),
     );
@@ -117,6 +130,7 @@ describe('operation tool contract (issue #67)', () => {
         'git_branch',
         'git_checkpoint',
         'git_commit',
+        'git_merge',
         'git_stage',
         'write',
       ].sort(),

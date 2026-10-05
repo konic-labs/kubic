@@ -1,9 +1,11 @@
 // Slice D: `kubic diff / undo / log / status` CLI (issue #18; §42.2, §78).
 // RED: runJournalCommand does not exist yet.
+import { execFileSync } from 'node:child_process';
 import {
   appendFileSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -803,6 +805,30 @@ describe('journal CLI worktree status (issue #126)', () => {
     );
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('repo: branch wt-feature');
+  });
+
+  // Issue #380: on a real repo the status line also names the root (and
+  // ahead/behind plus conflicts when they exist).
+  it('status names the repo root on a real repository', async () => {
+    const journalDir = mkTmp('j-');
+    const root = mkTmp('repo-');
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+    execFileSync('git', ['config', 'user.email', 't@t'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 't'], { cwd: root });
+    execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: root });
+    writeFileSync(join(root, 'a.txt'), 'one\n');
+    execFileSync('git', ['add', '--', 'a.txt'], { cwd: root });
+    execFileSync('git', ['commit', '-qm', 'first'], { cwd: root });
+    const lines: string[] = [];
+    const code = await runJournalCommand(
+      { command: 'status' },
+      { journalDir, root, out: (l) => lines.push(l) },
+    );
+    expect(code).toBe(0);
+    // rev-parse canonicalizes symlinks (/var → /private/var on macOS).
+    expect(lines.join('\n')).toContain(
+      `repo: branch main, dirty: no, root ${realpathSync(root)}`,
+    );
   });
 });
 

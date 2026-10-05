@@ -309,6 +309,36 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     ]);
   });
 
+  it('resolves worker thinking as override, then [roles.<r>].thinking, then the role default (issue #225)', () => {
+    // The config layer sits between the run's explicit level and the
+    // hardcoded §12 default — the GAP in #225's review, where the plan
+    // ignored the layer the docs already promised the child.
+    const layer = {
+      layer: 'project',
+      roles: { planner: { thinking: 'low' } },
+    } as const;
+    const plan = planWorkerRoles({
+      bridge: memBridge(twoRoleCwd()),
+      cwd: CWD,
+      agents: ['alpha', 'beta'],
+      roles: { alpha: 'planner' },
+      layers: [layer],
+    });
+    const [planner, implementer] = plan.assignments;
+    expect(planner?.thinking).toBe('low');
+    expect(implementer?.thinking).toBe('medium');
+    // The run's explicit level still outranks the config layer.
+    const overridden = planWorkerRoles({
+      bridge: memBridge(twoRoleCwd()),
+      cwd: CWD,
+      agents: ['alpha'],
+      roles: { alpha: 'planner' },
+      layers: [layer],
+      thinkingOverride: 'xhigh',
+    });
+    expect(overridden.assignments[0]?.thinking).toBe('xhigh');
+  });
+
   it('refuses a contradictory role document by the resolver name, assigning nothing', () => {
     // `tools: [read, write]` under `filesystem: read` is the §40.3
     // contradiction: the run must refuse with the resolver's named reason,

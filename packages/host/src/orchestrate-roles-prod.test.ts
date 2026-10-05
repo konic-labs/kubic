@@ -299,6 +299,31 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     expect(readDump(h.dumpDir, 'beta', 'model')).toBe('acme/m2');
   });
 
+  it('hands the committed [roles.<r>].thinking default to its worker (issue #225)', async () => {
+    // Acceptance: `[roles.planner] thinking = "low"` makes the planner
+    // worker run at low — through the real config load and the same
+    // projection the composition root passes the run, down to the child's
+    // own environment (the GAP in #225's review: the plan ignored the
+    // config layer and every worker got the hardcoded §12 default).
+    const h = await harness({
+      projectConfig: '[roles.planner]\nthinking = "low"\n',
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`,
+        agents: ['alpha:planner', 'beta:implementer'],
+        yes: true,
+        session: 'rolethinking',
+      },
+      h.deps,
+    );
+    expect(code).toBe(0);
+    // The planner runs its own config default; the implementer keeps the
+    // hardcoded §12 default — the layer is per-role.
+    expect(readDump(h.dumpDir, 'alpha', 'thinking')).toBe('low');
+    expect(readDump(h.dumpDir, 'beta', 'thinking')).toBe('medium');
+  });
+
   it('narrows the orchestrated role with the committed [roles.<r>].tools layer (issue #202)', async () => {
     // Acceptance: config `[roles.reviewer] tools` narrows the orchestrated
     // reviewer worker — the plan the run uses resolves over the same layers

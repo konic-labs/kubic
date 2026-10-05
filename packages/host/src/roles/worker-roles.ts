@@ -51,14 +51,17 @@ export interface WorkerRoleAssignment {
    */
   modelRef: string | undefined;
   /**
+  /**
    * The document's own budget dims (issue #198, §71), or undefined when
    * the role declares none — absent means unbounded. A copy, so the plan
    * owns the dims the spawn gate will enforce.
    */
   budget?: Record<string, number>;
   /**
-   * The thinking level the worker child is told (issue #202): the run's
-   * explicit level (`KUBIC_MODEL_THINKING`) when set, else the role's own
+   * The thinking level the worker child is told (issues #202/#225): the
+   * run's explicit level (`KUBIC_MODEL_THINKING`) when set, else the
+   * role's `[roles.<r>].thinking` config default, else the role's own
+>>>>>>> bbfdd0ea (fix(roles): resolve config-file role thinking onto worker assignments)
    * §12 default. Undefined leaves the child's `[model].thinking` in force.
    */
   thinking: string | undefined;
@@ -127,11 +130,13 @@ export interface WorkerRolesInput {
   trustProject?: (dir: string) => boolean;
   agents: readonly string[];
   layers?: RoleLayerInput[];
-  // §38.1 model levels (issue #202): the manager's own effective model pin
-  // (`provider/id`) is the fallback under the role's `[roles.<r>].model`,
-  // and the run's explicit thinking level (`KUBIC_MODEL_THINKING`) outranks
-  // the role's own thinking default. Both absent means the child keeps its
-  // own selection/thinking defaults — never a hardcoded role provider.
+  // §38.1 model levels (issue #202) plus the role thinking default (issue
+  // #225): the manager's own effective model pin (`provider/id`) is the
+  // fallback under the role's `[roles.<r>].model`, and the run's explicit
+  // thinking level (`KUBIC_MODEL_THINKING`) outranks the role's
+  // `[roles.<r>].thinking` config default, which outranks the role's own
+  // §12 default. Both absent means the child keeps its own
+  // selection/thinking defaults — never a hardcoded role provider.
   parentModel?: string;
   thinkingOverride?: string;
   // Explicit per-agent binding (issue #178): `roles` names one of the five
@@ -263,6 +268,10 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
           : { toolPolicy: input.toolPolicy }),
       });
       const promptText = rolePromptFor(selected.doc, selected.markdown);
+      // Issue #225: the role's merged `[roles.<r>].thinking` config default
+      // sits between the run's explicit level and the hardcoded §12
+      // default — without it the config-file value the docs promise the
+      // child never reaches the plan (the GAP in #225's review).
       const fallbackThinking = ROLE_THINKING_DEFAULTS[role];
       assignments.push({
         agentId,
@@ -283,7 +292,10 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
             : undefined) ??
           selected.resolved.model ??
           input.parentModel,
-        thinking: input.thinkingOverride ?? fallbackThinking,
+        thinking:
+          input.thinkingOverride ??
+          selected.resolved.thinking ??
+          fallbackThinking,
         // Issue #198 (§71): the document's own budget dims ride the
         // assignment, so the spawn gate can enforce them when no
         // spawn/CLI budget outranks them. Absent stays absent.

@@ -222,6 +222,7 @@ import {
 } from '../../../packages/worker/src/lane/session-store.js';
 import {
   bootSoloLane,
+  type SoloCompactionOptions,
   type SoloLane,
 } from '../../../packages/worker/src/lane/solo.js';
 import {
@@ -1080,6 +1081,10 @@ export interface TuiRunOptions {
     trustProject?: (dir: string) => boolean;
   };
   journalRetention?: JournalRetention;
+  // §27.1 (issue #239): the `[session]` compaction policy — the same
+  // projection `kubic run` threads, so the interactive lane compacts under
+  // config, not the lane defaults. Absent means #399's own defaults.
+  compaction?: SoloCompactionOptions;
   // §35 out-of-scope paths (issue #115): the same projection `kubic run`
   // threads, so a declared directory is excluded from this lane's §42.5
   // baseline and sweep too. Absent means the mechanism's own skips only.
@@ -1554,6 +1559,11 @@ export async function bootTuiLane(
       env,
       sessionId: id,
       agentId: options.agentId ?? 'root',
+      // §27.1 (issue #239): the configured compaction policy — absent
+      // means #399's own defaults.
+      ...(options.compaction === undefined
+        ? {}
+        : { compaction: options.compaction }),
       journal,
       currentTurn: () => turnCell.supplier?.(),
       // Issue #113 (§29.3): skills discovery at boot, same as the headless
@@ -2210,6 +2220,11 @@ export type TuiConfigProjection = {
   // defaults (and, for the snapshot, no delegation of conflicts).
   orchestratorRuntime?: RuntimeOrchestrator;
   approvalPolicy?: ApprovalSnapshot;
+  // Issue #239 (§27.1): the `[session]` compaction policy, from the same
+  // projection `kubic run` consumes — the interactive lane compacts under
+  // the configured policy, not the lane defaults. Absent means #399's own
+  // defaults.
+  compaction?: SoloCompactionOptions;
   // Issue #327: the config `[modes]` projection (issue #90's runtime load).
   // Consumed by runTuiCommand: `orchestrator = true` starts the session in
   // orchestrator mode; the flag still beats it.
@@ -2263,6 +2278,8 @@ export function tuiBootOptions(
     policy: provided.policy,
     journalRetention: provided.journalRetention,
     reconcileOutOfScope: provided.reconcileOutOfScope,
+    // Issue #239: the `[session]` compaction policy `kubic run` threads.
+    compaction: provided.compaction,
     // Issue #294: `[agent].name` (journal and reconciliation attribution)
     // and the `[roles.<name>]` layers `--role` merges under the document.
     agentId: provided.agentId,

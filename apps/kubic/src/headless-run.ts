@@ -167,6 +167,7 @@ import {
 } from '../../../packages/worker/src/lane/session-store.js';
 import {
   bootSoloLane,
+  type SoloCompactionOptions,
   type SoloLane,
 } from '../../../packages/worker/src/lane/solo.js';
 import {
@@ -297,6 +298,11 @@ export interface HeadlessRunDeps {
   // absent means the mechanism's own skips only — `.git/`, `.kubic/` and
   // `.gitignore` hits.
   reconcileOutOfScope?: string[];
+  // §27.1 (issue #239): the `[session]` compaction policy from the same
+  // config load — the boot hands it to #399's settings. Absent means the
+  // lane defaults (automatic, the default reserve, the default recent
+  // window).
+  compaction?: SoloCompactionOptions;
   // Debug sink for the §50 lines (issue #98). Defaults to stderr so a live
   // `kubic run --debug` emits without the composition root wiring anything;
   // tests inject an array collector instead.
@@ -1996,6 +2002,13 @@ async function runHeadlessPromptImpl(
         ...(options.tools === undefined
           ? {}
           : { toolSelection: [...options.tools] }),
+        // §27.1 (issue #239): the configured compaction policy reaches the
+        // lane boot — absent means #399's own defaults. Worker children
+        // inherit it because they are `kubic run` processes loading the
+        // same committed config.
+        ...(deps.compaction === undefined
+          ? {}
+          : { compaction: deps.compaction }),
         // One policy object carrying every mechanism (#86 + #90 + #93, #397):
         // the classes come from the config layer when it supplies them and
         // from the documented safe default otherwise, the interceptors are

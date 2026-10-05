@@ -38,6 +38,10 @@ export interface ConfigDoctorInput {
   ignoreSplitMissing: string[];
   ignoreSplitApplicable: boolean;
   budgetsConfigured: boolean;
+  // The effective compaction policy line (issue #239), shared with
+  // `kubic config` — appended to the passing detail so doctor names the
+  // reserve the lanes run with. Absent on older callers (tests).
+  compactionSummary?: string;
 }
 
 export const CONFIG_DOCTOR_ID = 'config-load';
@@ -100,7 +104,8 @@ export function configDoctorProbe(input: ConfigDoctorInput): DepProbe {
     detail:
       `${input.effectiveValues ?? 0} effective value(s); ${projectTrustDetail(input)}; ` +
       `budgets ${input.budgetsConfigured ? 'configured' : 'none (§71: nothing is capped until you configure a limit)'}; ` +
-      `runtime ignore split ${input.ignoreSplitApplicable ? 'complete' : 'not applicable (not a git repository)'}`,
+      `runtime ignore split ${input.ignoreSplitApplicable ? 'complete' : 'not applicable (not a git repository)'}` +
+      (input.compactionSummary === undefined ? '' : `; ${input.compactionSummary}`),
   };
 }
 
@@ -120,6 +125,7 @@ export function buildConfigDoctorInput(
         ignoreSplitMissing: string[];
         ignoreSplitApplicable: boolean;
         projectTrust?: ConfigDoctorInput['projectTrust'];
+        compactionSummary?: string;
       }
     | {
         error: string;
@@ -153,5 +159,8 @@ export function buildConfigDoctorInput(
     ignoreSplitMissing: loaded.ignoreSplitMissing,
     ignoreSplitApplicable: loaded.ignoreSplitApplicable,
     budgetsConfigured: loaded.budgetsConfigured,
+    ...(loaded.compactionSummary === undefined
+      ? {}
+      : { compactionSummary: loaded.compactionSummary }),
   };
 }

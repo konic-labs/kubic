@@ -379,6 +379,34 @@ describe('session.retentionDays (issue #119)', () => {
   });
 });
 
+describe('[session] compaction keys (issue #239)', () => {
+  it('parses autoCompact, reserveTokens and keepRecentTokens', () => {
+    const session = parseTomlConfig(
+      '[session]\nautoCompact = false\nreserveTokens = 4000\nkeepRecentTokens = 5000\n',
+    ).session;
+    expect(session?.autoCompact).toBe(false);
+    expect(session?.reserveTokens).toBe(4000);
+    expect(session?.keepRecentTokens).toBe(5000);
+  });
+
+  it('refuses malformed values by key name (fail-closed)', () => {
+    expect(() =>
+      parseTomlConfig('[session]\nautoCompact = "yes"\n'),
+    ).toThrow(/'session': 'autoCompact' must be a boolean/);
+    for (const bad of ['-1', '0', '4.5', '"4000"']) {
+      expect(() =>
+        parseTomlConfig(`[session]\nreserveTokens = ${bad}\n`),
+      ).toThrow(/'session': 'reserveTokens' must be a positive integer/);
+      expect(() =>
+        parseTomlConfig(`[session]\nkeepRecentTokens = ${bad}\n`),
+      ).toThrow(/'session': 'keepRecentTokens' must be a positive integer/);
+    }
+    expect(() => parseTomlConfig('[session]\nauto_compact = false\n')).toThrow(
+      /unknown key/,
+    );
+  });
+});
+
 describe('trust-gated project-local config (issue #38)', () => {
   it('refuses untrusted project config pre-trust', () => {
     expect(() =>

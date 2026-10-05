@@ -39,6 +39,7 @@ import {
 } from '../../../packages/host/src/config/config-doctor.js';
 import {
   checkWorkspaceIgnoreSplit,
+  compactionSummaryLine,
   effectiveConfigView,
   loadRuntimeConfig,
   type RuntimeConfig,
@@ -67,6 +68,7 @@ import type {
   RoleLayerInput,
   RoleLayerSpec,
 } from '../../../packages/host/src/roles/resolver.js';
+import type { SoloCompactionOptions } from '../../../packages/worker/src/lane/solo.js';
 import {
   ModelSelectError,
   type ModelSelection,
@@ -723,6 +725,33 @@ export function sessionRetentionDays(
   return result.runtime?.config.session?.retentionDays;
 }
 
+// The lane compaction options `kubic run` boots with (issue #239): the
+// configured `[session]` compaction keys over the SAME load every other
+// consumer uses. Undefined when config sets none (or the load was refused),
+// so the lane defaults apply — never an invented value. Orchestrator worker
+// children are `kubic run` processes in their worktree, loading the same
+// committed config themselves, so this projection IS their inheritance: no
+// extra env travels for it.
+export function runtimeCompactionDeps(
+  result: CliConfigResult,
+): SoloCompactionOptions | undefined {
+  const compaction = result.runtime?.compaction;
+  if (compaction === undefined) return undefined;
+  const { enabled, reserveTokens, keepRecentTokens } = compaction;
+  if (
+    enabled === undefined &&
+    reserveTokens === undefined &&
+    keepRecentTokens === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...(enabled === undefined ? {} : { enabled }),
+    ...(reserveTokens === undefined ? {} : { reserveTokens }),
+    ...(keepRecentTokens === undefined ? {} : { keepRecentTokens }),
+  };
+}
+
 // The manager lane's approval snapshot for the orchestrator path (issue #106,
 // §45.2), over the SAME config load every other consumer uses: a delegated
 // conflict resolver is spawned under exactly this policy, so the `route`,
@@ -796,6 +825,9 @@ export function doctorConfigProbe(result: CliConfigResult): DepProbe {
       values: view.values,
       projectTrusted: view.projectTrusted,
       budgetsConfigured: view.budgets.configured,
+      // The effective reserve, from the same getter `kubic config` prints
+      // (issue #239) — doctor and the command cannot disagree.
+      compactionSummary: compactionSummaryLine(view.compaction),
       ignoreSplitMissing: missing,
       ignoreSplitApplicable: applicable,
       projectTrust: result.trust,

@@ -155,6 +155,7 @@ import {
   kubicConfigLoader,
   projectTrustFor,
   runtimeApprovalDeps,
+  runtimeCompactionDeps,
   runtimeLaneDeps,
   runtimeModelFrozen,
   runtimeModelPin,
@@ -303,8 +304,13 @@ function reportStyle(json: boolean): { theme: CliTheme; fancy: boolean } {
 // dropped (the defect class of issues #288/#294).
 export function prodRunDeps(cliConfig: CliConfigResult): HeadlessRunDeps {
   const enterprisePolicy = runtimePolicy(cliConfig);
+  // Issue #239: the session compaction keys, threaded to the lane boot
+  // below. Worker children are `kubic run` processes loading the same
+  // committed config, so this is also their inheritance.
+  const compaction = runtimeCompactionDeps(cliConfig);
   return {
     model: runtimeModelPin(cliConfig),
+    ...(compaction === undefined ? {} : { compaction }),
     // §58 enterprise policy (issue #288): the model gate, the role grant
     // check and the lane tool intersection all read this one resolved
     // object.
@@ -336,6 +342,8 @@ export function prodTuiDeps(
   cliConfig: CliConfigResult,
 ): TuiDepsInput {
   const enterprisePolicy = runtimePolicy(cliConfig);
+  // Issue #239: the session compaction projection, like `kubic run`.
+  const compaction = runtimeCompactionDeps(cliConfig);
   return {
     out: io.out,
     // `error:` lines (unknown session, no models) are diagnostics.
@@ -354,6 +362,10 @@ export function prodTuiDeps(
     // interactive lane's baseline and sweep exclude what `kubic run`
     // excludes.
     reconcileOutOfScope: runtimeRunDeps(cliConfig).reconcileOutOfScope,
+    // Issue #239: the same session compaction projection `kubic run`
+    // threads — the interactive lane compacts under the configured
+    // policy, not the lane defaults.
+    ...(compaction === undefined ? {} : { compaction }),
     // Issue #295 with #227 (§38.1): the SAME model projection `kubic run`
     // consumes — the cli `--model` (above `KUBIC_MODEL`/`[model]`) included.
     // Without it the TUI ignored those pins and ran the first registered
@@ -1384,6 +1396,9 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       }),
     replay: (options, cliConfig) => {
       const enterprisePolicy = runtimePolicy(cliConfig);
+      // Issue #239: the live re-execution tiers boot the real solo lane,
+      // so they compact under the configured policy like `kubic run`.
+      const compaction = runtimeCompactionDeps(cliConfig);
       // `--session <id>` (issue #383): the session's own trajectory file.
       const resolved = resolveSessionTrajectory(options, defaultSessionsRoot());
       if ('error' in resolved) return usageError(resolved.error);
@@ -1412,6 +1427,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
           // (agent id + config-sourced role layers + the out-of-scope
           // paths) — the pinned role merges under them identically.
           ...runtimeLaneDeps(cliConfig),
+          ...(compaction === undefined ? {} : { compaction }),
         },
       );
     },

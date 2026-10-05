@@ -49,6 +49,7 @@ import {
   resolveInteractiveProjectTrust,
   roleLayersFromConfig,
   runtimeApprovalDeps,
+  runtimeCompactionDeps,
   runtimeLaneDeps,
   runtimeModelFrozen,
   runtimeModelPin,
@@ -625,6 +626,54 @@ describe('installedPolicyClasses over the same load the lane uses (issue #384)',
     const deps = installedPolicyDeps(result);
     expect(deps.source).toBe('config');
     expect(deps.classes?.shell).toBe(false);
+  });
+});
+
+describe('session compaction projection (issue #239)', () => {
+  it('maps the keys onto the lane compaction options', () => {
+    const { home, cwd } = globalHome(
+      '[session]\nautoCompact = false\nreserveTokens = 4000\nkeepRecentTokens = 5000\n',
+    );
+    const result = loadCliConfig({ cwd, home, env: {} });
+    expect(result.error).toBeUndefined();
+    expect(runtimeCompactionDeps(result)).toEqual({
+      enabled: false,
+      reserveTokens: 4000,
+      keepRecentTokens: 5000,
+    });
+  });
+
+  it('is undefined when nothing is configured (the lane defaults apply)', () => {
+    const home = tmpDir('kubic-compact-absent-home-');
+    const cwd = tmpDir('kubic-compact-absent-cwd-');
+    const result = loadCliConfig({ cwd, home, env: {} });
+    expect(result.error).toBeUndefined();
+    expect(runtimeCompactionDeps(result)).toBeUndefined();
+  });
+
+  it('prodRunDeps carries it: run and worker children boot the same options', () => {
+    // Orchestrator workers are `kubic run` children in their worktree:
+    // they load the committed config themselves, so the run projection
+    // IS the worker inheritance (no extra env travels).
+    const { home, cwd } = globalHome(
+      '[session]\nreserveTokens = 4000\n',
+    );
+    const result = loadCliConfig({ cwd, home, env: {} });
+    expect(result.error).toBeUndefined();
+    expect(prodRunDeps(result).compaction).toEqual({ reserveTokens: 4000 });
+    const bare = loadCliConfig({
+      cwd: tmpDir('kubic-compact-bare-cwd-'),
+      home: tmpDir('kubic-compact-bare-home-'),
+      env: {},
+    });
+    expect(prodRunDeps(bare).compaction).toBeUndefined();
+  });
+
+  it('doctor reports the effective reserve (issue #239)', () => {
+    const { home, cwd } = globalHome('[session]\nreserveTokens = 4000\n');
+    const probe = doctorConfigProbe(loadCliConfig({ cwd, home, env: {} }));
+    expect(probe.ok).toBe(true);
+    expect(probe.detail).toContain('reserve=4000 token(s)');
   });
 });
 

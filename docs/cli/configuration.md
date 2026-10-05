@@ -250,7 +250,7 @@ trigger — issue #275), filesystem `full` → `workspace-write`, git
 `[journal]` retentionDays/maxBytes/outOfScope · `[roles.<name>]` model/tools ·
 `[orchestrator]` root/maxWorkers · `[ui]` theme (a built-in name or a JSON
 theme path, §16.9) /statusBar ·
-`[session]` store/dir/retentionDays · `[policy]` (the §58 enterprise policy,
+`[session]` store/dir/retentionDays/autoCompact/reserveTokens/keepRecentTokens · `[policy]` (the §58 enterprise policy,
 below) · `[[audit]]` (sink/level, below). The canonical example is
 `packages/host/src/config/example.toml` (pinned by test — copy it to
 start). Unknown sections or keys are rejected (`ConfigError`).
@@ -286,6 +286,9 @@ quietly stop configuring anything.
 | `ui.statusBar` | Kept: the status bar is always shown; hiding it is a named follow-up — parsed and reported for forward-compat only. |
 | `session.store` | Kept: `jsonl` is the only store implemented; `sqlite`/`memory` are a separate decision — parsed and reported for forward-compat only. |
 | `session.dir` | Not yet implemented: sessions stay under `~/.kubic/sessions`; relocation is a named follow-up with no filed issue yet (session-lock placement and the runtime-exclude split must settle first). |
+| `session.autoCompact` | Threshold compaction on the solo lane (`run`, `tui`, workers): `false` disables it, `true` (and unset) keeps the automatic default. A non-boolean is refused by name. |
+| `session.reserveTokens` | Reserved-room tokens before the lane compacts: unset ⇒ 16384. A value that is not a positive integer is refused by name. The effective reserve is clamped per model to at most a quarter of its context window (an 8192-token model reserves 2048), so a small-window model compacts sooner than the configured figure; `kubic config` and `kubic doctor` print the effective reserve. Orchestrator worker children are `kubic run` processes loading the same committed config, so they inherit the value with no extra wiring. |
+| `session.keepRecentTokens` | Verbatim recent-context window the lane keeps across a compaction: unset ⇒ 20000. A value that is not a positive integer is refused by name. |
 | `session.retentionDays` | Default keep-window (days) for `kubic sessions prune`: `--keep-days` overrides it. `0` means retention is off — prune exits 0 with `session retention is off (keep-days 0) — nothing is pruned`; unset, prune exits 1 naming both ways to set a window (`--keep-days`, or this key) rather than inventing one. Deletion stays explicit (`--yes`), dry-run is the default, and a session holding a live lock is never pruned — the lock is re-checked immediately before each delete, so a session locked between plan and delete is skipped too. The same window self-heals session journals at read time: `kubic log` (with `--session <id>` or the latest-session fallback) drops aged entries as it reads them — with retention unset, or `0`, the log path writes nothing. |
 | `verify.tests`, `verify.build`, `verify.lint`, `verify.typecheck` | The §48 gate commands (see [Gate verification](#gate-verification-verify)). After each `kubic run` settles, each configured command runs as `sh -c <command>` in the run's worktree and its exit status becomes the trajectory's `signal:<gate>` label (0 = `pass`). A gate with no command stays `unknown`. A blank or non-string command is refused by name at load. |
 | `verify.timeoutMs` | Per-command bound for the `[verify]` gates, a positive integer of milliseconds (default 600000). A command still running at the bound is killed and its gate is `fail`. |
@@ -870,10 +873,13 @@ not. The split, exactly as shipped:
   providers come from `models.json` (see
   [models.json](#modelsjson) above). A model without `contextWindow`/`maxTokens` gets
   fail-safe defaults `8192`/`2048` (small local servers overflow above
-  them). The 16384-token compaction reserve is
+  them). The compaction reserve (`[session] reserveTokens`, default 16384) is
   clamped to a quarter of the model's window (an 8192-token model reserves
   2048), so a small-window model compacts only near its limit, never every
-  turn.
+  turn. The same three `[session]` keys (`autoCompact`, `reserveTokens`,
+  `keepRecentTokens`) drive `kubic run`, `kubic tui` and orchestrator workers
+  alike — see the key-effect table — and `kubic config` / `kubic doctor`
+  print the effective reserve after the clamp.
 - **Sessions store**: `~/.kubic/sessions` by default. Retention is opt-in
   and manual: `kubic sessions prune` lists candidates by default and
   deletes only with `--yes`, and `[session] retentionDays` (above) supplies

@@ -41,6 +41,25 @@ describe('tuiBootOptions (issue #227)', () => {
     ).toBe(false);
   });
 
+  it('forwards the session compaction projection (issue #239)', () => {
+    const options = tuiBootOptions(
+      {
+        out: () => {},
+        compaction: { enabled: false, reserveTokens: 4000 },
+      },
+      undefined,
+      undefined,
+    );
+    expect(options.compaction).toEqual({
+      enabled: false,
+      reserveTokens: 4000,
+    });
+    // Absent means absent: the lane defaults apply, never an invented value.
+    expect(
+      'compaction' in tuiBootOptions({ out: () => {} }, undefined, undefined),
+    ).toBe(false);
+  });
+
   it('omits the model when no pin is configured', () => {
     const options = tuiBootOptions({ out: () => {} }, undefined, undefined);
     expect(options).toEqual({});

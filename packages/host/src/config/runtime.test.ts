@@ -646,6 +646,74 @@ describe('effective config view (issue #90)', () => {
     );
   });
 
+  it('turns [session] compaction keys into a live lane projection (issue #239)', () => {
+    const runtime = load(
+      {
+        [PROJECT]:
+          '[session]\nautoCompact = false\nreserveTokens = 4000\nkeepRecentTokens = 5000\n',
+      },
+      { projectTrusted: true },
+    );
+    expect(runtime.compaction).toEqual({
+      enabled: false,
+      reserveTokens: 4000,
+      keepRecentTokens: 5000,
+      source: 'project',
+    });
+    // The effective view default-fills for display: the report names the
+    // values the lane will run with, and the render line states the clamp.
+    const view = effectiveConfigView(runtime);
+    expect(view.compaction).toEqual({
+      enabled: false,
+      reserveTokens: 4000,
+      keepRecentTokens: 5000,
+      source: 'project',
+    });
+    expect(view.values.find((v) => v.key === 'session.reserveTokens'))
+      .toMatchObject({ value: '4000', layer: 'project', disposition: 'consumed' });
+    const lines = renderEffectiveConfig(view);
+    expect(
+      lines.some((line) => line.includes('reserve=4000 token(s)')),
+    ).toBe(true);
+  });
+
+  it('reports compaction defaults when nothing is configured (issue #239)', () => {
+    const runtime = load({});
+    expect(runtime.compaction).toEqual({ source: 'defaults' });
+    const view = effectiveConfigView(runtime);
+    expect(view.compaction).toEqual({
+      enabled: true,
+      reserveTokens: 16384,
+      keepRecentTokens: 20000,
+      source: 'defaults',
+    });
+    const lines = renderEffectiveConfig(view);
+    expect(
+      lines.some((line) => line.includes('reserve=16384 token(s)')),
+    ).toBe(true);
+  });
+
+  it('re-validates session compaction for the programmatic layers (issue #239)', () => {
+    // The session/agent layers never pass through the TOML parser: a bad
+    // value there is refused by name, never carried to the lane.
+    expect(() =>
+      loadRuntimeConfig({
+        bridge: fakeBridge({}),
+        home: HOME,
+        cwd: CWD,
+        session: { session: { reserveTokens: 0 } },
+      }),
+    ).toThrow(/'session': 'reserveTokens' must be a positive integer/);
+    expect(() =>
+      loadRuntimeConfig({
+        bridge: fakeBridge({}),
+        home: HOME,
+        cwd: CWD,
+        agent: { session: { autoCompact: 'yes' as unknown as boolean } },
+      }),
+    ).toThrow(/'session': 'autoCompact' must be a boolean/);
+  });
+
   it('renders the same view for humans', () => {
     const runtime = load(
       { [GLOBAL]: '[model]\nprovider = "local"\nid = "llama3"\n' },

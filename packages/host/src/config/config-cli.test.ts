@@ -37,6 +37,7 @@ function runtime(): RuntimeConfig {
       },
       source: 'defaults',
     },
+    compaction: { source: 'defaults' },
     journal: {
       retentionDays: 30,
       maxAgeMs: 30 * 86_400_000,

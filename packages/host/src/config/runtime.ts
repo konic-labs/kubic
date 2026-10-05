@@ -24,6 +24,11 @@ import {
   validateClasses,
 } from '../../../agents/src/policy.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
+import {
+  DEFAULT_RESERVE_TOKENS,
+  effectiveReserveTokens,
+  SOLO_KEEP_RECENT_TOKENS,
+} from '../../../worker/src/compaction.js';
 import { alwaysAskAutoApprove, validatePolicy } from '../approvals.js';
 import {
   type EffectivePolicy,
@@ -42,6 +47,7 @@ import {
   checkOrchestratorRoot,
   checkOutOfScopeEntries,
   checkRoleModelRef,
+  checkSessionCompaction,
   checkVerifyConfig,
   defaultLayerPaths,
   type KubicConfig,
@@ -219,6 +225,18 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
     effect:
       'default keep-window for `kubic sessions prune` (deletion stays explicit)',
   },
+  'session.autoCompact': {
+    effect:
+      'threshold compaction on the solo lane (run, tui, workers): false disables it, true is the automatic default',
+  },
+  'session.reserveTokens': {
+    effect:
+      'reserved-room tokens on the solo lane (run, tui, workers), clamped per model to at most a quarter of its context window',
+  },
+  'session.keepRecentTokens': {
+    effect:
+      'verbatim recent-context window on the solo lane (run, tui, workers)',
+  },
   'verify.tests': {
     effect:
       'tests gate command run in the worktree after each run settles; exit status → signal:tests (§48)',
@@ -346,6 +364,17 @@ export interface RuntimeJournal {
   source: ConfigValueSource;
 }
 
+export interface RuntimeCompaction {
+  // Undefined means "not configured" — the lane defaults apply (automatic
+  // compaction, the default reserve, the default recent window), never an
+  // invented value here.
+  enabled?: boolean;
+  reserveTokens?: number;
+  keepRecentTokens?: number;
+  // The layer owning the first set key, or 'defaults' when none is set.
+  source: ConfigValueSource;
+}
+
 export interface RuntimeModes {
   solo: boolean;
   orchestrator: boolean;
@@ -427,6 +456,7 @@ export interface RuntimeConfig {
   approvals: RuntimeApprovals;
   permissions: RuntimePermissions;
   journal: RuntimeJournal;
+  compaction: RuntimeCompaction;
   modes: RuntimeModes;
   orchestrator: RuntimeOrchestrator;
   verify: RuntimeVerify;
@@ -470,6 +500,12 @@ export interface EffectiveConfigView {
     retentionDays?: number;
     maxAgeMs?: number;
     outOfScope?: string[];
+    source: ConfigValueSource;
+  };
+  compaction: {
+    enabled: boolean;
+    reserveTokens: number;
+    keepRecentTokens: number;
     source: ConfigValueSource;
   };
   model: RuntimeModelSelection | undefined;
@@ -905,6 +941,33 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
       : (loaded.sources['journal.retentionDays'] ?? 'defaults'),
   };
 
+  // Session compaction policy (issue #239; §27.1): re-validated here,
+  // because the programmatic session/agent layers never pass through the
+  // TOML parser — a bad value there is refused by name, never carried to
+  // the lane. Unset means the lane defaults (never an invented value here).
+  const sessionCompaction = checkSessionCompaction(
+    (config.session ?? {}) as Record<string, unknown>,
+    'session',
+  );
+  // The config key is `autoCompact`; the runtime projection names the lane
+  // option (`enabled`) — one spelling per surface, mapped here.
+  const compaction: RuntimeCompaction = {
+    ...(sessionCompaction.autoCompact === undefined
+      ? {}
+      : { enabled: sessionCompaction.autoCompact }),
+    ...(sessionCompaction.reserveTokens === undefined
+      ? {}
+      : { reserveTokens: sessionCompaction.reserveTokens }),
+    ...(sessionCompaction.keepRecentTokens === undefined
+      ? {}
+      : { keepRecentTokens: sessionCompaction.keepRecentTokens }),
+    source:
+      loaded.sources['session.autoCompact'] ??
+      loaded.sources['session.reserveTokens'] ??
+      loaded.sources['session.keepRecentTokens'] ??
+      'defaults',
+  };
+
   // §35/§44/§45 orchestrator keys (issue #133): validated here too, because
   // the programmatic session/agent layers never pass through the TOML
   // parser — an escaping root or a non-positive cap is refused by name,
@@ -980,6 +1043,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     approvals,
     permissions,
     journal,
+    compaction,
     modes: modesFrom(config, loaded.sources),
     orchestrator: {
       ...(orchestratorRoot === undefined ? {} : { root: orchestratorRoot }),
@@ -1044,6 +1108,22 @@ export function effectiveConfigView(
         ? {}
         : { outOfScope: [...runtime.journal.outOfScope] }),
     },
+    // The reportable compaction policy (issue #239): configured values
+    // default-filled, so the report names what the lane will run with. The
+    // reserve is the EFFECTIVE one through the same clamp the lane's live
+    // getter uses — with no conversation there is no model window yet, so
+    // an unknown window reports the configured value and the lane re-clamps
+    // per model at boot.
+    compaction: {
+      enabled: runtime.compaction.enabled ?? true,
+      reserveTokens: effectiveReserveTokens(
+        0,
+        runtime.compaction.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
+      ),
+      keepRecentTokens:
+        runtime.compaction.keepRecentTokens ?? SOLO_KEEP_RECENT_TOKENS,
+      source: runtime.compaction.source,
+    },
     model: runtime.model === undefined ? undefined : { ...runtime.model },
     modelSource: runtime.modelSource,
     modes: { ...runtime.modes },
@@ -1052,6 +1132,21 @@ export function effectiveConfigView(
     overriddenAttempts: [...runtime.overriddenAttempts],
     layers: runtime.layers.map((layer) => ({ ...layer })),
   };
+}
+
+// The effective compaction policy as one reportable line (issue #239): what
+// the lane runs with. The reserve is already clamped through the lane's own
+// clamp; the lane re-clamps per model at boot (at most a quarter of its
+// window), so a small-window model may compact sooner than this line's
+// figure. Shared by `kubic config` and the doctor probe, so the two surfaces
+// cannot disagree about the effective reserve.
+export function compactionSummaryLine(compaction: {
+  enabled: boolean;
+  reserveTokens: number;
+  keepRecentTokens: number;
+  source: ConfigValueSource;
+}): string {
+  return `compaction: ${compaction.enabled ? 'automatic' : 'off'}, reserve=${compaction.reserveTokens} token(s) (${compaction.source}; clamped per model to at most a quarter of its window), keep-recent=${compaction.keepRecentTokens} token(s)`;
 }
 
 // Human-readable rendering of the same view (one line per fact); secret
@@ -1128,6 +1223,7 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
       ? 'journal out-of-scope: none declared — the walk still skips .git/, .kubic/ and .gitignore hits on its own'
       : `journal out-of-scope: ${view.journal.outOfScope.length} path(s) excluded from the baseline and the sweep (self + children): ${view.journal.outOfScope.join(', ')}`,
   );
+  lines.push(compactionSummaryLine(view.compaction));
   lines.push(
     `modes: solo=${String(view.modes.solo)}, orchestrator=${String(view.modes.orchestrator)} (${view.modes.source})`,
   );

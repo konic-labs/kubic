@@ -134,6 +134,13 @@ export interface SessionConfig {
   // demands an explicit --keep-days rather than inventing a window; 0 also
   // means off (retention disabled, never "everything is old").
   retentionDays?: number;
+  // Compaction policy (issue #239; §27.1, §63): whether threshold
+  // compaction runs, the reserved-room tokens and the verbatim recent
+  // window the solo lane compacts under. Unset means the lane defaults
+  // (automatic, 16384 reserved, 20000 kept recent).
+  autoCompact?: boolean;
+  reserveTokens?: number;
+  keepRecentTokens?: number;
 }
 
 // §48 gate commands (issue #267): each runs as `sh -c <command>` in the
@@ -306,6 +313,13 @@ statusBar = true
 store = "jsonl"
 dir = ".kubic/sessions"
 retentionDays = 30
+# Compaction policy (§27.1): automatic threshold compaction, a 4000-token
+# reserved room and a 5000-token verbatim recent window on the run, tui
+# and worker lanes. All three are optional — unset means the lane defaults
+# (automatic, 16384 reserved, 20000 kept recent).
+autoCompact = true
+reserveTokens = 4000
+keepRecentTokens = 5000
 
 [verify]
 tests = "npm test"
@@ -895,6 +909,45 @@ export function checkJournalMaxBytes(value: unknown): number | undefined {
 // §45 worker cap (issue #133): a positive integer or nothing. A value that
 // could never admit a worker is refused here, by name — never clamped into
 // one silently. The scheduler's own validation stays as the second layer.
+// Session compaction policy (issue #239; §27.1): shared by the TOML parser
+// and the runtime projection, which re-checks because the programmatic
+// session/agent layers never pass through the parser. A non-boolean switch
+// and a non-positive-safe-integer token count are refused by key name —
+// fail closed, never a half-applied policy.
+export function checkSessionCompaction(
+  session: Record<string, unknown>,
+  keyPath: string,
+): Pick<SessionConfig, 'autoCompact' | 'reserveTokens' | 'keepRecentTokens'> {
+  const rawAuto = session.autoCompact;
+  if (rawAuto !== undefined && typeof rawAuto !== 'boolean') {
+    throw new ConfigError(`'${keyPath}': 'autoCompact' must be a boolean`);
+  }
+  const checkTokens = (
+    key: 'reserveTokens' | 'keepRecentTokens',
+  ): number | undefined => {
+    const value = session[key];
+    if (value === undefined) return undefined;
+    if (
+      typeof value !== 'number' ||
+      !Number.isSafeInteger(value) ||
+      value < 1
+    ) {
+      throw new ConfigError(
+        `'${keyPath}': '${key}' must be a positive integer`,
+      );
+    }
+    return value;
+  };
+  const autoCompact = rawAuto as boolean | undefined;
+  const reserveTokens = checkTokens('reserveTokens');
+  const keepRecentTokens = checkTokens('keepRecentTokens');
+  return {
+    ...(autoCompact === undefined ? {} : { autoCompact }),
+    ...(reserveTokens === undefined ? {} : { reserveTokens }),
+    ...(keepRecentTokens === undefined ? {} : { keepRecentTokens }),
+  };
+}
+
 export function checkOrchestratorMaxWorkers(
   value: unknown,
   keyPath: string,
@@ -1349,16 +1402,25 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
     }
     checkNoUnknown(
       session,
-      new Set(['store', 'dir', 'retentionDays']),
+      new Set([
+        'store',
+        'dir',
+        'retentionDays',
+        'autoCompact',
+        'reserveTokens',
+        'keepRecentTokens',
+      ]),
       'session',
     );
     const store = reqString(session, 'store', 'session', true);
     const dir = reqString(session, 'dir', 'session', true);
     const retentionDays = optNumber(session, 'retentionDays', 'session');
+    const compaction = checkSessionCompaction(session, 'session');
     config.session = {
       ...(store === undefined ? {} : { store }),
       ...(dir === undefined ? {} : { dir }),
       ...(retentionDays === undefined ? {} : { retentionDays }),
+      ...compaction,
     };
   }
   const verify = raw.verify;

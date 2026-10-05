@@ -56,6 +56,13 @@ statusBar = true
 store = "jsonl"
 dir = ".kubic/sessions"
 retentionDays = 30
+# Compaction policy (§27.1): automatic threshold compaction, a 4000-token
+# reserved room and a 5000-token verbatim recent window on the run, tui
+# and worker lanes. All three are optional — unset means the lane defaults
+# (automatic, 16384 reserved, 20000 kept recent).
+autoCompact = true
+reserveTokens = 4000
+keepRecentTokens = 5000
 
 [verify]
 tests = "npm test"

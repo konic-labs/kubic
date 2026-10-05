@@ -1513,10 +1513,7 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
       "'model': 'thinking'",
     );
     const escalate = checkEscalationLadder(model.escalate, 'model');
-    const maxEscalations = checkMaxEscalations(
-      model.maxEscalations,
-      'model',
-    );
+    const maxEscalations = checkMaxEscalations(model.maxEscalations, 'model');
     config.model = {
       ...(provider === undefined ? {} : { provider }),
       ...(id === undefined ? {} : { id }),

@@ -244,7 +244,6 @@ describe('mergeRoleLayers', () => {
     expect(roleModelAllowed(set, 'localfoo', 'x')).toBe(false);
     expect(roleModelAllowed(set, 'other', 'x')).toBe(false);
   });
-
 });
 
 describe('resolveRole', () => {

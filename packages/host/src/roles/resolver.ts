@@ -581,8 +581,7 @@ export function resolveRole(
       merged.models === undefined
         ? undefined
         : merged.models.map((entry) => ({ ...entry })),
-    escalate:
-      merged.escalate === undefined ? undefined : [...merged.escalate],
+    escalate: merged.escalate === undefined ? undefined : [...merged.escalate],
     overriddenAttempts: merged.overriddenAttempts,
   };
   const toolPolicy = options.toolPolicy;

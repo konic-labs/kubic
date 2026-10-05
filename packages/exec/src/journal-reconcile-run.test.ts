@@ -10,6 +10,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -17,13 +18,22 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { FileJournalStore, loadBaseline, sha256Hex } from './journal.js';
+import { diffEntries, renderDiff } from './journal-diff.js';
+import { loadGitBaseline } from './journal-git.js';
 import { beginReconciliation } from './journal-reconcile.js';
+import { applyUndo, planUndo } from './journal-undo.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from './test-support/git-sandbox.js';
 
 const NOW = 1_700_000_000_000;
 
 const roots: string[] = [];
 
 afterEach(() => {
+  disposeAllGitSandboxes();
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
 });
@@ -328,5 +338,139 @@ describe('per-turn rebaseline (issue #374)', () => {
     expect(store.entries().map((entry) => entry.path)).toEqual([
       'bash-made.txt',
     ]);
+  });
+});
+
+// Git pre-images end to end (issue #371): the sweep restores bash-made
+// changes to clean tracked files from the object store, through the
+// existing before-blob mechanism — `journal-undo.ts` needed no new path.
+//
+// Real git in sandboxed throwaway repos (issue #365): the repo setup runs
+// through the sandbox's scrubbed env, and the sandbox is activated into
+// process.env while the production code (which spawns git on the inherited
+// environment) runs.
+describe('git pre-images end to end (issue #371)', () => {
+  function gitRepo(): GitSandbox {
+    const repo = createGitSandbox({
+      prefix: 'journal-git-',
+      injectProcessEnv: true,
+    });
+    writeFileSync(join(repo.path, 'tracked.ts'), 'v1\n');
+    writeFileSync(join(repo.path, 'data.txt'), 'data\n');
+    repo.git(['add', 'tracked.ts', 'data.txt']);
+    repo.git(['commit', '--no-verify', '-m', 'init']);
+    return repo;
+  }
+
+  function begin(root: string, store: FileJournalStore) {
+    return beginReconciliation({
+      store,
+      root,
+      runId: 'sess-git',
+      sessionId: 'sess-git',
+      agentId: 'root',
+      now: () => NOW,
+    });
+  }
+
+  function journalStore(): FileJournalStore {
+    return new FileJournalStore(tmpRoot('j-git-'));
+  }
+
+  it('records blob OIDs for stat-clean tracked files without copying content', () => {
+    const repo = gitRepo();
+    const store = journalStore();
+    const run = begin(repo.path, store);
+    expect(Object.keys(run.gitBaseline ?? {}).sort()).toEqual([
+      'data.txt',
+      'tracked.ts',
+    ]);
+    for (const oid of Object.values(run.gitBaseline ?? {})) {
+      expect(oid).toMatch(/^[0-9a-f]{40}$/);
+    }
+    // The baseline is still a metadata walk: hashes plus OIDs, zero blobs.
+    expect(store.blobCount()).toBe(0);
+    expect(loadGitBaseline(dirname(store.indexPath), 'sess-git')).toEqual(
+      run.gitBaseline,
+    );
+    expect(run.sweep()).toBe(0);
+  });
+
+  it('a bash rm of a tracked file is restored byte-identically by undo', () => {
+    const repo = gitRepo();
+    const store = journalStore();
+    const run = begin(repo.path, store);
+    rmSync(join(repo.path, 'tracked.ts'));
+    expect(run.sweep()).toBe(1);
+    const plan = planUndo(store, {}, repo.path);
+    expect(plan.reversible).toBe(1);
+    expect(plan.nonReversible).toEqual([]);
+    const result = applyUndo(store, plan, repo.path, {});
+    expect(result.restored).toEqual(['tracked.ts']);
+    expect(result.skipped).toEqual([]);
+    expect(readFileSync(join(repo.path, 'tracked.ts'), 'utf8')).toBe('v1\n');
+  });
+
+  it('a bash sed -i on a tracked file is undoable, and diff shows before and after', () => {
+    const repo = gitRepo();
+    const store = journalStore();
+    const run = begin(repo.path, store);
+    // sed -i equivalent: bypasses Kubic ops entirely.
+    writeFileSync(join(repo.path, 'tracked.ts'), 'v2, longer\n');
+    expect(run.sweep()).toBe(1);
+    const entry = store.entries()[0];
+    if (entry === undefined) throw new Error('missing sweep entry');
+    expect(store.readBefore(entry)).toBe('v1\n');
+    expect(entry.bytesDelta).not.toBe(0);
+    const plan = planUndo(store, {}, repo.path);
+    expect(plan.reversible).toBe(1);
+    const text = renderDiff(diffEntries(store, {}));
+    expect(text).toContain('v1');
+    expect(text).toContain('v2, longer');
+    // Reversible — the badge is [unattributed] alone, never non-reversible.
+    expect(text).toContain('[unattributed]');
+    expect(text).not.toContain('non-reversible');
+    expect(applyUndo(store, plan, repo.path, {}).restored).toEqual([
+      'tracked.ts',
+    ]);
+    expect(readFileSync(join(repo.path, 'tracked.ts'), 'utf8')).toBe('v1\n');
+  });
+
+  it('an untracked file deleted by bash is still reported non-reversible', () => {
+    const repo = gitRepo();
+    writeFileSync(join(repo.path, 'scratch.txt'), 'doomed\n');
+    const store = journalStore();
+    const run = begin(repo.path, store);
+    rmSync(join(repo.path, 'scratch.txt'));
+    expect(run.sweep()).toBe(1);
+    const entry = store.entries()[0];
+    if (entry === undefined) throw new Error('missing sweep entry');
+    expect(entry.op).toBe('delete');
+    expect(store.readBefore(entry)).toBe(null);
+    expect(entry.bytesDelta).toBe(0);
+    const plan = planUndo(store, {}, repo.path);
+    expect(plan.reversible).toBe(0);
+    expect(plan.nonReversible).toEqual(['scratch.txt']);
+  });
+
+  it('a tracked file dirty at baseline is still non-reversible (no wrong pre-image)', () => {
+    const repo = gitRepo();
+    // Uncommitted work: the index OID is NOT this file's pre-image, so no
+    // OID may be recorded for it — restoring the committed version would
+    // destroy the operator's edit.
+    writeFileSync(join(repo.path, 'tracked.ts'), 'operator edit\n');
+    const store = journalStore();
+    const run = begin(repo.path, store);
+    expect(run.gitBaseline?.['tracked.ts']).toBe(undefined);
+    expect(run.gitBaseline?.['data.txt']).toMatch(/^[0-9a-f]{40}$/);
+    // Bash changes it again during the run.
+    writeFileSync(join(repo.path, 'tracked.ts'), 'agent bash edit\n');
+    expect(run.sweep()).toBe(1);
+    const entry = store.entries()[0];
+    if (entry === undefined) throw new Error('missing sweep entry');
+    expect(store.readBefore(entry)).toBe(null);
+    const plan = planUndo(store, {}, repo.path);
+    expect(plan.reversible).toBe(0);
+    expect(plan.nonReversible).toEqual(['tracked.ts']);
   });
 });

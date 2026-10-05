@@ -4,7 +4,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { captureBaseline, FileJournalStore, reconcile } from './journal.js';
+import {
+  captureBaseline,
+  FileJournalStore,
+  MAX_SWEEP_CONTENT_BYTES,
+  reconcile,
+} from './journal.js';
+import type { GitBaseline, GitCommand } from './journal-git.js';
 
 const roots: string[] = [];
 
@@ -132,5 +138,186 @@ describe('journal baseline + reconciliation (issue #17, slice C)', () => {
       beforeHash: baseline['keep.txt'],
       afterHash: null,
     });
+  });
+});
+
+describe('git pre-images for sweep entries (issue #371)', () => {
+  const OID = 'a'.repeat(40);
+  const CTX = { sessionId: 's1', agentId: 'root', timestamp: 2 };
+
+  // Scripted object store: OID → blob bytes, recording blob reads so the
+  // "only for changed files" bound is observed, not assumed.
+  function fakeGit(blobs: Record<string, Buffer>): {
+    run: GitCommand;
+    blobReads: string[];
+  } {
+    const blobReads: string[] = [];
+    const run: GitCommand = (args: string[]) => {
+      if (args[0] === 'cat-file' && args[1] === '-s') {
+        const blob = blobs[args[2] ?? ''];
+        if (blob === undefined) return { status: 1, stdout: Buffer.alloc(0) };
+        return { status: 0, stdout: Buffer.from(`${blob.length}\n`, 'utf8') };
+      }
+      if (args[0] === 'cat-file') {
+        const oid = args[args.length - 1] ?? '';
+        blobReads.push(oid);
+        const blob = blobs[oid];
+        if (blob === undefined) return { status: 1, stdout: Buffer.alloc(0) };
+        return { status: 0, stdout: blob };
+      }
+      return { status: 1, stdout: Buffer.alloc(0) };
+    };
+    return { run, blobReads };
+  }
+
+  function trackedRoot(): { root: string; journal: FileJournalStore } {
+    const root = tmpRoot('ws-git-');
+    writeFileSync(join(root, 'tracked.ts'), 'before\n');
+    writeFileSync(join(root, 'keep.ts'), 'same\n');
+    return { root, journal: new FileJournalStore(tmpRoot('j-git-')) };
+  }
+
+  it('stores the git pre-image as the before-blob for a bash-changed tracked file', () => {
+    const { root, journal } = trackedRoot();
+    const baseline = captureBaseline(root);
+    const git: GitBaseline = { 'tracked.ts': OID };
+    const { run } = fakeGit({ [OID]: Buffer.from('before\n', 'utf8') });
+    writeFileSync(join(root, 'tracked.ts'), 'after, longer\n');
+    expect(
+      reconcile(journal, baseline, root, CTX, {
+        gitBaseline: git,
+        gitRun: run,
+      }),
+    ).toBe(1);
+    const entry = journal.entries()[0];
+    if (entry === undefined) throw new Error('missing entry');
+    expect(entry.op).toBe('write');
+    expect(journal.readBefore(entry)).toBe('before\n');
+    expect(entry.bytesDelta).toBe(
+      Buffer.byteLength('after, longer\n', 'utf8') -
+        Buffer.byteLength('before\n', 'utf8'),
+    );
+    expect(entry.bytesDelta).not.toBe(0);
+  });
+
+  it('restores a bash-deleted tracked file entry with its pre-image and a negative delta', () => {
+    const { root, journal } = trackedRoot();
+    const baseline = captureBaseline(root);
+    const git: GitBaseline = { 'tracked.ts': OID, 'keep.ts': OID };
+    rmSync(join(root, 'tracked.ts'));
+    // keep.ts is unchanged: its OID must never be read (no blob reads for
+    // files the sweep did not find changed).
+    const { run: run2, blobReads } = fakeGit({
+      [OID]: Buffer.from('before\n', 'utf8'),
+    });
+    expect(
+      reconcile(journal, baseline, root, CTX, {
+        gitBaseline: git,
+        gitRun: run2,
+      }),
+    ).toBe(1);
+    const entry = journal.entries()[0];
+    if (entry === undefined) throw new Error('missing entry');
+    expect(entry.op).toBe('delete');
+    expect(journal.readBefore(entry)).toBe('before\n');
+    expect(entry.bytesDelta).toBe(-Buffer.byteLength('before\n', 'utf8'));
+    expect(blobReads).toEqual([OID]);
+  });
+
+  it('keeps the tool chain when a tool touched the path this run (never the git blob)', () => {
+    const { root, journal } = trackedRoot();
+    const baseline = captureBaseline(root);
+    // The run started before the tool wrote: its entry scopes the sweep's
+    // expected state (issue #341).
+    const runStart = { count: 0, last: null as null };
+    journal.append({
+      path: 'tracked.ts',
+      op: 'write',
+      before: 'before\n',
+      after: 'mid\n',
+      bytesDelta: -3,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 't1',
+      timestamp: 1,
+    });
+    writeFileSync(join(root, 'tracked.ts'), 'final\n');
+    const git: GitBaseline = { 'tracked.ts': OID };
+    const { run, blobReads } = fakeGit({
+      [OID]: Buffer.from('before\n', 'utf8'),
+    });
+    expect(
+      reconcile(
+        journal,
+        baseline,
+        root,
+        { ...CTX, runStart },
+        { gitBaseline: git, gitRun: run },
+      ),
+    ).toBe(1);
+    const sweep = journal.entries()[1];
+    if (sweep === undefined) throw new Error('missing sweep entry');
+    // The chain is v-final → v-mid (the tool entry) → v-before: the sweep's
+    // before-side is the tool's after-content, exactly as issue #341 pins.
+    expect(journal.readBefore(sweep)).toBe('mid\n');
+    expect(blobReads).toEqual([]);
+  });
+
+  it('falls back to hash-only when the blob does not match the baseline hash', () => {
+    const { root, journal } = trackedRoot();
+    const baseline = captureBaseline(root);
+    // A stale or filter-mangled OID: the object store answers, but with
+    // bytes that are not what the baseline saw. Inventing them as the
+    // pre-image would restore the wrong content — keep today's shape.
+    const git: GitBaseline = { 'tracked.ts': OID };
+    const { run } = fakeGit({ [OID]: Buffer.from('something else\n', 'utf8') });
+    writeFileSync(join(root, 'tracked.ts'), 'after\n');
+    reconcile(journal, baseline, root, CTX, { gitBaseline: git, gitRun: run });
+    const entry = journal.entries()[0];
+    if (entry === undefined) throw new Error('missing entry');
+    expect(journal.readBefore(entry)).toBe(null);
+    expect(entry.beforeHash).toBe(baseline['tracked.ts']);
+    expect(entry.bytesDelta).toBe(0);
+  });
+
+  it('falls back to hash-only for binary and over-bound pre-images', () => {
+    const { root, journal } = trackedRoot();
+    const baseline = captureBaseline(root);
+    const git: GitBaseline = { 'tracked.ts': OID };
+    const binary = Buffer.from([0x61, 0xff, 0xfe, 0x00]);
+    const { run, blobReads } = fakeGit({ [OID]: binary });
+    writeFileSync(join(root, 'tracked.ts'), 'after\n');
+    reconcile(journal, baseline, root, CTX, { gitBaseline: git, gitRun: run });
+    const entry = journal.entries()[0];
+    if (entry === undefined) throw new Error('missing entry');
+    expect(journal.readBefore(entry)).toBe(null);
+    expect(blobReads).toEqual([OID]);
+  });
+
+  it('never reads a pre-image above the sweep content bound', () => {
+    const { root, journal } = trackedRoot();
+    const baseline = captureBaseline(root);
+    const git: GitBaseline = { 'tracked.ts': OID };
+    // The blob the OID names is large: the -s pre-check refuses it before
+    // any content is read, so the exit path never pays its size in memory.
+    const big = Buffer.alloc(MAX_SWEEP_CONTENT_BYTES + 1, 0x61);
+    const { run, blobReads } = fakeGit({ [OID]: big });
+    writeFileSync(join(root, 'tracked.ts'), 'after\n');
+    reconcile(journal, baseline, root, CTX, { gitBaseline: git, gitRun: run });
+    const entry = journal.entries()[0];
+    if (entry === undefined) throw new Error('missing entry');
+    expect(journal.readBefore(entry)).toBe(null);
+    expect(blobReads).toEqual([]);
+  });
+
+  it('records a positive delta for a sweep create and zero when git is absent', () => {
+    const { root, journal } = trackedRoot();
+    const baseline = captureBaseline(root);
+    writeFileSync(join(root, 'new.ts'), 'born\n');
+    reconcile(journal, baseline, root, CTX);
+    const created = journal.entries().find((e) => e.path === 'new.ts');
+    if (created === undefined) throw new Error('missing create entry');
+    expect(journal.readBefore(created)).toBe(null);
+    expect(created.bytesDelta).toBe(Buffer.byteLength('born\n', 'utf8'));
   });
 });

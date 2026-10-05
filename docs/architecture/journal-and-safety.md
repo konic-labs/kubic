@@ -67,7 +67,16 @@ records no before-content, so it is reported non-reversible and cannot
 itself be undone. Review the record, revert a step or a path, check
 status and history; entries the
 journal cannot reconstruct (recorded hash, no retrievable pre-image)
-are reported as non-reversible rather than guessed at. Changes the sweep
+are reported as non-reversible rather than guessed at. In a git repository
+the sweep can reconstruct more: at baseline it records the index blob OID
+of every tracked file clean against the index (two metadata calls, no blob
+reads), and at sweep it reads the pre-image of a changed or deleted tracked
+file back from the object store — so a bash `rm`, `sed -i`, formatter or
+`git checkout -- .` on a committed file undoes exactly like a tool edit.
+Only clean files qualify (restoring a committed version over uncommitted
+work would destroy it), and the pre-image must hash to the baseline digest
+— a mismatch, a binary file, or a pre-image above 4 MiB keeps the hash-only
+shape. Untracked files and non-repositories are unchanged. Changes the sweep
 captures are bounded the same way: a changed file above 4 MiB — or one whose
 utf-8 decode would be lossy (binary content) — is recorded hash-only
 (`changed, N bytes`; `diff` shows a size-only line), never as a mangled or

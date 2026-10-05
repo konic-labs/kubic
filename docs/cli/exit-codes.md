@@ -59,10 +59,12 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   on stderr and nothing touched; 1 an unexpected IO failure (root
   catch-all). `undo` also exits **1** when it restored but skipped steps. Three skip classes reach that code:
   `non-reversible (skipped)` — entries an end-of-run reconciliation sweep
-  appended (`unattributed`) whose baseline holds hashes, not pre-images
-  (the exception is a path whose pre-image an earlier attributed entry in
-  the same run already stored — there the sweep entry is reversible, `undo`
-  restores it, and the exit code follows the normal rule);
+  appended (`unattributed`) with no retrievable pre-image (the exceptions
+  are a path clean against the git index at boot — the sweep restores its
+  blob-OID pre-image from the object store — and a path whose pre-image an
+  earlier attributed entry in the same run already stored — there the sweep
+  entry is reversible, `undo` restores it, and the exit code follows the
+  normal rule);
   `stale (skipped)` — the file changed after the entry was journaled, so
   restoring would destroy unjournaled changes (issue #108; `--force`
   overrides per-invocation); and `already undone (skipped)` — a previous

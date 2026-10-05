@@ -250,7 +250,8 @@ the file a day old) — so crash recovery works same-day. **Different**
 sessions in one repo stay legal — nothing blocks them — but each run's
 end-of-run sweep compares against its own boot baseline, so a run
 overlapping another session records that session's in-flight changes as
-**unattributed, non-reversible** journal entries. When the local session
+**unattributed** journal entries (still `non-reversible` unless a pre-image
+resolves — a git pre-image or an earlier attributed entry in the run). When the local session
 store shows another session on the workspace, the run's debug channel
 emits one `reconcile: another run may be live in this workspace …` line
 naming the sibling ids, and `kubic doctor` reports the same overlap as the
@@ -1018,7 +1019,9 @@ the journal (and both panels) as its tool call ends. A change made with
 `bash` is not intercepted, so it is journaled by the reconciliation sweep —
 which, in the TUI, runs when a turn that used `bash` **settles** (before the
 panels refresh), not only at quit: after such a turn `Ctrl-R` lists the
-change as `unattributed, non-reversible` and `Ctrl-O` follows it. The sweep
+change as `unattributed` (plus `non-reversible` when no pre-image exists —
+a bash edit of a committed file carries its git pre-image and undoes) and
+`Ctrl-O` follows it. The sweep
 walks and hashes the workspace, so turns that ran no `bash` do not pay for
 it; it is safe to repeat (an unchanged tree appends nothing). The cost is
 real: the sweep is a synchronous walk-and-hash of the whole workspace on the
@@ -1634,7 +1637,7 @@ Options also take the `--flag=value` form (`--agent=w1`).
 | Subcommand | Meaning |
 | --- | --- |
 | `diff [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>]` | Rendered diff of journaled changes (`no changes` + exit 0 when empty). `--path`/`--agent` filter; `--json` prints `{session, root, changes}` — the change array with each side clipped at 64 KiB per change (`--max-content-bytes <n>` overrides the bound; `0` = unlimited). A `--path`/`--agent`/`--session` without a value, or a `--max-content-bytes` that is missing or not a non-negative integer, is a usage error (exit 2). |
-| `undo [--] [<path>] [--step] [--dry-run] [--force] [--json] [--session <id>]` | Restore journaled changes. `--json` prints one object `{session, root, dryRun, restored: [paths], skipped: [{path, kind: stale\|already-undone\|non-reversible, reason}]}` (also when there is nothing to undo) with the same exit codes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus a summary; warnings (a removal whose content had no recoverable copy, a pre-undo file that is no longer lossless utf-8 text — recorded hash-only, so that undo cannot be redone (issue #352) — or a step whose inverse record would not fit the journal's byte bound — that step is skipped BEFORE the file is touched, so the undo never lands unrecorded) go to stderr as `warn: …`. A session whose lock is live (issue #337) refuses the whole invocation with one `error: session '<id>' is attached by pid <pid> — refusing to undo under a live run (pass --force to override)` line and exit 1: restoring under a live run races its writes, and `--force` is the documented override (the same knob the staleness refusal uses). `nothing to undo` exits 0. **Exit 1 when any step was skipped** (issue #372 — the partial outcome never reuses the usage code) — three skip classes, each with its own line: `non-reversible (skipped): <p>` (no retrievable pre-image: an unattributed reconciliation find, a write over a file above the 8 MiB pre-image bound (recorded hash-only), a delete-shaped undo whose file was absent pre-undo, or an inverse record over the journal's byte bound), `stale (skipped): <p> — <reason>` (the file changed after the entry was journaled — restoring would destroy unjournaled changes), `already undone (skipped): <p>` (a previous undo already unwound it — nothing is rewritten). The summary is `undo: N restored, M non-reversible` when all skips are the non-reversible class, else `undo: N restored, M skipped (K stale, J already undone)` naming the counts present. The `--session` value selects the store, never the path scope. |
+| `undo [--] [<path>] [--step] [--dry-run] [--force] [--json] [--session <id>]` | Restore journaled changes. `--json` prints one object `{session, root, dryRun, restored: [paths], skipped: [{path, kind: stale\|already-undone\|non-reversible, reason}]}` (also when there is nothing to undo) with the same exit codes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus a summary; warnings (a removal whose content had no recoverable copy, a pre-undo file that is no longer lossless utf-8 text — recorded hash-only, so that undo cannot be redone (issue #352) — or a step whose inverse record would not fit the journal's byte bound — that step is skipped BEFORE the file is touched, so the undo never lands unrecorded) go to stderr as `warn: …`. A session whose lock is live (issue #337) refuses the whole invocation with one `error: session '<id>' is attached by pid <pid> — refusing to undo under a live run (pass --force to override)` line and exit 1: restoring under a live run races its writes, and `--force` is the documented override (the same knob the staleness refusal uses). `nothing to undo` exits 0. **Exit 1 when any step was skipped** (issue #372 — the partial outcome never reuses the usage code) — three skip classes, each with its own line: `non-reversible (skipped): <p>` (no retrievable pre-image: an unattributed reconciliation find with no git pre-image (untracked, dirty at baseline, non-repo, binary or over-bound) or whose tool chain stored none, a write over a file above the 8 MiB pre-image bound (recorded hash-only), a delete-shaped undo whose file was absent pre-undo, or an inverse record over the journal's byte bound), `stale (skipped): <p> — <reason>` (the file changed after the entry was journaled — restoring would destroy unjournaled changes), `already undone (skipped): <p>` (a previous undo already unwound it — nothing is rewritten). The summary is `undo: N restored, M non-reversible` when all skips are the non-reversible class, else `undo: N restored, M skipped (K stale, J already undone)` naming the counts present. The `--session` value selects the store, never the path scope. |
 
 **Undo staleness safety (issue #108).** Before any restore, the file's
 current content is verified against the entry's recorded after-hash — undo
@@ -1764,13 +1767,19 @@ composition paths therefore capture a **baseline** when the lane boots and
   `packages/foo/build/`), and an unreadable nested ignore leaves its parent's
   rules in force. Anything missed only widens the baseline, never narrows the
   journal.
-- Before-content is unknowable for these finds — the baseline holds hashes,
-  not copies — so they are recorded **hashes only** and the badge is
-  `[unattributed, non-reversible]`: `kubic undo` skips them naming the path
-  (`non-reversible (skipped): <p>`), exiting **1** without writing. The sweep
-  never invents a pre-image. If an earlier attributed entry in the same run
-  already stored that path's pre-image, the entry *is* reversible and `undo`
-  restores it — the badge then reads `[unattributed]` alone.
+- Before-content for these finds comes from the git object store when the
+  path was clean against the index at boot — the baseline records its blob
+  OID, the sweep reads it back, and `kubic undo` restores it, so a bash `rm`
+  or `sed -i` on a committed file undoes like a tool edit (the badge then
+  reads `[unattributed]` alone). Otherwise — untracked files, files dirty at
+  baseline, non-repositories, binary or over-4-MiB pre-images — they are
+  recorded **hashes only** and the badge is `[unattributed, non-reversible]`:
+  `kubic undo` skips them naming the path (`non-reversible (skipped): <p>`),
+  exiting **1** without writing. The sweep never invents a pre-image: a blob
+  that does not hash to the baseline digest is refused. If an earlier
+  attributed entry in the same run already stored that path's pre-image, the
+  entry *is* reversible through the tool chain instead, and `undo` restores
+  it — the badge then reads `[unattributed]` alone.
 - Cost is bounded: unchanged files cost one hash and no blob, and a file larger
   than 4 MiB is hashed in chunks, so its boot and sweep cost is one chunk of
   memory rather than the file size (a 256MB artifact measured below 1MB of heap

@@ -13,13 +13,16 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   applyDelta,
+  captureBaseline,
   encodeDelta,
   FileJournalStore,
   type JournalEntry,
   type JournalEntryInput,
+  reconcile,
   restoreEntry,
   sha256Hex,
 } from './journal.js';
+import type { GitCommand } from './journal-git.js';
 
 const roots: string[] = [];
 
@@ -395,5 +398,41 @@ describe('blob hash verification (issue #111)', () => {
     expect(result.restored).toBe(false);
     // Wrong content must never be written over the real file.
     expect(readFileSync(join(root, 'f.txt'), 'utf8')).toBe('v2\n');
+  });
+});
+
+describe('sweep bytesDelta (issue #371)', () => {
+  it('is nonzero for a sweep entry that changed size', () => {
+    const root = tmpRoot('journal-delta-');
+    writeFileSync(join(root, 'grown.ts'), 'before\n');
+    const baseline = captureBaseline(root);
+    writeFileSync(join(root, 'grown.ts'), 'before, and much more\n');
+    const store = new FileJournalStore(tmpRoot('j-delta-'));
+    // Scripted object store answering the boot blob (the file was clean at
+    // baseline): the sweep stores the pre-image and sizes the delta.
+    const before = Buffer.from('before\n', 'utf8');
+    const gitRun: GitCommand = (args: string[]) =>
+      args[0] === 'cat-file' && args[1] === '-s'
+        ? { status: 0, stdout: Buffer.from(`${before.length}\n`, 'utf8') }
+        : { status: 0, stdout: before };
+    const added = reconcile(
+      store,
+      baseline,
+      root,
+      {
+        sessionId: 's1',
+        agentId: 'root',
+        timestamp: 1,
+      },
+      { gitBaseline: { 'grown.ts': 'a'.repeat(40) }, gitRun },
+    );
+    expect(added).toBe(1);
+    const swept = store.entries()[0];
+    if (swept === undefined) throw new Error('missing sweep entry');
+    expect(swept.bytesDelta).toBe(
+      Buffer.byteLength('before, and much more\n', 'utf8') -
+        Buffer.byteLength('before\n', 'utf8'),
+    );
+    expect(swept.bytesDelta).not.toBe(0);
   });
 });

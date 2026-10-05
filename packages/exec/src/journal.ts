@@ -22,6 +22,11 @@ import {
   withFileLocked,
 } from './file-bridge.js';
 import { type IgnoreRule, isIgnored, parseIgnoreFile } from './ignore.js';
+import {
+  type GitBaseline,
+  type GitCommand,
+  readGitBlob,
+} from './journal-git.js';
 import { tightenStateDir } from './lock-file.js';
 
 export type JournalOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
@@ -1357,6 +1362,19 @@ export interface BaselineOptions {
    * a boot capture has none, and an unlistable directory contributes nothing.
    */
   previous?: Baseline;
+  /**
+   * Issue #371: boot-time index blob OIDs for stat-clean tracked files
+   * (see `journal-git.ts` `captureGitBaseline`). Absent or null outside git
+   * repositories (fail-open) — the sweep then records exactly today's
+   * hash-only shape. Carried on the walk options so the run lifecycle can
+   * pass it through; `captureBaseline` itself ignores it.
+   */
+  gitBaseline?: GitBaseline | null;
+  /**
+   * Issue #371: seam for the object-store reads (tests script it;
+   * production spawns `git cat-file`).
+   */
+  gitRun?: GitCommand;
 }
 
 // §35 out-of-scope paths (issue #115): an entry excludes the path itself and
@@ -1886,11 +1904,36 @@ function regularFileStillThere(
   }
 }
 
+// Issue #371: the pre-image for a sweep find from the git object store.
+// The OID was recorded at boot for a file clean against the index, and the
+// object store is content-addressed, so the bytes are exactly the boot
+// content — but only a pre-image matching the boot baseline hash may be
+// journaled as one. A mismatch (a racy index update between the OID capture
+// and the walk, clean/smudge filters, CRLF checkout) keeps today's hash-only
+// shape rather than restoring the wrong content. Binary content (a lossy
+// utf-8 decode) and pre-images above the sweep content bound are likewise
+// hash-only — the same bound the after-side obeys on the run's exit path.
+function gitBeforeContent(
+  root: string,
+  relPath: string,
+  expected: string,
+  options: BaselineOptions,
+): string | null {
+  const oid = options.gitBaseline?.[relPath];
+  if (oid === undefined) return null;
+  const bytes = readGitBlob(root, oid, MAX_SWEEP_CONTENT_BYTES, options.gitRun);
+  if (bytes === null) return null;
+  const text = decodeLossless(bytes);
+  if (text === null) return null;
+  return sha256Hex(text) === expected ? text : null;
+}
+
 // End-of-run sweep: whatever moved without interception gets an
 // unattributed entry — sed -i, npm install fallout, formatters, builds.
-// Before-content is unknowable for these (the baseline holds hashes, not
-// copies), so beforeHash is recorded but no before-blob exists: undo of
-// unattributed entries is reported non-reversible by the next issue's CLI.
+// Before-content comes from the git object store when the path was clean
+// against the index at boot (issue #371); otherwise the baseline holds
+// hashes, not copies, so beforeHash is recorded but no before-blob exists:
+// undo of those unattributed entries is reported non-reversible.
 export function reconcile(
   store: FileJournalStore,
   baseline: Baseline,
@@ -1932,16 +1975,30 @@ export function reconcile(
   const record = (input: {
     path: string;
     op: JournalEntryInput['op'];
+    before: string | null;
     beforeHash: string | null;
     after: string | null;
     afterHash?: string;
     afterOmitted?: boolean;
     afterBytes?: number;
   }): void => {
+    // Issue #371: the sweep's byte delta, computed when both sides are
+    // known — a create grows from absent (0), a delete shrinks to it, and a
+    // write is the difference. Unknown stays 0, exactly today's shape.
+    const beforeLen =
+      input.before === null
+        ? input.op === 'create'
+          ? 0
+          : null
+        : Buffer.byteLength(input.before, 'utf8');
+    const afterLen =
+      input.after === null
+        ? (input.afterBytes ?? (input.op === 'delete' ? 0 : null))
+        : Buffer.byteLength(input.after, 'utf8');
     store.append({
       path: input.path,
       op: input.op,
-      before: null,
+      before: input.before,
       beforeHash: input.beforeHash,
       after: input.after,
       ...(input.afterHash === undefined ? {} : { afterHash: input.afterHash }),
@@ -1949,7 +2006,8 @@ export function reconcile(
       ...(input.afterBytes === undefined
         ? {}
         : { afterBytes: input.afterBytes }),
-      bytesDelta: 0,
+      bytesDelta:
+        beforeLen !== null && afterLen !== null ? afterLen - beforeLen : 0,
       sessionId: ctx.sessionId,
       agentId: ctx.agentId,
       toolCallId: null,
@@ -2001,9 +2059,17 @@ export function reconcile(
         after = null;
       }
     }
+    // Issue #371: a path a tool journaled this run keeps the tool chain —
+    // its before-side is the tool's after-content (issue #341), never the
+    // boot blob — and a create has no pre-image by definition.
+    const before =
+      expected === null || sinceStart.has(relPath)
+        ? null
+        : gitBeforeContent(root, relPath, expected, options);
     record({
       path: relPath,
       op: expected === null ? 'create' : 'write',
+      before,
       beforeHash: expected,
       after,
       // The hash-only shape: the walk hash keeps dedupe and undo staleness
@@ -2038,6 +2104,12 @@ export function reconcile(
     record({
       path: relPath,
       op: 'delete',
+      // Issue #371: the same tool-chain rule in the delete direction — a
+      // path journaled this run unwinds through its entries, never the boot
+      // blob.
+      before: sinceStart.has(relPath)
+        ? null
+        : gitBeforeContent(root, relPath, expected, options),
       beforeHash: expected,
       after: null,
     });

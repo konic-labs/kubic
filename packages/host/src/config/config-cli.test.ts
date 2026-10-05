@@ -18,6 +18,7 @@ function runtime(): RuntimeConfig {
     model: { provider: 'local', id: 'llama3' },
     modelSource: 'global',
     thinking: undefined,
+    escalate: undefined,
     approvals: {
       policy: {
         route: 'deny',

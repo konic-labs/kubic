@@ -189,6 +189,45 @@ describe('runtime config load (issue #90)', () => {
     expect(keep.entries().length).toBe(1);
   });
 
+  it('projects the [model] escalation ladder with its bound (issue #210)', () => {
+    const runtime = load(
+      {
+        [PROJECT]:
+          '[model]\nprovider = "local"\nid = "a"\nescalate = ["local/a", "acme/big"]\nmaxEscalations = 1\n',
+      },
+      { projectTrusted: true },
+    );
+    expect(runtime.escalate).toEqual({
+      steps: ['local/a', 'acme/big'],
+      maxEscalations: 1,
+    });
+    expect(runtime.sources['model.escalate']).toBe('project');
+    // Unset max defaults to the ladder length (the ladder itself bounds).
+    expect(
+      load(
+        { [PROJECT]: '[model]\nprovider = "local"\nid = "a"\nescalate = ["local/a", "local/b"]\n' },
+        { projectTrusted: true },
+      ).escalate,
+    ).toEqual({ steps: ['local/a', 'local/b'], maxEscalations: 2 });
+    // No ladder: nothing is invented.
+    expect(
+      load(
+        { [PROJECT]: '[model]\nprovider = "x"\nid = "y"\n' },
+        { projectTrusted: true },
+      ).escalate,
+    ).toBeUndefined();
+  });
+
+  it('explains the escalation keys in the key-effects table (issue #210)', () => {
+    for (const key of ['model.escalate', 'model.maxEscalations']) {
+      expect(runtimeKeyDisposition(keyEffectFor(key))).toBe('consumed');
+    }
+    // The per-role ladder falls back to the `roles` section row.
+    expect(
+      runtimeKeyDisposition(keyEffectFor('roles.reviewer.escalate')),
+    ).toBe('consumed');
+  });
+
   it('projects [journal] outOfScope with its layer, refusing an empty entry by name', () => {
     const runtime = load(
       { [PROJECT]: '[journal]\noutOfScope = ["build", "coverage"]\n' },

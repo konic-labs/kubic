@@ -27,6 +27,7 @@ import {
 } from '../../../packages/exec/src/runtime-exclude.js';
 import type { SoloApprovalConfig } from '../../../packages/host/src/approvals.js';
 import type { RoleModelEntry } from '../../../packages/host/src/config/config.js';
+import type { RuntimeEscalation } from '../../../packages/host/src/config/runtime.js';
 import {
   CONFIG_LAYERS,
   ConfigError,
@@ -759,6 +760,9 @@ export function runtimeLaneDeps(result: CliConfigResult): {
   agentId?: string;
   roles?: { layers: RoleLayerInput[]; trustProject: ProjectTrustCheck };
   thinking?: RuntimeThinking;
+  /** The merged `[model]` ladder (issue #210; §38.4) — the lane climbs
+   * the role's own rungs first when the role names any. */
+  escalate?: RuntimeEscalation;
 } {
   const runtime = result.runtime;
   if (runtime === undefined) return {};
@@ -777,6 +781,16 @@ export function runtimeLaneDeps(result: CliConfigResult): {
     ...(runtime.thinking === undefined
       ? {}
       : { thinking: { ...runtime.thinking } }),
+    // No ladder, no field (issue #210): escalation stays opt-in — the
+    // lane climbs nothing it was never configured with.
+    ...(runtime.escalate === undefined
+      ? {}
+      : {
+          escalate: {
+            steps: [...runtime.escalate.steps],
+            maxEscalations: runtime.escalate.maxEscalations,
+          },
+        }),
   };
 }
 
@@ -801,6 +815,24 @@ export function runtimeSkillsDeps(result: CliConfigResult): {
     }
   }
   return { settingsSkills: [...skills] };
+}
+
+// The lane's escalation ladder (issue #210; §38.4): the role's own rungs
+// win outright when the role names any — even [] (the role opts out of
+// climbing) — and the `[model]` bound still caps the role's climbs. No
+// rungs anywhere means no ladder: escalation stays opt-in.
+export function resolveLaneLadder(
+  model: RuntimeEscalation | undefined,
+  role: readonly string[] | undefined,
+): RuntimeEscalation | undefined {
+  if (role !== undefined) {
+    return {
+      steps: [...role],
+      maxEscalations: model?.maxEscalations ?? role.length,
+    };
+  }
+  if (model === undefined) return undefined;
+  return { steps: [...model.steps], maxEscalations: model.maxEscalations };
 }
 
 // The effective thinking level (issue #225; §38.3) with its source — the
@@ -856,6 +888,15 @@ export function roleLayersFromConfig(runtime: RuntimeConfig): RoleLayerInput[] {
         runtime.sources[`roles.${name}.models`] === layer
       ) {
         spec.models = entry.models.map((modelEntry) => ({ ...modelEntry }));
+      }
+      // The ladder rides the same provenance (issue #210; §38.4): the
+      // winning rungs travel on the layer that set them, copied so the
+      // resolver owns its merge input.
+      if (
+        entry.escalate !== undefined &&
+        runtime.sources[`roles.${name}.escalate`] === layer
+      ) {
+        spec.escalate = [...entry.escalate];
       }
       if (
         entry.thinking !== undefined &&

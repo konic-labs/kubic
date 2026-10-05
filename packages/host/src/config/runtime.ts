@@ -168,6 +168,14 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
     effect:
       'prompt cache retention preference on the solo lane (`settings.stream`), layered per role by `[roles.<name>].cacheRetention` (§37.4)',
   },
+  'model.escalate': {
+    effect:
+      'escalation ladder rungs the run/tui lane climbs one-way (§38.4); a role escalate wins for that role',
+  },
+  'model.maxEscalations': {
+    effect:
+      'climbs allowed per run on the escalation ladder (§38.4); unset means the ladder length',
+  },
   'modes.solo': {
     effect:
       'selects solo (the architecture) — solo=true with orchestrator=true is refused',
@@ -424,6 +432,13 @@ export interface RuntimeCompaction {
   source: ConfigValueSource;
 }
 
+// The merged `[model]` escalation ladder (issue #210; §38.4): steps plus
+// the per-run bound, projected once per config load.
+export interface RuntimeEscalation {
+  steps: string[];
+  maxEscalations: number;
+}
+
 export interface RuntimeModes {
   solo: boolean;
   orchestrator: boolean;
@@ -511,6 +526,11 @@ export interface RuntimeConfig {
   // Undefined when nothing set a level: the lane then boots at the session's
   // persisted level, a role default, or Pi's 'off'.
   thinking: RuntimeThinking | undefined;
+  // The merged `[model]` escalation ladder (issue #210; §38.4): the steps
+  // plus the bound (defaulting to the ladder length — the ladder itself
+  // bounds). Undefined when no layer named rungs: escalation is opt-in.
+  // A role's own ladder wins per run at the lane, not here.
+  escalate: RuntimeEscalation | undefined;
   approvals: RuntimeApprovals;
   permissions: RuntimePermissions;
   journal: RuntimeJournal;
@@ -1262,6 +1282,19 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
       ? loaded.paths[systemPromptSource as ConfigLayer]
       : undefined;
 
+  // The merged `[model]` escalation ladder (issue #210; §38.4): steps
+  // from the winning layer, bound defaulting to the ladder length so the
+  // ladder itself bounds when no explicit max is set.
+  const modelEscalate = config.model?.escalate;
+  const escalate: RuntimeEscalation | undefined =
+    modelEscalate === undefined
+      ? undefined
+      : {
+          steps: [...modelEscalate],
+          maxEscalations:
+            config.model?.maxEscalations ?? modelEscalate.length,
+        };
+
   const rawPermissions = config.permissions ?? {};
   const permissions: RuntimePermissions = {
     classes: validateClasses(rawPermissions),
@@ -1277,6 +1310,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     model,
     modelSource,
     thinking,
+    escalate,
     approvals,
     permissions,
     journal,

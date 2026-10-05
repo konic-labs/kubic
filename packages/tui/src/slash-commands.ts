@@ -140,6 +140,14 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     command: 'model.select',
   },
   {
+    // Issue #210 (§38.4): the explicit climb — same ladder gate as
+    // `/model`, but the reason lands in the escalation event.
+    name: 'escalate',
+    summary: 'climb the escalation ladder with a reason',
+    usage: '/escalate <provider/id> [reason]',
+    argumentHint: 'provider/id',
+  },
+  {
     // No §66 command (issue #255): the allowed set is a local read like
     // `/session` — the loop reports the resolved set, nothing is sent.
     name: 'scoped-models',

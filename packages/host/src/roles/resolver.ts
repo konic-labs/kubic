@@ -310,6 +310,9 @@ export interface RoleLayerSpec {
   // The layer's per-role allowed model set (issue #255; §38.2):
   // normalized entries, whole-list first-wins like `tools`.
   models?: RoleModelEntry[];
+  // The layer's per-role escalation ladder (issue #210; §38.4): ordered
+  // concrete rungs, whole-list first-wins like `tools`.
+  escalate?: string[];
 }
 
 export interface RoleLayerInput {
@@ -336,6 +339,9 @@ export interface MergedRole {
   // The winning allowed set (issue #255; §38.2), or undefined when no
   // layer set one — the role then allows all models.
   models: RoleModelEntry[] | undefined;
+  // The winning ladder (issue #210; §38.4), or undefined when no layer
+  // named rungs — the role then has no ladder of its own.
+  escalate: string[] | undefined;
   overriddenAttempts: string[];
 }
 
@@ -371,6 +377,9 @@ export function mergeRoleLayers(
   // set wins it outright (tools precedent) — a lower layer's list never
   // unions in, so the winning layer's boundary stays exact.
   let models: RoleModelEntry[] | undefined;
+  // The merged escalation ladder (issue #210): same whole-list rule —
+  // the highest layer that names rungs wins them outright.
+  let escalate: string[] | undefined;
   const classLeaves = new Map<string, unknown>();
   for (const input of ordered) {
     const spec = input.roles[doc.name];
@@ -404,6 +413,13 @@ export function mergeRoleLayers(
         models = spec.models.map((entry) => ({ ...entry }));
       } else if (JSON.stringify(models) !== JSON.stringify(spec.models)) {
         overriddenAttempts.push(`roles.${doc.name}.models`);
+      }
+    }
+    if (spec.escalate !== undefined) {
+      if (escalate === undefined) {
+        escalate = [...spec.escalate];
+      } else if (JSON.stringify(escalate) !== JSON.stringify(spec.escalate)) {
+        overriddenAttempts.push(`roles.${doc.name}.escalate`);
       }
     }
     if (spec.classes !== undefined) {
@@ -440,6 +456,7 @@ export function mergeRoleLayers(
     ...(doc.budget === undefined ? {} : { budget: { ...doc.budget } }),
     thinking,
     models,
+    escalate,
     overriddenAttempts,
   };
 }
@@ -489,6 +506,9 @@ export interface ResolvedRole {
   // The layer-supplied allowed model set (issue #255; §38.2), or
   // undefined when no layer set one — the role then allows all models.
   models: RoleModelEntry[] | undefined;
+  // The layer-supplied ladder (issue #210; §38.4), or undefined when no
+  // layer named rungs — the lane then falls back to `[model]`.
+  escalate: string[] | undefined;
   overriddenAttempts: string[];
 }
 
@@ -561,6 +581,8 @@ export function resolveRole(
       merged.models === undefined
         ? undefined
         : merged.models.map((entry) => ({ ...entry })),
+    escalate:
+      merged.escalate === undefined ? undefined : [...merged.escalate],
     overriddenAttempts: merged.overriddenAttempts,
   };
   const toolPolicy = options.toolPolicy;

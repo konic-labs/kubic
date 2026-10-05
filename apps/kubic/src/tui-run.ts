@@ -62,6 +62,7 @@ import {
   type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import type { RoleModelEntry } from '../../../packages/host/src/config/config.js';
+import type { RuntimeEscalation } from '../../../packages/host/src/config/runtime.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
 import type {
   RuntimeOrchestrator,
@@ -235,8 +236,11 @@ import {
 import {
   bootSoloLane,
   type SoloCompactionOptions,
+  escalateSoloModel,
   type SoloLane,
 } from '../../../packages/worker/src/lane/solo.js';
+import type { EscalationLadder } from '../../../packages/worker/src/model-select.js';
+import type { ModelEscalationEvent } from '../../../packages/worker/src/prompts.js';
 import {
   entriesToTranscript,
   readConversationEntries,
@@ -276,6 +280,7 @@ import {
   type StreamTuningTables,
 } from '../../../packages/worker/src/stream-options.js';
 import {
+  resolveLaneLadder,
   resolveRoleThinking,
   roleModelScope,
   type runtimeLaneDeps,
@@ -384,6 +389,10 @@ export interface TuiLaneLoop {
   switchModel?: (
     model: { provider: string; modelId: string },
     context: Context,
+    // Issue #210 (§38.4): the reason the climb records — `/model <ref>`
+    // by default, the operator's words after `/escalate <ref>`. Absent
+    // on the plain switch path, which records nothing.
+    reason?: string,
   ) => Promise<string>;
   /** The live model label (provider/id) — the status bar and usage rows. */
   model?: (context: Context) => Promise<string>;
@@ -1169,6 +1178,10 @@ export interface TuiRunOptions {
   // against the session's stored level and the role default and clamps it
   // to the effective model — a clamp is never silent.
   thinking?: RuntimeThinking;
+  // The merged `[model]` ladder (issue #210; §38.4), from the same
+  // projection. The boot climbs the role's own rungs first
+  // (`resolveLaneLadder`); absent means escalation is unconfigured.
+  escalate?: RuntimeEscalation;
   // Issue #327: the config `[orchestrator]` projection (worktree parent and
   // worker cap) the interactive drive hands the manager lane, and the
   // approval snapshot a delegated conflict resolver runs under.
@@ -1521,6 +1534,28 @@ export async function bootTuiLane(
     // the policy is installed before the lane exists, so it reads this at
     // record time instead of freezing the pre-boot pick.
     let liveModelRef = `${model.provider}/${model.id}`;
+    // The run's escalation ladder (issue #210; §38.4): the role's own
+    // rungs win over the merged `[model]` ones (`resolveLaneLadder`),
+    // and the record lives here — one ladder object per boot, so every
+    // explicit climb and the single auto climb (slice 4) draw from the
+    // same budget. Undefined when nothing configured a ladder: the
+    // `/model` switch keeps its existing path.
+    const laneLadderSteps = resolveLaneLadder(
+      options.escalate,
+      selectedRole?.resolved.escalate,
+    );
+    const laneLadder: EscalationLadder | undefined =
+      laneLadderSteps === undefined
+        ? undefined
+        : {
+            steps: [...laneLadderSteps.steps],
+            maxEscalations: laneLadderSteps.maxEscalations,
+            record: [],
+          };
+    // The climbs this run recorded (issue #210): the sink every
+    // escalateSoloModel call reports to — the trajectory event and the
+    // transcript line (slice 5) read them from here.
+    const escalationEvents: ModelEscalationEvent[] = [];
     const env = options.env ?? new NodeExecutionEnv(process.cwd());
     // §60 audit identity (issue #282): the base revision this run started
     // from — captured once here, `none` outside git — and the thinking
@@ -1667,6 +1702,10 @@ export async function bootTuiLane(
               ...(roleThinking === undefined ? {} : { role: roleThinking }),
             },
           }),
+      // Issue #210 (§38.4/affinity): the session id pins the boot model
+      // for the task — escalateSoloModel is the only path off it, so an
+      // off-ladder `/model` target refuses instead of silently switching.
+      taskId: id,
       env,
       sessionId: id,
       agentId: options.agentId ?? 'root',
@@ -2066,7 +2105,7 @@ export async function bootTuiLane(
         // boot's own: a switch outside `allowed_models`/`allowed_providers`
         // is refused with the same named error before the lane is touched,
         // so the live model stays put.
-        switchModel: async (selection, loopContext) => {
+        switchModel: async (selection, loopContext, reason) => {
           // §35.1/§38.1 (issue #295): `/model` is the session override, and a
           // frozen enterprise `[model]` cannot be overridden by it — refused
           // by name before the catalog or the conversation is touched. Naming
@@ -2090,6 +2129,26 @@ export async function bootTuiLane(
             // §38.2): the live model stays put, like the enterprise gate.
             roleModelScope(selectedRole?.resolved),
           );
+          // Issue #210 (§38.4): with a ladder configured the switch climbs
+          // it through escalateSoloModel — one-way, budget-bounded,
+          // recorded — so an off-ladder target, a down-step, or an
+          // exhausted budget refuses by name with the live model untouched.
+          // Naming the live model is a no-op pass down the plain path
+          // (no budget burned, no event); without a ladder the plain path
+          // below runs exactly as before. After a climb, control falls
+          // through to the #328 re-clamp below, which commits the thinking
+          // level for the NEW model in the same switch.
+          const requested = `${selection.provider}/${selection.modelId}`;
+          if (laneLadder !== undefined && requested !== liveModelRef) {
+            await escalateSoloModel(
+              booted,
+              laneLadder,
+              requested,
+              reason ?? `/model ${requested}`,
+              loopContext,
+              (event) => escalationEvents.push(event),
+            );
+          }
           // Issue #328 review: a switch re-clamps the thinking level to the
           // NEW model's ladder and commits both in one change, so the stored
           // level, the `/thinking` report, the cycle key and the status bar
@@ -2465,6 +2524,9 @@ export function tuiBootOptions(
     // (`--thinking` > `KUBIC_MODEL_THINKING` > file layers) — the lane
     // resolves it against the session's stored level and the role default.
     thinking: provided.thinking,
+    // Issue #210 (§38.4): the merged `[model]` ladder — the lane climbs
+    // the role's own rungs first.
+    escalate: provided.escalate,
     model: provided.model,
     // §58 enterprise policy (issue #288): the role-grant, model and tool
     // gates of the interactive boot all read this one object.
@@ -2769,7 +2831,12 @@ export class TuiTurnRunner {
   // Issue #227: `/model provider/id`. The loop owns the lane-side switch
   // (catalog resolution, conversation.configure, read-back); this runner
   // keeps the model the app's status bar and every later header names.
-  async switchModel(selection: ModelSelection): Promise<string> {
+  // Issue #210: the reason rides to the loop for the escalation event —
+  // `/model` passes none, `/escalate` the operator's words.
+  async switchModel(
+    selection: ModelSelection,
+    reason?: string,
+  ): Promise<string> {
     const switchModel = this.loop.switchModel;
     if (switchModel === undefined) {
       throw new Error('this session has no live lane to switch');
@@ -2777,6 +2844,7 @@ export class TuiTurnRunner {
     const label = await switchModel(
       { provider: selection.provider, modelId: selection.id },
       this.loop.context,
+      reason,
     );
     this.model = label;
     // Issue #328 review: the switch re-clamped the level in the lane, so the
@@ -3609,6 +3677,43 @@ export function parseModelCommand(prompt: string): TuiModelCommand | undefined {
   if (argument === '') return { kind: 'report' };
   try {
     return { kind: 'switch', selection: parseModelFlag(argument) };
+  } catch (error) {
+    return {
+      kind: 'invalid',
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+// The `/escalate` command of the interactive loop (issue #210; §38.4): an
+// explicit climb with a recorded reason. Unlike `/model` (the session
+// override, which climbs silently), `/escalate` names WHY in the
+// escalation event — the trajectory row and the transcript line carry it.
+// A bare `/escalate` is a usage refusal, not a report: reporting the
+// ladder is `/scoped-models`' successor's job, not this command's.
+export type TuiEscalateCommand =
+  | { kind: 'switch'; selection: ModelSelection; reason: string | undefined }
+  | { kind: 'invalid'; message: string };
+
+export function parseEscalateCommand(
+  prompt: string,
+): TuiEscalateCommand | undefined {
+  if (prompt !== '/escalate' && !prompt.startsWith('/escalate '))
+    return undefined;
+  const argument =
+    prompt === '/escalate' ? '' : prompt.slice('/escalate '.length).trim();
+  if (argument === '') {
+    return {
+      kind: 'invalid',
+      message: 'usage: /escalate <provider/id> [reason]',
+    };
+  }
+  const space = argument.search(/\s/);
+  const ref = space === -1 ? argument : argument.slice(0, space);
+  const reason =
+    space === -1 ? undefined : argument.slice(space).trim() || undefined;
+  try {
+    return { kind: 'switch', selection: parseModelFlag(ref), reason };
   } catch (error) {
     return {
       kind: 'invalid',
@@ -4655,6 +4760,22 @@ export async function runTuiCommand(
         }
         switchModelTo(command.selection);
       };
+      // Issue #210 (§38.4): `/escalate <ref> [reason]` — the explicit
+      // climb. Same busy guard and switch path as `/model`; the reason
+      // travels to the loop so the escalation event names it.
+      const handleEscalateCommand = (command: TuiEscalateCommand): void => {
+        if (turn === undefined) {
+          app.setEditorFooter('model switch needs the solo lane');
+          if (!stopped) screen?.render();
+          return;
+        }
+        if (command.kind === 'invalid') {
+          app.setEditorFooter(`escalation failed: ${command.message}`);
+          if (!stopped) screen?.render();
+          return;
+        }
+        switchModelTo(command.selection, command.reason);
+      };
       // Issue #305: `/new` and `/resume` swap the session under the running
       // TUI. The next lane boots FIRST (a failed boot keeps the session the
       // operator was in), the previous one closes, and every lane-bound
@@ -5112,7 +5233,12 @@ export async function runTuiCommand(
 
       // Issue #227/#328: one switch path for `/model <id>` and the picker's
       // Enter — the same footer wording and the same refusal text.
-      const switchModelTo = (selection: ModelSelection): void => {
+      // Issue #210 adds the reason: `/escalate <id> [reason]` records it
+      // in the escalation event; `/model` passes none (a silent climb).
+      const switchModelTo = (
+        selection: ModelSelection,
+        reason?: string,
+      ): void => {
         if (turn === undefined) {
           app.setEditorFooter('model switch needs the solo lane');
           if (!stopped) screen?.render();
@@ -5123,7 +5249,7 @@ export async function runTuiCommand(
         );
         if (!stopped) screen?.render();
         void turn
-          .switchModel(selection)
+          .switchModel(selection, reason)
           .then(async (label) => {
             if (stopped) return;
             // Issue #338: the new model may not accept images (§16.8). The
@@ -5653,6 +5779,21 @@ export async function runTuiCommand(
             return 'refused';
           }
           handleModelCommand(modelCommand);
+          return 'accepted';
+        }
+        // Issue #210 (§38.4): `/escalate <ref> [reason]` climbs the same
+        // ladder as `/model` — the busy guard matches, since the climb is
+        // a conversation.configure too.
+        const escalateCommand = parseEscalateCommand(prompt);
+        if (escalateCommand !== undefined) {
+          if (busy) {
+            app.setEditorFooter(
+              'escalation: finish the current turn before climbing',
+            );
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
+          handleEscalateCommand(escalateCommand);
           return 'accepted';
         }
         // Issue #327: the NEXT submit goes to the lane the session mode

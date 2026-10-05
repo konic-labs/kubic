@@ -59,6 +59,7 @@ import {
   orchestratedWorkerFromEnv,
   type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
+import type { RuntimeEscalation } from '../../../packages/host/src/config/runtime.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
 import type {
   RuntimeThinking,
@@ -327,6 +328,10 @@ export interface HeadlessRunDeps {
   // config default. Absent means the lane boots at the session's stored
   // level, a role default, or Pi's 'off'.
   thinking?: RuntimeThinking;
+  // The merged `[model]` ladder (issue #210; §38.4), from
+  // `runtimeLaneDeps` via prodRunDeps. The lane climbs the role's own
+  // rungs first (`resolveLaneLadder`); absent means unconfigured.
+  escalate?: RuntimeEscalation;
   // The installed-policy seat (issue #86). Absent means the shipped
   // DEFAULT: the documented SOLO_DEFAULTS classes plus the destructive/
   // network/confine guards and the approval ask, all derived by
@@ -2152,6 +2157,10 @@ async function runHeadlessPromptImpl(
                   }),
             ...(roleThinking === undefined ? {} : { role: roleThinking }),
           };
+    // Issue #210 (§38.4/affinity): the session id pins the boot model for
+    // the task — escalation is the only path off it (the headless lane
+    // climbs only via the single auto trigger; explicit switches are a
+    // TUI affordance).
     try {
       solo = await bootSoloLane({
         session,
@@ -2160,6 +2169,7 @@ async function runHeadlessPromptImpl(
         modelPolicy: explicitModel ? 'selected' : 'stored',
         onModelNotice: notice,
         ...(laneThinking === undefined ? {} : { thinking: laneThinking }),
+        taskId: id,
         env,
         sessionId: id,
         agentId: resolveRunAgentId(deps.agentId),

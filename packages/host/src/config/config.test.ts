@@ -802,6 +802,37 @@ describe('config validation hardening (issue #69)', () => {
     ).toThrow(/'roles\.a\.models\[0\]': unknown key 'bogus'/);
   });
 
+  it('parses [model]/[roles.<name>] escalate + maxEscalations (issue #210)', () => {
+    const parsed = parseTomlConfig(
+      '[model]\nescalate = ["local/a", "acme/big"]\nmaxEscalations = 2\n' +
+        '[roles.a]\nescalate = ["local/a", "local/b"]\n',
+    );
+    expect(parsed.model?.escalate).toEqual(['local/a', 'acme/big']);
+    expect(parsed.model?.maxEscalations).toBe(2);
+    expect(parsed.roles?.a?.escalate).toEqual(['local/a', 'local/b']);
+    // Unset means no ladder, not an empty one.
+    expect(parseTomlConfig('[model]\nprovider = "x"\n').model?.escalate)
+      .toBeUndefined();
+    expect(() =>
+      parseTomlConfig('[model]\nescalate = "local/a"\n'),
+    ).toThrow(/'model': 'escalate' must be an array/);
+    expect(() =>
+      parseTomlConfig('[model]\nescalate = ["noid"]\n'),
+    ).toThrow(/'model': 'escalate\[0\]' must be 'provider\/id'/);
+    expect(() =>
+      parseTomlConfig('[model]\nescalate = ["local/*"]\n'),
+    ).toThrow(/'model': 'escalate\[0\]' must be 'provider\/id'/);
+    expect(() =>
+      parseTomlConfig('[model]\nmaxEscalations = -1\n'),
+    ).toThrow(/'model': 'maxEscalations' must be a non-negative integer/);
+    expect(() =>
+      parseTomlConfig('[model]\nmaxEscalations = 1.5\n'),
+    ).toThrow(/'model': 'maxEscalations' must be a non-negative integer/);
+    expect(() =>
+      parseTomlConfig('[roles.a]\nescalate = ["noid"]\n'),
+    ).toThrow(/'roles\.a': 'escalate\[0\]' must be 'provider\/id'/);
+  });
+
   it('rejects negative numbers and non-string role tools', () => {
     expect(() => parseTomlConfig('[journal]\nretentionDays = -1\n')).toThrow(
       /non-negative number/,

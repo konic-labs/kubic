@@ -76,6 +76,10 @@ export interface ModelConfig {
   maxRetries?: number;
   maxRetryDelayMs?: number;
   cacheRetention?: string;
+  /** Escalation ladder rungs (§38.4, issue #210): ordered concrete refs. */
+  escalate?: string[];
+  /** Escalation bound (§38.4, issue #210): climbs allowed per run. */
+  maxEscalations?: number;
 }
 
 export interface ModesConfig {
@@ -142,6 +146,9 @@ export interface RoleConfig {
   // entries (`provider/id` or `provider/*`, optional per-entry
   // thinking). Absent or empty means all models.
   models?: RoleModelEntry[];
+  // The per-role escalation ladder (issue #210; §38.4): ordered concrete
+  // rungs, winning over the `[model]` ladder for this role when set.
+  escalate?: string[];
 }
 
 export interface OrchestratorConfig {
@@ -1111,6 +1118,50 @@ export interface RoleModelEntry {
   thinking?: string;
 }
 
+// The escalation ladder (issue #210; §38.4): ordered concrete
+// `provider/id` rungs — never wildcards (a rung names the exact model the
+// lane switches to, so one-way validation stays decidable) and never
+// empty strings. Refused by name per entry, like the scoped-model set.
+export function checkEscalationLadder(
+  value: unknown,
+  keyPath: string,
+): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new ConfigError(
+      `'${keyPath}': 'escalate' must be an array of 'provider/id' rungs`,
+    );
+  }
+  return value.map((entry, index) => {
+    const label = `'${keyPath}': 'escalate[${index}]'`;
+    if (typeof entry !== 'string') {
+      throw new ConfigError(
+        `${label} must be 'provider/id' (got ${JSON.stringify(entry)})`,
+      );
+    }
+    const slash = entry.indexOf('/');
+    if (slash <= 0 || slash === entry.length - 1 || entry.includes('*')) {
+      throw new ConfigError(
+        `${label} must be 'provider/id' (got ${JSON.stringify(entry)})`,
+      );
+    }
+    return entry;
+  });
+}
+
+export function checkMaxEscalations(
+  value: unknown,
+  keyPath: string,
+): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    throw new ConfigError(
+      `'${keyPath}': 'maxEscalations' must be a non-negative integer (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
 // The per-role allowed set (issue #255; §38.2): an array of `provider/id`
 // or `provider/*` refs, each optionally carrying per-entry thinking as a
 // table (`{ id, thinking? }`). An empty array parses (it means all
@@ -1450,6 +1501,8 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
         'maxRetries',
         'maxRetryDelayMs',
         'cacheRetention',
+        'escalate',
+        'maxEscalations',
       ]),
       'model',
     );
@@ -1459,11 +1512,18 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
       reqString(model, 'thinking', 'model', true),
       "'model': 'thinking'",
     );
+    const escalate = checkEscalationLadder(model.escalate, 'model');
+    const maxEscalations = checkMaxEscalations(
+      model.maxEscalations,
+      'model',
+    );
     config.model = {
       ...(provider === undefined ? {} : { provider }),
       ...(id === undefined ? {} : { id }),
       ...(thinking === undefined ? {} : { thinking }),
       ...checkModelStreamTuning(model, 'model'),
+      ...(escalate === undefined ? {} : { escalate }),
+      ...(maxEscalations === undefined ? {} : { maxEscalations }),
     };
   }
   const modes = raw.modes;
@@ -1583,6 +1643,7 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
           'maxRetries',
           'maxRetryDelayMs',
           'cacheRetention',
+          'escalate',
         ]),
         `roles.${name}`,
       );
@@ -1594,12 +1655,14 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
         `'roles.${name}': 'thinking'`,
       );
       const models = checkRoleModels(spec.models, name);
+      const escalate = checkEscalationLadder(spec.escalate, `roles.${name}`);
       parsed[name] = {
         ...(modelRef === undefined ? {} : { model: modelRef }),
         ...(tools === undefined ? {} : { tools }),
         ...(requires === undefined ? {} : { requires }),
         ...(thinking === undefined ? {} : { thinking }),
         ...(models === undefined ? {} : { models }),
+        ...(escalate === undefined ? {} : { escalate }),
         ...checkModelStreamTuning(spec, `roles.${name}`),
       };
     }

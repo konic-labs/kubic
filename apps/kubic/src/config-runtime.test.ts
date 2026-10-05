@@ -58,6 +58,7 @@ import {
   projectTrustFor,
   requireRuntimeConfig,
   resolveInteractiveProjectTrust,
+  resolveLaneLadder,
   resolveRoleThinking,
   roleLayersFromConfig,
   runtimeApprovalDeps,
@@ -933,6 +934,46 @@ describe('roleLayersFromConfig (issue #384)', () => {
       runtime.config.roles?.implementer?.tools,
     );
     expect(runtime.config.roles?.implementer?.tools).toEqual(['read']);
+  });
+
+  it('carries [roles.<name>] escalate with provenance, copied (issue #210)', () => {
+    const { home, project } = trustedProject(
+      '[roles.implementer]\nescalate = ["local/a", "acme/big"]\n',
+    );
+    const result = loadCliConfig({
+      cwd: project,
+      home,
+      env: { KUBIC_TRUST_PROJECT: '1' },
+    });
+    expect(result.error).toBeUndefined();
+    const runtime = requireRuntimeConfig(result);
+    const layers = roleLayersFromConfig(runtime);
+    expect(layers).toHaveLength(1);
+    expect(layers[0]?.roles['implementer']).toEqual({
+      escalate: ['local/a', 'acme/big'],
+    });
+    expect(layers[0]?.roles['implementer']?.escalate).not.toBe(
+      runtime.config.roles?.['implementer']?.escalate,
+    );
+  });
+
+  it('resolveLaneLadder prefers the role ladder; model fills the bound (issue #210)', () => {
+    const model = {
+      steps: ['local/a', 'acme/big'],
+      maxEscalations: 1,
+    };
+    // Role wins outright (even []: the role opts out of climbing).
+    expect(resolveLaneLadder(model, ['local/a', 'local/b'])).toEqual({
+      steps: ['local/a', 'local/b'],
+      maxEscalations: 1,
+    });
+    expect(resolveLaneLadder(model, [])).toEqual({
+      steps: [],
+      maxEscalations: 1,
+    });
+    // No role ladder: the [model] one stands; none anywhere: none.
+    expect(resolveLaneLadder(model, undefined)).toEqual(model);
+    expect(resolveLaneLadder(undefined, undefined)).toBeUndefined();
   });
 
   it('orders layers by CONFIG_LAYERS: global before project', () => {

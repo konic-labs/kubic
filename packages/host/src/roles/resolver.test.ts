@@ -206,6 +206,34 @@ describe('mergeRoleLayers', () => {
     expect(resolveRole(doc, []).models).toBeUndefined();
   });
 
+  it('escalate merges first-wins whole-list; attempts reported (issue #210)', () => {
+    const doc = parseRoleDocument(PLANNER_MD);
+    const merged = mergeRoleLayers(doc, [
+      {
+        layer: 'project',
+        roles: { planner: { escalate: ['local/a', 'local/b'] } },
+      },
+      {
+        layer: 'enterprise',
+        roles: { planner: { escalate: ['local/a', 'acme/big'] } },
+      },
+    ]);
+    expect(merged.escalate).toEqual(['local/a', 'acme/big']);
+    expect(merged.overriddenAttempts).toEqual(['roles.planner.escalate']);
+    // Copied, and unset stays undefined (no ladder).
+    const resolved = resolveRole(doc, [
+      {
+        layer: 'project',
+        roles: { planner: { escalate: ['local/a', 'local/b'] } },
+      },
+    ]);
+    expect(resolved.escalate).toEqual(['local/a', 'local/b']);
+    expect(resolved.escalate).not.toBe(
+      (doc as unknown as { escalate?: unknown }).escalate,
+    );
+    expect(resolveRole(doc, []).escalate).toBeUndefined();
+  });
+
   it('roleModelAllowed matches exact and provider/*, boundary-safe (issue #255)', () => {
     const set = [{ id: 'local/*' }, { id: 'acme/big' }];
     expect(roleModelAllowed(undefined, 'acme', 'x')).toBe(true);

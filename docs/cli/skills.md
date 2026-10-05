@@ -32,9 +32,13 @@ status:
   flag (explicit calls only).
 - `withheld` — failed the role/capability gate, with the reason.
 - `excluded` — left out by policy: an untrusted project root, or a
-  package entry confined away (an absolute path, a `..` escape, or a
-  symlink resolving outside the `package.json`'s own directory — refused
-  with the reason, never loaded under project trust).
+  package entry confined away. Confinement is to the *declaring
+  package's* directory — stricter than the repo root, per the
+  per-ancestor trust model: a `/repo/pkg` entry for `../sibling` is
+  refused even though the sibling is inside the same repository. An
+  absolute path, a `..` escape, or a symlink resolving outside the
+  declaring directory is refused with the reason, never loaded; a
+  failed resolution is reported as an `error` instead.
 - `error` — the file could not be read, with the reason.
 
 `--role <name>` gates the listing as the lane would for that role (the

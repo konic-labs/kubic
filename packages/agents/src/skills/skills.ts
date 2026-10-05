@@ -568,6 +568,13 @@ function readPackageSkillDirs(
 // and neither does a symlink resolving outside (realpath, so links
 // count) — each refusal carries its reason on the log sink. Without the
 // bridge's realPath seam the check is lexical only.
+//
+// The boundary is deliberately the DECLARING package's directory, not
+// the repo root: per the per-ancestor trust model (issue #228) a grant
+// for `/repo/pkg` covers `/repo/pkg` only, so a `/repo/pkg` entry for
+// `../sibling` is refused even though the sibling is inside the same
+// repo. A transient realPath failure fails closed (error skip, never a
+// lexical fallback load).
 function isWithinDir(path: string, dir: string): boolean {
   const cleanDir = dir.replace(/\/*$/, '') || '/';
   if (cleanDir === '/') return true;

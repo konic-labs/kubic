@@ -541,6 +541,26 @@ describe('package-declared skill confinement (issue #423)', () => {
     expect(
       lines.filter((line) => /outside trusted root/.test(line)),
     ).toHaveLength(2);
+    // Review on #423: the refusals are reported, not just logged —
+    // both entries land in `skipped` with reasons (issue #238 surface).
+    expect(result.skipped).toEqual([
+      {
+        name: 'evil',
+        filePath: '/abs/elsewhere/evil/SKILL.md',
+        source: 'package',
+        status: 'excluded',
+        reason:
+          "package skill '/abs/elsewhere/evil' outside trusted root '/repo/pkg'",
+      },
+      {
+        name: 'outside',
+        filePath: '/repo/outside/SKILL.md',
+        source: 'package',
+        status: 'excluded',
+        reason:
+          "package skill '/repo/outside' outside trusted root '/repo/pkg'",
+      },
+    ]);
   });
 
   it('refuses a package entry whose symlink resolves outside the declaring dir', () => {

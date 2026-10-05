@@ -706,7 +706,7 @@ describe('enterprise-frozen thinking + thinking-only layers (issue #226)', () =>
   // Bug A: an enterprise-pinned level keeps its value and source against
   // the env override — and the dropped override is reported, never
   // silent (the model-pin #295 pattern, one row per ignored input).
-  it("records the env override a frozen enterprise level drops", () => {
+  it('records the env override a frozen enterprise level drops', () => {
     const files = {
       // Thinking-only enterprise layer (the issue's shape): the pin comes
       // from project, the level from enterprise.

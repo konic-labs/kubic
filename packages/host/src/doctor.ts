@@ -33,9 +33,12 @@ import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 // route through the limits mapper so provider-down exits 6.
 import type { ResourceEnforcementProbe } from './limits/doctor-limits.js';
 import {
-  collectLimitChecksFromDeps,
+  depsLimitCheck,
   limitsDoctorExit,
+  policyEnforceabilityCheck,
+  providerAvailabilityCheck,
   resourceEnforcementCheck,
+  staticLimitChecks,
 } from './limits/doctor-limits.js';
 
 export const DOCTOR_EXIT_OK = EXIT_OK;
@@ -552,9 +555,17 @@ export function collectDoctorChecks(
   skip: string[],
 ): DoctorCheck[] {
   const checks: DoctorCheck[] = [];
+  // Issue #291: each probe runs ONCE here and the results are captured —
+  // the limit aggregates at the end reuse these results and never re-call
+  // the probes (a second call would double-bill expensive probes and let
+  // a flaky probe answer differently twice).
+  let providerProbes: ProviderProbe[] | undefined;
+  let providerError: unknown;
   try {
-    checks.push(...providerChecks(deps.probeProviders()));
+    providerProbes = deps.probeProviders();
+    checks.push(...providerChecks(providerProbes));
   } catch (error) {
+    providerError = error;
     checks.push({
       id: 'provider:probe',
       label: 'provider probe',
@@ -563,9 +574,13 @@ export function collectDoctorChecks(
       detail: probeMessage(error),
     });
   }
+  let depProbes: DepProbe[] | undefined;
+  let depError: unknown;
   try {
-    checks.push(...depChecks(deps.checkDeps()));
+    depProbes = deps.checkDeps();
+    checks.push(...depChecks(depProbes));
   } catch (error) {
+    depError = error;
     checks.push({
       id: 'dep:check',
       label: 'dep check',
@@ -590,11 +605,16 @@ export function collectDoctorChecks(
     }
   }
   let configured: ConfiguredApprovals | undefined;
+  let rawPolicy: unknown;
+  let policyLoaded = false;
+  let policyError: unknown;
   try {
-    const raw = deps.loadPolicy();
-    configured = configuredApprovals(raw);
-    checks.push(policyCheck(raw));
+    rawPolicy = deps.loadPolicy();
+    policyLoaded = true;
+    configured = configuredApprovals(rawPolicy);
+    checks.push(policyCheck(rawPolicy));
   } catch (error) {
+    policyError = error;
     checks.push({
       id: 'policy:approvals',
       label: 'policy approvals',
@@ -717,13 +737,121 @@ export function collectDoctorChecks(
   // License identity (issue #59): reported on every run, never skipped
   // implicitly — --skip license:kubic remains available like any check.
   checks.push(licenseCheck());
-  // Issue #58 honest limits (§59.1): registration only — the limit
-  // checks ride the same --skip and exit path as #29. The builder is
-  // total (a throwing probe becomes a failing check). Static §59.1
-  // notices report warn (informational, never exit-flipping); only
-  // fail (provider-down, deps-missing, policy-mismatch) flips the exit,
-  // via limitsDoctorExit below (6 for provider-down, 1 otherwise).
-  checks.push(...collectLimitChecksFromDeps(deps));
+  // Issue #58 honest limits (§59.1) plus issue #291: the limit aggregates
+  // derive from the probes captured above — never a second probe call —
+  // and from the POST-skip items, so skipping a failing item clears the
+  // aggregate it would otherwise fail. A direct --skip of a limit id is
+  // still honoured by the final pass below.
+  const skipped = new Set(skip);
+  checks.push(
+    ...limitChecksFromResults(
+      {
+        providerProbes,
+        providerError,
+        depProbes,
+        depError,
+        rawPolicy,
+        policyLoaded,
+        policyError,
+      },
+      skipped,
+    ),
+  );
+  return applySkip(checks, skip);
+}
+
+// Issue #291: limit aggregates from captured probe results. Probes whose
+// per-item check was skipped are excluded, so a skipped refusal no longer
+// fails the aggregate; when skipping empties a section entirely the
+// aggregate reports skip (it has nothing to assess), never a failure.
+function limitChecksFromResults(
+  probed: {
+    providerProbes: ProviderProbe[] | undefined;
+    providerError: unknown;
+    depProbes: DepProbe[] | undefined;
+    depError: unknown;
+    rawPolicy: unknown;
+    policyLoaded: boolean;
+    policyError: unknown;
+  },
+  skipped: Set<string>,
+): DoctorCheck[] {
+  const checks: DoctorCheck[] = [...staticLimitChecks()];
+  if (probed.providerProbes === undefined) {
+    checks.push({
+      id: 'limit:provider-availability',
+      label: 'limit provider availability',
+      status: 'fail',
+      reason: 'provider-down',
+      detail: probeMessage(probed.providerError),
+    });
+  } else {
+    const live = probed.providerProbes.filter(
+      (probe) => !skipped.has(`provider:${probe.id}`),
+    );
+    checks.push(
+      aggregateOrSkipped(
+        providerAvailabilityCheck(live),
+        probed.providerProbes.length,
+        live.length,
+      ),
+    );
+  }
+  if (probed.depProbes === undefined) {
+    checks.push({
+      id: 'limit:deps-present',
+      label: 'limit deps present',
+      status: 'fail',
+      reason: 'deps-missing',
+      detail: probeMessage(probed.depError),
+    });
+  } else {
+    const live = probed.depProbes.filter(
+      (probe) => !skipped.has(`dep:${probe.id}`),
+    );
+    checks.push(
+      aggregateOrSkipped(
+        depsLimitCheck(live),
+        probed.depProbes.length,
+        live.length,
+      ),
+    );
+  }
+  if (!probed.policyLoaded) {
+    checks.push({
+      id: 'policy:enforceability',
+      label: 'policy enforceability',
+      status: 'fail',
+      reason: 'policy-mismatch',
+      detail: probeMessage(probed.policyError),
+    });
+  } else {
+    // A skipped policy:approvals changes nothing here: the check reads the
+    // raw policy and already passes with a pointer when it is invalid.
+    checks.push(policyEnforceabilityCheck(probed.rawPolicy));
+  }
+  return checks;
+}
+
+// When --skip emptied a section entirely, the aggregate has nothing to
+// assess: it reports skip, never a failure (or a vacuous pass).
+function aggregateOrSkipped(
+  built: DoctorCheck,
+  total: number,
+  live: number,
+): DoctorCheck {
+  if (live === 0 && total > 0) {
+    return {
+      ...built,
+      status: 'skip' as DoctorStatus,
+      reason: 'skipped' as DoctorReason,
+      detail: `skipped via --skip (all inputs skipped)`,
+    };
+  }
+  return built;
+}
+
+function applySkip(checks: DoctorCheck[], skip: string[]): DoctorCheck[] {
   return checks.map((check) =>
     skip.includes(check.id)
       ? {

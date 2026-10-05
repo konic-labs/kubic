@@ -87,6 +87,13 @@ a typo fails closed instead of silently passing.
 known-broken install, not a recovery — the bundle stays unloaded while
 skipped.
 
+Skipping a failing item also clears the aggregate over it: each probe
+runs once per `doctor` call and the `limit:` aggregates derive from the
+post-skip items, so `--skip dep:config-load` leaves
+`limit:deps-present` skipped (exit 0 when nothing else fails) instead of
+still failing it. Skipping every input of a section reports that
+aggregate as skipped, never as a failure.
+
 ## When a command dies unexpectedly (`KUBIC_DEBUG`)
 
 An unexpected failure — a bug in a command's wiring, an unshaped IO error —

@@ -9,7 +9,6 @@ import { RUN_EXIT_PROVIDER_PROBE_FAILED } from '../run-cli.js';
 import {
   buildLimitsJsonReport,
   collectLimitChecks,
-  collectLimitChecksFromDeps,
   depsLimitCheck,
   LIMITS_DOCTOR_EXIT_FAIL,
   LIMITS_DOCTOR_EXIT_OK,
@@ -247,29 +246,6 @@ describe('collectLimitChecks (issue #58)', () => {
     expect(ids).toContain('limit:provider-availability');
     expect(ids).toContain('limit:deps-present');
     expect(ids).toContain('policy:enforceability');
-  });
-
-  it('never throws on throwing probes — it reports them', () => {
-    const checks = collectLimitChecksFromDeps({
-      probeProviders: () => {
-        throw new Error('probe exploded');
-      },
-      checkDeps: () => [{ id: 'node', ok: true }],
-      loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
-    });
-    const provider = checks.find(
-      (check) => check.id === 'limit:provider-availability',
-    );
-    expect(provider?.status).toBe('fail');
-    expect(provider?.reason).toBe('provider-down');
-    expect(provider?.detail).toBe('probe exploded');
-    // The other sections still ran: one throwing probe is not a crash.
-    expect(
-      checks.find((check) => check.id === 'limit:deps-present')?.status,
-    ).toBe('pass');
-    expect(
-      checks.find((check) => check.id === 'policy:enforceability')?.status,
-    ).toBe('pass');
   });
 });
 

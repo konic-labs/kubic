@@ -28,13 +28,37 @@ import {
   ProjectTrustStore,
   projectTrustStorePath,
 } from '../../../packages/host/src/config/trust-store.js';
+import { ModelSelectError } from '../../../packages/worker/src/model-select.js';
 import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  type MutableModels,
+} from '../../../packages/worker/src/pi-boundary.js';
+import {
+  approvalSnapshotFrom,
+  configRefusalExit,
+  doctorConfigProbe,
+  doctorPolicyLoader,
+  installedPolicyClasses,
+  installedPolicyDeps,
+  kubicConfigLoader,
   loadCliConfig,
   projectTrustFor,
   requireRuntimeConfig,
   resolveInteractiveProjectTrust,
+  roleLayersFromConfig,
+  runtimeApprovalDeps,
+  runtimeLaneDeps,
+  runtimeModelFrozen,
   runtimeModelPin,
+  runtimeModelPinNotes,
+  runtimePolicy,
+  runtimeRunDeps,
+  selectModelUnderPolicy,
+  sessionRetentionDays,
 } from './config-runtime.js';
+import { prodRunDeps } from './prod-runners.js';
 
 const made: string[] = [];
 
@@ -457,5 +481,367 @@ describe('cli model layer (issue #227)', () => {
     expect(renderEffectiveConfig(view)).toContain(
       'selected model: g/file (global)',
     );
+  });
+});
+
+// The config-runtime projections (issue #384): every export of
+// config-runtime.ts is referenced by a behavioural test below, driven
+// through the real loadCliConfig over temp dirs (no network, no tokens).
+// Helpers write one layer file at a time: the global layer needs no trust,
+// the project layer loads under KUBIC_TRUST_PROJECT=1.
+function globalHome(toml: string): { home: string; cwd: string } {
+  const home = tmpDir('kubic-proj-home-');
+  const cwd = tmpDir('kubic-proj-cwd-');
+  mkdirSync(join(home, '.kubic'), { recursive: true });
+  writeFileSync(join(home, '.kubic', 'config.toml'), toml);
+  return { home, cwd };
+}
+
+function trustedProject(toml: string): { home: string; project: string } {
+  const home = tmpDir('kubic-proj-phome-');
+  const project = tmpDir('kubic-proj-project-');
+  mkdirSync(join(project, '.kubic'), { recursive: true });
+  writeFileSync(join(project, '.kubic', 'config.toml'), toml);
+  return { home, project };
+}
+
+function refusedGlobal(): ReturnType<typeof loadCliConfig> {
+  const { home, cwd } = globalHome('[bogus]\nkey = 1\n');
+  const refused = loadCliConfig({ cwd, home, env: {} });
+  expect(refused.runtime).toBeUndefined();
+  expect(refused.error).toContain('bogus');
+  return refused;
+}
+
+describe('runtimeModelPin + requireRuntimeConfig + configRefusalExit (issue #384)', () => {
+  it('is undefined when no model is pinned', () => {
+    const home = tmpDir('kubic-pin-absent-home-');
+    const cwd = tmpDir('kubic-pin-absent-cwd-');
+    expect(
+      runtimeModelPin(loadCliConfig({ cwd, home, env: {} })),
+    ).toBeUndefined();
+  });
+
+  it('projects a set pin as { provider, id }', () => {
+    const { home, cwd } = globalHome('[model]\nprovider = "g"\nid = "file"\n');
+    expect(runtimeModelPin(loadCliConfig({ cwd, home, env: {} }))).toEqual({
+      provider: 'g',
+      id: 'file',
+    });
+  });
+
+  it('is undefined on a refused config instead of a default', () => {
+    expect(runtimeModelPin(refusedGlobal())).toBeUndefined();
+  });
+
+  it('requireRuntimeConfig returns the runtime, or throws the named refusal', () => {
+    const { home, cwd } = globalHome('[model]\nprovider = "g"\nid = "file"\n');
+    const clean = loadCliConfig({ cwd, home, env: {} });
+    expect(requireRuntimeConfig(clean)).toBe(clean.runtime);
+    const refused = refusedGlobal();
+    expect(() => requireRuntimeConfig(refused)).toThrow(
+      refused.error ?? 'refused',
+    );
+  });
+
+  it('configRefusalExit stops the agent-executing modes, never the reporting ones', () => {
+    const { home, cwd } = globalHome('[model]\nprovider = "g"\nid = "file"\n');
+    const clean = loadCliConfig({ cwd, home, env: {} });
+    expect(configRefusalExit(clean, 'run')).toBeUndefined();
+    const refused = refusedGlobal();
+    for (const command of ['run', 'orchestrate', 'tui', 'replay']) {
+      expect(configRefusalExit(refused, command)).toBe(1);
+    }
+    for (const command of ['config', 'doctor', 'trust', undefined]) {
+      expect(configRefusalExit(refused, command)).toBeUndefined();
+    }
+  });
+});
+
+describe('kubicConfigLoader + doctorPolicyLoader fail closed (issue #384)', () => {
+  it('kubicConfigLoader renders the runtime, or throws the refusal', () => {
+    const { home, cwd } = globalHome('[model]\nprovider = "g"\nid = "file"\n');
+    const clean = loadCliConfig({ cwd, home, env: {} });
+    expect(kubicConfigLoader(clean)()).toBe(clean.runtime);
+    const refused = refusedGlobal();
+    expect(() => kubicConfigLoader(refused)()).toThrow(
+      refused.error ?? 'refused',
+    );
+  });
+
+  it('doctorPolicyLoader reads the approvals policy, or throws the refusal', () => {
+    const { home, cwd } = globalHome('[approvals]\nroute = "deny"\n');
+    const clean = loadCliConfig({ cwd, home, env: {} });
+    expect(doctorPolicyLoader(clean)()).toBe(clean.runtime?.approvals.policy);
+    const refused = refusedGlobal();
+    expect(() => doctorPolicyLoader(refused)()).toThrow(
+      refused.error ?? 'refused',
+    );
+  });
+});
+
+describe('approvalSnapshotFrom copies the policy (issue #384)', () => {
+  it('carries route/autoApprove/maxPendingMs by value, never by reference', () => {
+    const { home, cwd } = globalHome(
+      '[approvals]\nroute = "deny"\nmaxPendingMs = 4321\nautoApprove = ["read", "write"]\n',
+    );
+    const runtime = requireRuntimeConfig(loadCliConfig({ cwd, home, env: {} }));
+    const snapshot = approvalSnapshotFrom(runtime);
+    expect(snapshot).toEqual({
+      route: 'deny',
+      autoApprove: ['read', 'write'],
+      maxPendingMs: 4321,
+    });
+    // The frozen-snapshot guarantee: not the live array.
+    expect(snapshot.autoApprove).not.toBe(runtime.approvals.policy.autoApprove);
+    // Mutating the snapshot leaves the runtime (and the next snapshot) unchanged.
+    // (cast: the snapshot type is readonly, the runtime value is a live array.)
+    (snapshot.autoApprove as string[]).push('network');
+    expect(runtime.approvals.policy.autoApprove).toEqual(['read', 'write']);
+    expect(approvalSnapshotFrom(runtime).autoApprove).toEqual([
+      'read',
+      'write',
+    ]);
+  });
+});
+
+describe('installedPolicyClasses over the same load the lane uses (issue #384)', () => {
+  it('is {} when the config declares no classes', () => {
+    const home = tmpDir('kubic-pol-absent-home-');
+    const cwd = tmpDir('kubic-pol-absent-cwd-');
+    const result = loadCliConfig({ cwd, home, env: {} });
+    expect(result.error).toBeUndefined();
+    expect(installedPolicyClasses(result)).toEqual({});
+    expect(installedPolicyDeps(result).source).toBe('default');
+  });
+
+  it('carries configured classes with a config source', () => {
+    const { home, cwd } = globalHome('[permissions]\nshell = false\n');
+    const result = loadCliConfig({ cwd, home, env: {} });
+    expect(result.error).toBeUndefined();
+    const { classes } = installedPolicyClasses(result);
+    expect(classes?.shell).toBe(false);
+    const deps = installedPolicyDeps(result);
+    expect(deps.source).toBe('config');
+    expect(deps.classes?.shell).toBe(false);
+  });
+});
+
+describe('doctorConfigProbe names clean vs refused (issue #384)', () => {
+  it('passes on a clean load', () => {
+    const { home, cwd } = globalHome('[model]\nprovider = "g"\nid = "file"\n');
+    const probe = doctorConfigProbe(loadCliConfig({ cwd, home, env: {} }));
+    expect(probe.id).toBe('config-load');
+    expect(probe.ok).toBe(true);
+  });
+
+  it('fails by name on a refused load, never on defaults', () => {
+    const refused = refusedGlobal();
+    const probe = doctorConfigProbe(refused);
+    expect(probe.ok).toBe(false);
+    expect(probe.detail).toContain(refused.error ?? 'bogus');
+  });
+});
+
+describe('roleLayersFromConfig (issue #384)', () => {
+  it('turns [roles.<name>] model/tools into layer inputs', () => {
+    const { home, project } = trustedProject(
+      '[roles.implementer]\nmodel = "g/file"\ntools = ["read"]\n',
+    );
+    const result = loadCliConfig({
+      cwd: project,
+      home,
+      env: { KUBIC_TRUST_PROJECT: '1' },
+    });
+    expect(result.error).toBeUndefined();
+    const runtime = requireRuntimeConfig(result);
+    const layers = roleLayersFromConfig(runtime);
+    expect(layers).toHaveLength(1);
+    expect(layers[0]?.layer).toBe('project');
+    expect(layers[0]?.roles['implementer']).toEqual({
+      model: 'g/file',
+      tools: ['read'],
+    });
+    // Copied out: the projection holds its own array, not the live one.
+    expect(layers[0]?.roles['implementer']?.tools).not.toBe(
+      runtime.config.roles?.['implementer']?.tools,
+    );
+    expect(runtime.config.roles?.['implementer']?.tools).toEqual(['read']);
+  });
+
+  it('orders layers by CONFIG_LAYERS: global before project', () => {
+    const home = tmpDir('kubic-layers-home-');
+    const project = tmpDir('kubic-layers-project-');
+    mkdirSync(join(home, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(home, '.kubic', 'config.toml'),
+      '[roles.alpha]\ntools = ["read"]\n',
+    );
+    mkdirSync(join(project, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(project, '.kubic', 'config.toml'),
+      '[roles.beta]\nmodel = "g/file"\n',
+    );
+    const result = loadCliConfig({
+      cwd: project,
+      home,
+      env: { KUBIC_TRUST_PROJECT: '1' },
+    });
+    expect(result.error).toBeUndefined();
+    const layers = roleLayersFromConfig(requireRuntimeConfig(result));
+    expect(layers.map((entry) => entry.layer)).toEqual(['global', 'project']);
+    expect(layers[0]?.roles['alpha']).toEqual({ tools: ['read'] });
+    expect(layers[1]?.roles['beta']).toEqual({ model: 'g/file' });
+  });
+
+  it('is empty when no layer declares a role leaf', () => {
+    const home = tmpDir('kubic-layers-empty-home-');
+    const cwd = tmpDir('kubic-layers-empty-cwd-');
+    const result = loadCliConfig({ cwd, home, env: {} });
+    expect(roleLayersFromConfig(requireRuntimeConfig(result))).toEqual([]);
+  });
+});
+
+describe('remaining projections stay fail-closed (issue #384)', () => {
+  it('runtimePolicy is defined on a clean load, undefined on a refusal', () => {
+    const { home, cwd } = globalHome('[model]\nprovider = "g"\nid = "file"\n');
+    expect(runtimePolicy(loadCliConfig({ cwd, home, env: {} }))).toBeDefined();
+    expect(runtimePolicy(refusedGlobal())).toBeUndefined();
+  });
+
+  it('a global pin is not a frozen enterprise pin and overrides nothing', () => {
+    const { home, cwd } = globalHome('[model]\nprovider = "g"\nid = "file"\n');
+    const result = loadCliConfig({ cwd, home, env: {} });
+    // Frozen is the enterprise [model] path (host runtime tests pin it);
+    // a file pin below enterprise never freezes and overrides nothing.
+    expect(runtimeModelFrozen(result)).toBe(false);
+    expect(runtimeModelPinNotes(result)).toEqual([]);
+  });
+
+  it('sessionRetentionDays, approvals, run and lane projections read one load', () => {
+    const { home, cwd } = globalHome(
+      '[agent]\nname = "alice"\n[approvals]\nroute = "deny"\nmaxPendingMs = 4321\n[session]\nretentionDays = 9\n[permissions]\nshell = false\n',
+    );
+    const result = loadCliConfig({ cwd, home, env: {} });
+    expect(result.error).toBeUndefined();
+    expect(sessionRetentionDays(result)).toBe(9);
+    expect(runtimeApprovalDeps(result).route).toBe('deny');
+    const run = runtimeRunDeps(result);
+    expect(run.policySource).toBe('config');
+    expect(run.policyClasses?.shell).toBe(false);
+    expect(run.approvals?.route).toBe('deny');
+    const lane = runtimeLaneDeps(result);
+    expect(lane.agentId).toBe('alice');
+    expect(lane.roles?.layers).toEqual([]);
+    expect(typeof lane.roles?.trustProject).toBe('function');
+    // A refused config contributes nothing: the command fails closed first.
+    const refused = refusedGlobal();
+    expect(sessionRetentionDays(refused)).toBeUndefined();
+    expect(runtimeRunDeps(refused).policySource).toBe('default');
+    expect(runtimeLaneDeps(refused)).toEqual({});
+  });
+});
+
+describe('selectModelUnderPolicy gates before the registry (issue #384)', () => {
+  function catalog(
+    spec: { provider: string; models: string[] }[],
+  ): MutableModels {
+    const models = createModels();
+    for (const entry of spec) {
+      const faux = fauxProvider({
+        provider: entry.provider,
+        models: entry.models.map((id) => ({ id })),
+      });
+      faux.setResponses([fauxAssistantMessage('ok')]);
+      models.setProvider(faux.provider);
+    }
+    return models;
+  }
+
+  it('without a model policy it is exactly selectModel', () => {
+    const { home, cwd } = globalHome('[model]\nprovider = "g"\nid = "file"\n');
+    const policy = runtimePolicy(loadCliConfig({ cwd, home, env: {} }));
+    const models = catalog([
+      { provider: 'g', models: ['file'] },
+      { provider: 'other', models: ['m'] },
+    ]);
+    expect(
+      selectModelUnderPolicy(
+        models,
+        { provider: 'other', id: 'm' },
+        undefined,
+        undefined,
+        policy,
+      ).id,
+    ).toBe('m');
+    expect(
+      selectModelUnderPolicy(
+        models,
+        undefined,
+        { provider: 'g', id: 'file' },
+        undefined,
+        policy,
+      ).id,
+    ).toBe('file');
+  });
+
+  it('refuses a gated-out pin by name before any provider call', () => {
+    const { home, cwd } = globalHome(
+      '[policy]\nallowed_models = ["corp/approved"]\n',
+    );
+    const policy = runtimePolicy(loadCliConfig({ cwd, home, env: {} }));
+    expect(policy).toBeDefined();
+    const models = catalog([
+      { provider: 'corp', models: ['approved'] },
+      { provider: 'other', models: ['m'] },
+    ]);
+    expect(() =>
+      selectModelUnderPolicy(
+        models,
+        { provider: 'other', id: 'm' },
+        undefined,
+        undefined,
+        policy,
+      ),
+    ).toThrow(ModelSelectError);
+    expect(() =>
+      selectModelUnderPolicy(
+        models,
+        { provider: 'other', id: 'm' },
+        undefined,
+        undefined,
+        policy,
+      ),
+    ).toThrow(/refused by enterprise policy/);
+    // The allowed pin still selects.
+    expect(
+      selectModelUnderPolicy(
+        models,
+        { provider: 'corp', id: 'approved' },
+        undefined,
+        undefined,
+        policy,
+      ).id,
+    ).toBe('approved');
+  });
+});
+
+describe('end to end: the project [model] pin reaches the prod run runner (issue #384)', () => {
+  // Scope says `[agent] model`; `[agent]` only carries `name` (config.ts:
+  // checkNoUnknown(agent, {'name'})) — the top-level `[model]` pin is what
+  // Evidence describes and what runtimeModelPin projects, so that is what
+  // this drives through prodRunDeps, the builder the binary calls.
+  it('project [model] provider/id becomes prodRunDeps.model', () => {
+    const { home, project } = trustedProject(
+      '[model]\nprovider = "g"\nid = "file"\n',
+    );
+    const result = loadCliConfig({
+      cwd: project,
+      home,
+      env: { KUBIC_TRUST_PROJECT: '1' },
+    });
+    expect(result.error).toBeUndefined();
+    expect(runtimeModelPin(result)).toEqual({ provider: 'g', id: 'file' });
+    expect(prodRunDeps(result).model).toEqual({ provider: 'g', id: 'file' });
   });
 });

@@ -256,6 +256,16 @@ export async function runSessionsCommand(
   }
   if (invocation.command === 'list') {
     const listed = await listSessions(store, BACKGROUND_CONTEXT);
+    // Review #164: a `--parent` naming no recorded session is a named
+    // refusal (exit 1), not an empty listing — a run id with zero
+    // children still lists (empty) when the run itself is recorded.
+    if (
+      invocation.parent !== undefined &&
+      !listed.some((entry) => entry.id === invocation.parent)
+    ) {
+      log.error(`unknown parent session: ${invocation.parent}`);
+      return 1;
+    }
     // Issue #164 (§23): `--parent <id>` groups one run's children.
     const sessions =
       invocation.parent === undefined
@@ -328,14 +338,17 @@ export async function runSessionsCommand(
       deps.out(`session ${session.id}  cwd=${session.meta.cwd ?? '(none)'}`);
       // Issue #164 (§23): the run this session belongs to, when it has one.
       if (session.meta.parentSessionId !== undefined) {
+        // Review #164: role/agentId ride operator-typed binding values into
+        // metadata, so they go through the same display strip as transcript
+        // text before reaching the operator's terminal.
         const scoped = [
           `parent=${session.meta.parentSessionId}`,
           ...(session.meta.role === undefined
             ? []
-            : [`role=${session.meta.role}`]),
+            : [`role=${oneLine(session.meta.role)}`]),
           ...(session.meta.agentId === undefined
             ? []
-            : [`agent=${session.meta.agentId}`]),
+            : [`agent=${oneLine(session.meta.agentId)}`]),
         ].join(' ');
         deps.out(scoped);
       }

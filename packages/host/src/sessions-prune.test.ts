@@ -685,6 +685,26 @@ describe('sessions prune, config flow (issue #119)', () => {
       }
     });
 
+    it('a live-locked child keeps its aged parent (review #164)', async () => {
+      const root = tmpRoot();
+      runSession(root, 'orch-1', 40 * DAY_MS);
+      runSession(root, 'orch-1-aaa', 60 * 60 * 1000, 'orch-1');
+      // The child is mid-run: its lock is live, so it is reported locked
+      // — but its mtime still counts toward the family's age.
+      lockFile(root, 'orch-1-aaa', FAKE_PID, 60 * 60 * 1000);
+      const kill = stubKill(true);
+      try {
+        const { code, lines } = await prune(root, { keepDays: 30 });
+        expect(code).toBe(0);
+        const text = lines.join('\n');
+        expect(text).toContain('locked: orch-1-aaa');
+        expect(text).not.toContain('would prune orch-1');
+        expect(existsSync(join(root, 'orch-1'))).toBe(true);
+      } finally {
+        kill.mockRestore();
+      }
+    });
+
     it('keeps the children of an explicitly kept parent', async () => {
       const root = tmpRoot();
       runSession(root, 'orch-1', 40 * DAY_MS);

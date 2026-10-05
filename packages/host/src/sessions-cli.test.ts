@@ -235,6 +235,22 @@ describe('sessions CLI (issue #14, slice F)', () => {
     ]);
   });
 
+  it('list --parent on an unknown run names the filter (review #164)', async () => {
+    const root = tmpRoot();
+    const o = out();
+    const e = out();
+    const code = await runSessionsCommand(
+      { command: 'list', parent: 'nope' },
+      {
+        sessionsRoot: root,
+        out: o.write,
+        logger: createLineLogger(e.write),
+      },
+    );
+    expect(code).toBe(1);
+    expect(e.lines.join('\n')).toContain('nope');
+  });
+
   it('list --json emits one {id, cwd} object per session', async () => {
     const root = tmpRoot();
     const o = out();
@@ -256,6 +272,32 @@ describe('sessions CLI (issue #14, slice F)', () => {
     expect(JSON.parse(listing.lines.join('\n'))).toEqual([
       { id: o.lines[0], cwd: '/work' },
     ]);
+  });
+
+  it('attach strips control sequences from the parent/role/agent line (review #164)', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const worker = await createSession(
+      store,
+      {
+        id: 'orch-1-aaa',
+        cwd: '/repo/.kubic/wt/aaa',
+        parentSessionId: 'orch-1',
+        role: 'impl\u001b[2Jementer',
+        agentId: 'a\u0007aa',
+      },
+      BACKGROUND_CONTEXT,
+    );
+    await worker.release(BACKGROUND_CONTEXT);
+    const o = out();
+    const code = await runSessionsCommand(
+      { command: 'attach', id: 'orch-1-aaa' },
+      { sessionsRoot: root, out: o.write },
+    );
+    expect(code).toBe(0);
+    const text = o.lines.join('\n');
+    expect(text).toContain('parent=orch-1');
+    expect(text).not.toMatch(/\u001b|\u0007/);
   });
 
   it('attaches and shows the transcript tail as readable turn lines', async () => {

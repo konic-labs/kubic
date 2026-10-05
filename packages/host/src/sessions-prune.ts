@@ -155,8 +155,11 @@ export function planSessionPrune(args: SessionPrunePlanArgs): SessionPrunePlan {
     throw new SessionsRootError(args.root, detail(error));
   }
   // First pass: locks and mtimes. Locked sessions are reported, never
-  // aged; everything else records its mtime for the family evaluation.
+  // candidates — but a mid-run member still counts toward its family's
+  // age (review #164: an old parent with a live-locked child keeps the
+  // parent, since the run is as young as its youngest member).
   const mtimes = new Map<string, number>();
+  const lockedIds = new Set<string>();
   for (const entry of entries) {
     if (!entry.isDirectory || entry.isSymbolicLink) continue;
     if (!SESSION_ID_PATTERN.test(entry.name)) continue;
@@ -164,7 +167,7 @@ export function planSessionPrune(args: SessionPrunePlanArgs): SessionPrunePlan {
     const posture = sessionLockIsLive(join(args.root, entry.name));
     if (posture !== undefined) {
       plan.locked.push({ id: entry.name, ...posture });
-      continue;
+      lockedIds.add(entry.name);
     }
     let info: BridgeFileInfo;
     try {
@@ -206,6 +209,7 @@ export function planSessionPrune(args: SessionPrunePlanArgs): SessionPrunePlan {
   const effectiveMtime = (id: string): number =>
     familyMtime.get(familyRoot(id)) ?? 0;
   for (const id of mtimes.keys()) {
+    if (lockedIds.has(id)) continue; // locked: reported, never a candidate
     if (effectiveMtime(id) > cutoff) continue; // recent: not a candidate
     if (keep.has(id)) {
       plan.kept.push({ id, why: '--keep-session' });

@@ -225,19 +225,20 @@ export async function loadSessionCostRows(
   // escape, never a marker row); a child that cannot be opened reports a
   // zero marker row like the listing sweep, so a still-running worker
   // (live lock) reads as `(locked)` instead of failing the report.
+  const listed =
+    sessionId === undefined
+      ? []
+      : (await listSessions(store, BACKGROUND_CONTEXT))
+          .filter(
+            (entry) =>
+              entry.id !== sessionId &&
+              entry.meta?.parentSessionId === sessionId,
+          )
+          .map((entry) => ({ id: entry.id }));
   const entries =
     sessionId === undefined
       ? await listSessions(store, BACKGROUND_CONTEXT)
-      : [
-          { id: sessionId },
-          ...(await listSessions(store, BACKGROUND_CONTEXT))
-            .filter(
-              (entry) =>
-                entry.id !== sessionId &&
-                entry.meta?.parentSessionId === sessionId,
-            )
-            .map((entry) => ({ id: entry.id })),
-        ];
+      : [{ id: sessionId }, ...listed];
   const rows: AgentCostInput[] = [];
   for (const entry of entries) {
     let session: Awaited<ReturnType<typeof attachSession>>;
@@ -249,6 +250,19 @@ export async function loadSessionCostRows(
       // `runCostCommand` prints the refusal and exits 1, as it did before
       // the durable store. Marker rows are for the listing sweep — and for
       // the NAMED run's children — only.
+      // Review #164: a live run's manager record is lock-held by the run
+      // itself — refusing the whole report would leave a running run with
+      // no cost view. With children recorded, the parent row is skipped
+      // and the report covers the children; without children the named
+      // contract below still escapes.
+      if (
+        sessionId !== undefined &&
+        entry.id === sessionId &&
+        error instanceof SessionLockError &&
+        listed.length > 0
+      ) {
+        continue;
+      }
       if (
         sessionId !== undefined &&
         entry.id === sessionId &&

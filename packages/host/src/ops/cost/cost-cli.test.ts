@@ -597,6 +597,42 @@ describe('kubic cost durable usage (issue #400)', () => {
     expect(expected).toBeGreaterThanOrEqual(0);
   });
 
+  it('a live-locked manager still reports its children (review #164)', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    // The manager stays attached: a live run holds the Kubic lock exactly
+    // like this, so the old contract would refuse the whole report.
+    const parent = await createSession(
+      store,
+      { id: 'orch-1', cwd: '/repo' },
+      BACKGROUND_CONTEXT,
+    );
+    try {
+      for (const agent of ['aaa', 'bbb']) {
+        const worker = await createSession(
+          store,
+          {
+            id: `orch-1-${agent}`,
+            cwd: `/repo/.kubic/wt/${agent}`,
+            parentSessionId: 'orch-1',
+            role: 'implementer',
+            agentId: agent,
+          },
+          BACKGROUND_CONTEXT,
+        );
+        await fauxRun(worker.adopt());
+        await worker.release(BACKGROUND_CONTEXT);
+      }
+      const rows = await loadSessionCostRows(root, 'orch-1');
+      expect(rows.map((row) => row.agentId).sort()).toEqual([
+        'orch-1-aaa',
+        'orch-1-bbb',
+      ]);
+    } finally {
+      await parent.release(BACKGROUND_CONTEXT);
+    }
+  });
+
   it('still refuses an unknown explicit --session (exit 1), never a marker row', async () => {
     const root = tmpRoot();
     await expect(loadSessionCostRows(root, 'missing')).rejects.toMatchObject({

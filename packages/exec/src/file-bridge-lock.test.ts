@@ -120,16 +120,26 @@ describe('updateFileLocked failure paths (issue #360)', () => {
 
   it('removes the tmp file when the rename fails, leaving the target intact', () => {
     const dir = scratch();
-    const sub = join(dir, 'sub');
-    mkdirSync(sub);
-    writeFileSync(join(sub, 'keep.txt'), 'k');
-    // Renaming a file onto a non-empty directory fails: the tmp write must
-    // be cleaned up and the directory untouched.
-    expect(() => updateFileLocked(sub, () => 'x')).toThrow();
+    const file = join(dir, 'victim.txt');
+    writeFileSync(file, 'before');
+    // Read-succeed-then-rename-fail: the callback swaps the regular file
+    // for a non-empty dir, so the pre-read succeeds, the tmp write lands,
+    // and only the rename onto the dir fails — exercising the rmSync(tmp)
+    // catch (a dir target from the start would throw EISDIR in the
+    // pre-read and never reach the rename).
+    expect(() =>
+      updateFileLocked(file, () => {
+        rmSync(file);
+        mkdirSync(file);
+        writeFileSync(join(file, 'k'), 'k');
+        return 'after';
+      }),
+    ).toThrow();
     expect(readdirSync(dir).filter((name) => name.includes('.tmp.'))).toEqual(
       [],
     );
-    expect(readFileSync(join(sub, 'keep.txt'), 'utf8')).toBe('k');
+    expect(existsSync(`${file}.lock`)).toBe(false);
+    expect(readFileSync(join(file, 'k'), 'utf8')).toBe('k');
   });
 
   it('two child processes doing 50 increments each end at 100', async () => {

@@ -43,10 +43,28 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // A faked clock must never outlive a test: `waitFor` polls with real
+  // timers, so a leaked fake clock would hang every later wait.
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   for (const dir of made.splice(0))
     rmSync(dir, { recursive: true, force: true });
 });
+
+// The paste state machine arms its idle valve with `setTimeout`. Feeding the
+// chunks of one paste inside this window means no real time can pass between
+// them — a loaded machine can stall a task for longer than PASTE_IDLE_MS, and
+// the valve firing mid-paste is a test-timing failure that blames the
+// product (issue #338 review, cycle 4). `waitFor` needs real timers, so the
+// window is always closed again before waiting.
+function withFrozenTime<T>(body: () => T): T {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    return body();
+  } finally {
+    vi.useRealTimers();
+  }
+}
 
 // The user message the faux provider last received, structurally typed:
 // only `role` and `content` are read, so this test needs no Pi type.
@@ -543,13 +561,22 @@ describe('kubic tui /image (issue #338)', () => {
     // the reassembly cap, and the third is pure payload: the discard state
     // must consume it up to the terminator rather than type megabytes of
     // base64 into the draft (issue #338 review, cycle 2).
+    // All three chunks back to back, with no await between them: the second
+    // feed sets the footer synchronously, so nothing here depends on the
+    // idle valve not firing first (a >PASTE_IDLE_MS stall between feeds on a
+    // loaded machine would otherwise clear the discard state and type the
+    // third chunk's payload — a test-timing failure that blames the product).
     const payload = 'A'.repeat(7 * 1024 * 1024);
-    fake.feed(`\x1b]1337;File=name=big.png;inline=1:${payload.slice(0, 4096)}`);
-    fake.feed(payload.slice(4096, 7 * 1024 * 1024 - 2048));
+    withFrozenTime(() => {
+      fake.feed(
+        `\x1b]1337;File=name=big.png;inline=1:${payload.slice(0, 4096)}`,
+      );
+      fake.feed(payload.slice(4096, 7 * 1024 * 1024 - 2048));
+      fake.feed(`${payload.slice(-2048)}\x07`);
+    });
     await waitFor(() =>
       fake.writes.join('').includes('is too large (> 5.0 MB)'),
     );
-    fake.feed(`${payload.slice(-2048)}\x07`);
     // Then type normally: the draft must hold only what was typed after the
     // paste, never payload.
     for (const ch of 'after') fake.feed(ch);
@@ -590,17 +617,16 @@ describe('kubic tui /image (issue #338)', () => {
 
     // One call: the sequence is already past the cap when it arrives, so no
     // earlier partial buffer exists to inherit a timer from — the discard
-    // state is armed on its own.
-    fake.feed(
-      `\x1b]1337;File=name=big.png;inline=1:${'A'.repeat(7 * 1024 * 1024)}`,
-    );
-    await waitFor(() =>
-      fake.writes.join('').includes('is too large (> 5.0 MB)'),
-    );
-    // The footer deliberately stays the same when this valve fires (the paste
-    // really was over the cap), so the bound itself is the wait: PASTE_IDLE_MS
-    // with a wide margin, after which typing must land in the draft again.
-    await new Promise((resolve) => setTimeout(resolve, PASTE_IDLE_MS * 4));
+    // state arms its own valve, on the faked clock, and the advance fires it.
+    // The footer deliberately stays the same when the valve fires (the paste
+    // really was over the cap), so typing again is the observable.
+    withFrozenTime(() => {
+      fake.feed(
+        `\x1b]1337;File=name=big.png;inline=1:${'A'.repeat(7 * 1024 * 1024)}`,
+      );
+      expect(fake.writes.join('')).toContain('is too large (> 5.0 MB)');
+      vi.advanceTimersByTime(PASTE_IDLE_MS + 1);
+    });
     for (const ch of 'typed') fake.feed(ch);
     await waitFor(() => fake.writes.join('').includes('typed'));
     expect(fake.writes.join('')).not.toContain('AAAAAAAA');

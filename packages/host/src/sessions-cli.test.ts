@@ -92,6 +92,58 @@ async function seededSession(
   return session.id;
 }
 
+// One real session with a faux turn AND a real compaction, released for the
+// CLI to attach (issue #318: the compaction entry must render readable).
+async function seededCompactedSession(root: string): Promise<string> {
+  const store = openSessionStore(root, createNodeFileBridge(root));
+  const session = await createSession(
+    store,
+    { cwd: '/work' },
+    BACKGROUND_CONTEXT,
+  );
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const harness = await Harness.open(
+    session.adopt(),
+    {
+      models,
+      registry: createRegistry(),
+      // Evict everything, so the compact commits a summary entry.
+      settings: { compaction: { keepRecentTokens: 0 } },
+    },
+    BACKGROUND_CONTEXT,
+  );
+  const conversation = await harness.root(BACKGROUND_CONTEXT, {
+    agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+  });
+  faux.setResponses([fauxAssistantMessage('a long answer')]);
+  await (
+    await conversation.submit(
+      { type: 'input', content: 'work' },
+      BACKGROUND_CONTEXT,
+    )
+  ).wait(BACKGROUND_CONTEXT);
+  // The summarizer's answer becomes the stored compaction summary.
+  faux.setResponses([fauxAssistantMessage('## Goal\nSummarized.')]);
+  const task = await conversation.compact(undefined, BACKGROUND_CONTEXT);
+  const settled = await harness.waitForTask(task, BACKGROUND_CONTEXT);
+  // The summary is placed through a write submission: wait for that write
+  // so the entry is committed when attach reads it.
+  const submissionId =
+    settled.state.outcome.status === 'completed'
+      ? settled.state.outcome.result.submissionId
+      : undefined;
+  if (submissionId !== undefined) {
+    await (
+      await harness.submission(submissionId, BACKGROUND_CONTEXT)
+    )?.wait(BACKGROUND_CONTEXT);
+  }
+  await harness.close(BACKGROUND_CONTEXT);
+  await session.release(BACKGROUND_CONTEXT);
+  return session.id;
+}
+
 describe('sessions CLI (issue #14, slice F)', () => {
   it('creates and lists sessions', async () => {
     const root = tmpRoot();
@@ -404,6 +456,47 @@ describe('sessions CLI (issue #14, slice F)', () => {
     expect(o.lines.some((line) => line.startsWith('tool-result read:'))).toBe(
       true,
     );
+  });
+
+  it('renders a compaction entry as a readable line under --tail (#318)', async () => {
+    const root = tmpRoot();
+    const id = await seededCompactedSession(root);
+    const o = out();
+    const code = await runSessionsCommand(
+      { command: 'attach', id, tail: 3 },
+      {
+        sessionsRoot: root,
+        out: o.write,
+      },
+    );
+    expect(code).toBe(0);
+    expect(o.lines.some((line) => line.startsWith('[compaction]'))).toBe(
+      true,
+    );
+    expect(o.lines.join('\n')).toContain('Summarized.');
+    expect(o.lines.join('\n')).not.toContain('"role"');
+  });
+
+  it('attach --json keeps the raw tail entries (#318)', async () => {
+    const root = tmpRoot();
+    const id = await seededCompactedSession(root);
+    const o = out();
+    const code = await runSessionsCommand(
+      { command: 'attach', id, tail: 10, json: true },
+      {
+        sessionsRoot: root,
+        out: o.write,
+      },
+    );
+    expect(code).toBe(0);
+    // Raw entries: every entry line parses as JSON and the compaction
+    // entry is present in full (no truncation, no readable rendering).
+    const tail = o.lines.filter((line) => line.startsWith('{'));
+    expect(tail.length).toBeGreaterThan(0);
+    for (const line of tail) {
+      expect(() => JSON.parse(line)).not.toThrow();
+    }
+    expect(tail.join('\n')).toContain('pi.compaction');
   });
 
   it('honours --tail over the transcript items', async () => {

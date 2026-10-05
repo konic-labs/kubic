@@ -506,12 +506,14 @@ function registerSessions(program: Command, ctx: CommandContext): void {
       '--ids',
       'prefix each line with its entry id (for `sessions fork --at`)',
     )
+    .option('--json', 'print the raw tail entries as JSON (untruncated)')
     .action(async (id, opts) => {
       await run({
         command: 'attach',
         id,
         ...(opts.tail === undefined ? {} : { tail: opts.tail }),
         ...(opts.ids === true ? { ids: true } : {}),
+        ...(opts.json === true ? { json: true } : {}),
       });
     });
   sessions

@@ -71,6 +71,9 @@ export type SessionsInvocation =
       readonly id: string;
       readonly tail?: number;
       readonly ids?: boolean;
+      // Issue #318: the raw form the readable rendering replaces — one
+      // full (untruncated) entry JSON per line, for scripting.
+      readonly json?: boolean;
     }
   | {
       readonly command: 'fork';
@@ -399,6 +402,10 @@ export async function runSessionsCommand(
       ].sort((left, right) => left.id - right.id);
       const lines: string[] = [];
       for (const entry of entries) {
+        if (invocation.json === true) {
+          lines.push(JSON.stringify(entry));
+          continue;
+        }
         const item = entriesToTranscript([entry])[0];
         if (item === undefined) continue;
         const line = renderTranscriptItem(item);

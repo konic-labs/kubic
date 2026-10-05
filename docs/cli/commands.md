@@ -756,6 +756,13 @@ parsed `tests` counts.
 Failures print `error: <message> code=<code>` **on stderr** and exit 1
 (session creation, spawn, worker, merge, reap and manager-toolset failures),
 2 (usage), 5 (the non-git refusal — orchestrator mode needs a git
+repository, §78), or 4 (approval denied) — see
+[exit codes](exit-codes.md). stdout carries only the report (or, under
+`--json`, exactly one two-space-indented envelope — the `error:` line still
+goes to stderr, so `kubic orchestrate --json … | jq` always parses). On a
+colour terminal the report labels (`session:`, `merged:`, `result:`, …) are
+coloured; `NO_COLOR`, a pipe, and `--json` turn colour off.
+
 **Model-driven manager lane (issue #431, L-D34).** Opt-in, default off:
 `--manager-lane` (or `[orchestrator] manager = "lane"`) routes the
 submitted prompt through the manager lane instead of the deterministic
@@ -790,16 +797,6 @@ connection surfaces on the first attempt — named, never a hang inside
 durable backoff (transient blips fail the run; `--resume` replays the
 stored transcript). `--resume --session <id>` re-attaches the lane
 without re-running settled workers or re-merging merged ones.
-
-Failures print `error: <message> code=<code>` **on stderr** and exit 1
-(session creation, spawn, worker, merge, reap and manager-toolset failures),
-2 (usage), 5 (the non-git refusal — orchestrator mode needs a git
-repository, §78), or 4 (approval denied) — see
-[exit codes](exit-codes.md). stdout carries only the report (or, under
-`--json`, exactly one two-space-indented envelope — the `error:` line still
-goes to stderr, so `kubic orchestrate --json … | jq` always parses). On a
-colour terminal the report labels (`session:`, `merged:`, `result:`, …) are
-coloured; `NO_COLOR`, a pipe, and `--json` turn colour off.
 
 **A genuine merge conflict is delegated, never resolved by the manager**
 (issue #106, §45.2). The merge aborts first (never a half-merged tree); the

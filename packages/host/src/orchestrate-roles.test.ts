@@ -247,8 +247,9 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
     expect(storedBeta).toContain('You are the implementer.');
     expect(storedBeta).toContain("Plan step 2 of 2 for agent 'beta'");
 
-    // …and a resume with no -p replays it verbatim, so the retried worker
-    // runs the same composed prompt it ran before the kill.
+    // …and a resume with no -p replays it as the prompt prefix, so the
+    // retried worker runs the same composed prompt it ran before the
+    // kill — with the §24 transfer block rendered after it (issue #184).
     const second = makeWorld({
       loadWorkerRoles: roleLoaderFor(files),
       loadState: () => structuredClone(killed),
@@ -260,7 +261,8 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
       ),
     ).toBe(0);
     expect(second.prompts).toHaveLength(1);
-    expect(second.prompts[0]?.prompt).toBe(storedBeta);
+    expect(second.prompts[0]?.prompt).toContain(storedBeta);
+    expect(second.prompts[0]?.prompt).toContain('Task:');
     expect(second.spawnInfo[0]?.info?.role).toBe('implementer');
   });
 

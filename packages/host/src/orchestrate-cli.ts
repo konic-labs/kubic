@@ -147,6 +147,19 @@ import {
   buildParallelTreeLine,
   buildParallelWorkersExtra,
 } from './orchestrator/parallel/visibility.js';
+import type {
+  TaskArtifact,
+  TaskTransfer,
+  TaskTransferInput,
+} from './orchestrator/transfer.js';
+import {
+  artifactFromResult,
+  buildHandoff,
+  buildTaskTransfer,
+  handoffFindingLines,
+  isStoredArtifact,
+  renderTransferRecord,
+} from './orchestrator/transfer.js';
 import { validateAgentId } from './orchestrator/worktree/naming.js';
 import type { WorktreeStatus } from './orchestrator/worktree/status.js';
 import {
@@ -543,6 +556,12 @@ export interface OrchestratorRunState {
   // The manager's final message (issue #431): its last transcript text,
   // carried for the #418 envelope. Absent until the lane finishes.
   managerSummary?: string;
+  // The context transfer records (issue #184, §24/§25): one transfer per
+  // launched worker plus one artifact per settled result, keyed by agent.
+  // Rebuilt at every launch from the stored results, so a --resume
+  // recomposes the same findings deterministically.
+  transfers?: Record<string, TaskTransfer>;
+  artifacts?: Record<string, TaskArtifact>;
   // Write-ahead worker completions (issue #160): one entry per worker that
   // settled successfully but is not merged yet — branch + hunks (+ the §68
   // result when the worker reported one). Persisted as soon as the worker
@@ -733,6 +752,31 @@ export function parseOrchestratorRunState(
   }
   if (value.laneDriven === true && value.managerSessionId === undefined) {
     return undefined;
+  }
+  // The transfer records (issue #184, §24/§25): keys must name this run's
+  // workers and every record must validate — a torn or hand-edited state
+  // fails closed rather than composing prompts from garbage.
+  if (value.transfers !== undefined) {
+    if (typeof value.transfers !== 'object' || value.transfers === null) {
+      return undefined;
+    }
+    for (const [key, entry] of Object.entries(value.transfers)) {
+      if (!agents.includes(key)) return undefined;
+      try {
+        buildTaskTransfer(entry as TaskTransferInput);
+      } catch {
+        return undefined;
+      }
+    }
+  }
+  if (value.artifacts !== undefined) {
+    if (typeof value.artifacts !== 'object' || value.artifacts === null) {
+      return undefined;
+    }
+    for (const [key, entry] of Object.entries(value.artifacts)) {
+      if (!agents.includes(key)) return undefined;
+      if (!isStoredArtifact(entry)) return undefined;
+    }
   }
   return raw as OrchestratorRunState;
 }
@@ -2338,9 +2382,96 @@ export async function runOrchestrateCommand(
   // there); the fallback keeps `promptForWorker` total — a mint without
   // a recorded step runs the objective, never a crash.
   const plan = (state.plan ?? []) as ManagerPlanStep[];
-  const promptForWorker = (agentId: string): string => {
+  // Every worker's output is reviewed and merged (the merge gate), so the
+  // transfer names that contract as the expected output.
+  const TRANSFER_EXPECTED_OUTPUT =
+    'changes committed on the worker branch for review and merge';
+  // The artifact ledger (issue #184, §25.2): artifacts materialize lazily
+  // from settled results — including results rehydrated from stored state
+  // on a resume — so a retry rebuilds the same findings deterministically.
+  // A result that fails the §69 gate is skipped fail-closed (debug line,
+  // no artifact): the worker still merges on its hunks, it just hands
+  // nothing down the agent order.
+  const ensureArtifact = (agentId: string): TaskArtifact | undefined => {
+    const stored = state.artifacts?.[agentId];
+    if (stored !== undefined) return stored;
+    const result = resultsByAgent.get(agentId);
+    if (result === undefined) return undefined;
+    const placement = prepared.get(agentId) ?? worktrees.get(agentId);
+    if (placement === undefined) {
+      debug(`artifact for '${agentId}': no worktree recorded — skipped`);
+      return undefined;
+    }
+    try {
+      const artifact = artifactFromResult(agentId, result, {
+        worktree: placement.path,
+        diffRef: result.diff?.diffId ?? `branch:${placement.branch}`,
+      });
+      state.artifacts = { ...state.artifacts, [agentId]: artifact };
+      return artifact;
+    } catch (error) {
+      debug(
+        `artifact for '${agentId}' rejected — ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return undefined;
+    }
+  };
+  // The handoff chain (issue #184, §25.3/§69): findings flow down the
+  // agent order from workers that already settled — a worker launching
+  // before an earlier sibling settles simply sees fewer findings.
+  const previousFindingsFor = (agentId: string): string[] => {
+    const lines: string[] = [];
+    for (const earlier of state.agents) {
+      if (earlier === agentId) break;
+      const artifact = ensureArtifact(earlier);
+      if (artifact === undefined) continue;
+      try {
+        lines.push(
+          ...handoffFindingLines(
+            buildHandoff(
+              earlier,
+              artifact,
+              state.transfers?.[earlier]?.constraints ?? [],
+            ),
+          ),
+        );
+      } catch (error) {
+        debug(
+          `handoff from '${earlier}' rejected — ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    return lines;
+  };
+  const promptForWorker = (
+    agentId: string,
+    worktree: OrchestrateWorktree,
+  ): string => {
     const step = planStepFor(plan, agentId);
-    return step === undefined ? prompt : step.prompt;
+    const base = step === undefined ? prompt : step.prompt;
+    // The transfer (issue #184, §24) is rebuilt at every launch and
+    // rendered after the step prompt — the stored plan step stays the
+    // worker's own prompt, so a --resume replays it verbatim while the
+    // findings always reflect the artifacts settled so far. A transfer
+    // that cannot validate (an empty stored objective) degrades to the
+    // bare step prompt rather than crashing the launch.
+    try {
+      const transfer = buildTaskTransfer({
+        task: state.prompt,
+        worktree: worktree.path,
+        relevantFiles: [],
+        constraints: [...(spawnRoleInfo(agentId, rolePlan).requires ?? [])],
+        expectedOutput: TRANSFER_EXPECTED_OUTPUT,
+        previousFindings: previousFindingsFor(agentId),
+      });
+      state.transfers = { ...state.transfers, [agentId]: transfer };
+      return `${base}\n\n${renderTransferRecord(transfer)}`;
+    } catch (error) {
+      debug(
+        `transfer for '${agentId}' rejected — ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return base;
+    }
   };
   // The lane's minted roles (issue #431): `onSpawned` records each mint's
   // role here, so `spawnRoleInfo` (session linkage, worker rows) and the
@@ -3247,24 +3378,29 @@ export async function runOrchestrateCommand(
         approvalsRun.beginWorker(approvalScopeFor(agentId, worktree));
       }
       const output = runOutputOf(
-        await deps.runWorker(agentId, worktree, promptForWorker(agentId), {
-          sessionId,
-          workerSessionId,
-          ...(worktreeMsByAgent.get(agentId) === undefined
-            ? {}
-            : { worktreeMs: worktreeMsByAgent.get(agentId) as number }),
-          // The role this worker was assigned and the tool set its lane
-          // must register (§12.1/§40): the resolved set is what withholds
-          // a tool — absence, never approval. Absent means no role
-          // document exists for this worker, so nothing is narrowed.
-          ...spawnRoleInfo(agentId, rolePlan),
-          // §67 task resources (issue #170): the run's `--skill` values reach
-          // every worker (the STORED ones on a resume), and the run resolves
-          // them against its own cwd.
-          ...(effectiveSkills.length === 0
-            ? {}
-            : { skills: [...effectiveSkills] }),
-        }),
+        await deps.runWorker(
+          agentId,
+          worktree,
+          promptForWorker(agentId, worktree),
+          {
+            sessionId,
+            workerSessionId,
+            ...(worktreeMsByAgent.get(agentId) === undefined
+              ? {}
+              : { worktreeMs: worktreeMsByAgent.get(agentId) as number }),
+            // The role this worker was assigned and the tool set its lane
+            // must register (§12.1/§40): the resolved set is what withholds
+            // a tool — absence, never approval. Absent means no role
+            // document exists for this worker, so nothing is narrowed.
+            ...spawnRoleInfo(agentId, rolePlan),
+            // §67 task resources (issue #170): the run's `--skill` values reach
+            // every worker (the STORED ones on a resume), and the run resolves
+            // them against its own cwd.
+            ...(effectiveSkills.length === 0
+              ? {}
+              : { skills: [...effectiveSkills] }),
+          },
+        ),
       );
       if (output.result !== undefined) {
         resultsByAgent.set(agentId, output.result);

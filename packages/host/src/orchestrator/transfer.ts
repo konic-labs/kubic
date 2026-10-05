@@ -195,6 +195,90 @@ export function buildTaskTransfer(input: TaskTransferInput): TaskTransfer {
 }
 
 /**
+ * §25.3 Handoff: the validated record one worker's artifact becomes for
+ * the next — result, artifact refs, diff ref, worktree, constraints.
+ * Never transcripts (§69): validated at build, like the artifact.
+ */
+export interface Handoff {
+  fromAgentId: string;
+  summary: string;
+  fileRefs: string[];
+  findings: string[];
+  diffRef?: string;
+  worktree: string;
+  constraints: string[];
+}
+
+export function buildHandoff(
+  fromAgentId: string,
+  artifact: TaskArtifact,
+  constraints: string[],
+): Handoff {
+  if (!isStringList(constraints)) {
+    throw new TransferRejectedError(
+      'invalid_record',
+      `handoff from '${fromAgentId}' needs string constraints`,
+    );
+  }
+  const handoff: Handoff = {
+    fromAgentId,
+    summary: artifact.summary,
+    fileRefs: [...artifact.fileRefs],
+    findings: [...artifact.findings],
+    ...(artifact.diffRef === undefined ? {} : { diffRef: artifact.diffRef }),
+    worktree: artifact.worktree,
+    constraints: [...constraints],
+  };
+  assertNoTranscript(handoff, `handoff from '${fromAgentId}'`);
+  return handoff;
+}
+
+/**
+ * Render a handoff as previous-findings lines: one summary line naming
+ * the files, then one line per finding — all plain strings, prompt-safe.
+ */
+export function handoffFindingLines(handoff: Handoff): string[] {
+  const files = handoff.fileRefs.join(', ') || 'no files';
+  return [
+    `${handoff.fromAgentId}: ${handoff.summary} (${files})`,
+    ...handoff.findings.map((finding) => `${handoff.fromAgentId}: ${finding}`),
+  ];
+}
+
+/**
+ * Stored-artifact validation (issue #184): run state is untrusted JSON,
+ * so a resumed run re-validates every artifact — shape plus the §69 gate
+ * — before it may feed a handoff. Anything malformed fails closed.
+ */
+export function isStoredArtifact(value: unknown): value is TaskArtifact {
+  if (typeof value !== 'object' || value === null) return false;
+  const entry = value as Record<string, unknown>;
+  if (typeof entry.summary !== 'string' || entry.summary.trim() === '') {
+    return false;
+  }
+  if (!isStringList(entry.fileRefs) || !isStringList(entry.findings)) {
+    return false;
+  }
+  if (!Array.isArray(entry.testResults)) return false;
+  if (
+    !Array.isArray(entry.decisions) ||
+    !entry.decisions.every((item) => typeof item === 'string')
+  ) {
+    return false;
+  }
+  if (typeof entry.worktree !== 'string') return false;
+  if (entry.diffRef !== undefined && typeof entry.diffRef !== 'string') {
+    return false;
+  }
+  try {
+    assertNoTranscript(value, 'stored artifact');
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Render a transfer deterministically into prompt text: fixed section
  * order, fixed labels, no model-generated prose. The same record always
  * renders the same text.

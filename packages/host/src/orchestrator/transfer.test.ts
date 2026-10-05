@@ -6,7 +6,10 @@ import { buildAgentResult } from '../../../worker/src/result.js';
 import {
   artifactFromResult,
   assertNoTranscript,
+  buildHandoff,
   buildTaskTransfer,
+  handoffFindingLines,
+  isStoredArtifact,
   renderTransferRecord,
   TransferRejectedError,
 } from './transfer.js';
@@ -96,6 +99,40 @@ describe('transfer slice 1: artifact, record, render, validator (#184)', () => {
         expectedOutput: 'x',
       }),
     ).toThrow(/task must be a non-empty string/);
+  });
+
+  it('builds a handoff and renders its finding lines', () => {
+    const artifact = artifactFromResult(
+      'worker-1',
+      completed('did alpha', ['a.txt']),
+      {
+        worktree: '/wt/w1',
+      },
+    );
+    const handoff = buildHandoff('worker-1', artifact, ['stay inside']);
+    expect(handoff.worktree).toBe('/wt/w1');
+    expect(handoff.constraints).toEqual(['stay inside']);
+    expect(handoffFindingLines(handoff)).toEqual([
+      'worker-1: did alpha (a.txt)',
+    ]);
+    expect(() =>
+      buildHandoff('worker-1', artifact, ['ok', 7] as never),
+    ).toThrow(/string constraints/);
+  });
+
+  it('validates stored artifacts: shape plus the §69 gate', () => {
+    const artifact = artifactFromResult(
+      'worker-1',
+      completed('did alpha', ['a.txt']),
+      {
+        worktree: '/wt/w1',
+      },
+    );
+    expect(isStoredArtifact(JSON.parse(JSON.stringify(artifact)))).toBe(true);
+    expect(isStoredArtifact({ ...artifact, summary: '  ' })).toBe(false);
+    expect(
+      isStoredArtifact({ ...artifact, findings: [{ role: 'user' }] }),
+    ).toBe(false);
   });
 
   it('renders deterministically and JSON-round-trips', () => {

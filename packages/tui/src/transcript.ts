@@ -7,10 +7,7 @@
 // The ScrollView owns follow state (follow:'end', primary nearest,
 // overscroll chain); this module owns the document: delta appends rebuild
 // the single Markdown child exactly once per entry and never clear it.
-import type {
-  LaneImagePart,
-  LaneSnapshot,
-} from '../../core/src/presentation.js';
+import type { LaneImagePart } from '../../core/src/presentation.js';
 import { createAttachmentComponent } from './attachments.js';
 import { sanitizeLaneText } from './lane-cells.js';
 import { type TuiTheme, tuiTheme } from './theme.js';

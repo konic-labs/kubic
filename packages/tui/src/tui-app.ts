@@ -411,8 +411,6 @@ export interface TuiApp {
     readonly thinking?: string;
     readonly usage?: ReadonlyArray<StatusUsageRow>;
   }): void;
-  // Issue #305: the editor's autocomplete (the registry's `/` commands).
-  setAutocomplete(provider: AutocompleteProvider): void;
   // Issue #309: the confirmation dialog (the full-access toggle). Returns
   // false when this boot has no overlay seat.
   openConfirm(options: TuiConfirmOptions): boolean;

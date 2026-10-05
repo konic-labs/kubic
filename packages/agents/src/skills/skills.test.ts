@@ -953,15 +953,15 @@ describe('skill gating and invocation hardening (issue #69)', () => {
   it('escapes XML metacharacters in the system prompt', () => {
     const xml = formatSkillsForSystemPrompt([
       {
-        name: 'a&b<c>d',
-        description: 'x&y<z>',
+        name: 'a&b<c>d"e\'f',
+        description: 'x&y<z>"q"',
         filePath: '/p/SKILL.md',
         source: 'user',
         content: 'c',
       },
     ]);
-    expect(xml).toContain('a&amp;b&lt;c&gt;d');
-    expect(xml).toContain('x&amp;y&lt;z&gt;');
+    expect(xml).toContain('a&amp;b&lt;c&gt;d&quot;e&apos;f');
+    expect(xml).toContain('x&amp;y&lt;z&gt;&quot;q&quot;');
     expect(xml).not.toContain('a&b');
   });
 
@@ -978,5 +978,91 @@ describe('skill gating and invocation hardening (issue #69)', () => {
     expect(resolved.withheld).toEqual([
       { name: 'ghost', reason: "unknown skill 'ghost'" },
     ]);
+  });
+});
+
+// Pi skill-contract parity (issue #186, §29): the canonical kebab-case
+// `disable-model-invocation`, block sequences and folded/literal scalars
+// for the contract keys, and recursive discovery. Deeper YAML (anchors,
+// tags, nested maps, indent indicators) stays plain values by design.
+describe('Pi skill-contract parity (issue #186)', () => {
+  it('hides disable-model-invocation skills, keeping camelCase as an alias', () => {
+    const kebab = parseSkillFile(
+      '/x/hide/SKILL.md',
+      '---\nname: hide\ndisable-model-invocation: true\n---\nBody.\n',
+    );
+    expect(kebab.disableModelInvocation).toBe(true);
+    const camel = parseSkillFile(
+      '/x/hide/SKILL.md',
+      '---\nname: hide\ndisableModelInvocation: true\n---\nBody.\n',
+    );
+    expect(camel.disableModelInvocation).toBe(true);
+    const plain = parseSkillFile('/x/hide/SKILL.md', '---\nname: hide\n---\n');
+    expect(plain.disableModelInvocation).toBeUndefined();
+    // Hidden means hidden: neither spelling reaches the prompt block.
+    const xml = formatSkillsForSystemPrompt([
+      { ...kebab, source: 'user' },
+      { ...camel, name: 'hide2', source: 'user' },
+    ]);
+    expect(xml).not.toContain('hide');
+  });
+
+  it('folds > descriptions and keeps | newlines', () => {
+    const folded = parseSkillFile(
+      '/x/f/SKILL.md',
+      '---\nname: f\ndescription: >\n  Line one\n  line two\n---\nBody.\n',
+    );
+    expect(folded.description).toBe('Line one line two');
+    const literal = parseSkillFile(
+      '/x/f/SKILL.md',
+      '---\nname: f\ndescription: |\n  Line one\n  line two\n---\nBody.\n',
+    );
+    expect(literal.description).toBe('Line one\nline two');
+    const stripped = parseSkillFile(
+      '/x/f/SKILL.md',
+      '---\nname: f\ndescription: |-\n  Line one\n  line two\n---\nBody.\n',
+    );
+    expect(stripped.description).toBe('Line one\nline two');
+  });
+
+  it('parses block-list roles and tools, stripping quotes', () => {
+    const parsed = parseSkillFile(
+      '/x/b/SKILL.md',
+      '---\nname: b\nroles:\n  - reviewer\n  - "plan ner"\ntools:\n  - read\n  - write\n---\nBody.\n',
+    );
+    expect(parsed.roles).toEqual(['reviewer', 'plan ner']);
+    expect(parsed.requiredTools).toEqual(['read', 'write']);
+  });
+
+  it('reads an empty value with indented non-list text as absent', () => {
+    const parsed = parseSkillFile(
+      '/x/b/SKILL.md',
+      '---\nname: b\nroles:\n  just some text\ntools: [read]\n---\nBody.\n',
+    );
+    expect(parsed.roles).toBeUndefined();
+    expect(parsed.requiredTools).toEqual(['read']);
+  });
+
+  it('discovers nested skill dirs, skipping dot-dirs and node_modules', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/outer/nested/SKILL.md`,
+      skillMd('name: nested\ndescription: Deep'),
+    );
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/.hidden/SKILL.md`,
+      skillMd('name: hidden\ndescription: Nope'),
+    );
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/node_modules/dep/SKILL.md`,
+      skillMd('name: dep\ndescription: Nope'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['nested']);
   });
 });

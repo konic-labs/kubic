@@ -40,6 +40,7 @@ import {
   SystemEntry,
 } from '../../worker/src/pi-boundary.js';
 import { runRunCommand } from './run-cli.js';
+import { bootSkills } from './skills-boot.js';
 
 const made: string[] = [];
 
@@ -412,5 +413,51 @@ describe('advertised skills outside the workspace are readable (issue #173, §29
     );
     expect(results[0]?.isError).toBe(false);
     expect(results[0]?.text).toContain('Body for b.');
+  });
+});
+
+// Pi contract parity on the live path (issue #186, §29): a hidden skill
+// contributes no prompt block, and a skill-less boot keeps the prompt
+// byte-identical (issue #33 — the block is undefined, not empty).
+describe('hidden skills stay out of the live prompt (issue #186)', () => {
+  it('hides disable-model-invocation skills from the committed prompt', async () => {
+    const home = tmpRoot('skills-hidden-home-');
+    const dir = join(home, '.agents', 'skills', 'secret-helper');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'SKILL.md'),
+      '---\nname: secret-helper\ndescription: Agent-invoked only\ndisable-model-invocation: true\n---\n\nHidden body.\n',
+    );
+    const root = tmpRoot('skills-hidden-sessions-');
+    const result = await runHeadlessPrompt(
+      'hello',
+      {},
+      {
+        sessionsRoot: root,
+        models: fauxModels(['done']),
+        env: new FakeExecutionEnv({}),
+        skills: { homeDir: home, trusted: true },
+      },
+    );
+    expect(result.terminus).toBe('completed');
+    const prompt = await committedPrompt(root, result.sessionId);
+    // The hidden skill contributes no block at all — and it is the only
+    // skill, so the prompt carries no <skills> section.
+    expect(prompt).not.toContain('secret-helper');
+    expect(prompt).not.toContain('<skills>');
+  });
+
+  it('keeps a no-skill boot prompt byte-identical (issue #33)', () => {
+    const dir = tmpRoot('skills-empty-');
+    const boot = bootSkills({
+      bridge: createNodeFileBridge(dir),
+      homeDir: dir,
+      cwd: dir,
+      trusted: false,
+    });
+    expect(boot.skills).toEqual([]);
+    // Undefined, not an empty block: a skill-less boot assembles
+    // byte-identical prompt bytes (the prefix is cache-keyed).
+    expect(boot.block).toBeUndefined();
   });
 });

@@ -1,13 +1,11 @@
 // Slice D: `kubic diff / undo / log / status` CLI (issue #18; §42.2, §78).
 // RED: runJournalCommand does not exist yet.
-import { execFileSync } from 'node:child_process';
 import {
   appendFileSync,
   chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  realpathSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -19,6 +17,10 @@ import { CliUsageError } from '../../core/src/cli/exit-codes.js';
 import { createCliTheme } from '../../core/src/cli/theme.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../exec/src/journal.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+} from '../../exec/src/test-support/git-sandbox.js';
 import {
   createSession,
   openSessionStore,
@@ -40,6 +42,7 @@ function mkTmp(prefix: string): string {
 }
 
 afterEach(() => {
+  disposeAllGitSandboxes();
   for (const dir of made.splice(0))
     rmSync(dir, { recursive: true, force: true });
 });
@@ -859,26 +862,25 @@ describe('journal CLI worktree status (issue #126)', () => {
   });
 
   // Issue #380: on a real repo the status line also names the root (and
-  // ahead/behind plus conflicts when they exist).
+  // ahead/behind plus conflicts when they exist). L-D37: real git runs
+  // through the shared sandbox, never raw execFileSync.
   it('status names the repo root on a real repository', async () => {
     const journalDir = mkTmp('j-');
-    const root = mkTmp('repo-');
-    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
-    execFileSync('git', ['config', 'user.email', 't@t'], { cwd: root });
-    execFileSync('git', ['config', 'user.name', 't'], { cwd: root });
-    execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: root });
-    writeFileSync(join(root, 'a.txt'), 'one\n');
-    execFileSync('git', ['add', '--', 'a.txt'], { cwd: root });
-    execFileSync('git', ['commit', '-qm', 'first'], { cwd: root });
+    const repo = createGitSandbox({
+      prefix: 'kubic-status-380-',
+      injectProcessEnv: true,
+    });
+    writeFileSync(join(repo.path, 'a.txt'), 'one\n');
+    repo.git(['add', '--', 'a.txt']);
+    repo.git(['commit', '-qm', 'first']);
     const lines: string[] = [];
     const code = await runJournalCommand(
       { command: 'status' },
-      { journalDir, root, out: (l) => lines.push(l) },
+      { journalDir, root: repo.path, out: (l) => lines.push(l) },
     );
     expect(code).toBe(0);
-    // rev-parse canonicalizes symlinks (/var → /private/var on macOS).
     expect(lines.join('\n')).toContain(
-      `repo: branch main, dirty: no, root ${realpathSync(root)}`,
+      `repo: branch main, dirty: no, root ${repo.path}`,
     );
   });
 
@@ -888,38 +890,31 @@ describe('journal CLI worktree status (issue #126)', () => {
   it('status renders ahead/behind and conflicts on a real repository', async () => {
     const journalDir = mkTmp('j-');
     const origin = mkTmp('origin-');
-    execFileSync('git', ['init', '--bare', '-q', origin]);
-    const root = mkTmp('repo-');
-    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
-    execFileSync('git', ['config', 'user.email', 't@t'], { cwd: root });
-    execFileSync('git', ['config', 'user.name', 't'], { cwd: root });
-    execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: root });
+    const repo = createGitSandbox({
+      prefix: 'kubic-status-380-',
+      injectProcessEnv: true,
+    });
+    repo.git(['init', '--bare', '-q', origin]);
     const commit = (name: string, content: string, message: string) => {
-      writeFileSync(join(root, name), content);
-      execFileSync('git', ['add', '--', name], { cwd: root });
-      execFileSync('git', ['commit', '-qm', message], { cwd: root });
+      writeFileSync(join(repo.path, name), content);
+      repo.git(['add', '--', name]);
+      repo.git(['commit', '-qm', message]);
     };
     commit('a.txt', 'one\n', 'first');
-    execFileSync('git', ['remote', 'add', 'origin', origin], { cwd: root });
-    execFileSync('git', ['push', '-qu', 'origin', 'main'], { cwd: root });
+    repo.git(['remote', 'add', 'origin', origin]);
+    repo.git(['push', '-qu', 'origin', 'main']);
     commit('b.txt', 'two\n', 'second');
     commit('f.txt', 'base\n', 'base file');
-    execFileSync('git', ['checkout', '-qb', 'feature'], { cwd: root });
+    repo.git(['checkout', '-qb', 'feature']);
     commit('f.txt', 'theirs\n', 'theirs');
-    execFileSync('git', ['checkout', '-q', 'main'], { cwd: root });
+    repo.git(['checkout', '-q', 'main']);
     commit('f.txt', 'ours\n', 'ours');
-    try {
-      execFileSync('git', ['merge', 'feature'], {
-        cwd: root,
-        stdio: 'ignore',
-      });
-    } catch {
-      // A conflicting merge exits 1 by design; the state is the subject.
-    }
+    // A conflicting merge exits 1: the non-throwing variant.
+    repo.gitResult(['merge', 'feature']);
     const lines: string[] = [];
     const code = await runJournalCommand(
       { command: 'status' },
-      { journalDir, root, out: (l) => lines.push(l) },
+      { journalDir, root: repo.path, out: (l) => lines.push(l) },
     );
     expect(code).toBe(0);
     const text = lines.join('\n');

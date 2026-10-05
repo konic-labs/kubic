@@ -1,5 +1,4 @@
 // Slice D: push guard, git CLI, git-via-bash reconciliation (issue #19; §43).
-import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +11,10 @@ import {
   FileJournalStore,
   reconcile,
 } from '../../exec/src/journal.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+} from '../../exec/src/test-support/git-sandbox.js';
 import {
   createInvocation,
   MemoryMemoStore,
@@ -29,6 +32,7 @@ function mkTmp(prefix: string): string {
 }
 
 afterEach(() => {
+  disposeAllGitSandboxes();
   for (const dir of made.splice(0))
     rmSync(dir, { recursive: true, force: true });
 });
@@ -141,32 +145,23 @@ describe('git guard + CLI + reconciliation (issue #19, slice D)', () => {
   });
 
   it('git-via-bash changes appear in reconciliation as unattributed', () => {
-    const root = mkTmp('git-');
-    execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
-    execFileSync('git', ['config', 'user.email', 't@t'], {
-      cwd: root,
-      stdio: 'ignore',
+    // L-D37: real git runs through the shared sandbox, never raw
+    // execFileSync — the bash op below inherits the sandbox env.
+    const repo = createGitSandbox({
+      prefix: 'git-cli-',
+      injectProcessEnv: true,
     });
-    execFileSync('git', ['config', 'user.name', 't'], {
-      cwd: root,
-      stdio: 'ignore',
-    });
+    const root = repo.path;
     writeFileSync(join(root, 'tracked.txt'), 'v1\n');
-    execFileSync('git', ['add', '--', 'tracked.txt'], {
-      cwd: root,
-      stdio: 'ignore',
-    });
-    execFileSync('git', ['commit', '-m', 'v1'], { cwd: root, stdio: 'ignore' });
+    repo.git(['add', '--', 'tracked.txt']);
+    repo.git(['commit', '-m', 'v1']);
 
     const env = new NodeExecutionEnv(root);
     const store = new FileJournalStore(mkTmp('j-'));
     const baseline = captureBaseline(root);
     // The agent rewrites the file through bash + git (no journal entry —
     // bash mutations are not intercepted by design).
-    execFileSync('git', ['checkout', '--', 'tracked.txt'], {
-      cwd: root,
-      stdio: 'ignore',
-    });
+    repo.git(['checkout', '--', 'tracked.txt']);
     writeFileSync(join(root, 'tracked.txt'), 'v2-external\n');
     const added = reconcile(store, baseline, root, {
       sessionId: 's1',
@@ -181,16 +176,12 @@ describe('git guard + CLI + reconciliation (issue #19, slice D)', () => {
   });
 
   it('git mutations through the bash op reconcile the same way', async () => {
-    const root = mkTmp('git-');
-    execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
-    execFileSync('git', ['config', 'user.email', 't@t'], {
-      cwd: root,
-      stdio: 'ignore',
+    // L-D37: shared sandbox (activated: the bash op inherits its env).
+    const repo = createGitSandbox({
+      prefix: 'git-cli-',
+      injectProcessEnv: true,
     });
-    execFileSync('git', ['config', 'user.name', 't'], {
-      cwd: root,
-      stdio: 'ignore',
-    });
+    const root = repo.path;
     writeFileSync(join(root, 'tracked.txt'), 'v1\n');
     const store = new FileJournalStore(mkTmp('j-'));
     const baseline = captureBaseline(root);
@@ -224,17 +215,16 @@ describe('kubic git over a real repo (typed requests)', () => {
     lines: string[];
     out: (l: string) => void;
   } {
-    const root = mkTmp('git-cli-');
-    for (const args of [
-      ['init', '-b', 'main'],
-      ['config', 'user.email', 't@t'],
-      ['config', 'user.name', 'tester'],
-      ['config', 'commit.gpgsign', 'false'],
-    ]) {
-      execFileSync('git', args, { cwd: root, stdio: 'ignore' });
-    }
+    // L-D37: shared sandbox. The log tests assert author `tester`, so
+    // the repo-local identity overrides the sandbox default.
+    const sandbox = createGitSandbox({
+      prefix: 'git-cli-',
+      injectProcessEnv: true,
+    });
+    sandbox.git(['config', 'user.email', 't@t']);
+    sandbox.git(['config', 'user.name', 'tester']);
     const lines: string[] = [];
-    return { root, lines, out: (l) => lines.push(l) };
+    return { root: sandbox.path, lines, out: (l) => lines.push(l) };
   }
 
   it('stage, commit, log and status round-trip in the human form', async () => {

@@ -66,6 +66,34 @@ describe('queued follow-up rows from the state (issue #333 review)', () => {
     expect(target.render(100).join('\n')).toContain('queued: second prompt');
   });
 
+  it('paints the row in the frame that writes it, not a tick later', async () => {
+    // The loop's own bookkeeping repaints run BEFORE the state write (the
+    // queue map is the state's input), so the write needs its own paint.
+    // The admission is immediately followed by a withdrawal, so the ONLY
+    // frame that can carry the row is the one the admission painted: a
+    // repaint that waits for the next tick (or for settlement) never shows
+    // it.
+    const target = app();
+    const frames: string[] = [];
+    const turn = new TuiTurnRunner(
+      target,
+      stubLoop([
+        { type: 'inbox', items: [{ id: 'sub-1', mode: 'followUp' }] } as never,
+        { type: 'inbox', items: [] } as never,
+      ]),
+      'faux/faux-1',
+      () => {
+        frames.push(target.render(100).join('\n'));
+      },
+    );
+    turn.setQueuedText(new Map([['sub-1', 'second prompt']]));
+    await turn.run('hi');
+    expect(frames.length).toBeGreaterThan(0);
+    expect(
+      frames.some((frame) => frame.includes('queued: second prompt')),
+    ).toBe(true);
+  });
+
   it('drops the row in the very frame the placement lands in', async () => {
     // The loop's own `run-start` bookkeeping (bootTuiLane's branch): the
     // harness placed the submission, so its id leaves the map and the prompt

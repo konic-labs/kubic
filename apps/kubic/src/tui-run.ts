@@ -2275,8 +2275,18 @@ export class TuiTurnRunner {
     this.onLaneEvent?.(event);
     // Issue #333 (§66): the projector folds the event; the app renders the
     // state it produces (the presentation never folds raw events).
+    const revision = this.projector.revision();
     this.projector.apply(event);
     this.app.applyPresentation(this.projector.state());
+    if (this.projector.revision() !== revision) {
+      // Issue #333 (review round 2): the loop's bookkeeping above repaints
+      // BEFORE this write (it owns the map the state resolves the queue
+      // from), so the state the write produced needs a paint of its own —
+      // without one a `queued:` row it just resolved only appears on the
+      // next tick. Events that do not change the state (a `message-delta`,
+      // a committed `entry`) keep their own paint paths.
+      this.onUpdate?.();
+    }
     if (event.type === 'run-start') {
       // The run is placed: a latched Ctrl-C may now abort it for real, and a
       // submission the harness queued earlier (a follow-up waiting behind a

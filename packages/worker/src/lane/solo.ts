@@ -42,8 +42,6 @@ import {
 import {
   assembleSystemPrompt,
   escalatePinnedModel,
-  type LaneBinding,
-  type LaneRegistry,
   type ModelEscalationEvent,
   PromptCacheError,
   pinModelForTask,
@@ -205,10 +203,6 @@ export interface SoloBootOptions {
   systemPrompt?: string;
   context?: Context;
   policy?: SoloPolicyOptions;
-  // LaneRegistry binding (issue #82, rule 5): when set, boot spawns the
-  // session/conversation binding; a repeat boot for the same key reuses the
-  // continuation instead of re-spawning (which the registry rejects).
-  registry?: LaneRegistry;
   // Model affinity pin (issue #82, rule 6): when set, boot pins the
   // boot model for the task; escalateSoloModel is the only path off it.
   taskId?: string;
@@ -333,7 +327,6 @@ export interface SoloLane {
   // this one; a later configure is read live through `conversation.agent()`.
   model: Model<string>;
   sessionId: string;
-  binding?: LaneBinding;
   affinity?: TaskAffinity;
   // The configured (unclamped) compaction reserve and a window lookup, so a
   // model switch re-clamps the harness reserve to the NEW model's window
@@ -745,51 +738,6 @@ export async function bootSoloLane(
     await conversation.configure({ tools: null }, context);
   }
 
-  let binding: LaneBinding | undefined;
-  // NIT (review, issue #82): the harness above boots BEFORE the registry
-  // continuation check, so a re-boot builds a second harness even when the
-  // lane is reused. Reordering to check-first was left alone: the harness
-  // owns policy/hook wiring with side effects, and a check-first reorder
-  // is not trivially safe.
-  if (options.registry !== undefined) {
-    const candidate: LaneBinding = {
-      sessionId: options.sessionId,
-      lane: SOLO_LANE_NAME,
-      modelId: effectiveId,
-    };
-    let existing: LaneBinding | undefined;
-    try {
-      existing = options.registry.continuation(
-        options.sessionId,
-        SOLO_LANE_NAME,
-      );
-    } catch (err) {
-      // Absence-only catch: a missing lane falls through to spawn, but any
-      // other continuation failure (backend errors, programming errors)
-      // propagates instead of being masked as "no lane yet".
-      if (
-        err instanceof PromptCacheError &&
-        /no active lane/.test(err.message)
-      ) {
-        options.registry.spawn(candidate);
-        binding = { ...candidate };
-      } else {
-        throw err;
-      }
-    }
-    if (existing !== undefined) {
-      // Model agreement on reuse: the new conversation runs the boot model,
-      // so a stale bound modelId must never be handed back silently.
-      if (existing.modelId !== candidate.modelId) {
-        throw new PromptCacheError(
-          `lane model mismatch for '${options.sessionId}/${SOLO_LANE_NAME}': ` +
-            `bound to '${existing.modelId}' but boot requested '${candidate.modelId}'`,
-        );
-      }
-      binding = existing;
-    }
-  }
-
   const solo: SoloLane = {
     harness,
     conversation,
@@ -804,7 +752,6 @@ export async function bootSoloLane(
       agentState?.dispose();
       await harness.close(closeContext);
     },
-    ...(binding === undefined ? {} : { binding }),
     ...(options.taskId === undefined
       ? {}
       : {

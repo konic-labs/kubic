@@ -1,6 +1,6 @@
 // RED-first regression tests for issue #82 review fix cycle 1, ported to
-// the durable harness in #394: (a) escalate ordering, (b) same-model no-op,
-// (c) registry reuse. The escalation now applies through
+// the durable harness in #394: (a) escalate ordering, (b) same-model no-op.
+// The escalation now applies through
 // `conversation.configure({ model })`; the reserved re-clamp moved to the
 // live CompactionPolicy getter (#399).
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -182,74 +182,6 @@ describe('escalateSoloModel rejects same-model no-ops (issue #82 fix b)', () => 
     expect(ladder.record).toHaveLength(0);
     expect(booted.affinity?.modelId).toBe('faux/a');
     expect(sink).not.toHaveBeenCalled();
-  });
-});
-
-describe('registry reuse is absence-scoped and model-checked (issue #82 fix c)', () => {
-  it('non-absence continuation errors propagate instead of spawning', async () => {
-    const faux = fauxProvider();
-    const models = createModels();
-    models.setProvider(faux.provider);
-    faux.setResponses([fauxAssistantMessage('hi')]);
-    const brokenRegistry = {
-      continuation: () => {
-        throw new Error('boom: registry backend down');
-      },
-      spawn: vi.fn(),
-    };
-    await expect(
-      bootSoloLane({
-        session: handle() as never,
-        models,
-        model: faux.getModel(),
-        env: new FakeExecutionEnv({}),
-        sessionId: 'sess-1',
-        agentId: 'root',
-        registry: brokenRegistry as never,
-      }),
-    ).rejects.toThrow(/boom/);
-    expect(brokenRegistry.spawn).not.toHaveBeenCalled();
-  });
-
-  it('re-boot with a different model is refused instead of returning a stale binding', async () => {
-    const { LaneRegistry } = await import('../prompts.js');
-    const registry = new LaneRegistry();
-    const faux = fauxProvider({ models: [{ id: 'a' }, { id: 'b' }] });
-    const models = createModels();
-    models.setProvider(faux.provider);
-    faux.setResponses([fauxAssistantMessage('hi')]);
-    const modelA = faux.getModel('a');
-    const modelB = faux.getModel('b');
-    if (modelA === undefined || modelB === undefined) {
-      throw new Error('faux models missing');
-    }
-    const session = handle();
-    const first = await bootSoloLane({
-      session: session as never,
-      models,
-      model: modelA,
-      env: new FakeExecutionEnv({}),
-      sessionId: 'sess-1',
-      agentId: 'root',
-      registry,
-    });
-    await first.close(BACKGROUND_CONTEXT);
-    expect(first.binding?.modelId).toBe('faux/a');
-    // Issue #148: only an EXPLICIT selection moves a resumed session off its
-    // stored model — an unpinned re-boot keeps 'faux/a', which is exactly
-    // the bound model. The explicit switch is the re-boot that must refuse.
-    await expect(
-      bootSoloLane({
-        session: handle() as never,
-        models,
-        model: modelB,
-        modelPolicy: 'selected',
-        env: new FakeExecutionEnv({}),
-        sessionId: 'sess-1',
-        agentId: 'root',
-        registry,
-      }),
-    ).rejects.toThrow(/model/i);
   });
 });
 

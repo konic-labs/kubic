@@ -1,7 +1,7 @@
 // Solo lane boot wiring on the durable harness (issues #82, #99, #143;
 // ported in #394): the registry install order (= hook order), the prompt
-// sections (role prompt, appended context blocks), the LaneRegistry
-// binding, and the HarnessSettings the boot hands over.
+// sections (role prompt, appended context blocks), and the
+// HarnessSettings the boot hands over.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import type { EscalationLadder } from '../model-select.js';
@@ -275,22 +275,6 @@ describe('solo boot prompt sections (issues #82, #99)', () => {
     // The #33 rule: everything the no-sections boot sends is a prefix of it.
     const prefix = prompt.slice(0, prompt.indexOf('\n## Skills'));
     expect(prefix).toContain('meta: agent=root,lane=main,model=faux/big');
-  });
-});
-
-describe('solo boot binds the lane registry (issue #82, rule 5)', () => {
-  it('spawns the binding on boot and reuses it on continuation', async () => {
-    const { LaneRegistry } = await import('../prompts.js');
-    const registry = new LaneRegistry();
-    const first = await boot({ registry });
-    expect(first.binding).toMatchObject({
-      sessionId: 'sess-1',
-      lane: 'main',
-      modelId: 'faux/big',
-    });
-    expect(registry.continuation('sess-1', 'main').modelId).toBe('faux/big');
-    const second = await boot({ registry });
-    expect(second.binding?.modelId).toBe('faux/big');
   });
 });
 

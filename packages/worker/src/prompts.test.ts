@@ -36,23 +36,6 @@ describe('prompt assembly byte-stability (issue #33, rule 1-3)', () => {
   });
 });
 
-describe('lane lifecycle (issue #33, rule 5)', () => {
-  it('continuation reuses the lane; re-spawn for continuation is rejected', async () => {
-    const { LaneRegistry } = await import('./prompts.js');
-    const registry = new LaneRegistry();
-    registry.spawn({ sessionId: 's1', lane: 'main', modelId: 'faux/a' });
-    expect(registry.continuation('s1', 'main').modelId).toBe('faux/a');
-    expect(() =>
-      registry.spawn({ sessionId: 's1', lane: 'main', modelId: 'faux/b' }),
-    ).toThrow(/re-spawn/);
-    // The rejected re-spawn never overwrote the live binding.
-    expect(registry.continuation('s1', 'main').modelId).toBe('faux/a');
-    expect(() => registry.continuation('nope', 'main')).toThrow(
-      /no active lane/,
-    );
-  });
-});
-
 describe('model affinity (issue #33, rule 6)', () => {
   it('N turns resolve to 1 pinned model id; mixed ids are rejected', async () => {
     const { assertSingleModelId, pinModelForTask, taskModelForTurn } =

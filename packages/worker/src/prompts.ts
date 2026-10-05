@@ -55,42 +55,11 @@ export function assembleSystemPrompt(input: SystemPromptInput): string {
 // the no-new-pi.system-entry two-turn test — there is no per-turn prompt
 // extension in the pi-durable design, so the standalone append/assert
 // helpers were deleted (issue #215).
-export interface LaneBinding {
-  sessionId: string;
-  lane: string;
-  modelId: string;
-}
-
-// Rule 5: one live lane per session+lane key. Continuations resolve the
-// bound lane; spawning over a live key is rejected so a continuation can
-// never silently fork (and lose) the cached prefix.
-export class LaneRegistry {
-  private bound = new Map<string, LaneBinding>();
-
-  private key(sessionId: string, lane: string): string {
-    return `${sessionId}/${lane}`;
-  }
-
-  spawn(binding: LaneBinding): void {
-    const key = this.key(binding.sessionId, binding.lane);
-    if (this.bound.has(key)) {
-      throw new PromptCacheError(
-        `re-spawn rejected for continuation on '${key}': reuse the lane`,
-      );
-    }
-    this.bound.set(key, { ...binding });
-  }
-
-  continuation(sessionId: string, lane: string): LaneBinding {
-    const found = this.bound.get(this.key(sessionId, lane));
-    if (found === undefined) {
-      throw new PromptCacheError(
-        `no active lane for '${sessionId}/${lane}': continuation must reuse a lane`,
-      );
-    }
-    return { ...found };
-  }
-}
+// Rule 5 (issue #82) deleted in the #210 review round: LaneRegistry (and
+// its LaneBinding shape) had no production consumer repo-wide — only test
+// constructions plus the optional boot field — so the class, the interface,
+// the boot spawn/continuation branch and the lane's binding surface went
+// with it. The per-task model pin (rule 6) below is the live mechanism.
 
 export interface AffinityEscalation {
   from: string;

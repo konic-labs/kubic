@@ -981,7 +981,14 @@ reports the current model, and an unknown or malformed id is refused in
 the footer while the lane keeps the model it had. `/scoped-models`
 reports the role's resolved allowed set (§38.2, issue #255) — the entries
 the boot selected against, with any per-entry thinking — or that the role
-(or a roleless lane) is unconstrained. Under an enterprise
+(or a roleless lane) is unconstrained. `/escalate <provider/id> [reason]`
+climbs the configured escalation ladder (§38.4, issue #210) one rung with
+the reason recorded — `/model <provider/id>` climbs the same ladder
+silently; off-ladder targets, down-steps and exhausted budgets are refused
+in the footer with the live model untouched. Three consecutive tool-failure
+turns climb one rung automatically, once per run. Every climb appends an
+`escalation: <from> → <to> (<reason>)` transcript row and lands on the
+trajectory's `model.escalations`. Under an enterprise
 `[policy]` (§58) the switch passes the same model/provider gate the boot
 does: a model outside `allowed_models`/`allowed_providers` is refused in the
 footer with the boot's named refusal and the lane keeps its model. A frozen

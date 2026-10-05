@@ -988,6 +988,43 @@ describe('effective config view (issue #90)', () => {
   });
 });
 
+describe('§37.4 request options reach the effective view (issue #257)', () => {
+  it('marks the [model] tuning consumed with its layer', () => {
+    const runtime = load(
+      {
+        [PROJECT]:
+          '[model]\nprovider = "local"\nid = "llama3"\ntimeoutMs = 60000\nmaxRetries = 5\nmaxRetryDelayMs = 10000\ncacheRetention = "long"\n',
+      },
+      { projectTrusted: true },
+    );
+    for (const key of [
+      'model.timeoutMs',
+      'model.maxRetries',
+      'model.maxRetryDelayMs',
+      'model.cacheRetention',
+    ]) {
+      expect(keyEffectFor(key), key).toBe(RUNTIME_KEY_EFFECTS[key]);
+      expect(runtimeKeyDisposition(keyEffectFor(key)), key).toBe('consumed');
+    }
+    const view = effectiveConfigView(runtime);
+    expect(view.values.find((v) => v.key === 'model.timeoutMs')).toMatchObject({
+      value: '60000',
+      layer: 'project',
+      disposition: 'consumed',
+    });
+    expect(
+      view.values.find((v) => v.key === 'model.cacheRetention'),
+    ).toMatchObject({
+      value: '"long"',
+      layer: 'project',
+      disposition: 'consumed',
+    });
+    // A role table's tuning resolves through the `roles` section row — the
+    // same section-or-key rule `roles.<name>.model` already follows.
+    expect(keyEffectFor('roles.a.maxRetries')).toBe(RUNTIME_KEY_EFFECTS.roles);
+  });
+});
+
 describe('enterprise [policy] on the live path (issue #288)', () => {
   const ENTERPRISE = '/etc/kubic/config.toml';
   const PRODUCT = '/etc/kubic/product.toml';

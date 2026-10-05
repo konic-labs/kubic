@@ -202,6 +202,10 @@ import {
   UserEntry,
   withCancel,
 } from '../../../packages/worker/src/pi-boundary.js';
+import {
+  resolveStreamOptions,
+  type StreamTuningTables,
+} from '../../../packages/worker/src/stream-options.js';
 import { selectModelUnderPolicy } from './config-runtime.js';
 import { loadExtensionStartup } from './extension-startup.js';
 import {
@@ -251,6 +255,11 @@ export interface HeadlessRunDeps {
   sessionsRoot?: string;
   models?: MutableModels;
   model?: ModelSelection;
+  // §37.4 request options (issue #257): the merged `[model]` tuning plus
+  // every `[roles.<name>]` table that sets a key (runtimeStreamTuning).
+  // The boot resolves them against the run's role into `settings.stream`.
+  // Absent means untuned — the provider defaults stand.
+  streamTuning?: StreamTuningTables;
   // The lane's agent id (issue #133): the configured `[agent].name`, threaded
   // from runtimeLaneDeps. Absent means 'root' — the shipped behaviour, byte
   // for byte (journal attribution and `kubic diff --agent` follow it).
@@ -1967,6 +1976,19 @@ async function runHeadlessPromptImpl(
         : createRunBudgetEnforcer(budgetPlan, (termination) => {
             tripGuard(new BudgetExceededError(termination.limit));
           });
+    // §37.4 request options (issue #257): the merged `[model]` tuning with
+    // the run's role layered over it becomes this lane's `settings.stream`.
+    // A task names its own role (a worker child's assignment); otherwise
+    // `--role` does. Orchestrator worker children boot through this same
+    // path under their task role, so each worker carries its own role's
+    // tuning on its own harness.
+    const streamRoleName = options.role ?? task?.role;
+    const stream = resolveStreamOptions(
+      deps.streamTuning?.model,
+      streamRoleName === undefined
+        ? undefined
+        : deps.streamTuning?.roles?.[streamRoleName],
+    );
     try {
       solo = await bootSoloLane({
         session,
@@ -1978,6 +2000,9 @@ async function runHeadlessPromptImpl(
         sessionId: id,
         agentId: resolveRunAgentId(deps.agentId),
         journal,
+        // §37.4 (issue #257): an untuned run omits `stream` — the
+        // provider defaults stand, never an invented Kubic one.
+        ...(stream === undefined ? {} : { settings: { stream } }),
         // Issue #154 (§14.2): an orchestrator worker child can ask the USER a
         // free-text question through its run's mailbox (the same dir and
         // verify key the approval seat uses); a solo run has nobody to ask.

@@ -68,6 +68,14 @@ export interface ModelConfig {
   provider?: string;
   id?: string;
   thinking?: string;
+  // §37.4 request options (issue #257): per-provider request tuning Pi
+  // reads at every use (timeoutMs, maxRetries, maxRetryDelayMs,
+  // cacheRetention). Absent means the provider default; a `[roles.<n>]`
+  // table overrides each key it sets.
+  timeoutMs?: number;
+  maxRetries?: number;
+  maxRetryDelayMs?: number;
+  cacheRetention?: string;
 }
 
 export interface ModesConfig {
@@ -116,6 +124,12 @@ export interface JournalConfig {
 
 export interface RoleConfig {
   model?: string;
+  // §37.4 request options (issue #257): per-key overrides of the `[model]`
+  // tuning for lanes booted as this role.
+  timeoutMs?: number;
+  maxRetries?: number;
+  maxRetryDelayMs?: number;
+  cacheRetention?: string;
   tools?: string[];
   // Issue #196 (§41.1): tool names that always require approval under
   // this role — forwarded to the resolver layers like `tools`.
@@ -974,6 +988,65 @@ export function checkOrchestratorMaxWorkers(
   return value;
 }
 
+// §37.4 request options (issue #257): the four tuning keys `[model]` and
+// `[roles.<name>]` share. `timeoutMs` bounds one provider request (a
+// positive integer of milliseconds — 0 would refuse every request, so it is
+// refused by name); `maxRetries`/`maxRetryDelayMs` are non-negative
+// integers (0 disables retries / the delay cap — both real provider
+// meanings, never "unset"); `cacheRetention` names Pi's retention
+// vocabulary. Refused by name here so a malformed value never reaches the
+// lane; the runtime projection re-checks for the programmatic layers.
+export const STREAM_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
+
+export function checkModelStreamTuning(
+  record: Record<string, unknown>,
+  keyPath: string,
+): Pick<
+  ModelConfig,
+  'timeoutMs' | 'maxRetries' | 'maxRetryDelayMs' | 'cacheRetention'
+> {
+  const out: Pick<
+    ModelConfig,
+    'timeoutMs' | 'maxRetries' | 'maxRetryDelayMs' | 'cacheRetention'
+  > = {};
+  const timeoutMs = record.timeoutMs;
+  if (timeoutMs !== undefined) {
+    if (
+      typeof timeoutMs !== 'number' ||
+      !Number.isInteger(timeoutMs) ||
+      timeoutMs <= 0
+    ) {
+      throw new ConfigError(
+        `'${keyPath}': 'timeoutMs' must be a positive integer of milliseconds`,
+      );
+    }
+    out.timeoutMs = timeoutMs;
+  }
+  for (const key of ['maxRetries', 'maxRetryDelayMs'] as const) {
+    const value = record[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+      throw new ConfigError(
+        `'${keyPath}': '${key}' must be a non-negative integer`,
+      );
+    }
+    out[key] = value;
+  }
+  const cacheRetention = record.cacheRetention;
+  if (cacheRetention !== undefined) {
+    if (
+      typeof cacheRetention !== 'string' ||
+      !(STREAM_CACHE_RETENTIONS as readonly string[]).includes(cacheRetention)
+    ) {
+      throw new ConfigError(
+        `'${keyPath}': 'cacheRetention' must be one of ${STREAM_CACHE_RETENTIONS.join(', ')}`,
+      );
+    }
+    out.cacheRetention = cacheRetention;
+  }
+  return out;
+}
+
 // §12.1 per-role model pin (issue #133): a `provider/id` ref, never a bare
 // provider or a half ref — the run path turns exactly this shape into a
 // selection. Refused by name here so a malformed pin never reaches the lane;
@@ -1249,7 +1322,19 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
   const model = raw.model;
   if (model !== undefined) {
     if (!isRecord(model)) throw new ConfigError("'[model]' must be a table");
-    checkNoUnknown(model, new Set(['provider', 'id', 'thinking']), 'model');
+    checkNoUnknown(
+      model,
+      new Set([
+        'provider',
+        'id',
+        'thinking',
+        'timeoutMs',
+        'maxRetries',
+        'maxRetryDelayMs',
+        'cacheRetention',
+      ]),
+      'model',
+    );
     const provider = reqString(model, 'provider', 'model', true);
     const id = reqString(model, 'id', 'model', true);
     const thinking = reqString(model, 'thinking', 'model', true);
@@ -1265,6 +1350,7 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
       ...(provider === undefined ? {} : { provider }),
       ...(id === undefined ? {} : { id }),
       ...(thinking === undefined ? {} : { thinking }),
+      ...checkModelStreamTuning(model, 'model'),
     };
   }
   const modes = raw.modes;
@@ -1374,7 +1460,15 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
       }
       checkNoUnknown(
         spec,
-        new Set(['model', 'tools', 'requires']),
+        new Set([
+          'model',
+          'tools',
+          'requires',
+          'timeoutMs',
+          'maxRetries',
+          'maxRetryDelayMs',
+          'cacheRetention',
+        ]),
         `roles.${name}`,
       );
       const modelRef = checkRoleModelRef(spec.model, name);
@@ -1384,6 +1478,7 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
         ...(modelRef === undefined ? {} : { model: modelRef }),
         ...(tools === undefined ? {} : { tools }),
         ...(requires === undefined ? {} : { requires }),
+        ...checkModelStreamTuning(spec, `roles.${name}`),
       };
     }
     config.roles = parsed;

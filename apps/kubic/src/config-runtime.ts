@@ -30,6 +30,7 @@ import {
   CONFIG_LAYERS,
   ConfigError,
   checkCommittedConfigHalfRoot,
+  checkModelStreamTuning,
   checkOrchestratorRootNoOp,
   checkOrchestratorRootShape,
 } from '../../../packages/host/src/config/config.js';
@@ -75,6 +76,10 @@ import {
   selectModel,
 } from '../../../packages/worker/src/model-select.js';
 import type { MutableModels } from '../../../packages/worker/src/pi-boundary.js';
+import type {
+  ModelStreamTuning,
+  StreamTuningTables,
+} from '../../../packages/worker/src/stream-options.js';
 import { selectionOrigin, withSelectionOrigin } from './model-projection.js';
 
 export interface CliConfigResult {
@@ -712,6 +717,51 @@ export function roleLayersFromConfig(runtime: RuntimeConfig): RoleLayerInput[] {
     if (Object.keys(specs).length > 0) layers.push({ layer, roles: specs });
   }
   return layers;
+}
+
+// §37.4 request options (issue #257): the merged `[model]` tuning plus
+// every `[roles.<name>]` table that sets a key, re-checked here so the
+// programmatic session/agent layers (which bypass the TOML parser) cannot
+// hand the lane a malformed value. Undefined when nothing is tuned — the
+// run sites then omit `settings.stream` and the provider defaults stand.
+// The run sites resolve the tables against the run's role with
+// `resolveStreamOptions`, so each lane (solo or worker) carries its own
+// role's tuning on its own harness.
+export function runtimeStreamTuning(
+  result: CliConfigResult,
+): StreamTuningTables | undefined {
+  const runtime = result.runtime;
+  if (runtime === undefined) return undefined;
+  const toTuning = (
+    record: Record<string, unknown>,
+    keyPath: string,
+  ): ModelStreamTuning => {
+    const { cacheRetention, ...rest } = checkModelStreamTuning(record, keyPath);
+    return {
+      ...rest,
+      // Validated one line above against the same three literals Pi
+      // names, so the narrowing is exact, never a guess.
+      ...(cacheRetention === undefined
+        ? {}
+        : {
+            cacheRetention:
+              cacheRetention as ModelStreamTuning['cacheRetention'],
+          }),
+    };
+  };
+  const model = toTuning({ ...runtime.config.model }, 'model');
+  const roles: Record<string, ModelStreamTuning> = {};
+  for (const [name, spec] of Object.entries(runtime.config.roles ?? {})) {
+    const tuning = toTuning({ ...spec }, `roles.${name}`);
+    if (Object.keys(tuning).length > 0) roles[name] = tuning;
+  }
+  if (Object.keys(model).length === 0 && Object.keys(roles).length === 0) {
+    return undefined;
+  }
+  return {
+    ...(Object.keys(model).length === 0 ? {} : { model }),
+    ...(Object.keys(roles).length === 0 ? {} : { roles }),
+  };
 }
 
 // `kubic sessions prune`'s default keep-window (issue #119): the parsed

@@ -166,6 +166,7 @@ import {
   runtimePolicy,
   runtimeRunDeps,
   runtimeSkillsDeps,
+  runtimeStreamTuning,
   runtimeSystemPromptSection,
   sessionRetentionDays,
 } from './config-runtime.js';
@@ -315,10 +316,15 @@ export function prodRunDeps(cliConfig: CliConfigResult): HeadlessRunDeps {
   // Issue #240: the system prompt file section, read at load — worker
   // children assemble the same prompt because they load the same config.
   const systemPromptSection = runtimeSystemPromptSection(cliConfig);
+  // §37.4 (issue #257): the `[model]` / `[roles.<name>]` request tuning
+  // the headless boot resolves against the run's role. Undefined when
+  // nothing is tuned — the lane then omits `settings.stream`.
+  const streamTuning = runtimeStreamTuning(cliConfig);
   return {
     model: runtimeModelPin(cliConfig),
     ...(compaction === undefined ? {} : { compaction }),
     ...(systemPromptSection === undefined ? {} : { systemPromptSection }),
+    ...(streamTuning === undefined ? {} : { streamTuning }),
     // §58 enterprise policy (issue #288): the model gate, the role grant
     // check and the lane tool intersection all read this one resolved
     // object.
@@ -354,6 +360,9 @@ export function prodTuiDeps(
   const compaction = runtimeCompactionDeps(cliConfig);
   // Issue #240: the system prompt file section, like `kubic run`.
   const systemPromptSection = runtimeSystemPromptSection(cliConfig);
+  // §37.4 (issue #257): the same request tuning `kubic run` threads — the
+  // interactive boot resolves it against `--role` identically.
+  const streamTuning = runtimeStreamTuning(cliConfig);
   return {
     out: io.out,
     // `error:` lines (unknown session, no models) are diagnostics.
@@ -384,6 +393,9 @@ export function prodTuiDeps(
     // Without it the TUI ignored those pins and ran the first registered
     // provider.
     model: runtimeModelPin(cliConfig),
+    // §37.4 (issue #257): spread beside the model pin so the tuning can
+    // never drift from the projection `kubic run` boots with.
+    ...(streamTuning === undefined ? {} : { streamTuning }),
     // §58 enterprise policy (issue #288): the interactive lane gates role
     // grants, model selection and its tool set identically.
     ...(enterprisePolicy === undefined

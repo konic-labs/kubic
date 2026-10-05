@@ -215,6 +215,67 @@ sink = "syslog"
 level = "privileged"
 `;
 
+describe('§37.4 request options (issue #257)', () => {
+  it('parses [model] timeoutMs/maxRetries/maxRetryDelayMs/cacheRetention', () => {
+    const parsed = parseTomlConfig(
+      '[model]\nprovider = "local"\nid = "llama3"\ntimeoutMs = 60000\nmaxRetries = 5\nmaxRetryDelayMs = 10000\ncacheRetention = "long"\n',
+    );
+    expect(parsed.model).toEqual({
+      provider: 'local',
+      id: 'llama3',
+      timeoutMs: 60000,
+      maxRetries: 5,
+      maxRetryDelayMs: 10000,
+      cacheRetention: 'long',
+    });
+  });
+
+  it('parses [roles.<name>] request options over the [model] ones', () => {
+    const parsed = parseTomlConfig(
+      '[model]\ntimeoutMs = 60000\n[roles.a]\nmodel = "local/x"\nmaxRetries = 1\ncacheRetention = "none"\n',
+    );
+    expect(parsed.model?.timeoutMs).toBe(60000);
+    expect(parsed.roles?.a).toEqual({
+      model: 'local/x',
+      maxRetries: 1,
+      cacheRetention: 'none',
+    });
+  });
+
+  it('refuses invalid [model] request options by name', () => {
+    expect(() => parseTomlConfig('[model]\ntimeoutMs = 0\n')).toThrow(
+      /'model': 'timeoutMs' must be a positive integer/,
+    );
+    expect(() => parseTomlConfig('[model]\ntimeoutMs = 1.5\n')).toThrow(
+      /'model': 'timeoutMs' must be a positive integer/,
+    );
+    expect(() => parseTomlConfig('[model]\nmaxRetries = -1\n')).toThrow(
+      /'model': 'maxRetries' must be a non-negative integer/,
+    );
+    expect(() => parseTomlConfig('[model]\nmaxRetries = 2.5\n')).toThrow(
+      /'model': 'maxRetries' must be a non-negative integer/,
+    );
+    expect(() => parseTomlConfig('[model]\nmaxRetryDelayMs = -5\n')).toThrow(
+      /'model': 'maxRetryDelayMs' must be a non-negative integer/,
+    );
+    expect(() =>
+      parseTomlConfig('[model]\ncacheRetention = "forever"\n'),
+    ).toThrow(/'model': 'cacheRetention' must be one of/);
+  });
+
+  it('refuses invalid [roles.<name>] request options by name', () => {
+    expect(() => parseTomlConfig('[roles.a]\ntimeoutMs = 0\n')).toThrow(
+      /'roles\.a': 'timeoutMs' must be a positive integer/,
+    );
+    expect(() => parseTomlConfig('[roles.a]\nmaxRetries = -1\n')).toThrow(
+      /'roles\.a': 'maxRetries' must be a non-negative integer/,
+    );
+    expect(() =>
+      parseTomlConfig('[roles.a]\ncacheRetention = "forever"\n'),
+    ).toThrow(/'roles\.a': 'cacheRetention' must be one of/);
+  });
+});
+
 describe('§58 [policy] + [[audit]] (issue #288)', () => {
   it('parses the §58 example verbatim, keys normalized for the policy engine', () => {
     const parsed = parseTomlConfig(S58_POLICY_EXAMPLE);

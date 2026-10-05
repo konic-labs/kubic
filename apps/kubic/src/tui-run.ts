@@ -260,6 +260,10 @@ import {
   type SubmissionId,
 } from '../../../packages/worker/src/pi-boundary.js';
 import {
+  resolveStreamOptions,
+  type StreamTuningTables,
+} from '../../../packages/worker/src/stream-options.js';
+import {
   type runtimeLaneDeps,
   selectModelUnderPolicy,
 } from './config-runtime.js';
@@ -1116,6 +1120,11 @@ export interface TuiRunOptions {
   // first-available; an explicit pin selects the model and makes a resumed
   // session switch (the #148 rule), absent means the default pick.
   model?: ModelSelection;
+  // §37.4 request options (issue #257): the merged `[model]` tuning plus
+  // every `[roles.<name>]` table that sets a key (runtimeStreamTuning) —
+  // the same projection `kubic run` consumes. The boot resolves them
+  // against `--role` into `settings.stream`. Absent means untuned.
+  streamTuning?: StreamTuningTables;
   // §58 enterprise policy (issue #288): the same EffectivePolicy the
   // headless runner gates with — the interactive lane is not the
   // unprotected one.
@@ -1558,6 +1567,15 @@ export async function bootTuiLane(
     // setCurrentTurnSupplier. Unwired (undefined) reads turn-less, so a
     // boot without a loop behaves like a headless run.
     const turnCell: { supplier?: () => number | undefined } = {};
+    // §37.4 request options (issue #257): the merged `[model]` tuning with
+    // `--role` layered over it becomes this lane's `settings.stream` — the
+    // same resolution `kubic run` performs.
+    const stream = resolveStreamOptions(
+      options.streamTuning?.model,
+      options.role === undefined
+        ? undefined
+        : options.streamTuning?.roles?.[options.role],
+    );
     const booted = await bootSoloLane({
       session,
       models,
@@ -1573,6 +1591,9 @@ export async function bootTuiLane(
         ? {}
         : { compaction: options.compaction }),
       journal,
+      // §37.4 (issue #257): an untuned boot omits `stream` — the provider
+      // defaults stand, never an invented Kubic one.
+      ...(stream === undefined ? {} : { settings: { stream } }),
       currentTurn: () => turnCell.supplier?.(),
       // Issue #113 (§29.3): skills discovery at boot, same as the headless
       // runner — the <skills> block lands on the interactive lane too. A

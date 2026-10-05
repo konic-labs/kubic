@@ -150,6 +150,22 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
     effect:
       'default thinking level reported by `kubic config`; per-run override is --model',
   },
+  'model.timeoutMs': {
+    effect:
+      'per-request provider timeout on the solo lane (`settings.stream`), layered per role by `[roles.<name>].timeoutMs` (§37.4)',
+  },
+  'model.maxRetries': {
+    effect:
+      'provider/SDK retries inside one request attempt on the solo lane (`settings.stream`), layered per role by `[roles.<name>].maxRetries` (§37.4)',
+  },
+  'model.maxRetryDelayMs': {
+    effect:
+      'cap on the server-requested retry delay on the solo lane (`settings.stream`), layered per role by `[roles.<name>].maxRetryDelayMs` (§37.4)',
+  },
+  'model.cacheRetention': {
+    effect:
+      'prompt cache retention preference on the solo lane (`settings.stream`), layered per role by `[roles.<name>].cacheRetention` (§37.4)',
+  },
   'modes.solo': {
     effect:
       'selects solo (the architecture) — solo=true with orchestrator=true is refused',

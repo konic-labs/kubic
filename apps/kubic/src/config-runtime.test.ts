@@ -24,9 +24,11 @@ import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import {
   effectiveConfigView,
+  loadRuntimeConfig,
   renderEffectiveConfig,
 } from '../../../packages/host/src/config/runtime.js';
 import {
+  NO_PROJECT_TRUST,
   ProjectTrustStore,
   projectTrustStorePath,
 } from '../../../packages/host/src/config/trust-store.js';
@@ -66,6 +68,7 @@ import {
   runtimePolicy,
   runtimeRunDeps,
   runtimeSkillsDeps,
+  runtimeStreamTuning,
   runtimeSystemPromptSection,
   selectModelUnderPolicy,
   sessionRetentionDays,
@@ -1104,6 +1107,66 @@ describe('end to end: the project [model] pin reaches the prod run runner (issue
     expect(result.error).toBeUndefined();
     expect(runtimeModelPin(result)).toEqual({ provider: 'g', id: 'file' });
     expect(prodRunDeps(result).model).toEqual({ provider: 'g', id: 'file' });
+  });
+});
+
+describe('§37.4 request options projection (issue #257)', () => {
+  function tunedResult(toml: string): ReturnType<typeof loadCliConfig> {
+    const { home, project } = trustedProject(toml);
+    const result = loadCliConfig({
+      cwd: project,
+      home,
+      env: { KUBIC_TRUST_PROJECT: '1' },
+    });
+    expect(result.error).toBeUndefined();
+    return result;
+  }
+
+  it('is undefined when nothing is tuned', () => {
+    const result = tunedResult('[model]\nprovider = "g"\nid = "file"\n');
+    expect(runtimeStreamTuning(result)).toBeUndefined();
+    expect(prodRunDeps(result).streamTuning).toBeUndefined();
+  });
+
+  it('projects [model] tuning and per-role tables through prodRunDeps', () => {
+    const result = tunedResult(
+      '[model]\nprovider = "g"\nid = "file"\ntimeoutMs = 60000\nmaxRetries = 5\n[roles.reader]\nmodel = "g/file"\nmaxRetries = 1\ncacheRetention = "none"\n',
+    );
+    expect(runtimeStreamTuning(result)).toEqual({
+      model: { timeoutMs: 60000, maxRetries: 5 },
+      roles: { reader: { maxRetries: 1, cacheRetention: 'none' } },
+    });
+    // The builder the binary calls carries the same tables the run boot
+    // resolves — dropping the prod spread must not stay green.
+    expect(prodRunDeps(result).streamTuning).toEqual(
+      runtimeStreamTuning(result),
+    );
+  });
+
+  it('re-checks the programmatic layers that bypass the parser', () => {
+    // Session/agent overrides arrive as objects, never as TOML, so the
+    // parser never sees them: the projection refuses a malformed value
+    // here instead of handing it to the lane.
+    const runtime = loadRuntimeConfig({
+      bridge: {
+        exists: (): boolean => false,
+        readTextFile: (): string => {
+          throw new Error('no layers');
+        },
+      },
+      home: tmpDir('kubic-stream-fail-home-'),
+      cwd: tmpDir('kubic-stream-fail-cwd-'),
+      projectTrusted: true,
+      session: { model: { timeoutMs: 0 } },
+    });
+    expect(() =>
+      runtimeStreamTuning({
+        runtime,
+        error: undefined,
+        ignoreSplit: { missing: [], checked: [], applicable: false },
+        trust: NO_PROJECT_TRUST,
+      }),
+    ).toThrow(/'model': 'timeoutMs' must be a positive integer/);
   });
 });
 

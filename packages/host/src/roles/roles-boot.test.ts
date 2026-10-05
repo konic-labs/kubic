@@ -220,6 +220,9 @@ describe('rolePromptFor refuses instruction-less roles by name (issue #211)', ()
   it("an empty '## Prompt' section names the role", () => {
     const selected = selectedWithBody('## Prompt\n\n   \n');
     expect(() => rolePromptFor(selected.doc, selected.markdown)).toThrow(
+      RoleBootError,
+    );
+    expect(() => rolePromptFor(selected.doc, selected.markdown)).toThrow(
       "role 'promptless' has an empty '## Prompt' section",
     );
   });

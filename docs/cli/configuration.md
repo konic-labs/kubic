@@ -89,7 +89,7 @@ concurrency posture and every message — is on
 | Variable | Effect |
 | --- | --- |
 | `KUBIC_MODEL` | `provider/id` model pin (same precedence as the file key, one step higher). |
-| `KUBIC_MODEL_THINKING` | Thinking level for the selected model (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Below `--thinking`, above `[model].thinking`, below the session's stored level and a frozen enterprise key (which ignores it); the lane clamps it to the effective model with a named notice. Malformed values fail the config load by name — `kubic config` included. |
+| `KUBIC_MODEL_THINKING` | Thinking level for the selected model (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Below `--thinking`, above `[model].thinking`, below the session's stored level and a frozen enterprise key (which ignores it and reports the attempt in `overriddenAttempts`); the lane clamps it to the effective model with a named notice. Malformed values fail the config load by name — `kubic config` included. |
 | `KUBIC_APPROVALS_ROUTE` | `ask-user` or `deny`. |
 | `KUBIC_JOURNAL_RETENTION_DAYS` | Journal age bound, in days (non-negative integer). |
 | `KUBIC_TRUST_PROJECT` | `1`/`true` accepts the project layer — `config.toml` and the project [`models.json`](#modelsjson) — for this invocation, above the persistent store and without recording anything. |

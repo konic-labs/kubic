@@ -1006,6 +1006,11 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   // explicit flag is refused by name; the env override is not applied).
   let thinking: RuntimeThinking | undefined;
   const fileThinking = config.model?.thinking;
+  // Issue #226 (§35.1): an env override a frozen enterprise level drops
+  // is reported in `overriddenAttempts` (never applied), mirroring the
+  // model-pin overrides below. The flag is refused by name above, so only
+  // the env input can land here; an equal value overrode nothing.
+  let droppedEnvThinking: string | undefined;
   if (frozen('model.thinking')) {
     if (cliThinking !== undefined) {
       throw new ConfigError(
@@ -1013,6 +1018,9 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
       );
     }
     thinking = { level: fileThinking as string, source: 'enterprise' };
+    if (envThinking !== undefined && envThinking !== fileThinking) {
+      droppedEnvThinking = `model: KUBIC_MODEL_THINKING '${envThinking}' rejected: enterprise thinking '${fileThinking}' holds`;
+    }
   } else if (cliThinking !== undefined) {
     thinking = { level: cliThinking, source: 'cli' };
   } else if (envThinking !== undefined) {
@@ -1293,6 +1301,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
         (entry) =>
           `model: ${entry.source === 'cli' ? '--model' : 'KUBIC_MODEL'} '${entry.requested}' rejected: enterprise pin '${entry.pinned}' holds`,
       ),
+      ...(droppedEnvThinking === undefined ? [] : [droppedEnvThinking]),
     ],
     modelPinOverrides,
     layers: loaded.reports,

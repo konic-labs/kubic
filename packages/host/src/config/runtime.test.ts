@@ -702,6 +702,69 @@ describe('thinking level load (issue #225; §38.3)', () => {
   });
 });
 
+describe('enterprise-frozen thinking + thinking-only layers (issue #226)', () => {
+  // Bug A: an enterprise-pinned level keeps its value and source against
+  // the env override — and the dropped override is reported, never
+  // silent (the model-pin #295 pattern, one row per ignored input).
+  it("records the env override a frozen enterprise level drops", () => {
+    const files = {
+      // Thinking-only enterprise layer (the issue's shape): the pin comes
+      // from project, the level from enterprise.
+      '/etc/kubic/config.toml': '[model]\nthinking = "high"\n',
+      [PROJECT]: '[model]\nprovider = "local"\nid = "llama3"\n',
+    };
+    const env = load(files, {
+      projectTrusted: true,
+      env: { [RUNTIME_ENV_OVERRIDES.modelThinking]: 'low' },
+    });
+    expect(env.thinking).toEqual({ level: 'high', source: 'enterprise' });
+    expect(env.model).toMatchObject({ thinking: 'high' });
+    expect(env.overriddenAttempts).toEqual([
+      "model: KUBIC_MODEL_THINKING 'low' rejected: enterprise thinking 'high' holds",
+    ]);
+    // An equal value overrode nothing.
+    expect(
+      load(files, {
+        projectTrusted: true,
+        env: { [RUNTIME_ENV_OVERRIDES.modelThinking]: 'high' },
+      }).overriddenAttempts,
+    ).toEqual([]);
+    // No env override: nothing to report.
+    expect(load(files, { projectTrusted: true }).overriddenAttempts).toEqual(
+      [],
+    );
+  });
+
+  // Bug B: a layer that sets only `[model] thinking` reaches the
+  // projection through the thinking channel (no model pin is invented)
+  // and `kubic config` names the same winner the lane boots with.
+  it('reports a thinking-only layer consistently', () => {
+    const runtime = load(
+      { [PROJECT]: '[model]\nthinking = "high"\n' },
+      { projectTrusted: true },
+    );
+    expect(runtime.model).toBeUndefined();
+    expect(runtime.thinking).toEqual({ level: 'high', source: 'project' });
+    const view = effectiveConfigView(runtime);
+    expect(view.values).toEqual(
+      expect.arrayContaining([
+        {
+          key: 'model.thinking',
+          value: '"high"',
+          layer: 'project',
+          disposition: 'consumed',
+        },
+      ]),
+    );
+    expect(view.thinking).toEqual({ level: 'high', source: 'project' });
+    const lines = renderEffectiveConfig(view);
+    expect(lines).toContain('thinking level: high (project)');
+    expect(lines).toContain(
+      'selected model: first available provider (defaults) — no model pin configured',
+    );
+  });
+});
+
 describe('effective config view (issue #90)', () => {
   it('reports every value with the layer it came from, machine-readable', () => {
     const runtime = load(

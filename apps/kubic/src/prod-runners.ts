@@ -111,7 +111,10 @@ import {
   runPolicyCommand,
 } from '../../../packages/host/src/policy/policy-cli.js';
 import { findProjectRoot } from '../../../packages/host/src/project-root.js';
-import { runReplayCommand } from '../../../packages/host/src/replay/replay.js';
+import {
+  type ReplayRuntimeDeps,
+  runReplayCommand,
+} from '../../../packages/host/src/replay/replay.js';
 import { rolesDoctorProbe } from '../../../packages/host/src/roles/roles-boot.js';
 import {
   planWorkerRoles,
@@ -1417,6 +1420,22 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       // Replay at a declared tier (issue #78): recorded/compare are
       // log-only; deterministic/live re-execute the recorded objective
       // through the real solo lane at the declared model pin.
+      // Issues #239/#240 (review follow-up): the runtime object is built
+      // against the named type, so a dropped or mistyped projection fails
+      // compile — the spreads below used to ride unchecked.
+      const runtime: ReplayRuntimeDeps = {
+        ...runtimeRunDeps(cliConfig),
+        trustProject: projectTrustFor(cliConfig),
+        ...(enterprisePolicy === undefined
+          ? {}
+          : { modelPolicy: enterprisePolicy }),
+        // Issue #272: the shared lane projections `kubic run` threads
+        // (agent id + config-sourced role layers + the out-of-scope
+        // paths) — the pinned role merges under them identically.
+        ...runtimeLaneDeps(cliConfig),
+        ...(compaction === undefined ? {} : { compaction }),
+        ...(systemPromptSection === undefined ? {} : { systemPromptSection }),
+      };
       return runReplayCommand(
         resolved.options,
         {
@@ -1429,19 +1448,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         // assembled catalog gates the project models.json on its own root.
         // §58 enterprise policy (issue #288): and the same model/tool/role
         // gates — a live re-execution is not an ungated lane.
-        {
-          ...runtimeRunDeps(cliConfig),
-          trustProject: projectTrustFor(cliConfig),
-          ...(enterprisePolicy === undefined
-            ? {}
-            : { modelPolicy: enterprisePolicy }),
-          // Issue #272: the shared lane projections `kubic run` threads
-          // (agent id + config-sourced role layers + the out-of-scope
-          // paths) — the pinned role merges under them identically.
-          ...runtimeLaneDeps(cliConfig),
-          ...(compaction === undefined ? {} : { compaction }),
-          ...(systemPromptSection === undefined ? {} : { systemPromptSection }),
-        },
+        runtime,
       );
     },
     export: (options) => {

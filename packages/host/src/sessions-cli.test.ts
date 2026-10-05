@@ -297,7 +297,10 @@ describe('sessions CLI (issue #14, slice F)', () => {
     expect(code).toBe(0);
     const text = o.lines.join('\n');
     expect(text).toContain('parent=orch-1');
-    expect(text).not.toMatch(/\u001b|\u0007/);
+    // No control-character regex (biome noControlCharactersInRegex):
+    // ESC and BEL are asserted absent by code point instead.
+    expect(text.includes(String.fromCharCode(27))).toBe(false);
+    expect(text.includes(String.fromCharCode(7))).toBe(false);
   });
 
   it('attaches and shows the transcript tail as readable turn lines', async () => {

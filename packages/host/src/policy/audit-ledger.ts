@@ -98,7 +98,10 @@ export function auditLedgerDirFor(cwd: string): string {
 // composition root's own shell spawn, waited: `((cmd, args) =>
 // env.shell.spawn(cmd, args, { provenance }).wait())`.
 export async function resolveRunBaseRevision(
-  run: (cmd: string, args: string[]) => Promise<{
+  run: (
+    cmd: string,
+    args: string[],
+  ) => Promise<{
     exitCode: number;
     stdout: string;
   }>,

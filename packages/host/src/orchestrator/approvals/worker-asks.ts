@@ -556,12 +556,14 @@ export interface WorkerAskRouterOptions {
    * undefined for a request — keeps the honest 0/unknown fallback: a
    * manager approve of a forged key belongs to no worker.
    */
-  provenanceFor?: (request: OrchestratorApprovalRequest) => {
-    pid?: number;
-    generation?: number;
-    thinking?: string;
-    base?: string;
-  } | undefined;
+  provenanceFor?: (request: OrchestratorApprovalRequest) =>
+    | {
+        pid?: number;
+        generation?: number;
+        thinking?: string;
+        base?: string;
+      }
+    | undefined;
   /** Where a failed ledger append is reported (never decides the ask). */
   debug?: (line: string) => void;
   /**

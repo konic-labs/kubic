@@ -117,6 +117,8 @@ import {
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import { bootSkills } from '../../../packages/host/src/skills-boot.js';
+import type { DebugSink } from '../../../packages/host/src/spans.js';
+import { hookErrorLine, modelLine } from '../../../packages/host/src/spans.js';
 import type { RunOutcome } from '../../../packages/host/src/trajectory/run-trajectory.js';
 import { createApprovalSurface } from '../../../packages/tui/src/approval-surface.js';
 import {
@@ -211,6 +213,7 @@ import {
   forkSession,
   listSessions,
   openSessionStore,
+  readSessionMetadata,
 } from '../../../packages/worker/src/lane/session-store.js';
 import {
   bootSoloLane,
@@ -744,6 +747,12 @@ export interface TuiLaneBoot {
   // Absent (injected boots, the orchestrator-lane switch) means no spans —
   // the turn works exactly as before.
   turnSpans?: TurnSpansSink;
+  // Issue #246: the §50 debug sink for the boot's session/role lines and
+  // the turn's fault and token lines (threaded to the runner below).
+  // Absent (prod: `kubic tui` has no --debug flag yet) means the lines
+  // are dropped — except the fault, which always lands as a transcript
+  // notice because the TUI has no other failure channel.
+  debug?: DebugSink;
   // Issue #147: the outcome line for a turn a crashed process left open on
   // this session (durably aborted at boot). Shown in the editor footer from
   // the first render; absent when nothing was pending.
@@ -998,6 +1007,12 @@ export interface TuiRunOptions {
   // Issue #86: the config layer's own record of where the classes came from
   // ('default' when nothing configured them). Absent means 'default'.
   policySource?: 'config' | 'default';
+  // Issue #246: the §50 debug sink for the boot's session/role lines
+  // (threaded to the runner for its fault and token lines). A test seam:
+  // prod `kubic tui` passes none (`tui` has no --debug flag yet), so the
+  // lines are dropped there — the fault notice still renders (it does not
+  // need the sink).
+  debug?: DebugSink;
   // Issue #230: the config `[approvals]` policy — the same projection
   // `kubic run` installs. Absent means the documented defaults.
   approvals?: SoloApprovalConfig;
@@ -1192,6 +1207,17 @@ export async function bootTuiLane(
       ? await createSession(store, { cwd: process.cwd() }, context)
       : await attachSession(store, sessionId, context);
   const id = session.id;
+  // Issue #246: the §50 [session] line names the session and its #164
+  // parent. Best-effort: a fresh or torn session simply has no parent,
+  // and a failed read is never a boot failure.
+  try {
+    const meta = await readSessionMetadata(session.storage, context);
+    options.debug?.(
+      `[session] id=${id} parent=${meta?.parentSessionId ?? 'none'}`,
+    );
+  } catch {
+    // A failed metadata read is not a boot failure.
+  }
   // Issue #346: the session's committed spend, read from its own `pi.usage`
   // ledger (#400's reader — the same numbers `kubic cost` prints) BEFORE the
   // lane adopts the storage. Best-effort: a torn or foreign usage document
@@ -1349,6 +1375,16 @@ export async function bootTuiLane(
       const promptText = rolePromptFor(selected.doc, selected.markdown);
       return { resolved: selected.resolved, prompt: promptText };
     })();
+    // Issue #246: the §50 [policy] line names the resolved role — or the
+    // default the boot runs as when no --role was given (mirrors the
+    // headless runner's line).
+    if (selectedRole === undefined) {
+      options.debug?.(`[policy] role=solo (default)`);
+    } else {
+      options.debug?.(
+        `[policy] role=${selectedRole.resolved.name} tools=${selectedRole.resolved.tools.join(',')}`,
+      );
+    }
     const roleBoot: { rolePrompt?: string; toolAllowlist?: string[] } =
       selectedRole === undefined
         ? {}
@@ -1590,6 +1626,9 @@ export async function bootTuiLane(
     return {
       sessionId: id,
       model: `${runningModel.provider}/${runningModel.id}`,
+      // Issue #246: the injected §50 sink, threaded to the turn runner
+      // for its fault and token lines (absent in prod — no --debug flag).
+      debug: options.debug,
       // Issue #290: per-turn spans next to the headless artifact — the
       // session's spans.jsonl carries one run span per TUI turn plus its
       // tool spans. Best-effort: telemetry never fails a turn or a boot.
@@ -2367,6 +2406,10 @@ export class TuiTurnRunner {
   // Issue #290: per-turn spans (absent means the turn records none).
   private readonly spans: TurnSpansSink | undefined;
 
+  // Issue #246: the §50 debug sink (absent means lines are dropped,
+  // except the fault notice which always renders).
+  private readonly debug: DebugSink | undefined;
+
   constructor(
     app: TuiApp,
     loop: TuiLaneLoop,
@@ -2379,6 +2422,9 @@ export class TuiTurnRunner {
     usageRows: ReadonlyArray<StatusUsageRow> = [],
     // Issue #290: per-turn spans; absent means the turn records none.
     spans?: TurnSpansSink,
+    // Issue #246: the §50 debug sink; absent drops the lines (the fault
+    // notice below still renders — it does not need the sink).
+    debug?: DebugSink,
   ) {
     this.app = app;
     this.loop = loop;
@@ -2387,6 +2433,7 @@ export class TuiTurnRunner {
     this.onLaneEvent = onLaneEvent;
     this.usageRows = [...usageRows];
     this.spans = spans;
+    this.debug = debug;
     this.projector = new PresentationProjector(app.presentationSeed());
   }
 
@@ -2560,6 +2607,9 @@ export class TuiTurnRunner {
     if (event.type === 'usage') {
       // The row names the provider/model that answered (#287); the status
       // bar reads tokens + cost only.
+      // Issue #246: the same row feeds the §50 [model] token line (sink
+      // only — the status bar already shows the spend, so the transcript
+      // stays quiet).
       this.usageRows.push({
         model: event.row.model,
         provider: event.row.provider,
@@ -2572,6 +2622,14 @@ export class TuiTurnRunner {
           : { toolCallId: event.row.toolCallId }),
       });
       this.app.setUsage([...this.usageRows]);
+      this.debug?.(
+        modelLine(
+          event.row.usage.input,
+          event.row.usage.output,
+          event.row.usage.cacheRead,
+          `${event.row.provider}/${event.row.model}`,
+        ),
+      );
       // Issue #296: the committed assistant entry is here. Clear the draft
       // FIRST — `clearStream` paints nothing, so no frame can show the text
       // vanishing — and fold second, because the fold's own paint is the one
@@ -2590,6 +2648,16 @@ export class TuiTurnRunner {
     if (event.type === 'tool-start') {
       // Issue #290: the turn's tool span opens with the call.
       this.spans?.turns.startTool(event.toolCallId, event.toolName);
+    }
+    if (event.type === 'fault') {
+      // Issue #246: a faulted harness task (pi-durable `task_failed` —
+      // Pi 1.0 has no `handler_error` event) is the §50 handler_error
+      // line. It rides the debug sink when one is attached, and it ALWAYS
+      // lands as a transcript notice: the TUI has no --debug channel, so
+      // a silent sink would swallow an extension/hook failure whole.
+      const line = hookErrorLine(event.code, event.message);
+      this.debug?.(line);
+      this.app.appendNotice([line]);
     }
     if (event.type === 'tool-end' && event.entry !== undefined) {
       // A tool result that faulted or was orphaned has no entry: the tree
@@ -3637,6 +3705,7 @@ export async function runTuiCommand(
       },
       boot.usageRows,
       boot.turnSpans,
+      boot.debug,
     );
     // Issue #333 (review round 2): EVERY runner gets the loop's in-place queue
     // map, not just the initial one — `/new` and `/resume` rebuild the runner

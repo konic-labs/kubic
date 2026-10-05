@@ -7,7 +7,7 @@
 //     per span, written by the composition root next to the journal),
 //   - stderr debug lines on the existing §50 vocabulary (`[agent]` lane
 //     lines, `[tool]` in/out lines) behind `kubic run --debug`.
-// No new debug class is invented: DEBUG_CLASSES stays the pinned nine.
+// No new debug class is invented: DEBUG_CLASSES stays the pinned eight.
 // Since issue #397 the attachment is a pi-durable `ToolTask` hook (beforeTool
 // opens the span, afterTool closes it and returns the result unchanged).
 // Never blocks a tool call — the handlers return undefined except for the

@@ -1352,8 +1352,10 @@ export async function orchestrateDepsWithDefaults(
   // one worker.start (+ nested startup) span per launch, appended per
   // settled worker to <root>/.kubic/orchestrator/<session>.spans.jsonl.
   // Shared across concurrent runWorker calls: span ids are unique per
-  // launch, so workers never share spans.
-  const managerSpans = new RunSpans(Date.now);
+  // launch, so workers never share spans. The run's debug channel
+  // carries the span lines (issue #246), so `kubic orchestrate --debug`
+  // names each worker start and end.
+  const managerSpans = new RunSpans(Date.now, debug);
 
   const needRoot = (): string => {
     if (root === undefined) throw new Error('not a git repository');

@@ -1,5 +1,5 @@
 // reap = zombie-free, <1s, non-blocking (issue #42; §61 teardown):
-// kill lands synchronously, the exit report (code/signal/leaks)
+// kill lands synchronously, the exit report (code/signal)
 // settles async, and the caller never blocks on the child.
 import { describe, expect, it } from 'vitest';
 import { reapDetached, reportExit } from './reap.js';
@@ -11,22 +11,24 @@ function deferred<T>() {
 }
 
 describe('reportExit (issue #42)', () => {
-  it('reports code, signal, and leaked handles together', () => {
-    expect(
-      reportExit({ code: 1, signal: 'SIGKILL', leakedHandles: 2 }),
-    ).toEqual({
+  it('reports code and signal together (no leak count — issue #246)', () => {
+    const report = reportExit({ code: 1, signal: 'SIGKILL' });
+    expect(report).toEqual({
       kind: 'crash',
       status: 'failed',
       code: 1,
       signal: 'SIGKILL',
-      leakedHandles: 2,
     });
+    // The always-0 leak count is dropped from the exit report (issue
+    // #246): nothing ever measured it, so the report carries no key.
+    expect(report).not.toHaveProperty('leakedHandles');
   });
 
-  it('reports a clean exit with zero leaks', () => {
-    expect(
-      reportExit({ code: 0, signal: null, leakedHandles: 0 }),
-    ).toMatchObject({ kind: 'completed', status: 'completed' });
+  it('reports a clean exit', () => {
+    expect(reportExit({ code: 0, signal: null })).toMatchObject({
+      kind: 'completed',
+      status: 'completed',
+    });
   });
 });
 

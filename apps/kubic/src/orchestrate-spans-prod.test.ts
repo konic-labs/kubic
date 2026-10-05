@@ -137,4 +137,41 @@ describe('manager-side worker spans (issue #290)', () => {
     expect(start?.sessionId).toBe('spans-worker-1');
     expect(startup?.sessionId).toBe('spans-worker-1');
   }, 30_000);
+
+  it('routes worker span lines to the run debug channel (issue #246)', async () => {
+    const repo = initRepo();
+    const lines: string[] = [];
+    const debugLines: string[] = [];
+    const deps = await orchestrateDepsWithDefaults({
+      out: (line) => lines.push(line),
+      err: () => undefined,
+      debug: (line) => debugLines.push(line),
+      cwd: repo,
+      sessionsRoot: scratch('kubic-spans-sessions-'),
+      registry: new WorkerRegistry(),
+      workerEntry: fixtureEntry(),
+      signals: { install: () => () => undefined, reraise: () => undefined },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'go',
+        agents: ['worker-1'],
+        yes: true,
+        json: true,
+        session: 'spans-debug',
+      },
+      deps,
+    );
+    expect(code).toBe(0);
+    // The manager's worker.start span opens and closes on the debug
+    // channel, so `kubic orchestrate --debug` names each worker.
+    expect(
+      debugLines.some((line) =>
+        line.includes('[agent] worker start session=spans-debug-worker-1'),
+      ),
+    ).toBe(true);
+    expect(
+      debugLines.some((line) => line.includes('[agent] worker end ms=')),
+    ).toBe(true);
+  }, 30_000);
 });

@@ -94,6 +94,40 @@ post-skip items, so `--skip dep:config-load` leaves
 still failing it. Skipping every input of a section reports that
 aggregate as skipped, never as a failure.
 
+## What each path emits on `--debug` (§50, issue #246)
+
+The §50 vocabulary is eight line classes (`[policy]`, `[worker]`,
+`[session]`, `[tool]`, `[model]`, `[agent]`, `[exit]`, `handler_error`):
+
+- **`kubic run --debug`** (stderr): the boot `[session] id=<id>
+  parent=<id|none>` and `[policy] role=<name> tools=<…>` lines (a stock
+  run names `role=solo (default)`), then per turn the `[agent]` run/lane
+  spans, one `[tool] in/out` pair per tool call, one `[model]
+  in=<n> out=<n> cached=<n> <provider>/<model>` line per committed
+  response, and retry/compaction `[lane]` lines. A faulted harness task
+  (pi-durable `task_failed` — Pi 1.0 has no `handler_error` event)
+  surfaces as `handler_error hook=<kind> error=<message> verdict=deny`.
+- **`kubic orchestrate --debug`** (stderr): one `[agent] worker start
+  session=<worker-session>` line per launch plus the worker end line,
+  alongside the existing `[worker] spawn …` rows. The per-launch
+  `kubic.worker.start` span (with its nested `kubic.worker.startup`
+  span, pinned to the registry's `startupMs`) is appended per settled
+  worker to `<repo>/.kubic/orchestrator/<session>.spans.jsonl`; the
+  worker child itself writes its session's `spans.jsonl` like a headless
+  run, so both traces join on the worker session id.
+- **`kubic tui`** has no `--debug` flag, so its lines are dropped — with
+  two exceptions that always surface: a lane fault renders as a
+  transcript notice (the `handler_error …` line; the TUI has no other
+  failure channel), and every settled turn appends its spans to the
+  session's `spans.jsonl` exactly like a headless run. The per-response
+  spend stays on the status bar; the boot's `[session]`/`[policy]` lines
+  and the per-response `[model]` line go to the (currently unwired)
+  debug sink a test boot injects.
+- **Dropped by design** (see [design drift](../design-drift.md)): the
+  `(0 leaked handles)` count (nothing ever measured it) and `[tool]
+  allowed` verdict lines (admission is enforced by the policy
+  interceptor, which reports on the approval surface).
+
 ## When a command dies unexpectedly (`KUBIC_DEBUG`)
 
 An unexpected failure — a bug in a command's wiring, an unshaped IO error —

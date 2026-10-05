@@ -53,8 +53,8 @@ describe('SpanRecorder (§49.3 order + startup isolation)', () => {
   });
 });
 
-describe('DebugLog (§50 --debug vocabulary, 9 classes)', () => {
-  it('emits all 9 classes with in/out/cached + exited cleanly (0 leaked handles)', () => {
+describe('DebugLog (§50 --debug vocabulary, 8 classes)', () => {
+  it('emits all 8 classes with in/out/cached + exited cleanly', () => {
     const lines: string[] = [];
     const debug = new DebugLog((line: string) => lines.push(line));
     debug.policy('route=ask-user tool=bash');
@@ -67,7 +67,8 @@ describe('DebugLog (§50 --debug vocabulary, 9 classes)', () => {
     debug.agent('turn=3 done');
     debug.hookError('onToolEnd', new Error('boom'));
     debug.exit(0);
-    debug.handles(0);
+    // Issue #246: no leak line — nothing ever measured a leak count.
+    expect(lines.join('\n')).not.toContain('leaked handles');
     const joined = lines.join('\n');
     for (const cls of [
       '[policy]',
@@ -77,14 +78,12 @@ describe('DebugLog (§50 --debug vocabulary, 9 classes)', () => {
       '[model]',
       '[agent]',
       '[exit]',
-      '[handles]',
       'handler_error',
     ]) {
       expect(joined).toContain(cls);
     }
     expect(joined).toContain('in=120 out=45 cached=30');
     expect(joined).toContain('exited cleanly');
-    expect(joined).toContain('0 leaked handles');
   });
 });
 
@@ -156,5 +155,32 @@ describe('SpanRecorder explicit end (issue #290)', () => {
     expect(() => recorder.endAt('span-404', 1)).toThrow(
       'unknown span span-404',
     );
+  });
+});
+
+describe('debug line helpers (issue #246)', () => {
+  it('formats the same handler_error line the method emits', async () => {
+    const { hookErrorLine } = await import('./spans.js');
+    const lines: string[] = [];
+    new DebugLog((line: string) => lines.push(line)).hookError(
+      'tool',
+      'task exploded',
+    );
+    expect(hookErrorLine('tool', 'task exploded')).toBe(lines[0]);
+    expect(hookErrorLine('tool', 'task exploded')).toBe(
+      'handler_error hook=tool error=task exploded verdict=deny',
+    );
+  });
+
+  it('formats the same [model] line the method emits', async () => {
+    const { modelLine } = await import('./spans.js');
+    const lines: string[] = [];
+    new DebugLog((line: string) => lines.push(line)).model(
+      120,
+      45,
+      30,
+      'test/faux-1',
+    );
+    expect(modelLine(120, 45, 30, 'test/faux-1')).toBe(lines[0]);
   });
 });

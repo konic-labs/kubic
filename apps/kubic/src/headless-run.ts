@@ -122,6 +122,7 @@ import {
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import { bootSkills } from '../../../packages/host/src/skills-boot.js';
 import type { DebugSink } from '../../../packages/host/src/spans.js';
+import { hookErrorLine, modelLine } from '../../../packages/host/src/spans.js';
 import type { RunOutcome } from '../../../packages/host/src/trajectory/run-trajectory.js';
 import {
   hasVerifyCommands,
@@ -152,6 +153,7 @@ import {
   createSession,
   laneConversationIdOf,
   openSessionStore,
+  readSessionMetadata,
   type SessionHandle,
   sessionsTouchingWorkspace,
 } from '../../../packages/worker/src/lane/session-store.js';
@@ -759,9 +761,24 @@ interface RunCapture {
 // Issue #150: the `[lane]` debug line for a retry or compaction event, or
 // undefined for any other event. The 1.0 harness reports the attempt and the
 // error (#398's contract — no maxAttempts, no notBefore).
+// Issue #246: a lane fault (pi-durable `task_failed` — Pi 1.0 has no
+// `handler_error` event) maps to the §50 handler_error line, and a
+// committed response maps to the §50 [model] token line. Both reuse the
+// spans vocabulary formatters, so every path emits byte-identical lines.
 export function laneActivityDebugLine(
   event: KubicLaneEvent,
 ): string | undefined {
+  if (event.type === 'fault') {
+    return hookErrorLine(event.code, event.message);
+  }
+  if (event.type === 'usage') {
+    return modelLine(
+      event.row.usage.input,
+      event.row.usage.output,
+      event.row.usage.cacheRead,
+      `${event.row.provider}/${event.row.model}`,
+    );
+  }
   if (event.type === 'retry') {
     const attempt = event.attempt ?? 1;
     return event.phase === 'start'
@@ -1149,6 +1166,15 @@ async function runHeadlessPromptImpl(
   const id = session.id;
   capture.sessionId = id;
   capture.sessionsRoot = root;
+  // Issue #246: the §50 [session] line names the session and its #164
+  // parent. Best-effort (telemetry never fails a run): a fresh or torn
+  // session simply has no parent.
+  try {
+    const meta = await readSessionMetadata(session.storage, context);
+    debug?.(`[session] id=${id} parent=${meta?.parentSessionId ?? 'none'}`);
+  } catch {
+    // A failed metadata read is not a run failure.
+  }
   // Declared outside the try so the `finally` sweep below can reach it
   // (issue #87): assigned once the lane's env (the workspace root) exists.
   let reconciliation: RunReconciliation | undefined;
@@ -1379,6 +1405,10 @@ async function runHeadlessPromptImpl(
       );
       role = { resolved: selected.resolved, prompt: promptText };
       capture.role = selected.resolved.name;
+    } else {
+      // Issue #246: the stock solo run resolves no role document — the
+      // §50 [policy] line still names the default role it runs as.
+      debug?.(`[policy] role=solo (default)`);
     }
     // A refused models.json is a config error the user must see: it goes
     // to the warning channel unconditionally; a successful load is a

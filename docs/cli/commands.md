@@ -264,10 +264,11 @@ semantics are provided or tested.
 Lane, tool and worker spans have three destinations:
 
 1. **stderr, behind `--debug`** — each span close writes one
-   `<label>: <name> …` line through the shared `DebugSink`. This is the
-   channel the interactive TUI debug view uses, so the vocabulary is
-   identical across modes. Silence (no `--debug`) is the default, which
-   keeps stdout consumable and the run's exit contract untouched.
+   `<label>: <name> …` line through the shared `DebugSink`. Silence (no
+   `--debug`) is the default, which keeps stdout consumable and the run's
+   exit contract untouched. (`kubic tui` has no `--debug` flag: its span
+   closes go to the artifact below, and lane faults render as transcript
+   notices — see the debug page.)
 2. **the session artifact** — `run-spans.ts` also serializes the same
    spans to `spans.jsonl` under the session's own directory
    (`<sessions-root>/<session-id>/spans.jsonl`), one JSON object per

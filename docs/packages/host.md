@@ -41,7 +41,7 @@ docs and code must never imply otherwise (design §59.1).
 ### Spans and the debug channel (`spans.ts` + `ops/perf/run-spans.ts`, §29/§49.3/§50)
 
 `spans.ts` is the §49.3 recorder (`SpanRecorder` over `SPAN_NAMES`), the
-§50 debug vocabulary (`DEBUG_CLASSES`, nine classes) and the transcript
+§50 debug vocabulary (`DEBUG_CLASSES`, eight classes — `[handles]` dropped with the leak count, #246) and the transcript
 sinks. Since issue #98 it is **live on the run path**: `ops/perf/run-spans.ts`
 maps what the lane and the harness actually do onto it and
 `apps/kubic/src/headless-run.ts` drives it, so a real `kubic run` records

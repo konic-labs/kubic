@@ -1,17 +1,18 @@
 // Worker reap (issue #42; §61 teardown, §51): zombie-free, <1s,
 // non-blocking. reapDetached kills synchronously and returns at once —
-// the exit report (code/signal/leaks) settles on .reaped, with a
+// the exit report (code/signal) settles on .reaped, with a
 // past-budget flag when the child outlives the teardown budget. The
 // child is always drained (.drained), so no zombies even on timeout.
 // Cancelled workers (§51) are terminated here and never reused: reap
 // removes the proc, it never recycles it.
+// Issue #246: the report carries no leak count — nothing ever measured
+// it (the old always-0 `leakedHandles` is dropped).
 
 import { classifyExit, type ExitResultStatus } from './status.js';
 
 export interface RawExit {
   code: number | null;
   signal: string | null;
-  leakedHandles: number;
   /**
    * The group SIGKILL escalation beat the child's own cooperative shutdown
    * (issue #249): the cancel was FORCED, not settled. Absent means the child
@@ -42,7 +43,6 @@ export function reportExit(raw: RawExit): ExitReport {
   return {
     code: raw.code,
     signal: raw.signal,
-    leakedHandles: raw.leakedHandles,
     ...(raw.forced === true ? { forced: true } : {}),
     kind: classified.kind,
     status: classified.status,
@@ -57,7 +57,6 @@ export interface ReapTarget {
     signal?: string | null;
     forced?: boolean;
   }>;
-  leakedHandles?: number;
   cancelled?: boolean;
 }
 
@@ -94,7 +93,6 @@ export function reapDetached(
     return {
       code: done.code,
       signal: done.signal ?? null,
-      leakedHandles: target.leakedHandles ?? 0,
       ...(done.forced === true ? { forced: true } : {}),
       kind: classified.kind,
       status: classified.status,
@@ -118,7 +116,6 @@ export function reapDetached(
         return {
           code: null,
           signal: null,
-          leakedHandles: target.leakedHandles ?? 0,
           forced: true,
           kind: 'timeout',
           status: 'timeout',

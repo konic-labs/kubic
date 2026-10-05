@@ -102,11 +102,13 @@ export class SpanRecorder {
   }
 }
 
-// --debug stderr vocabulary (§50): exactly 9 line classes —
+// --debug stderr vocabulary (§50): exactly 8 line classes —
 // [policy]/[worker]/[session]/[tool]/[model]/[agent] + [exit] +
-// [handles] + handler_error. Tool lines carry the in/out/cached phase;
+// handler_error. Tool lines carry the in/out/cached phase;
 // model lines carry in/out/cached token counts. Constructed with a sink
 // (stderr in prod, an array in tests) so TUI code never touches io here.
+// Issue #246: the `[handles]` class is dropped — nothing ever measured a
+// leak count, so the vocabulary carries no leak line.
 export const DEBUG_CLASSES = [
   '[policy]',
   '[worker]',
@@ -115,13 +117,29 @@ export const DEBUG_CLASSES = [
   '[model]',
   '[agent]',
   '[exit]',
-  '[handles]',
   'handler_error',
 ] as const;
 
 export type DebugSink = (line: string) => void;
 
 export type ToolPhase = 'in' | 'out' | 'cached';
+
+// Issue #246: the two line shapes other paths reuse without owning a
+// DebugLog — the methods below delegate to these, so the headless lane
+// sink and the TUI runner emit byte-identical lines.
+export function hookErrorLine(hook: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return `handler_error hook=${hook} error=${message} verdict=deny`;
+}
+
+export function modelLine(
+  input: number,
+  output: number,
+  cached: number,
+  detail: string,
+): string {
+  return `[model] in=${input} out=${output} cached=${cached} ${detail}`;
+}
 
 export class DebugLog {
   private readonly sink: DebugSink;
@@ -147,7 +165,7 @@ export class DebugLog {
   }
 
   model(input: number, output: number, cached: number, detail: string): void {
-    this.sink(`[model] in=${input} out=${output} cached=${cached} ${detail}`);
+    this.sink(modelLine(input, output, cached, detail));
   }
 
   agent(detail: string): void {
@@ -155,16 +173,11 @@ export class DebugLog {
   }
 
   hookError(hook: string, error: unknown): void {
-    const message = error instanceof Error ? error.message : String(error);
-    this.sink(`handler_error hook=${hook} error=${message} verdict=deny`);
+    this.sink(hookErrorLine(hook, error));
   }
 
   exit(code: number): void {
     this.sink(`[exit] code=${code} exited cleanly`);
-  }
-
-  handles(leaked: number): void {
-    this.sink(`[handles] ${leaked} leaked handles`);
   }
 }
 

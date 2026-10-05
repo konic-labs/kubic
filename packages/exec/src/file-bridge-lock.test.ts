@@ -172,9 +172,7 @@ describe('temp + range primitives (issue #360)', () => {
     if (readFileRange === undefined)
       throw new Error('node bridge lacks readFileRange');
     bridge.writeFile('f.bin', 'hello');
-    expect(Buffer.from(readFileRange('f.bin', 0, 5)).toString()).toBe(
-      'hello',
-    );
+    expect(Buffer.from(readFileRange('f.bin', 0, 5)).toString()).toBe('hello');
     const past = readFileRange('f.bin', 2, 100);
     expect(past.length).toBe(3);
     expect(Buffer.from(past).toString()).toBe('llo');

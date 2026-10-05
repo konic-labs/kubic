@@ -135,9 +135,9 @@ async function seededCompactedSession(root: string): Promise<string> {
       ? settled.state.outcome.result.submissionId
       : undefined;
   if (submissionId !== undefined) {
-    await (
-      await harness.submission(submissionId, BACKGROUND_CONTEXT)
-    )?.wait(BACKGROUND_CONTEXT);
+    await (await harness.submission(submissionId, BACKGROUND_CONTEXT))?.wait(
+      BACKGROUND_CONTEXT,
+    );
   }
   await harness.close(BACKGROUND_CONTEXT);
   await session.release(BACKGROUND_CONTEXT);
@@ -197,9 +197,7 @@ describe('sessions CLI (issue #14, slice F)', () => {
       cwd: string;
     }>;
     // Absolute, and the caller's directory — never the sessions root.
-    expect(entries.find((entry) => entry.id === id)?.cwd).toBe(
-      process.cwd(),
-    );
+    expect(entries.find((entry) => entry.id === id)?.cwd).toBe(process.cwd());
   });
 
   it('create --cwd refuses a missing or non-directory path by name (#261)', async () => {
@@ -470,9 +468,7 @@ describe('sessions CLI (issue #14, slice F)', () => {
       },
     );
     expect(code).toBe(0);
-    expect(o.lines.some((line) => line.startsWith('[compaction]'))).toBe(
-      true,
-    );
+    expect(o.lines.some((line) => line.startsWith('[compaction]'))).toBe(true);
     expect(o.lines.join('\n')).toContain('Summarized.');
     expect(o.lines.join('\n')).not.toContain('"role"');
   });

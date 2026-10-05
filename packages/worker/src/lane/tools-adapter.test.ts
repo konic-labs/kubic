@@ -463,6 +463,49 @@ describe('kubicToolsToPiTools (issue #168)', () => {
     expect(JSON.parse(out)).toMatchObject({ path: 'w.txt' });
   });
 
+  it('an unexpected throw stays an internal error result and never rejects', async () => {
+    // readFailure names known fs failures and propagates anything else
+    // unchanged, so a raw seam fault reaches callOperation's catch and
+    // becomes code 'internal' content — the promise resolves, pi-durable
+    // only marks a throw as an error result.
+    const base = new FakeExecutionEnv({});
+    const fault = (): never => {
+      throw new Error('disk on fire');
+    };
+    const env = Object.assign(Object.create(base) as FakeExecutionEnv, {
+      fs: { ...base.fs, readFile: fault, readFileRange: fault },
+    });
+    const out = await run('read', { path: 'x.txt' }, toolContext({ env }));
+    expect(out.text).toBe('error internal: disk on fire');
+    expect(out.isError).toBeUndefined();
+    expect(out.details).toEqual({
+      ok: false,
+      toolCallId: 'call-1',
+      code: 'internal',
+    });
+  });
+
+  it('a failed never-replay op writes no memo on the lane either (issue #217)', async () => {
+    // The lane sets keepEffectMemo: false, so the registry memo never
+    // engages there — success (above) or failure, no second durable copy.
+    const env = new FakeExecutionEnv({});
+    env.fs.writeFile('x.txt', 'aaa\n');
+    const api = drive({ callId: 'call-edit-1' });
+    const out = await run(
+      'edit',
+      { path: 'x.txt', oldText: 'zzz-no-match', newText: 'b' },
+      toolContext({ env }),
+      api,
+    );
+    expect(out.text).toBe('error no_match: edit: oldText not found in x.txt');
+    expect(out.details).toEqual({
+      ok: false,
+      toolCallId: 'call-edit-1',
+      code: 'no_match',
+    });
+    expect([...api.memos.keys()]).toEqual([]);
+  });
+
   it('an op error stays a model-readable error line', async () => {
     const out = await run('read', { path: 'missing.txt' });
     expect(out.text).toBe('error not_found: read: no such file: missing.txt');

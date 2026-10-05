@@ -10,6 +10,7 @@ import {
   formatImageBytes,
   IMAGE_MAX_BYTES,
   INLINE_IMAGE_MAX_CHARS,
+  inlineImageTerminatorEnd,
   parseInlineImageSequence,
   scanInlineImageChunk,
   validateImageAttachment,
@@ -177,5 +178,41 @@ describe('terminal-pasted images (issue #338)', () => {
 
   it('leaves a chunk with no sequence to the normal input path', () => {
     expect(scanInlineImageChunk('', 'plain typing')).toEqual({ kind: 'none' });
+  });
+
+  // Issue #338 review, cycle 2: a pty split can land inside the 12-character
+  // opener, and without holding the partial prefix the rest of the sequence
+  // has nothing to match and is typed into the draft.
+  it('holds a chunk that ends inside the opener', () => {
+    const first = scanInlineImageChunk('', 'look\u001b]133');
+    expect(first).toEqual({
+      kind: 'pending',
+      head: 'look',
+      buffer: '\u001b]133',
+    });
+    const second = scanInlineImageChunk(
+      first.kind === 'pending' ? first.buffer : '',
+      `7;File=name=x;inline=1:${PNG.toString('base64')}\u0007`,
+    );
+    expect(second.kind).toBe('image');
+  });
+
+  // A lone ESC is the Esc key, not the start of a paste: holding it would
+  // swallow the quit binding until the idle window expired.
+  it('never holds a lone ESC', () => {
+    expect(scanInlineImageChunk('', '\u001b')).toEqual({ kind: 'none' });
+    expect(scanInlineImageChunk('', '\u001b]')).toEqual({
+      kind: 'pending',
+      head: '',
+      buffer: '\u001b]',
+    });
+  });
+
+  it('finds where a discarded payload ends', () => {
+    expect(inlineImageTerminatorEnd('AAAA')).toBeUndefined();
+    expect(inlineImageTerminatorEnd('AAAA\u0007rest')).toBe(5);
+    expect(inlineImageTerminatorEnd('AAAA\u001b\\rest')).toBe(6);
+    // Whichever terminator comes first wins.
+    expect(inlineImageTerminatorEnd('A\u0007B\u001b\\C')).toBe(2);
   });
 });

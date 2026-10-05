@@ -421,6 +421,11 @@ export interface TuiApp {
   // Issue #338 (§16.8): the images the next echoed prompt carries, set by
   // the loop together with the submit it accepted.
   setPendingImages(images: readonly LaneImagePart[]): void;
+  // Issue #338 (review, cycle 2): how many attachments are armed but NOT yet
+  // submitted — the signal `allowEmptySubmit` reads. `setPendingImages` is
+  // the echo's copy and outlives the submit; this one is cleared by the
+  // submit itself.
+  setPendingAttachments(count: number): void;
   // Issue #334 (review): put a refused draft back in the editor, so a busy
   // orchestrator run (or a `/model` typed mid-turn) never eats the text the
   // operator typed.
@@ -816,8 +821,12 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   let pendingImages: readonly LaneImagePart[] = [];
   // Issue #338 (review): Enter with an attachment and no text IS a submit —
   // the image is the prompt. The editor asks this before dropping a blank
-  // draft (attach + Enter was a silent no-op otherwise).
-  editor.allowEmptySubmit = (): boolean => pendingImages.length > 0;
+  // draft (attach + Enter was a silent no-op otherwise). The count is the
+  // loop's UNSUBMITTED attachments, not the echo images: after a submit the
+  // echo still holds them, and a blank Enter there must stay a no-op
+  // (issue #338 review, cycle 2).
+  let pendingAttachments = 0;
+  editor.allowEmptySubmit = (): boolean => pendingAttachments > 0;
   let promptCells = 0;
   let promptCellsAtSubmit = 0;
   editor.onSubmit = (prompt: string): void => {
@@ -1480,6 +1489,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       if (pendingPrompt !== undefined) {
         transcript.setPendingPrompt(pendingPrompt, pendingImages);
       }
+    },
+    setPendingAttachments: (count: number): void => {
+      pendingAttachments = count;
     },
     setJournalChanges: (rows: ReadonlyArray<JournalChangeLike>): void => {
       diffPanel.setChanges(rows);

@@ -270,6 +270,11 @@ export type InlineImageChunk =
 // defect this function exists to prevent (issue #338 review). `buffer` is the
 // previous call's pending tail; a chunk with no sequence at all (ordinary
 // typing, a key press) is left to the normal input path.
+//
+// The tail of a chunk may end inside the 12-character prefix itself (a pty
+// split there is as likely as any other byte), so a trailing partial prefix
+// is held too: without that, the rest of the sequence has no prefix to match
+// and the whole thing would be typed (issue #338 review, cycle 2).
 export function scanInlineImageChunk(
   buffer: string,
   chunk: string,
@@ -278,7 +283,15 @@ export function scanInlineImageChunk(
   const image = parseInlineImageSequence(combined);
   if (image !== undefined) return { kind: 'image', image };
   const start = combined.lastIndexOf(INLINE_IMAGE_PREFIX);
-  if (start === -1) return { kind: 'none' };
+  if (start === -1) {
+    const held = trailingPrefixLength(combined);
+    if (held === 0) return { kind: 'none' };
+    return {
+      kind: 'pending',
+      head: combined.slice(0, combined.length - held),
+      buffer: combined.slice(combined.length - held),
+    };
+  }
   const head = combined.slice(0, start);
   const tail = combined.slice(start);
   if (tail.length > INLINE_IMAGE_MAX_CHARS) {
@@ -287,4 +300,38 @@ export function scanInlineImageChunk(
     return { kind: 'too-large', head };
   }
   return { kind: 'pending', head, buffer: tail };
+}
+
+// The length of the longest suffix of `text` that is a proper prefix of the
+// inline-image opener (`'\u001b]1337;File='.length - 1` at most), or 0 when
+// nothing should be held.
+//
+// A LONE trailing `ESC` is deliberately not held: the terminal sends exactly
+// that byte for the Esc key, so holding it would swallow a quit (and every
+// other Esc binding) until the idle window expired — the state machine would
+// be trading one silent swallow for another. The opener's first two bytes
+// (`ESC ]`) are the OSC introducer, which no key produces, so holding from
+// two bytes up is safe. A paste split exactly between `ESC` and `]` is a
+// stated miss: the Esc is delivered as a key.
+function trailingPrefixLength(text: string): number {
+  const max = Math.min(text.length, INLINE_IMAGE_PREFIX.length - 1);
+  for (let length = max; length >= 2; length -= 1) {
+    if (text.endsWith(INLINE_IMAGE_PREFIX.slice(0, length))) return length;
+  }
+  return 0;
+}
+
+// Where an inline-image payload ends, in `text`: the index just past the
+// first BEL (`\u0007`) or ST (`\u001b\\`) terminator, or `undefined` when the
+// payload is still arriving. Used while DISCARDING a sequence that was over
+// the cap: the remaining chunks hold pure payload, so they are consumed
+// until the terminator instead of being typed into the draft (issue #338
+// review, cycle 2).
+export function inlineImageTerminatorEnd(text: string): number | undefined {
+  const bel = text.indexOf('\u0007');
+  const st = text.indexOf('\u001b\\');
+  if (bel === -1 && st === -1) return undefined;
+  if (bel === -1) return st + 2;
+  if (st === -1) return bel + 1;
+  return bel < st ? bel + 1 : st + 2;
 }

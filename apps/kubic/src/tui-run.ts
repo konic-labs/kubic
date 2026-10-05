@@ -108,6 +108,7 @@ import {
   type AttachmentImage,
   formatImageBytes,
   IMAGE_MAX_BYTES,
+  inlineImageTerminatorEnd,
   scanInlineImageChunk,
   validateImageAttachment,
 } from '../../../packages/tui/src/attachments.js';
@@ -2806,6 +2807,13 @@ export type TuiImageCommand =
 export const IMAGE_COMMAND_USAGE =
   'usage: /image <path> (png, jpeg, webp or gif)';
 
+// How long an unterminated inline-image sequence is held before it is
+// dropped with a footer (issue #338 review, cycle 2): long enough for the
+// chunks of one real paste (the pty delivers them back to back, and pi-tui's
+// StdinBuffer flushes a partial OSC after 50 ms), short enough that a stray
+// escape never swallows the operator's typing.
+export const PASTE_IDLE_MS = 150;
+
 export function parseImageCommand(prompt: string): TuiImageCommand | undefined {
   const trimmed = prompt.trim();
   if (trimmed !== '/image' && !trimmed.startsWith('/image ')) {
@@ -3209,6 +3217,10 @@ export async function runTuiCommand(
             const images = queuedImages.get(id) ?? [];
             queuedImages.delete(id);
             app.setPendingImages(images);
+            // Nothing is armed any more: the composer is empty and the echo
+            // carries the images, so a blank Enter here is a no-op (issue
+            // #338 review, cycle 2).
+            app.setPendingAttachments(0);
             app.setPendingEcho(text);
           }
           // The placed submission is work in flight now: a queued
@@ -3503,8 +3515,26 @@ export async function runTuiCommand(
     const imageFiles = files;
     // Issue #338 review: a large inline paste arrives in chunks, so a partial
     // OSC 1337 sequence is held here across listener calls (bounded) instead
-    // of being typed into the draft as raw escape + base64.
+    // of being typed into the draft as raw escape + base64. `droppingPaste`
+    // is the state after one that was past the cap: its remaining chunks are
+    // payload and are discarded up to the terminator.
     let pasteBuffer = '';
+    let droppingPaste = false;
+    let dropCarry = '';
+    let pasteIdle: ReturnType<typeof setTimeout> | undefined;
+    // A partial sequence that never completes must not swallow the operator's
+    // typing for the rest of the session (issue #338 review, cycle 2): after
+    // a short idle window the held bytes are dropped and the footer says so.
+    const armPasteIdle = (): void => {
+      if (pasteIdle !== undefined) clearTimeout(pasteIdle);
+      pasteIdle = setTimeout(() => {
+        pasteIdle = undefined;
+        if (stopped || pasteBuffer === '') return;
+        pasteBuffer = '';
+        setImagesFooter('pasted image incomplete — ignored');
+      }, PASTE_IDLE_MS);
+      pasteIdle.unref?.();
+    };
     const setImagesFooter = (text: string): void => {
       app.setEditorFooter(text);
       if (!stopped) screen?.render();
@@ -3537,6 +3567,9 @@ export async function runTuiCommand(
       };
       pendingImages = [...pendingImages, image];
       app.setPendingImages(pendingImages);
+      // Issue #338 (review, cycle 2): the armed-but-unsubmitted count the
+      // editor's blank-submit rule reads.
+      app.setPendingAttachments(pendingImages.length);
       setImagesFooter(
         `image attached: ${image.filename} (${formatImageBytes(image.bytes)}) — Enter sends it`,
       );
@@ -3583,6 +3616,24 @@ export async function runTuiCommand(
       // even if a future caller routes around it — a Ctrl-C release counted
       // as the second Ctrl-C would quit the session on key-up.
       if (isKeyRelease(data)) return { consume: true };
+      // Issue #338 review (cycle 2): while a paste past the cap is being
+      // discarded, its remaining chunks are pure payload — consume them
+      // until the sequence's terminator instead of typing base64 into the
+      // draft. A chunk that ends mid-terminator keeps its ESC for the next
+      // call.
+      if (droppingPaste) {
+        const text = dropCarry + data;
+        const end = inlineImageTerminatorEnd(text);
+        if (end === undefined) {
+          dropCarry = data.endsWith('\u001b') ? '\u001b' : '';
+          return { consume: true };
+        }
+        droppingPaste = false;
+        dropCarry = '';
+        const rest = text.slice(end);
+        if (rest === '') return { consume: true };
+        return routeInput(rest);
+      }
       // Issue #338: a terminal that pastes an image inline (iTerm2's OSC
       // 1337 `File=` sequence) hands the bytes to the attach path — the
       // editor would otherwise insert the base64 payload as draft text. The
@@ -3596,11 +3647,14 @@ export async function runTuiCommand(
       }
       if (scan.kind === 'too-large') {
         pasteBuffer = '';
+        droppingPaste = true;
+        dropCarry = '';
         setImagesFooter(
           `pasted image is too large (> ${formatImageBytes(IMAGE_MAX_BYTES)})`,
         );
       } else {
         pasteBuffer = scan.kind === 'pending' ? scan.buffer : '';
+        if (pasteBuffer !== '') armPasteIdle();
       }
       const routedData =
         scan.kind === 'pending' || scan.kind === 'too-large' ? scan.head : data;
@@ -4049,6 +4103,7 @@ export async function runTuiCommand(
                 const dropped = pendingImages.length;
                 pendingImages = [];
                 app.setPendingImages([]);
+                app.setPendingAttachments(0);
                 app.setEditorFooter(
                   `model: ${label} (switched) · dropped ${dropped} attached image${dropped === 1 ? '' : 's'} — ${label} does not accept image input`,
                 );
@@ -4555,6 +4610,10 @@ export async function runTuiCommand(
           // The app keeps the sent images on the echo until the lane's own
           // prompt cell replaces it; the composer itself is empty again.
           app.setPendingImages(sentImages);
+          // ... but nothing is armed any more: a blank Enter between this
+          // submit and the echo's replacement is a no-op again (issue #338
+          // review, cycle 2).
+          app.setPendingAttachments(0);
         };
         if (busy) {
           // Issue #334: the solo lane queues the prompt in the

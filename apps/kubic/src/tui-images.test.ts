@@ -160,16 +160,28 @@ function startSession(
 
 // One `kubic tui` run over a stub lane: the routing decision (which lane a
 // submit reaches) is what these tests observe, so no provider is involved.
-function startStubSession(mode: 'solo' | 'orchestrator'): Session & {
+function startStubSession(
+  mode: 'solo' | 'orchestrator',
+  // `hold: true` keeps the first turn in flight until `release()` is called,
+  // so a test can act while the lane is busy (the echo still holds its
+  // images). The default settles immediately.
+  options: { readonly hold?: boolean } = {},
+): Session & {
   readonly admitted: Array<{ prompt: string; images: number }>;
   readonly objectives: string[];
+  readonly release: () => void;
 } {
   const fake = recordingTerminal();
   const admitted: Array<{ prompt: string; images: number }> = [];
   const objectives: string[] = [];
+  let releaseTurn: (() => void) | undefined;
+  const held = new Promise<void>((resolve) => {
+    releaseTurn = resolve;
+  });
   const loop = {
     runTurn: async (prompt: string, opts?: { images?: readonly unknown[] }) => {
       admitted.push({ prompt, images: opts?.images?.length ?? 0 });
+      if (options.hold === true) await held;
       return { kind: 'completed', submissionId: `sub-${admitted.length}` };
     },
     supportsImages: async () => true,
@@ -203,7 +215,14 @@ function startStubSession(mode: 'solo' | 'orchestrator'): Session & {
         }) as unknown as TuiLaneBoot,
     },
   );
-  return { fake, exit, boots: [], admitted, objectives };
+  return {
+    fake,
+    exit,
+    boots: [],
+    admitted,
+    objectives,
+    release: () => releaseTurn?.(),
+  };
 }
 
 describe('kubic tui /image (issue #338)', () => {
@@ -349,6 +368,43 @@ describe('kubic tui /image (issue #338)', () => {
     expect(await exit).toBe(0);
   });
 
+  // Issue #338 review, cycle 2: `allowEmptySubmit` must read the UNSUBMITTED
+  // attachments. The echo keeps the sent images until the lane's own prompt
+  // cell lands, so a blank Enter while the turn runs (a double-tap, or habit)
+  // must stay a no-op instead of queueing a prompt with no images.
+  it('does not submit a blank prompt between a submit and its echo', async () => {
+    const root = tmpRoot();
+    const shot = join(root, 'shot.png');
+    writeFileSync(shot, PNG);
+    const { fake, exit, admitted, release } = startStubSession('solo', {
+      hold: true,
+    });
+    await waitFor(() => fake.counts.started === 1);
+
+    for (const ch of `/image ${shot}`) fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('image attached'));
+
+    for (const ch of 'solo it') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => admitted.length === 1);
+    expect(admitted).toEqual([{ prompt: 'solo it', images: 1 }]);
+
+    // The turn is still running and the echo still shows the image; a blank
+    // Enter must not queue a second, imageless prompt.
+    fake.feed('\r');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(admitted).toHaveLength(1);
+
+    release();
+    // The settled turn must not resurrect the blank submit either.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(admitted).toHaveLength(1);
+    fake.feed('\x03');
+    fake.feed('\x03');
+    expect(await exit).toBe(0);
+  });
+
   // Issue #338 review: the /model drop and the orchestrator refusal were
   // claimed by the report and the docs but pinned by no test.
   it('drops pending attachments when /model switches to a text-only model', async () => {
@@ -482,13 +538,41 @@ describe('kubic tui /image (issue #338)', () => {
     const { fake, exit } = startStubSession('solo');
     await waitFor(() => fake.counts.started === 1);
 
-    fake.feed(
-      `\x1b]1337;File=name=big.png;inline=1:${'A'.repeat(7 * 1024 * 1024)}`,
-    );
+    // Three calls, like a real pty. The second pushes the held sequence past
+    // the reassembly cap, and the third is pure payload: the discard state
+    // must consume it up to the terminator rather than type megabytes of
+    // base64 into the draft (issue #338 review, cycle 2).
+    const payload = 'A'.repeat(7 * 1024 * 1024);
+    fake.feed(`\x1b]1337;File=name=big.png;inline=1:${payload.slice(0, 4096)}`);
+    fake.feed(payload.slice(4096, 7 * 1024 * 1024 - 2048));
     await waitFor(() =>
       fake.writes.join('').includes('is too large (> 5.0 MB)'),
     );
+    fake.feed(`${payload.slice(-2048)}\x07`);
+    // Then type normally: the draft must hold only what was typed after the
+    // paste, never payload.
+    for (const ch of 'after') fake.feed(ch);
+    await waitFor(() => fake.writes.join('').includes('after'));
     expect(fake.writes.join('')).not.toContain('AAAAAAAA');
+
+    fake.feed('\x03');
+    fake.feed('\x03');
+    expect(await exit).toBe(0);
+  });
+
+  // Issue #338 review, cycle 2: an unterminated sequence that never completes
+  // must not swallow the operator's typing for the rest of the session.
+  it('drops an unterminated sequence after a short idle window', async () => {
+    const { fake, exit } = startStubSession('solo');
+    await waitFor(() => fake.counts.started === 1);
+
+    fake.feed('\x1b]1337;File=name=x;inline=1:AAAA');
+    await waitFor(() =>
+      fake.writes.join('').includes('pasted image incomplete — ignored'),
+    );
+    for (const ch of 'typed') fake.feed(ch);
+    await waitFor(() => fake.writes.join('').includes('typed'));
+    expect(fake.writes.join('')).not.toContain('AAAA');
 
     fake.feed('\x03');
     fake.feed('\x03');

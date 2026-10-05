@@ -127,7 +127,10 @@ import {
   abortLane,
   forgetLaneKills,
 } from '../../../packages/worker/src/lane/abort.js';
-import { subscribeLaneEvents } from '../../../packages/worker/src/lane/events.js';
+import {
+  type KubicLaneEvent,
+  subscribeLaneEvents,
+} from '../../../packages/worker/src/lane/events.js';
 import {
   type ClassifiedFailure,
   classifyFailure,
@@ -701,6 +704,27 @@ interface RunCapture {
 // it settles — completed or not — and the result's trajectory ref names
 // that file. A trajectory that cannot be written is reported on the warning
 // channel; it never changes the run's own result.
+
+// Issue #150: the `[lane]` debug line for a retry or compaction event, or
+// undefined for any other event. The 1.0 harness reports the attempt and the
+// error (#398's contract — no maxAttempts, no notBefore).
+export function laneActivityDebugLine(
+  event: KubicLaneEvent,
+): string | undefined {
+  if (event.type === 'retry') {
+    const attempt = event.attempt ?? 1;
+    return event.phase === 'start'
+      ? `[lane] retry attempt ${attempt} after error: ${event.error ?? 'unknown'}`
+      : `[lane] retry attempt ${attempt} settled`;
+  }
+  if (event.type === 'compaction') {
+    const reason = event.reason === undefined ? '' : ` (${event.reason})`;
+    return event.phase === 'start'
+      ? `[lane] compaction started${reason}`
+      : `[lane] compaction finished${reason}`;
+  }
+  return undefined;
+}
 
 export async function runHeadlessPrompt(
   prompt: string,
@@ -1744,6 +1768,10 @@ async function runHeadlessPromptImpl(
       solo.harness,
       solo.conversation.id,
       (event) => {
+        // Issue #150 (§20.6, §27.1): a retry backoff and a compaction are
+        // named on the debug channel — tens of silent seconds otherwise.
+        const activity = laneActivityDebugLine(event);
+        if (activity !== undefined) debug?.(activity);
         if (event.type !== 'usage') return;
         budgetEnforcer?.onUsage(event.row);
         turns += 1;

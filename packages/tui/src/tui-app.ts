@@ -587,6 +587,21 @@ export function welcomeLines(info: {
   return lines;
 }
 
+// Issue #150 (§20.6, §27.1): the footer line for a lane's transient
+// activity, or undefined when there is none. The 1.0 harness reports the
+// attempt and the error (no maxAttempts, no notBefore — #398's contract), so
+// that is what the line names; a retry outranks a compaction.
+export function laneActivityLine(lane: {
+  readonly retrying?: { readonly attempt: number; readonly error?: string };
+  readonly compacting: boolean;
+}): string | undefined {
+  if (lane.retrying !== undefined) {
+    const error = lane.retrying.error;
+    return `⟳ retrying · attempt ${lane.retrying.attempt}${error === undefined || error === '' ? '' : ` — ${error}`}`;
+  }
+  return lane.compacting ? '⟳ compacting context…' : undefined;
+}
+
 // The layout's fourth row is one component (issue #22 owns arrangement
 // only), so the editor and its one-line hint slot are composed here rather
 // than widening the layout. The slot shows, in order of precedence: an
@@ -617,9 +632,24 @@ class EditorRow implements Component {
     this.footer = sanitizeLaneText(text);
   }
 
+  // Issue #150: the lane's transient activity (a retry backoff, a
+  // compaction). It outranks every other footer line while it lasts — it is
+  // the reason the turn looks idle — and clears the moment the state does.
+  private activity = '';
+
+  setActivity(text: string | undefined): void {
+    this.activity = text === undefined ? '' : sanitizeLaneText(text);
+  }
+
   render(width: number): string[] {
     const lines = this.editor.render(width);
     const theme = tuiTheme();
+    if (this.activity !== '') {
+      return [
+        ...lines,
+        truncateToWidth(theme.warning(this.activity), Math.max(0, width), '…'),
+      ];
+    }
     if (this.footer !== '') {
       const styled = this.footer.startsWith('error')
         ? theme.error(this.footer)
@@ -1277,6 +1307,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     }),
     applyPresentation: (state: KubicPresentationState): void => {
       const lane = state.lanes.get(seed.sessionId);
+      editorRow.setActivity(
+        lane === undefined ? undefined : laneActivityLine(lane),
+      );
       if (lane !== undefined) {
         applyTreeSnapshot(tree.getState(), {
           status: lane.status,

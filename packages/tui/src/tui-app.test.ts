@@ -1160,3 +1160,37 @@ describe('keybinding overrides in the app (issue #303)', () => {
     expect(frame).not.toContain('ctrl+o diff');
   });
 });
+
+// Issue #150 (§20.6, §27.1): a retry backoff or a compaction can take tens
+// of seconds; the footer names it instead of looking like a hang, and clears
+// it the moment the state does.
+describe('lane activity on the footer (issue #150)', () => {
+  const app = () =>
+    createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+  const footer = (ui: ReturnType<typeof app>): string =>
+    ui.render(100).find((line) => line.includes('⟳')) ?? '';
+
+  it('shows the retry attempt and its error, then clears it', () => {
+    const ui = app();
+    ui.applyPresentation(
+      presentation({ retrying: { attempt: 2, error: 'server overloaded' } }),
+    );
+    expect(footer(ui)).toContain('⟳ retrying · attempt 2 — server overloaded');
+    ui.applyPresentation(presentation());
+    expect(footer(ui)).toBe('');
+    expect(ui.render(100).join('\n')).toContain('enter send');
+  });
+
+  it('renders the compaction indicator (headless snapshot)', () => {
+    const ui = app();
+    ui.applyPresentation(presentation({ compacting: true }));
+    expect(footer(ui).trimEnd()).toMatchInlineSnapshot(
+      `"⟳ compacting context…"`,
+    );
+  });
+});

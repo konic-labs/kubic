@@ -1694,6 +1694,66 @@ export interface SessionFullAccessGrant {
   warning: string;
 }
 
+interface FullAccessChange {
+  enabled: boolean;
+  /** The command recorded in the posture file and the §60 row. */
+  by: string;
+  sessionId: string;
+  workspace: string;
+  mode?: 'solo' | 'orchestrator';
+  /** The posture store to write; absent falls back to `sessionDir`. */
+  store?: FileApprovalStore;
+  sessionDir?: string;
+  clock?: () => number;
+  onAuditError?: (message: string) => void;
+}
+
+// The ONE writer for a session-scoped full-access change (issue #309
+// review): the posture file and its §60 row are produced here, so the
+// CLI-shaped session helpers and the installed policy's in-session toggle
+// cannot drift into two writers for one row shape. Exactly one clock read
+// produces the record the file holds, and it is RETURNED, so a caller that
+// keeps an in-memory posture (the #325 guard's baseline) re-bases on the
+// file's own values instead of a second `Date.now()` that could tick in
+// between — a difference the guard would read as a foreign change and
+// answer with a false `posture:changed-mid-session` row.
+function recordFullAccessChange(change: FullAccessChange): AccessPosture {
+  const clock = change.clock ?? Date.now;
+  const store =
+    change.store ??
+    (change.sessionDir === undefined
+      ? undefined
+      : new FileApprovalStore(change.sessionDir));
+  const posture: AccessPosture =
+    store === undefined
+      ? {
+          fullAccess: change.enabled,
+          enabledAt: clock(),
+          enabledBy: change.by,
+        }
+      : change.enabled
+        ? enableFullAccess(store, change.by, clock)
+        : disableFullAccess(store, change.by, clock);
+  appendToLedger(
+    auditLedgerDirFor(change.workspace),
+    change.enabled
+      ? fullAccessEnabledAudit({
+          sessionId: change.sessionId,
+          command: change.by,
+          workspace: change.workspace,
+          mode: change.mode ?? 'solo',
+        })
+      : fullAccessDisabledAudit({
+          sessionId: change.sessionId,
+          command: change.by,
+          workspace: change.workspace,
+          mode: change.mode ?? 'solo',
+        }),
+    change.onAuditError,
+  );
+  return posture;
+}
+
 // The ONE enable path for session-scoped full access (issue #308): `kubic`,
 // `kubic tui`, `kubic run`, `kubic sessions create` and `kubic orchestrate`
 // all come through here. It records the posture in the session dir (never in
@@ -1703,25 +1763,20 @@ export function enableSessionFullAccess(
   options: SessionFullAccessOptions,
 ): SessionFullAccessGrant {
   const commandLine = `kubic ${options.command} ${FULL_ACCESS_FLAG}`;
-  const clock = options.clock ?? Date.now;
-  const posture =
-    options.sessionDir === undefined
-      ? { fullAccess: true, enabledAt: clock(), enabledBy: commandLine }
-      : enableFullAccess(
-          new FileApprovalStore(options.sessionDir),
-          commandLine,
-          clock,
-        );
-  appendToLedger(
-    auditLedgerDirFor(options.workspace),
-    fullAccessEnabledAudit({
-      sessionId: options.sessionId,
-      command: commandLine,
-      workspace: options.workspace,
-      mode: options.mode ?? 'solo',
-    }),
-    options.onAuditError,
-  );
+  const posture = recordFullAccessChange({
+    enabled: true,
+    by: commandLine,
+    sessionId: options.sessionId,
+    workspace: options.workspace,
+    mode: options.mode,
+    ...(options.sessionDir === undefined
+      ? {}
+      : { sessionDir: options.sessionDir }),
+    ...(options.clock === undefined ? {} : { clock: options.clock }),
+    ...(options.onAuditError === undefined
+      ? {}
+      : { onAuditError: options.onAuditError }),
+  });
   return {
     posture,
     warning: `full-access approvals skipped for session ${options.sessionId} (recorded ${posture.enabledAt}) — every challenged call runs without asking`,
@@ -1735,25 +1790,20 @@ export function disableSessionFullAccess(
   options: SessionFullAccessOptions,
 ): SessionFullAccessGrant {
   const commandLine = `kubic ${options.command}`;
-  const clock = options.clock ?? Date.now;
-  const posture =
-    options.sessionDir === undefined
-      ? { fullAccess: false, enabledAt: clock(), enabledBy: commandLine }
-      : disableFullAccess(
-          new FileApprovalStore(options.sessionDir),
-          commandLine,
-          clock,
-        );
-  appendToLedger(
-    auditLedgerDirFor(options.workspace),
-    fullAccessDisabledAudit({
-      sessionId: options.sessionId,
-      command: commandLine,
-      workspace: options.workspace,
-      mode: options.mode ?? 'solo',
-    }),
-    options.onAuditError,
-  );
+  const posture = recordFullAccessChange({
+    enabled: false,
+    by: commandLine,
+    sessionId: options.sessionId,
+    workspace: options.workspace,
+    mode: options.mode,
+    ...(options.sessionDir === undefined
+      ? {}
+      : { sessionDir: options.sessionDir }),
+    ...(options.clock === undefined ? {} : { clock: options.clock }),
+    ...(options.onAuditError === undefined
+      ? {}
+      : { onAuditError: options.onAuditError }),
+  });
   return {
     posture,
     warning: `full-access revoked for session ${options.sessionId} — every challenged call asks again`,
@@ -2132,40 +2182,27 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
   // #325 guard sees the operator's own change rather than a foreign one and
   // does not restore the file underneath them.
   const setFullAccess = (enabled: boolean, by: string): AccessPosture => {
-    const next: AccessPosture = enabled
-      ? { fullAccess: true, enabledAt: Date.now(), enabledBy: by }
-      : { fullAccess: false, enabledAt: Date.now(), enabledBy: by };
-    if (store !== undefined) {
-      if (enabled) {
-        enableFullAccess(store, by);
-      } else {
-        disableFullAccess(store, by);
-      }
-    }
-    posture.fullAccess = next.fullAccess;
-    bootPosture.fullAccess = next.fullAccess;
-    bootPosture.enabledAt = next.enabledAt;
-    bootPosture.enabledBy = next.enabledBy;
-    // The §60 row for the operator's own change, through the same row shapes
-    // the CLI paths write (one row per flip, in order).
-    appendToLedger(
-      ledgerDir,
-      enabled
-        ? fullAccessEnabledAudit({
-            sessionId: auditSessionId,
-            command: by,
-            workspace: input.workspace,
-            mode: 'solo',
-          })
-        : fullAccessDisabledAudit({
-            sessionId: auditSessionId,
-            command: by,
-            workspace: input.workspace,
-            mode: 'solo',
-          }),
-      input.onAuditError,
-    );
-    return next;
+    // ONE writer and ONE clock read (issue #309 review): the helper writes
+    // the file and the §60 row through the same shapes the CLI paths use,
+    // and the record it returns is what the live cell and the #325 guard's
+    // baseline are re-based on — never a second `Date.now()`.
+    const recorded = recordFullAccessChange({
+      enabled,
+      by,
+      sessionId: auditSessionId,
+      workspace: input.workspace,
+      mode: 'solo',
+      ...(store === undefined ? {} : { store }),
+      ...(input.clock === undefined ? {} : { clock: input.clock }),
+      ...(input.onAuditError === undefined
+        ? {}
+        : { onAuditError: input.onAuditError }),
+    });
+    posture.fullAccess = recorded.fullAccess;
+    bootPosture.fullAccess = recorded.fullAccess;
+    bootPosture.enabledAt = recorded.enabledAt;
+    bootPosture.enabledBy = recorded.enabledBy;
+    return recorded;
   };
   // A posture.json change made DURING the session (issue #325) is refused:
   // the file is restored to the boot posture (so a later resume does not

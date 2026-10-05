@@ -14,10 +14,12 @@ import {
 } from '../../../apps/kubic/src/tui-run.js';
 import { fakeTerminal } from '../../../test/fake-terminal.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
+  fauxToolCall,
   type MutableModels,
 } from '../../worker/src/pi-boundary.js';
 import { FileApprovalStore } from './approvals.js';
@@ -198,18 +200,22 @@ describe('the TUI full-access toggle (issue #309)', () => {
     const workspace = tmpRoot('ws-');
     const sessionsRoot = tmpRoot('sessions-');
     const fake = fakeTerminal(120, 30);
+    let sessionId = '';
     const pending = runTuiCommand(
       {},
       {
         out: () => undefined,
         createTerminal: () => fake,
-        bootLane: async (sid, answer) =>
-          bootTuiLane(sid, {
+        bootLane: async (sid, answer) => {
+          const boot = await bootTuiLane(sid, {
             sessionsRoot,
             models: models(),
             env: new NodeExecutionEnv(workspace),
             ...(answer === undefined ? {} : { answer }),
-          }),
+          });
+          sessionId = boot.sessionId;
+          return boot;
+        },
       },
     );
     await waitFor(() => fake.started === 1);
@@ -222,9 +228,17 @@ describe('the TUI full-access toggle (issue #309)', () => {
     await waitFor(() =>
       fake.output().includes('approvals: enforced — challenged calls ask'),
     );
-    // `off` while already off is a no-op that still reports the state.
+    // Issue #309 review finding 1: `off` while already off is a REPORT — no
+    // dialog, no second posture row for a change that did not happen.
+    const beforeOff = fake.writes.length;
     run('/approvals off');
-    await waitFor(() => fake.output().includes('approvals: enforced again'));
+    await waitFor(() =>
+      fake.output().includes('approvals: enforced — nothing to change'),
+    );
+    expect(postureRows(workspace)).toHaveLength(0);
+    expect(fake.writes.slice(beforeOff).join('')).not.toContain(
+      'posture:approvals',
+    );
     // A malformed argument is refused by name.
     run('/approvals maybe');
     await waitFor(() =>
@@ -243,6 +257,89 @@ describe('the TUI full-access toggle (issue #309)', () => {
     await waitFor(() =>
       fake.output().includes('approvals: full access ON for this session'),
     );
+    // Finding 1's mirror: `on` while already on is a report — it must NOT
+    // toggle off, and it must not open a dialog that would.
+    const beforeOn = fake.writes.length;
+    run('/approvals on');
+    await waitFor(() =>
+      fake.output().includes('approvals: full access already ON'),
+    );
+    expect(fake.writes.slice(beforeOn).join('')).not.toContain(
+      'enable full access for this session?',
+    );
+    expect(
+      new FileApprovalStore(join(sessionsRoot, sessionId)).loadPosture()
+        .fullAccess,
+    ).toBe(true);
+    expect(postureRows(workspace).map((row) => row.what)).toEqual([
+      'posture:full-access',
+    ]);
+    // And the explicit direction still turns it off, immediately.
+    run('/approvals off');
+    await waitFor(() =>
+      fake.output().includes('enforced again — the next challenged call asks'),
+    );
+    expect(postureRows(workspace).map((row) => row.what)).toEqual([
+      'posture:full-access',
+      'posture:approvals',
+    ]);
+    fake.inject('\u0003');
+    expect(await pending).toBe(0);
+  });
+
+  it('refuses to open the confirmation over a pending approval (issue #309 review)', async () => {
+    const workspace = tmpRoot('ws-');
+    const sessionsRoot = tmpRoot('sessions-');
+    const fake = fakeTerminal(120, 30);
+    const models = createModels();
+    const faux = fauxProvider({
+      provider: 'faux',
+      models: [{ id: 'big', contextWindow: 200000 }],
+    });
+    faux.setResponses([
+      fauxToolUse(
+        fauxAssistantMessage([
+          fauxToolCall('bash', { command: 'rm -rf build/' }),
+        ]).content,
+      ),
+      fauxAssistantMessage('done'),
+    ]);
+    models.setProvider(faux.provider);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: () => undefined,
+        createTerminal: () => fake,
+        approvalArmingMs: 0,
+        bootLane: async (sid, answer) =>
+          bootTuiLane(sid, {
+            sessionsRoot,
+            models,
+            env: new NodeExecutionEnv(workspace),
+            ...(answer === undefined ? {} : { answer }),
+          }),
+      },
+    );
+    await waitFor(() => fake.started === 1);
+    for (const ch of 'clean up') fake.inject(ch);
+    fake.inject('\r');
+    // The approval overlay owns the keys: the challenged command is on it.
+    await waitFor(() => fake.output().includes('Approval required'));
+    const before = fake.writes.length;
+    fake.inject('\u001ba');
+    await waitFor(() =>
+      fake.output().includes('approvals: answer the pending request first'),
+    );
+    // No dialog was opened, so Ctrl-S and Esc still belong to the approval:
+    // nothing was recorded for a flip that never started.
+    expect(fake.writes.slice(before).join('')).not.toContain(
+      'enable full access for this session?',
+    );
+    expect(postureRows(workspace)).toHaveLength(0);
+    // Esc answers the pending request (denies it) rather than a dialog.
+    fake.inject('\u001b');
+    await waitFor(() => fake.output().includes('denied'));
+    expect(postureRows(workspace)).toHaveLength(0);
     fake.inject('\u0003');
     expect(await pending).toBe(0);
   });

@@ -3529,17 +3529,38 @@ export async function runTuiCommand(
           case 'approvals': {
             const argument = command.argument.trim().toLowerCase();
             if (argument === '') {
-              const on = boot.approvalsSkipped?.() ?? boot.fullAccess === true;
               app.setEditorFooter(
-                on
+                fullAccessLive()
                   ? 'approvals: full access ON for this session'
                   : 'approvals: enforced — challenged calls ask',
               );
               if (!stopped) screen?.render();
               return 'accepted';
             }
-            if (argument === 'on') return requestFullAccess();
-            if (argument === 'off') return applyFullAccess(false);
+            // Issue #309 (review finding 1): the argument names a DIRECTION,
+            // so it never flips the other way. `on` in a session that is
+            // already on is a report (it must not toggle off, and it must
+            // not open a dialog that would); `off` in a session that is
+            // already off is a report too — never a second no-op row for a
+            // change that did not happen. Only `Alt+A` toggles.
+            if (argument === 'on') {
+              if (fullAccessLive()) {
+                app.setEditorFooter(
+                  'approvals: full access already ON for this session',
+                );
+                if (!stopped) screen?.render();
+                return 'accepted';
+              }
+              return openFullAccessConfirm();
+            }
+            if (argument === 'off') {
+              if (!fullAccessLive()) {
+                app.setEditorFooter('approvals: enforced — nothing to change');
+                if (!stopped) screen?.render();
+                return 'accepted';
+              }
+              return applyFullAccess(false);
+            }
             app.setEditorFooter(
               `approvals: expected 'on' or 'off' (got '${command.argument}')`,
             );
@@ -3827,10 +3848,20 @@ export async function runTuiCommand(
       };
       // Enabling asks first (the dialog names the consequence); disabling is
       // immediate. The dialog accepts only its deliberate key.
-      const requestFullAccess = (): TuiSubmitOutcome => {
+      //
+      // Issue #309 (review finding 3): the confirmation is a modal of its
+      // own and `Alt+A` is a GLOBAL key, so it would otherwise open OVER a
+      // pending approval — where its advertised Ctrl-S is swallowed by the
+      // approval surface and Esc/Ctrl-C DENY the challenged call instead of
+      // cancelling the dialog. One modal at a time: while an approval owns
+      // the keys the confirmation refuses by name.
+      const openFullAccessConfirm = (): TuiSubmitOutcome => {
         if (stopped) return 'refused';
-        const on = boot.approvalsSkipped?.() ?? boot.fullAccess === true;
-        if (on) return applyFullAccess(false);
+        if (app.hasPendingApproval()) {
+          app.setEditorFooter('approvals: answer the pending request first');
+          if (!stopped) screen?.render();
+          return 'refused';
+        }
         const opened = app.openConfirm({
           title: 'enable full access for this session?',
           body: [
@@ -3858,8 +3889,16 @@ export async function runTuiCommand(
         if (!stopped) screen?.render();
         return 'accepted';
       };
+      // Issue #309 (review finding 1): the LIVE posture, read from the same
+      // predicate the status bar uses, so a direction can be checked against
+      // what is actually in force.
+      const fullAccessLive = (): boolean =>
+        boot.approvalsSkipped?.() ?? boot.fullAccess === true;
+      // `Alt+A` is the TOGGLE: an already-on session flips off through it.
+      const toggleFullAccess = (): TuiSubmitOutcome =>
+        fullAccessLive() ? applyFullAccess(false) : openFullAccessConfirm();
       fullAccessForLoop = () => {
-        requestFullAccess();
+        toggleFullAccess();
       };
 
       // Issue #334: one accepted prompt → one turn on its driver. A busy

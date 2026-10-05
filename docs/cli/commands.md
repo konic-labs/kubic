@@ -860,7 +860,9 @@ full access for the session it opens or resumes, through the same path as
 `kubic run`: `posture.json`, one `posture:full-access` audit row, and a
 `warning:` line on stderr before the screen opens. In the session itself the
 same posture can be toggled with `Alt+A` or `/approvals on|off` (issue #309):
-enabling asks for confirmation first, disabling is immediate, and both write
+`Alt+A` flips whichever way the session is currently in, while `on`/`off`
+name a direction and only report when it is already in force; enabling asks
+for confirmation first, disabling is immediate, and both write
 the same posture file and audit rows — the installed policy reads the change
 live, so the very next challenged call follows it, and the indicator moves in
 the same frame. The status bar shows
@@ -992,8 +994,8 @@ stdout (`FORCE_COLOR=0..3` overrides).
 | `/quit` | Leave the TUI (same as `Esc`). |
 | `/foo` (unknown) | **Refused locally** — `unknown command '/foo' — /help lists the commands` on the footer, with the draft kept in the editor. A slash command is never sent to the model; `//text` is the escape hatch for a prompt that starts with a slash. |
 | `Ctrl-P` | Open the **command palette**: the registry's commands in a picker (`Enter` runs the selected one exactly as if it were typed, `Esc`/`Ctrl-C` cancels). |
-| `Alt+A` | **Toggle full access** for this session (§41.4): enabling opens a confirmation dialog naming the consequence (`Ctrl-S` confirms, `Esc` cancels — a bare printable letter never does); disabling takes effect immediately. Either way `posture.json` is written, one `posture:full-access` / `posture:approvals` row is appended, and the status-bar indicator moves in the same frame. `kubic tui --dangerously-skip-approvals` is the boot-time equivalent. |
-| `/approvals [on\|off]` | The same toggle as a command: `/approvals` alone reports the live posture, `/approvals on` opens the confirmation, `/approvals off` disables immediately (idempotent), and any other argument is refused by name. |
+| `Alt+A` | **Toggle full access** for this session (§41.4): enabling opens a confirmation dialog naming the consequence (`Ctrl-S` confirms, `Esc` cancels — a bare printable letter never does); disabling takes effect immediately. Either way `posture.json` is written, one `posture:full-access` / `posture:approvals` row is appended, and the status-bar indicator moves in the same frame. While an **approval is pending** the toggle refuses (`approvals: answer the pending request first`): the confirmation is a modal of its own and the approval owns the keys until it is answered. `kubic tui --dangerously-skip-approvals` is the boot-time equivalent. |
+| `/approvals [on\|off]` | The same posture, by direction: `/approvals` alone reports the live posture. `on` opens the confirmation — and in a session that is **already** on it only reports (`approvals: full access already ON for this session`), never flipping the other way or opening a dialog. `off` disables immediately; in a session that is already off it only reports (`approvals: enforced — nothing to change`) and writes no second row for a change that did not happen. Any other argument is refused by name. |
 | `Ctrl-J`, `Shift+Enter`, `\` then `Enter` | Insert a newline (multi-line entry). |
 | `Ctrl-T` | Toggle the tree (collapsed summary ↔ per-call rows). |
 | `Ctrl-G` | Switch the session mode between **solo** and **orchestrator** between turns — the next submitted prompt takes the selected lane. Refused (with the reason on the footer) while a turn runs. |
@@ -2116,7 +2118,9 @@ shipped runtime ignore rules cover this file.
   `/approvals on` toggle) appends one `posture:full-access` row naming the
   session and the command; turning it back off (`Alt+A` again, or
   `/approvals off`) appends one `posture:approvals` row, so the ledger
-  carries the posture history in order. A `posture.json` change made
+  carries the posture history in order. A flip that would change nothing
+  (the direction is already in force) is reported on the footer and writes
+  no row. A `posture.json` change made
   during a session by anything else is refused and recorded once as
   `posture:changed-mid-session`.
 - A failed ledger write never changes the decision.

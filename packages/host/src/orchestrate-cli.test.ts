@@ -2175,6 +2175,8 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
         const transfer = last.transfers?.[id];
         expect(transfer?.task).toBe('ship the seam work');
         expect(transfer?.worktree).toBe(`/repo/.kubic/wt/${id}`);
+        expect(transfer?.relevantFiles).toEqual([]);
+        expect(transfer?.constraints).toEqual([]);
         expect(transfer?.expectedOutput).toBe(
           'changes committed on the worker branch for review and merge',
         );

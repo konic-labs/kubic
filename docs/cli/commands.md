@@ -1079,6 +1079,7 @@ the built-in palette; see `[ui] theme` under
 | `@` | **Mention a file** (issue #336): typing `@` and part of a path opens a completion popup of matching workspace files — fuzzy, file-name and path-prefix matches first, at most 50 — and `Tab` (or `Enter` on the popup) inserts the workspace-relative path as `@path ` (`@"path with spaces" ` when it needs quoting). The list is the walk the `find` / `grep` tools use: `.gitignore` rules (nested ones included) are honoured and `node_modules` / `.git` are skipped, so an ignored file is never offered; it is refreshed at most every 2 s. **Only the path is sent** with the prompt — no file content is attached; the model reads the file with its own tools when it needs it. `/` commands complete through the same popup. |
 | `Up` / `Down` | Recall earlier prompts on an empty draft (Pi's editor history; consecutive duplicates collapse to one). `kubic tui --session <id>` seeds it from the resumed session's committed prompts (issue #340), so `Up` recalls what the previous process sent — the newest 100, the same bound the editor keeps for live prompts. |
 | `Ctrl-T` | Toggle the tree (collapsed summary ↔ per-call rows). |
+| `/inspect <worker>` | **Inspect an orchestrator worker** (issue #342; §16.5 AgentInspector): a capturing overlay with the worker's role, status and generation, full worktree path, model, tokens and cost (`not reported yet` until the worker's result reports it); `Enter` or `Esc` closes it. Refused on the footer for a worker this session's orchestrator view does not show. |
 | `Ctrl-G` | Switch the session mode between **solo** and **orchestrator** between turns — the next submitted prompt takes the selected lane. Refused (with the reason on the footer) while a turn runs. The choice is **persisted with the session** (`<session>/mode.json`, issue #276): `kubic tui --session <id>`, `/resume` and the session swaps restore the mode it was last switched to (the `--orchestrator` flag still wins, and `[modes]` only seeds a session that was never switched); a fresh session starts solo unless config says otherwise. A saved orchestrator mode outside a git repository starts solo with a `warning:` line naming why. |
 | `Ctrl-O` | Toggle the **diff panel** — the last tool call that changed files (or, when a `bash` call changed something the file tools did not journal, that turn's reconciled change), rendered as unified hunks. Every file of the call is rendered under its own `path — op (file k/N)` header; the panel scrolls, and `Alt-↓` / `Alt-↑` cycle its files. |
 | `Ctrl-R` | Toggle the **journal panel** — every change in the session journal, including changes made with `bash` (filter by path or agent on the command line with `kubic diff --path/--agent`). `Alt-↓` / `Alt-↑` page through it. |
@@ -1097,6 +1098,16 @@ the built-in palette; see `[ui] theme` under
 | `Ctrl-Up` / `Ctrl-Down` (`Ctrl-Shift-Up` / `Ctrl-Shift-Down`) | Jump to the previous / next prompt in the transcript. |
 | `Ctrl-Shift-F` | Search the transcript: `Enter` (or `Ctrl-G`) selects the next match, `Shift-Enter` (`Ctrl-Shift-G`) the previous one, `Esc` closes the search and returns the keys to the editor. |
 | EOF (closed stdin) | Quit — a detached tty or `kubic tui < /dev/null` never hangs the alt-screen. |
+
+**The orchestrator view** (issue #342; §18): in orchestrator mode the tree
+row shows the manager as its root and every worker of the running delegation
+as a node — `● alpha  implementer  running  g1  wt:alpha` — with its role,
+live status, generation (a replacement of the same agent is the next
+generation), worktree (last path segment) and, once the worker settles, its
+spend (`$cost in/out`). The row is non-capturing (input stays in the editor)
+and follows each worker's start and result on the next frame; finished
+workers stay listed with their final status until the next delegation
+replaces the list. `/inspect <worker>` opens one node in full.
 
 **Retries and compaction on the footer** (issue #150; §20.6, §27.1): while
 the harness waits to retry a transient model error the footer under the

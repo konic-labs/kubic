@@ -32,6 +32,7 @@ import type { OrchestratorVerdict } from '../../../packages/host/src/orchestrato
 import type { WorkerAskSeat } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
 import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import type { EffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
+import type { WorkerProjectionEvent } from '../../../packages/host/src/presentation/projector.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
 import {
   type OrchestrateRunOptions,
@@ -202,11 +203,17 @@ export function createProdTuiOrchestrator(
   const runCommand = options.runCommand ?? runOrchestrateCommand;
   const now = options.now ?? Date.now;
   let lastStamp = 0;
+  // Issue #342: the orchestrator view's feed — one listener, registered by
+  // the TUI loop; every turn's workers report through it.
+  let onWorker: ((event: WorkerProjectionEvent) => void) | undefined;
   const nextSessionId = (): string => {
     lastStamp = Math.max(now(), lastStamp + 1);
     return `${options.sessionId}-o${lastStamp.toString(36)}`;
   };
   return {
+    watchWorkers(listener) {
+      onWorker = listener;
+    },
     async run(objective, onReport): Promise<TuiTurnOutcome> {
       sink = onReport ?? options.out;
       try {
@@ -255,7 +262,7 @@ export function createProdTuiOrchestrator(
         });
         const code = await runCommand(
           { prompt: objective, session: nextSessionId() },
-          deps,
+          observeWorkers(deps, (event) => onWorker?.(event)),
         );
         return code === 0
           ? { status: 'completed' }
@@ -268,6 +275,56 @@ export function createProdTuiOrchestrator(
           status: 'failed',
           detail: error instanceof Error ? error.message : String(error),
         };
+      }
+    },
+  };
+}
+
+// Issue #342 (§18): wraps the run's `runWorker` so each worker reports its
+// start (role, worktree, model, generation — a replacement of the same agent
+// is the next generation) and its end (the result's status and spend), the
+// facts the orchestrator view renders. The run itself is untouched.
+export function observeWorkers(
+  deps: OrchestrateCommandDeps,
+  emit: (event: WorkerProjectionEvent) => void,
+): OrchestrateCommandDeps {
+  const generations = new Map<string, number>();
+  const runWorker = deps.runWorker;
+  return {
+    ...deps,
+    runWorker: async (agentId, worktree, prompt, info) => {
+      const generation = (generations.get(agentId) ?? 0) + 1;
+      generations.set(agentId, generation);
+      emit({
+        type: 'worker-start',
+        workerId: agentId,
+        status: 'running',
+        generation,
+        workspace: worktree.path,
+        ...(info?.role === undefined ? {} : { role: info.role }),
+        ...(info?.modelRef === undefined ? {} : { model: info.modelRef }),
+      });
+      try {
+        const output = await runWorker(agentId, worktree, prompt, info);
+        const result = Array.isArray(output) ? undefined : output.result;
+        emit({
+          type: 'worker-update',
+          workerId: agentId,
+          status: result?.status ?? 'completed',
+          ...(result === undefined
+            ? {}
+            : {
+                inputTokens: result.metrics.inputTokens,
+                outputTokens: result.metrics.outputTokens,
+                ...(result.metrics.costUsd === undefined
+                  ? {}
+                  : { costUsd: result.metrics.costUsd }),
+              }),
+        });
+        return output;
+      } catch (error) {
+        emit({ type: 'worker-update', workerId: agentId, status: 'failed' });
+        throw error;
       }
     },
   };

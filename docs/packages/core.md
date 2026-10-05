@@ -58,7 +58,7 @@ Sub-interfaces, field-for-field (issue #333 fleshed out the stubs):
 | `BudgetSummary` | `inputTokens`, `outputTokens`, `costUsd`, `limitUsd?` |
 | `LaneSnapshot` | `laneId`, `agentId`, `status: 'idle'\|'running'\|'done'`, `tools: LaneToolSnapshot[]`, `queued: string[]`, `compacting: boolean`, `fault?`, `retrying?` |
 | `LaneToolSnapshot` | `toolCallId`, `toolName`, `status: 'running'\|'done'`, `isError`, `args?`, `entry?`, `durationMs?` |
-| `WorkerSummary` | `workerId`, `role?`, `status?`, `workspace?`, `budget?` |
+| `WorkerSummary` | `workerId`, `role?`, `status?`, `workspace?`, `budget?`, `generation?`, `model?`, `inputTokens?`, `outputTokens?`, `costUsd?` (issue #342: the orchestrator view's per-agent facts) |
 | `ApprovalRequest` | `requestId`, `toolName?`, `capability?`, `detail?` |
 | `UsageTotals` | `inputTokens`, `outputTokens`, `costUsd`, `requests?`, `cacheReadTokens?`, `cacheWriteTokens?` |
 | `ConnectionState` | `status: 'connected' \| 'disconnected' \| 'reconnecting'`, `detail?` |

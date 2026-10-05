@@ -101,7 +101,12 @@ import {
   type TranscriptEntry,
   type TranscriptView,
 } from './transcript.js';
-import { AgentTreeView, applyTreeSnapshot } from './tree.js';
+import {
+  AgentTreeView,
+  applyTreeSnapshot,
+  renderAgentInspector,
+  type TreeWorker,
+} from './tree.js';
 import type {
   AutocompleteProvider,
   Component,
@@ -443,6 +448,9 @@ export interface TuiApp {
   panelMode(): PanelMode;
   // Issue #340: seed the editor's Up history (prompts oldest first).
   seedPromptHistory(prompts: readonly string[]): void;
+  // Issue #342 (§16.5 AgentInspector): open the capturing inspector for one
+  // worker node; false when there is no such worker or no room for it.
+  inspectWorker(workerId: string): boolean;
   openPanel(mode: PanelMode): void;
   // Issue #301: the panel's own scroll surface. The panel row is a
   // ScrollView (the wheel and alt+up / alt+down move it), and these expose
@@ -705,6 +713,30 @@ function lineComponent(render: (width: number) => string): Component {
     render: (width: number): string[] => [render(width)],
     invalidate: (): void => {},
   };
+}
+
+// Issue #342: the presentation state's workers as tree nodes (the state
+// carries values, the tree its own node shape).
+function treeWorkersOf(
+  workers: KubicPresentationState['workers'],
+): TreeWorker[] {
+  return [...workers.values()].map((worker) => ({
+    workerId: worker.workerId,
+    status: worker.status ?? 'running',
+    ...(worker.role === undefined ? {} : { role: worker.role }),
+    ...(worker.generation === undefined
+      ? {}
+      : { generation: worker.generation }),
+    ...(worker.workspace === undefined ? {} : { worktree: worker.workspace }),
+    ...(worker.model === undefined ? {} : { model: worker.model }),
+    ...(worker.inputTokens === undefined
+      ? {}
+      : { inputTokens: worker.inputTokens }),
+    ...(worker.outputTokens === undefined
+      ? {}
+      : { outputTokens: worker.outputTokens }),
+    ...(worker.costUsd === undefined ? {} : { costUsd: worker.costUsd }),
+  }));
 }
 
 export function createTuiApp(seed: TuiAppSeed): TuiApp {
@@ -1332,10 +1364,21 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       editorRow.setActivity(
         lane === undefined ? undefined : laneActivityLine(lane),
       );
+      // Issue #342 (§18): the orchestrator's workers become nodes under the
+      // manager root — every apply replaces the list (the state is the truth).
+      const workers = treeWorkersOf(state.workers);
+      if (lane === undefined && workers.length > 0) {
+        applyTreeSnapshot(tree.getState(), {
+          status: 'idle',
+          tools: [],
+          workers,
+        });
+      }
       if (lane !== undefined) {
         applyTreeSnapshot(tree.getState(), {
           status: lane.status,
           tools: lane.tools,
+          workers,
           usage: {
             costTotal: state.usage.costUsd,
             inputTokens: state.usage.inputTokens,
@@ -1579,6 +1622,20 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     panelMode: (): PanelMode => mode,
     seedPromptHistory: (prompts: readonly string[]): void => {
       editor.seedHistory(prompts);
+    },
+    inspectWorker: (workerId: string): boolean => {
+      const worker = tree
+        .getState()
+        .workers.find((node) => node.workerId === workerId);
+      if (worker === undefined) return false;
+      // A read-only capturing list: Enter or Esc closes it.
+      return openPickerOverlay({
+        rows: renderAgentInspector(worker).map((line, index) => ({
+          value: String(index),
+          label: line,
+        })),
+        onSelect: () => {},
+      });
     },
     openPanel: setPanel,
     panelScrollBy: (lines: number): void => {

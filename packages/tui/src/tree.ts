@@ -82,6 +82,24 @@ export interface AgentTreeState {
   previousTurns: TreeTurnSummary[];
   collapsed: boolean;
   usage: TreeUsage;
+  // Issue #342 (§18): orchestrator mode's worker nodes under the manager
+  // root. Empty in solo, which therefore renders exactly as before.
+  workers: TreeWorker[];
+}
+
+// One orchestrator worker node (issue #342; §16.5 WorkerStatusView /
+// AgentInspector data): role, live status, generation (a replacement is the
+// next generation), worktree, model and the worker's own spend once known.
+export interface TreeWorker {
+  readonly workerId: string;
+  readonly role?: string;
+  readonly status: string;
+  readonly generation?: number;
+  readonly worktree?: string;
+  readonly model?: string;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly costUsd?: number;
 }
 
 export function createTreeState(label = 'solo'): AgentTreeState {
@@ -92,6 +110,7 @@ export function createTreeState(label = 'solo'): AgentTreeState {
     previousTurns: [],
     collapsed: false,
     usage: { seen: false, costTotal: 0, inputTokens: 0, outputTokens: 0 },
+    workers: [],
   };
 }
 
@@ -124,6 +143,8 @@ export interface TreeToolSnapshot {
 export interface TreeLaneSnapshot {
   readonly status: RunStatus;
   readonly tools: ReadonlyArray<TreeToolSnapshot>;
+  // Issue #342: the orchestrator's workers, replacing the previous list.
+  readonly workers?: ReadonlyArray<TreeWorker>;
   readonly usage?: {
     readonly costTotal: number;
     readonly inputTokens: number;
@@ -135,6 +156,7 @@ export function applyTreeSnapshot(
   state: AgentTreeState,
   lane: TreeLaneSnapshot,
 ): void {
+  if (lane.workers !== undefined) state.workers = [...lane.workers];
   // A new turn (the root goes back to running) closes the previous group, the
   // same boundary the run-start event draws in the event-driven path.
   if (
@@ -214,6 +236,69 @@ function rootLine(state: AgentTreeState): string {
   return `${head} ${cost} ${tokens}`;
 }
 
+const WORKER_LIVE = new Set([
+  'spawning',
+  'starting',
+  'ready',
+  'running',
+  'waiting',
+  'settling',
+]);
+const WORKER_FAILED = new Set([
+  'failed',
+  'cancelled',
+  'timeout',
+  'budget_exhausted',
+  'spawn_failed',
+]);
+
+export function workerGlyph(status: string): string {
+  if (WORKER_LIVE.has(status)) return '●';
+  if (status === 'completed') return '✓';
+  return WORKER_FAILED.has(status) ? '✗' : '◌';
+}
+
+const lastSegment = (path: string): string =>
+  path.replace(/\/+$/, '').split('/').pop() ?? path;
+
+// `● alpha  implementer  running  g1  wt:alpha  $0.0123 1.2k/300` — every
+// field is optional except the id and status; the worktree is its last path
+// segment (the inspector shows the full path).
+function workerLine(worker: TreeWorker): string {
+  const parts = [`${workerGlyph(worker.status)} ${worker.workerId}`];
+  if (worker.role !== undefined) parts.push(worker.role);
+  parts.push(worker.status);
+  if (worker.generation !== undefined) parts.push(`g${worker.generation}`);
+  if (worker.worktree !== undefined)
+    parts.push(`wt:${lastSegment(worker.worktree)}`);
+  if (worker.costUsd !== undefined || worker.inputTokens !== undefined) {
+    const cost =
+      worker.costUsd === undefined
+        ? ''
+        : `${formatStatusCost(worker.costUsd)} `;
+    parts.push(
+      `${cost}${formatTreeTokens(worker.inputTokens ?? 0)}/${formatTreeTokens(worker.outputTokens ?? 0)}`,
+    );
+  }
+  return `  ${parts.join('  ')}`;
+}
+
+// Issue #342 (§16.5 AgentInspector): the selected node in full — the lines a
+// capturing overlay shows. Unknown fields say so instead of being omitted, so
+// the operator can tell "not reported yet" from "nothing".
+export function renderAgentInspector(worker: TreeWorker): string[] {
+  const unknown = 'not reported yet';
+  return [
+    `agent ${worker.workerId}`,
+    `role: ${worker.role ?? unknown}`,
+    `status: ${worker.status}${worker.generation === undefined ? '' : ` (generation ${worker.generation})`}`,
+    `worktree: ${worker.worktree ?? unknown}`,
+    `model: ${worker.model ?? unknown}`,
+    `tokens: ${worker.inputTokens === undefined ? unknown : `${worker.inputTokens} in / ${worker.outputTokens ?? 0} out`}`,
+    `cost: ${worker.costUsd === undefined ? unknown : `$${worker.costUsd.toFixed(4)}`}`,
+  ];
+}
+
 // One line covers every completed turn: the live turn below is visibly its
 // own group, and the count still names how much history the fold hides.
 function earlierTurnsLine(callCount: number, turnCount: number): string {
@@ -234,6 +319,19 @@ export function renderTreeLines(
 ): string[] {
   const w = Math.max(0, Math.floor(width));
   const lines = [rootLine(state)];
+  if (state.workers.length > 0 && !state.collapsed) {
+    // Issue #342: the manager is the root and the workers are its nodes; the
+    // row cap folds the oldest into one count, like tool calls.
+    const shown = state.workers.slice(-TREE_MAX_TOOL_LINES);
+    const hidden = state.workers.length - shown.length;
+    if (hidden > 0) {
+      lines.push(`  … ${hidden} more ${hidden === 1 ? 'worker' : 'workers'}`);
+    }
+    for (const worker of shown.slice(hidden > 0 ? 1 : 0)) {
+      lines.push(workerLine(worker));
+    }
+    return lines.map((line) => styleTreeLine(fitLine(line, w)));
+  }
   if (state.collapsed) {
     if (previousCalls(state) + state.tools.length > 0) {
       lines.push(`  ${collapsedSummary(state)}`);

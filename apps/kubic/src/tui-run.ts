@@ -90,7 +90,10 @@ import {
   isModelAllowed,
   isToolAllowedByEnterprise,
 } from '../../../packages/host/src/policy/enterprise.js';
-import { PresentationProjector } from '../../../packages/host/src/presentation/projector.js';
+import {
+  PresentationProjector,
+  type WorkerProjectionEvent,
+} from '../../../packages/host/src/presentation/projector.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
 import {
   rolePromptFor,
@@ -486,6 +489,10 @@ export interface TuiOrchestratorRun {
   // workers are reaped on process exit); a drive that can abort stops the
   // run itself.
   abort?: () => Promise<void> | void;
+  // Issue #342 (§18): per-worker facts (start with role, worktree, model and
+  // generation; the final status and spend from the worker's result) for the
+  // orchestrator view. The loop registers one listener.
+  watchWorkers?: (listener: (event: WorkerProjectionEvent) => void) => void;
 }
 
 // One orchestrator turn: drives the manager-lane run for an objective.
@@ -2476,6 +2483,14 @@ export class TuiTurnRunner {
   // session facts and fed every lane event the subscription delivers.
   private readonly projector: PresentationProjector;
 
+  // Issue #342: an orchestrator worker fact, folded into the same projector
+  // the lane events feed, so the tree shows it on the next frame.
+  applyWorker(event: WorkerProjectionEvent): void {
+    this.projector.applyWorker(event);
+    this.app.applyPresentation(this.projector.state());
+    this.onUpdate?.();
+  }
+
   // Issue #296: the text streamed for the in-flight generation. Cleared when
   // the committed entry lands, on a snapshot rebase and at settlement.
   private streamText = '';
@@ -3495,6 +3510,14 @@ export async function runTuiCommand(
   // this boot is solo-only (viewer/fake lanes): the submit path refuses by
   // name instead of falling back into solo silently.
   let orchestratorTurn: TuiOrchestratorTurn | undefined;
+  // Issue #342: the drive's worker facts reach the projector the solo runner
+  // owns (one projector per session), whichever runner is current.
+  const watchOrchestratorWorkers = (): void => {
+    boot.orchestrator?.watchWorkers?.((event) => {
+      if (stopped) return;
+      turn?.applyWorker(event);
+    });
+  };
   const buildOrchestratorTurn = (): TuiOrchestratorTurn | undefined =>
     boot.orchestrator === undefined
       ? undefined
@@ -3503,6 +3526,7 @@ export async function runTuiCommand(
           if (!stopped) screen?.update();
         });
   orchestratorTurn = buildOrchestratorTurn();
+  watchOrchestratorWorkers();
   // The driver of the turn in flight, whichever lane owns it (#327).
   let activeTurn: TuiTurnDriver | undefined;
   // Issue #334 (review): the busy latch follows PLACED work, and the lane
@@ -4084,6 +4108,7 @@ export async function runTuiCommand(
         reconcileTurnOpen = false;
         turn = buildTurn();
         orchestratorTurn = buildOrchestratorTurn();
+        watchOrchestratorWorkers();
         app.resetSession({
           sessionId: next.sessionId,
           model: next.model,
@@ -4339,6 +4364,23 @@ export async function runTuiCommand(
           }
         }
         switch (command.name) {
+          case 'inspect': {
+            const workerId = command.argument.trim();
+            if (workerId === '') {
+              app.setEditorFooter('usage: /inspect <worker>');
+              if (!stopped) screen?.render();
+              return 'refused';
+            }
+            if (!app.inspectWorker(workerId)) {
+              app.setEditorFooter(
+                `inspect: no worker '${workerId}' in this session's orchestrator view`,
+              );
+              if (!stopped) screen?.render();
+              return 'refused';
+            }
+            if (!stopped) screen?.render();
+            return 'command';
+          }
           case 'help': {
             const wanted =
               command.argument === ''

@@ -77,6 +77,14 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     command: 'session.fork',
   },
   {
+    // Issue #342 (§16.5 AgentInspector): a local read — no §66 command.
+    name: 'inspect',
+    summary:
+      'show an orchestrator worker in full (role, worktree, model, cost)',
+    usage: '/inspect <worker>',
+    argumentHint: 'worker',
+  },
+  {
     name: 'fork',
     summary: 'fork this session at an entry and switch to the fork',
     usage: '/fork <entry>',

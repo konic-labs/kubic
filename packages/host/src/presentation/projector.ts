@@ -43,6 +43,11 @@ export interface WorkerProjectionEvent {
   readonly status?: string;
   readonly workspace?: string;
   readonly budget?: BudgetSummary;
+  readonly generation?: number;
+  readonly model?: string;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly costUsd?: number;
 }
 
 // One approval fact. `ask` adds the pending request, `settled` removes it.
@@ -321,6 +326,11 @@ export class PresentationProjector {
         status: event.status ?? previous?.status ?? 'running',
         workspace: event.workspace ?? previous?.workspace,
         budget: event.budget ?? previous?.budget,
+        generation: event.generation ?? previous?.generation,
+        model: event.model ?? previous?.model,
+        inputTokens: event.inputTokens ?? previous?.inputTokens,
+        outputTokens: event.outputTokens ?? previous?.outputTokens,
+        costUsd: event.costUsd ?? previous?.costUsd,
       });
     }
     this.current = { ...this.current, workers };

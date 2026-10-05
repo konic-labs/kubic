@@ -86,6 +86,14 @@ export interface WorkerSummary {
   status?: string;
   workspace?: string;
   budget?: BudgetSummary;
+  // Issue #342 (§18): the per-agent facts the orchestrator view shows — the
+  // generation (a replacement is the next one), the model the worker runs,
+  // and its own spend once its result reports it.
+  generation?: number;
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
 }
 
 export interface ApprovalRequest {

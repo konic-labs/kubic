@@ -8,10 +8,12 @@ import {
   applyTreeSnapshot,
   collapsedSummary,
   createTreeState,
+  renderAgentInspector,
   renderTreeLines,
   rootGlyph,
   type TreeLaneSnapshot,
   type TreeToolSnapshot,
+  type TreeWorker,
   toggleTree,
   toolGlyph,
 } from './tree.js';
@@ -485,5 +487,89 @@ describe('tree mutation hardening (issue #68)', () => {
     expect(
       new AgentTreeView(undefined, { label: 'lane-7' }).render(100),
     ).toEqual(['◌ lane-7']);
+  });
+});
+
+// Issue #342 (§18, §16.5): orchestrator mode adds per-agent state to the same
+// view — the manager is the root and every worker is a node with its role,
+// status, generation, worktree and spend. A solo state renders as before.
+describe('orchestrator agent tree (issue #342)', () => {
+  const twoWorkers = () => {
+    const state = createTreeState('orchestrator');
+    applyTreeSnapshot(state, {
+      status: 'running',
+      tools: [],
+      workers: [
+        {
+          workerId: 'alpha',
+          role: 'implementer',
+          status: 'running',
+          generation: 1,
+          worktree: '/repo/.kubic/wt/sess-o1/alpha',
+        },
+        {
+          workerId: 'beta',
+          role: 'reviewer',
+          status: 'completed',
+          generation: 2,
+          worktree: '/repo/.kubic/wt/sess-o1/beta',
+          model: 'faux/faux-1',
+          inputTokens: 1200,
+          outputTokens: 300,
+          costUsd: 0.0123,
+        },
+      ],
+    });
+    return state;
+  };
+
+  it('renders the manager and two workers with worktree and generation columns (headless snapshot)', () => {
+    expect(renderTreeLines(twoWorkers(), 100)).toMatchInlineSnapshot(`
+      [
+        "● orchestrator",
+        "  ● alpha  implementer  running  g1  wt:alpha",
+        "  ✓ beta  reviewer  completed  g2  wt:beta  $0.01 1.2k/0.3k",
+      ]
+    `);
+  });
+
+  it('a worker status change updates its node on the next render', () => {
+    const state = twoWorkers();
+    applyTreeSnapshot(state, {
+      status: 'running',
+      tools: [],
+      workers: [
+        {
+          workerId: 'alpha',
+          role: 'implementer',
+          status: 'failed',
+          generation: 1,
+        },
+      ],
+    });
+    const lines = renderTreeLines(state, 100);
+    expect(lines[1]).toBe('  ✗ alpha  implementer  failed  g1');
+    expect(lines).toHaveLength(2);
+  });
+
+  it('a solo state (no workers) renders exactly as before', () => {
+    const state = createTreeState();
+    applyTreeSnapshot(state, { status: 'idle', tools: [] });
+    expect(renderTreeLines(state, 80)).toEqual(['◌ solo']);
+  });
+
+  it('the AgentInspector shows role, worktree, model and cost (headless snapshot)', () => {
+    const [, beta] = twoWorkers().workers;
+    expect(renderAgentInspector(beta as TreeWorker)).toMatchInlineSnapshot(`
+      [
+        "agent beta",
+        "role: reviewer",
+        "status: completed (generation 2)",
+        "worktree: /repo/.kubic/wt/sess-o1/beta",
+        "model: faux/faux-1",
+        "tokens: 1200 in / 300 out",
+        "cost: $0.0123",
+      ]
+    `);
   });
 });

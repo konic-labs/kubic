@@ -764,7 +764,13 @@ not. The split, exactly as shipped:
   those five runtime prefixes into the repository's **local, uncommitted**
   exclude file (`.git/info/exclude`), in a marked block it rewrites in
   place on later runs — so nothing of Kubic's own appears in `git status`,
-  and your committed `.gitignore` is never touched by the tool. A
+  and your committed `.gitignore` is never touched by the tool. `kubic doctor`
+  checks the same file the writer writes: it resolves the repository with
+  `git rev-parse --show-toplevel` and the exclude with `git rev-parse
+  --git-path info/exclude`, so a linked worktree (whose `.git` is a file
+  pointing at the common dir) checks the common dir's exclude, and a run
+  from a subdirectory checks the root files. Outside a git repository the
+  check does not apply. A
   configured `[orchestrator].root` joins that block as `/<root>/`, anchored
   to the repo root, so a worktree parent named `worktrees` never hides a
   `deep/worktrees/` or `src/worktrees/` you meant to keep. `.kubic/`

@@ -1,14 +1,21 @@
 // Runtime config load (issue #90; design §35.1/§36/§71) — RED first.
 // Every test drives the production entry point (`loadRuntimeConfig`) over
 // a fake FileBridge: zero network, zero real files, dummy $ENV_VAR refs.
-import { mkdtempSync, rmSync } from 'node:fs';
+
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
+import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../exec/src/journal.js';
+import {
+  ensureRuntimeExcludeRules,
+  gitSync,
+} from '../../../exec/src/runtime-exclude.js';
 import { applyToolPolicy } from '../../../worker/src/lane/policy.js';
 import {
   bootFauxLane,
@@ -26,6 +33,7 @@ import {
   ProjectUntrustedError,
 } from './config.js';
 import {
+  checkWorkspaceIgnoreSplit,
   effectiveConfigView,
   keyEffectFor,
   loadRuntimeConfig,
@@ -1084,5 +1092,99 @@ describe('orchestrator config projections (issue #133)', () => {
         { projectTrusted: true },
       ),
     ).toThrow(/secrets never appear in config/);
+  });
+});
+
+describe('checkWorkspaceIgnoreSplit in linked worktrees (issue #292)', () => {
+  // Real git fixtures: a linked worktree's `.git` is a file, so only
+  // `git rev-parse --git-path info/exclude` (what the writer uses) finds
+  // the common-dir exclude. Cleanup removes the worktree first so no
+  // stale metadata stays in the main checkout, then the temp dirs.
+  const worktrees: Array<{ repo: string; wt: string }> = [];
+
+  afterEach(() => {
+    for (const { repo, wt } of worktrees.splice(0)) {
+      try {
+        git(repo, ['worktree', 'remove', '--force', wt]);
+      } catch {
+        // The rmSync below still reclaims the directory.
+      }
+    }
+  });
+
+  function git(cwd: string, args: string[]): string {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    if (result.status !== 0) {
+      throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
+    }
+    return (result.stdout ?? '').trim();
+  }
+
+  // The injectable runner the prod caller passes: the writer's own probe.
+  const gitRunner = gitSync;
+
+  function initRepo(): string {
+    const repo = tempDir('kubic-ignore-split-');
+    git(repo, ['init', '-q']);
+    git(repo, ['config', 'user.email', 'split@kubic.dev']);
+    git(repo, ['config', 'user.name', 'kubic split']);
+    writeFileSync(join(repo, 'base.txt'), 'base\n');
+    git(repo, ['add', 'base.txt']);
+    git(repo, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'base']);
+    return repo;
+  }
+
+  function linkWorktree(repo: string): string {
+    const wt = join(tempDir('kubic-ignore-wt-'), 'checkout');
+    git(repo, ['worktree', 'add', '--detach', wt, 'HEAD']);
+    worktrees.push({ repo, wt });
+    return wt;
+  }
+
+  it('finds the writer entries in the common-dir exclude from a linked worktree', () => {
+    const repo = initRepo();
+    const wt = linkWorktree(repo);
+    // Prod fidelity: the real writer puts the entries where rev-parse
+    // points — the common dir's info/exclude.
+    const written = ensureRuntimeExcludeRules({ cwd: wt });
+    expect(written.changed).toBe(true);
+    const split = checkWorkspaceIgnoreSplit(
+      createNodeFileBridge('/'),
+      wt,
+      gitRunner,
+    );
+    expect(split.applicable).toBe(true);
+    // The worktree `.git` is a file: the legacy `${cwd}/.git/info/exclude`
+    // probe fails ENOTDIR and every entry reports missing.
+    expect(split.missing).toEqual([]);
+  });
+
+  it('reads the root files from a repo subdirectory', () => {
+    const repo = initRepo();
+    const written = ensureRuntimeExcludeRules({ cwd: repo });
+    expect(written.changed).toBe(true);
+    const sub = join(repo, 'a', 'b');
+    mkdirSync(sub, { recursive: true });
+    const split = checkWorkspaceIgnoreSplit(
+      createNodeFileBridge('/'),
+      sub,
+      gitRunner,
+    );
+    expect(split.applicable).toBe(true);
+    expect(split.missing).toEqual([]);
+    expect(split.checked.some((path) => path.endsWith('info/exclude'))).toBe(
+      true,
+    );
+  });
+
+  it('stays inapplicable outside any repository', () => {
+    const outside = tempDir('kubic-ignore-outside-');
+    const split = checkWorkspaceIgnoreSplit(
+      createNodeFileBridge('/'),
+      outside,
+      gitRunner,
+    );
+    expect(split.applicable).toBe(false);
+    expect(split.missing).toEqual([]);
   });
 });

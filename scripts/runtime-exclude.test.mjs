@@ -276,7 +276,10 @@ describe('this repo ships the split (issue #91)', () => {
     );
     assert.match(
       runtime,
-      /checkWorkspaceIgnoreSplit\(bridge, projectRoot\)/,
+      // Issue #292: the check resolves the toplevel and the exclude the
+      // way the writer does, so the runner (exec's sync git probe) is part
+      // of the pinned wiring — dropping it would re-break worktrees.
+      /checkWorkspaceIgnoreSplit\(\s*bridge,\s*projectRoot,\s*gitSync/,
       'apps/kubic/src/config-runtime.ts must run the ignore-split check on the real repo',
     );
     const hostRuntime = readFileSync(

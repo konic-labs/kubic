@@ -20,6 +20,7 @@ import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import type { JournalRetention } from '../../../packages/exec/src/journal.js';
 import {
+  gitSync,
   hasGitignoreMetacharacters,
   hasUnsafeCharacters,
   RUNTIME_EXCLUDE_ENTRIES,
@@ -205,7 +206,12 @@ export function loadCliConfig(options: CliConfigOptions = {}): CliConfigResult {
   // trust report, the project layer and the ignore-split check all read
   // the same root, so a subdirectory run honours the committed project.
   const projectRoot = findProjectRoot(bridge, cwd, home);
-  const ignoreSplit = checkWorkspaceIgnoreSplit(bridge, projectRoot);
+  // Issue #292: the checker resolves the toplevel and the exclude the way
+  // the writer does (`git rev-parse`), so linked worktrees (whose `.git`
+  // is a file) and subdirectories check the right files. The sync probe
+  // lives in exec behind the §9 I/O seam; a missing git binary just makes
+  // the check inapplicable.
+  const ignoreSplit = checkWorkspaceIgnoreSplit(bridge, projectRoot, gitSync);
   let stored: ProjectTrustReport;
   try {
     stored = projectTrustReport({ home, cwd: projectRoot, env });

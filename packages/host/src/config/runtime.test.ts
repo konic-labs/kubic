@@ -2,7 +2,6 @@
 // Every test drives the production entry point (`loadRuntimeConfig`) over
 // a fake FileBridge: zero network, zero real files, dummy $ENV_VAR refs.
 
-import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +15,11 @@ import {
   ensureRuntimeExcludeRules,
   gitSync,
 } from '../../../exec/src/runtime-exclude.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../../exec/src/test-support/git-sandbox.js';
 import { applyToolPolicy } from '../../../worker/src/lane/policy.js';
 import {
   bootFauxLane,
@@ -73,10 +77,16 @@ function tempDir(prefix: string): string {
 }
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// The test's git driver (issue #420): plain, never injected — production
+// reaches git only through the injected gitRunner seam.
+let driver: GitSandbox | undefined;
 
 function load(
   files: Record<string, string>,
@@ -1113,11 +1123,10 @@ describe('checkWorkspaceIgnoreSplit in linked worktrees (issue #292)', () => {
   });
 
   function git(cwd: string, args: string[]): string {
-    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
-    if (result.status !== 0) {
-      throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
-    }
-    return (result.stdout ?? '').trim();
+    // Shared sandbox driver (issue #420): production reaches git only
+    // through the injected gitRunner seam below — plain, never injected.
+    driver ??= createGitSandbox();
+    return driver.git(args, { cwd }).trim();
   }
 
   // The injectable runner the prod caller passes: the writer's own probe.

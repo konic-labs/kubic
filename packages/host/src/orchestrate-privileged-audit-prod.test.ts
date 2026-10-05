@@ -4,12 +4,17 @@
 // `worktree-create`, one `worker-spawn`, one `worker-terminate` and one
 // `merge` row, each carrying the live provenance (real pid, generation,
 // worktree path, base revision).
-import { execFileSync } from 'node:child_process';
+
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../exec/src/test-support/git-sandbox.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
 import { auditLedgerDirFor, readAuditLedger } from './policy/audit-ledger.js';
 
@@ -31,21 +36,21 @@ function scratch(prefix: string): string {
 }
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-// Hermetic git env (issue #284 review — same as the sibling #282 test):
-// machine-global config (hooks, signing) must not flake the fixture.
-const GIT_ENV = {
-  ...process.env,
-  GIT_CONFIG_GLOBAL: '/dev/null',
-  GIT_CONFIG_NOSYSTEM: '1',
-};
+// The test's git driver (issue #420): one injected sandbox per test, so the
+// fixture setup and the production git the merge path shells share the
+// scrubbed view. Repos keep their own scratch dirs; only the env is shared.
+let driver: GitSandbox | undefined;
 
 function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', env: GIT_ENV });
+  driver ??= createGitSandbox({ injectProcessEnv: true });
+  return driver.git(args, { cwd });
 }
 
 describe('privileged-action audit rows on the prod path (issue #284)', () => {

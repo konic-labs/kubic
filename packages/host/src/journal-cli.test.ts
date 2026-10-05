@@ -1,5 +1,6 @@
 // Slice D: `kubic diff / undo / log / status` CLI (issue #18; §42.2, §78).
 // RED: runJournalCommand does not exist yet.
+
 import {
   appendFileSync,
   chmodSync,

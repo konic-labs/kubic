@@ -439,8 +439,8 @@ describe('prod orchestrate path: settings skills reach every worker (issue #237)
       '---\nname: house\ndescription: House skill\n---\n\nBody.\n',
     );
     // Committed: an untracked file would trip the pre-merge clean-tree guard.
-    execFileSync('git', ['add', '-A'], { cwd: root });
-    execFileSync('git', ['commit', '-m', 'add the skill'], { cwd: root });
+    git(root, ['add', '-A']);
+    git(root, ['commit', '-m', 'add the skill']);
     const absolute = join(root, 'skills', 'house');
     // Already absolute (the config load resolves): the manager passes it
     // through, ahead of the run's own --skill values.

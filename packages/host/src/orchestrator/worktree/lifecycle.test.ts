@@ -42,12 +42,15 @@ describe('settle and retain (issue #45)', () => {
     expect(merged.removed).toBe(false);
   });
 
-  it('reads live status through the shell seam', async () => {
+  it('reads live status through the shell seam (porcelain v2, issue #388)', async () => {
     const env = new FakeExecutionEnv(
       {
-        'git -C /repo/.kubic/wt/agent-1 status --porcelain=v1 -b': {
+        'git -C /repo/.kubic/wt/agent-1 status --porcelain=v2 -z -b': {
           exitCode: 0,
-          stdout: '## kubic/agent-1\n M edited.txt\n?? new.txt\n',
+          stdout:
+            '# branch.oid abc1234\0# branch.head kubic/agent-1\0' +
+            '1 .M N... 100644 100644 100644 1111111 2222222 edited.txt\0' +
+            '? new.txt\0',
           stderr: '',
         },
       },
@@ -59,7 +62,25 @@ describe('settle and retain (issue #45)', () => {
     expect(status.unstaged).toEqual(['edited.txt']);
     expect(status.untracked).toEqual(['new.txt']);
     expect(argvOf(env)).toEqual([
-      'git -C /repo/.kubic/wt/agent-1 status --porcelain=v1 -b',
+      'git -C /repo/.kubic/wt/agent-1 status --porcelain=v2 -z -b',
+    ]);
+  });
+
+  it('reports renames by new path and detached HEAD as null (issue #388)', async () => {
+    const env = new FakeExecutionEnv({
+      'git -C /repo/.kubic/wt/agent-1 status --porcelain=v2 -z -b': {
+        exitCode: 0,
+        stdout:
+          '# branch.oid abc1234\0# branch.head (detached)\0' +
+          '2 R. N... 100644 100644 100644 1111111 2222222 R100 new.txt\0old.txt\0',
+        stderr: '',
+      },
+    });
+    const status = await getWorktreeStatus(env, '/repo/.kubic/wt/agent-1');
+    expect(status.branch).toBeNull();
+    expect(status.staged).toEqual(['new.txt']);
+    expect(status.renames).toEqual([
+      { path: 'new.txt', oldPath: 'old.txt', staged: true },
     ]);
   });
 });

@@ -1740,7 +1740,7 @@ export async function orchestrateDepsWithDefaults(
     isGitRepo: () => root !== undefined,
     // §44.1 retained-worktree status (issue #106): the run retained these
     // worktrees as evidence, so the operator is told which of them are dirty
-    // and where. Real `git -C <path> status --porcelain=v1 -b` through the
+    // and where. Real `git -C <path> status --porcelain=v2 -z -b` through the
     // exec Shell seam, anchored to the repo root so a foreign path can never
     // be reported as a spawned worktree.
     worktreeStatus: async (path, options) => {

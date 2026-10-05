@@ -254,7 +254,10 @@ solo) — and `run` never delegates.
 - **A retained worktree reports whether it is dirty.** Each retained worktree
   gets one line after the run — `retained: <agent> branch=<b> worktree=<path>
   clean=<bool>` — and a dirty one names the files (`staged`/`unstaged`/
-  `untracked` kept apart). A status that cannot be read prints
+  `untracked` kept apart). The reader parses `git status --porcelain=v2 -z -b`
+  through the parser it shares with `git_status`, so renames arrive by new
+  path (never `old -> new`), non-ASCII/whitespace paths arrive unquoted, and
+  a detached HEAD reports `branch: null`. A status that cannot be read prints
   `clean=unknown` with the reason, never a false clean.
 
 The manager toolset the design fixes in §40/§43.1 (`spawn_agent`,

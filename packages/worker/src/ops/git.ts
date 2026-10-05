@@ -137,7 +137,12 @@ export interface GitStatus {
 // the branch headers separate a detached HEAD (`# branch.head (detached)`)
 // from a branch name — never guessed from one — while an unborn branch is
 // just a name next to `# branch.oid (initial)`.
-function parsePorcelainStatus(out: string): GitStatus {
+/**
+ * Shared with the host worktree reader (issue #388): it parses the same
+ * `git status --porcelain=v2 -z -b` output `git_status` classifies, so the
+ * orchestrator never grows a second status parser.
+ */
+export function parsePorcelainStatus(out: string): GitStatus {
   const staged: string[] = [];
   const unstaged: string[] = [];
   const untracked: string[] = [];

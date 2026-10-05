@@ -6,6 +6,8 @@ import { BUDGET_MANIFEST } from './bundles/budget/index.js';
 import {
   budgetStatusOf,
   budgetToolGate,
+  commandLoadsExtensions,
+  EXTENSION_STARTUP_COMMANDS,
   ExtensionBudgetError,
   firstBreachedLimit,
   startFirstPartyExtensions,
@@ -157,6 +159,27 @@ describe('first-party bundle startup gate (issue #93)', () => {
     ) => Promise<string>;
     for (let i = 0; i < 5; i += 1) {
       await expect(call()).resolves.toBe('ran');
+    }
+  });
+});
+
+describe('extension startup command selection (issue #368)', () => {
+  it('is exactly the two lane boots plus orchestrate and doctor', () => {
+    // Adding `eval` here or dropping `tui` fails this equality, not just CI.
+    expect([...EXTENSION_STARTUP_COMMANDS]).toEqual([
+      'run',
+      'tui',
+      'orchestrate',
+      'doctor',
+    ]);
+  });
+
+  it('loads extensions for run, tui, orchestrate and doctor only', () => {
+    for (const command of ['run', 'tui', 'orchestrate', 'doctor']) {
+      expect(commandLoadsExtensions(command)).toBe(true);
+    }
+    for (const command of [undefined, 'diff', 'eval', '--version']) {
+      expect(commandLoadsExtensions(command)).toBe(false);
     }
   });
 });

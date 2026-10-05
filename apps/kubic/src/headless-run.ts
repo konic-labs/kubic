@@ -790,7 +790,10 @@ export function resolveRunAgentId(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): string {
   const workerId = env.KUBIC_WORKER_ID;
-  if (workerId !== undefined && workerId !== '') return workerId;
+  // Review follow-up: a whitespace-only id is blank too — the
+  // trim-consistent blank test (issue #159); the raw value is returned
+  // otherwise, never the trimmed one.
+  if (workerId !== undefined && workerId.trim() !== '') return workerId;
   return depsAgentId ?? 'root';
 }
 

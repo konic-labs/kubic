@@ -103,6 +103,17 @@ describe('resolveRunAgentId (issue #364)', () => {
     expect(resolveRunAgentId('alice', {})).toBe('alice');
     expect(resolveRunAgentId(undefined, {})).toBe('root');
   });
+
+  // Review follow-up: a whitespace-only id is blank too (issue #159
+  // trim-consistent test) — it must not become the agent id.
+  it('treats a whitespace-only worker id as absent', () => {
+    expect(resolveRunAgentId('alice', { KUBIC_WORKER_ID: '   ' })).toBe(
+      'alice',
+    );
+    expect(resolveRunAgentId(undefined, { KUBIC_WORKER_ID: '\t ' })).toBe(
+      'root',
+    );
+  });
 });
 
 describe('headless worker journal attribution (issue #364)', () => {

@@ -99,7 +99,13 @@ function parseToolsList(raw: string): string[] {
 // (absent means none, issue #196), and the five permission-class keys carry
 // the tool_policy. Unknown keys are refused fail-closed, never ignored.
 export function parseRoleDocument(markdown: string): ParsedRoleDoc {
-  const lines = markdown.split('\n');
+  // Issue #236: normalize Windows line endings (and strip a leading
+  // BOM) before fence detection — otherwise a `---\r` closing fence
+  // never matches `indexOf('---')` and the doc is refused as unclosed.
+  const lines = markdown
+    .replace(/\r\n?/g, '\n')
+    .replace(/^\uFEFF/, '')
+    .split('\n');
   if (lines[0]?.trim() !== '---') {
     throw new RoleParseError(
       'role document must open with a --- frontmatter block',

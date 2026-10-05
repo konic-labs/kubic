@@ -53,6 +53,15 @@ describe('parseRoleDocument', () => {
     expect(doc.name).toBe('reviewer');
     expect(doc.skills).toEqual(['diff-skill', 'lint-skill']);
   });
+
+  // Issue #236: Windows line endings and a leading BOM are normalized
+  // before fence detection — a CRLF doc parses like its LF twin.
+  it('parses CRLF and BOM-prefixed documents like their LF twin', () => {
+    const lf = `---\nrole: reviewer\ntools: [read]\n---\n\n# Reviewer\n`;
+    const crlf = lf.replace(/\n/g, '\r\n');
+    expect(parseRoleDocument(crlf)).toEqual(parseRoleDocument(lf));
+    expect(parseRoleDocument(`\uFEFF${lf}`)).toEqual(parseRoleDocument(lf));
+  });
 });
 
 const REVIEWER_MD = `---

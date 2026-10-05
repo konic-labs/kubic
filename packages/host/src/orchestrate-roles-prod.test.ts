@@ -426,14 +426,17 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
   it('does not leave the run hanging when a role document does not parse', async () => {
     // Frontmatter that cannot be parsed is a role-document failure too: it
     // must reach the operator as the loader's named reason under the same
-    // machine-readable code, never as an unhandled rejection.
+    // machine-readable code, never as an unhandled rejection. Issue #236:
+    // only the SELECTED document can block a run — alpha is bound to the
+    // broken planner role, so the refusal names planner.md; a worker on
+    // any other role would proceed.
     const h = await harness();
     writeFileSync(
       join(h.root, '.kubic', 'roles', 'planner.md'),
       'not frontmatter at all\n',
     );
     const code = await runOrchestrateCommand(
-      { prompt: 'do the thing', agents: ['alpha'], yes: true },
+      { prompt: 'do the thing', agents: ['alpha:planner'], yes: true },
       h.deps,
     );
     expect(code).toBe(1);

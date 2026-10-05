@@ -190,7 +190,109 @@ describe('project role documents are trust-gated (issue #430, §33)', () => {
     expect(held[0]?.detail).toContain('withheld: untrusted project root');
   });
 });
+describe('one malformed document never blocks the other roles (issue #236)', () => {
+  const files = {
+    '/repo/.kubic/roles/a.md': roleDoc('a'),
+    // No closing fence: unparseable, but role `a` must still resolve.
+    '/repo/.kubic/roles/b.md': '---\nrole: b\ntools: [read]\n\n# b\n',
+  };
+  const input = {
+    bridge: memBridge(files),
+    cwd: '/repo',
+    projectRoot: '/repo',
+    trusted: true,
+  };
 
+  it('selects the healthy role despite the malformed sibling', () => {
+    const selected = selectRole({ ...input, role: 'a' });
+    expect(selected.doc.name).toBe('a');
+  });
+
+  it('reports the malformed document by name without throwing', () => {
+    const loaded = loadRoles(input);
+    expect(loaded.docs.map((doc) => doc.name)).toContain('a');
+    expect(loaded.invalid).toHaveLength(1);
+    expect(loaded.invalid[0]?.path).toContain('b.md');
+    expect(loaded.invalid[0]?.reason).toContain('never closed');
+  });
+
+  it('fails the malformed document in doctor, naming the file', () => {
+    const checks = rolesDoctorProbe(input);
+    const bad = checks.filter((check) => check.id === 'role:b');
+    expect(bad).toHaveLength(1);
+    expect(bad[0]?.status).toBe('fail');
+    expect(bad[0]?.detail).toContain('b.md');
+    expect(bad[0]?.detail).toContain('never closed');
+  });
+
+  it('still refuses selecting the malformed role itself, with the parse error', () => {
+    expect(() => selectRole({ ...input, role: 'b' })).toThrow(
+      /b\.md.*never closed/,
+    );
+  });
+
+  it('refuses the malformed name even when a builtin preset shares it', () => {
+    // A malformed `planner.md` must not silently fall back to the
+    // embedded planner preset — the breakage must surface.
+    const shadowed = {
+      bridge: memBridge({
+        '/repo/.kubic/roles/planner.md': 'not frontmatter at all\n',
+      }),
+      cwd: '/repo',
+      projectRoot: '/repo',
+      trusted: true,
+    };
+    expect(() => selectRole({ ...shadowed, role: 'planner' })).toThrow(
+      /planner\.md.*must open with/,
+    );
+  });
+});
+
+describe('duplicate role names are refused by name (issue #236)', () => {
+  const files = {
+    '/repo/.kubic/roles/first.md': roleDoc('x'),
+    '/repo/.kubic/roles/second.md': roleDoc('x'),
+    '/repo/.kubic/roles/ok.md': roleDoc('ok'),
+  };
+  const input = {
+    bridge: memBridge(files),
+    cwd: '/repo',
+    projectRoot: '/repo',
+    trusted: true,
+  };
+
+  it('reports the duplicate with both files and offers neither copy', () => {
+    const loaded = loadRoles(input);
+    expect(loaded.duplicates).toEqual([
+      {
+        name: 'x',
+        paths: ['/repo/.kubic/roles/first.md', '/repo/.kubic/roles/second.md'],
+      },
+    ]);
+    // Fail-closed: no copy wins silently, and the healthy role is unaffected.
+    expect(loaded.docs.map((doc) => doc.name)).not.toContain('x');
+    expect(loaded.docs.map((doc) => doc.name)).toContain('ok');
+  });
+
+  it('refuses the duplicated name, listing both files', () => {
+    expect(() => selectRole({ ...input, role: 'x' })).toThrow(
+      /first\.md.*second\.md|second\.md.*first\.md/,
+    );
+  });
+
+  it('fails the duplicated name in doctor, listing both files', () => {
+    const checks = rolesDoctorProbe(input);
+    const dup = checks.filter((check) => check.id === 'role:x');
+    expect(dup).toHaveLength(1);
+    expect(dup[0]?.status).toBe('fail');
+    expect(dup[0]?.detail).toContain('first.md');
+    expect(dup[0]?.detail).toContain('second.md');
+  });
+
+  it('still selects the healthy role despite the duplicate pair', () => {
+    expect(selectRole({ ...input, role: 'ok' }).doc.name).toBe('ok');
+  });
+});
 describe('rolePromptFor refuses instruction-less roles by name (issue #211)', () => {
   const frontmatter =
     '---\nrole: promptless\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# promptless\n\n';
@@ -263,3 +365,4 @@ describe('selectRole unknown roles (issue #211)', () => {
     }
   });
 });
+

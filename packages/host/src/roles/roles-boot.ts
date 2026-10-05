@@ -106,6 +106,17 @@ export interface LoadedRoles {
   // silently dropped: a contradictory role is exactly what doctor must
   // show. Keyed by role name.
   refused: Array<{ name: string; reason: string }>;
+  // Issue #236: documents that FAILED to parse — reported by file stem,
+  // never thrown: one malformed document must not block every `--role`.
+  // `selectRole` still refuses when the SELECTED name matches one of
+  // these stems; doctor fails each one by name.
+  invalid: Array<{ name: string; path: string; reason: string }>;
+  // Issue #236: declared names claimed by two or more repo documents —
+  // refused by name (doctor fail + selection refusal), both files
+  // listed. No copy wins: a forked name resolves to nothing, not even a
+  // same-named builtin. A single repo document overriding a builtin
+  // (issue #203) is not a duplicate and still wins.
+  duplicates: Array<{ name: string; paths: string[] }>;
   // Repo documents withheld by project trust (issue #430, §33, L-D27) —
   // named, never silently dropped: an untrusted root's roles are not
   // offered and `--role` naming one refuses with the trust message.
@@ -160,7 +171,13 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
   // registers under the declared name). A parse failure is named with the
   // document's own path so a typo'd frontmatter cannot be mistaken for "no
   // roles configured".
-  const repoDocs: Array<{ doc: ParsedRoleDoc; text: string }> = [];
+  const repoDocs: Array<{ doc: ParsedRoleDoc; text: string; path: string }> =
+    [];
+  // Issue #236: a document that fails to parse is recorded here — with
+  // the file stem, since the declared name is unknowable — instead of
+  // aborting the whole load. Only the selected document can block
+  // selection (see selectRole); the rest surface in doctor.
+  const invalid: Array<{ name: string; path: string; reason: string }> = [];
   let entries: Array<{ name: string; path: string }>;
   if (!repoTrusted) {
     // Untrusted: name what is withheld (stems only — contents are never
@@ -213,17 +230,34 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
       );
     }
     try {
-      repoDocs.push({ doc: parseRoleDocument(text), text });
+      repoDocs.push({ doc: parseRoleDocument(text), text, path: entry.path });
     } catch (error) {
       if (error instanceof RoleParseError) {
-        throw new RoleBootError(
-          `role document ${entry.path} is invalid: ${error.message}`,
-        );
+        invalid.push({
+          name: entry.name.slice(0, -'.md'.length),
+          path: entry.path,
+          reason: error.message,
+        });
+        continue;
       }
       throw error;
     }
   }
-  const { docs, texts, sources } = withBuiltins(repoDocs);
+  // Issue #236: partition out repo-vs-repo duplicate declared names —
+  // only uniquely-declared documents reach the builtin merge below.
+  const byName = new Map<string, string[]>();
+  for (const { doc, path } of repoDocs) {
+    byName.set(doc.name, [...(byName.get(doc.name) ?? []), path]);
+  }
+  const duplicates: Array<{ name: string; paths: string[] }> = [];
+  for (const [name, paths] of byName) {
+    if (paths.length > 1) duplicates.push({ name, paths });
+  }
+  duplicates.sort((a, b) => (a.name < b.name ? -1 : 1));
+  const dupNames = new Set(duplicates.map((dup) => dup.name));
+  const { docs, texts, sources } = withBuiltins(
+    repoDocs.filter(({ doc }) => !dupNames.has(doc.name)),
+  );
   const resolved: ResolvedRole[] = [];
   const refused: Array<{ name: string; reason: string }> = [];
   for (const doc of docs) {
@@ -243,7 +277,16 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
       throw error;
     }
   }
-  return { docs, texts, sources, resolved, refused, withheld };
+  return {
+    docs,
+    texts,
+    sources,
+    resolved,
+    refused,
+    withheld,
+    invalid,
+    duplicates,
+  };
 }
 
 // The role a lane boot runs as. `--role` names it; an absent flag means no
@@ -269,8 +312,30 @@ export interface SelectedRole {
   source: RoleSource;
 }
 
+// Issue #236: one wording for the forked-name refusal — doctor and
+// selection refuse with the same named reason.
+function duplicateRefusal(dup: { name: string; paths: string[] }): string {
+  return `role '${dup.name}' is declared by ${dup.paths.length} documents (${dup.paths.join(', ')}): refusing an ambiguous role`;
+}
+
 export function selectRole(input: RoleSelectionInput): SelectedRole {
   const loaded = loadRoles(input);
+  // Issue #236: a forked name is refused before anything else — no copy
+  // wins, not even a same-named builtin.
+  const dup = loaded.duplicates.find((entry) => entry.name === input.role);
+  if (dup !== undefined) {
+    throw new RoleBootError(duplicateRefusal(dup));
+  }
+  // Issue #236: selecting a document that failed to parse refuses with
+  // that document's own parse error — checked before the builtin
+  // fallback, so a malformed `planner.md` cannot silently run the
+  // embedded planner preset. Nothing else can block selection.
+  const bad = loaded.invalid.find((entry) => entry.name === input.role);
+  if (bad !== undefined) {
+    throw new RoleBootError(
+      `role document ${bad.path} is invalid: ${bad.reason}`,
+    );
+  }
   const doc = loaded.docs.find((entry) => entry.name === input.role);
   if (doc === undefined) {
     // Issue #430 (§33, L-D27): a name the untrusted root withholds refuses
@@ -365,6 +430,28 @@ export function rolesDoctorProbe(input: RolesDirInput): DoctorCheck[] {
       status: 'warn',
       reason: 'policy-mismatch',
       detail: held.reason,
+    });
+  }
+  // Issue #236: every document that failed to parse fails doctor by its
+  // file stem, naming the file and the parse error.
+  for (const bad of loaded.invalid) {
+    checks.push({
+      id: `role:${bad.name}`,
+      label: `role ${bad.name}`,
+      status: 'fail',
+      reason: 'policy-mismatch',
+      detail: `role document ${bad.path} is invalid: ${bad.reason}`,
+    });
+  }
+  // Issue #236: every forked name fails doctor, listing every file that
+  // declares it.
+  for (const forked of loaded.duplicates) {
+    checks.push({
+      id: `role:${forked.name}`,
+      label: `role ${forked.name}`,
+      status: 'fail',
+      reason: 'policy-mismatch',
+      detail: duplicateRefusal(forked),
     });
   }
   return checks;

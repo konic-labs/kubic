@@ -95,9 +95,13 @@ async function seededSession(
 describe('sessions CLI (issue #14, slice F)', () => {
   it('creates and lists sessions', async () => {
     const root = tmpRoot();
+    // Issue #261: create refuses a missing cwd, so the fixture workspace
+    // must exist.
+    const work = join(root, 'work');
+    mkdirSync(work);
     const o = out();
     const created = await runSessionsCommand(
-      { command: 'create', cwd: '/work' },
+      { command: 'create', cwd: work },
       {
         sessionsRoot: root,
         out: o.write,
@@ -118,8 +122,58 @@ describe('sessions CLI (issue #14, slice F)', () => {
     );
     expect(listed).toBe(0);
     expect(
-      listing.lines.some((line) => line.includes(id) && line.includes('/work')),
+      listing.lines.some((line) => line.includes(id) && line.includes(work)),
     ).toBe(true);
+  });
+
+  it('create --cwd resolves a relative path against the invoking directory (#261)', async () => {
+    const root = tmpRoot();
+    const o = out();
+    const code = await runSessionsCommand(
+      { command: 'create', cwd: '.' },
+      { sessionsRoot: root, out: o.write },
+    );
+    expect(code).toBe(0);
+    const id = o.lines[0] ?? '';
+    const listing = out();
+    await runSessionsCommand(
+      { command: 'list', json: true },
+      { sessionsRoot: root, out: listing.write },
+    );
+    const entries = JSON.parse(listing.lines.join('\n')) as Array<{
+      id: string;
+      cwd: string;
+    }>;
+    // Absolute, and the caller's directory — never the sessions root.
+    expect(entries.find((entry) => entry.id === id)?.cwd).toBe(
+      process.cwd(),
+    );
+  });
+
+  it('create --cwd refuses a missing or non-directory path by name (#261)', async () => {
+    const root = tmpRoot();
+    writeFileSync(join(root, 'file'), 'not a directory\n');
+    for (const bad of [join(root, 'does-not-exist'), join(root, 'file')]) {
+      const o = out();
+      const e = out();
+      const code = await runSessionsCommand(
+        { command: 'create', cwd: bad },
+        {
+          sessionsRoot: root,
+          out: o.write,
+          logger: createLineLogger(e.write),
+        },
+      );
+      expect(code).toBe(1);
+      expect(e.lines.join('\n')).toContain(bad);
+    }
+    // Neither refusal created a session.
+    const listing = out();
+    await runSessionsCommand(
+      { command: 'list', json: true },
+      { sessionsRoot: root, out: listing.write },
+    );
+    expect(listing.lines).toEqual(['[]']);
   });
 
   it('list --json prints [] when there are no sessions', async () => {
@@ -253,9 +307,11 @@ describe('sessions CLI (issue #14, slice F)', () => {
 
   it('list --json emits one {id, cwd} object per session', async () => {
     const root = tmpRoot();
+    const work = join(root, 'work');
+    mkdirSync(work);
     const o = out();
     await runSessionsCommand(
-      { command: 'create', cwd: '/work' },
+      { command: 'create', cwd: work },
       {
         sessionsRoot: root,
         out: o.write,
@@ -270,7 +326,7 @@ describe('sessions CLI (issue #14, slice F)', () => {
       },
     );
     expect(JSON.parse(listing.lines.join('\n'))).toEqual([
-      { id: o.lines[0], cwd: '/work' },
+      { id: o.lines[0], cwd: work },
     ]);
   });
 
@@ -533,7 +589,7 @@ describe('sessions CLI approvals posture (issue #16, slice D)', () => {
     const root = tmpRoot();
     const o = out();
     const created = await runSessionsCommand(
-      { command: 'create', cwd: '/work', dangerouslySkipApprovals: true },
+      { command: 'create', cwd: root, dangerouslySkipApprovals: true },
       { sessionsRoot: root, out: o.write },
     );
     expect(created).toBe(0);
@@ -558,7 +614,7 @@ describe('sessions CLI approvals posture (issue #16, slice D)', () => {
     const o = out();
     expect(
       await runSessionsCommand(
-        { command: 'create', cwd: '/work' },
+        { command: 'create', cwd: root },
         {
           sessionsRoot: root,
           out: o.write,

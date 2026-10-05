@@ -4,7 +4,7 @@
 // confirm what they are resuming before driving it.
 
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
@@ -231,7 +231,26 @@ export async function runSessionsCommand(
   }
   const store = openSessionStore(root, createNodeFileBridge(root));
   if (invocation.command === 'create') {
-    const cwd = invocation.cwd ?? process.cwd();
+    // Issue #261: a relative --cwd resolves against the INVOKING
+    // directory, never the sessions root the store's bridge is built on —
+    // `--cwd .` must record the caller's directory. Resolve-only, no
+    // realpath: the overlap probe (sessionsTouchingWorkspace) compares
+    // strict === against the run side's unresolved process.cwd(), so
+    // canonicalizing one side would introduce the mismatch realpath is
+    // meant to prevent (journal-cli canonicalizes its own compare).
+    // I/O confinement (§9): the check rides a root-anchored bridge, so an
+    // absolute operand passes through unconfined.
+    const cwd = resolve(process.cwd(), invocation.cwd ?? process.cwd());
+    let isDirectory = false;
+    try {
+      isDirectory = createNodeFileBridge('/').fileInfo(cwd).isDirectory;
+    } catch {
+      isDirectory = false;
+    }
+    if (!isDirectory) {
+      log.error(`kubic sessions create: --cwd ${cwd}: no such directory`);
+      return 1;
+    }
     const session = await createSession(store, { cwd }, BACKGROUND_CONTEXT);
     const id = session.id;
     await session.release(BACKGROUND_CONTEXT);

@@ -13,6 +13,7 @@ import {
   diffEntriesMany,
   type FileChange,
   renderDiff,
+  renderDiffStat,
   unifiedHunks,
 } from './journal-diff.js';
 
@@ -387,5 +388,44 @@ describe('multi-store diff (issue #364)', () => {
     expect(
       diffEntriesMany([w1, w2], { agent: 'worker-2' }).map((c) => c.path),
     ).toEqual(['same.txt']);
+  });
+});
+
+describe('diff --stat (issue #335)', () => {
+  function change(over: Record<string, unknown>): FileChange {
+    return {
+      path: 'a.txt',
+      op: 'write',
+      agentId: 'root',
+      toolCallId: 't',
+      sessionId: 's',
+      timestamp: 1,
+      unattributed: false,
+      reversible: true,
+      before: 'one\ntwo\nthree\n',
+      after: 'one\nTWO\nthree\nfour\n',
+      corrupt: false,
+      afterOmitted: false,
+      ...over,
+    } as FileChange;
+  }
+
+  it('prints path, hunk-matching counts, tool and turn', () => {
+    const lines = renderDiffStat([
+      change({ path: 'src/auth/token.ts', toolName: 'edit', turn: 3 }),
+    ]);
+    // Exactly the hunk body below: -two -three +TWO +three +four.
+    expect(lines).toEqual(['src/auth/token.ts +3 -2 edit, turn 3']);
+  });
+
+  it('renders pre-schema entries with the op and no turn', () => {
+    const lines = renderDiffStat([
+      change({ path: 'old.txt', op: 'create' }),
+      change({ path: 'sweep.txt', unattributed: true }),
+    ]);
+    expect(lines).toEqual([
+      'old.txt +3 -2 create',
+      'sweep.txt +3 -2 reconciled',
+    ]);
   });
 });

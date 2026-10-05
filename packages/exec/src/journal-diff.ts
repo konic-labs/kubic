@@ -47,6 +47,12 @@ export interface FileChange {
   // with a marker line naming the bound). Absent — never true — on the full
   // core read, which `undo` and `renderDiff` rely on.
   contentTruncated?: boolean;
+  // Issue #335: the intercepting tool's name and the interactive turn, from
+  // the group's latest entry. Absent on pre-schema entries, reconciliation
+  // finds (no tool ran) and tool entries journaled before turns were
+  // threaded — `--stat` and `--json` render them when present.
+  toolName?: string;
+  turn?: number;
 }
 
 export interface DiffFilter {
@@ -186,6 +192,8 @@ function buildChange(
     toolCallId: last.toolCallId,
     sessionId: last.sessionId,
     timestamp: last.timestamp,
+    ...(last.toolName === undefined ? {} : { toolName: last.toolName }),
+    ...(last.turn === undefined ? {} : { turn: last.turn }),
     unattributed: last.unattributed === true,
     reversible: before !== null || isUndoableCreate(first),
     before,
@@ -323,4 +331,25 @@ export function renderDiff(changes: FileChange[]): string {
     out.push(...unifiedHunks(c.before ?? '', c.after ?? ''));
   }
   return out.join('\n');
+}
+
+// Issue #335 (§84 flow): the per-file summary — path, added/removed line
+// counts, the intercepting tool and the turn. The counts come from the
+// same `unifiedHunks` the full render prints, so `--stat` can never
+// disagree with the hunks; a missing side counts as empty (a create reads
+// as all-added, a delete as all-removed). Tool and turn render only when
+// the entry carries them — pre-schema entries and reconciliation finds
+// show the op (or `reconciled`) instead of a blank.
+export function renderDiffStat(changes: FileChange[]): string[] {
+  return changes.map((c) => {
+    let added = 0;
+    let removed = 0;
+    for (const line of unifiedHunks(c.before ?? '', c.after ?? '')) {
+      if (line.startsWith('+')) added += 1;
+      else if (line.startsWith('-')) removed += 1;
+    }
+    const what = c.toolName ?? (c.unattributed ? 'reconciled' : c.op);
+    const turn = c.turn === undefined ? '' : `, turn ${c.turn}`;
+    return `${c.path} +${added} -${removed} ${what}${turn}`;
+  });
 }

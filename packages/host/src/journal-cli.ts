@@ -34,6 +34,7 @@ import {
   diffEntries,
   diffEntriesMany,
   renderDiff,
+  renderDiffStat,
 } from '../../exec/src/journal-diff.js';
 import {
   formatHeadMove,
@@ -99,6 +100,10 @@ export interface JournalSelection {
 export interface JournalDiffOptions extends JournalSelection {
   path?: string | undefined;
   agent?: string | undefined;
+  // Issue #335: `--stat` prints the per-file summary (path, added/removed
+  // counts, tool, turn) instead of hunks. Human render only — `--json`
+  // already carries the fields, so `--json` ignores it.
+  stat?: boolean | undefined;
   // The `--json` per-side content bound in bytes; 0 = unlimited.
   maxContentBytes?: number | undefined;
 }
@@ -565,6 +570,13 @@ function journalDiff(run: JournalRun, request: JournalDiffOptions): number {
         `no journal under ${run.resolved.dir} and none under the sessions root (${sessionsRoot}) — start a run or pass --session`,
       );
     }
+    return EXIT_OK;
+  }
+  // Issue #335: `--stat` swaps the hunks for the per-file summary. The
+  // lines print plain (no hunk roles to colour) so scripts can split on
+  // spaces.
+  if (request.stat === true) {
+    for (const line of renderDiffStat(changes)) deps.out(line);
     return EXIT_OK;
   }
   for (const line of renderDiff(changes).split('\n')) {

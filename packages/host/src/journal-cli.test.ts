@@ -1480,3 +1480,64 @@ describe('journal CLI diff path scope (issue #271)', () => {
     expect(text).not.toContain('a.txt');
   });
 });
+
+describe('journal CLI diff --stat (issue #335)', () => {
+  function statSetup(): { journalDir: string; root: string } {
+    const journalDir = mkTmp('j-');
+    const root = mkTmp('ws-');
+    const store = new FileJournalStore(journalDir);
+    store.append({
+      path: 'a.txt',
+      op: 'write',
+      before: 'v1\n',
+      after: 'v2\ntail\n',
+      bytesDelta: 5,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      toolName: 'edit',
+      turn: 3,
+      timestamp: 1700000000000,
+    });
+    return { journalDir, root };
+  }
+
+  it('prints per-file counts with tool and turn instead of hunks', async () => {
+    const { journalDir, root } = statSetup();
+    const lines: string[] = [];
+    expect(
+      await runJournalCommand(
+        { command: 'diff', stat: true },
+        { journalDir, root, out: (l: string) => lines.push(l) },
+      ),
+    ).toBe(0);
+    // before v1\n vs after v2\ntail\n: -v1 +v2 +tail.
+    expect(lines).toEqual(['a.txt +2 -1 edit, turn 3']);
+  });
+
+  it('diff and log --json carry toolName and turn', async () => {
+    const { journalDir, root } = statSetup();
+    const diff: string[] = [];
+    await runJournalCommand(
+      { command: 'diff', json: true },
+      { journalDir, root, out: (l: string) => diff.push(l) },
+    );
+    const changes = (
+      JSON.parse(diff.join('\n')) as {
+        changes: Array<{ toolName?: string; turn?: number }>;
+      }
+    ).changes;
+    expect(changes.map((c) => [c.toolName, c.turn])).toEqual([['edit', 3]]);
+    const log: string[] = [];
+    await runJournalCommand(
+      { command: 'log', json: true },
+      { journalDir, root, out: (l: string) => log.push(l) },
+    );
+    const entries = (
+      JSON.parse(log.join('\n')) as {
+        entries: Array<{ toolName?: string; turn?: number }>;
+      }
+    ).entries;
+    expect(entries.map((e) => [e.toolName, e.turn])).toEqual([['edit', 3]]);
+  });
+});

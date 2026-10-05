@@ -146,6 +146,13 @@ export interface JournalEntryInput {
    */
   turn?: number;
   /**
+   * Issue #335: the tool that journaled the entry (`write`, `edit`) —
+   * recorded at interception from the op name. Absent on reconciliation
+   * finds (no tool ran) and on every entry written before the field
+   * existed; `diff --stat` and `--json` render it when present.
+   */
+  toolName?: string;
+  /**
    * Issue #378: set only on `op: 'marker'` entries — the HEAD state before
    * and after the move the sweep observed. Absent on every file entry.
    */
@@ -197,6 +204,8 @@ export interface JournalEntry {
   unattributed?: boolean;
   /** Issue #374: see JournalEntryInput.turn. */
   turn?: number;
+  /** Issue #335: see JournalEntryInput.toolName. */
+  toolName?: string;
   /** True when the delta was encoded against '' (reconciliation entries with
    *  no before-blob). Absent on pre-schema entries — see readAfter fallback. */
   deltaBaseEmpty?: boolean;
@@ -643,6 +652,9 @@ export class FileJournalStore {
       timestamp: input.timestamp,
       ...(input.unattributed === true ? { unattributed: true } : {}),
       ...(input.turn === undefined ? {} : { turn: input.turn }),
+      // Issue #335: the intercepting tool's name — carried like `turn` so
+      // pre-schema index lines (no such key) keep reading as before.
+      ...(input.toolName === undefined ? {} : { toolName: input.toolName }),
       // Issue #378: the marker's from→to — data only, no blobs.
       ...(input.headFrom === undefined ? {} : { headFrom: input.headFrom }),
       ...(input.headTo === undefined ? {} : { headTo: input.headTo }),

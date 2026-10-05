@@ -150,6 +150,10 @@ export function replaceFile(
         sessionId: ctx.sessionId,
         agentId: ctx.agentId,
         toolCallId: ctx.toolCallId ?? null,
+        // Issue #335: the intercepting tool's name — `opName` is the
+        // literal 'write'/'edit' the call site passed, so both tools are
+        // covered here with no signature change.
+        toolName: opName,
         timestamp: Date.now(),
       });
     } catch (error) {

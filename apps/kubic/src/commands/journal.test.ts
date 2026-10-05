@@ -80,7 +80,13 @@ describe('journal commands: generated help (exit 0, no runner)', () => {
   const cases: readonly (readonly [readonly string[], readonly string[]])[] = [
     [
       ['diff'],
-      ['[path]', '--path <path>', '--agent <id>', '--max-content-bytes <n>'],
+      [
+        '[path]',
+        '--path <path>',
+        '--stat',
+        '--agent <id>',
+        '--max-content-bytes <n>',
+      ],
     ],
     [['undo'], ['[path]', '--step', '--dry-run', '--force']],
     [['log'], ['--session <id>', '--json']],
@@ -174,6 +180,7 @@ describe('journal commands: parsed requests reach the runner', () => {
       '--path',
       'src/a.ts',
       '--agent=w1',
+      '--stat',
       '--max-content-bytes',
       '0',
       '--session',
@@ -186,6 +193,7 @@ describe('journal commands: parsed requests reach the runner', () => {
         command: 'diff',
         path: 'src/a.ts',
         agent: 'w1',
+        stat: true,
         maxContentBytes: 0,
         session: 'journal:s-1',
         json: true,

@@ -56,6 +56,7 @@ workspace (named on stderr).
 Examples:
   $ kubic diff                         # every journaled change, as a diff
   $ kubic diff src/app.ts              # one file (same as --path)
+  $ kubic diff --stat                  # per-file summary instead of hunks
   $ kubic diff --session journal:abc   # the run that printed journal:abc
   $ kubic diff --json --max-content-bytes 0   # unclipped JSON`;
 
@@ -99,6 +100,7 @@ export const registerJournalCommands: CommandRegistrar = (program, ctx) => {
       'only changes to this path (same as --path; use -- before a path starting with -)',
     )
     .option('--path <path>', 'only changes to this path')
+    .option('--stat', 'per-file summary instead of hunks')
     .option('--agent <id>', 'only changes made by this agent')
     .option(
       '--max-content-bytes <n>',

@@ -65,6 +65,10 @@ import {
 } from './approval-view.js';
 import { PromptEditor } from './editor-view.js';
 import {
+  CombinedAutocomplete,
+  FileMentionAutocomplete,
+} from './file-mentions.js';
+import {
   DEFAULT_KEY_REGISTRY,
   type KeyAction,
   type KeyRegistry,
@@ -159,6 +163,9 @@ export interface TuiAppSeed {
   // user's ~/.kubic/keybindings.json overrides, resolved by the composition
   // root. Every key the app claims ahead of the editor is looked up here.
   readonly keys?: KeyRegistry;
+  // Issue #336: the workspace files `@` mentions complete from — the
+  // composition root's gitignore-aware walk. Absent: slash commands only.
+  readonly listFiles?: () => readonly string[];
 }
 
 // §66 replication: the TUI holds no authority — it reads the replicated
@@ -772,7 +779,16 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // Issue #305: the editor completes the registry's `/`-commands as they are
   // typed (Pi's editor owns the popup and the completion keys); the submit
   // path still parses and dispatches.
-  editor.setAutocomplete(new SlashCommandAutocomplete());
+  // Issue #305 + #336: one provider for the editor's single slot — the
+  // slash commands, then the @-file mentions when a file source exists.
+  editor.setAutocomplete(
+    seed.listFiles === undefined
+      ? new SlashCommandAutocomplete()
+      : new CombinedAutocomplete([
+          new SlashCommandAutocomplete(),
+          new FileMentionAutocomplete(seed.listFiles),
+        ]),
+  );
   const editorRow = new EditorRow(
     editor,
     () => sessionMode.current,

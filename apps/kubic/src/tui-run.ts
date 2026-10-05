@@ -25,7 +25,10 @@ import {
   validateClasses,
 } from '../../../packages/agents/src/policy.js';
 import type { LaneImagePart } from '../../../packages/core/src/presentation.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import {
+  type FileSystem,
+  NodeExecutionEnv,
+} from '../../../packages/exec/src/env.js';
 import type { FileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import {
@@ -222,6 +225,7 @@ import {
   THINKING_LEVELS,
 } from '../../../packages/worker/src/models-config.js';
 import { OPERATIONS } from '../../../packages/worker/src/ops/registry.js';
+import { walkFiles } from '../../../packages/worker/src/ops/walk.js';
 import {
   BACKGROUND_CONTEXT,
   type Context,
@@ -687,6 +691,9 @@ export interface TuiLaneBoot {
   // changes (tagged with `turn`) and an edit made between prompts is absorbed
   // instead of attributed to the agent. Safe to call when nothing changed.
   rebaseline?: (turn: number) => void;
+  // Issue #336: the workspace's files for `@` mentions, workspace-relative —
+  // the gitignore-aware, bounded walk the find/grep tools use.
+  listFiles?: () => readonly string[];
   // Issue #307: the installed policy's own full-access predicate (the SAME
   // one its ask auto-approves on), read for the mode indicator at boot and
   // after every turn. Absent (a viewer boot with no policy) means approvals
@@ -1533,6 +1540,7 @@ export async function bootTuiLane(
       rebaseline: (turn: number) => {
         reconciliation?.rebaseline(turn);
       },
+      listFiles: workspaceFileLister(env),
       ...(modelNotices.length === 0
         ? {}
         : { modelNotice: modelNotices.join('; ') }),
@@ -2836,6 +2844,33 @@ export function resolveTuiTheme(
   return createThemeFromColors(parseThemeJson(text, ref), level);
 }
 
+// Issue #336: the `@` mention source — every file the find/grep walk would
+// visit (gitignore rules honoured, node_modules/.git skipped, bounded),
+// workspace-relative. Cached for a short window so a burst of keystrokes
+// walks once; a failed walk lists nothing.
+export const FILE_LIST_TTL_MS = 2000;
+
+export function workspaceFileLister(
+  env: { readonly fs: FileSystem },
+  now: () => number = Date.now,
+): () => readonly string[] {
+  let cached: readonly string[] = [];
+  let at = Number.NEGATIVE_INFINITY;
+  return () => {
+    if (now() - at < FILE_LIST_TTL_MS) return cached;
+    try {
+      cached = walkFiles(env.fs, '.')
+        .entries.filter((entry) => !entry.isDirectory)
+        .map((entry) => entry.path)
+        .sort();
+    } catch {
+      cached = [];
+    }
+    at = now();
+    return cached;
+  };
+}
+
 // Issue #303 (§16.6/§16.9): the keybindings file → the registry the app
 // dispatches through. A missing file is the shipped bindings; a present one
 // is read through the exec bridge with the same regular-file and size guard
@@ -3176,6 +3211,7 @@ export async function runTuiCommand(
     model: boot.model,
     approvalSurface: surface,
     keys,
+    ...(boot.listFiles === undefined ? {} : { listFiles: boot.listFiles }),
     // Issue #307/#327: the session mode comes from the resolution above —
     // never a literal, so the indicator and the submit routing cannot
     // disagree with what the entry actually selected. The approvals half

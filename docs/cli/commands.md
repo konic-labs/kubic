@@ -776,7 +776,9 @@ is never raised without the flag). The TUI orchestrator always templates
 `<id>-manager`, attach-or-created on the run's own session store) calls
 `spawn_agent` with free-text roles and tasks, and the run admits,
 launches, inspects, follows up, diffs, stages and merges through the
-same scheduler, worktrees, merge queue and merge gate as the template
+same scheduler (concurrency, §71 budget gate and queueing rule — an
+interactive run fail-fasts a blocked lane spawn, an autonomous one
+queues it), worktrees, merge queue and merge gate as the template
 path. Minted workers are named `worker-<n>` (skipping ids the roster
 takes), recorded with `parentSessionId`/`role`/`agentId` linkage, and merged
 in queue order after the merge gate approves — the gate's approval is the

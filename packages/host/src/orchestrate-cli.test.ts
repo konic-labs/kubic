@@ -44,6 +44,7 @@ import type { MergedHunk } from './orchestrator/merge/attribution.js';
 import { assertManagerZeroWrites } from './orchestrator/merge/settle.js';
 import type { MergeTelemetry } from './orchestrator/merge/telemetry.js';
 import { totalMergeMs } from './orchestrator/merge/telemetry.js';
+import { ParallelScheduler } from './orchestrator/parallel/scheduler.js';
 import { addWorktree } from './orchestrator/worktree/add.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
 
@@ -3531,6 +3532,78 @@ describe('orchestrate manager lane (issue #431)', () => {
     expect(envelope.workers.map((entry) => entry.agentId)).toContain(
       'worker-1',
     );
+  });
+
+  it('an explicit --autonomous run queues (never fail-fasts) a spawn past a taken slot', async () => {
+    // The #207 reviewer gap: the router passed a fixed mode instead of
+    // the run's derived §19 mode, so an explicit `--autonomous` on an
+    // interactive seat still fail-fasted. Pre-fix the second spawn is
+    // denied at admission; post-fix it queues behind worker-1 and runs.
+    // worker-1 settles on a short timer so the overlap is deterministic
+    // without test-thread interleaving (no sleeps assert anything).
+    const gatedRan: string[] = [];
+    const world = laneWorld(
+      [
+        toolTurn('spawn_agent', { role: 'implementer', task: 'do alpha' }),
+        toolTurn('spawn_agent', { role: 'implementer', task: 'do beta' }),
+        toolTurn('wait_for_agent', { agentId: 'worker-1' }),
+        toolTurn('collect_result', { agentId: 'worker-1' }),
+        toolTurn('workspace_diff', { agentId: 'worker-1' }),
+        toolTurn('workspace_apply', { agentId: 'worker-1' }),
+        toolTurn('wait_for_agent', { agentId: 'worker-2' }),
+        toolTurn('collect_result', { agentId: 'worker-2' }),
+        toolTurn('workspace_diff', { agentId: 'worker-2' }),
+        toolTurn('workspace_apply', { agentId: 'worker-2' }),
+        toolTurn('workspace_merge', {}),
+        toolTurn('workspace_merge', {}),
+        fauxAssistantMessage('merged worker-1 and worker-2'),
+      ],
+      {
+        interactive: true,
+        scheduler: new ParallelScheduler({ maxConcurrency: 1 }),
+        runWorker: (agentId: string, worktree: OrchestrateWorktree) => {
+          gatedRan.push(agentId);
+          const out = {
+            result: buildAgentResult({
+              status: 'completed',
+              summary: `${agentId} done`,
+              provenance: {
+                workerId: agentId,
+                sessionId: workerSessionFor('lane-mode-run', agentId),
+                pid: null,
+                generation: 0,
+                worktree: worktree.path,
+                model: 'faux/m',
+              },
+              metrics: { wallMs: 1, latencyMs: 1 },
+            }),
+            hunks: [
+              {
+                path: `${agentId}-0.txt`,
+                hunk: `@@ -0,0 +1 @@ +${agentId}`,
+              },
+            ],
+          };
+          if (agentId !== 'worker-1') return out;
+          return new Promise<typeof out>((resolve) =>
+            setTimeout(() => resolve(out), 25),
+          );
+        },
+      },
+    );
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'ship two',
+        agents: ['alpha', 'beta'],
+        autonomous: true,
+        session: 'lane-mode-run',
+        json: true,
+      },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(gatedRan).toEqual(['worker-1', 'worker-2']);
+    expect(world.calls.merge).toEqual(['worker-1', 'worker-2']);
   });
 
   it('consecutive workspace_merge calls name successive heads, never the same one twice', () => {

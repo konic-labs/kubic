@@ -3787,10 +3787,13 @@ export async function runOrchestrateCommand(
     };
     const routerDeps: ManagerToolsDeps = {
       sessionId,
-      runMode:
-        deps.interactive === true && parsed.autoApprove !== true
-          ? 'interactive'
-          : 'autonomous',
+      // The run's derived §19 mode (issues #278/#207) — never a fixed
+      // value. The template path hardcodes 'autonomous' past its
+      // spawn-cap ask (that ask owns the interactive branch); the lane
+      // has no such ask, so admission follows the mode the operator
+      // chose: an interactive run fail-fasts a blocked spawn, an
+      // autonomous one queues it.
+      runMode,
       scheduler,
       spawnCap,
       // Settlement is guaranteed by `startWorker`'s never-rejecting

@@ -44,6 +44,7 @@ import {
 } from './manager.js';
 import { managerToolStubs } from './manager-lane.js';
 import { QueueStoppedError } from './merge/queue.js';
+import type { UsageTally } from './parallel/limits.js';
 import type { ParallelScheduler } from './parallel/scheduler.js';
 
 /** A refusal the model can act on: a stable code plus the reason. */
@@ -423,6 +424,24 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
    * launch that never produces one fails closed with a synthesized
    * `failed` result, never a hang `wait_for_agent` cannot observe.
    */
+  // Cumulative §71 spend (issue #207): `updateUsage` REPLACES the
+  // scheduler's snapshot, so the adapter accumulates every settlement —
+  // launches and follow-ups alike, both spend — and pushes the running
+  // total. Without this the budget gate only ever saw the run's opening
+  // snapshot and the aggregate gate never bound a lane-driven run.
+  const spendTally: UsageTally = {};
+  const noteSpend = (result: AgentResult): void => {
+    const metrics = result.metrics;
+    spendTally.costUsd = (spendTally.costUsd ?? 0) + (metrics.costUsd ?? 0);
+    spendTally.tokens =
+      (spendTally.tokens ?? 0) +
+      metrics.inputTokens +
+      metrics.outputTokens +
+      metrics.cachedTokens;
+    spendTally.toolCalls = (spendTally.toolCalls ?? 0) + metrics.toolCalls;
+    spendTally.runtimeMs = (spendTally.runtimeMs ?? 0) + metrics.wallMs;
+    deps.scheduler.updateUsage({ ...spendTally });
+  };
   const trackBackground = (
     agentId: string,
     worked: Promise<AgentResult>,
@@ -431,36 +450,38 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
     void worked.then(
       (result) => {
         settle.noteSettled(agentId, result);
+        noteSpend(result);
         releaseSlot(agentId);
       },
       (error) => {
-        settle.noteSettled(
-          agentId,
-          buildAgentResult({
-            status: 'failed',
-            summary: `worker '${agentId}' ${what}: ${error instanceof Error ? error.message : String(error)}`,
-            filesChanged: [],
-            provenance: {
-              workerId: agentId,
-              sessionId: deps.sessionId,
-              pid: null,
-              generation: 0,
-              worktree: worktrees.get(agentId) ?? agentId,
-              model: 'unresolved',
+        const settled = buildAgentResult({
+          status: 'failed',
+          summary: `worker '${agentId}' ${what}: ${error instanceof Error ? error.message : String(error)}`,
+          filesChanged: [],
+          provenance: {
+            workerId: agentId,
+            sessionId: deps.sessionId,
+            pid: null,
+            generation: 0,
+            worktree: worktrees.get(agentId) ?? agentId,
+            model: 'unresolved',
+          },
+          metrics: { wallMs: 0, latencyMs: 0 },
+          error: {
+            kind: 'process',
+            message: error instanceof Error ? error.message : String(error),
+            details: {
+              code:
+                what === 'failed to launch'
+                  ? 'spawn_failed'
+                  : 'follow_up_failed',
             },
-            metrics: { wallMs: 0, latencyMs: 0 },
-            error: {
-              kind: 'process',
-              message: error instanceof Error ? error.message : String(error),
-              details: {
-                code:
-                  what === 'failed to launch'
-                    ? 'spawn_failed'
-                    : 'follow_up_failed',
-              },
-            },
-          }),
-        );
+          },
+        });
+        settle.noteSettled(agentId, settled);
+        // Zero metrics on a fail-closed synthesis, but the call stays:
+        // a future shape that spends before failing must still feed.
+        noteSpend(settled);
         releaseSlot(agentId);
       },
     );

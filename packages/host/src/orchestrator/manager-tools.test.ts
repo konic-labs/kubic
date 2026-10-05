@@ -29,6 +29,7 @@ import {
   type WorkerSpawnRequest,
 } from './manager-tools.js';
 import { createMergeQueue, type MergeQueue } from './merge/queue.js';
+import type { BudgetGate, UsageTally } from './parallel/limits.js';
 import { ParallelScheduler } from './parallel/scheduler.js';
 
 interface FakeRoles {
@@ -103,11 +104,23 @@ function rig(options?: {
   waitTimeoutMs?: number;
   mintAgentId?: () => string;
   rowExtra?: Record<string, unknown>;
+  budgetGate?: BudgetGate;
+  initialUsage?: UsageTally;
 }): Rig {
   const scheduler = new ParallelScheduler(
-    options?.maxConcurrency === undefined
+    options?.maxConcurrency === undefined && options?.budgetGate === undefined
       ? undefined
-      : { maxConcurrency: options.maxConcurrency },
+      : {
+          ...(options?.maxConcurrency === undefined
+            ? {}
+            : { maxConcurrency: options.maxConcurrency }),
+          ...(options?.budgetGate === undefined
+            ? {}
+            : { budgetGate: options.budgetGate }),
+        },
+    options?.initialUsage === undefined
+      ? undefined
+      : { usage: options.initialUsage },
   );
   const prepared: string[] = [];
   const launched: WorkerSpawnRequest[] = [];
@@ -1651,6 +1664,41 @@ describe('unbounded settle waits (issue #431)', () => {
     expect(finished).toBe(false);
     test.settle('worker-1', completedResult('late work', ['late.txt']));
     await expect(waited).resolves.toBeDefined();
+  });
+
+  it('settled worker spend feeds the aggregate gate: the next spawn queues instead of admitting', async () => {
+    // The #207 reviewer gap: trackBackground never fed
+    // scheduler.updateUsage, so the budget gate only ever saw the run's
+    // opening snapshot and the aggregate gate never bound a lane run.
+    // Pre-fix the second spawn admits (usage stays empty); post-fix the
+    // $5 settlement trips the $1 gate and the spawn queues, timing out
+    // on the test's short admission bound.
+    const test = useRig({
+      budgetGate: { maxCostUsd: 1 },
+      waitTimeoutMs: 50,
+    });
+    const lane = await bootLane(test, [fauxAssistantMessage('ok')]);
+    await toolCall(lane, 'spawn_agent', {
+      role: 'implementer',
+      task: 'spend',
+    });
+    test.settle(
+      'worker-1',
+      completedResult('spent', ['spent.txt'], {
+        metrics: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          toolCalls: 0,
+          latencyMs: 1,
+          wallMs: 1,
+          costUsd: 5,
+        },
+      }),
+    );
+    await expect(
+      toolCall(lane, 'spawn_agent', { role: 'implementer', task: 'more' }),
+    ).rejects.toThrow('spawn_queue_timeout');
   });
 
   it('a zero wait still times out by name', async () => {

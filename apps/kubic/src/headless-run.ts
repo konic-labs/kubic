@@ -1537,7 +1537,7 @@ async function runHeadlessPromptImpl(
     // from — `git rev-parse HEAD` captured once here, `none` outside git.
     // The policy is installed before the lane boots, so the revision is
     // resolved now and carried on the install.
-    const runBase = await resolveRunBaseRevision((cmd, args) =>
+    const runBase = await resolveRunBaseRevision(env.cwd, (cmd, args) =>
       env.shell
         .spawn(cmd, args, {
           provenance: {

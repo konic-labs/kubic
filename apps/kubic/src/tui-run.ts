@@ -1366,7 +1366,7 @@ export async function bootTuiLane(
     // §60 audit identity (issue #282): the base revision this run started
     // from — captured once here, `none` outside git — and the thinking
     // level the lane runs, re-pointed after boot and on every change.
-    const runBase = await resolveRunBaseRevision((cmd, args) =>
+    const runBase = await resolveRunBaseRevision(env.cwd, (cmd, args) =>
       env.shell
         .spawn(cmd, args, {
           provenance: {

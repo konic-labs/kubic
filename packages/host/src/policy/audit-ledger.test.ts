@@ -1,6 +1,7 @@
 // §60 audit ledger (one record format, one file): approval decisions are
 // emitted through emitAudit as OrgAuditRecords and read back by the same
 // reader `kubic audit` uses.
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -339,22 +340,73 @@ describe('§60 audit ledger', () => {
     });
 
     it("resolves the run's base revision once, and says 'none' when git cannot", async () => {
-      const sha = await resolveRunBaseRevision(async () => ({
+      const sha = await resolveRunBaseRevision('/repo', async () => ({
         exitCode: 0,
         stdout: '  abc123\n',
       }));
       expect(sha).toBe('abc123');
       await expect(
-        resolveRunBaseRevision(async () => ({
+        resolveRunBaseRevision('/repo', async () => ({
           exitCode: 128,
           stdout: 'fatal: not a git repository',
         })),
       ).resolves.toBe('none');
       await expect(
-        resolveRunBaseRevision(async () => {
+        resolveRunBaseRevision('/repo', async () => {
           throw new Error('spawn git ENOENT');
         }),
       ).resolves.toBe('none');
+    });
+
+    it('probes git in the workspace dir, not the spawn cwd (issue #282 review gap)', async () => {
+      // A scratch repo (the workspace) and a bare non-repo dir (the spawn
+      // cwd): the probe must report the workspace's HEAD even though the
+      // spawning shell sits elsewhere.
+      const workspace = mkdtempSync(join(tmpdir(), 'kubic-base-ws-'));
+      roots.push(workspace);
+      const elsewhere = mkdtempSync(join(tmpdir(), 'kubic-base-cwd-'));
+      roots.push(elsewhere);
+      execFileSync('git', ['init', '-b', 'main'], {
+        cwd: workspace,
+        encoding: 'utf8',
+      });
+      execFileSync('git', ['config', 'user.email', 'base@kubic.dev'], {
+        cwd: workspace,
+      });
+      execFileSync('git', ['config', 'user.name', 'kubic base'], {
+        cwd: workspace,
+      });
+      execFileSync('git', ['config', 'commit.gpgsign', 'false'], {
+        cwd: workspace,
+      });
+      writeFileSync(join(workspace, 'base.txt'), 'base\n');
+      execFileSync('git', ['add', 'base.txt'], { cwd: workspace });
+      execFileSync('git', ['commit', '-m', 'base'], { cwd: workspace });
+      const expected = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: workspace,
+        encoding: 'utf8',
+      }).trim();
+      // The runner spawns from `elsewhere` the way an env shell pinned to
+      // another dir would — the `-C` in argv is what reaches the workspace.
+      const seen: string[][] = [];
+      const sha = await resolveRunBaseRevision(workspace, async (cmd, args) => {
+        seen.push([cmd, ...args]);
+        try {
+          const stdout = execFileSync(cmd, args, {
+            cwd: elsewhere,
+            encoding: 'utf8',
+          });
+          return { exitCode: 0, stdout };
+        } catch (error) {
+          const failure = error as { status?: number; stdout?: unknown };
+          return {
+            exitCode: failure.status ?? 128,
+            stdout: String(failure.stdout ?? ''),
+          };
+        }
+      });
+      expect(seen).toEqual([['git', '-C', workspace, 'rev-parse', 'HEAD']]);
+      expect(sha).toBe(expected);
     });
 
     it("no live-path record carries 'unknown' for a field whose data exists", () => {

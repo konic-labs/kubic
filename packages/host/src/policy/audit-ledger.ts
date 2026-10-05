@@ -92,12 +92,15 @@ export function auditLedgerDirFor(cwd: string): string {
 }
 
 // The base revision a solo run started from (issue #282): `git rev-parse
-// HEAD` in the workspace, captured ONCE at run start — `none` outside git
+// HEAD` in the WORKSPACE, captured ONCE at run start — `none` outside git
 // or when git cannot run. Best-effort by contract: a failed probe is never a
-// run failure, and the record then honestly says `none`. The runner is the
-// composition root's own shell spawn, waited: `((cmd, args) =>
+// run failure, and the record then honestly says `none`. The workspace
+// travels as `git -C`, never as the spawn's own cwd: the composition root's
+// shell is pinned to its env dir, which is not necessarily this run's
+// workspace. The runner is that shell spawn, waited: `((cmd, args) =>
 // env.shell.spawn(cmd, args, { provenance }).wait())`.
 export async function resolveRunBaseRevision(
+  workspace: string,
   run: (
     cmd: string,
     args: string[],
@@ -107,7 +110,7 @@ export async function resolveRunBaseRevision(
   }>,
 ): Promise<string> {
   try {
-    const done = await run('git', ['rev-parse', 'HEAD']);
+    const done = await run('git', ['-C', workspace, 'rev-parse', 'HEAD']);
     const sha = done.stdout.trim();
     if (done.exitCode === 0 && sha !== '') return sha;
   } catch {

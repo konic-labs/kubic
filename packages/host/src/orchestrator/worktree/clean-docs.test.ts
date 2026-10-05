@@ -118,8 +118,13 @@ describe('clean is documented and dispatched (issue #92)', () => {
       // -D` on a spawned branch may only be issued from the clean/remove path.
       const clean = readFileSync(CLEAN, 'utf8');
       expect(clean).toContain('deleteSpawnedBranch');
-      // Scan every shipped source: the branch delete argv lives only in
-      // remove.ts, and only clean.ts calls the helper that issues it.
+      // Scan every shipped source: the branch delete argv lives in
+      // remove.ts (spawned worker branches, via the helper below) and in
+      // ops/perf/measure.ts — issue #252: the measurer deletes only the
+      // `kubic/perf-*` sample branches it created itself, in the same
+      // sample, never a spawned worker branch (deleteSpawnedBranch
+      // refuses that namespace). Only clean.ts calls the helper that
+      // issues the spawned-branch delete.
       const sources: string[] = [];
       const walk = (dir: string): void => {
         for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -143,6 +148,7 @@ describe('clean is documented and dispatched (issue #92)', () => {
         .filter((file) => /'branch',\s*'-D'/.test(readFileSync(file, 'utf8')))
         .map(rel);
       expect(deleters).toEqual([
+        'packages/host/src/ops/perf/measure.ts',
         'packages/host/src/orchestrator/worktree/remove.ts',
       ]);
       const callers = sources

@@ -2297,9 +2297,14 @@ one sample source, `--measure` or `--samples`:
 
 - **`--measure`** runs the real thing and times it:
   - `spawn` cycles a real `node -e` child through the worker spawn
-    environment
-  - `worktree` runs a real `git worktree add` / `remove` cycle in a
-    scratch directory
+    environment (a spawn that exits non-zero is a measurement error,
+    not a timing — issue #252)
+  - `worktree` runs a real `git worktree add` / `remove` cycle under
+    the repo root (`git rev-parse --show-toplevel` from the cwd, so a
+    subdirectory run still measures under `<root>/.kubic/wt` — issue
+    #252) and deletes the sample branch afterwards, so a measurement
+    leaves no `kubic/perf-*` branch and no worktree behind (a failed
+    remove or delete is a measurement error, with cleanup attempted)
   - `attach` creates a session in your real sessions root, attaches it
     and releases it (the §61 attach row; issue #158), cleaning up the
     measurement's own session afterwards
@@ -2327,7 +2332,7 @@ picking one.
 | Flag | Meaning |
 | --- | --- |
 | `--budget <worktree\|spawn\|attach\|teardown>` | **Required.** The budget to evaluate. Any other kind exits 2. |
-| `--measure` | Measures for real. Only `spawn` and `worktree` have a live source; the other kinds exit 2 and name `--samples`. |
+| `--measure` | Measures for real. `spawn`, `worktree` and `attach` have a live source; `teardown` exits 2 and names `--samples`. |
 | `--samples <ms,ms,…>` | Fallback: comma-separated, non-negative millisecond samples. At least one is required: an empty or non-numeric list exits 2, so a run never passes vacuously. |
 | `--json` | Prints the full evaluation (`kind`, `budgetMs`, `count`, `p50`, `p95`, `within`, `regression`, plus `source` and `note` for measured samples). Exits 0 on a pass, 1 on a breach. |
 

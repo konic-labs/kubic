@@ -9,7 +9,7 @@
 //     injected ExecutionEnv (a real throwaway repo in tests).
 // Faux-only where it matters: the spawn source is hermetic; the worktree
 // source takes an injected env so a test can use the fake seam.
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -240,5 +240,168 @@ describe('measureSamples: worktree failure (issue #98)', () => {
     await expect(
       measureSamples({ kind: 'worktree', samples: 1, env, repoRoot: '/repo' }),
     ).rejects.toThrow(/worktree add failed.*exit 128.*not a git repository/);
+  });
+});
+
+describe('measureSamples: worktree/measure hygiene (issue #252)', () => {
+  // Real git, like the #98 worktree test above: branch deletion and root
+  // resolution only mean something against a real repository.
+  async function initRepo(root: string): Promise<void> {
+    const env = new NodeExecutionEnv(root);
+    const git = async (argv: string[]) => {
+      const done = await env.shell
+        .spawn('git', argv, { provenance: env.provenance })
+        .wait();
+      if (done.exitCode !== 0)
+        throw new Error(`git ${argv.join(' ')} failed: ${done.stderr}`);
+      return done.stdout;
+    };
+    await git(['init', '-q', '.']);
+    await git([
+      '-c',
+      'user.email=perf@kubic.local',
+      '-c',
+      'user.name=kubic',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'init',
+    ]);
+    return undefined;
+  }
+
+  it('leaves no kubic/perf-* branch behind after --measure', async () => {
+    const root = tmpRoot('measure-branches-');
+    try {
+      await initRepo(root);
+      const env = new NodeExecutionEnv(root);
+      await measureSamples({
+        kind: 'worktree',
+        samples: 2,
+        env,
+        repoRoot: root,
+      });
+      const branches = await env.shell
+        .spawn('git', ['branch', '--list', 'kubic/perf-*'], {
+          provenance: env.provenance,
+        })
+        .wait();
+      expect(branches.stdout.trim()).toBe('');
+      const list = await env.shell
+        .spawn('git', ['worktree', 'list', '--porcelain'], {
+          provenance: env.provenance,
+        })
+        .wait();
+      expect(
+        list.stdout.split('\n').filter((line) => line.startsWith('worktree ')),
+      ).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+    // Real git spawns: headroom for a loaded CI box, not a sleep.
+  }, 15_000);
+
+  it('measures from the repo root when run from a subdirectory', async () => {
+    const root = tmpRoot('measure-subdir-');
+    try {
+      await initRepo(root);
+      const sub = join(root, 'a', 'b');
+      mkdirSync(sub, { recursive: true });
+      const env = new NodeExecutionEnv(sub);
+      await measureSamples({ kind: 'worktree', samples: 1, env });
+      // The sample's worktree lived under the ROOT's .kubic/wt (already
+      // removed by cleanup), so the negative proves the root resolution:
+      // no state leaked into the subdirectory.
+      const bridge = createNodeFileBridge('/');
+      expect(bridge.exists(join(sub, '.kubic'))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it('a spawn command that exits non-zero is a measurement error', async () => {
+    const cmd = process.execPath;
+    const args = ['-e', 'process.exit(3)'];
+    const env = new FakeExecutionEnv({
+      [`${cmd} ${args.join(' ')}`]: {
+        exitCode: 3,
+        stdout: '',
+        stderr: 'boom',
+      },
+    });
+    await expect(
+      measureSamples({
+        kind: 'spawn',
+        samples: 1,
+        env,
+        spawnCommand: { cmd, args },
+      }),
+    ).rejects.toThrow(/exit 3/);
+  });
+
+  it('a failed worktree remove is a measurement error, with the branch still deleted', async () => {
+    const agentId = `perf-0-${process.pid}`;
+    const path = `/fake/.kubic/wt/${agentId}`;
+    const branch = `kubic/${agentId}`;
+    const env = new FakeExecutionEnv(
+      {
+        [`git worktree add ${path} -b ${branch}`]: {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+        [`git worktree remove --force ${path}`]: {
+          exitCode: 1,
+          stdout: '',
+          stderr: 'remove failed',
+        },
+        [`git branch -D ${branch}`]: {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+      },
+      { strict: true },
+    );
+    await expect(
+      measureSamples({ kind: 'worktree', samples: 1, env }),
+    ).rejects.toThrow(/worktree remove/);
+    // Cleanup was attempted even though the sample failed.
+    expect(
+      env.calls.some(
+        (call) =>
+          call.cmd === 'git' && call.args.join(' ') === `branch -D ${branch}`,
+      ),
+    ).toBe(true);
+  });
+
+  it('a failed branch delete is a measurement error', async () => {
+    const agentId = `perf-0-${process.pid}`;
+    const path = `/fake/.kubic/wt/${agentId}`;
+    const branch = `kubic/${agentId}`;
+    const env = new FakeExecutionEnv(
+      {
+        [`git worktree add ${path} -b ${branch}`]: {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+        [`git worktree remove --force ${path}`]: {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+        [`git branch -D ${branch}`]: {
+          exitCode: 1,
+          stdout: '',
+          stderr: `error: branch '${branch}' not found`,
+        },
+      },
+      { strict: true },
+    );
+    await expect(
+      measureSamples({ kind: 'worktree', samples: 1, env }),
+    ).rejects.toThrow(/branch -D/);
   });
 });

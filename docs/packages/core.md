@@ -43,12 +43,11 @@ manager.
 | `approvals` | `readonly ApprovalRequest[]` |
 | `usage` | `UsageTotals` |
 | `connection` | `ConnectionState` |
-| `revision` | `number` (the projector's fold counter, issue #333) |
 
-`PRESENTATION_STATE_FIELDS` pins the same keys (`session`, `agents`,
-`lanes`, `workers`, `approvals`, `usage`, `connection`, `revision`) via
+`PRESENTATION_STATE_FIELDS` pins exactly those seven keys via
 `satisfies Record<keyof KubicPresentationState, true>` — adding or
-removing a field breaks compilation.
+removing a field breaks compilation, and the projector re-checks the same
+list at runtime before every hand-out.
 
 Sub-interfaces, field-for-field (issue #333 fleshed out the stubs):
 
@@ -69,7 +68,10 @@ The state is produced by the host-side projector
 stream (#398's `subscribeLaneEvents`) plus the worker and approval facts the
 host feeds it into the state; `apps/kubic/src/tui-run.ts` feeds the TUI from
 it, and `packages/tui/src/tui-app.ts` renders it (`applyPresentation`) — the
-presentation never folds raw events itself (§15.2, §66).
+presentation never folds raw events itself (§15.2, §66). The projector also
+exposes `revision()`, its monotonic fold counter (0 at the seed, +1 per
+applied fact): a consumer can tell a fresh state from the one it last
+rendered without diffing. It is deliberately NOT a state field.
 
 ### `PRESENTATION_COMMANDS` (`presentation.ts`)
 

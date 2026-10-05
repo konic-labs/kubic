@@ -21,8 +21,8 @@ TUI-side analogue of the worker Pi boundary.
 | `layout.ts` | `Viewport`, `LayoutSlots`, `NARROW_COLUMNS`, `buildLayoutRoot`, `renderLayout` |
 | `screen.ts` | `Screen`, `bootScreen` |
 | `status-bar.ts` | `StatusUsageCost`, `StatusUsage`, `StatusUsageRow`, `StatusSummary`, `summarizeStatusRows`, `formatStatusCost`, `StatusMode`, `StatusBarState`, `StatusBarTheme`, `DEFAULT_STATUS_THEME`, `statusVisibleWidth`, `renderStatusLines`, `StatusBarOptions`, `StatusBar` |
-| `transcript.ts` | `TranscriptEntryKind`, `TranscriptEntry`, `TranscriptDelta`, `LaneSnapshot` (re-export), `TranscriptSnapshotOp`, `TranscriptDeltaOp`, `TranscriptOp`, `TranscriptView`, `createTranscriptView`, `replayTranscript` |
-| `tree.ts` | `RunStatus`, `ToolCallState`, `rootGlyph`, `toolGlyph`, `TreeToolCall`, `TreeUsage`, `TreeTurnSummary`, `AgentTreeState`, `createTreeState`, `toggleTree`, `LaneEventLike`, `applyLaneEvent`, `collapsedSummary`, `formatTreeTokens`, `renderTreeLines`, `TreeMouseEvent`, `TreeMouseResult`, `TreeViewOptions`, `AgentTreeView` |
+| `transcript.ts` | `TranscriptEntryKind`, `TranscriptEntry`, `TranscriptDelta`, `LaneIdentity`, `TranscriptSnapshotOp`, `TranscriptDeltaOp`, `TranscriptOp`, `TranscriptView`, `createTranscriptView`, `replayTranscript` |
+| `tree.ts` | `RunStatus`, `ToolCallState`, `rootGlyph`, `toolGlyph`, `TreeToolCall`, `TreeUsage`, `TreeTurnSummary`, `AgentTreeState`, `createTreeState`, `toggleTree`, `TreeToolSnapshot`, `TreeLaneSnapshot`, `applyTreeSnapshot`, `collapsedSummary`, `formatTreeTokens`, `renderTreeLines`, `TreeMouseEvent`, `TreeMouseResult`, `TreeViewOptions`, `AgentTreeView` |
 | `editor-view.ts` | `EDITOR_FALLBACK_ROWS`, `editorTheme`, `PromptEditor` (Pi `Editor` behind the seam: Enter submit, multi-line entry, history, focus forwarding) |
 | `lane-cells.ts` | `LaneEntryLike`, `PROMPT_PREFIX`, `TOOL_CALL_PREFIX`, `TOOL_RESULT_MAX_CHARS`, `TOOL_DETAIL_MAX_CHARS`, `TOOL_OUTCOME_MAX_CHARS`, `sanitizeLaneText`, `summarizeToolArguments`, `summarizeToolOutcome`, `entriesToCells` — committed lane entries → coarse transcript cells (§15.2); every cell's text (user, assistant, tool result, tool name) is sanitized here so model-supplied content cannot drive the terminal. `sanitizeLaneText` strips complete ECMA-48 sequences (CSI, OSC, C1 CSI, 2-byte ESC forms — not just the ESC byte, #299), collapses carriage-return overwrites to the text after the last `\r`, expands tabs by visible column width, and drops the remaining C0/C1 controls |
 | `tui-app.ts` | `TuiAppSeed`, `TuiInputResult`, `TuiApp`, `createTuiApp`, `seedFromPresentation` — the global keys (Ctrl-C/Esc/Ctrl-D/Ctrl-T) are classified through Pi's `parseKey` (see `tui-boundary.ts`), so both legacy-byte and Kitty CSI-u encodings are honoured |
@@ -95,18 +95,18 @@ module owns arrangement only.
   (`createTranscriptView({ ops: true })`, for `replayTranscript` and tests)
   — production applies a snapshot per lane event and keeps no copy of it.
 - **Tree** (`tree.ts`): `RunStatus` is `idle|running|done`;
-  `AgentTreeState` toggles (`toggleTree`), consumes lane events
-  (`LaneEventLike` via `applyLaneEvent` — run status, tool start/end, usage
-  rows and the attach snapshot's usage ledger) and renders
-  (`renderTreeLines`, `collapsedSummary`, glyphs,
-  `formatTreeTokens`). Tool rows carry the args summary and outcome
+  `AgentTreeState` toggles (`toggleTree`), takes ONE lane input —
+  `applyTreeSnapshot(state, lane)`, the `TreeLaneSnapshot` the host
+  projector folds (§66; the tree never sees a raw lane event) — and renders
+  (`renderTreeLines`, `collapsedSummary`, glyphs, `formatTreeTokens`). Tool
+  rows carry the args summary and outcome
   (`summarizeToolArguments`/`summarizeToolOutcome`, shell tool only), a
   failed call renders
-  `✗`, the root row carries `$cost in/out` (`TreeUsage`, seeded from the
-  attach snapshot's ledger — the tree picks it up when the lane attaches,
-  not at boot — then summed from usage rows), and calls are
-  grouped per turn (a `run-start` rolls the live group into
-  `previousTurns` as a `TreeTurnSummary`, which folds to one line).
+  `✗`, the root row carries `$cost in/out` (`TreeUsage`, the totals the
+  state carries: the attach snapshot's cumulative ledger, then the usage
+  rows), and calls are grouped per turn (a new running turn rolls the live
+  group into `previousTurns` as a `TreeTurnSummary`, which folds to one
+  line).
 - **Diff** (`diff-view.ts`): `DiffOp` mirrors the journal ops
   (`write|edit|create|delete|rename`); `DiffFileChange` renders headers
   + unified hunks (`renderDiffHeader`, `renderDiffLines`,

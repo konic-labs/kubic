@@ -25,6 +25,7 @@ import {
   type Storage,
   SystemEntry,
 } from '../pi-boundary.js';
+import { PromptCacheError } from '../prompts.js';
 import {
   assembleSoloPrompt,
   bootSoloLane,
@@ -33,7 +34,6 @@ import {
   type SoloLane,
   splitSoloModelId,
 } from './solo.js';
-import { PromptCacheError } from '../prompts.js';
 
 vi.mock('./interceptors.js', () => ({
   policyInterceptorHooks: () => [],

@@ -44,9 +44,9 @@ describe('abortLane', () => {
         if (attempts === 1) throw new Error('durable abort refused');
       },
     });
-    await expect(
-      abortLane(stub, BACKGROUND_CONTEXT),
-    ).rejects.toThrowError(LaneDriveError);
+    await expect(abortLane(stub, BACKGROUND_CONTEXT)).rejects.toThrowError(
+      LaneDriveError,
+    );
     // The first attempt already ran both kills before the abort failed.
     expect(runs).toBe(2);
     const retry = await abortLane(stub, BACKGROUND_CONTEXT);

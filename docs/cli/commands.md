@@ -1952,7 +1952,10 @@ instead of an empty list. The **RESOURCES** cell shows resource consumption
 `rss=<MB> cpu=<%>` (one `ps` sample, never an average — absent when the pid
 is gone), then the settled `tok=<n>` `cost=$<n>` `calls=<n>` from the run's
 own usage summary when the worker settled (`tok` totals input+output+cached
-and abbreviates at k/M).
+and abbreviates at k/M). The run state is read by the `owner` suffix, but the
+rows file is untrusted input (issue #437): a suffix outside the session-id
+charset — or a state file resolving outside `.kubic/orchestrator/` — reads as
+an absent facet, never a file from elsewhere.
 
 A row that FAILED also names the code it settled on — `failed(<code>)` in the
 **AGENT** cell and a `failure: {code, message}` field in `--json` (issue

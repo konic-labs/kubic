@@ -34,6 +34,7 @@ import {
   runEvalCommand,
 } from '../../../packages/eval/src/cli.js';
 import { runExportCommand as runTrajectoryExportCommand } from '../../../packages/eval/src/export-cli.js';
+import { confinedStatePath } from '../../../packages/exec/src/confined-path.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { isGitWorktreeClean } from '../../../packages/exec/src/git-clean.js';
@@ -426,9 +427,14 @@ async function prodWorkerCommand(pid: number): Promise<string | undefined> {
 // legacy row — without it there is no run state to read.
 function prodRunSessionOf(row: WorkerListRow): string | undefined {
   const prefix = 'orchestrate:';
-  return row.owner.startsWith(prefix)
-    ? row.owner.slice(prefix.length)
-    : undefined;
+  if (!row.owner.startsWith(prefix)) return undefined;
+  const runSession = row.owner.slice(prefix.length);
+  // The rows file is repo-local data, not a trust root (issue #437): the
+  // suffix must be shaped like the session id orchestrate wrote —
+  // SESSION_ID_PATTERN, the same charset rule `--session` obeys — before
+  // anything builds a path from it.
+  if (!SESSION_ID_PATTERN.test(runSession)) return undefined;
+  return runSession;
 }
 
 async function prodInspectWorktree(
@@ -483,10 +489,16 @@ function prodReadRunState(
 ): { runSession: string; state: unknown } | undefined {
   const runSession = prodRunSessionOf(row);
   if (runSession === undefined) return undefined;
+  // Belt and braces behind the charset gate (issue #437): the file must
+  // resolve inside the orchestrator dir — a symlink pointing out is
+  // refused with its named reason, exactly like a missing file.
+  const orchDir = join(repoRoot, '.kubic', 'orchestrator');
+  const confined = confinedStatePath(orchDir, `${runSession}.json`);
+  if (!confined.ok) return undefined;
   try {
-    const raw = createNodeFileBridge(
-      join(repoRoot, '.kubic', 'orchestrator'),
-    ).readTextFile(`${runSession}.json`);
+    // Read the resolved path itself, not a re-joined one: nothing is
+    // re-resolved between the confinement check and the read.
+    const raw = createNodeFileBridge(orchDir).readTextFile(confined.path);
     const state = JSON.parse(raw) as unknown;
     if (typeof state !== 'object' || state === null) return undefined;
     return { runSession, state };

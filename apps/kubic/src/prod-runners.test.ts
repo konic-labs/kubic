@@ -2,7 +2,13 @@
 // user's working directory and the SAME installed policy `kubic run` and
 // `kubic doctor` use — not a filesystem root, not an empty policy.
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -670,5 +676,88 @@ describe('kubic workers list resources (prod wiring, issue #248)', () => {
       cpuPct: expect.any(Number),
     });
     expect(doc[0]?.['consumption']).toMatchObject({ costUsd: 0.012 });
+  });
+});
+
+describe('kubic workers refuses owner-derived state paths (issue #437)', () => {
+  function metricsFile(agentId: string): string {
+    return JSON.stringify({
+      records: [
+        {
+          agentId,
+          result: {
+            metrics: { inputTokens: 9999, toolCalls: 2, costUsd: 0.009 },
+          },
+        },
+      ],
+    });
+  }
+
+  function evilRepo(
+    tag: string,
+    owner: string,
+  ): { dir: string; orchDir: string } {
+    const dir = mkdtempSync(join(tmpdir(), tag));
+    roots.push(dir);
+    const orchDir = join(dir, '.kubic', 'orchestrator');
+    mkdirSync(orchDir, { recursive: true });
+    writeWorkerRows(createNodeFileBridge(orchDir), 'workers.json', [
+      {
+        workerId: 'w9',
+        sessionId: 'run-9-w9',
+        generation: 1,
+        status: 'ready',
+        agentStatus: 'running',
+        startedAtMs: Date.now(),
+        ageMs: 0,
+        owner,
+      },
+    ]);
+    vi.spyOn(process, 'cwd').mockReturnValue(dir);
+    return { dir, orchDir };
+  }
+
+  it('list does not read a run state reached by `..` in the owner', async () => {
+    const { dir } = evilRepo('prod-ownerescape-', 'orchestrate:../decoy');
+    // The decoy a traversal would land on: reachable only from outside
+    // the orchestrator dir.
+    writeFileSync(join(dir, '.kubic', 'decoy.json'), metricsFile('w9'));
+    const { lines, r } = runners();
+    expect(await r.workers({ command: 'list' }, noConfig)).toBe(0);
+    expect(lines.join('\n')).not.toContain('tok=');
+  });
+
+  it('inspect does not read it either', async () => {
+    const { dir } = evilRepo('prod-ownerescape-', 'orchestrate:../decoy');
+    writeFileSync(join(dir, '.kubic', 'decoy.json'), metricsFile('w9'));
+    const { lines, r } = runners();
+    expect(await r.workers({ command: 'inspect', id: 'w9' }, noConfig)).toBe(
+      0,
+    );
+    const text = lines.join('\n');
+    expect(text).toContain('usage: accruing');
+    expect(text).not.toContain('tok=');
+  });
+
+  it('terminate never consults the owner-derived state', async () => {
+    evilRepo('prod-ownerescape-', 'orchestrate:../decoy');
+    const { lines, errs, r } = runners();
+    expect(await r.workers({ command: 'terminate', id: 'w9' }, noConfig)).toBe(
+      1,
+    );
+    expect(lines.join('\n')).not.toContain('tok=');
+    expect(errs.join('\n')).toMatch(/code=worker_not_running/);
+  });
+
+  it('refuses a run-state symlink pointing outside the run dir', async () => {
+    const { dir, orchDir } = evilRepo(
+      'prod-ownerescape-',
+      'orchestrate:linked',
+    );
+    writeFileSync(join(dir, 'secret.json'), metricsFile('w9'));
+    symlinkSync(join(dir, 'secret.json'), join(orchDir, 'linked.json'));
+    const { lines, r } = runners();
+    expect(await r.workers({ command: 'list' }, noConfig)).toBe(0);
+    expect(lines.join('\n')).not.toContain('tok=');
   });
 });

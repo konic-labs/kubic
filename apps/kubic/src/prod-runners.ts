@@ -55,6 +55,11 @@ import type {
 } from '../../../packages/host/src/doctor.js';
 import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
 import {
+  describeFullAccessSession,
+  type FullAccessSession,
+  listFullAccessSessions,
+} from '../../../packages/host/src/doctor-full-access.js';
+import {
   FAUX_NOTICE,
   fauxProviderActive,
 } from '../../../packages/host/src/faux-provider.js';
@@ -104,7 +109,10 @@ import {
   planWorkerRoles,
   thinkingOverrideFromEnv,
 } from '../../../packages/host/src/roles/worker-roles.js';
-import { runRunCommand } from '../../../packages/host/src/run-cli.js';
+import {
+  runRunCommand,
+  SESSION_ID_PATTERN,
+} from '../../../packages/host/src/run-cli.js';
 import {
   defaultSessionsRoot,
   runSessionsCommand,
@@ -681,6 +689,24 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       );
     },
     doctor: async (options, cliConfig) => {
+      // Issue #310: `doctor --session <id>` checks one session — its
+      // installed posture reads that session's posture.json. A value that
+      // cannot name a session directory is refused before any path join.
+      const doctorSession = options.session;
+      if (
+        doctorSession !== undefined &&
+        !SESSION_ID_PATTERN.test(doctorSession)
+      ) {
+        debug(
+          `error: invalid --session id ${JSON.stringify(doctorSession)} (use [A-Za-z0-9_-])`,
+        );
+        return EXIT_USAGE;
+      }
+      const sessionsRoot = defaultSessionsRoot();
+      const doctorSessionDir =
+        doctorSession === undefined
+          ? undefined
+          : join(sessionsRoot, doctorSession);
       const enterprisePolicy = runtimePolicy(cliConfig);
       // §58 (issue #289): the enterprise checks run only when a `[policy]`
       // section is actually configured — the resolved policy is always
@@ -736,6 +762,27 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         });
       } catch {
         sessionOverlapProbe = undefined;
+      }
+      // §41.4 full-access sessions (issue #310): the workspace's live
+      // sessions running with approvals off — enumerated eagerly like the
+      // overlap probe, so the check cannot disagree with the store doctor
+      // just listed. With --session exactly one session is checked (the
+      // workspace filter is bypassed: the operator named it). Best-effort
+      // like the overlap probe: an unlistable store makes no claim.
+      let fullAccessProbe: (() => FullAccessSession[]) | undefined;
+      try {
+        const fullAccess =
+          doctorSession === undefined
+            ? await listFullAccessSessions({
+                sessionsRoot,
+                workspace: process.cwd(),
+              })
+            : await describeFullAccessSession(sessionsRoot, doctorSession).then(
+                (session) => (session === undefined ? [] : [session]),
+              );
+        fullAccessProbe = () => fullAccess;
+      } catch {
+        fullAccessProbe = undefined;
       }
       // §36.3 credential posture (issue #200): which provider each role's
       // workers get credentials for — over the same default delegation set a
@@ -839,6 +886,12 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         installedPolicy: () =>
           installedPolicyPosture({
             workspace: process.cwd(),
+            // Issue #310: with --session the installed posture reads that
+            // session's posture.json, so a full-access session reports
+            // FULL ACCESS instead of the workspace-level false.
+            ...(doctorSessionDir === undefined
+              ? {}
+              : { sessionDir: doctorSessionDir }),
             ...installedPolicyDeps(cliConfig),
           }),
         // §82 resource enforcement (issue #163): which per-agent limits this
@@ -910,6 +963,12 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         ...(sessionOverlapProbe === undefined
           ? {}
           : { probeSessionOverlap: sessionOverlapProbe }),
+        // §41.4 full-access sessions (issue #310): one warning per live
+        // session running with approvals off (named grant + way back when
+        // recorded). With --session exactly the named session is checked.
+        ...(fullAccessProbe === undefined
+          ? {}
+          : { probeFullAccessSessions: fullAccessProbe }),
         // Issue #361: always injected — the check itself is a pass when the
         // state directories are private.
         probeStatePermissions: statePermissionProbe,

@@ -28,6 +28,7 @@ import {
   validatePolicy,
 } from './approvals.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
+import type { FullAccessSession } from './doctor-full-access.js';
 // Issue #58 honest limits (§59.1, §78): registration import only — no
 // existing check builder in this file was modified for #58. Exit codes
 // route through the limits mapper so provider-down exits 6.
@@ -132,6 +133,12 @@ export interface DoctorDeps extends CliIo {
   // reports a warn note (concurrent different-session runs are legal; the
   // note states the sweep blind spot). Absent: no overlap check.
   probeSessionOverlap?: () => SessionOverlapProbe;
+  // §41.4 full-access sessions (issue #310): the composition root's
+  // enumeration of the workspace's live sessions whose posture.json
+  // records fullAccess (host/doctor-full-access). Absent: no per-session
+  // checks (legacy matrices are unchanged). A throwing probe becomes one
+  // warn check, never a crash: an unlistable store must not flip the exit.
+  probeFullAccessSessions?: () => FullAccessSession[];
   // Issue #361: a state directory that other local users can read (session
   // transcripts, journaled file content). undefined means private or absent.
   probeStatePermissions?: () => StatePermissionProbe | undefined;
@@ -318,6 +325,25 @@ export interface ExtensionPostureInput {
 export interface SessionOverlapProbe {
   workspace: string;
   sessionIds: string[];
+}
+
+function fullAccessSessionCheck(session: FullAccessSession): DoctorCheck {
+  // Warn, never fail: full access is operator intent (flag or toggle),
+  // doctor informs. The detail names the grant when the posture recorded
+  // one, and the way back to enforcement.
+  const granted =
+    session.enabledAt === undefined && session.enabledBy === undefined
+      ? 'grant details not recorded'
+      : `enabled ${session.enabledAt ?? 'at an unknown time'} by ${session.enabledBy ?? 'an unknown operator'}`;
+  return {
+    id: `session:full-access:${session.sessionId}`,
+    label: 'session full access',
+    status: 'warn',
+    reason: 'full-access',
+    detail:
+      `session ${session.sessionId}: approvals FULL ACCESS (${granted}) — ` +
+      'end the session or switch approvals back on; new sessions start enforced',
+  };
 }
 
 function sessionOverlapCheck(probe: SessionOverlapProbe): DoctorCheck {
@@ -734,6 +760,24 @@ export function collectDoctorChecks(
       });
     }
   }
+  // §41.4 full-access sessions (issue #310): one warning per live session
+  // running with approvals off (see fullAccessSessionCheck). A throwing
+  // probe becomes one warn check, never a crash.
+  if (deps.probeFullAccessSessions !== undefined) {
+    try {
+      for (const session of deps.probeFullAccessSessions()) {
+        checks.push(fullAccessSessionCheck(session));
+      }
+    } catch (error) {
+      checks.push({
+        id: 'session:full-access',
+        label: 'session full access',
+        status: 'warn',
+        reason: 'ok',
+        detail: `full-access sessions unverified (session store not listable): ${probeMessage(error)}`,
+      });
+    }
+  }
   // License identity (issue #59): reported on every run, never skipped
   // implicitly — --skip license:kubic remains available like any check.
   checks.push(licenseCheck());
@@ -878,6 +922,10 @@ function summarize(checks: DoctorCheck[]): string {
 export interface DoctorCommandOptions {
   readonly skip?: readonly string[];
   readonly json?: boolean;
+  // Issue #310: check one session — its installed posture reads that
+  // session's posture.json, and the full-access enumeration covers
+  // exactly it (workspace filter bypassed).
+  readonly session?: string;
 }
 
 export async function runDoctorCommand(

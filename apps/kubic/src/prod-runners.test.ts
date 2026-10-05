@@ -583,3 +583,11 @@ describe('kubic doctor: worker credential posture (issue #200)', () => {
     expect(code).not.toBe(0);
   });
 });
+
+describe('kubic doctor --session (prod wiring, issue #310)', () => {
+  it('refuses a session id that cannot name a session directory', async () => {
+    const { errs, r } = runners();
+    expect(await r.doctor({ session: '../evil' }, noConfig)).toBe(2);
+    expect(errs.join('\n')).toContain('invalid --session id');
+  });
+});

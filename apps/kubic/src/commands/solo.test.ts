@@ -541,6 +541,13 @@ describe('kubic doctor', () => {
     expect((await kubic(['doctor'], 6)).code).toBe(6);
   });
 
+  it('forwards --session to the doctor runner', async () => {
+    const result = await kubic(['doctor', '--session', 'abc']);
+    expect(result.calls).toEqual([
+      { key: 'doctor', input: { skip: [], session: 'abc' } },
+    ]);
+  });
+
   it('refuses --skip without a value', async () => {
     expect(await usageError(['doctor', '--skip'])).toContain(
       'argument missing',

@@ -1,11 +1,11 @@
 // kubic doctor (issue #29; §41.4, §50): providers, deps, policy
 // mismatches, skip flag — with --json parity. Faux-only: probes are
 // injected, never network.
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { installedPolicyPosture } from './approvals.js';
+import { FileApprovalStore, installedPolicyPosture } from './approvals.js';
 import type { DoctorDeps } from './doctor.js';
 import { runDoctorCommand } from './doctor.js';
 import { assembleModels, providerProbesOf } from './models-cli.js';
@@ -752,5 +752,89 @@ describe('doctor probes run once and --skip clears aggregates (issue #291)', () 
       checks.find((check) => check.id === 'limit:provider-availability')
         ?.status,
     ).toBe('pass');
+  });
+});
+
+describe('full-access sessions (issue #310)', () => {
+  interface CheckView {
+    id: string;
+    status: string;
+    reason: string;
+    detail: string;
+  }
+
+  async function matrix(
+    deps: Partial<DoctorDeps>,
+  ): Promise<{ code: number; checks: CheckView[] }> {
+    const lines: string[] = [];
+    const code = await runDoctorCommand(
+      { json: true },
+      { ...cleanDeps((line: string) => lines.push(line)), ...deps },
+    );
+    const report = JSON.parse(lines.join('\n')) as { checks: CheckView[] };
+    return { code, checks: report.checks };
+  }
+
+  it('warns once per live full-access session, naming the grant and the way off', async () => {
+    const { code, checks } = await matrix({
+      probeFullAccessSessions: () => [
+        { sessionId: 'abc', enabledAt: 1700000000000, enabledBy: 'tester' },
+      ],
+    });
+    // A warning never flips the exit: full access is operator intent,
+    // doctor informs.
+    expect(code).toBe(0);
+    const check = checks.find(
+      (entry) => entry.id === 'session:full-access:abc',
+    );
+    expect(check?.status).toBe('warn');
+    expect(check?.reason).toBe('full-access');
+    expect(check?.detail).toContain('session abc');
+    expect(check?.detail).toContain('1700000000000');
+    expect(check?.detail).toContain('tester');
+    expect(check?.detail).toContain('switch approvals back on');
+  });
+
+  it('stays quiet when no session left enforcement', async () => {
+    const { checks } = await matrix({ probeFullAccessSessions: () => [] });
+    expect(
+      checks.filter((entry) => entry.id.startsWith('session:full-access:')),
+    ).toEqual([]);
+  });
+
+  it('adds no checks without the probe (legacy matrices unchanged)', async () => {
+    const { checks } = await matrix({});
+    expect(
+      checks.filter((entry) => entry.id.startsWith('session:full-access:')),
+    ).toEqual([]);
+  });
+
+  it('a throwing probe warns once instead of crashing the matrix', async () => {
+    const { code, checks } = await matrix({
+      probeFullAccessSessions: () => {
+        throw new Error('store exploded');
+      },
+    });
+    expect(code).toBe(0);
+    const check = checks.find((entry) => entry.id === 'session:full-access');
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toContain('store exploded');
+  });
+
+  it('installedPolicy over a full-access session dir reports FULL ACCESS (doctor --session)', async () => {
+    const root = mkTmp('kubic-doctor-session-');
+    const dir = join(root, 'abc');
+    mkdirSync(dir, { recursive: true });
+    new FileApprovalStore(dir).savePosture({
+      fullAccess: true,
+      enabledAt: 1700000000000,
+      enabledBy: 'tester',
+    });
+    const { checks } = await matrix({
+      installedPolicy: () =>
+        installedPolicyPosture({ workspace: root, sessionDir: dir }),
+    });
+    const installed = checks.find((entry) => entry.id === 'policy:installed');
+    expect(installed?.detail).toContain('FULL ACCESS recorded');
   });
 });

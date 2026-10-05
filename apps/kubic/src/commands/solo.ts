@@ -319,6 +319,10 @@ function registerDoctor(program: Command, ctx: CommandContext): void {
       [] as string[],
     )
     .option('--json', 'print one JSON report')
+    .option(
+      '--session <id>',
+      'check one session (its installed posture and full-access state)',
+    )
     .addHelpText(
       'after',
       examples([
@@ -332,6 +336,7 @@ function registerDoctor(program: Command, ctx: CommandContext): void {
           {
             skip: opts.skip,
             ...(opts.json === true ? { json: true } : {}),
+            ...(opts.session === undefined ? {} : { session: opts.session }),
           },
           ctx.config,
         ),

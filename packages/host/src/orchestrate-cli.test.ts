@@ -2175,7 +2175,12 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
         const transfer = last.transfers?.[id];
         expect(transfer?.task).toBe('ship the seam work');
         expect(transfer?.worktree).toBe(`/repo/.kubic/wt/${id}`);
-        expect(transfer?.relevantFiles).toEqual([]);
+        // Issue #184 review (MED): relevant files union earlier
+        // artifacts' file refs — alpha launches first (none), beta
+        // inherits alpha's change set.
+        expect(transfer?.relevantFiles).toEqual(
+          id === 'alpha' ? [] : ['alpha-0.txt'],
+        );
         expect(transfer?.constraints).toEqual([]);
         expect(transfer?.expectedOutput).toBe(
           'changes committed on the worker branch for review and merge',
@@ -2218,6 +2223,52 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
         fileRefs: ['alpha-0.txt'],
         findings: ['the seam is threaded'],
       });
+    });
+
+    it('resume validation accepts mint-keyed transfers and artifacts (plan-step ids)', () => {
+      // Issue #184 review (HIGH-b): lane mints join state.agents only
+      // post-drive, but their transfers/artifacts persist at mid-drive
+      // saves — keys outside the plan-step universe stay refused, so a
+      // hand-edited stranger still fails closed.
+      const transfer = {
+        task: 'p',
+        worktree: '/w',
+        relevantFiles: [],
+        constraints: [],
+        previousFindings: [],
+        expectedOutput: 'e',
+      };
+      const artifact = {
+        summary: 's',
+        fileRefs: [],
+        findings: [],
+        testResults: [],
+        decisions: [],
+        worktree: '/w',
+      };
+      const base = {
+        version: 1,
+        sessionId: 's',
+        prompt: 'p',
+        agents: ['alpha'],
+        merged: [],
+        pending: [],
+        stopped: false,
+        records: [],
+        plan: [
+          { agentId: 'alpha', step: 1, total: 1, prompt: 'a' },
+          { agentId: 'worker-1', step: 1, total: 1, prompt: 'w' },
+        ],
+        transfers: { 'worker-1': transfer },
+        artifacts: { 'worker-1': artifact },
+      };
+      expect(parseOrchestratorRunState(base, 's')).toBeDefined();
+      expect(
+        parseOrchestratorRunState(
+          { ...base, transfers: { ghost: transfer } },
+          's',
+        ),
+      ).toBeUndefined();
     });
 
     it('a history-shaped finding is rejected fail-closed: the run survives, the prompt stays clean', async () => {
@@ -3737,6 +3788,83 @@ describe('orchestrate manager lane (issue #431)', () => {
 
   const toolTurn = (name: string, args: Record<string, string>) =>
     fauxAssistantMessage([fauxToolCall(name, args)], { stopReason: 'toolUse' });
+
+  it('a later mint inherits an earlier mint artifact through the handoff (issue #184 review)', async () => {
+    // HIGH-a: mints join state.agents only post-drive, so a handoff walk
+    // over agents alone leaves later mints without earlier findings.
+    // Pre-fix the second mint's prompt carries no worker-1 lines.
+    const seen: { agentId: string; prompt: string }[] = [];
+    const world = laneWorld(
+      [
+        toolTurn('spawn_agent', { role: 'implementer', task: 'do alpha' }),
+        toolTurn('wait_for_agent', { agentId: 'worker-1' }),
+        toolTurn('collect_result', { agentId: 'worker-1' }),
+        toolTurn('spawn_agent', { role: 'implementer', task: 'do beta' }),
+        toolTurn('wait_for_agent', { agentId: 'worker-2' }),
+        toolTurn('collect_result', { agentId: 'worker-2' }),
+        toolTurn('workspace_diff', { agentId: 'worker-1' }),
+        toolTurn('workspace_apply', { agentId: 'worker-1' }),
+        toolTurn('workspace_diff', { agentId: 'worker-2' }),
+        toolTurn('workspace_apply', { agentId: 'worker-2' }),
+        toolTurn('workspace_merge', {}),
+        toolTurn('workspace_merge', {}),
+        fauxAssistantMessage('merged both'),
+      ],
+      {
+        runWorker: (
+          agentId: string,
+          worktree: OrchestrateWorktree,
+          prompt: string,
+        ) => {
+          seen.push({ agentId, prompt });
+          const built = buildAgentResult({
+            status: 'completed',
+            summary: `${agentId} done`,
+            filesChanged: [`${agentId}-0.txt`],
+            provenance: {
+              workerId: agentId,
+              sessionId: workerSessionFor('lane-handoff', agentId),
+              pid: null,
+              generation: 0,
+              worktree: worktree.path,
+              model: 'faux/m',
+            },
+            metrics: { wallMs: 1, latencyMs: 1 },
+          });
+          if (agentId === 'worker-1') {
+            built.findings = ['the seam is threaded'];
+          }
+          return {
+            result: built,
+            hunks: [
+              {
+                path: `${agentId}-0.txt`,
+                hunk: `@@ -0,0 +1 @@ +${agentId}`,
+              },
+            ],
+          };
+        },
+      },
+    );
+    const code = await runOrchestrateCommand(
+      {
+        // Two roster names lift the lane spawn cap to two mints; the
+        // roster itself never launches on the lane path.
+        prompt: 'ship alpha then beta',
+        agents: ['alpha', 'beta'],
+        json: true,
+        session: 'lane-handoff',
+      },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    const second = seen.find((entry) => entry.agentId === 'worker-2');
+    expect(second).toBeDefined();
+    expect(second?.prompt).toContain(
+      'worker-1: worker-1 done (worker-1-0.txt)',
+    );
+    expect(second?.prompt).toContain('worker-1: the seam is threaded');
+  });
 
   it('drives spawn to merge through the lane and merges the minted worker', async () => {
     const world = laneWorld([

@@ -755,13 +755,28 @@ export function parseOrchestratorRunState(
   }
   // The transfer records (issue #184, §24/§25): keys must name this run's
   // workers and every record must validate — a torn or hand-edited state
-  // fails closed rather than composing prompts from garbage.
+  // fails closed rather than composing prompts from garbage. The key
+  // universe is agents plus plan-step ids in plan order (issue #184
+  // review): lane mints join agents only post-drive, but their
+  // transfers/artifacts persist at mid-drive saves — refusing mint keys
+  // would make a follow-up-then-kill lane run unresumable.
+  const plannedIds: string[] = [];
+  if (Array.isArray(value.plan)) {
+    for (const step of value.plan) {
+      const id = (step as { agentId?: unknown }).agentId;
+      if (typeof id === 'string' && !plannedIds.includes(id)) {
+        plannedIds.push(id);
+      }
+    }
+  }
+  const knownAgent = (key: string): boolean =>
+    agents.includes(key) || plannedIds.includes(key);
   if (value.transfers !== undefined) {
     if (typeof value.transfers !== 'object' || value.transfers === null) {
       return undefined;
     }
     for (const [key, entry] of Object.entries(value.transfers)) {
-      if (!agents.includes(key)) return undefined;
+      if (!knownAgent(key)) return undefined;
       try {
         buildTaskTransfer(entry as TaskTransferInput);
       } catch {
@@ -774,7 +789,7 @@ export function parseOrchestratorRunState(
       return undefined;
     }
     for (const [key, entry] of Object.entries(value.artifacts)) {
-      if (!agents.includes(key)) return undefined;
+      if (!knownAgent(key)) return undefined;
       if (!isStoredArtifact(entry)) return undefined;
     }
   }
@@ -2425,12 +2440,38 @@ export async function runOrchestrateCommand(
       return undefined;
     }
   };
+  // Launch order (issue #184 review): lane mints join state.agents only
+  // post-drive, but their plan steps are appended at spawn — agents plus
+  // plan-step ids in plan order is the order workers actually launched,
+  // so settled mints feed later mints mid-drive.
+  const launchOrderAgents = (): string[] => {
+    const order = [...state.agents];
+    for (const step of state.plan ?? []) {
+      if (!order.includes(step.agentId)) order.push(step.agentId);
+    }
+    return order;
+  };
+  // Relevant files (issue #184 review, §24 intent): the union of earlier
+  // settled artifacts' file refs, in launch order — existing data, so no
+  // producer is needed and the record is complete, not decorative.
+  const relevantFilesFor = (agentId: string): string[] => {
+    const files: string[] = [];
+    for (const earlier of launchOrderAgents()) {
+      if (earlier === agentId) break;
+      const artifact = ensureArtifact(earlier);
+      if (artifact === undefined) continue;
+      for (const file of artifact.fileRefs) {
+        if (!files.includes(file)) files.push(file);
+      }
+    }
+    return files;
+  };
   // The handoff chain (issue #184, §25.3/§69): findings flow down the
-  // agent order from workers that already settled — a worker launching
+  // launch order from workers that already settled — a worker launching
   // before an earlier sibling settles simply sees fewer findings.
   const previousFindingsFor = (agentId: string): string[] => {
     const lines: string[] = [];
-    for (const earlier of state.agents) {
+    for (const earlier of launchOrderAgents()) {
       if (earlier === agentId) break;
       const artifact = ensureArtifact(earlier);
       if (artifact === undefined) continue;
@@ -2468,7 +2509,7 @@ export async function runOrchestrateCommand(
       const transfer = buildTaskTransfer({
         task: state.prompt,
         worktree: worktree.path,
-        relevantFiles: [],
+        relevantFiles: relevantFilesFor(agentId),
         constraints: [...(spawnRoleInfo(agentId, rolePlan).requires ?? [])],
         expectedOutput: TRANSFER_EXPECTED_OUTPUT,
         previousFindings: previousFindingsFor(agentId),

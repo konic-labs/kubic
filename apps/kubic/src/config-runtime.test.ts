@@ -678,6 +678,30 @@ describe('session compaction projection (issue #239)', () => {
     expect(prodRunDeps(bare).compaction).toBeUndefined();
   });
 
+  it('a worker-shaped cwd loads the same committed config (issue #239 review)', () => {
+    // Orchestrator workers are `kubic run` children in their worktree:
+    // they load the committed project config themselves. A second
+    // worktree-shaped cwd under the same project root must project the
+    // identical compaction options — that load IS the inheritance.
+    const { home, project } = trustedProject(
+      '[session]\nreserveTokens = 4000\nautoCompact = false\n',
+    );
+    const workerCwd = join(project, '.kubic', 'wt', 'agent-1');
+    mkdirSync(workerCwd, { recursive: true });
+    const env = { KUBIC_TRUST_PROJECT: '1' };
+    const fromProject = loadCliConfig({ cwd: project, home, env });
+    const fromWorktree = loadCliConfig({ cwd: workerCwd, home, env });
+    expect(fromProject.error).toBeUndefined();
+    expect(fromWorktree.error).toBeUndefined();
+    expect(runtimeCompactionDeps(fromWorktree)).toEqual(
+      runtimeCompactionDeps(fromProject),
+    );
+    expect(runtimeCompactionDeps(fromWorktree)).toEqual({
+      enabled: false,
+      reserveTokens: 4000,
+    });
+  });
+
   it('doctor reports the effective reserve (issue #239)', () => {
     const { home, cwd } = globalHome('[session]\nreserveTokens = 4000\n');
     const probe = doctorConfigProbe(loadCliConfig({ cwd, home, env: {} }));

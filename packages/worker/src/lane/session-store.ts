@@ -41,7 +41,9 @@ import type {
   FileBridge,
 } from '../../../exec/src/file-bridge.js';
 import {
+  claimLockLink,
   createLockFile,
+  processStartTimeOf,
   readLockFile,
   removeLockFile,
   tightenStateDir,
@@ -195,13 +197,17 @@ export class SessionIdError extends Error {
 }
 
 // Session locking (issue #118; §21–§22): one live attachment per session.
-// The lock file is <sessions-root>/<id>/lock.json — `{pid, startedAt}` of
-// the attaching process. It wraps EVERY storage open (issue #392): pi-durable
-// owns a storage exclusively and does no cross-process locking, so the Kubic
-// lock is the only guard against two processes appending to one session.
-// LOCAL FILESYSTEM ONLY: O_EXCL create is atomic on a local fs (and on
-// volumes that honor it), but no network/shared-disk locking semantics are
-// claimed — see docs/packages/worker.md.
+// The lock file is <sessions-root>/<id>/lock.json — `{pid, startedAt,
+// procStart?, nonce?}` of the attaching process (`startedAt` is when the
+// lock was taken, `procStart` the holder process's own start time for the
+// pid-reuse guard in issue #145, `nonce` the per-attempt unique that makes
+// the post-write verification exact). It wraps EVERY storage open (issue
+// #392): pi-durable owns a storage exclusively and does no cross-process
+// locking, so the Kubic lock is the only guard against two processes
+// appending to one session. LOCAL FILESYSTEM ONLY: O_EXCL create and hard
+// links are atomic on a local fs (and on volumes that honor them), but no
+// network/shared-disk locking semantics are claimed — see
+// docs/packages/worker.md.
 export class SessionLockError extends Error {
   constructor(sessionId: string, holder: { pid: number; startedAt: number }) {
     // Totality: a partially-written lock must refuse with the named error,
@@ -220,26 +226,40 @@ export class SessionLockError extends Error {
 
 // The lock file's holder, as far as it can be read: a torn write or a
 // non-object payload yields what is missing and nothing more (the caller's
-// stale-candidate case, never a crash).
-function readLockHolder(lockPath: string): {
+// stale-candidate case, never a crash). Unknown keys (`nonce`, …) are
+// ignored; legacy locks simply carry no `procStart`.
+interface LockHolder {
   pid?: number;
   startedAt?: number;
-} {
-  const raw = readLockFile(lockPath);
+  procStart?: number;
+}
+
+function parseLockHolder(raw: string | undefined): LockHolder {
   if (raw === undefined) return {};
   try {
-    const parsed = JSON.parse(raw) as { pid?: unknown; startedAt?: unknown };
+    const parsed = JSON.parse(raw) as {
+      pid?: unknown;
+      startedAt?: unknown;
+      procStart?: unknown;
+    };
     if (parsed === null || typeof parsed !== 'object') return {};
     return {
       ...(typeof parsed.pid === 'number' ? { pid: parsed.pid } : {}),
       ...(typeof parsed.startedAt === 'number'
         ? { startedAt: parsed.startedAt }
         : {}),
+      ...(typeof parsed.procStart === 'number'
+        ? { procStart: parsed.procStart }
+        : {}),
     };
   } catch {
     // torn write: treat as stale candidate
     return {};
   }
+}
+
+function readLockHolder(lockPath: string): LockHolder {
+  return parseLockHolder(readLockFile(lockPath));
 }
 
 // process.kill(pid, 0) is the liveness probe — signal 0 performs the
@@ -255,6 +275,72 @@ function pidIsAlive(pid: number): boolean {
   }
 }
 
+// How far the recorded process start may drift from the pid's actual
+// start and still name the same process. Both sides compute through the
+// same reader, so a live holder compares exactly equal — the tolerance is
+// belt-and-braces for tick rounding, not a window a reused pid can hide
+// in (reuse moves the start by the gap between the two processes).
+const PROC_START_TOLERANCE_MS = 1000;
+
+// Holder liveness (issue #145): the pid probe plus the start-time check
+// against pid reuse. A live pid number is not necessarily the holder — the
+// recorded process start must still match the pid's actual start. There is
+// NO age rule: a 48h-old lock with a live, matching holder is a long TUI
+// session, never stale. A dead holder is stale immediately (crash recovery
+// works same-day); a torn payload names nobody and is a stale candidate.
+// Locks without a recorded start (legacy shape, or a platform without a
+// start-time source) and pids whose start cannot be read fall back to the
+// pid probe: stealing is the destructive arm, so doubt protects the holder.
+function holderIsLive(holder: LockHolder): boolean {
+  if (holder.pid === undefined || !pidIsAlive(holder.pid)) return false;
+  if (holder.procStart === undefined) return true;
+  const actual = processStartTimeOf(holder.pid);
+  if (actual === undefined) return true;
+  return Math.abs(actual - holder.procStart) <= PROC_START_TOLERANCE_MS;
+}
+
+function lockErrorHolder(holder: LockHolder): {
+  pid: number;
+  startedAt: number;
+} {
+  return {
+    pid: holder.pid ?? -1,
+    startedAt: holder.startedAt ?? 0,
+  };
+}
+
+// Stale takeover (issue #145): temp lock + link claim, re-read and verify
+// the owner. Each generation is arbitrated by the link — exactly one racer
+// lands, every loser sees EEXIST — and the clear only ever removes the
+// stale occupant this attempt judged: bytes that changed under us mean a
+// rival acted, so re-evaluate instead of deleting a lock that may now be
+// live. A live occupant throws naming it; surviving the bounded retries
+// without landing throws naming nobody.
+function stealSessionLock(
+  lockPath: string,
+  sessionId: string,
+  payload: string,
+): void {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const observed = readLockFile(lockPath);
+    const holder = parseLockHolder(observed);
+    if (holderIsLive(holder))
+      throw new SessionLockError(sessionId, lockErrorHolder(holder));
+    // Conditional clear: only remove the occupant judged stale above.
+    if (observed !== undefined && readLockFile(lockPath) !== observed) continue;
+    removeLockFile(lockPath);
+    if (
+      claimLockLink(lockPath, payload) &&
+      readLockFile(lockPath) === payload
+    ) {
+      return;
+    }
+    // Lost the claim or the verify: loop re-reads, and a live winner
+    // throws above.
+  }
+  throw new SessionLockError(sessionId, { pid: -1, startedAt: 0 });
+}
+
 export function acquireSessionLock(
   sessionDir: string,
   sessionId: string,
@@ -267,38 +353,38 @@ export function acquireSessionLock(
   tightenStateDir(sessionDir);
   tightenStateDir(dirname(sessionDir));
   const lockPath = join(sessionDir, 'lock.json');
-  const payload = JSON.stringify({ pid: process.pid, startedAt: Date.now() });
+  const ownStart = processStartTimeOf(process.pid);
+  // The nonce makes the post-write verification exact: only these bytes
+  // read as "acquired by this attempt".
+  const payload = JSON.stringify({
+    pid: process.pid,
+    startedAt: Date.now(),
+    ...(ownStart === undefined ? {} : { procStart: ownStart }),
+    nonce: `${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2)}`,
+  });
   // O_EXCL test-and-set via the exec seam (I/O confinement, §9; the
   // primitive creates the session dir eagerly so the lock can land there).
-  if (createLockFile(lockPath, payload)) return;
-  // Stale handling exactly as the work-order sketch: a lock is refused
-  // only while its holder process is alive AND the file is fresher than a
-  // day. A gone holder alone is already stale (crash recovery must work
-  // same-day); a day-old file is stale regardless (pid reuse). Torn
-  // lock.json is a stale candidate either way.
-  const holder = readLockHolder(lockPath);
-  const holderAlive = holder.pid !== undefined && pidIsAlive(holder.pid);
-  const staleByAge =
-    holder.startedAt !== undefined &&
-    Date.now() - holder.startedAt > 24 * 60 * 60 * 1000;
-  if (holderAlive && !staleByAge)
-    throw new SessionLockError(sessionId, {
-      pid: holder.pid as number,
-      startedAt: holder.startedAt as number,
-    });
-  removeLockFile(lockPath);
-  if (createLockFile(lockPath, payload)) return;
-  throw new SessionLockError(sessionId, { pid: -1, startedAt: 0 });
+  // The verify closes the fresh path against a stealer that observed a
+  // stale lock before our create: bytes that are not ours fall through to
+  // the steal path, which re-evaluates the live occupant.
+  if (createLockFile(lockPath, payload)) {
+    if (readLockFile(lockPath) === payload) return;
+  } else {
+    const holder = readLockHolder(lockPath);
+    if (holderIsLive(holder))
+      throw new SessionLockError(sessionId, lockErrorHolder(holder));
+  }
+  stealSessionLock(lockPath, sessionId, payload);
 }
 
 // Read-only liveness view for consumers that must never pull state out
 // from under a live attachment (issue #119: `kubic sessions prune`).
-// Stronger than the steal rule above on purpose: deletion is
-// unrecoverable, so ANY live holder pid protects the session regardless
-// of the lock's age (a reused pid can cost at most a skipped prune), while
-// a dead holder — or a torn/absent payload — never protects. LOCAL
-// FILESYSTEM ONLY, like every read here: pid liveness is this machine's
-// process table, never another host's.
+// Pid-only on purpose, and deliberately stronger than the steal rule:
+// deletion is unrecoverable, so ANY live holder pid protects the session
+// — prune never applies the start-time reuse check, and a reused pid costs
+// at most a skipped prune — while a dead holder, or a torn/absent payload,
+// never protects. LOCAL FILESYSTEM ONLY, like every read here: pid
+// liveness is this machine's process table, never another host's.
 export function sessionLockIsLive(
   sessionDir: string,
 ): { pid: number; startedAt?: number } | undefined {
@@ -311,7 +397,16 @@ export function sessionLockIsLive(
 }
 
 export function releaseSessionLock(sessionDir: string): void {
-  removeLockFile(join(sessionDir, 'lock.json'));
+  const lockPath = join(sessionDir, 'lock.json');
+  // Owned-release only (issue #145): a lock naming another process is left
+  // alone. A lock is ours exactly when it names this pid — no other process
+  // can hold our pid while we run — so a refused attach or a failed create
+  // releases safely through here: what they never owned, they never delete.
+  // Missing, unreadable and torn payloads name nothing: the missing case is
+  // the idempotent second release, and a torn file is never provably ours
+  // (it stays a stale candidate for the next acquire).
+  if (readLockHolder(lockPath).pid !== process.pid) return;
+  removeLockFile(lockPath);
 }
 
 // The listing header: Kubic's projection of the session metadata, read by

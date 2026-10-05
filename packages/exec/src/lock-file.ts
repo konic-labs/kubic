@@ -8,13 +8,14 @@
 
 import {
   chmodSync,
+  linkSync,
   mkdirSync,
   readFileSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 /**
  * O_EXCL create — an atomic test-and-set. Returns `true` when the file was
@@ -94,4 +95,115 @@ export function removeLockFile(path: string): void {
   } catch {
     // Best-effort — the caller's outcome must not be masked by the remove.
   }
+}
+
+// The /proc field carrying a process's start time: `starttime` is field 22
+// of `/proc/<pid>/stat`, and stripping `pid (comm) ` leaves field 3 at
+// index 0, so starttime sits at index 19. `comm` may hold spaces and
+// parens, hence the last-`)` split rather than a fixed offset.
+const PROC_STAT_STARTTIME_INDEX = 19;
+
+// USER_HZ on every supported Linux target: the starttime tick in
+// milliseconds. The value only needs to be self-consistent — the holder
+// records through this function and the verifier recomputes through it —
+// so even a wrong HZ still compares equal for the same process.
+const LINUX_CLOCK_TICK_MS = 10;
+
+/**
+ * Issue #145: the pure half of the start-time reader — `starttime` ticks
+ * from a `/proc/<pid>/stat` text with a `/proc/stat` boot time. Exported
+ * so the field arithmetic is pinned by a fixture test on every platform
+ * (the file reads themselves only exist on Linux).
+ */
+export function procStartTimeFromStat(
+  stat: string,
+  bootTimeMs: number,
+): number | undefined {
+  const close = stat.lastIndexOf(')');
+  if (close === -1) return undefined;
+  const ticks = Number(
+    stat.slice(close + 2).split(' ')[PROC_STAT_STARTTIME_INDEX],
+  );
+  if (!Number.isFinite(ticks) || ticks < 0) return undefined;
+  return bootTimeMs + ticks * LINUX_CLOCK_TICK_MS;
+}
+
+function readProcStartTimeMs(pid: number): number | undefined {
+  let stat: string;
+  try {
+    stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+  } catch {
+    return undefined;
+  }
+  const bootMs = readProcBootTimeMs();
+  if (bootMs === undefined) return undefined;
+  return procStartTimeFromStat(stat, bootMs);
+}
+
+function readProcBootTimeMs(): number | undefined {
+  let stat: string;
+  try {
+    stat = readFileSync('/proc/stat', 'utf8');
+  } catch {
+    return undefined;
+  }
+  for (const line of stat.split('\n')) {
+    if (!line.startsWith('btime ')) continue;
+    const seconds = Number(line.slice('btime '.length).trim());
+    if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+    return seconds * 1000;
+  }
+  return undefined;
+}
+
+/**
+ * Issue #145: when `pid` started, as epoch milliseconds — the pid-reuse
+ * guard behind the session lock's stale rule. Linux-only (`/proc` is the
+ * only source that needs no spawn and no privileges); `undefined` on any
+ * other platform and for any unreadable pid, so the caller falls back to
+ * the pid probe. Never throws. A reboot moves every start time, so this
+ * also catches reuse across boots.
+ */
+export function processStartTimeOf(pid: number): number | undefined {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
+  if (process.platform !== 'linux') return undefined;
+  return readProcStartTimeMs(pid);
+}
+
+/**
+ * Issue #145: land `payload` at `lockPath` atomically — the stale-takeover
+ * claim. The payload is written to a unique temp file in the same directory
+ * (same filesystem, a link requirement) and hard-linked into place: the
+ * link is the test-and-set, so exactly one racer's claim lands per
+ * generation and every loser sees EEXIST. Returns `true` when this call's
+ * payload landed, `false` when an occupant is already there (left
+ * untouched). The temp name is dropped either way, so no litter survives.
+ * LOCAL FILESYSTEM ONLY, like every lock read here.
+ */
+export function claimLockLink(lockPath: string, payload: string): boolean {
+  const dir = dirname(lockPath);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const tmp = join(
+    dir,
+    `.lock.tmp.${process.pid}.${Date.now().toString(36)}.${Math.floor(Math.random() * 1e9).toString(36)}`,
+  );
+  writeFileSync(tmp, payload, { flag: 'wx', mode: 0o600 });
+  const dropTemp = (): void => {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      // Best-effort — the claim's outcome is what the caller reports.
+    }
+  };
+  try {
+    linkSync(tmp, lockPath);
+  } catch (error) {
+    dropTemp();
+    if ((error as { code?: string } | null)?.code === 'EEXIST') return false;
+    throw error;
+  }
+  // The link and the temp are one inode now; dropping the temp name leaves
+  // the lock as its only name.
+  dropTemp();
+  return true;
 }

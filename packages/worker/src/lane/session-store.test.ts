@@ -22,6 +22,7 @@ import {
   createNodeFileBridge,
   type FileBridge,
 } from '../../../exec/src/file-bridge.js';
+import { processStartTimeOf } from '../../../exec/src/lock-file.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -37,6 +38,7 @@ import {
   listSessions,
   openSessionStore,
   readSessionMetadata,
+  releaseSessionLock,
   SessionAttachError,
   SessionFormatError,
   type SessionHandle,
@@ -657,21 +659,123 @@ describe('session lock primitive (issue #118)', () => {
     }
   });
 
-  it('steals a day-old lock even when its pid looks alive (pid reuse)', () => {
+  it('does not steal a 48h-old lock whose holder pid is alive (issue #145)', () => {
     const dir = lockDir();
-    writeFileSync(
-      join(dir, 'lock.json'),
-      JSON.stringify({ pid: FAKE_PID, startedAt: Date.now() - DAY_MS - 1 }),
-    );
-    // Liveness stubbed ALIVE: only the age arm can make this lock stale
-    // (the dead-pid arm is covered by the same-day crash-recovery case).
+    // A legacy-shaped lock (no procStart): a long TUI session's holder is
+    // alive, so the 24h age rule must not take it.
+    const fixture = JSON.stringify({
+      pid: FAKE_PID,
+      startedAt: Date.now() - 48 * DAY_MS,
+    });
+    writeFileSync(join(dir, 'lock.json'), fixture);
     const kill = stubKill(true);
     try {
-      acquireSessionLock(dir, 'sess-b');
+      let caught: unknown;
+      try {
+        acquireSessionLock(dir, 'sess-b');
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(SessionLockError);
+      expect((caught as Error).message).toContain(String(FAKE_PID));
     } finally {
       kill.mockRestore();
     }
-    expect(readLock(dir).pid).toBe(process.pid);
+    // The live holder's lock is untouched: no steal, no clobber.
+    expect(readFileSync(join(dir, 'lock.json'), 'utf8')).toBe(fixture);
+  });
+
+  it('does not steal a 48h-old lock whose recorded process start still matches (issue #145)', () => {
+    const dir = lockDir();
+    const procStart = processStartTimeOf(process.pid);
+    const fixture = JSON.stringify({
+      pid: process.pid,
+      startedAt: Date.now() - 48 * DAY_MS,
+      ...(procStart === undefined ? {} : { procStart }),
+    });
+    writeFileSync(join(dir, 'lock.json'), fixture);
+    // No kill stub: process.pid is really alive, so only the process-start
+    // match (or the pid-only fallback where the reader is unavailable) can
+    // refuse this acquire.
+    let caught: unknown;
+    try {
+      acquireSessionLock(dir, 'sess-b2');
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(SessionLockError);
+    expect(readFileSync(join(dir, 'lock.json'), 'utf8')).toBe(fixture);
+  });
+
+  (processStartTimeOf(process.pid) === undefined ? it.skip : it)(
+    'steals a lock whose pid is alive but whose process start moved (pid reuse, issue #145)',
+    () => {
+      const dir = lockDir();
+      // Our own pid is alive, but epoch-1 is not when this process started:
+      // the pid number was recycled by a younger process.
+      writeFileSync(
+        join(dir, 'lock.json'),
+        JSON.stringify({
+          pid: process.pid,
+          startedAt: Date.now(),
+          procStart: 1,
+        }),
+      );
+      acquireSessionLock(dir, 'sess-reuse');
+      const taken = JSON.parse(
+        readFileSync(join(dir, 'lock.json'), 'utf8'),
+      ) as {
+        pid?: unknown;
+        procStart?: unknown;
+      };
+      expect(taken.pid).toBe(process.pid);
+      expect(taken.procStart).not.toBe(1);
+    },
+  );
+
+  it('a simulated concurrent stale takeover leaves exactly one owner (issue #145)', () => {
+    const dir = lockDir();
+    writeFileSync(
+      join(dir, 'lock.json'),
+      JSON.stringify({ pid: FAKE_PID, startedAt: Date.now() }),
+    );
+    // Racer A arrives first: the holder is dead, so A steals and owns.
+    let kill = stubKill(false);
+    try {
+      acquireSessionLock(dir, 'sess-race');
+    } finally {
+      kill.mockRestore();
+    }
+    const owned = readFileSync(join(dir, 'lock.json'), 'utf8');
+    expect((JSON.parse(owned) as { pid?: unknown }).pid).toBe(process.pid);
+    // Racer B arrives after: the holder (A, this process) is alive, so B
+    // is refused and A's lock is byte-identical — exactly one owner.
+    kill = stubKill(true);
+    try {
+      let caught: unknown;
+      try {
+        acquireSessionLock(dir, 'sess-race');
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(SessionLockError);
+    } finally {
+      kill.mockRestore();
+    }
+    expect(readFileSync(join(dir, 'lock.json'), 'utf8')).toBe(owned);
+  });
+
+  it("release does not remove another process's lock (issue #145)", () => {
+    const dir = lockDir();
+    const fixture = JSON.stringify({ pid: FAKE_PID, startedAt: Date.now() });
+    writeFileSync(join(dir, 'lock.json'), fixture);
+    const kill = stubKill(true);
+    try {
+      releaseSessionLock(dir);
+    } finally {
+      kill.mockRestore();
+    }
+    expect(readFileSync(join(dir, 'lock.json'), 'utf8')).toBe(fixture);
   });
 
   it('treats a torn lock.json as a stale candidate and steals it', () => {
@@ -797,6 +901,30 @@ describe('session locking wiring (issue #118)', () => {
     } finally {
       kill.mockRestore();
     }
+  });
+
+  it("a refused attach leaves the live holder's lock alone (issue #145)", async () => {
+    const root = tmpRoot();
+    const store = storeFor(root);
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    const id = session.id;
+    await session.release(BACKGROUND_CONTEXT);
+    const fixture = JSON.stringify({ pid: FAKE_PID, startedAt: Date.now() });
+    writeFileSync(join(root, id, 'lock.json'), fixture);
+    const kill = stubKill(true);
+    try {
+      await expect(
+        attachSession(store, id, BACKGROUND_CONTEXT),
+      ).rejects.toBeInstanceOf(SessionLockError);
+    } finally {
+      kill.mockRestore();
+    }
+    // The refusal must not delete (or rewrite) the live holder's lock.
+    expect(readFileSync(join(root, id, 'lock.json'), 'utf8')).toBe(fixture);
   });
 
   it('steals a crashed holder lock on attach (same-day dead pid)', async () => {

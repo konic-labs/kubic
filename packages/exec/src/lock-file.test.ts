@@ -6,6 +6,7 @@ import {
   chmodSync,
   existsSync,
   mkdtempSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -13,8 +14,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  claimLockLink,
   createLockFile,
   looseStateDirMode,
+  processStartTimeOf,
+  procStartTimeFromStat,
   readLockFile,
   removeLockFile,
 } from './lock-file.js';
@@ -63,6 +67,63 @@ describe('lock file primitive (issue #118)', () => {
     removeLockFile(path);
     expect(readLockFile(path)).toBeUndefined();
     expect(() => removeLockFile(path)).not.toThrow(); // second call: still fine
+  });
+});
+
+// Atomic lock claim (issue #145): temp file + hard link, so exactly one
+// stale-takeover racer lands each generation — the loser sees EEXIST and
+// must re-read the winner instead of deleting it.
+describe('atomic lock claim (issue #145)', () => {
+  it('claims an absent lock and leaves no temp file behind', () => {
+    const path = tmpFile();
+    expect(claimLockLink(path, '{"pid":1,"nonce":"a"}')).toBe(true);
+    expect(readLockFile(path)).toBe('{"pid":1,"nonce":"a"}');
+    expect(readdirSync(join(path, '..')).sort()).toEqual(['lock.json']);
+  });
+
+  it('loses to an existing occupant without touching it', () => {
+    const path = tmpFile();
+    writeFileSync(path, '{"pid":9}');
+    expect(claimLockLink(path, '{"pid":1}')).toBe(false);
+    expect(readLockFile(path)).toBe('{"pid":9}');
+    expect(readdirSync(join(path, '..')).sort()).toEqual(['lock.json']);
+  });
+});
+
+// Process start time (issue #145): the pid-reuse guard behind the stale
+// rule. Linux-only: /proc is the only portable-enough source, and anywhere
+// else the lock falls back to the pid probe.
+describe('process start time (issue #145)', () => {
+  (process.platform === 'linux' && processStartTimeOf(process.pid) !== undefined
+    ? it
+    : it.skip)("reads this process's start from /proc", () => {
+    const start = processStartTimeOf(process.pid);
+    expect(start).toBeDefined();
+    const uptimeStart = Date.now() - process.uptime() * 1000;
+    expect(Math.abs((start as number) - uptimeStart)).toBeLessThan(60_000);
+  });
+
+  it('returns undefined for pids that cannot exist', () => {
+    expect(processStartTimeOf(2 ** 31)).toBeUndefined();
+    expect(processStartTimeOf(0)).toBeUndefined();
+    expect(processStartTimeOf(-4)).toBeUndefined();
+  });
+
+  it('parses starttime as field 22 past a comm holding spaces and parens', () => {
+    // Fields after `comm`: state(3) ppid(4) pgrp(5) session(6) tty(7)
+    // tpgid(8) flags(9) minflt(10) cminflt(11) majflt(12) cmajflt(13)
+    // utime(14) stime(15) cutime(16) cstime(17) priority(18) nice(19)
+    // num_threads(20) itrealvalue(21) starttime(22) = 12345 ticks.
+    const stat =
+      '4242 (my proc (weird)) S 0 1 1 0 -1 4194560 100 0 0 0 50 25 0 0 20 0 4 0 12345 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0';
+    expect(procStartTimeFromStat(stat, 1_700_000_000_000)).toBe(
+      1_700_000_000_000 + 12345 * 10,
+    );
+  });
+
+  it('rejects stat texts without a comm close or a numeric starttime', () => {
+    expect(procStartTimeFromStat('no parens here', 1000)).toBeUndefined();
+    expect(procStartTimeFromStat('1 (x) S', 1000)).toBeUndefined();
   });
 });
 

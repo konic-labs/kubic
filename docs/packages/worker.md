@@ -451,13 +451,16 @@ and does not transfer ownership.
 
 One live attachment per session, fail-closed. `createSession` (before the
 storage is created) and `attachSession` (before the storage is opened)
-acquire `<sessions-root>/<session-id>/lock.json` — a `{pid, startedAt}`
-record of the attaching process — through the exec-owned lock-file
-primitive (`exec/lock-file.ts`; I/O confinement, §9): an O_EXCL
-(`writeFileSync(…, {flag: 'wx'})`) create is the atomic test-and-set, and
-the primitive makes the session dir eagerly as the lock's parent.
-`handle.release(…)` releases the lock (best-effort remove), so the file
-exists only while a session is actually attached.
+acquire `<sessions-root>/<session-id>/lock.json` — a
+`{pid, startedAt, procStart?, nonce?}` record of the attaching process
+(`startedAt` is when the lock was taken, `procStart` the holder process's
+own start time for the pid-reuse guard in issue #145, `nonce` the
+per-attempt unique that makes the post-write verification exact) — through
+the exec-owned lock-file primitive (`exec/lock-file.ts`; I/O confinement,
+§9): an O_EXCL (`writeFileSync(…, {flag: 'wx'})`) create is the atomic
+test-and-set, and the primitive makes the session dir eagerly as the
+lock's parent. `handle.release(…)` releases the lock, so the file exists
+only while a session is actually attached.
 
 The lock is the ONLY guard around a storage open (issue #392): pi-durable
 states that one process owns a storage at a time and provides no
@@ -470,10 +473,22 @@ already held.
   without reading the transcript.
 - **Stale steal** (never a steal of a live lock): a holder whose process
   is gone (`process.kill(pid, 0)` fails) is stale immediately — crash
-  recovery works same-day; a lock file older than a day is stale
-  regardless (pid reuse); an unparseable/torn `lock.json` is a stale
-  candidate. A steal that loses its re-create race surfaces as
+  recovery works same-day. There is NO age rule: a days-old lock with a
+  live, matching holder is a long TUI session, never stale. Pid reuse is
+  caught by the process-start check instead: the lock records the holder's
+  own start time (`/proc` on Linux; `processStartTimeOf`, issue #145), and
+  a live pid whose start moved is a recycled number, so the lock is stale.
+  Locks without a recorded start (legacy shape, or a platform without a
+  start-time source) fall back to the pid probe. An unparseable/torn
+  `lock.json` is a stale candidate. The takeover lands through a temp
+  file + hard-link claim (`claimLockLink`: exactly one racer lands per
+  generation), clears only the stale occupant it judged, and re-reads to
+  verify the owner is this attempt. A steal that loses surfaces as
   `SessionLockError`, never a crash.
+- **Owned release**: `releaseSessionLock` removes only a lock naming this
+  process — another process's lock is left alone. A refused attach or a
+  failed create therefore releases safely: what they never owned, they
+  never delete.
 - **Local filesystem only.** O_EXCL atomicity is claimed on local
   filesystems only — no network/shared-disk (NFS/SMB) locking semantics
   are provided or tested.

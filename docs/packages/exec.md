@@ -274,7 +274,9 @@ O(pattern x path) per entry instead of exponential time. A LEADING `**/`
 matches zero or more leading directories (git matches `**/foo` at the root,
 not only below one), and a trailing `dir/` applies to directories only: a
 file named like the directory stays in scope, while anything under an
-ignored directory is ignored by its ancestor. Nested rules are matched
+ignored directory is ignored by its ancestor — including glob dir rules
+(`*.egg-info/` matches per directory segment, so the whole subtree stays
+out of the baseline and the sweep). Nested rules are matched
 against
 the workspace-relative path rather than re-rooted at their own directory, so
 a nested ANCHORED pattern must be written repo-relative (`packages/foo/build/`);

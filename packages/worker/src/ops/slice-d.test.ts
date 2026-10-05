@@ -220,20 +220,11 @@ describe('replay acceptance (issue #13)', () => {
     const env = new FakeExecutionEnv({});
     env.fs.writeFile('x.txt', 'aaa\n');
     const counts = { gets: 0, sets: 0 };
-    const invocation = counting(
-      'inv-nrf',
-      new MemoryMemoStore(),
-      counts,
-    );
+    const invocation = counting('inv-nrf', new MemoryMemoStore(), counts);
     const miss = { path: 'x.txt', oldText: 'zzz-no-match', newText: 'b' };
     const first = await callOperation('edit', miss, invocation, fakeCtx(env));
     expect(first.ok).toBe(false);
-    const second = await callOperation(
-      'edit',
-      miss,
-      invocation,
-      fakeCtx(env),
-    );
+    const second = await callOperation('edit', miss, invocation, fakeCtx(env));
     expect(second.ok).toBe(false);
     // The failure stored nothing, so the later call checked the memo
     // again, missed again, and re-executed instead of replaying a fault.

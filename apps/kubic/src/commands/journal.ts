@@ -55,7 +55,7 @@ workspace (named on stderr).
 
 Examples:
   $ kubic diff                         # every journaled change, as a diff
-  $ kubic diff --path src/app.ts       # one file
+  $ kubic diff src/app.ts              # one file (same as --path)
   $ kubic diff --session journal:abc   # the run that printed journal:abc
   $ kubic diff --json --max-content-bytes 0   # unclipped JSON`;
 
@@ -89,6 +89,15 @@ export const registerJournalCommands: CommandRegistrar = (program, ctx) => {
   program
     .command('diff')
     .description('show journaled changes as a unified diff')
+    // Issue #271: the path operand scopes exactly like `--path` (spec
+    // §42.2 `kubic diff <path>`); without the declaration commander dropped
+    // the operand as excess, so users believed the diff was scoped when it
+    // was not. A second operand is commander's own too-many-arguments
+    // refusal, the same as `undo`.
+    .argument(
+      '[path]',
+      'only changes to this path (same as --path; use -- before a path starting with -)',
+    )
     .option('--path <path>', 'only changes to this path')
     .option('--agent <id>', 'only changes made by this agent')
     .option(
@@ -99,7 +108,22 @@ export const registerJournalCommands: CommandRegistrar = (program, ctx) => {
     .addOption(sessionOption())
     .addOption(jsonOption())
     .addHelpText('after', DIFF_HELP)
-    .action(async (opts) => journal({ command: 'diff', ...opts }));
+    .action(async (operandPath, opts) => {
+      if (
+        operandPath !== undefined &&
+        opts.path !== undefined &&
+        operandPath !== opts.path
+      ) {
+        throw new CliUsageError(
+          `--path '${opts.path}' conflicts with path operand '${operandPath}' — give one path`,
+        );
+      }
+      await journal({
+        command: 'diff',
+        ...opts,
+        ...(operandPath === undefined ? {} : { path: operandPath }),
+      });
+    });
 
   program
     .command('undo')

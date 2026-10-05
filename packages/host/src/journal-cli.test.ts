@@ -1452,3 +1452,31 @@ describe('journal CLI orchestration aggregation (issue #364)', () => {
     ]);
   });
 });
+
+describe('journal CLI diff path scope (issue #271)', () => {
+  it('a scoped request shows only that path', async () => {
+    const { journalDir, root } = setup();
+    const store = new FileJournalStore(journalDir);
+    store.append({
+      path: 'b.txt',
+      op: 'write',
+      before: null,
+      after: 'other\n',
+      bytesDelta: 6,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 'call-2',
+      timestamp: 1700000000001,
+    });
+    const lines: string[] = [];
+    expect(
+      await runJournalCommand(
+        { command: 'diff', path: 'b.txt' },
+        { journalDir, root, out: (l: string) => lines.push(l) },
+      ),
+    ).toBe(0);
+    const text = lines.join('\n');
+    expect(text).toContain('b.txt');
+    expect(text).not.toContain('a.txt');
+  });
+});

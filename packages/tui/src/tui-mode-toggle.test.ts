@@ -3,6 +3,7 @@
 // the state, not the boot seed, and a running turn refuses the switch
 // instead of silently changing the lane mid-flight.
 import { describe, expect, it } from 'vitest';
+import type { KubicPresentationState } from '../../core/src/presentation.js';
 import { createTuiApp, type TuiApp } from './tui-app.js';
 
 // Legacy byte form of Ctrl-G: parseKey maps it to 'ctrl+g' like the loop's
@@ -77,5 +78,38 @@ describe('session mode toggle (issue #327)', () => {
     expect(target.render(100).join('\n')).toContain(
       'orchestrator • approvals:on',
     );
+  });
+});
+
+describe('the app owns its own mode and posture (issue #333 review)', () => {
+  // The state's session facts are the SEED (the lane the boot selected): the
+  // projector never updates them from events, so writing them back on every
+  // applyPresentation silently reverts a Ctrl-G toggle or an approval
+  // posture change — and the mode is read at submit time, so a toggled
+  // session would route its next prompt to the lane it left.
+  const staleSeed = (): KubicPresentationState => ({
+    session: { sessionId: 's', mode: 'solo', approvalsSkipped: false },
+    agents: new Map(),
+    lanes: new Map(),
+    workers: new Map(),
+    approvals: [],
+    usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+    connection: { status: 'connected' },
+  });
+
+  it('keeps a toggled mode across a presentation apply', () => {
+    const target = app();
+    target.handleInput(CTRL_G);
+    expect(target.mode()).toBe('orchestrator');
+    target.applyPresentation(staleSeed());
+    expect(target.mode()).toBe('orchestrator');
+    expect(target.render(100)[0]).toContain('orchestrator');
+  });
+
+  it('keeps the posture the policy installed across a presentation apply', () => {
+    const target = app();
+    target.setApprovalsSkipped(true);
+    target.applyPresentation(staleSeed());
+    expect(target.render(100).join('\n')).toContain('approvals OFF');
   });
 });

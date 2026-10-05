@@ -6,12 +6,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
-import { BACKGROUND_CONTEXT } from '../pi-boundary.js';
+import { BACKGROUND_CONTEXT, fauxAssistantMessage } from '../pi-boundary.js';
 import { attachSession, openSessionStore } from './session-store.js';
 import {
   bootFauxLane,
   type FauxLane,
   type FauxLaneOptions,
+  runPrompt,
 } from './test-harness.js';
 
 const dirs: string[] = [];
@@ -105,5 +106,28 @@ describe('lane thinking resolution (issue #225)', () => {
         thinking: { override: { level: 'banana', source: '--thinking' } },
       }),
     ).rejects.toThrow(/banana.*--thinking/);
+  });
+
+  // Review cycle 2: the committed doc is not the claim — the next provider
+  // request must carry the booted level. The factory observes the exact
+  // options the harness hands the provider (`reasoning`, pi-ai's
+  // SimpleStreamOptions), so this pins the agent-doc → request path, not
+  // just the doc the boot wrote.
+  it('carries the booted level on the next provider request', async () => {
+    const seen: Array<string | undefined> = [];
+    const lane = await bootFauxLane({
+      ...reasoning(),
+      thinking: { config: { level: 'high', source: 'project' } },
+      responses: [
+        (_context, options) => {
+          seen.push(options?.reasoning);
+          return fauxAssistantMessage('ok');
+        },
+      ],
+    });
+    lanes.push(lane);
+    const result = await runPrompt(lane.solo, 'hello', { requestId: 'u1' });
+    expect(result.status).toBe('completed');
+    expect(seen).toEqual(['high']);
   });
 });

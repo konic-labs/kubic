@@ -88,4 +88,27 @@ describe('the --thinking flag feeds the one config load (issue #225)', () => {
     expect(exit).toBe(0);
     expect(seen).toContain('thinking=high');
   });
+
+  // Review cycle 2: the fail-closed env path ends here, not in the loader
+  // unit test — a banana `KUBIC_MODEL_THINKING` stops `kubic run` (exit 1)
+  // with the variable named, before any runner is reached.
+  it('a banana KUBIC_MODEL_THINKING fails kubic run naming the variable', async () => {
+    const errs: string[] = [];
+    const deps: DispatchDeps = {
+      out: () => {},
+      err: (line) => errs.push(line),
+      loadConfig: () =>
+        loadCliConfig({
+          cwd: fixture,
+          home: fixture,
+          env: { KUBIC_MODEL_THINKING: 'banana' },
+        }),
+      version: () => '9.9.9',
+      ensureRuntimeExclude: () => {},
+      runners: {} as unknown as DispatchRunners,
+    };
+    const exit = await dispatchCommand('run', ['-p', 'hi'], deps);
+    expect(exit).toBe(1);
+    expect(errs.join('\n')).toMatch(/KUBIC_MODEL_THINKING/);
+  });
 });

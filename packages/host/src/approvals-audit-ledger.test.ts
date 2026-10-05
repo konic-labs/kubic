@@ -189,6 +189,45 @@ describe('orchestrated worker children (issue #279)', () => {
   });
 });
 
+describe('solo provenance fields (issue #282)', () => {
+  it('records the thinking level and the base revision the run captured at start', async () => {
+    const { repo, sub } = fixtureRepo();
+    const base = git(repo, ['rev-parse', 'HEAD']).trim();
+    let thinking = 'high';
+    const installed = installSoloPolicy({
+      workspace: sub,
+      sessionDir: tmpRoot('session-'),
+      thinking: () => thinking,
+      base,
+    });
+    await installed.ask(DESTRUCTIVE);
+    // A mid-run thinking change is read at record time, like the model.
+    thinking = 'low';
+    await installed.ask({ ...DESTRUCTIVE, toolCallId: 'c2' });
+    const records = readAuditLedger(auditLedgerDir(repo));
+    expect(records).toHaveLength(2);
+    expect(records[0]?.model.thinking).toBe('high');
+    expect(records[1]?.model.thinking).toBe('low');
+    for (const record of records) {
+      expect(record?.workspace.base).toBe(base);
+    }
+  });
+
+  it('accepts a static thinking level', async () => {
+    const { repo } = fixtureRepo();
+    const installed = installSoloPolicy({
+      workspace: repo,
+      sessionDir: tmpRoot('session-'),
+      thinking: 'medium',
+      base: 'none',
+    });
+    await installed.ask(DESTRUCTIVE);
+    const [record] = readAuditLedger(auditLedgerDir(repo));
+    expect(record?.model.thinking).toBe('medium');
+    expect(record?.workspace.base).toBe('none');
+  });
+});
+
 describe('an unreadable ledger is an error, not an empty trail (issue #279)', () => {
   const skip =
     process.platform === 'win32' ||

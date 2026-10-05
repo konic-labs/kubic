@@ -22,6 +22,7 @@ import {
   summarizeCommand,
 } from '../../approval-display.js';
 import { summarizeRequest } from '../../approvals.js';
+import { readAuditLedger } from '../../policy/audit-ledger.js';
 import { OrchestratorBudgetError } from './budgets.js';
 import { buildOrchestratorRequest } from './request.js';
 import type { OrchestratorVerdict } from './routing.js';
@@ -194,6 +195,71 @@ describe('FileDecisionStore (issue #379)', () => {
       }),
     ).toThrow();
     expect(readdirSync(dir)).toEqual([DECISIONS_FILE]);
+  });
+});
+
+describe('ask ledger provenance (issue #282)', () => {
+  it('records the registry pid/generation, thinking and base the hook resolves', async () => {
+    const dir = tmpDir();
+    const seen: string[] = [];
+    const router = createWorkerAskRouter({
+      dir,
+      maxPendingMs: 1_000,
+      provenanceFor: (request) => {
+        seen.push(request.agentId);
+        return {
+          pid: 4242,
+          generation: 1,
+          thinking: 'high',
+          base: 'abc123',
+        };
+      },
+    });
+    await router.ask(input(), { autoApprove: true });
+    expect(seen).toEqual(['agent-1']);
+    const [record] = readAuditLedger(dir);
+    expect(record?.worker).toMatchObject({ pid: 4242, generation: 1 });
+    expect(record?.model.thinking).toBe('high');
+    expect(record?.workspace.base).toBe('abc123');
+  });
+
+  it('keeps the honest fallback when the hook knows nothing (e.g. a forged key)', async () => {
+    const dir = tmpDir();
+    const router = createWorkerAskRouter({
+      dir,
+      maxPendingMs: 1_000,
+      provenanceFor: () => undefined,
+    });
+    await router.ask(input(), { autoApprove: true });
+    const [record] = readAuditLedger(dir);
+    expect(record?.worker).toMatchObject({ pid: 0, generation: 0 });
+    expect(record?.model.thinking).toBe('unknown');
+    expect(record?.workspace.base).toBe('unknown');
+  });
+
+  it('a respawned worker records its new generation', async () => {
+    // The generation is read at record time, so a respawn between two asks
+    // shows 0 then 1 — the registry row, not a frozen value.
+    let generation = 0;
+    const dir = tmpDir();
+    const router = createWorkerAskRouter({
+      dir,
+      maxPendingMs: 1_000,
+      provenanceFor: () => ({
+        pid: 4242,
+        generation,
+        thinking: 'high',
+        base: 'abc123',
+      }),
+    });
+    await router.ask(input(), { autoApprove: true });
+    generation = 1;
+    await router.ask(input({ args: { command: 'echo y > /etc/y' } }), {
+      autoApprove: true,
+    });
+    expect(
+      readAuditLedger(dir).map((record) => record.worker.generation),
+    ).toEqual([0, 1]);
   });
 });
 

@@ -14,7 +14,9 @@ import {
   auditLedgerDirFor,
   credentialUseAudit,
   mergeDecisionAudit,
+  orchestratorDecisionAudit,
   readAuditLedger,
+  resolveRunBaseRevision,
   soloDecisionAudit,
   workerGenerationFromEnv,
 } from './audit-ledger.js';
@@ -275,6 +277,110 @@ describe('§60 audit ledger', () => {
         .generation,
     ).toBe(0);
     expect(workerGenerationFromEnv({ KUBIC_WORKER_GENERATION: '7' })).toBe(7);
+  });
+
+  // Issue #282: the ledger must answer which worker (pid, generation) on
+  // which base ran X, and at which thinking level — no hard-coded 0/unknown
+  // for a field the run knows.
+  describe('audit provenance fields (issue #282)', () => {
+    const request = {
+      key: 'k1',
+      trigger: 'network' as const,
+      toolName: 'bash',
+      summary: 'curl example.com',
+      justification: 'fetch the fixture',
+      sessionId: 'sess-1',
+      agentId: 'worker-1',
+      role: 'implementer',
+      worktree: '/repo/.kubic/wt/worker-1',
+      provenance: { parentSessionId: 'orch-1', model: 'faux/faux' },
+    };
+    const approve = { approved: true, by: 'user' } as const;
+
+    it("records the worker's pid, generation, thinking level and worktree base", () => {
+      const input = orchestratorDecisionAudit(request, approve, {
+        posture: 'approvals',
+        pid: 4242,
+        generation: 1,
+        thinking: 'high',
+        base: 'abc123',
+      });
+      expect(input.worker).toMatchObject({ pid: 4242, generation: 1 });
+      expect(input.model.thinking).toBe('high');
+      expect(input.workspace.base).toBe('abc123');
+    });
+
+    it('keeps the honest 0/unknown fallback when the run knows nothing (e.g. a forged key)', () => {
+      const input = orchestratorDecisionAudit(
+        { key: 'k9' } as unknown as typeof request,
+        { approved: false, reason: 'no such ask' },
+        { posture: 'approvals' },
+      );
+      expect(input.worker).toMatchObject({ pid: 0, generation: 0 });
+      expect(input.model.thinking).toBe('unknown');
+      expect(input.workspace.base).toBe('unknown');
+    });
+
+    it('records thinking and base on solo rows', () => {
+      const input = soloDecisionAudit({
+        sessionId: 's',
+        toolName: 'bash',
+        trigger: 'destructive-shell',
+        workspace: '/w',
+        model: 'faux/faux',
+        thinking: 'high',
+        base: 'def456',
+        approved: true,
+        by: 'user',
+        posture: 'approvals',
+      });
+      expect(input.model.thinking).toBe('high');
+      expect(input.workspace.base).toBe('def456');
+    });
+
+    it("resolves the run's base revision once, and says 'none' when git cannot", async () => {
+      const sha = await resolveRunBaseRevision(async () => ({
+        exitCode: 0,
+        stdout: '  abc123\n',
+      }));
+      expect(sha).toBe('abc123');
+      await expect(
+        resolveRunBaseRevision(async () => ({
+          exitCode: 128,
+          stdout: 'fatal: not a git repository',
+        })),
+      ).resolves.toBe('none');
+      await expect(
+        resolveRunBaseRevision(async () => {
+          throw new Error('spawn git ENOENT');
+        }),
+      ).resolves.toBe('none');
+    });
+
+    it("no live-path record carries 'unknown' for a field whose data exists", () => {
+      const orchestrated = orchestratorDecisionAudit(request, approve, {
+        posture: 'approvals',
+        pid: 4242,
+        generation: 1,
+        thinking: 'medium',
+        base: 'abc123',
+      });
+      const solo = soloDecisionAudit({
+        sessionId: 's',
+        toolName: 'bash',
+        trigger: 'destructive-shell',
+        workspace: '/w',
+        model: 'faux/faux',
+        thinking: 'medium',
+        base: 'abc123',
+        approved: true,
+        by: 'user',
+        posture: 'approvals',
+      });
+      for (const record of [orchestrated, solo]) {
+        expect(JSON.stringify(record)).not.toContain('unknown');
+      }
+    });
   });
 
   it('resolves the ledger at the repo root from any subdirectory', () => {

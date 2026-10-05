@@ -83,6 +83,7 @@ import {
   setOrchestratorToggle,
 } from '../../../packages/host/src/orchestrator/manager.js';
 import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
+import { resolveRunBaseRevision } from '../../../packages/host/src/policy/audit-ledger.js';
 import {
   type EffectivePolicy,
   hasModelPolicy,
@@ -1362,6 +1363,23 @@ export async function bootTuiLane(
     // record time instead of freezing the pre-boot pick.
     let liveModelRef = `${model.provider}/${model.id}`;
     const env = options.env ?? new NodeExecutionEnv(process.cwd());
+    // §60 audit identity (issue #282): the base revision this run started
+    // from — captured once here, `none` outside git — and the thinking
+    // level the lane runs, re-pointed after boot and on every change.
+    const runBase = await resolveRunBaseRevision((cmd, args) =>
+      env.shell
+        .spawn(cmd, args, {
+          provenance: {
+            sessionId: id,
+            agentId: options.agentId ?? 'root',
+            toolCallId: 'tui:base-revision',
+            turnId: 0,
+            operation: 'tui',
+          },
+        })
+        .wait(),
+    );
+    let liveThinkingRef: string | undefined;
     // The loaded skill names, for the §46 trajectory's resources (#383).
     let skillNames: string[] = [];
     // Installed policy (issue #86): `kubic tui` drives the same solo lane as
@@ -1394,6 +1412,10 @@ export async function bootTuiLane(
         // session and the model the lane runs on, like `kubic run`'s.
         sessionId: id,
         model: () => liveModelRef,
+        // Issue #282: the thinking level at record time, and the base
+        // revision captured above.
+        thinking: () => liveThinkingRef,
+        base: runBase,
         // The answer seat (issue #96): with the overlay's surface attached,
         // `kubic tui` is the command that can actually collect a verdict on a
         // challenged call instead of refusing it unseen. Injected policies
@@ -1487,6 +1509,11 @@ export async function bootTuiLane(
     {
       const running = await liveModelOf(booted, context);
       liveModelRef = `${running.provider}/${running.id}`;
+      // Issue #282: the thinking level the lane actually runs (pi-durable
+      // defaults an unset level to `off`, the same answer `/thinking`
+      // reports) — the §60 rows name this, and the switches below keep it.
+      liveThinkingRef =
+        (await booted.conversation.agent(context)).thinkingLevel ?? 'off';
     }
     killRemaining = (): void => {
       // D1: every bash group is keyed by the conversation id, so the quit's
@@ -1732,6 +1759,9 @@ export async function bootTuiLane(
           // compaction reserve, which follows the current model live).
           const live = await liveModelOf(booted, loopContext);
           liveModelRef = `${live.provider}/${live.id}`;
+          // Issue #282: the switch committed a re-clamped level with the
+          // model — the §60 rows follow it.
+          liveThinkingRef = effective;
           return liveModelRef;
         },
         model: async (loopContext) => {
@@ -1759,7 +1789,10 @@ export async function bootTuiLane(
             loopContext,
           );
           const agent = await booted.conversation.agent(loopContext);
-          return agent.thinkingLevel ?? effective;
+          // Issue #282: the §60 rows name the committed level.
+          const committed = agent.thinkingLevel ?? effective;
+          liveThinkingRef = committed;
+          return committed;
         },
         supportedThinking: async (loopContext) => {
           const live = await liveModelOf(booted, loopContext);

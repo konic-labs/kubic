@@ -1900,6 +1900,19 @@ export interface SoloPolicyInput {
    * issue #227) is still recorded under the model the lane runs now.
    */
   model?: string | (() => string);
+  /**
+   * §60 audit identity (issue #282): the thinking level the lane runs. A
+   * function is read at RECORD time, like the model — the policy is
+   * installed before the lane boots, and `/thinking` can change it
+   * mid-session. Absent keeps the honest `unknown`.
+   */
+  thinking?: string | (() => string | undefined);
+  /**
+   * §60 audit identity (issue #282): the base revision the run started
+   * from (`git rev-parse HEAD` captured once at run start, `none` outside
+   * git). The composition root resolves it; the policy only carries it.
+   */
+  base?: string;
   /** A failed ledger append lands here; it never reaches the approval. */
   onAuditError?: (message: string) => void;
   /**
@@ -2114,6 +2127,11 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     try {
       const model =
         typeof input.model === 'function' ? input.model() : input.model;
+      // Issue #282: the thinking level at record time, like the model.
+      const thinking =
+        typeof input.thinking === 'function'
+          ? input.thinking()
+          : input.thinking;
       appendToLedger(
         ledgerDir,
         soloDecisionAudit({
@@ -2122,6 +2140,8 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
           trigger,
           workspace: input.workspace,
           ...(model === undefined ? {} : { model }),
+          ...(thinking === undefined ? {} : { thinking }),
+          ...(input.base === undefined ? {} : { base: input.base }),
           approved: decision.approved,
           ...(decision.approved
             ? decision.by === undefined

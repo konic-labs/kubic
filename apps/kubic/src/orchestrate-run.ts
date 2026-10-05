@@ -80,6 +80,7 @@ import {
   POSTURE_APPROVALS,
   POSTURE_FULL_ACCESS,
   type WorkerApprovalsRun,
+  type WorkerAskRouterOptions,
   type WorkerAskSeat,
   type WorkerQuestionSeat,
   workerQuestionSeatForRun,
@@ -445,6 +446,36 @@ function launchesView(
         const { ok, breaches, sample } = worker.perf();
         return { ok, breaches, sample };
       }),
+  };
+}
+
+// §60 ledger provenance for one worker ask (issue #282): the registry row
+// the spawn recorded — pid, generation — read at RECORD time, so a respawn
+// between two asks records the new generation; the per-worker resolved
+// thinking level (else the run's explicit level); the worktree base captured
+// at creation. A worker the registry never saw (a forged key) resolves
+// undefined, and the row keeps the honest 0/unknown fallback. Exported so
+// the wiring itself is what the ledger test drives, not a copy of it.
+export function askProvenanceForWorker(
+  registry: WorkerRegistry,
+  lookup: {
+    thinkingByAgent: ReadonlyMap<string, string>;
+    baseByAgent: ReadonlyMap<string, string>;
+    thinkingFallback?: string;
+  },
+): NonNullable<WorkerAskRouterOptions['provenanceFor']> {
+  return (request) => {
+    const row = registry.get(request.agentId);
+    if (row === undefined) return undefined;
+    const thinking =
+      lookup.thinkingByAgent.get(request.agentId) ?? lookup.thinkingFallback;
+    const base = lookup.baseByAgent.get(request.agentId);
+    return {
+      ...(row.pid === undefined ? {} : { pid: row.pid }),
+      generation: row.generation,
+      ...(thinking === undefined ? {} : { thinking }),
+      ...(base === undefined ? {} : { base }),
+    };
   };
 }
 
@@ -1144,6 +1175,12 @@ export async function orchestrateDepsWithDefaults(
   const maxWorkers = options.orchestrator?.maxWorkers;
   const excludeEntries = runtimeExcludeEntriesFor(worktreeRoot);
   const workerRegistry = options.registry ?? new WorkerRegistry();
+  // §60 audit provenance (issue #282): the per-worker thinking level the
+  // spawn resolved and the worktree base revision captured at creation.
+  // Read at RECORD time through the approvals hook below, so the maps may
+  // fill after the hook is built.
+  const thinkingByAgent = new Map<string, string>();
+  const baseByAgent = new Map<string, string>();
   // One registry for the whole invocation (issue #94): the orchestrator
   // writes rows here, `kubic workers` reads the same rows off disk, and a
   // caller can hand in a registry to observe a run from outside.
@@ -1657,6 +1694,30 @@ export async function orchestrateDepsWithDefaults(
     }
     return { grant: resolved.grant, refusal: undefined };
   };
+  // Issue #282: the worktree's base revision for the §60 rows — HEAD at
+  // creation (or at resume), best-effort. A failed probe keeps the honest
+  // unknown instead of failing the spawn.
+  const captureWorktreeBase = async (
+    agentId: string,
+    worktreePath: string,
+    ownerSession: string | undefined,
+  ): Promise<void> => {
+    try {
+      const head = await runGit(
+        worktreePath,
+        ['rev-parse', 'HEAD'],
+        ownerSession ?? 'cli',
+        agentId,
+        'worktree-base',
+      );
+      const sha = head.stdout.trim();
+      if (head.exitCode === 0 && sha !== '') baseByAgent.set(agentId, sha);
+    } catch (error) {
+      debug(
+        `audit: base revision probe failed for '${agentId}': ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
   return {
     out: options.out,
     err: options.err,
@@ -1799,6 +1860,10 @@ export async function orchestrateDepsWithDefaults(
         // child is spawned.
         worktreeMsByAgent.set(agentId, Date.now() - worktreeStarted);
         for (const warning of added.warnings) debug(`gap: ${warning.message}`);
+        // Issue #282: the worktree's base revision for the §60 rows — HEAD
+        // at creation, best-effort (a failed probe keeps the honest
+        // unknown rather than failing the spawn).
+        await captureWorktreeBase(agentId, added.path, ownerSession);
         return { path: added.path, branch: added.branch };
       } catch (error) {
         if (!isWorktreeError(error) || error.code !== 'already_exists') {
@@ -1833,6 +1898,8 @@ export async function orchestrateDepsWithDefaults(
         if (!present) throw worktreeMissingError(path, branch);
         debug(`worktree: resuming '${agentId}' in its own ${path}`);
         worktreeMsByAgent.set(agentId, Date.now() - worktreeStarted);
+        // Issue #282: a resumed tree's base is HEAD at resume time.
+        await captureWorktreeBase(agentId, path, ownerSession);
         return { path, branch };
       }
     },
@@ -1893,6 +1960,16 @@ export async function orchestrateDepsWithDefaults(
         // hang). `--yes` never replaces it (issue #323): the standing answer
         // is the merge gate's only.
         ...(optionsSeat === undefined ? {} : { seat: optionsSeat }),
+        // §60 audit provenance (issue #282): the registry row (pid,
+        // generation), the resolved thinking level and the worktree base —
+        // read at record time, so a respawn records the new generation.
+        provenanceFor: askProvenanceForWorker(workerRegistry, {
+          thinkingByAgent,
+          baseByAgent,
+          ...(thinkingOverride === undefined
+            ? {}
+            : { thinkingFallback: thinkingOverride }),
+        }),
         debug: (line) => debug(line),
       });
       approvalsActive = run;
@@ -2049,6 +2126,8 @@ export async function orchestrateDepsWithDefaults(
       // (the run's explicit `KUBIC_MODEL_THINKING`, else the role's default);
       // the manager's ambient value is the fallback.
       const thinking = info?.thinking ?? process.env.KUBIC_MODEL_THINKING;
+      // Issue #282: the resolved level for this worker's §60 rows.
+      if (thinking !== undefined) thinkingByAgent.set(agentId, thinking);
       // Issue #94: the worker starts through the lifecycle layer, never by
       // reaching for the exec Shell here. launchWorker refuses a stale
       // generation, registers the row `kubic workers` reads, builds the

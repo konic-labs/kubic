@@ -91,6 +91,28 @@ export function auditLedgerDirFor(cwd: string): string {
   return auditLedgerDir(resolveRepoRuntimeRoot(cwd));
 }
 
+// The base revision a solo run started from (issue #282): `git rev-parse
+// HEAD` in the workspace, captured ONCE at run start — `none` outside git
+// or when git cannot run. Best-effort by contract: a failed probe is never a
+// run failure, and the record then honestly says `none`. The runner is the
+// composition root's own shell spawn, waited: `((cmd, args) =>
+// env.shell.spawn(cmd, args, { provenance }).wait())`.
+export async function resolveRunBaseRevision(
+  run: (cmd: string, args: string[]) => Promise<{
+    exitCode: number;
+    stdout: string;
+  }>,
+): Promise<string> {
+  try {
+    const done = await run('git', ['rev-parse', 'HEAD']);
+    const sha = done.stdout.trim();
+    if (done.exitCode === 0 && sha !== '') return sha;
+  } catch {
+    // Not a repo, no git binary, or a spawn failure: `none` below.
+  }
+  return 'none';
+}
+
 // A synchronous file sink: one validated record per line. appendAudit
 // refuses async sinks, so the append completes before emitAudit returns.
 export function createLedgerSink(dir: string): AuditSink {
@@ -214,7 +236,22 @@ function verdictFields(verdict: OrchestratorVerdict): {
 export function orchestratorDecisionAudit(
   request: OrchestratorApprovalRequest,
   verdict: OrchestratorVerdict,
-  options: { posture: string; pid?: number; generation?: number },
+  options: {
+    posture: string;
+    pid?: number;
+    generation?: number;
+    /**
+     * The resolved thinking level (issue #282): the worker's own level on
+     * the orchestrator path. Absent keeps the honest `unknown` — e.g. a
+     * manager approve of a forged key belongs to no worker.
+     */
+    thinking?: string;
+    /**
+     * The worktree's base revision (issue #282), captured at creation.
+     * Absent keeps the honest `unknown`.
+     */
+    base?: string;
+  },
 ): AuditInput {
   const { approval, result, reason } = verdictFields(verdict);
   return {
@@ -227,13 +264,19 @@ export function orchestratorDecisionAudit(
         ? { parent: request.provenance.parentSessionId }
         : {}),
     },
-    model: { ...parseModel(request.provenance?.model), thinking: UNKNOWN },
+    model: {
+      ...parseModel(request.provenance?.model),
+      thinking: options.thinking ?? UNKNOWN,
+    },
     worker: {
       pid: options.pid ?? 0,
       generation: options.generation ?? 0,
       role: request.role || UNKNOWN,
     },
-    workspace: { path: request.worktree || UNKNOWN, base: UNKNOWN },
+    workspace: {
+      path: request.worktree || UNKNOWN,
+      base: options.base ?? UNKNOWN,
+    },
     permission: { permission: `trigger:${request.trigger}`, approval },
     credential: { sentinel: 'none' },
     network: { ...NO_NETWORK },
@@ -283,6 +326,12 @@ export interface SoloDecisionInput {
   workspace: string;
   model?: string;
   thinking?: string;
+  /**
+   * The base revision the run started from (issue #282): `git rev-parse
+   * HEAD` captured once at run start, `none` outside git. Absent keeps the
+   * honest `unknown`.
+   */
+  base?: string;
   approved: boolean;
   by?: string;
   reason?: string;
@@ -338,7 +387,10 @@ export function soloDecisionAudit(
           : (worker.generation ?? workerGenerationFromEnv(env)),
       role,
     },
-    workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
+    workspace: {
+      path: input.workspace || UNKNOWN,
+      base: input.base ?? UNKNOWN,
+    },
     permission: { permission: `trigger:${input.trigger || UNKNOWN}`, approval },
     credential: { sentinel: 'none' },
     network: { ...NO_NETWORK },

@@ -548,6 +548,20 @@ export interface WorkerAskRouterOptions {
   audit?: (event: RouterAuditEvent) => void;
   /** §60 posture stamped on ledger records (default: approvals enabled). */
   posture?: () => string;
+  /**
+   * §60 provenance for the ledger row (issue #282): the worker's live
+   * pid/generation (the registry row the spawn recorded), the resolved
+   * thinking level and the worktree's base revision. Read at RECORD time,
+   * so a respawn between two asks records the new generation. Absent — or
+   * undefined for a request — keeps the honest 0/unknown fallback: a
+   * manager approve of a forged key belongs to no worker.
+   */
+  provenanceFor?: (request: OrchestratorApprovalRequest) => {
+    pid?: number;
+    generation?: number;
+    thinking?: string;
+    base?: string;
+  } | undefined;
   /** Where a failed ledger append is reported (never decides the ask). */
   debug?: (line: string) => void;
   /**
@@ -598,10 +612,23 @@ export function createWorkerAskRouter(
     request: OrchestratorApprovalRequest,
     verdict: OrchestratorVerdict,
   ): void => {
+    // Issue #282: the worker's live provenance at record time — pid,
+    // generation (a respawn between two asks records the new one),
+    // thinking level and worktree base. Unknown workers resolve nothing
+    // and keep the honest fallback.
+    const provenance = options.provenanceFor?.(request);
     appendToLedger(
       options.ledgerDir ?? mailboxDir,
       orchestratorDecisionAudit(request, verdict, {
         posture: options.posture?.() ?? POSTURE_APPROVALS,
+        ...(provenance?.pid === undefined ? {} : { pid: provenance.pid }),
+        ...(provenance?.generation === undefined
+          ? {}
+          : { generation: provenance.generation }),
+        ...(provenance?.thinking === undefined
+          ? {}
+          : { thinking: provenance.thinking }),
+        ...(provenance?.base === undefined ? {} : { base: provenance.base }),
       }),
       (message) => options.debug?.(`audit: ledger append failed: ${message}`),
     );
@@ -1231,6 +1258,12 @@ export interface WorkerApprovalsRunOptions {
    * authority — production always mints per run.
    */
   signer?: ApprovalSigner;
+  /**
+   * §60 ledger provenance (issue #282): forwarded to the router, which
+   * reads it at record time. The composition root wires the worker
+   * registry, the resolved thinking levels and the worktree bases here.
+   */
+  provenanceFor?: WorkerAskRouterOptions['provenanceFor'];
 }
 
 // ---------------------------------------------------------------------------
@@ -1420,6 +1453,9 @@ export function createOrchestratorApprovalsRun(
     maxPendingMs: options.maxPendingMs,
     posture: () =>
       fullAccessLive() === undefined ? POSTURE_APPROVALS : POSTURE_FULL_ACCESS,
+    ...(options.provenanceFor === undefined
+      ? {}
+      : { provenanceFor: options.provenanceFor }),
     debug,
     signer,
     ...(options.seat === undefined ? {} : { seat: options.seat }),

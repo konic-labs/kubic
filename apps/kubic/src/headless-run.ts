@@ -91,6 +91,7 @@ import {
   workerAskIdentity,
 } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
 import { createAskUserTool } from '../../../packages/host/src/orchestrator/approvals/worker-question-tool.js';
+import { resolveRunBaseRevision } from '../../../packages/host/src/policy/audit-ledger.js';
 import {
   type EffectivePolicy,
   hasModelPolicy,
@@ -1532,6 +1533,27 @@ async function runHeadlessPromptImpl(
     // lane exists, so it reads this at record time instead of freezing the
     // pre-boot pick.
     let liveModelRef = `${model.provider}/${model.id}`;
+    // §60 audit identity (issue #282): the base revision this run started
+    // from — `git rev-parse HEAD` captured once here, `none` outside git.
+    // The policy is installed before the lane boots, so the revision is
+    // resolved now and carried on the install.
+    const runBase = await resolveRunBaseRevision((cmd, args) =>
+      env.shell
+        .spawn(cmd, args, {
+          provenance: {
+            sessionId: id,
+            agentId: deps.agentId ?? 'root',
+            toolCallId: 'run:base-revision',
+            turnId: 0,
+            operation: 'run',
+          },
+        })
+        .wait(),
+    );
+    // The thinking level the lane runs (issue #282): re-pointed at the
+    // conversation's agent document once the boot has applied the stored
+    // level — read at record time, like the model.
+    let liveThinkingRef: string | undefined;
     const installed =
       deps.policy ??
       installSoloPolicy({
@@ -1550,6 +1572,10 @@ async function runHeadlessPromptImpl(
         // §60 audit identity for the ledger record of each resolved ask.
         sessionId: id,
         model: () => liveModelRef,
+        // Issue #282: the thinking level at record time, and the base
+        // revision captured above.
+        thinking: () => liveThinkingRef,
+        base: runBase,
         // Per-worker approvals (issue #105): an orchestrator-managed child
         // (`kubic orchestrate` set KUBIC_APPROVALS_DIR) attaches the mailbox
         // seat, so a challenged call it cannot answer itself reaches the USER
@@ -1797,6 +1823,11 @@ async function runHeadlessPromptImpl(
       capture.model = { provider: running.provider, id: running.id };
       liveModelRef = `${running.provider}/${running.id}`;
     }
+    // Issue #282: the thinking level the lane actually runs (pi-durable
+    // defaults an unset level to `off`, the same answer `/thinking`
+    // reports) — the §60 rows name this, not the pre-boot pick.
+    liveThinkingRef =
+      (await solo.conversation.agent(context)).thinkingLevel ?? 'off';
     report.model = await liveModelId(solo, context);
     // §71 (issue #208) + the turn guard: one event subscription per
     // conversation (#398) feeds the budget meter's usage half and counts the

@@ -2340,6 +2340,20 @@ shipped runtime ignore rules cover this file.
 - The model on every solo record is the model the lane runs: `kubic run`
   reads it after the stored-model rule (`--session` without a pin keeps the
   session's own model, and both the record and `trajectory.json` say so).
+  `model.thinking` is the thinking level the lane runs, read from the
+  conversation's agent document (a `/thinking` change mid-session is read at
+  record time, so later rows name the new level); a manager's worker-ask row
+  names the resolved level for that worker (the per-worker level, else the
+  run's explicit level).
+- `worker.pid` and `worker.generation` on a manager's worker-ask row are the
+  live registry row the spawn recorded — the child's pid, the generation
+  after a respawn — so the ledger answers which worker process ran what. A
+  solo row names its own process and generation `0`.
+- `workspace.base` is the base revision the run started from: `git rev-parse
+  HEAD` of the worktree at creation for a worker ask (at resume for a
+  resumed tree), `HEAD` at run start for a solo run, `none` outside git. A
+  row that genuinely knows no better (a refused manager approve of a forged
+  key) keeps the honest `unknown` instead of inventing a value.
 - Enabling full access (`--dangerously-skip-approvals` on `kubic`, `tui`,
   `run`, `sessions create` or `orchestrate`, or the in-session `Alt+A` /
   `/approvals on` toggle) appends one `posture:full-access` row naming the

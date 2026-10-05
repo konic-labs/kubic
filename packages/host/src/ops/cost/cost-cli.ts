@@ -427,6 +427,15 @@ export async function loadSessionCostRows(
       }
       throw error;
     }
+    // Issue #426: the race the pre-read probe cannot see. Between the
+    // probe above and the reads below, the session can go live — cost
+    // then reads a store another process is appending to. The torn tail
+    // needs no handling here (the JSONL core truncates a partial trailing
+    // record before it parses, #392 — the in-flight commit is skipped,
+    // never a parse error), but the rows may be partial, so the lock is
+    // re-probed AFTER the read and a live session gets a zero marker row
+    // beside its rows — the same convention as `(locked)`/`(unreadable)`.
+    let wentLive = false;
     try {
       // Issue #250 (§39 request level): one row per assistant entry that
       // carries its response's usage — the model spend of that request.
@@ -452,30 +461,40 @@ export async function loadSessionCostRows(
             cacheWrite: item.usage.cacheWrite,
           });
         }
-        continue;
-      }
-      for (const row of await readSessionUsage(storage, BACKGROUND_CONTEXT)) {
-        rows.push({
-          ...identity,
-          // A tool bucket has no provider/model identity: it is labelled
-          // `tool:<name>` so the readout never looks like a model row.
-          model: row.kind === 'tool' ? `tool:${row.key}` : row.key,
-          costUsd: num(row.usage.cost?.total),
-          input: row.usage.input,
-          output: row.usage.output,
-          // §62 lever 2 (issue #98): the real prefix-cache counters off the
-          // session's usage rollup.
-          cacheRead: row.usage.cacheRead,
-          cacheWrite: row.usage.cacheWrite,
-        });
+      } else {
+        for (const row of await readSessionUsage(storage, BACKGROUND_CONTEXT)) {
+          rows.push({
+            ...identity,
+            // A tool bucket has no provider/model identity: it is labelled
+            // `tool:<name>` so the readout never looks like a model row.
+            model: row.kind === 'tool' ? `tool:${row.key}` : row.key,
+            costUsd: num(row.usage.cost?.total),
+            input: row.usage.input,
+            output: row.usage.output,
+            // §62 lever 2 (issue #98): the real prefix-cache counters off the
+            // session's usage rollup.
+            cacheRead: row.usage.cacheRead,
+            cacheWrite: row.usage.cacheWrite,
+          });
+        }
       }
     } finally {
       // No lock was taken, so there is none to give back: closing the
       // storage is the whole release.
       await storage.close(BACKGROUND_CONTEXT);
+      wentLive = sessionLockIsLive(join(sessionsRoot, entry.id)) !== undefined;
+    }
+    if (wentLive) {
+      rows.push({
+        ...identity,
+        model: '(live)',
+        costUsd: 0,
+        input: 0,
+        output: 0,
+      });
     }
   }
-  // Marker rows (`(locked)`, `(unreadable)`) carry zero counters, so
+  // Marker rows (`(locked)`, `(unreadable)`, `(live)`) carry zero counters, so
   // grouping keeps the task total exactly Σ(rows); at project level they
   // merge into the project sum, at the other levels they stay visible.
   return groupCostRows(rows, by);

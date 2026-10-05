@@ -1,6 +1,7 @@
 // `kubic cost` CLI tests (issue #79; §62). RED first: cost-cli.ts lands
 // after this file. Faux-only, zero network — rows are injected.
 import {
+  appendFileSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -43,7 +44,13 @@ import {
 } from './cost-cli.js';
 import { summarizePerAgentCost, toCostJson } from './per-agent-cost.js';
 
-const attached = vi.hoisted(() => ({ calls: [] as Array<readonly unknown[]> }));
+const attached = vi.hoisted(() => ({
+  calls: [] as Array<readonly unknown[]>,
+  // Issue #426: scripted `sessionLockIsLive` answers, consumed in order
+  // (a mid-read-liveness test scripts [undefined, live]). Empty means
+  // passthrough to the real probe, so every other test is unaffected.
+  lockScript: [] as Array<{ pid: number; startedAt?: number } | undefined>,
+}));
 
 vi.mock(
   '../../../../worker/src/lane/session-store.js',
@@ -57,6 +64,10 @@ vi.mock(
       attachSession: (...args: Parameters<typeof actual.attachSession>) => {
         attached.calls.push(args);
         return actual.attachSession(...args);
+      },
+      sessionLockIsLive: (sessionDir: string) => {
+        if (attached.lockScript.length > 0) return attached.lockScript.shift();
+        return actual.sessionLockIsLive(sessionDir);
       },
     };
   },
@@ -894,6 +905,67 @@ describe('kubic cost lock-free reads (issue #251)', () => {
     expect(code).toBe(0);
     expect(cap.lines.join('\n')).toContain('(locked)');
     expect(cap.errs).toEqual([]);
+  });
+
+  // Issue #426 (found reviewing #251): between the `sessionLockIsLive`
+  // probe and the read, a session can go live — cost then reads a store
+  // another process is appending to. The torn tail must not fail the
+  // report, and a row that went live mid-read must say it may be
+  // incomplete.
+  it('skips a torn trailing record instead of failing the report', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    await fauxRun(session.adopt());
+    await session.release(BACKGROUND_CONTEXT);
+    // The mid-append instant, frozen: a partial trailing record with no
+    // terminating newline — the writer's uncommitted tail.
+    appendFileSync(
+      join(root, session.id, 'main.jsonl'),
+      '{"type":"entry","seq":999999,"incompl',
+    );
+
+    const rows = await loadSessionCostRows(root, session.id);
+    // Complete report: the intact usage row survives, the torn tail is
+    // in-flight and skipped.
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.agentId).toBe(session.id);
+    expect(rows[0]?.model.startsWith('(')).toBe(false);
+    expect(rows[0]?.input).toBeGreaterThan(0);
+  });
+
+  it('marks a session that goes live during the read (live)', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    await fauxRun(session.adopt());
+    await session.release(BACKGROUND_CONTEXT);
+    // Dead at the pre-read probe, live at the post-read probe: the race
+    // the issue names. Our own pid is trivially alive.
+    attached.lockScript.push(undefined, { pid: process.pid });
+    try {
+      const rows = await loadSessionCostRows(root, session.id);
+      // The read rows stay; a zero marker row says they may be partial.
+      const read = rows.find((row) => !row.model.startsWith('('));
+      expect(read).toMatchObject({ agentId: session.id });
+      expect(read?.input).toBeGreaterThan(0);
+      expect(rows.find((row) => row.model === '(live)')).toMatchObject({
+        agentId: session.id,
+        costUsd: 0,
+        input: 0,
+        output: 0,
+      });
+    } finally {
+      attached.lockScript.length = 0;
+    }
   });
 });
 

@@ -2272,7 +2272,11 @@ rolls each workspace to a single row. A session whose storage a live run
 owns is skipped, never opened (pi-durable: one process per storage), and
 reported as a zero row with `MODEL` `(locked)`; a session that cannot be
 read at all (a Pi 0.87 transcript, a half-written directory) is
-`(unreadable)` the same way. A session the operator NAMED with `--session`
+`(unreadable)` the same way. A session that goes live *during* the read —
+after the lock probe said it was dead — is read as far as it can be (a
+partial trailing record is the writer's uncommitted tail and is skipped,
+never a parse error) and gets a zero `(live)` row beside its rows: the
+sibling rows may be partial ([#426](https://github.com/konic-labs/kubic/issues/426)). A session the operator NAMED with `--session`
 is never skipped that way: an unknown id, a live lock and a 0.87 transcript
 each print their refusal and exit 1. The read path is lock-free
 ([#251](https://github.com/konic-labs/kubic/issues/251)): `kubic cost` never

@@ -367,8 +367,9 @@ SIGINT/SIGTERM/SIGHUP (and process exit), kills every live worker's group,
 then re-delivers the signal. A manager killed with SIGKILL cannot do this.
 Each run also reports **§61 merge telemetry** (issue #158): per candidate, the
 merge phases the run measured — `queueMs` (enqueue → dequeue), `diffMs` (the
-worker's own branch-diff read), `mergeMs` (the `workspace_merge` leg alone,
-starting after the merge gate's verdict), `resolveMs` (the resolver's rework)
+worker's own branch-diff read), `mergeMs` (the `workspace_merge`
+leg alone — from the gate's verdict to the apply leg, excluding the resolver's
+rework), `resolveMs` (the resolver's rework)
 and `applyMs` (attribution + record + persist). The merge gate's own wait is in
 no phase: it is human-paced and §61 budgets the merge, not the user's answer.
 The run's `--json` document carries the records under `mergeTelemetry` (on the

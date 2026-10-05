@@ -2,10 +2,11 @@
 // validation. Fixture role documents are inline strings — never real
 // filesystem roles (role contents land in issue #44).
 import { describe, expect, it } from 'vitest';
+import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
 import {
   applyRoleToLane,
-  createRolePolicyGuard,
   createRoleToolGuard,
+  effectiveRoleClasses,
   loadRoleDocuments,
   mergeRoleLayers,
   parseRoleDocument,
@@ -361,76 +362,102 @@ describe('createRoleToolGuard', () => {
   });
 });
 
-describe('createRolePolicyGuard', () => {
-  const guard = createRolePolicyGuard('implementer', {
-    workspace: '/work',
-    network: 'none',
-  });
+describe('effectiveRoleClasses (issue #196)', () => {
+  const FULL = {
+    filesystem: 'full',
+    shell: true,
+    network: 'full',
+    git: 'full',
+    credentials: 'allowlist',
+  } as const;
 
-  it('destructive commands block with terminate:false toward approval', () => {
-    const verdict = guard({
-      toolCallId: 'call-1',
-      toolName: 'bash',
-      args: { command: 'rm -rf /' },
-    });
-    expect(verdict).toEqual({
-      block: {
-        reason: expect.stringContaining('destructive-shell'),
-        terminate: false,
-      },
-    });
-  });
-
-  it('network, push, install, and outside-write commands each block', () => {
-    const cases: Array<{
-      toolName: string;
-      args: Record<string, unknown>;
-      capability: string;
-    }> = [
-      {
-        toolName: 'bash',
-        args: { command: 'curl https://example.com' },
-        capability: 'network',
-      },
-      {
-        toolName: 'bash',
-        args: { command: 'git push origin main' },
-        capability: 'git-push',
-      },
-      {
-        toolName: 'bash',
-        args: { command: 'npm install leftpad' },
-        capability: 'install',
-      },
-      {
-        toolName: 'write',
-        args: { path: '/etc/passwd' },
-        capability: 'outside-write',
-      },
-    ];
-    for (const { toolName, args, capability } of cases) {
-      const verdict = guard({
-        toolCallId: `call-${capability}`,
-        toolName,
-        args,
-      });
-      expect(verdict).toEqual({
-        block: {
-          reason: expect.stringContaining(capability),
-          terminate: false,
-        },
-      });
-    }
-  });
-
-  it('clean calls pass through', () => {
+  it('takes the tighter level per key', () => {
     expect(
-      guard({
-        toolCallId: 'call-ok',
-        toolName: 'bash',
-        args: { command: 'echo hi' },
-      }),
-    ).toBeUndefined();
+      effectiveRoleClasses(
+        { ...FULL, network: 'full' },
+        { ...FULL, network: 'none' },
+      ).network,
+    ).toBe('none');
+  });
+
+  it('never widens: a permissive role keeps the config levels', () => {
+    const config = {
+      filesystem: 'read',
+      shell: false,
+      network: 'none',
+      git: false,
+      credentials: 'none',
+    } as const;
+    expect(effectiveRoleClasses(config, FULL)).toEqual(config);
+  });
+
+  it('merges every key independently', () => {
+    expect(
+      effectiveRoleClasses(
+        {
+          filesystem: 'full',
+          shell: true,
+          network: 'full',
+          git: 'full',
+          credentials: 'allowlist',
+        },
+        {
+          filesystem: 'read',
+          shell: 'read-only-allowlist',
+          network: 'allowlist',
+          git: 'workspace',
+          credentials: 'none',
+        },
+      ),
+    ).toEqual({
+      filesystem: 'read',
+      shell: 'read-only-allowlist',
+      network: 'allowlist',
+      git: 'workspace',
+      credentials: 'none',
+    });
+  });
+});
+
+describe('role approval requires (issue #196)', () => {
+  it('parses the requires list from the role document', () => {
+    const doc = parseRoleDocument(
+      '---\nrole: reviewer\nrequires: [write, bash]\n---\n# Reviewer\n',
+    );
+    expect(doc.requires).toEqual(['write', 'bash']);
+  });
+
+  it('unions the document and layer lists, sorted', () => {
+    const doc = parseRoleDocument(
+      '---\nrole: reviewer\nrequires: [write]\n---\n# Reviewer\n',
+    );
+    const merged = mergeRoleLayers(doc, [
+      {
+        layer: 'global',
+        roles: { reviewer: { requires: ['bash', 'write'] } },
+      },
+    ]);
+    expect(merged.requires).toEqual(['bash', 'write']);
+    expect(resolveRole(doc, []).requires).toEqual(['write']);
+  });
+
+  it('resolves no requires to an empty list', () => {
+    expect(resolveRole(parseRoleDocument(PLANNER_MD), []).requires).toEqual([]);
+  });
+});
+describe('roleDoctorChecks effective classes (issue #196)', () => {
+  it('names the most-restrictive merge and the requires when config classes are given', () => {
+    const resolved = resolveRole(parseRoleDocument(PLANNER_MD), []);
+    const [check] = roleDoctorChecks([resolved], {}, SOLO_DEFAULTS);
+    expect(check?.status).toBe('pass');
+    expect(check?.detail).toContain('effective');
+    expect(check?.detail).toContain('network:none');
+  });
+
+  it('keeps the tool list when no config classes are given', () => {
+    const resolved = resolveRole(parseRoleDocument(PLANNER_MD), []);
+    const [check] = roleDoctorChecks([resolved], {});
+    expect(check?.detail).toContain('tool(s):');
   });
 });
 

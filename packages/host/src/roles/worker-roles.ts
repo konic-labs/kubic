@@ -9,6 +9,8 @@
 // reused verbatim — there is no second parser and no second loader here.
 // Pure and injected: the FileBridge arrives as a parameter, so tests drive
 // fixtures while prod passes the real bridge.
+
+import type { PermissionClasses } from '../../../agents/src/policy.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import type { EffectivePolicy } from '../policy/enterprise.js';
 import type { RoleLayerInput } from './resolver.js';
@@ -28,6 +30,18 @@ export interface WorkerRoleAssignment {
   promptText: string;
   /** The resolver's resolved tool set: what the worker lane registers. */
   tools: string[];
+  /**
+   * The role's resolved classes (issue #196, §40.2): the manager sends
+   * these in the task resources and the child merges them with its own
+   * config classes (most restrictive wins) — the worker runs under the
+   * role without re-reading a worktree document.
+   */
+  classes: PermissionClasses;
+  /**
+   * The role's approval obligations (issue #196, §41.1): document +
+   * layers unioned. The child challenges these tools on its triggers.
+   */
+  requires: string[];
   /**
    * The resolved `provider/model` pin the worker child is told, or undefined
    * when no level chose one (issue #202): the child then keeps its own
@@ -236,6 +250,11 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
         role,
         promptText,
         tools: [...selected.resolved.tools],
+        // Issue #196 (§40.2/§41.1): the role's classes and approval
+        // obligations travel in the task resources — the child merges
+        // the classes with its own config, most restrictive wins.
+        classes: { ...selected.resolved.classes },
+        requires: [...selected.resolved.requires],
         // §38.1 (issue #202/#178): the explicit per-agent pin, then the
         // role's own config pin, then the manager's model — never the role
         // NAME and never a hardcoded provider.

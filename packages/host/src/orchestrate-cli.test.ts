@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { SOLO_DEFAULTS } from '../../../packages/agents/src/policy.js';
 import { createCliTheme } from '../../core/src/cli/theme.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import type { AgentResult } from '../../worker/src/result.js';
@@ -270,6 +271,8 @@ describe('per-agent role and model binding (issue #178)', () => {
           tools: [],
           modelRef: binding?.models[agentId],
           thinking: undefined,
+          classes: { ...SOLO_DEFAULTS },
+          requires: [],
         })),
         refused: [],
       };
@@ -2272,6 +2275,8 @@ describe('worker credential preflight (issue #200)', () => {
         tools: ['read'],
         modelRef: 'gw/m1',
         thinking: undefined,
+        classes: { ...SOLO_DEFAULTS },
+        requires: [],
       },
     ],
     refused: [],

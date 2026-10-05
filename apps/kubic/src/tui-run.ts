@@ -101,6 +101,7 @@ import {
 } from '../../../packages/host/src/presentation/projector.js';
 import { findProjectRoot } from '../../../packages/host/src/project-root.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
+import { effectiveRoleClasses } from '../../../packages/host/src/roles/resolver.js';
 import {
   rolePromptFor,
   selectRole,
@@ -1475,7 +1476,25 @@ export async function bootTuiLane(
       options.policy ??
       installSoloPolicy({
         workspace: env.cwd,
-        ...(options.classes === undefined ? {} : { classes: options.classes }),
+        // Issue #196 (§40.2/§41.1): the lane enforces the most
+        // restrictive merge of the config classes and the role's, and
+        // the role's approval obligations challenge on the triggers.
+        // No role means the config (or the lane default).
+        ...(selectedRole === undefined
+          ? {
+              ...(options.classes === undefined
+                ? {}
+                : { classes: options.classes }),
+            }
+          : {
+              classes: effectiveRoleClasses(
+                { ...SOLO_DEFAULTS, ...options.classes },
+                selectedRole.resolved.classes,
+              ),
+              ...(selectedRole.resolved.requires.length === 0
+                ? {}
+                : { requires: selectedRole.resolved.requires }),
+            }),
         source: options.policySource ?? 'default',
         ...(options.approvals ?? {}),
         sessionDir: join(root, id),

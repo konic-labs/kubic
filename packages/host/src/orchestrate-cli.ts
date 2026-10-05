@@ -23,6 +23,7 @@ import {
   createGraph,
   renderDag,
 } from '../../agents/src/graph.js';
+import type { PermissionClasses } from '../../agents/src/policy.js';
 import { createLineLogger } from '../../core/src/cli/logger.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
@@ -711,6 +712,14 @@ export interface WorkerSpawnInfo {
   thinking?: string;
   /** §67 task resources (issue #170): the `--skill` values this worker gets. */
   skills?: string[];
+  /**
+   * Issue #196 (§40.2/§41.1): the assigned role's resolved classes and
+   * approval obligations — the spawn writes them into the task resources
+   * (the child merges the classes with its own config, most restrictive
+   * wins). Absent when the worker has no role assignment.
+   */
+  classes?: PermissionClasses;
+  requires?: string[];
 }
 
 // The §54 delegation DAG (§49.1 projection): the shipped run is one manager
@@ -1958,7 +1967,10 @@ export async function runOrchestrateCommand(
   const spawnRoleInfo = (
     agentId: string,
     roles: WorkerRolesPlan,
-  ): Pick<WorkerSpawnInfo, 'role' | 'tools' | 'modelRef' | 'thinking'> => {
+  ): Pick<
+    WorkerSpawnInfo,
+    'role' | 'tools' | 'modelRef' | 'thinking' | 'classes' | 'requires'
+  > => {
     const assignment = workerRoleAssignment(roles, agentId);
     if (assignment === undefined) return {};
     return {
@@ -1966,6 +1978,10 @@ export async function runOrchestrateCommand(
       tools: [...assignment.tools],
       modelRef: assignment.modelRef,
       thinking: assignment.thinking,
+      // Issue #196 (§40.2/§41.1): the role's classes and obligations
+      // travel to the spawn — the task carries them to the child.
+      classes: { ...assignment.classes },
+      requires: [...assignment.requires],
     };
   };
   // §36.3 credential preflight (issue #200): the same role/model inputs

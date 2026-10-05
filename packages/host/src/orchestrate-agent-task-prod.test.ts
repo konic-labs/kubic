@@ -25,6 +25,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
+import { SOLO_DEFAULTS } from '../../../packages/agents/src/policy.js';
 import { buildAgentTask } from '../../agents/src/task.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
@@ -43,6 +44,7 @@ import {
   fauxProvider,
   SystemEntry,
 } from '../../worker/src/pi-boundary.js';
+import { registerFauxProvider } from './faux-provider.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
 
 const scratchDirs: string[] = [];
@@ -278,6 +280,51 @@ describe('prod orchestrate path: the worker gets its §67 task (issue #191)', ()
     expect(registered).not.toContain('find');
   });
 
+  it('a worker child merges the task role classes with its own config (issue #196 acceptance 3)', async () => {
+    // The manager planned the role under network:none; the child's own
+    // config allows full. The task carries the role classes, so the child
+    // challenges the network call anyway — most restrictive wins.
+    const root = await initRepo(['read', 'ls']);
+    const built = buildAgentTask({
+      taskId: 'task-196:alpha',
+      parentSessionId: 'task196',
+      role: 'implementer',
+      objective: 'do the network thing',
+      worktree: root,
+      toolNames: ['read', 'ls', 'bash'],
+      resources: {
+        classes: { ...SOLO_DEFAULTS, network: 'none' },
+        requires: ['write'],
+      },
+    });
+    expect(built.valid, built.valid ? '' : built.errors.join('; ')).toBe(true);
+    if (!built.valid) return;
+    const taskFile = join(root, 'agent-task-196.json');
+    writeFileSync(taskFile, `${JSON.stringify(built.task)}\n`);
+    vi.stubEnv('KUBIC_TASK_FILE', taskFile);
+    vi.stubEnv('KUBIC_WORKER_ID', 'alpha');
+    const replayRoot = scratchRoot('kubic-orch-196-replay-');
+    // The unbounded faux script turns the `faux:tool` directive into a
+    // real tool call on every turn (a one-shot text response would answer
+    // 'done' without ever calling; a bare provider has no replies at
+    // all). The task's network:none challenges the curl.
+    const models = createModels();
+    registerFauxProvider(models);
+    const result = await runHeadlessPrompt(
+      'faux:tool bash {"command":"curl https://example.com"}',
+      {},
+      {
+        sessionsRoot: replayRoot,
+        models,
+        env: new NodeExecutionEnv(root),
+        roles: { cwd: root },
+        // A challenged call is refused at once — no answer surface wait.
+        approvals: { route: 'deny' },
+      },
+    );
+    expect(result.terminus).toBe('approval_denied');
+  });
+
   it('refuses the spawn when the assignment carries no tool set (acceptance 3)', async () => {
     // `[roles.implementer] tools = []` resolves an assignment with an empty
     // grant: the task cannot validate, so the spawn is refused by name —
@@ -345,10 +392,26 @@ describe('prod orchestrate path: --skill reaches every worker (issue #170)', () 
     const task = JSON.parse(readFileSync(dump.taskFile as string, 'utf8')) as {
       resources?: { skills?: string[] };
     };
-    expect(task.resources).toEqual({ skills: [absolute] });
+    // Issue #196 (§40.2): the assigned role's classes ride the same
+    // channel — the child merges them with its own config.
+    expect(task.resources).toEqual({
+      skills: [absolute],
+      // The fixture document declares its own class keys, so the task
+      // carries those (not SOLO_DEFAULTS).
+      classes: {
+        filesystem: 'workspace-write',
+        shell: true,
+        network: 'none',
+        git: false,
+        credentials: 'none',
+      },
+    });
     // …and the registry row is what `kubic workers` reads (the run persists
     // it to <repo>/.kubic/orchestrator/workers.json).
     const rows = workersListFromRepo(root);
+    // The registry row keeps the #170 display contract (`skills=…` in
+    // `kubic workers`): the role classes enforce through the task file,
+    // not the row.
     expect(rows[0]?.resources).toEqual({ skills: [absolute] });
   });
 });
@@ -377,8 +440,24 @@ describe('prod orchestrate path: settings skills reach every worker (issue #237)
     const task = JSON.parse(readFileSync(dump.taskFile as string, 'utf8')) as {
       resources?: { skills?: string[] };
     };
-    expect(task.resources).toEqual({ skills: [absolute] });
+    // Issue #196 (§40.2): the assigned role's classes ride the same
+    // channel — the child merges them with its own config.
+    expect(task.resources).toEqual({
+      skills: [absolute],
+      // The fixture document declares its own class keys, so the task
+      // carries those (not SOLO_DEFAULTS).
+      classes: {
+        filesystem: 'workspace-write',
+        shell: true,
+        network: 'none',
+        git: false,
+        credentials: 'none',
+      },
+    });
     const rows = workersListFromRepo(root);
+    // The registry row keeps the #170 display contract (`skills=…` in
+    // `kubic workers`): the role classes enforce through the task file,
+    // not the row.
     expect(rows[0]?.resources).toEqual({ skills: [absolute] });
   });
 });

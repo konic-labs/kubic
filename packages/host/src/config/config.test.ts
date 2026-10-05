@@ -496,6 +496,17 @@ describe('TOML parser hardening (issue #69)', () => {
     expect(parsed.roles?.a?.tools).toEqual(['a', 'b']);
   });
 
+  it('parses [roles.<name>] requires like tools (issue #196)', () => {
+    const parsed = parseTomlConfig(
+      '[roles.a]\nrequires = ["write", \'bash\']\n',
+    );
+    expect(parsed.roles?.a?.requires).toEqual(['write', 'bash']);
+    expect(() => parseTomlConfig('[roles.a]\nrequires = [["x"]]\n')).toThrow(
+      /nested arrays/,
+    );
+    expect(() => parseTomlConfig('[roles.a]\nrequires = ["x]\n')).toThrow();
+  });
+
   it('rejects unterminated strings in arrays', () => {
     expect(() => parseTomlConfig('[roles.a]\ntools = ["x]\n')).toThrow(
       /unterminated string/,

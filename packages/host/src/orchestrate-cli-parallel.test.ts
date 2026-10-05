@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SOLO_DEFAULTS } from '../../../packages/agents/src/policy.js';
 import type {
   OrchestrateCommandDeps,
   OrchestrateWorktree,
@@ -444,6 +445,8 @@ describe('orchestrate queue expiry and never-wakeable queues (issue #206 review)
           tools: [],
           modelRef: 'prov/m1',
           thinking: undefined,
+          classes: { ...SOLO_DEFAULTS },
+          requires: [],
         })),
         refused: [],
       }),

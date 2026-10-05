@@ -7,6 +7,7 @@
 // catalog fields in #20; TaskArtifactRef grows transfer metadata in #32.
 
 import type { AgentBudget } from './budget.js';
+import type { PermissionClasses } from './policy.js';
 
 export type AgentRole = string;
 
@@ -25,6 +26,16 @@ export interface ScopedModel {
 export interface TaskResources {
   skills?: string[];
   promptTemplates?: string[];
+  // Issue #196 (§40.2): the worker role's resolved classes, as the
+  // manager planned them (working tree + layers). The child merges these
+  // with its own config classes — the most restrictive wins — so the
+  // worker runs under the role even though its worktree document is not
+  // re-read (issue #191: the task is authoritative, the checkout is HEAD).
+  classes?: PermissionClasses;
+  // Issue #196 (§41.1): the role's approval obligations (document +
+  // layers, unioned). The child challenges these tools on its installed
+  // triggers, alongside the class-derived ones.
+  requires?: string[];
 }
 
 export interface TaskArtifactRef {

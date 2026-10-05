@@ -1953,6 +1953,14 @@ export interface SoloPolicyInput {
   /** Config-sourced classes; absent means the documented SOLO_DEFAULTS. */
   classes?: PermissionClasses;
   /**
+   * Role-sourced approval obligations (issue #196, §41.1): tool names
+   * that always require approval under the resolved role — the union of
+   * the role document's `requires` and every config `[roles.<name>]`
+   * layer's. Threaded into the installed trigger context; absent means
+   * none (the triggers alone decide).
+   */
+  requires?: string[];
+  /**
    * Where the classes came from, as the CONFIG LAYER recorded it. Absent
    * falls back to the shape rule (classes present ⇒ 'config'), which is what
    * legacy callers mean; the composition root always passes the layer's own
@@ -2395,7 +2403,15 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     const detected = detectTriggers(
       call.toolName,
       call.args,
-      triggerContextFor(posture.classes, input.workspace, controlPlane),
+      // Issue #196 (§41.1): the role's approval obligations challenge
+      // here, alongside the class-derived triggers.
+      triggerContextFor(
+        posture.classes,
+        input.workspace,
+        controlPlane,
+        undefined,
+        input.requires,
+      ),
     );
     let capabilities = detected;
     if (posture.fullAccess && posture.route === 'ask-user') {
@@ -2563,6 +2579,10 @@ export function triggerContextFor(
   workspace: string,
   controlPlaneOrHome?: ControlPlaneRoots | string,
   home?: string,
+  // Issue #196 (§41.1): role-sourced approval obligations — tool names
+  // that always challenge under the resolved role. Optional, so the
+  // existing call shapes (and their tests) are untouched.
+  requires?: string[],
 ): TriggerContext {
   // HEAD passes the #324 control plane as the third argument; the #355
   // branch passes the user's home string there (tests rely on both shapes),
@@ -2578,7 +2598,7 @@ export function triggerContextFor(
     workspace,
     home: resolvedHome,
     ...(controlPlane === undefined ? {} : { controlPlane }),
-
+    ...(requires === undefined ? {} : { requires: [...requires] }),
     network: classes.network,
     credentials: classes.credentials,
     isDestructive: defaultIsDestructive,

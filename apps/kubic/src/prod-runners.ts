@@ -963,6 +963,9 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
             // The config `[roles.<name>]` layers `kubic run --role` merges
             // under each document: a role is judged as it would run.
             ...(roleLayers === undefined ? {} : { layers: roleLayers }),
+            // Issue #196 (§40.2): judge the effective classes the lane
+            // would install — the most restrictive merge with each role.
+            ...installedPolicyClasses(cliConfig),
             // Issue #430 (§33, L-D27): judge the trust the run would see —
             // an untrusted root's withheld roles warn here, never green.
             trustProject: projectTrustFor(cliConfig),

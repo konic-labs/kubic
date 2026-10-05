@@ -111,6 +111,9 @@ export interface JournalConfig {
 export interface RoleConfig {
   model?: string;
   tools?: string[];
+  // Issue #196 (§41.1): tool names that always require approval under
+  // this role — forwarded to the resolver layers like `tools`.
+  requires?: string[];
 }
 
 export interface OrchestratorConfig {
@@ -1275,12 +1278,18 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
       if (!isRecord(spec)) {
         throw new ConfigError(`'[roles.${name}]' must be a table`);
       }
-      checkNoUnknown(spec, new Set(['model', 'tools']), `roles.${name}`);
+      checkNoUnknown(
+        spec,
+        new Set(['model', 'tools', 'requires']),
+        `roles.${name}`,
+      );
       const modelRef = checkRoleModelRef(spec.model, name);
       const tools = optStringArray(spec, 'tools', `roles.${name}`);
+      const requires = optStringArray(spec, 'requires', `roles.${name}`);
       parsed[name] = {
         ...(modelRef === undefined ? {} : { model: modelRef }),
         ...(tools === undefined ? {} : { tools }),
+        ...(requires === undefined ? {} : { requires }),
       };
     }
     config.roles = parsed;

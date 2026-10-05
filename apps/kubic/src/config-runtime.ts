@@ -691,6 +691,14 @@ export function roleLayersFromConfig(runtime: RuntimeConfig): RoleLayerInput[] {
       ) {
         spec.tools = [...entry.tools];
       }
+      // Issue #196 (§41.1): the layer's approval obligations travel like
+      // `tools` — the resolver unions them with the document's list.
+      if (
+        entry.requires !== undefined &&
+        runtime.sources[`roles.${name}.requires`] === layer
+      ) {
+        spec.requires = [...entry.requires];
+      }
       if (
         entry.model !== undefined &&
         runtime.sources[`roles.${name}.model`] === layer

@@ -2280,7 +2280,20 @@ export async function orchestrateDepsWithDefaults(
           toolNames: info.tools ?? [],
           ...(budgetForSpawn === undefined ? {} : { budget: budgetForSpawn }),
           ...(model === undefined ? {} : { model }),
-          ...(skills.length === 0 ? {} : { resources: { skills } }),
+          // Issue #196 (§40.2/§41.1): the role's classes and approval
+          // obligations ride the §67 resources channel with the skills
+          // (already absolute) — the child merges the classes with its
+          // own config, most restrictive wins, and challenges the
+          // requires on its triggers.
+          resources: {
+            ...(skills.length === 0 ? {} : { skills }),
+            ...(info.classes === undefined
+              ? {}
+              : { classes: { ...info.classes } }),
+            ...(info.requires === undefined || info.requires.length === 0
+              ? {}
+              : { requires: [...info.requires] }),
+          },
         });
         if (!built.valid) {
           throw new AgentTaskRefusedError(agentId, built.errors);

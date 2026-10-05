@@ -107,6 +107,26 @@ const TWO_ROLES = {
 };
 
 describe('delegation-path role assignment (issue #104, §12)', () => {
+  it("carries the role's classes and approval requires to the spawn (issue #196)", () => {
+    const files: Record<string, string> = {
+      [`${CWD}/.kubic/roles/reviewer.md`]: roleText(
+        'reviewer',
+        'tools: [read, bash]\nfilesystem: read\nshell: true\nnetwork: none\ngit: false\ncredentials: none\nrequires: [write]\n',
+        'You are the reviewer.',
+      ),
+    };
+    const plan = planWorkerRoles({
+      bridge: memBridge(files),
+      cwd: CWD,
+      trusted: true,
+      agents: ['alpha'],
+      roles: { alpha: 'reviewer' },
+    });
+    expect(plan.assignments).toHaveLength(1);
+    expect(plan.assignments[0]?.classes.network).toBe('none');
+    expect(plan.assignments[0]?.requires).toEqual(['write']);
+  });
+
   it('defaults every unassigned worker to the implementer, never a positional cycle (issue #178)', () => {
     // The five roles are fixed (D11): the manager composes from them and
     // never invents a role at runtime. Position is not a task: a worker with

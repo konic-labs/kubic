@@ -221,6 +221,121 @@ describe('`kubic run` through the prod runner enforces the config (issues #230, 
   });
 });
 
+// Issue #196 (§40.2/§41.1): the lane installs the most restrictive merge
+// of the config classes and the role's, and the role's approval obligations
+// challenge on the installed triggers — for `kubic run`, and for worker
+// children through the task resources (covered in
+// orchestrate-agent-task-prod.test.ts).
+describe('role classes and approval requires reach the installed policy (issue #196)', () => {
+  beforeEach(() => {
+    vi.stubEnv('KUBIC_PROVIDER', 'faux');
+  });
+
+  const roleDoc = (network: string): string =>
+    `---\nrole: reviewer\ntools: [read, bash]\nfilesystem: read\nshell: true\nnetwork: ${network}\ngit: false\ncredentials: none\n---\n\n# reviewer\n\n## Prompt\n\nReview.\n`;
+
+  function reviewerWorkspace(network: string): string {
+    const workspace = tmpRoot('kubic-prod-196-');
+    mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(workspace, '.kubic', 'roles', 'reviewer.md'),
+      roleDoc(network),
+    );
+    return workspace;
+  }
+
+  it('a role declaring network:none runs under it even when config allows full', async () => {
+    const workspace = reviewerWorkspace('none');
+    const { r, lines } = runners(workspace);
+    const code = await r.run(
+      {
+        prompt: 'faux:tool bash {"command":"curl https://example.com"}',
+        role: 'reviewer',
+        json: true,
+      },
+      cliConfig(
+        {
+          [PROJECT]:
+            '[permissions]\nnetwork = "full"\n[approvals]\nroute = "deny"\n',
+        },
+        { trust: TRUSTED },
+      ),
+    );
+    expect(lines.join('\n')).toContain('denied by policy route');
+    expect(code).toBe(4);
+  });
+
+  it('a config declaring network:none holds even when the role allows full', async () => {
+    const workspace = reviewerWorkspace('full');
+    const { r, lines } = runners(workspace);
+    const code = await r.run(
+      {
+        prompt: 'faux:tool bash {"command":"curl https://example.com"}',
+        role: 'reviewer',
+        json: true,
+      },
+      cliConfig(
+        {
+          [PROJECT]:
+            '[permissions]\nnetwork = "none"\n[approvals]\nroute = "deny"\n',
+        },
+        { trust: TRUSTED },
+      ),
+    );
+    expect(lines.join('\n')).toContain('denied by policy route');
+    expect(code).toBe(4);
+  });
+
+  it("the role document's requires challenge an otherwise-allowed tool", async () => {
+    const workspace = tmpRoot('kubic-prod-196-');
+    mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(workspace, '.kubic', 'roles', 'reviewer.md'),
+      '---\nrole: reviewer\ntools: [read, write]\nfilesystem: workspace-write\nshell: false\nnetwork: none\ngit: false\ncredentials: none\nrequires: [write]\n---\n\n# reviewer\n\n## Prompt\n\nReview.\n',
+    );
+    const { r, lines } = runners(workspace);
+    const code = await r.run(
+      {
+        prompt: `faux:tool write {"path":${JSON.stringify(join(workspace, 'note'))},"content":"hi"}`,
+        role: 'reviewer',
+        json: true,
+      },
+      cliConfig(
+        { [PROJECT]: '[approvals]\nroute = "deny"\n' },
+        { trust: TRUSTED },
+      ),
+    );
+    expect(lines.join('\n')).toContain('denied by policy route');
+    expect(code).toBe(4);
+  });
+
+  it('a [roles.<name>] requires layer challenges like the document list', async () => {
+    const workspace = tmpRoot('kubic-prod-196-');
+    mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(workspace, '.kubic', 'roles', 'reviewer.md'),
+      '---\nrole: reviewer\ntools: [read, write]\nfilesystem: workspace-write\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# reviewer\n\n## Prompt\n\nReview.\n',
+    );
+    const { r, lines } = runners(workspace);
+    const code = await r.run(
+      {
+        prompt: `faux:tool write {"path":${JSON.stringify(join(workspace, 'note'))},"content":"hi"}`,
+        role: 'reviewer',
+        json: true,
+      },
+      cliConfig(
+        {
+          [PROJECT]:
+            '[approvals]\nroute = "deny"\n[roles.reviewer]\nrequires = ["write"]\n',
+        },
+        { trust: TRUSTED },
+      ),
+    );
+    expect(lines.join('\n')).toContain('denied by policy route');
+    expect(code).toBe(4);
+  });
+});
+
 describe('a frozen enterprise model pin announces the flag or env pin it overrides (issue #295)', () => {
   const FROZEN = '[model]\nprovider = "corp"\nid = "approved"\n';
   const NOTE_CLI =

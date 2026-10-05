@@ -7,6 +7,8 @@
 //
 // I/O confinement: this module never imports node:fs. The bridge is
 // injected, so tests drive fixtures while prod passes the real FileBridge.
+
+import type { PermissionClasses } from '../../../agents/src/policy.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import type { DoctorCheck } from '../doctor.js';
 import type { EffectivePolicy } from '../policy/enterprise.js';
@@ -84,6 +86,10 @@ export interface RolesDirInput {
   // (contradictions, the enterprise tool gate) as it would actually run.
   // Absent means the documents alone.
   layers?: RoleLayerInput[];
+  // Issue #196 (§40.2): the run's config classes — the probe's detail then
+  // names the EFFECTIVE classes (most restrictive merge with each role's)
+  // the lane would install. Absent keeps the role's own tool list.
+  classes?: PermissionClasses;
 }
 
 // Where a role's winning document came from (issue #203): the preset bundled
@@ -340,7 +346,11 @@ export function rolesDoctorProbe(input: RolesDirInput): DoctorCheck[] {
       },
     ];
   }
-  const checks = roleDoctorChecks(loaded.resolved, loaded.sources);
+  const checks = roleDoctorChecks(
+    loaded.resolved,
+    loaded.sources,
+    input.classes,
+  );
   for (const refusal of loaded.refused) {
     checks.push({
       id: `role:${refusal.name}`,

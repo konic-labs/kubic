@@ -104,6 +104,7 @@ import type {
   ResolvedRole,
   RoleLayerInput,
 } from '../../../packages/host/src/roles/resolver.js';
+import { effectiveRoleClasses } from '../../../packages/host/src/roles/resolver.js';
 import {
   rolePromptFor,
   type SelectedRole,
@@ -1658,9 +1659,32 @@ async function runHeadlessPromptImpl(
       deps.policy ??
       installSoloPolicy({
         workspace: env.cwd,
-        ...(deps.policyClasses === undefined
-          ? {}
-          : { classes: deps.policyClasses }),
+        // Issue #196 (§40.2): the lane enforces the most restrictive
+        // merge of the config classes and the role's — a role declaring
+        // `network: none` runs under it even when config allows full.
+        // A worker child's task carries the manager-planned classes
+        // (merged again with the child's own config — the tightest of
+        // the three wins); otherwise the `--role` document's classes.
+        // No grant anywhere means the config (or the lane default).
+        ...((): { classes?: PermissionClasses; requires?: string[] } => {
+          const grantClasses =
+            task?.resources?.classes ?? role?.resolved.classes;
+          const requires = task?.resources?.requires ?? role?.resolved.requires;
+          if (grantClasses === undefined)
+            return {
+              ...(deps.policyClasses === undefined
+                ? {}
+                : { classes: deps.policyClasses }),
+              ...(requires === undefined ? {} : { requires }),
+            };
+          return {
+            classes: effectiveRoleClasses(
+              { ...SOLO_DEFAULTS, ...deps.policyClasses },
+              grantClasses,
+            ),
+            ...(requires === undefined ? {} : { requires }),
+          };
+        })(),
         // The layer's own record, so the posture's `source` is the same
         // answer doctor prints — never inferred from the object's shape.
         source: deps.policySource ?? 'default',

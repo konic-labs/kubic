@@ -19,7 +19,9 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import {
   effectiveConfigView,
   renderEffectiveConfig,
@@ -28,8 +30,15 @@ import {
   ProjectTrustStore,
   projectTrustStorePath,
 } from '../../../packages/host/src/config/trust-store.js';
+import {
+  attachSession,
+  openSessionStore,
+} from '../../../packages/worker/src/lane/session-store.js';
+import { readSessionEntries } from '../../../packages/worker/src/lane/transcript.js';
 import { ModelSelectError } from '../../../packages/worker/src/model-select.js';
 import {
+  BACKGROUND_CONTEXT,
+  CompactionEntry,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
@@ -61,7 +70,7 @@ import {
   selectModelUnderPolicy,
   sessionRetentionDays,
 } from './config-runtime.js';
-import { composePromptSections } from './headless-run.js';
+import { composePromptSections, runHeadlessPrompt } from './headless-run.js';
 import { prodRunDeps } from './prod-runners.js';
 
 const made: string[] = [];
@@ -674,6 +683,138 @@ describe('session compaction projection (issue #239)', () => {
     const probe = doctorConfigProbe(loadCliConfig({ cwd, home, env: {} }));
     expect(probe.ok).toBe(true);
     expect(probe.detail).toContain('reserve=4000 token(s)');
+  });
+});
+
+describe('compaction disabled survives a threshold-crossing run (issue #239 review)', () => {
+  // Token math mirrors the worker's threshold test: window 3000, default
+  // reserve 16384 clamps to 750, blocking threshold 2250. One exchange of
+  // ~1200 + ~1200 estimated tokens crosses it — enabled, it compacts.
+  function text(label: string, tokens: number): string {
+    return `${label} ${'x'.repeat(Math.max(1, tokens * 4 - label.length - 1))}`;
+  }
+
+  function fauxSmallWindow(onRequest: (summary: boolean) => void) {
+    const faux = fauxProvider({
+      provider: 'faux',
+      models: [{ id: 'small', contextWindow: 3000, maxTokens: 1000 }],
+    });
+    const steps: Parameters<typeof faux.setResponses>[0] = [];
+    for (let index = 0; index < 20; index++) {
+      steps.push((transcript) => {
+        const first = transcript.messages[0];
+        onRequest(
+          first?.role === 'system' &&
+            typeof first.content === 'string' &&
+            first.content.includes('summarization'),
+        );
+        return fauxAssistantMessage(text('a', 1200));
+      });
+    }
+    faux.setResponses(steps);
+    const models: MutableModels = createModels();
+    models.setProvider(faux.provider);
+    return models;
+  }
+
+  async function compactionEntriesOf(sessionsRoot: string, sessionId: string) {
+    const store = openSessionStore(
+      sessionsRoot,
+      createNodeFileBridge(sessionsRoot),
+    );
+    const session = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
+    try {
+      const entries = await readSessionEntries(
+        session.storage,
+        BACKGROUND_CONTEXT,
+      );
+      return entries.filter((entry) => CompactionEntry.is(entry));
+    } finally {
+      await session.release(BACKGROUND_CONTEXT);
+    }
+  }
+
+  async function crossedRun(
+    compaction: ReturnType<typeof runtimeCompactionDeps>,
+  ) {
+    // Two turns on one session: the harness evaluates the blocking
+    // threshold when the second turn arrives (the worker's threshold test
+    // pins the summary reading the pre-u2 prefix), so a single exchange
+    // can never compact — the second turn is what crosses.
+    let summaries = 0;
+    const sessionsRoot = tmpDir('kubic-compact-off-sessions-');
+    const deps = {
+      sessionsRoot,
+      models: fauxSmallWindow((summary) => {
+        if (summary) summaries += 1;
+      }),
+      model: { provider: 'faux', id: 'small' },
+      env: new NodeExecutionEnv(tmpDir('kubic-compact-off-cwd-')),
+      ...(compaction === undefined ? {} : { compaction }),
+    };
+    const first = await runHeadlessPrompt(text('u1', 1200), {}, deps);
+    expect(first.terminus).toBe('completed');
+    const second = await runHeadlessPrompt(
+      text('u2', 20),
+      {
+        sessionId: first.sessionId,
+      },
+      deps,
+    );
+    expect(second.terminus).toBe('completed');
+    return {
+      summaries,
+      entries: await compactionEntriesOf(sessionsRoot, first.sessionId),
+    };
+  }
+
+  it('autoCompact = false: zero summary requests, zero pi.compaction entries', async () => {
+    vi.stubEnv('KUBIC_NO_NOTICE', '1');
+    try {
+      // The full chain: config file → load → projection → lane boot,
+      // verbatim — the boot receives exactly what the projection
+      // produced, no test-side additions.
+      const { home, cwd } = globalHome(
+        '[session]\nautoCompact = false\nreserveTokens = 4000\nkeepRecentTokens = 200\n',
+      );
+      const result = loadCliConfig({ cwd, home, env: {} });
+      expect(result.error).toBeUndefined();
+      const compaction = runtimeCompactionDeps(result);
+      expect(compaction).toEqual({
+        enabled: false,
+        reserveTokens: 4000,
+        keepRecentTokens: 200,
+      });
+      const crossed = await crossedRun(compaction);
+      expect(crossed.summaries).toBe(0);
+      expect(crossed.entries).toHaveLength(0);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('same exchange with compaction enabled compacts exactly once (positive control)', async () => {
+    // Without the control, the leg above cannot distinguish "disabled
+    // works" from "the threshold never crossed": identical numbers
+    // with autoCompact left enabled must compact.
+    vi.stubEnv('KUBIC_NO_NOTICE', '1');
+    try {
+      const { home, cwd } = globalHome(
+        '[session]\nreserveTokens = 4000\nkeepRecentTokens = 200\n',
+      );
+      const result = loadCliConfig({ cwd, home, env: {} });
+      expect(result.error).toBeUndefined();
+      const compaction = runtimeCompactionDeps(result);
+      expect(compaction).toEqual({
+        reserveTokens: 4000,
+        keepRecentTokens: 200,
+      });
+      const crossed = await crossedRun(compaction);
+      expect(crossed.summaries).toBe(1);
+      expect(crossed.entries).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

@@ -25,6 +25,7 @@ import {
   fauxToolCall,
   type MutableModels,
 } from '../../../packages/worker/src/pi-boundary.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   type CliConfigResult,
   runtimeApprovalDeps,
@@ -622,45 +623,7 @@ describe('advertised skills outside the workspace stay readable on the tui lane 
 // A recording terminal, as tui-model-switch-prod.test.ts drives the alt-screen
 // key path: the frame text is everything the app wrote.
 function fakeTerminal() {
-  const writes: string[] = [];
-  const counts = { started: 0 };
-  let handler: ((data: string) => void) | undefined;
-  return {
-    counts,
-    get frame(): string {
-      return writes.join('');
-    },
-    feed: (data: string) => {
-      handler?.(data);
-    },
-    terminal: {
-      start: (input: (data: string) => void) => {
-        counts.started += 1;
-        handler = input;
-      },
-      stop: () => {},
-      drainInput: () => Promise.resolve(),
-      write: (data: string) => writes.push(data),
-      // Wide enough that the whole refusal fits on one footer line.
-      get columns(): number {
-        return 240;
-      },
-      get rows(): number {
-        return 30;
-      },
-      get kittyProtocolActive(): boolean {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    },
-  };
+  return terminalRig(240, 30);
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {

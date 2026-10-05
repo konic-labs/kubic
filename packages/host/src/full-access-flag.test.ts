@@ -27,6 +27,7 @@ import {
   runTuiCommand,
   type TuiLaneBoot,
 } from '../../../apps/kubic/src/tui-run.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import { createLineLogger } from '../../core/src/cli/logger.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
@@ -376,37 +377,15 @@ describe('kubic tui --dangerously-skip-approvals (issue #308)', () => {
   });
 
   it('shows the OFF indicator and the warning when the boot is full access', async () => {
-    const writes: string[] = [];
+    const rig = terminalRig(120, 30);
     const errors: string[] = [];
-    let handler: ((data: string) => void) | undefined;
-    let started = 0;
     const flags: unknown[] = [];
     const pending = runTuiCommand(
       { dangerouslySkipApprovals: true },
       {
         out: () => undefined,
         err: (line) => errors.push(line),
-        createTerminal: () =>
-          ({
-            start: (input: (data: string) => void) => {
-              started += 1;
-              handler = input;
-            },
-            stop: () => {},
-            drainInput: () => Promise.resolve(),
-            write: (data: string) => writes.push(data),
-            columns: 120,
-            rows: 30,
-            kittyProtocolActive: false,
-            moveBy: () => {},
-            hideCursor: () => {},
-            showCursor: () => {},
-            clearLine: () => {},
-            clearFromCursor: () => {},
-            clearScreen: () => {},
-            setTitle: () => {},
-            setProgress: () => {},
-          }) as never,
+        createTerminal: () => rig.terminal,
         bootLane: async (_id, _answer, bootFlags): Promise<TuiLaneBoot> => {
           flags.push(bootFlags);
           return {
@@ -418,16 +397,16 @@ describe('kubic tui --dangerously-skip-approvals (issue #308)', () => {
         },
       },
     );
-    for (let i = 0; i < 200 && started === 0; i += 1) {
+    for (let i = 0; i < 200 && rig.counts.started === 0; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    for (let i = 0; i < 200 && !writes.join('').includes('OFF'); i += 1) {
+    for (let i = 0; i < 200 && !rig.frame.includes('OFF'); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    handler?.('\x03');
+    rig.feed('\x03');
     expect(await pending).toBe(0);
     expect(flags).toEqual([{ dangerouslySkipApprovals: true }]);
-    expect(writes.join('')).toContain('approvals OFF (full-access)');
+    expect(rig.frame).toContain('approvals OFF (full-access)');
     expect(errors.join('\n')).toContain('full-access approvals skipped');
   });
 });

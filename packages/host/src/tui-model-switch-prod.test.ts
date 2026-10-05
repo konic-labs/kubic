@@ -12,6 +12,7 @@ import {
   runTuiCommand,
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
@@ -95,47 +96,7 @@ function thinkingProviders(
 }
 
 function fakeTerminal(width: number) {
-  const writes: string[] = [];
-  const counts = { started: 0, stopped: 0 };
-  let handler: ((data: string) => void) | undefined;
-  return {
-    writes,
-    counts,
-    get frame(): string {
-      return writes.join('');
-    },
-    feed: (data: string) => {
-      handler?.(data);
-    },
-    terminal: {
-      start: (input: (data: string) => void) => {
-        counts.started += 1;
-        handler = input;
-      },
-      stop: () => {
-        counts.stopped += 1;
-      },
-      drainInput: () => Promise.resolve(),
-      write: (data: string) => writes.push(data),
-      get columns(): number {
-        return width;
-      },
-      get rows(): number {
-        return 30;
-      },
-      get kittyProtocolActive(): boolean {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    },
-  };
+  return terminalRig(width, 30);
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {

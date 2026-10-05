@@ -29,9 +29,30 @@ export interface FakeTerminal extends Terminal {
   resize: () => void;
   /** Feed raw terminal input (keystrokes, mouse sequences) to the TUI. */
   inject: (data: string) => void;
+  /** Alias of inject(), the name most TUI tests use. */
+  feed: (data: string) => void;
+  /** How many times the TUI drained pending input (drainInput() calls). */
+  drained: number;
 }
 
-export function fakeTerminal(columns = 100, rows = 30): FakeTerminal {
+/**
+ * Optional observers for tests that need more than the record: each hook runs
+ * inside the matching Terminal call, before the fake's own bookkeeping, so a
+ * hook can log the call order (terminal-restore tests) or throw to simulate a
+ * failing terminal (an onWrite that throws aborts that write).
+ */
+export interface FakeTerminalHooks {
+  onStart?: (input: (data: string) => void) => void;
+  onStop?: () => void;
+  onDrain?: () => void;
+  onWrite?: (data: string) => void;
+}
+
+export function fakeTerminal(
+  columns = 100,
+  rows = 30,
+  hooks: FakeTerminalHooks = {},
+): FakeTerminal {
   const writes: string[] = [];
   let onInput: ((data: string) => void) | undefined;
   let onResize: (() => void) | undefined;
@@ -40,16 +61,24 @@ export function fakeTerminal(columns = 100, rows = 30): FakeTerminal {
     output: () => writes.join(''),
     started: 0,
     stopped: 0,
+    drained: 0,
     start: (input, resize) => {
+      hooks.onStart?.(input);
       terminal.started += 1;
       onInput = input;
       onResize = resize;
     },
     stop: () => {
+      hooks.onStop?.();
       terminal.stopped += 1;
     },
-    drainInput: () => Promise.resolve(),
+    drainInput: () => {
+      hooks.onDrain?.();
+      terminal.drained += 1;
+      return Promise.resolve();
+    },
     write: (data: string) => {
+      hooks.onWrite?.(data);
       writes.push(data);
     },
     get columns() {
@@ -71,6 +100,9 @@ export function fakeTerminal(columns = 100, rows = 30): FakeTerminal {
     inject: (data: string) => {
       onInput?.(data);
     },
+    feed: (data: string) => {
+      onInput?.(data);
+    },
     moveBy: () => {},
     hideCursor: () => {},
     showCursor: () => {},
@@ -81,4 +113,55 @@ export function fakeTerminal(columns = 100, rows = 30): FakeTerminal {
     setProgress: () => {},
   };
   return terminal;
+}
+
+/**
+ * The shape most host/app TUI tests destructure: the fake Terminal plus its
+ * write log, live start/stop/drain counts, an input feeder and frame readers.
+ * A thin view over one fakeTerminal() — never a second implementation.
+ */
+export interface TerminalRig {
+  terminal: FakeTerminal;
+  writes: string[];
+  counts: {
+    readonly started: number;
+    readonly stopped: number;
+    readonly drained: number;
+  };
+  feed: (data: string) => void;
+  /** Everything written so far, as one string. */
+  readonly frame: string;
+  /** A position in the write log, for since(). */
+  mark: () => number;
+  /** Everything written after a mark(). */
+  since: (mark: number) => string;
+}
+
+export function terminalRig(
+  columns = 100,
+  rows = 30,
+  hooks: FakeTerminalHooks = {},
+): TerminalRig {
+  const terminal = fakeTerminal(columns, rows, hooks);
+  return {
+    terminal,
+    writes: terminal.writes,
+    counts: {
+      get started() {
+        return terminal.started;
+      },
+      get stopped() {
+        return terminal.stopped;
+      },
+      get drained() {
+        return terminal.drained;
+      },
+    },
+    feed: terminal.feed,
+    get frame() {
+      return terminal.output();
+    },
+    mark: () => terminal.writes.length,
+    since: (mark) => terminal.writes.slice(mark).join(''),
+  };
 }

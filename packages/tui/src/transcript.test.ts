@@ -4,6 +4,9 @@
 // ScrollView root directly (Component.render is pure) and assert document
 // text plus follow/pinned offsets across batches.
 import { afterEach, describe, expect, it } from 'vitest';
+import { fakeTerminal } from '../../../test/fake-terminal.js';
+import { buildLayoutRoot } from './layout.js';
+import { bootScreen } from './screen.js';
 import { createTuiTheme, setTuiTheme } from './theme.js';
 import {
   createTranscriptView,
@@ -11,7 +14,7 @@ import {
   replayTranscript,
   TOOL_OUTPUT_PREVIEW_LINES,
 } from './transcript.js';
-import { visibleWidth } from './tui-boundary.js';
+import { Text, visibleWidth } from './tui-boundary.js';
 
 afterEach(() => {
   setTuiTheme(createTuiTheme('none'));
@@ -97,11 +100,53 @@ describe('transcript view (issue #23, slice A)', () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
-  it('keeps wheel/drag defaults: nearest ScrollView, chained deltas', () => {
+  it('scrolls with the mouse wheel and re-pins at the end (behavioural, #321)', () => {
+    // Driven through a real alt-screen and SGR wheel input, not by reading
+    // the ScrollView's constructor options back: the wheel over the
+    // transcript moves it one line per event and leaves follow-end, and
+    // wheeling back down to the bottom resumes following.
     const view = createTranscriptView();
-    expect(view.scroll.followEnd).toBe(true);
-    expect(view.scroll.primary).toBe(true);
-    expect(view.scroll.overscroll).toBe('chain');
+    view.applyLaneSnapshot(
+      { laneId: 'lane-1' },
+      Array.from({ length: 60 }, (_, i) => ({
+        id: `t${i}`,
+        kind: 'text' as const,
+        markdown: `line ${i}`,
+      })),
+      1,
+    );
+    const terminal = fakeTerminal(80, 24);
+    const screen = bootScreen(
+      terminal,
+      buildLayoutRoot({
+        tree: new Text('tree', 0, 0),
+        transcript: view.component,
+        status: new Text('status', 0, 0),
+        editor: new Text('editor', 0, 0),
+      }),
+    );
+    try {
+      screen.render();
+      const lines = (): string[] => screen.tui.getScreenLines();
+      expect(lines().join('\n')).toContain('line 59');
+      expect(view.isPinned).toBe(true);
+      const row = lines().findIndex((line) => line.includes('line 59')) + 1;
+      const wheel = (button: 64 | 65): void =>
+        terminal.inject(`\u001b[<${button};5;${row}M`);
+      const bottom = view.scrollTop;
+      for (let i = 0; i < 3; i += 1) wheel(64);
+      screen.render();
+      expect(view.isPinned).toBe(false);
+      expect(view.scrollTop).toBe(bottom - 3);
+      expect(lines().join('\n')).not.toContain('line 59');
+      for (let i = 0; i < 3; i += 1) wheel(65);
+      screen.render();
+      expect(view.scrollTop).toBe(bottom);
+      expect(view.isPinned).toBe(true);
+      expect(lines().join('\n')).toContain('line 59');
+    } finally {
+      screen.stop(() => {});
+    }
   });
 
   it('ignores stale resnapshots so a re-watch replays gap-free', () => {

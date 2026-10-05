@@ -24,6 +24,7 @@ import {
 import { createApprovalSurface } from '../../../packages/tui/src/approval-surface.js';
 import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
+import { fakeTerminal as sharedFakeTerminal } from '../../../test/fake-terminal.js';
 import {
   createProdTuiOrchestrator,
   mergeSeatFromAnswer,
@@ -59,45 +60,7 @@ function fakeTerminal(width: number): Terminal & {
   stopped: number;
   feed: (data: string) => void;
 } {
-  const writes: string[] = [];
-  const counts = { started: 0, stopped: 0 };
-  let handler: ((data: string) => void) | undefined;
-  return {
-    writes,
-    get started(): number {
-      return counts.started;
-    },
-    get stopped(): number {
-      return counts.stopped;
-    },
-    feed: (data: string) => handler?.(data),
-    start: (onInput: (data: string) => void) => {
-      counts.started += 1;
-      handler = onInput;
-    },
-    stop: () => {
-      counts.stopped += 1;
-    },
-    drainInput: () => Promise.resolve(),
-    write: (data: string) => writes.push(data),
-    get columns(): number {
-      return width;
-    },
-    get rows(): number {
-      return 30;
-    },
-    get kittyProtocolActive(): boolean {
-      return false;
-    },
-    moveBy: () => {},
-    hideCursor: () => {},
-    showCursor: () => {},
-    clearLine: () => {},
-    clearFromCursor: () => {},
-    clearScreen: () => {},
-    setTitle: () => {},
-    setProgress: () => {},
-  };
+  return sharedFakeTerminal(width, 30);
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {

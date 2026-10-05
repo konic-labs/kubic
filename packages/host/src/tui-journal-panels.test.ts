@@ -16,6 +16,7 @@ import {
   runTuiCommand,
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import type { FileJournalStore } from '../../exec/src/journal.js';
 import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
@@ -48,44 +49,7 @@ afterEach(() => {
 type Step = Parameters<typeof fauxAssistantMessage>[0];
 
 function recordingTerminal() {
-  const writes: string[] = [];
-  const counts = { started: 0, stopped: 0 };
-  let handler: ((data: string) => void) | undefined;
-  return {
-    writes,
-    counts,
-    mark: (): number => writes.length,
-    since: (mark: number): string => writes.slice(mark).join(''),
-    feed: (data: string) => handler?.(data),
-    terminal: {
-      start: (input: (data: string) => void) => {
-        counts.started += 1;
-        handler = input;
-      },
-      stop: () => {
-        counts.stopped += 1;
-      },
-      drainInput: () => Promise.resolve(),
-      write: (data: string) => writes.push(data),
-      get columns(): number {
-        return 120;
-      },
-      get rows(): number {
-        return 40;
-      },
-      get kittyProtocolActive(): boolean {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    },
-  };
+  return terminalRig(120, 40);
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {

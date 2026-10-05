@@ -12,6 +12,7 @@ import {
   runTuiCommand,
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
@@ -94,39 +95,12 @@ function fakeTerminal(): {
   started: () => number;
   feed: (data: string) => void;
 } {
-  const writes: string[] = [];
-  let started = 0;
-  let handler: ((data: string) => void) | undefined;
+  const rig = terminalRig(240, 30);
   return {
-    writes,
-    started: () => started,
-    feed: (data) => handler?.(data),
-    terminal: {
-      start: (input: (data: string) => void) => {
-        started += 1;
-        handler = input;
-      },
-      stop: () => {},
-      drainInput: () => Promise.resolve(),
-      write: (data: string) => writes.push(data),
-      get columns(): number {
-        return 240;
-      },
-      get rows(): number {
-        return 30;
-      },
-      get kittyProtocolActive(): boolean {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    },
+    terminal: rig.terminal,
+    writes: rig.writes,
+    started: () => rig.counts.started,
+    feed: rig.feed,
   };
 }
 

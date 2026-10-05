@@ -9,6 +9,7 @@ import {
   runTuiCommand,
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
+import { fakeTerminal as sharedFakeTerminal } from '../../../test/fake-terminal.js';
 import { tuiTheme } from './theme.js';
 import type { Terminal } from './tui-boundary.js';
 
@@ -24,43 +25,7 @@ function fakeTerminal(
   started: number;
   stopped: number;
 } {
-  const writes: string[] = [];
-  const counts = { started: 0, stopped: 0 };
-  return {
-    writes,
-    get started(): number {
-      return counts.started;
-    },
-    get stopped(): number {
-      return counts.stopped;
-    },
-    start: (onInput: (data: string) => void) => {
-      counts.started++;
-      onStart?.(onInput);
-    },
-    stop: () => {
-      counts.stopped++;
-    },
-    drainInput: () => Promise.resolve(),
-    write: (data: string) => writes.push(data),
-    get columns(): number {
-      return width;
-    },
-    get rows(): number {
-      return 30;
-    },
-    get kittyProtocolActive(): boolean {
-      return false;
-    },
-    moveBy: () => {},
-    hideCursor: () => {},
-    showCursor: () => {},
-    clearLine: () => {},
-    clearFromCursor: () => {},
-    clearScreen: () => {},
-    setTitle: () => {},
-    setProgress: () => {},
-  };
+  return sharedFakeTerminal(width, 30, { onStart });
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {

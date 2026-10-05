@@ -18,6 +18,7 @@ import {
   type TuiProcessEvents,
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import type { OperationKillRegistry } from '../../worker/src/lane/abort.js';
 import {
@@ -47,54 +48,25 @@ afterEach(() => {
 
 // One ordered log shared by the terminal and the printer.
 function recordingTerminal(log: string[]) {
-  const counts = { started: 0, stopped: 0, drained: 0 };
-  let handler: ((data: string) => void) | undefined;
   let throwOnWrite = false;
+  const rig = terminalRig(100, 30, {
+    onStop: () => log.push('TERM-STOP'),
+    onDrain: () => log.push('DRAIN'),
+    onWrite: (data) => {
+      if (throwOnWrite) {
+        throwOnWrite = false;
+        throw new Error('render exploded');
+      }
+      log.push(`TERM:${data}`);
+    },
+  });
   return {
-    counts,
+    counts: rig.counts,
     armWriteFailure: () => {
       throwOnWrite = true;
     },
-    feed: (data: string) => handler?.(data),
-    terminal: {
-      start: (input: (data: string) => void) => {
-        counts.started += 1;
-        handler = input;
-      },
-      stop: () => {
-        counts.stopped += 1;
-        log.push('TERM-STOP');
-      },
-      drainInput: () => {
-        counts.drained += 1;
-        log.push('DRAIN');
-        return Promise.resolve();
-      },
-      write: (data: string) => {
-        if (throwOnWrite) {
-          throwOnWrite = false;
-          throw new Error('render exploded');
-        }
-        log.push(`TERM:${data}`);
-      },
-      get columns(): number {
-        return 100;
-      },
-      get rows(): number {
-        return 30;
-      },
-      get kittyProtocolActive(): boolean {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    },
+    feed: rig.feed,
+    terminal: rig.terminal,
   };
 }
 

@@ -21,6 +21,7 @@ import {
   type TuiRunDeps,
   TuiTurnRunner,
 } from '../../../apps/kubic/src/tui-run.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../exec/src/journal.js';
@@ -155,45 +156,7 @@ function fakeTerminal(
   width: number,
   onStart?: (input: (data: string) => void) => void,
 ) {
-  const writes: string[] = [];
-  const counts = { started: 0, stopped: 0 };
-  let handler: ((data: string) => void) | undefined;
-  return {
-    writes,
-    counts,
-    terminal: {
-      start: (input: (data: string) => void) => {
-        counts.started += 1;
-        handler = input;
-        onStart?.(input);
-      },
-      stop: () => {
-        counts.stopped += 1;
-      },
-      drainInput: () => Promise.resolve(),
-      write: (data: string) => writes.push(data),
-      get columns(): number {
-        return width;
-      },
-      get rows(): number {
-        return 30;
-      },
-      get kittyProtocolActive(): boolean {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    },
-    feed: (data: string): void => {
-      handler?.(data);
-    },
-  };
+  return terminalRig(width, 30, { onStart });
 }
 
 function sessionLogIncludes(root: string, needle: string): boolean {

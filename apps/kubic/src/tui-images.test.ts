@@ -8,13 +8,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
 } from '../../../packages/worker/src/pi-boundary.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   bootTuiLane,
   PASTE_IDLE_MS,
@@ -99,40 +99,7 @@ function fauxModels(
 }
 
 function recordingTerminal() {
-  const writes: string[] = [];
-  const counts = { started: 0 };
-  let handler: ((data: string) => void) | undefined;
-  return {
-    writes,
-    counts,
-    feed: (data: string) => handler?.(data),
-    terminal: {
-      start: (input: (data: string) => void) => {
-        counts.started += 1;
-        handler = input;
-      },
-      stop: () => {},
-      drainInput: () => Promise.resolve(),
-      write: (data: string) => writes.push(data),
-      get columns(): number {
-        return 140;
-      },
-      get rows(): number {
-        return 30;
-      },
-      get kittyProtocolActive(): boolean {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    } satisfies Terminal,
-  };
+  return terminalRig(140, 30);
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {

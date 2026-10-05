@@ -21,6 +21,7 @@ import {
   type TuiRunOptions,
   tuiDepsWithDefaults,
 } from '../../../../apps/kubic/src/tui-run.js';
+import { terminalRig } from '../../../../test/fake-terminal.js';
 import { NodeExecutionEnv } from '../../../exec/src/env.js';
 import { FileJournalStore } from '../../../exec/src/journal.js';
 import { fauxToolUse } from '../../../worker/src/lane/test-harness.js';
@@ -312,40 +313,7 @@ function twoModels(): MutableModels {
 }
 
 function recordingTerminal() {
-  const writes: string[] = [];
-  const counts = { started: 0 };
-  let handler: ((data: string) => void) | undefined;
-  return {
-    writes,
-    counts,
-    feed: (data: string) => handler?.(data),
-    terminal: {
-      start: (input: (data: string) => void) => {
-        counts.started += 1;
-        handler = input;
-      },
-      stop: () => {},
-      drainInput: () => Promise.resolve(),
-      write: (data: string) => writes.push(data),
-      get columns(): number {
-        return 100;
-      },
-      get rows(): number {
-        return 30;
-      },
-      get kittyProtocolActive(): boolean {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    },
-  };
+  return terminalRig(100, 30);
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {

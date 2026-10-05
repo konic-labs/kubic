@@ -17,6 +17,7 @@ import {
   createModels,
   fauxProvider,
 } from '../../../packages/worker/src/pi-boundary.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   bootTuiLane,
   resolveTuiTheme,
@@ -38,37 +39,7 @@ function recordingTerminal(): {
   feed: (data: string) => void;
   terminal: Terminal;
 } {
-  const writes: string[] = [];
-  let handler: ((data: string) => void) | undefined;
-  return {
-    writes,
-    feed: (data: string) => handler?.(data),
-    terminal: {
-      start: (input: (data: string) => void) => {
-        handler = input;
-      },
-      stop: () => {},
-      drainInput: () => Promise.resolve(),
-      write: (data: string) => writes.push(data),
-      get columns(): number {
-        return 120;
-      },
-      get rows(): number {
-        return 30;
-      },
-      get kittyProtocolActive(): boolean {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    } satisfies Terminal,
-  };
+  return terminalRig(120, 30);
 }
 
 const made: string[] = [];

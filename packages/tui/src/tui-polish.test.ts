@@ -1,8 +1,9 @@
 // TUI polish: Konic palette, transcript tool blocks, streaming echo,
 // working indicator, header, compact tree. Headless snapshots of pure
 // render functions only (no terminal, no network).
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TuiTurnRunner } from '../../../apps/kubic/src/tui-run.js';
+import { fakeTerminal } from '../../../test/fake-terminal.js';
 import { sanitizeLaneText } from './lane-cells.js';
 import { buildLayoutRoot, renderLayout, TREE_MAX_ROWS } from './layout.js';
 import { bootScreen } from './screen.js';
@@ -29,7 +30,6 @@ import {
   renderKeyHints,
   renderWorkingLine,
 } from './tui-app.js';
-import type { Terminal } from './tui-boundary.js';
 import { Text, visibleWidth } from './tui-boundary.js';
 
 const ESC = String.fromCharCode(27);
@@ -423,51 +423,57 @@ describe('review fixes', () => {
   });
 
   it('fully redraws on a width change even through the differential update', async () => {
-    const writes: string[] = [];
-    let columns = 80;
-    const terminal = {
-      start: () => {},
-      stop: () => {},
-      drainInput: () => Promise.resolve(),
-      write: (data: string) => writes.push(data),
-      get columns() {
-        return columns;
-      },
-      get rows() {
-        return 20;
-      },
-      get kittyProtocolActive() {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    } as unknown as Terminal;
+    // Deterministic, no sleeps (issue #321): pi-tui schedules a requested
+    // render with process.nextTick, then a setTimeout bounded by its render
+    // interval, measured with performance.now(). Faking only the timer and the
+    // clock lets the real nextTick fire, after which the pending render timer
+    // is run directly — whatever the interval constant is.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    const flush = async (): Promise<void> => {
+      await new Promise<void>((resolve) => process.nextTick(resolve));
+      vi.runOnlyPendingTimers();
+    };
+    const frameOf = (written: string): string => {
+      const start = written.lastIndexOf(`${ESC}[?2026h`);
+      const end = written.indexOf(`${ESC}[?2026l`, start);
+      return start >= 0 && end > start ? written.slice(start, end) : '';
+    };
+    const terminal = fakeTerminal(80, 20);
+    const body = new Text('body', 0, 0);
     const screen = bootScreen(
       terminal,
       buildLayoutRoot({
         tree: new Text('tree', 0, 0),
-        transcript: new Text('body', 0, 0),
+        transcript: body,
         status: new Text('status', 0, 0),
         editor: new Text('editor', 0, 0),
       }),
     );
-    screen.render();
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    const before = writes.join('').length;
-    screen.update();
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(writes.join('').slice(before)).not.toContain(`${ESC}[2J`);
-    columns = 60;
-    const mark = writes.join('').length;
-    screen.update();
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(writes.join('').slice(mark)).toContain(`${ESC}[2J`);
-    screen.stop(() => {});
+    try {
+      screen.render();
+      // Same width, changed content: a differential frame IS written (so the
+      // next assertion cannot pass on an empty write) and it never clears.
+      body.setText('body, changed');
+      let mark = terminal.writes.length;
+      screen.update();
+      await flush();
+      const differential = frameOf(terminal.writes.slice(mark).join(''));
+      expect(differential).toContain('changed');
+      expect(differential).not.toContain(`${ESC}[2J`);
+      // Width change: the update must write a full frame that clears first,
+      // and the screen read back is laid out at the new width.
+      terminal.setSize(60, 20);
+      mark = terminal.writes.length;
+      screen.update();
+      await flush();
+      const written = terminal.writes.slice(mark).join('');
+      expect(frameOf(written)).not.toBe('');
+      expect(written).toContain(`${ESC}[2J`);
+      for (const line of screen.tui.getScreenLines())
+        expect(visibleWidth(line)).toBeLessThanOrEqual(60);
+    } finally {
+      screen.stop(() => {});
+      vi.useRealTimers();
+    }
   });
 });

@@ -61,9 +61,9 @@ describe('transfer slice 1: artifact, record, render, validator (#184)', () => {
         'handoff',
       ),
     ).toThrow(/message-history/);
-    expect(() =>
-      assertNoTranscript({ transcript: [] }, 'handoff'),
-    ).toThrow(TransferRejectedError);
+    expect(() => assertNoTranscript({ transcript: [] }, 'handoff')).toThrow(
+      TransferRejectedError,
+    );
     // Plain strings and §68-shaped rows pass untouched.
     expect(() =>
       assertNoTranscript(

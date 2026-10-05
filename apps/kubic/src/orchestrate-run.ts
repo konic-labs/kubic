@@ -3566,10 +3566,22 @@ export async function orchestrateDepsWithDefaults(
       );
     },
     // The run's start names the §19 mode in the §60 ledger (issue #278).
-    // Best-effort like every other row: a dead ledger never fails the run.
+    // Best-effort like every other row: a dead ledger never fails the run —
+    // and outside a repo there is no ledger dir at all (the §78 gate owns
+    // that refusal), so the root resolution itself is guarded, not just
+    // the append.
     auditRunStart: (record): void => {
+      let dir: string;
+      try {
+        dir = auditLedgerDirFor(needRoot());
+      } catch (error) {
+        debug(
+          `audit: run start not recorded — ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return;
+      }
       appendToLedger(
-        auditLedgerDirFor(needRoot()),
+        dir,
         runStartAudit({
           sessionId: record.sessionId,
           command: `kubic ${record.command}`,

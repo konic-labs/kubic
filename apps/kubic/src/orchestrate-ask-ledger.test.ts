@@ -164,3 +164,33 @@ describe('ask ledger provenance on the live orchestrate path (issue #282)', () =
     ]);
   });
 });
+
+describe('run:start audit outside a git repo (issue #278 regression)', () => {
+  it('skips the ledger write instead of throwing — the §78 gate owns the refusal', async () => {
+    // A bare tmp dir, deliberately NOT a repo: root resolves undefined.
+    const bare = scratch('kubic-278-norepo-');
+    const debugLines: string[] = [];
+    const deps = await orchestrateDepsWithDefaults({
+      out: () => undefined,
+      err: () => undefined,
+      cwd: bare,
+      debug: (line: string) => {
+        debugLines.push(line);
+      },
+    });
+    expect(() =>
+      deps.auditRunStart?.({
+        sessionId: 'orch-outside',
+        command: 'orchestrate',
+        mode: 'orchestrator',
+        runMode: 'interactive',
+        workspace: bare,
+        posture: 'approvals',
+        autonomous: false,
+      }),
+    ).not.toThrow();
+    expect(debugLines).toContainEqual(
+      expect.stringContaining('run start not recorded'),
+    );
+  });
+});

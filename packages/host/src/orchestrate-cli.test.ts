@@ -588,6 +588,25 @@ describe('per-agent role and model binding (issue #178)', () => {
 });
 
 describe('orchestrate non-git refusal (issue #76, recoded by #372)', () => {
+  // Issue #278 regression: the run:start audit fired BEFORE this gate,
+  // and the prod hook's needRoot() threw outside a repo — exit 1
+  // instead of 5. No run starts here, so no run:start row either.
+  it('emits no run:start audit before the non-git refusal', async () => {
+    const audits: unknown[] = [];
+    const world = makeWorld({
+      isGitRepo: () => false,
+      auditRunStart: (record) => {
+        audits.push(record);
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'do things', agents: ['alpha'] },
+      world.deps,
+    );
+    expect(code).toBe(5);
+    expect(audits).toEqual([]);
+  });
+
   it('refuses outside a git repo with exit 5 and never runs solo', async () => {
     const world = makeWorld({ isGitRepo: () => false });
     const code = await runOrchestrateCommand(

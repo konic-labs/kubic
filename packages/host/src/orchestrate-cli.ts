@@ -17,6 +17,7 @@
 // apps/kubic/src/orchestrate-run.ts).
 
 import {
+  BUDGET_DIMENSIONS,
   type RunMode,
   resolveBlockedSpawn,
   resolveRunMode,
@@ -1832,18 +1833,6 @@ export async function runOrchestrateCommand(
     return RUN_EXIT_USAGE;
   }
   const sessionId = parsed.sessionId ?? `orch-${now()}`;
-  // Issue #278 (§19): the run's start names the §19 mode through the
-  // audit hook — the composition root appends the run:start row to the
-  // §60 ledger. Before any worktree, session or child exists.
-  deps.auditRunStart?.({
-    sessionId,
-    command: 'orchestrate',
-    mode: 'orchestrator',
-    runMode,
-    workspace: deps.repoRoot ?? process.cwd(),
-    posture: parsed.fullAccess ? 'full-access' : 'approvals',
-    autonomous: parsed.autonomous,
-  });
 
   // The manager lane registers BEFORE anything spawns (issue #103, §40).
   // Registration validates the requested toolset against the allowlist, so
@@ -1988,6 +1977,20 @@ export async function runOrchestrateCommand(
     );
     return RUN_EXIT_WORKSPACE_UNAVAILABLE;
   }
+  // Issue #278 (§19): the run's start names the §19 mode through the
+  // audit hook — the composition root appends the run:start row to the
+  // §60 ledger. After the §78 workspace gate (a refused run never starts,
+  // so it leaves no run:start row) and before any worktree, session or
+  // child exists.
+  deps.auditRunStart?.({
+    sessionId,
+    command: 'orchestrate',
+    mode: 'orchestrator',
+    runMode,
+    workspace: deps.repoRoot ?? process.cwd(),
+    posture: parsed.fullAccess ? 'full-access' : 'approvals',
+    autonomous: parsed.autonomous,
+  });
 
   // Resume: re-attach to the stored session. The stored payload is
   // untrusted JSON — anything malformed fails closed here as

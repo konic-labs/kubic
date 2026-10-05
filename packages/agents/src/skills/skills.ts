@@ -531,6 +531,46 @@ function readPackageSkillDirs(
   );
 }
 
+// Issue #423: a package-declared skill dir is confined to the ancestor
+// whose package.json declared it (the trusted root it was discovered
+// under). An absolute path or a `..` escape landing outside never loads,
+// and neither does a symlink resolving outside (realpath, so links
+// count) — each refusal carries its reason on the log sink. Without the
+// bridge's realPath seam the check is lexical only.
+function isWithinDir(path: string, dir: string): boolean {
+  const cleanDir = dir.replace(/\/*$/, '') || '/';
+  if (cleanDir === '/') return true;
+  return path === cleanDir || path.startsWith(`${cleanDir}/`);
+}
+
+function confinedPackageDir(
+  bridge: FileBridge,
+  declared: string,
+  ancestor: string,
+  log?: (line: string) => void,
+): string | undefined {
+  const lexical = normalizeSkillPath(declared);
+  if (!isWithinDir(lexical, ancestor)) {
+    log?.(
+      `skill skipped (package skill '${declared}' outside trusted root '${ancestor}')`,
+    );
+    return undefined;
+  }
+  let resolved = lexical;
+  try {
+    resolved = normalizeSkillPath(bridge.realPath?.(lexical) ?? lexical);
+  } catch {
+    resolved = lexical;
+  }
+  if (!isWithinDir(resolved, ancestor)) {
+    log?.(
+      `skill skipped (package skill '${declared}' resolves outside trusted root '${ancestor}')`,
+    );
+    return undefined;
+  }
+  return lexical;
+}
+
 export function discoverSkills(
   options: DiscoverSkillsOptions,
 ): DiscoverSkillsResult {
@@ -589,10 +629,15 @@ export function discoverSkills(
       }
       // Package-declared dirs: nearest package.json wins per name via the
       // same shadowing map (ancestors far-to-near so nearer shadows).
+      // Issue #423: each entry is confined to the ancestor that declared
+      // it — absolute paths, `..` escapes and outside-resolving symlinks
+      // are refused with a reason, never loaded under project trust.
       for (const ancestor of chain) {
         if (!trustFor(ancestor)) continue;
         for (const dir of readPackageSkillDirs(bridge, ancestor, log)) {
-          add(loadSkillDir(bridge, dir, 'package', log));
+          const confined = confinedPackageDir(bridge, dir, ancestor, log);
+          if (confined !== undefined)
+            add(loadSkillDir(bridge, confined, 'package', log));
         }
       }
     } else {

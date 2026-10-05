@@ -18,7 +18,10 @@ import {
   resolveTaskSkillRefs,
 } from './skills.js';
 
-function bridgeFromEnv(env: FakeExecutionEnv): FileBridge {
+function bridgeFromEnv(
+  env: FakeExecutionEnv,
+  links: Record<string, string> = {},
+): FileBridge {
   const isDir = (dir: string, name: string): boolean => {
     const clean = dir.replace(/\/*$/, '');
     const full = clean === '' ? name : `${clean}/${name}`;
@@ -98,6 +101,23 @@ function bridgeFromEnv(env: FakeExecutionEnv): FileBridge {
     remove: (): void => undefined,
     createTempDir: (): string => '/fake-tmp',
     createTempFile: (): string => '/fake-tmp-file',
+    // Issue #423: symlink stand-in — the fake fs cannot model links, so
+    // tests declare lexical-prefix → target mappings here. Longest prefix
+    // wins, applied iteratively so chained links resolve fully.
+    realPath: (path: string): string => {
+      let resolved = path.replace(/\/*$/, '') || '/';
+      for (let i = 0; i < 10; i++) {
+        const from = Object.keys(links)
+          .sort((a, b) => b.length - a.length)
+          .find(
+            (candidate) =>
+              resolved === candidate || resolved.startsWith(`${candidate}/`),
+          );
+        if (from === undefined) break;
+        resolved = `${links[from]}${resolved.slice(from.length)}`;
+      }
+      return resolved || '/';
+    },
   };
 }
 
@@ -486,6 +506,94 @@ describe('skill discovery (issue #36)', () => {
     });
     expect(result.skills[0]?.name).toBe('mystery');
     expect(result.skills[0]?.description).toBe('Do the mysterious thing.');
+  });
+});
+
+// Package-declared skill confinement (issue #423): a package.json entry
+// naming an absolute path, a `..` escape, or a symlink resolving outside
+// the declaring ancestor never loads — each refusal carries its reason on
+// the log sink.
+describe('package-declared skill confinement (issue #423)', () => {
+  it('refuses absolute and ../-escape package entries outside the declaring dir', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/repo/pkg/package.json',
+      JSON.stringify({
+        skills: ['/abs/elsewhere/evil', '../outside', './local-ok'],
+      }),
+    );
+    env.fs.writeFile(
+      '/repo/pkg/local-ok/SKILL.md',
+      skillMd('name: ok\ndescription: Local skill'),
+    );
+    const lines: string[] = [];
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/pkg',
+      trusted: true,
+      log: (line) => {
+        lines.push(line);
+      },
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['ok']);
+    expect(
+      lines.filter((line) => /outside trusted root/.test(line)),
+    ).toHaveLength(2);
+  });
+
+  it('refuses a package entry whose symlink resolves outside the declaring dir', () => {
+    const env = new FakeExecutionEnv({});
+    const bridge = bridgeFromEnv(env, {
+      '/repo/pkg/linked': '/outside/real',
+    });
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/repo/pkg/package.json',
+      JSON.stringify({ skills: ['./linked'] }),
+    );
+    // Present at the lexical path (the link itself is readable); the
+    // realPath stand-in above resolves it outside the repo.
+    env.fs.writeFile(
+      '/repo/pkg/linked/SKILL.md',
+      skillMd('name: smuggled\ndescription: Via symlink'),
+    );
+    const lines: string[] = [];
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/pkg',
+      trusted: true,
+      log: (line) => {
+        lines.push(line);
+      },
+    });
+    expect(result.skills).toEqual([]);
+    expect(lines.some((line) => /outside trusted root/.test(line))).toBe(true);
+  });
+
+  it('keeps a package entry whose symlink resolves inside the declaring dir', () => {
+    const env = new FakeExecutionEnv({});
+    const bridge = bridgeFromEnv(env, {
+      '/repo/pkg/alias': '/repo/pkg/real',
+    });
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/repo/pkg/package.json',
+      JSON.stringify({ skills: ['./alias'] }),
+    );
+    env.fs.writeFile(
+      '/repo/pkg/alias/SKILL.md',
+      skillMd('name: inner\ndescription: Inside link'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/pkg',
+      trusted: true,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['inner']);
   });
 });
 

@@ -327,10 +327,26 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
   const worktrees = new Map<string, string>();
 
   /**
+   * Scheduler slot ownership (issue #425): a launch holds its admission
+   * slot from the spawn until its settlement (or its cancellation) frees
+   * it. A follow-up holds none — the worker's process already ended and
+   * its slot freed at the initial settlement — so neither a follow-up's
+   * settlement nor a cancel aimed at a pending follow-up touches the
+   * scheduler. If a follow-up ever respawns a process, it must re-enter
+   * through ParallelScheduler.requestSpawn like any other spawn instead
+   * of reusing the freed slot.
+   */
+  const slotsHeld = new Set<string>();
+  const releaseSlot = (agentId: string): void => {
+    if (slotsHeld.delete(agentId)) deps.scheduler.complete(agentId);
+  };
+
+  /**
    * Track a background worker promise (launch or follow-up): settlement
-   * records the result and frees the scheduler slot; a launch that never
-   * produces one fails closed with a synthesized `failed` result, never a
-   * hang `wait_for_agent` cannot observe.
+   * records the result and frees the scheduler slot when the tracked work
+   * holds one (a launch — never a follow-up, see slotsHeld above); a
+   * launch that never produces one fails closed with a synthesized
+   * `failed` result, never a hang `wait_for_agent` cannot observe.
    */
   const trackBackground = (
     agentId: string,
@@ -340,7 +356,7 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
     void worked.then(
       (result) => {
         settle.noteSettled(agentId, result);
-        deps.scheduler.complete(agentId);
+        releaseSlot(agentId);
       },
       (error) => {
         settle.noteSettled(
@@ -370,7 +386,7 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
             },
           }),
         );
-        deps.scheduler.complete(agentId);
+        releaseSlot(agentId);
       },
     );
   };
@@ -518,6 +534,8 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
       // claim converts to a launched worker here.
       claimed.delete(agentId);
       settle.register(agentId);
+      // The launch holds its admission slot from here (issue #425).
+      slotsHeld.add(agentId);
       worktrees.set(agentId, prepared.worktreePath);
       deps.noteSpawned(agentId);
       trackBackground(
@@ -697,8 +715,10 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
         );
       }
       // The kill ends the child; the lane records the cancellation so
-      // wait/collect observe it and the scheduler slot frees — the run
-      // continues with its siblings.
+      // wait/collect observe it and the run continues with its siblings.
+      // The scheduler slot frees only when this cancel ends work that
+      // still holds one (issue #425): a running launch — never a pending
+      // follow-up, whose slot freed at the initial settlement.
       const cancelled = buildAgentResult({
         status: 'cancelled',
         summary: `worker '${agentId}' cancelled by the manager`,
@@ -719,7 +739,7 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
         },
       });
       settle.noteSettled(agentId, cancelled);
-      deps.scheduler.complete(agentId);
+      releaseSlot(agentId);
       return {
         content: [
           {

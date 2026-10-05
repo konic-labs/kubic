@@ -983,6 +983,107 @@ describe('manager inspect/cancel/send adapters (issue #415)', () => {
   });
 });
 
+describe('manager cancel during a pending follow-up (issue #425)', () => {
+  const tests: Rig[] = [];
+  afterEach(async () => {
+    for (const test of tests.splice(0)) {
+      for (const resolve of test.gates.values()) {
+        resolve(completedResult('cleanup', []));
+      }
+      for (const resolve of test.followUpGates.values()) {
+        resolve(completedResult('cleanup', []));
+      }
+      for (const lane of test.lanes.splice(0)) {
+        await lane.close(BACKGROUND_CONTEXT);
+      }
+    }
+  });
+  function useRig(options?: Parameters<typeof rig>[0]): Rig {
+    const test = rig(options);
+    tests.push(test);
+    return test;
+  }
+  /** Count the scheduler slot releases the adapters actually perform. */
+  function countCompletes(test: Rig): string[] {
+    const completes: string[] = [];
+    const scheduler = test.deps.scheduler;
+    const actual = scheduler.complete.bind(scheduler);
+    scheduler.complete = (agentId: string) => {
+      completes.push(agentId);
+      return actual(agentId);
+    };
+    return completes;
+  }
+  /** Spawn, settle, and leave a send_to_agent follow-up pending. */
+  async function settledWithPendingFollowUp(
+    test: Rig,
+  ): Promise<ManagerLaneHandle> {
+    const lane = await bootLane(test, [
+      fauxAssistantMessage(
+        [fauxToolCall('spawn_agent', { role: 'tester', task: 'prove it' })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('spawned'),
+    ]);
+    await runTurn(lane, 'go');
+    test.settle('worker-1');
+    await callTool(lane, 'wait_for_agent', { agentId: 'worker-1' });
+    await callTool(lane, 'send_to_agent', {
+      agentId: 'worker-1',
+      prompt: 'now cover the edge case',
+    });
+    return lane;
+  }
+
+  it('cancel during a pending follow-up resolves as cancelled: no throw, run continues, no slot touched', async () => {
+    const test = useRig();
+    const completes = countCompletes(test);
+    const lane = await settledWithPendingFollowUp(test);
+    // The initial settlement freed the worker's scheduler slot.
+    expect(completes).toEqual(['worker-1']);
+    // The worker process already ended (it settled before the follow-up),
+    // so the seam must tolerate the cancel — the rig's seam is the prod
+    // shape (records the id, never throws on an ended process).
+    const cancelled = (await callTool(lane, 'cancel_agent', {
+      agentId: 'worker-1',
+    })) as { content: Array<{ text: string }> };
+    expect(JSON.parse(cancelled.content[0]?.text ?? '{}')).toEqual({
+      agentId: 'worker-1',
+      status: 'cancelled',
+    });
+    expect(test.cancelled).toEqual(['worker-1']);
+    // The follow-up held no scheduler slot, so the cancel frees none.
+    expect(completes).toEqual(['worker-1']);
+    // wait/collect observe the cancellation: the run continues past it.
+    const collected = (await callTool(lane, 'collect_result', {
+      agentId: 'worker-1',
+    })) as { content: Array<{ text: string }> };
+    expect(JSON.parse(collected.content[0]?.text ?? '{}')).toMatchObject({
+      status: 'cancelled',
+    });
+  });
+
+  it('a follow-up settlement frees no scheduler slot', async () => {
+    const test = useRig();
+    const completes = countCompletes(test);
+    const lane = await settledWithPendingFollowUp(test);
+    expect(completes).toEqual(['worker-1']);
+    test.settleFollowUp(
+      'worker-1',
+      completedResult('covered it', ['edge.txt']),
+    );
+    const waited = (await callTool(lane, 'wait_for_agent', {
+      agentId: 'worker-1',
+    })) as { content: Array<{ text: string }> };
+    expect(JSON.parse(waited.content[0]?.text ?? '{}')).toMatchObject({
+      status: 'completed',
+    });
+    // The follow-up ran with no scheduler slot: its settlement releases none.
+    expect(completes).toEqual(['worker-1']);
+    expect(test.deps.scheduler.runningIds()).toEqual([]);
+  });
+});
+
 describe('manager spawn review findings (issue #414 round 1)', () => {
   const tests: Rig[] = [];
   afterEach(async () => {

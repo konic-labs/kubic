@@ -374,11 +374,6 @@ export interface TuiApp {
   setBusy(busy: boolean): void;
   isBusy(): boolean;
   setEditorFooter(text: string): void;
-  // Issue #334: the queued follow-ups (`pi.inbox`), oldest first. The loop
-  // keys its own prompt text by submission id (the inbox carries ids, not
-  // text) and calls this on every inbox change; a fresh call replaces the
-  // rows.
-  setQueuedPrompts(prompts: readonly string[]): void;
   // Issue #334: the echo row for a prompt whose turn has STARTED but whose
   // user entry is not committed yet — a queued follow-up the inbox placed.
   // A later committed prompt cell clears it, exactly like a direct submit.
@@ -1255,10 +1250,13 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         const last = lane.tools.at(-1);
         if (last !== undefined) diffPanel.followToolCall(last.toolCallId);
       }
-      // The live model label stays the app's own (#227: `/model` moves it);
-      // the state's session facts drive the mode and posture indicators.
-      setMode(state.session.mode);
-      status.setApprovalsSkipped(state.session.approvalsSkipped);
+      // Issue #333 (review): the state's session facts are the SEED — the
+      // lane the boot selected — and the projector never updates them from
+      // events. Writing them back here would silently revert the operator's
+      // own Ctrl-G toggle or the posture the installed policy reports (and
+      // the mode is read at submit time, so the next prompt would go to the
+      // lane the session just left). The app owns both; a consumer that
+      // wants the live values reads `mode()` / the status bar.
     },
     applyLaneEntries: (entries: ReadonlyArray<LaneEntryLike>): void => {
       // The revision counter makes every apply a fresh snapshot: the
@@ -1347,9 +1345,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     isBusy: (): boolean => busy,
     setEditorFooter: (text: string): void => {
       editorRow.setFooter(text);
-    },
-    setQueuedPrompts: (prompts: readonly string[]): void => {
-      transcript.setQueuedPrompts(prompts);
     },
     restoreDraft: (prompt: string): void => {
       restoreDraft(prompt);

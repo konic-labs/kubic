@@ -2146,6 +2146,25 @@ export class TuiTurnRunner {
     this.projector = new PresentationProjector(app.presentationSeed());
   }
 
+  // Issue #333 (review): the inbox carries submission ids, not prompt text —
+  // the loop owns the text of the submissions it queued, so it hands its
+  // in-place map in and the projector resolves `lane.queued` from it. The
+  // state is then the ONE writer of the `queued:` rows: the app writes them
+  // on every presentation apply instead of only on the two events that used
+  // to re-sync them.
+  setQueuedText(text: ReadonlyMap<string, string>): void {
+    this.projector.setQueuedText(text);
+  }
+
+  // Issue #333 (review): the queue map changed under the state (a submission
+  // was just admitted), so hand the app the resolved state now — the state is
+  // the only writer of the `queued:` rows, and without this the row would
+  // wait for the next lane event.
+  refreshPresentation(): void {
+    this.app.applyPresentation(this.projector.state());
+    this.onUpdate?.();
+  }
+
   // Issue #227: the live model label (updated by a `/model` switch), so the
   // `/model` report and the headers never read a stale boot snapshot.
   get modelRef(): string {
@@ -2249,11 +2268,15 @@ export class TuiTurnRunner {
   // result) instead of re-reading the lane per event; tool status drives the
   // tree and usage rows drive the status bar (#398/D2).
   private readonly sink: LaneEventSink = (event: KubicLaneEvent): void => {
+    // The loop's own bookkeeping runs FIRST: it owns the queue map the state
+    // resolves `lane.queued` from (a `run-start` drops the id the harness just
+    // placed), so folding before it would hand the app a row the placement
+    // already consumed — and then no further event would clear it.
+    this.onLaneEvent?.(event);
     // Issue #333 (§66): the projector folds the event; the app renders the
     // state it produces (the presentation never folds raw events).
     this.projector.apply(event);
     this.app.applyPresentation(this.projector.state());
-    this.onLaneEvent?.(event);
     if (event.type === 'run-start') {
       // The run is placed: a latched Ctrl-C may now abort it for real, and a
       // submission the harness queued earlier (a follow-up waiting behind a
@@ -2961,13 +2984,11 @@ export async function runTuiCommand(
   const queuedText = new Map<string, string>();
   const queuedCount = (): number =>
     queuedInbox.filter((item) => queuedText.has(item.id)).length;
-  const syncQueuedRows = (): void => {
-    app.setQueuedPrompts(
-      queuedInbox
-        .map((item) => queuedText.get(item.id))
-        .filter((text): text is string => text !== undefined),
-    );
-  };
+  // Issue #333 (review): no `app.setQueuedPrompts` here — the state carries
+  // the queue (`turn.setQueuedText(queuedText)` below) and the app writes the
+  // rows from it on every presentation apply. Writing them from this side too
+  // was the bug: the app's own write on the NEXT event wiped what this one
+  // had just set.
   // Issue #305: `/new` and `/resume` replace the lane, so the drivers are
   // rebuilt (a fresh runner starts with an empty feed and no subscription).
   let turn: TuiTurnRunner | undefined;
@@ -2992,7 +3013,6 @@ export async function runTuiCommand(
             // just PLACED, so its row becomes the pending echo instead.
             if (event.type === 'inbox') {
               queuedInbox = event.items;
-              syncQueuedRows();
               if (!stopped) screen?.update();
             }
             if (event.type === 'run-start') {
@@ -3003,7 +3023,6 @@ export async function runTuiCommand(
                 queuedText.delete(id);
                 app.setPendingEcho(text);
               }
-              syncQueuedRows();
               // The placed submission is work in flight now: a queued
               // follow-up that waited behind a failed run starts the spinner
               // again (#334 review).
@@ -3014,6 +3033,7 @@ export async function runTuiCommand(
           boot.usageRows,
         );
   turn = buildTurn();
+  turn?.setQueuedText(queuedText);
   // Issue #327: the orchestrator turn the toggle switches to. Absent means
   // this boot is solo-only (viewer/fake lanes): the submit path refuses by
   // name instead of falling back into solo silently.
@@ -4208,8 +4228,10 @@ export async function runTuiCommand(
               : {
                   whenBusy: 'followUp',
                   onSubmitted: (id) => {
+                    // The rows follow from the state: the id's text is what
+                    // the projector resolves against this map.
                     queuedText.set(id, prompt);
-                    syncQueuedRows();
+                    turn?.refreshPresentation();
                   },
                 },
           );

@@ -512,11 +512,11 @@ describe('queued follow-ups and steers while a turn runs (issue #334)', () => {
     // A queued prompt is NOT echoed as a pending turn: the queued row is the
     // feedback (the lane's inbox drives it).
     expect(ui.render(100).join('\n')).not.toContain('› also run the tests');
-    ui.setQueuedPrompts(['also run the tests']);
+    ui.applyPresentation(presentation({ queued: ['also run the tests'] }));
     const doc = ui.render(100).join('\n');
     expect(doc).toContain('queued: also run the tests');
-    // The inbox list is a snapshot: a fresh call replaces it.
-    ui.setQueuedPrompts([]);
+    // The inbox list is a snapshot: a fresh state replaces it.
+    ui.applyPresentation(presentation());
     expect(ui.render(100).join('\n')).not.toContain('queued:');
   });
 
@@ -557,10 +557,10 @@ describe('queued follow-ups and steers while a turn runs (issue #334)', () => {
 
   it('echoes a queued prompt once its turn starts', () => {
     const ui = app();
-    ui.setQueuedPrompts(['queued prompt']);
+    ui.applyPresentation(presentation({ queued: ['queued prompt'] }));
     expect(ui.render(100).join('\n')).toContain('queued: queued prompt');
     // The inbox placed it: the row goes, the pending echo takes over.
-    ui.setQueuedPrompts([]);
+    ui.applyPresentation(presentation());
     ui.setPendingEcho('queued prompt');
     const doc = ui.render(100).join('\n');
     expect(doc).not.toContain('queued: queued prompt');
@@ -977,7 +977,7 @@ describe('slash commands in the app (issue #305)', () => {
       }),
     );
     ui.setPendingEcho('old echo');
-    ui.setQueuedPrompts(['old queue']);
+    ui.applyPresentation(presentation({ queued: ['old queue'] }));
     expect(ui.render(100).join('\n')).toContain('old turn');
 
     ui.resetSession({ sessionId: 'sess-2', model: 'alt/m2', thinking: 'high' });

@@ -3257,3 +3257,65 @@ describe('spawn cap (issue #413)', () => {
     expect(world.errLines.join('\n')).toMatch(/spawn_cap_exceeded/);
   });
 });
+
+describe('orchestrate completion tip check (issue #429)', () => {
+  async function settledRun(tip: string): Promise<{
+    saved: OrchestratorRunState;
+  }> {
+    const first = makeWorld({
+      requestApproval: () => ({ verdict: 'timeout', maxPendingMs: 25 }),
+      readBranchTip: () => tip,
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['w1'], session: 'sess-1' },
+      first.deps,
+    );
+    expect(code).toBe(4);
+    const saved = first.saved[first.saved.length - 1] as OrchestratorRunState;
+    expect(saved.completed?.map((entry) => entry.agentId)).toEqual(['w1']);
+    return { saved };
+  }
+
+  it('records the branch tip with the completion and reuses it when the tip matches', async () => {
+    const { saved } = await settledRun('sha-settle');
+    expect(saved.completed?.[0]?.tipSha).toBe('sha-settle');
+    const second = makeWorld({
+      loadState: () => structuredClone(saved),
+      readBranchTip: () => 'sha-settle',
+    });
+    const code = await runOrchestrateCommand(
+      { resume: true, session: 'sess-1' },
+      second.deps,
+    );
+    expect(code).toBe(0);
+    expect(second.calls.run).toEqual([]);
+    expect(second.calls.merge).toEqual(['w1']);
+  });
+
+  it('resume refuses a completion whose branch tip was rewritten', async () => {
+    const { saved } = await settledRun('sha-settle');
+    const tipCalls: string[] = [];
+    const second = makeWorld({
+      loadState: () => structuredClone(saved),
+      readBranchTip: () => {
+        tipCalls.push('probe');
+        return 'sha-rewritten';
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { resume: true, session: 'sess-1' },
+      second.deps,
+    );
+    // The stale hunks never merge: the worker runs again, settles a fresh
+    // completion on the rewritten tip, and merges that instead.
+    expect(tipCalls.length).toBeGreaterThan(0);
+    expect(second.calls.run).toEqual(['w1']);
+    expect(code).toBe(0);
+    expect(second.calls.merge).toEqual(['w1']);
+    expect(second.debugLines.join('\n')).toContain(
+      "resume: worker 'w1' completion tip moved",
+    );
+    const done = second.saved[second.saved.length - 1] as OrchestratorRunState;
+    expect(done.completed ?? []).toEqual([]);
+  });
+});

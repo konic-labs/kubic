@@ -364,7 +364,7 @@ Worktree names carry the session, so a later run with the same agents
 (e.g. the default `worker-1`/`worker-2`) always starts on fresh worktrees at
 the current HEAD — never on an earlier run's retained, possibly dirty or
 unmerged tree — and two runs in one repo never share a worktree. Only
-`--resume --session <id>` reuses that session's own worktrees; a fresh run
+`--resume --session <id>` reuses that session's own worktrees; a settled-but-unmerged worker whose worktree branch still matches is queued for merge without re-running — unless the branch tip moved under the same name (the tip sha is recorded at settle and compared on resume), in which case the stale completion is dropped and the worker runs again (issue #429). A fresh run
 whose session-scoped worktree or branch already exists fails closed with
 `code=worktree_exists`, exit 1, naming the `--resume` and
 `kubic clean --session <id>` ways out. A fresh run under a `--session <id>`

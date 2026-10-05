@@ -339,10 +339,14 @@ export interface OrchestratedWorkerRecord {
   agentId: string;
   branch: string;
   hunks: MergedHunk[];
+  // The branch tip sha at settle (issue #429): resume compares it against
+  // the current tip and refuses a completion recorded before a same-name
+  // rewrite. Absent on state written before #429 (unknown, not a refusal).
   // The worker's §68 result (issue #185): status, summary, provenance and
   // metrics — persisted with the run so resume, handoff and replay can read
   // what each worker did and cost. Absent on state written before #185.
   result?: AgentResult;
+  tipSha?: string;
 }
 
 // What a worker run hands back (issue #185): the hunks it produced plus its
@@ -487,6 +491,9 @@ function validStoredWorkerRecord(record: unknown): boolean {
   if (typeof entry.agentId !== 'string') return false;
   if (typeof entry.branch !== 'string') return false;
   if (!Array.isArray(entry.hunks)) return false;
+  if (entry.tipSha !== undefined && typeof entry.tipSha !== 'string') {
+    return false;
+  }
   if (entry.result !== undefined && !validateAgentResult(entry.result).valid) {
     return false;
   }
@@ -911,6 +918,17 @@ export interface OrchestrateCommandDeps {
     agentId: string,
     worktree: OrchestrateWorktree,
   ) => boolean | Promise<boolean>;
+  // Branch-tip probe (issue #429): the HEAD sha of the worker branch at
+  // settle is persisted with the completion; on resume a different tip
+  // means the branch was rewritten under the same name, so the stored
+  // hunks must not merge against it. Optional so older fakes keep
+  // working; absent (or throwing, or a state written before #429) means
+  // unknown — resume reuses on branch match as before (#160), and a
+  // positive mismatch is the only refusal.
+  readBranchTip?: (
+    agentId: string,
+    worktree: OrchestrateWorktree,
+  ) => string | undefined | Promise<string | undefined>;
   reapWorker: (agentId: string) => void | Promise<void>;
   // Fail-fast cancellation (issue #206): a worker still in flight when the
   // run stops — a sibling failed, or the admission layer refused a spawn —
@@ -2605,7 +2623,33 @@ export async function runOrchestrateCommand(
       (entry) => entry.agentId === agentId,
     );
     if (completedEntry !== undefined) {
-      if (completedEntry.branch === worktree.branch) {
+      // Tip check (issue #429): a branch rewritten under the same name
+      // must not receive the hunks recorded before the rewrite. Only a
+      // positive mismatch refuses — an unknown tip (no probe, a throwing
+      // probe, a state written before #429) reuses on branch match (#160).
+      let tipMoved = false;
+      if (completedEntry.tipSha !== undefined) {
+        let current: string | undefined;
+        try {
+          current = await deps.readBranchTip?.(agentId, worktree);
+        } catch {
+          current = undefined;
+        }
+        tipMoved = current !== undefined && current !== completedEntry.tipSha;
+        if (tipMoved) {
+          debug(
+            `resume: worker '${agentId}' completion tip moved (recorded ${completedEntry.tipSha}, worktree tip ${current}) — running again`,
+          );
+        }
+      }
+      if (tipMoved) {
+        state = {
+          ...state,
+          completed: (state.completed ?? []).filter(
+            (entry) => entry.agentId !== agentId,
+          ),
+        };
+      } else if (completedEntry.branch === worktree.branch) {
         hunksByAgent.set(agentId, [...completedEntry.hunks]);
         if (completedEntry.result !== undefined) {
           resultsByAgent.set(agentId, completedEntry.result);
@@ -2745,11 +2789,20 @@ export async function runOrchestrateCommand(
       // branch + hunks persist BEFORE the merge gate runs — a deny, a
       // timeout or a kill must not lose them. Best-effort here (siblings
       // are still in flight); the merge phase re-saves fail-closed.
+      // The branch tip travels with it (issue #429): a throwing probe is
+      // an unknown tip, never a failed settle.
+      let tipSha: string | undefined;
+      try {
+        tipSha = await deps.readBranchTip?.(agentId, worktree);
+      } catch {
+        tipSha = undefined;
+      }
       upsertCompleted({
         agentId,
         branch: worktree.branch,
         hunks: [...hunks],
         ...(output.result === undefined ? {} : { result: output.result }),
+        ...(tipSha === undefined ? {} : { tipSha }),
       });
       try {
         await deps.saveState?.(state);

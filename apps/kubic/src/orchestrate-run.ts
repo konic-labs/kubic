@@ -2983,6 +2983,26 @@ export async function orchestrateDepsWithDefaults(
       );
       return done.exitCode === 0;
     },
+    readBranchTip: async (
+      agentId: string,
+      worktree: OrchestrateWorktree,
+    ): Promise<string | undefined> => {
+      // Branch-tip probe (issue #429): HEAD of the worker's own checkout
+      // at settle, persisted with the completion so resume can tell a
+      // same-name rewrite apart. A failed probe is an unknown tip (the
+      // lane reuses on branch match), never a failed run.
+      void agentId;
+      const tipped = await runGit(
+        worktree.path,
+        ['rev-parse', 'HEAD'],
+        'cli',
+        'manager',
+        'tip-check',
+      );
+      if (tipped.exitCode !== 0) return undefined;
+      const sha = tipped.stdout.trim();
+      return sha.length > 0 ? sha : undefined;
+    },
     // §45.2 conflict delegation (issue #106): the resolver is a REAL child
     // process, launched through the same lifecycle layer as every worker — the
     // one difference is the prompt it runs and the branch it settles on. The

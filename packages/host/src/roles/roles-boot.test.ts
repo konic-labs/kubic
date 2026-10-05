@@ -365,4 +365,3 @@ describe('selectRole unknown roles (issue #211)', () => {
     }
   });
 });
-

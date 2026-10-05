@@ -115,15 +115,16 @@ export function artifactFromResult(
       ...(test.output === undefined ? {} : { output: test.output }),
     };
   });
+  // An empty diff ref is absent, never a stub: a diff object without an
+  // id (or empty opts) leaves no `agent diff: ` line behind.
+  const diffRef = opts.diffRef ?? result.diff?.diffId;
   const artifact: TaskArtifact = {
     summary: result.summary,
     fileRefs: [...result.filesChanged],
     findings: [...findings],
     testResults,
     decisions: [],
-    ...(result.diff === undefined && opts.diffRef === undefined
-      ? {}
-      : { diffRef: opts.diffRef ?? result.diff?.diffId ?? '' }),
+    ...(diffRef !== undefined && diffRef !== '' ? { diffRef } : {}),
     worktree: opts.worktree,
   };
   assertNoTranscript(artifact, `artifact for '${agentId}'`);
@@ -150,7 +151,6 @@ export interface TaskTransfer {
   constraints: string[];
   previousFindings: string[];
   expectedOutput: string;
-  budget?: Record<string, number>;
 }
 
 export interface TaskTransferInput {
@@ -160,7 +160,6 @@ export interface TaskTransferInput {
   constraints: string[];
   expectedOutput: string;
   previousFindings?: string[];
-  budget?: Record<string, number>;
 }
 
 /** Validate and default a transfer record. Previous findings fill at
@@ -170,6 +169,12 @@ export function buildTaskTransfer(input: TaskTransferInput): TaskTransfer {
     throw new TransferRejectedError(
       'invalid_record',
       'task must be a non-empty string',
+    );
+  }
+  if (typeof input.worktree !== 'string' || input.worktree.trim() === '') {
+    throw new TransferRejectedError(
+      'invalid_record',
+      'worktree must be a non-empty string',
     );
   }
   for (const [field, value] of [
@@ -206,7 +211,6 @@ export function buildTaskTransfer(input: TaskTransferInput): TaskTransfer {
     constraints: [...input.constraints],
     previousFindings: [...previousFindings],
     expectedOutput: input.expectedOutput,
-    ...(input.budget === undefined ? {} : { budget: { ...input.budget } }),
   };
   assertNoTranscript(transfer, 'task transfer');
   return transfer;
@@ -275,7 +279,15 @@ export function handoffFindingLines(handoff: Handoff): string[] {
       `${handoff.fromAgentId} failing test: ${test.name}${clipped === '' ? '' : ` (${clipped})`}`,
     );
   }
-  if (handoff.diffRef !== undefined) {
+  // Inherited constraints render (issue #184 review): threading them
+  // through buildHandoff while dropping them from the lines would lose
+  // the earlier worker's obligations silently.
+  if (handoff.constraints.length > 0) {
+    lines.push(
+      `${handoff.fromAgentId} constraints: ${handoff.constraints.join('; ')}`,
+    );
+  }
+  if (handoff.diffRef !== undefined && handoff.diffRef !== '') {
     lines.push(`${handoff.fromAgentId} diff: ${handoff.diffRef}`);
   }
   lines.push(`${handoff.fromAgentId} worktree: ${handoff.worktree}`);
@@ -296,7 +308,23 @@ export function isStoredArtifact(value: unknown): value is TaskArtifact {
   if (!isStringList(entry.fileRefs) || !isStringList(entry.findings)) {
     return false;
   }
-  if (!Array.isArray(entry.testResults)) return false;
+  // Test rows validate like the builder validates them: a hand-edited
+  // row must never render an `undefined failing test:` line.
+  if (
+    !Array.isArray(entry.testResults) ||
+    !entry.testResults.every((test) => {
+      if (typeof test !== 'object' || test === null) return false;
+      const row = test as Record<string, unknown>;
+      return (
+        typeof row.name === 'string' &&
+        (row.name as string).trim() !== '' &&
+        typeof row.passed === 'boolean' &&
+        (row.output === undefined || typeof row.output === 'string')
+      );
+    })
+  ) {
+    return false;
+  }
   if (
     !Array.isArray(entry.decisions) ||
     !entry.decisions.every((item) => typeof item === 'string')

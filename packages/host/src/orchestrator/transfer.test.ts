@@ -89,7 +89,6 @@ describe('transfer slice 1: artifact, record, render, validator (#184)', () => {
       expectedOutput: 'a.txt committed',
     });
     expect(transfer.previousFindings).toEqual([]);
-    expect(transfer.budget).toBeUndefined();
     expect(() =>
       buildTaskTransfer({
         task: '  ',
@@ -114,6 +113,7 @@ describe('transfer slice 1: artifact, record, render, validator (#184)', () => {
     expect(handoff.constraints).toEqual(['stay inside']);
     expect(handoffFindingLines(handoff)).toEqual([
       'worker-1: did alpha (a.txt)',
+      'worker-1 constraints: stay inside',
       'worker-1 worktree: /wt/w1',
     ]);
     expect(() =>
@@ -146,6 +146,44 @@ describe('transfer slice 1: artifact, record, render, validator (#184)', () => {
     ).toThrow(/test rows/);
   });
 
+  it('rejects non-string worktrees and drops the dead budget field', () => {
+    expect(() =>
+      buildTaskTransfer({
+        task: 't',
+        worktree: 42 as never,
+        relevantFiles: [],
+        constraints: [],
+        expectedOutput: 'e',
+      }),
+    ).toThrow(/worktree must be/);
+    // budget was accepted but never passed at any call site nor rendered:
+    // the field is gone, not documented anywhere.
+    const transfer = buildTaskTransfer({
+      task: 't',
+      worktree: '/w',
+      relevantFiles: [],
+      constraints: [],
+      expectedOutput: 'e',
+    });
+    expect('budget' in (transfer as unknown as Record<string, unknown>)).toBe(
+      false,
+    );
+  });
+
+  it('a diff object without an id leaves no stub diff line', () => {
+    const result = completed('did alpha', ['a.txt']);
+    result.diff = {} as never;
+    const artifact = artifactFromResult('worker-1', result, {
+      worktree: '/wt/w1',
+    });
+    expect(artifact.diffRef).toBeUndefined();
+    expect(
+      handoffFindingLines(buildHandoff('worker-1', artifact, [])).some((line) =>
+        line.includes('diff:'),
+      ),
+    ).toBe(false);
+  });
+
   it('validates stored artifacts: shape plus the §69 gate', () => {
     const artifact = artifactFromResult(
       'worker-1',
@@ -158,6 +196,12 @@ describe('transfer slice 1: artifact, record, render, validator (#184)', () => {
     expect(isStoredArtifact({ ...artifact, summary: '  ' })).toBe(false);
     expect(
       isStoredArtifact({ ...artifact, findings: [{ role: 'user' }] }),
+    ).toBe(false);
+    expect(
+      isStoredArtifact({
+        ...artifact,
+        testResults: [{ name: 't' }],
+      }),
     ).toBe(false);
   });
 

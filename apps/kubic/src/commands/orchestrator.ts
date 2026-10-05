@@ -136,6 +136,15 @@ export const registerOrchestratorCommands: CommandRegistrar = (
       failureMode,
     )
     .option(
+      '--max-attempts <n>',
+      'debugger-loop bound (§70): how many debugger settlements before the single escalation and the loop-bound failure (default 3)',
+      positiveInt,
+    )
+    .option(
+      '--escalation-model <provider/id>',
+      'stronger model the debugger loop climbs to once after --max-attempts (default: the debugger relaunches at its own model)',
+    )
+    .option(
       '--session <id>',
       'orchestrator session id (default: orch-<now>)',
       sessionId,

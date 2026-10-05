@@ -197,6 +197,11 @@ export type {
 
 export const ORCHESTRATE_DEFAULT_AGENTS: string[] = ['worker-1', 'worker-2'];
 
+// The debugger-loop default bound (issue #188, §70): how many debugger
+// settlements the run absorbs before the single escalation. `--resume`
+// replays it only when neither the flag nor the stored loop names one.
+export const REVIEW_LOOP_DEFAULT_MAX_ATTEMPTS = 3;
+
 // The bounded wait for a per-worker approval ask (issue #105, §41.2). A fixed
 // run-level contract rather than a caller knob: an ask that no seat can answer
 // must deny closed on a human timescale, never hang the run headless.
@@ -254,6 +259,20 @@ export interface OrchestrateCliOptions {
    * plan — the flag is the headless opt-in, never a default.
    */
   readonly managerLane?: boolean;
+  /**
+   * `--max-attempts` (issue #188, §70): the debugger-loop bound — how
+   * many debugger settlements the run absorbs before the single
+   * escalation and the loop-bound failure. Default 3. Lane-only (the
+   * template path runs no loop); persisted for resume.
+   */
+  readonly maxAttempts?: number;
+  /**
+   * `--escalation-model` (issue #188, §70): the stronger model the
+   * debugger loop climbs to once after the bound trips. `provider/id`
+   * or absent (the escalation relaunches at the debugger's own model).
+   * Persisted for resume.
+   */
+  readonly escalationModel?: string;
   /**
    * `--skill <path>` (repeatable, issue #170): skills every worker AND the
    * resolver are granted. Relative values are resolved against the manager's
@@ -576,6 +595,17 @@ export interface OrchestratorRunState {
   // it, and the branch stays for inspection. A state written before #188
   // has none.
   discarded?: OrchestratedWorkerRecord[];
+  // The debugger-loop bound (issue #188, §70): the max debugger
+  // settlements before the single escalation, whether the escalation
+  // fired, and the stronger model it climbs to (absent: same model).
+  // Adopted from the flags on a fresh run (or the default bound) and
+  // re-applied from storage on --resume — an explicit flag still wins.
+  reviewLoop?: {
+    maxAttempts: number;
+    escalationModel?: string;
+    debuggerSettlements: number;
+    escalated: boolean;
+  };
   // Write-ahead worker completions (issue #160): one entry per worker that
   // settled successfully but is not merged yet — branch + hunks (+ the §68
   // result when the worker reported one). Persisted as soon as the worker
@@ -758,6 +788,36 @@ export function parseOrchestratorRunState(
     for (const record of value.discarded) {
       if (!validStoredWorkerRecord(record)) return undefined;
     }
+  }
+  // The debugger loop (issue #188, §70): a bound of at least one, an
+  // optional `provider/id` escalation rung, and non-negative counters.
+  if (value.reviewLoop !== undefined) {
+    if (typeof value.reviewLoop !== 'object' || value.reviewLoop === null) {
+      return undefined;
+    }
+    const loop = value.reviewLoop as Record<string, unknown>;
+    if (
+      typeof loop.maxAttempts !== 'number' ||
+      !Number.isSafeInteger(loop.maxAttempts) ||
+      loop.maxAttempts < 1
+    ) {
+      return undefined;
+    }
+    if (
+      loop.escalationModel !== undefined &&
+      (typeof loop.escalationModel !== 'string' ||
+        !isModelRef(loop.escalationModel))
+    ) {
+      return undefined;
+    }
+    if (
+      typeof loop.debuggerSettlements !== 'number' ||
+      !Number.isSafeInteger(loop.debuggerSettlements) ||
+      loop.debuggerSettlements < 0
+    ) {
+      return undefined;
+    }
+    if (typeof loop.escalated !== 'boolean') return undefined;
   }
   // The stored plan (issue #103) is untrusted JSON like everything else: a
   // step that is not exactly id/step/total/prompt would reach runWorker as
@@ -1954,6 +2014,27 @@ export async function runOrchestrateCommand(
       return RUN_EXIT_USAGE;
     }
   }
+  // The debugger-loop flags (issue #188, §70): a bound of at least one
+  // and an escalation rung in `provider/id` shape — a library caller
+  // cannot bypass the CLI's own checks.
+  if (
+    options.maxAttempts !== undefined &&
+    (!Number.isSafeInteger(options.maxAttempts) || options.maxAttempts < 1)
+  ) {
+    log.error(
+      `invalid --max-attempts ${JSON.stringify(options.maxAttempts)} (use a positive integer)`,
+    );
+    return RUN_EXIT_USAGE;
+  }
+  if (
+    options.escalationModel !== undefined &&
+    !isModelRef(options.escalationModel)
+  ) {
+    log.error(
+      `invalid --escalation-model ${JSON.stringify(options.escalationModel)} (use 'provider/id')`,
+    );
+    return RUN_EXIT_USAGE;
+  }
   if (
     parsed.sessionId !== undefined &&
     !SESSION_ID_PATTERN.test(parsed.sessionId)
@@ -2367,6 +2448,25 @@ export async function runOrchestrateCommand(
     parsed.onFailure ?? state.onFailure ?? 'stop';
   if (state.onFailure !== effectiveOnFailure) {
     state = { ...state, onFailure: effectiveOnFailure };
+  }
+  // The debugger loop travels with the state too (issue #188, §70): a
+  // fresh run adopts the flags (or the default bound), and --resume
+  // re-applies the stored loop — an explicit flag still wins, so a user
+  // can raise the bound on the retry. Counters always replay stored.
+  const storedLoop = state.reviewLoop;
+  const escalationModel =
+    options.escalationModel ?? storedLoop?.escalationModel;
+  const effectiveLoop: NonNullable<OrchestratorRunState['reviewLoop']> = {
+    maxAttempts:
+      options.maxAttempts ??
+      storedLoop?.maxAttempts ??
+      REVIEW_LOOP_DEFAULT_MAX_ATTEMPTS,
+    ...(escalationModel === undefined ? {} : { escalationModel }),
+    debuggerSettlements: storedLoop?.debuggerSettlements ?? 0,
+    escalated: storedLoop?.escalated ?? false,
+  };
+  if (JSON.stringify(state.reviewLoop) !== JSON.stringify(effectiveLoop)) {
+    state = { ...state, reviewLoop: effectiveLoop };
   }
   // Step 7 (issue #431): the model-driven manager lane drives the run when
   // a manager model resolves — a catalog plus a pin naming a model in it

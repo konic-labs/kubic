@@ -2320,6 +2320,50 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
       ).toBeUndefined();
     });
 
+    it('resume validation carries the debugger loop: bound, rung and counters', () => {
+      // Issue #188 (§70) slice S2a: the loop bound is at least one, the
+      // escalation rung is `provider/id` when present, counters replay.
+      const base = {
+        version: 1,
+        sessionId: 's',
+        prompt: 'p',
+        agents: ['alpha'],
+        merged: [],
+        pending: [],
+        stopped: false,
+        records: [],
+        reviewLoop: {
+          maxAttempts: 2,
+          escalationModel: 'p1/strong',
+          debuggerSettlements: 1,
+          escalated: false,
+        },
+      };
+      expect(parseOrchestratorRunState(base, 's')?.reviewLoop).toEqual({
+        maxAttempts: 2,
+        escalationModel: 'p1/strong',
+        debuggerSettlements: 1,
+        escalated: false,
+      });
+      // A zero bound, a shapeless rung, a negative counter and a
+      // non-boolean flag refuse.
+      for (const reviewLoop of [
+        { maxAttempts: 0, debuggerSettlements: 0, escalated: false },
+        {
+          maxAttempts: 2,
+          escalationModel: 'strong',
+          debuggerSettlements: 0,
+          escalated: false,
+        },
+        { maxAttempts: 2, debuggerSettlements: -1, escalated: false },
+        { maxAttempts: 2, debuggerSettlements: 0, escalated: 'no' },
+      ]) {
+        expect(
+          parseOrchestratorRunState({ ...base, reviewLoop }, 's'),
+        ).toBeUndefined();
+      }
+    });
+
     it('a history-shaped finding is rejected fail-closed: the run survives, the prompt stays clean', async () => {
       const seen: { agentId: string; prompt: string }[] = [];
       const world = makeWorld({

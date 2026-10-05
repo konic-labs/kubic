@@ -89,6 +89,8 @@ describe('kubic orchestrate (commander)', () => {
         '--agents <ids>',
         '--concurrency <n>',
         '--on-failure <mode>',
+        '--max-attempts <n>',
+        '--escalation-model <provider/id>',
         '--session <id>',
         '--resume',
         '--yes',

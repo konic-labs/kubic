@@ -130,7 +130,11 @@ import {
   recordMergeTelemetry,
   totalMergeMs,
 } from './orchestrator/merge/telemetry.js';
-import { sanitizeReasonField } from './orchestrator/parallel/limits.js';
+import {
+  type BudgetGate,
+  sanitizeReasonField,
+  type UsageTally,
+} from './orchestrator/parallel/limits.js';
 import { ParallelScheduler } from './orchestrator/parallel/scheduler.js';
 import type {
   ParallelTrajectoryEvent,
@@ -266,7 +270,9 @@ export type AgentBindingsParse =
   | { ok: false; reason: string };
 
 // The `provider/id` shape an explicit per-agent model pin must carry.
-function isModelRef(raw: string): boolean {
+// Shared with the manager-lane spawn adapter (issue #207 dedupes the
+// model-ref/budget rules #414 duplicated here).
+export function isModelRef(raw: string): boolean {
   const slash = raw.indexOf('/');
   return slash > 0 && slash < raw.length - 1;
 }
@@ -1473,6 +1479,10 @@ interface ParsedArgs {
   // --budget <dims> applies to every worker of the run.
   budget?: Record<string, number>;
   budgetsByAgent: Record<string, Record<string, number>>;
+  // The aggregate task budget (issue #207): `--budget total:<dims>` caps
+  // spend across all workers of the task, mapped to the admission layer's
+  // budgetGate. Threaded beside the per-spawn spec above.
+  budgetTotal?: Record<string, number>;
   fullAccess: boolean;
   // This run's admission override (issue #206): absent means the scheduler's
   // own resolution (explicit limits cap > configured maxWorkers > 4) stands.
@@ -1508,6 +1518,14 @@ export const RESERVED_SESSION_IDS: ReadonlySet<string> = new Set([
 
 export interface ParsedBudgetSpec {
   shared?: Record<string, number>;
+  /**
+   * The aggregate task budget (issue #207): a `total:<dims>` clause caps
+   * spend across ALL workers of the task (mapped to the admission layer's
+   * budgetGate). `total` is a reserved keyword — it never names a worker,
+   * so a per-agent clause for a worker literally named `total` is not
+   * expressible (that worker still runs under the shared spec).
+   */
+  total?: Record<string, number>;
   byAgent: Record<string, Record<string, number>>;
 }
 
@@ -1542,11 +1560,21 @@ export function parseBudgetSpec(raw: string): ParsedBudgetSpec | undefined {
     null,
   ) as Record<string, Record<string, number>>;
   let shared: Record<string, number> | undefined;
+  // The aggregate task budget (issue #207): `total:<dims>` caps the whole
+  // task. Claimed before the agent check below — `total` is reserved, never
+  // a worker id — and merged across repeated clauses like the shared spec.
+  let total: Record<string, number> | undefined;
   for (const clause of raw.split(';')) {
     const trimmed = clause.trim();
     if (trimmed.length === 0) continue;
     const colon = trimmed.indexOf(':');
     const head = colon > 0 ? trimmed.slice(0, colon).trim() : '';
+    if (head === 'total') {
+      const dims = parseBudgetDims(trimmed.slice(colon + 1));
+      if (dims === undefined) return undefined;
+      total = { ...(total ?? {}), ...dims };
+      continue;
+    }
     if (head.length > 0 && !BUDGET_DIMENSIONS.includes(head)) {
       if (validateAgentId(head).length > 0) return undefined;
       const dims = parseBudgetDims(trimmed.slice(colon + 1));
@@ -1558,16 +1586,28 @@ export function parseBudgetSpec(raw: string): ParsedBudgetSpec | undefined {
     if (dims === undefined) return undefined;
     shared = { ...(shared ?? {}), ...dims };
   }
-  if (shared === undefined && Object.keys(byAgent).length === 0) {
+  if (
+    shared === undefined &&
+    total === undefined &&
+    Object.keys(byAgent).length === 0
+  ) {
     return undefined;
   }
   return {
     ...(shared === undefined ? {} : { shared }),
+    ...(total === undefined ? {} : { total }),
     byAgent,
   };
 }
 
-function storedBudgetDims(raw: unknown): Record<string, number> | undefined {
+// Validate one dimensions object (positive numbers over the closed dim
+// set, maxRuntimeMs under the setTimeout ceiling). Shared with the
+// manager-lane spawn adapter (issue #207 dedupes the model-ref/budget
+// rules #414 duplicated here) — the stored form and a tool-arg map carry
+// the same shape.
+export function storedBudgetDims(
+  raw: unknown,
+): Record<string, number> | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return undefined;
   }
@@ -1595,12 +1635,20 @@ export function parseStoredBudgetSpec(
   }
   const record = raw as Record<string, unknown>;
   if (
-    Object.keys(record).some((key) => key !== 'shared' && key !== 'byAgent')
+    Object.keys(record).some(
+      (key) => key !== 'shared' && key !== 'total' && key !== 'byAgent',
+    )
   ) {
     return undefined;
   }
   const shared = storedBudgetDims(record.shared);
   if (record.shared !== undefined && shared === undefined) return undefined;
+  // The aggregate task budget travels with the state like the rest of the
+  // spec (issue #207): a resume re-applies the stored gate, and a flag
+  // naming a different aggregate is refused by budgetSpecsEqual below.
+  const total =
+    record.total === undefined ? undefined : storedBudgetDims(record.total);
+  if (record.total !== undefined && total === undefined) return undefined;
   // Null-prototype for the same reason as parseBudgetSpec (issue #208
   // review): a stored `__proto__` clause must survive as data.
   const byAgent: Record<string, Record<string, number>> = Object.create(
@@ -1623,11 +1671,16 @@ export function parseStoredBudgetSpec(
       byAgent[agent] = parsed;
     }
   }
-  if (shared === undefined && Object.keys(byAgent).length === 0) {
+  if (
+    shared === undefined &&
+    total === undefined &&
+    Object.keys(byAgent).length === 0
+  ) {
     return undefined;
   }
   return {
     ...(shared === undefined ? {} : { shared }),
+    ...(total === undefined ? {} : { total }),
     byAgent,
   };
 }
@@ -1655,6 +1708,13 @@ export function budgetSpecsEqual(
       ? a.shared === undefined && b.shared === undefined
       : dimsEqual(a.shared, b.shared);
   if (!sharedEqual) return false;
+  // The aggregate gate is part of the spec (issue #207): a resume flag
+  // naming a different aggregate is refused, like any other difference.
+  const totalEqual =
+    a.total === undefined || b.total === undefined
+      ? a.total === undefined && b.total === undefined
+      : dimsEqual(a.total, b.total);
+  if (!totalEqual) return false;
   const aAgents = Object.keys(a.byAgent).sort();
   const bAgents = Object.keys(b.byAgent).sort();
   if (aAgents.length !== bAgents.length) return false;
@@ -1692,6 +1752,9 @@ function parsedFrom(options: OrchestrateCliOptions): ParsedArgs {
       ? {}
       : { budget: options.budget.shared }),
     budgetsByAgent: options.budget?.byAgent ?? {},
+    ...(options.budget?.total === undefined
+      ? {}
+      : { budgetTotal: options.budget.total }),
     fullAccess: options.fullAccess === true,
     skills: [...(options.skills ?? [])],
     ...(options.prompt === undefined ? {} : { prompt: options.prompt }),
@@ -1970,10 +2033,14 @@ export async function runOrchestrateCommand(
   // state on --resume (a differing flag is refused after the state loads).
   const requestedBudget: ParsedBudgetSpec | undefined =
     parsed.budget === undefined &&
+    parsed.budgetTotal === undefined &&
     Object.keys(parsed.budgetsByAgent).length === 0
       ? undefined
       : {
           ...(parsed.budget === undefined ? {} : { shared: parsed.budget }),
+          ...(parsed.budgetTotal === undefined
+            ? {}
+            : { total: parsed.budgetTotal }),
           byAgent: { ...parsed.budgetsByAgent },
         };
   let state: OrchestratorRunState;
@@ -2225,10 +2292,16 @@ export async function runOrchestrateCommand(
   // model is even considered — the lane never outranks a `role_refused`.
   // The mode itself is committed there too (the lane owns spawning: minted
   // ids arrive as it spawns, so the run starts with nothing pending).
-  // No approvals layer means no gate to enforce the spec. Refused, never
-  // silently dropped — the exact false sense of cost control issue #208
-  // exists to remove.
-  if (effectiveBudget !== undefined && deps.approvals === undefined) {
+  // No approvals layer means no gate to enforce the per-spawn spec.
+  // Refused, never silently dropped — the exact false sense of cost control
+  // issue #208 exists to remove. A `total`-only spec is exempt (issue
+  // #207): the aggregate gate lives in the admission layer, which needs no
+  // approvals wiring, so there is nothing unenforced to refuse.
+  const needsSpawnEnforcement =
+    effectiveBudget !== undefined &&
+    (effectiveBudget.shared !== undefined ||
+      Object.keys(effectiveBudget.byAgent).length > 0);
+  if (needsSpawnEnforcement && deps.approvals === undefined) {
     log.error(
       '--budget cannot be enforced: this run has no approvals layer wired — refusing rather than dropping the limit',
     );
@@ -2451,6 +2524,30 @@ export async function runOrchestrateCommand(
   if (parsed.concurrency !== undefined) {
     scheduler.setSessionOverride(parsed.concurrency);
   }
+  // The aggregate task budget (issue #207, §71): `--budget total:<dims>`
+  // caps spend across ALL workers of the task through the admission
+  // layer's budgetGate. Installed only when the run carries one — absent
+  // means no aggregate limit (whatever the scheduler was constructed with
+  // stands). The effective spec travels with the state, so a resume
+  // re-applies the stored gate.
+  if (effectiveBudget?.total !== undefined) {
+    const total = effectiveBudget.total;
+    const gate: BudgetGate = {
+      ...(typeof total.maxCostUsd === 'number'
+        ? { maxCostUsd: total.maxCostUsd }
+        : {}),
+      ...(typeof total.maxTokens === 'number'
+        ? { maxTokens: total.maxTokens }
+        : {}),
+      ...(typeof total.maxToolCalls === 'number'
+        ? { maxToolCalls: total.maxToolCalls }
+        : {}),
+      ...(typeof total.maxRuntimeMs === 'number'
+        ? { maxRuntimeMs: total.maxRuntimeMs }
+        : {}),
+    };
+    scheduler.setBudgetGate(gate);
+  }
   let runningHighWater = 0;
   let queuedHighWater = 0;
   const observeAdmission = (): void => {
@@ -2480,6 +2577,37 @@ export async function runOrchestrateCommand(
       resultsByAgent.set(record.agentId, record.result);
     }
   }
+  // Aggregate usage roll-up (issue #207, §71): the previous attempt's
+  // records seed the tally below, so a resume never forgets what the run
+  // already spent — the gate judges the retry against real spend. Both
+  // lists seed it: `records` (merged) AND `completed` (issue #160
+  // write-ahead completions not yet merged when the attempt ended — a
+  // stopped run's settled workers live there, and their spend counts).
+  const aggregateUsage: UsageTally = {};
+  const accumulateUsage = (result: AgentResult | undefined): void => {
+    if (result === undefined) return;
+    // The stored payload is untrusted JSON: only finite numbers enter the
+    // tally, so a crafted record can never poison the gate fail-open
+    // (NaN comparisons are false, which would read as "under budget").
+    const num = (value: unknown): number =>
+      typeof value === 'number' && Number.isFinite(value) ? value : 0;
+    const metrics = result.metrics;
+    aggregateUsage.costUsd =
+      (aggregateUsage.costUsd ?? 0) + num(metrics.costUsd);
+    aggregateUsage.tokens =
+      (aggregateUsage.tokens ?? 0) +
+      num(metrics.inputTokens) +
+      num(metrics.outputTokens);
+    aggregateUsage.toolCalls =
+      (aggregateUsage.toolCalls ?? 0) + num(metrics.toolCalls);
+    aggregateUsage.runtimeMs =
+      (aggregateUsage.runtimeMs ?? 0) + num(metrics.wallMs);
+  };
+  for (const result of resultsByAgent.values()) accumulateUsage(result);
+  for (const record of state.completed ?? []) {
+    accumulateUsage(record.result);
+  }
+  scheduler.updateUsage({ ...aggregateUsage });
 
   // Per-worker approvals + opt-in budgets (issue #105; §41.1, §41.2, §71).
   // One approvals run for the whole orchestration: the router, its durable
@@ -2873,6 +3001,17 @@ export async function runOrchestrateCommand(
   // silent queue. The autonomous run keeps the shipped rule (the shared
   // resolveBlockedSpawn contract): the cap bounds concurrency, it never asks.
   const concurrencyCap = scheduler.maxConcurrency();
+  // Issue #207 (§71): the mode the admission layer judges every spawn
+  // under — a TTY run without --yes is interactive (pressure fails
+  // immediately with a reason), --yes or headless is autonomous (pressure
+  // queues). The #277 spawn-agents ask below is the interactive decision
+  // for the concurrency cap itself: approving it proceeds under the
+  // queueing rule, so an approval flips back to autonomous for the
+  // per-worker requests — the user already decided, no second ask per
+  // worker and no fail-fast betraying the approval.
+  // Seeded from the run's §19 mode (issue #278: explicit --autonomous wins,
+  // else --yes / headless is autonomous) so the admission layer honours it.
+  let spawnMode: RunMode = runMode;
   // The --agents spawn cap (issue #413): adopted from stored state when the
   // run predates it, so a resume never runs uncapped.
   const spawnCap = state.spawnCap ?? state.agents.length;
@@ -2891,9 +3030,8 @@ export async function runOrchestrateCommand(
   if (excessAgents.length > 0 && approvalsRun !== undefined) {
     // `--yes` is the run's standing answer: it makes the run autonomous, so
     // the cap never asks (issue #323's rule, applied to this ask too).
-    // `runMode` is hoisted: the admission layer below shares it.
     const blocked = resolveBlockedSpawn(
-      runMode,
+      spawnMode,
       `${state.agents.length} workers requested with a concurrency cap of ${concurrencyCap}`,
     );
     if (blocked.outcome === 'ask') {
@@ -2918,6 +3056,10 @@ export async function runOrchestrateCommand(
           `admission: spawn-agents ask denied — ${excessAgents.join(', ')} will not spawn (${verdict.reason})`,
         );
       } else {
+        // The approval is the queueing decision (issue #207): the excess
+        // proceeds under the queueing rule, so the per-worker requests
+        // below judge under autonomous even on an interactive run.
+        spawnMode = 'autonomous';
         debug(
           `admission: spawn-agents ask approved — ${excessAgents.join(', ')} proceed under the queueing rule`,
         );
@@ -3354,10 +3496,19 @@ export async function runOrchestrateCommand(
   // Release a settled worker's slot, then start whatever the scheduler's FIFO
   // drain woke — shared by the success and the `continue` failure paths, so a
   // failed worker frees its slot exactly like a completed one (issue #206).
+  // The settled worker's reported usage feeds the admission layer FIRST
+  // (issue #207, §71): the drain that wakes the next worker judges under
+  // the fresh tally, so a spawn the run can no longer afford stays queued
+  // (or is denied outright in interactive mode) instead of starting blind.
   const releaseSlot = (agentId: string): void => {
-    const woken = scheduler.complete(agentId);
+    accumulateUsage(resultsByAgent.get(agentId));
+    const woken = scheduler.updateUsage({ ...aggregateUsage });
+    const usageWakeups = woken.filter((id) => !started.has(id));
+    for (const id of usageWakeups) startWorker(id);
+    if (usageWakeups.length > 0) recordAdmission(usageWakeups);
+    const drained = scheduler.complete(agentId);
     observeAdmission();
-    const wakeups = woken.filter((id) => !started.has(id));
+    const wakeups = drained.filter((id) => !started.has(id));
     for (const id of wakeups) startWorker(id);
     if (wakeups.length > 0) recordAdmission(wakeups);
   };
@@ -3491,11 +3642,7 @@ export async function runOrchestrateCommand(
         worktree: worktree.path,
         ...(provider === undefined ? {} : { provider }),
       },
-      // Stays 'autonomous' on purpose (issue #278): the spawn-cap ask
-      // above owns the interactive branch — once past it (asked and
-      // approved, or never asked) the excess queues under the queueing
-      // rule. Passing runMode here would deny approved spawns at the cap.
-      'autonomous',
+      spawnMode,
     );
     // The admission layer's own numbers, sampled right after the request
     // (issue #106, §49.1/§50) — the point at which running/queued are the

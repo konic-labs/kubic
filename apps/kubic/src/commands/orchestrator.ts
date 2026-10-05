@@ -42,7 +42,7 @@ function budgetSpec(raw: string): ParsedBudgetSpec {
   const spec = parseBudgetSpec(raw);
   if (spec === undefined) {
     throw new InvalidArgumentError(
-      `Use <dim>=<n>[,…] or <agent>:<dim>=<n>[;…] with positive numbers; dims: ${BUDGET_DIMENSIONS.join(', ')}.`,
+      `Use <dim>=<n>[,…], <agent>:<dim>=<n>[;…] or total:<dim>=<n> (aggregate task cap) with positive numbers; dims: ${BUDGET_DIMENSIONS.join(', ')}.`,
     );
   }
   return spec;
@@ -157,7 +157,7 @@ export const registerOrchestratorCommands: CommandRegistrar = (
     )
     .option(
       '--budget <dims>',
-      'opt-in per-worker budget, e.g. maxToolCalls=20 or w1:maxCostUsd=1;w2:maxTokens=5000',
+      'opt-in per-worker budget, e.g. maxToolCalls=20 or w1:maxCostUsd=1;w2:maxTokens=5000; total:maxCostUsd=5 caps the whole task',
       budgetSpec,
     )
     .option(

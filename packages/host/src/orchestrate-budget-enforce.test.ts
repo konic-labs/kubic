@@ -53,6 +53,7 @@ import {
   budgetSpecsEqual,
   parseBudgetSpec,
   parseOrchestratorRunState,
+  parseStoredBudgetSpec,
   runOrchestrateCommand,
 } from './orchestrate-cli.js';
 import { createOrchestratorApprovalsRun } from './orchestrator/approvals/worker-asks.js';
@@ -283,6 +284,78 @@ describe('budget spec validation helpers (issue #208)', () => {
         byAgent: { 'worker-2': { maxToolCalls: 3 } },
       }),
     ).toBe(false);
+  });
+});
+
+describe('aggregate task budget clause total: (issue #207)', () => {
+  it('parseBudgetSpec routes a total: clause to the aggregate spec, never to an agent', () => {
+    expect(parseBudgetSpec('total:maxCostUsd=5')).toEqual({
+      total: { maxCostUsd: 5 },
+      byAgent: {},
+    });
+    expect(
+      parseBudgetSpec('maxTokens=10;total:maxCostUsd=5;w1:maxTokens=3'),
+    ).toEqual({
+      shared: { maxTokens: 10 },
+      total: { maxCostUsd: 5 },
+      byAgent: { w1: { maxTokens: 3 } },
+    });
+    // A repeated total: clause merges, like the shared spec.
+    expect(
+      parseBudgetSpec('total:maxTokens=5;total:maxCostUsd=1'),
+    ).toMatchObject({ total: { maxTokens: 5, maxCostUsd: 1 } });
+  });
+
+  it('parseBudgetSpec refuses a malformed total: clause', () => {
+    expect(parseBudgetSpec('total:bogus=1')).toBeUndefined();
+    expect(parseBudgetSpec('total:')).toBeUndefined();
+    expect(parseBudgetSpec('total:maxCostUsd=0')).toBeUndefined();
+  });
+
+  it('parseStoredBudgetSpec round-trips total: and refuses malformed ones', () => {
+    const stored = {
+      shared: { maxTokens: 10 },
+      total: { maxCostUsd: 5 },
+      byAgent: { w1: { maxTokens: 3 } },
+    };
+    expect(parseStoredBudgetSpec(stored)).toEqual(stored);
+    expect(
+      parseStoredBudgetSpec({ ...stored, total: { bogus: 1 } }),
+    ).toBeUndefined();
+    expect(
+      parseStoredBudgetSpec({ ...stored, total: { maxCostUsd: -2 } }),
+    ).toBeUndefined();
+  });
+
+  it('budgetSpecsEqual compares the aggregate clause', () => {
+    const a = {
+      total: { maxCostUsd: 5 },
+      byAgent: {},
+    };
+    expect(budgetSpecsEqual(a, { total: { maxCostUsd: 5 }, byAgent: {} })).toBe(
+      true,
+    );
+    expect(budgetSpecsEqual(a, { total: { maxCostUsd: 6 }, byAgent: {} })).toBe(
+      false,
+    );
+    expect(budgetSpecsEqual(a, { byAgent: {} })).toBe(false);
+  });
+
+  it('a total: clause is not mistaken for an agent the run never named', async () => {
+    const world = makeWorld();
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'demo',
+        agents: ['a', 'b'],
+        session: 'sess-207-total',
+        yes: true,
+        budget: parseBudgetSpec('total:maxCostUsd=5'),
+      },
+      world.deps,
+    );
+    // Not exit 2 (unknown agent): `total` names the aggregate gate.
+    expect(code).toBe(0);
+    expect(world.calls).toEqual(['a', 'b']);
   });
 });
 

@@ -810,6 +810,11 @@ describe('manager spawn/wait/collect adapters (issue #414)', () => {
         budget: { maxSmooches: 3 },
       }),
     ).rejects.toThrow(/invalid_budget/);
+    // An empty map limits nothing: refused, never silently accepted
+    // (issue #207 dedup preserves the previous parser's refusal).
+    await expect(
+      call('spawn_agent', { role: 'tester', task: 'x', budget: {} }),
+    ).rejects.toThrow(/invalid_budget/);
     expect(test.launched).toHaveLength(1);
   });
 

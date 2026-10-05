@@ -581,6 +581,16 @@ can produce one):
   cannot raise its own budget: the raise is refused and audited. The spec
   persists with the session, so `--resume` re-applies it; a differing
   `--budget` on resume is refused (exit 2) rather than silently mixed.
+- **The task can also carry an aggregate budget (§71, issue #207).**
+  `--budget total:<dims>` caps spend across ALL workers of the task (e.g.
+  `--budget total:maxCostUsd=5`), enforced by the admission layer before
+  each spawn: settled workers' reported usage accumulates into the gate, so
+  a spawn the run can no longer afford is blocked — denied with the gate's
+  reason on an interactive run, queued (then refused when no release can
+  free it) on an autonomous one. `total` is a reserved keyword and never
+  names a worker. The aggregate persists with the session like the rest of
+  the spec: `--resume` re-applies the stored gate AND the spend the previous
+  attempt already accumulated.
 - **`--dangerously-skip-approvals` is the session-scoped skip (§41.4).** It
   is stored per session, indicated on the surface, recorded for audit/doctor
   (one `posture:full-access` ledger row), warned on stderr, and a fresh

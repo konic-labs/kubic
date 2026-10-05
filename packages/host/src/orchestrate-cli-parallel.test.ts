@@ -12,12 +12,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SOLO_DEFAULTS } from '../../../packages/agents/src/policy.js';
+import type { AgentResult } from '../../../packages/worker/src/result.js';
+import { buildAgentResult } from '../../../packages/worker/src/result.js';
 import type {
   OrchestrateCommandDeps,
   OrchestrateWorktree,
   OrchestratorRunState,
 } from './orchestrate-cli.js';
-import { runOrchestrateCommand } from './orchestrate-cli.js';
+import { parseBudgetSpec, runOrchestrateCommand } from './orchestrate-cli.js';
 import {
   createOrchestratorApprovalsRun,
   type WorkerApprovalsRun,
@@ -651,5 +653,165 @@ describe('orchestrate asks before spawning past the cap (issue #277, §41.1)', (
     );
     expect(code).toBe(0);
     expect(raised).toEqual([]);
+  });
+});
+
+// Task-level aggregate budgets and the run mode each spawn is judged under
+// (issue #207, §71): the live path always consulted the scheduler with
+// 'autonomous', so an interactive run queued silently where the design says
+// it must fail immediately with a reason.
+describe('orchestrate run mode per spawn (issue #207)', () => {
+  function modeWorld(overrides: Partial<OrchestrateCommandDeps> = {}) {
+    const ran: string[] = [];
+    const world = makeWorld({
+      scheduler: new ParallelScheduler({ maxConcurrency: 1 }),
+      runWorker: (agentId: string) => {
+        ran.push(agentId);
+        return [{ path: `${agentId}.txt`, hunk: `@@ -0,0 +1 @@ +${agentId}` }];
+      },
+      ...overrides,
+    });
+    return { world, ran };
+  }
+
+  it('an interactive run fails a pressured spawn immediately, without queueing', async () => {
+    const { world, ran } = modeWorld({ interactive: true });
+    const code = await runOrchestrateCommand(
+      { prompt: 'do it', agents: ['a', 'b'], session: 'sess-207-mode' },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    // The pressured worker never ran: denied by name, never queued.
+    expect(ran).toEqual(['a']);
+    const last = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(
+      last.records.find((record) => record.agentId === 'b')?.result,
+    ).toMatchObject({ status: 'spawn_failed' });
+    expect(world.lines.join('\n')).toContain('spawn_denied');
+  });
+
+  it('an autonomous run queues the pressured spawn and admits it after release', async () => {
+    const { world, ran } = modeWorld({ interactive: false });
+    const code = await runOrchestrateCommand(
+      { prompt: 'do it', agents: ['a', 'b'], session: 'sess-207-mode' },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(ran).toEqual(['a', 'b']);
+  });
+});
+
+// The aggregate task budget (issue #207, §71): `--budget total:<dims>` caps
+// spend across ALL workers. Settled workers' reported usage accumulates
+// into the admission layer, so a spawn the run can no longer afford is
+// blocked — and an interactive run names the exhausted gate instead of
+// queueing behind it.
+describe('orchestrate aggregate task budget (issue #207)', () => {
+  // A worker whose settled result reports `costUsd` spend.
+  function spendingRunWorker(costByAgent: Record<string, number>) {
+    const ran: string[] = [];
+    const runWorker: OrchestrateCommandDeps['runWorker'] = (agentId) => {
+      ran.push(agentId);
+      const costUsd = costByAgent[agentId] ?? 0;
+      const result: AgentResult = buildAgentResult({
+        status: 'completed',
+        summary: `${agentId} done`,
+        provenance: {
+          workerId: agentId,
+          sessionId: `sess-207-spend-${agentId}`,
+          pid: null,
+          generation: 0,
+          worktree: `/repo/.kubic/wt/${agentId}`,
+          model: 'faux/model',
+        },
+        metrics: {
+          inputTokens: 10,
+          outputTokens: 5,
+          cachedTokens: 0,
+          toolCalls: 1,
+          latencyMs: 1,
+          wallMs: 1,
+          costUsd,
+        },
+      });
+      return {
+        hunks: [{ path: `${agentId}.txt`, hunk: `@@ -0,0 +1 @@ +${agentId}` }],
+        result,
+      };
+    };
+    return { ran, runWorker };
+  }
+
+  it('aggregate cost from settled workers blocks the next spawn', async () => {
+    const { ran, runWorker } = spendingRunWorker({ a: 10 });
+    const world = makeWorld({
+      scheduler: new ParallelScheduler({ maxConcurrency: 1 }),
+      runWorker,
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do it',
+        agents: ['a', 'b'],
+        session: 'sess-207-spend',
+        yes: true,
+        budget: parseBudgetSpec('total:maxCostUsd=5'),
+      },
+      world.deps,
+    );
+    // Worker a spent 10 against a task gate of 5: b is blocked and never
+    // runs — the run fails instead of spending what the gate forbids.
+    expect(code).toBe(1);
+    expect(ran).toEqual(['a']);
+    const last = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(
+      last.records.find((record) => record.agentId === 'b')?.result,
+    ).toMatchObject({ status: 'spawn_failed' });
+  });
+
+  it('an interactive resume names the exhausted aggregate gate, without queueing', async () => {
+    // Phase one spends the gate: an autonomous run settles a (cost 10
+    // against total 5) and blocks b. Phase two resumes interactively — the
+    // seeded roll-up must deny b's spawn with the gate's reason.
+    const first = spendingRunWorker({ a: 10 });
+    const saved: OrchestratorRunState[] = [];
+    const firstWorld = makeWorld({
+      scheduler: new ParallelScheduler({ maxConcurrency: 1 }),
+      runWorker: first.runWorker,
+      saveState: (state) => {
+        saved.push(structuredClone(state));
+      },
+    });
+    const firstCode = await runOrchestrateCommand(
+      {
+        prompt: 'do it',
+        agents: ['a', 'b'],
+        session: 'sess-207-resume',
+        yes: true,
+        budget: parseBudgetSpec('total:maxCostUsd=5'),
+      },
+      firstWorld.deps,
+    );
+    expect(firstCode).toBe(1);
+    expect(first.ran).toEqual(['a']);
+
+    const second = spendingRunWorker({});
+    const secondWorld = makeWorld({
+      scheduler: new ParallelScheduler({ maxConcurrency: 1 }),
+      runWorker: second.runWorker,
+      interactive: true,
+      loadState: () => saved[saved.length - 1],
+    });
+    const secondCode = await runOrchestrateCommand(
+      {
+        resume: true,
+        session: 'sess-207-resume',
+        budget: parseBudgetSpec('total:maxCostUsd=5'),
+      },
+      secondWorld.deps,
+    );
+    expect(secondCode).toBe(1);
+    // The resume never ran b: the request was denied by name, never queued.
+    expect(second.ran).toEqual([]);
+    expect(secondWorld.lines.join('\n')).toMatch(/budget cost gate exceeded/);
   });
 });

@@ -367,6 +367,33 @@ describe('parallel budget updateUsage (issue #47 review)', () => {
   });
 });
 
+describe('parallel budget gate installation (issue #207)', () => {
+  it('setBudgetGate installs the aggregate gate on a live scheduler', () => {
+    const sched = new ParallelScheduler({ maxConcurrency: 8 });
+    expect(sched.requestSpawn(req('b1'), 'autonomous').outcome).toBe(
+      'admitted',
+    );
+    sched.setBudgetGate({ maxCostUsd: 5 });
+    sched.updateUsage({ costUsd: 10 });
+    const denied = sched.requestSpawn(req('b2'), 'interactive');
+    expect(denied.outcome).toBe('denied');
+    if (denied.outcome === 'denied') {
+      expect(denied.reason).toMatch(/budget cost gate/);
+    }
+  });
+
+  it('setBudgetGate validates eagerly and removes the override on undefined', () => {
+    const sched = new ParallelScheduler();
+    expect(() => sched.setBudgetGate({ maxCostUsd: 0 })).toThrow(/maxCostUsd/);
+    sched.setBudgetGate({ maxCostUsd: 5 });
+    sched.setBudgetGate(undefined);
+    sched.updateUsage({ costUsd: 10 });
+    expect(sched.requestSpawn(req('b1'), 'autonomous').outcome).toBe(
+      'admitted',
+    );
+  });
+});
+
 describe('parallel log sanitizing (issue #47 review)', () => {
   it('strips control characters from queue logs for a crafted agentId', () => {
     const logs: string[] = [];

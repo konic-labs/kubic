@@ -30,8 +30,12 @@ import {
 } from '../../../worker/src/pi-boundary.js';
 import type { AgentResult, ResultStatus } from '../../../worker/src/result.js';
 import { buildAgentResult } from '../../../worker/src/result.js';
+import {
+  BUDGET_DIMENSIONS,
+  isModelRef,
+  storedBudgetDims,
+} from '../orchestrate-cli.js';
 import { composeWorkerPrompt } from '../roles/worker-roles.js';
-import { MAX_RUN_TIMEOUT_MS } from '../run-cli.js';
 import {
   QUESTION_UNANSWERED_CODE,
   type WorkerQuestionOutcome,
@@ -210,36 +214,10 @@ export interface ManagerToolsDeps {
 // The `--budget` dimension names a `spawn_agent(budget=…)` map may carry
 // (issue #208): the same closed set the CLI flag accepts, so a model cannot
 // invent a dimension the enforcement step (#207) would not understand.
-const SPAWN_BUDGET_DIMENSIONS: readonly string[] = [
-  'maxTokens',
-  'maxCostUsd',
-  'maxRuntimeMs',
-  'maxToolCalls',
-];
-
-/** The `provider/id` shape an explicit model pin must carry (issue #178). */
-function isModelRef(raw: string): boolean {
-  const slash = raw.indexOf('/');
-  return slash > 0 && slash < raw.length - 1;
-}
-
-function parseSpawnBudget(raw: unknown): Record<string, number> | undefined {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    return undefined;
-  }
-  const dims: Record<string, number> = {};
-  for (const [name, value] of Object.entries(raw)) {
-    if (!SPAWN_BUDGET_DIMENSIONS.includes(name)) return undefined;
-    if (typeof value !== 'number' || !Number.isFinite(value) || !(value > 0)) {
-      return undefined;
-    }
-    if (name === 'maxRuntimeMs' && value > MAX_RUN_TIMEOUT_MS) {
-      return undefined;
-    }
-    dims[name] = value;
-  }
-  return Object.keys(dims).length === 0 ? undefined : dims;
-}
+// Issue #207 dedupes the rules #414 duplicated: the dimension set, the
+// model-ref shape and the dims-object validation all come from the CLI's
+// own parsers (../orchestrate-cli.ts) — one source of truth, so the lane
+// can never drift from what the flag accepts.
 
 interface SettleRecord {
   result?: AgentResult;
@@ -536,11 +514,19 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
           `model pin ${JSON.stringify(model)} must be 'provider/id'`,
         );
       }
-      const dims = budget === undefined ? undefined : parseSpawnBudget(budget);
+      // An empty map carries no limit: refused like any other map the
+      // shared validator accepts structurally but that limits nothing
+      // (the previous local parser refused it explicitly — preserved).
+      const parsed =
+        budget === undefined ? undefined : storedBudgetDims(budget);
+      const dims =
+        parsed !== undefined && Object.keys(parsed).length === 0
+          ? undefined
+          : parsed;
       if (budget !== undefined && dims === undefined) {
         throw new ManagerToolRefusalError(
           'invalid_budget',
-          `budget ${JSON.stringify(budget)} must map ${SPAWN_BUDGET_DIMENSIONS.join(', ')} to positive numbers`,
+          `budget ${JSON.stringify(budget)} must map ${BUDGET_DIMENSIONS.join(', ')} to positive numbers`,
         );
       }
       // The --agents cap binds here, where the manager chooses: past it the

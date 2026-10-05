@@ -2606,6 +2606,9 @@ describe('failure results persist in the saved records (issue #185)', () => {
         pendingIds: () => [],
         runningIds: () => [],
         maxPendingMs: () => 60_000,
+        // The run feeds settled usage into the admission layer (issue
+        // #207): a fake must answer this one too.
+        updateUsage: () => [],
       } as unknown as OrchestrateCommandDeps['scheduler'],
     });
     const code = await runOrchestrateCommand(

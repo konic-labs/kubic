@@ -10,6 +10,7 @@
 // fail-closed instead of scoring fiction (the refusal is pinned verbatim
 // by dispatch.test.ts).
 
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   EXIT_FAILED,
@@ -117,6 +118,7 @@ import {
   defaultSessionsRoot,
   runSessionsCommand,
 } from '../../../packages/host/src/sessions-cli.js';
+import { skillsDoctorProbe } from '../../../packages/host/src/skills-boot.js';
 import { runTrustCommand } from '../../../packages/host/src/trust-cli.js';
 import {
   runWorkerInspectCommand,
@@ -964,6 +966,23 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
             // Issue #430 (§33, L-D27): judge the trust the run would see —
             // an untrusted root's withheld roles warn here, never green.
             trustProject: projectTrustFor(cliConfig),
+          }),
+        // Skills gate (issue #181, §29.4): the same boot the lane runs,
+        // judged with the lane's classes and no role — a skill the lane
+        // would not offer warns with the gate's reason, never green. The
+        // trust inputs mirror `kubic run`'s (env opt-in + the per-path
+        // project check), so doctor judges the tree the run would see.
+        probeSkills: () =>
+          skillsDoctorProbe({
+            bridge: createNodeFileBridge(process.cwd()),
+            cwd: process.cwd(),
+            homeDir: homedir(),
+            trusted:
+              process.env.KUBIC_TRUST_PROJECT === '1' ||
+              process.env.KUBIC_TRUST_PROJECT === 'true',
+            trustProject: projectTrustFor(cliConfig),
+            ...runtimeSkillsDeps(cliConfig),
+            ...installedPolicyClasses(cliConfig),
           }),
         // Repo-level session overlap (issue #118): warning only — the check
         // reports warn (never exit-flipping) when 2+ sessions are recorded

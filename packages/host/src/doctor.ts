@@ -122,6 +122,10 @@ export interface DoctorDeps extends CliIo {
   // run can never print green. Absent: no role checks (legacy matrices are
   // unchanged).
   probeRoles?: () => DoctorCheck[];
+  // Issue #181 (§29.4): the skills gate probe — absent means no skills
+  // checks. Same contract as probeRoles: a throwing probe becomes one
+  // failing check, returned checks pass through verbatim.
+  probeSkills?: () => DoctorCheck[];
   // §58 enterprise policy (issue #289): the checks `enterpriseDoctorChecks`
   // derives from the resolved `[policy]` section, built by the composition
   // root (host never imports the app). Absent — including when no `[policy]`
@@ -698,6 +702,21 @@ export function collectDoctorChecks(
       checks.push({
         id: 'role:documents',
         label: 'role documents',
+        status: 'fail',
+        reason: 'policy-mismatch',
+        detail: probeMessage(error),
+      });
+    }
+  }
+  // Skills gate (issue #181, §29.4): opt-in via the injected probe —
+  // absent means no skills checks, same fail-closed probe contract.
+  if (deps.probeSkills !== undefined) {
+    try {
+      checks.push(...deps.probeSkills());
+    } catch (error) {
+      checks.push({
+        id: 'skill:documents',
+        label: 'skill documents',
         status: 'fail',
         reason: 'policy-mismatch',
         detail: probeMessage(error),

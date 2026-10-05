@@ -1376,7 +1376,13 @@ export async function bootTuiLane(
           : { toolPolicy: enterprisePolicy }),
       });
       const promptText = rolePromptFor(selected.doc, selected.markdown);
-      return { resolved: selected.resolved, prompt: promptText };
+      // Issue #181 (§29.4): the document's `skills` list travels with the
+      // resolved role for the skill gate.
+      return {
+        resolved: selected.resolved,
+        prompt: promptText,
+        docSkills: selected.doc.skills,
+      };
     })();
     // Issue #246: the §50 [policy] line names the resolved role — or the
     // default the boot runs as when no --role was given (mirrors the
@@ -1533,6 +1539,16 @@ export async function bootTuiLane(
           ...(options.skills?.settingsSkills === undefined
             ? {}
             : { settingsSkills: options.skills.settingsSkills }),
+          // Issue #181 (§29.4): the injected set depends on the resolved
+          // role and the installed classes — withheld skills never reach
+          // the prompt, with the reason on the debug sink.
+          ...(selectedRole === undefined
+            ? {}
+            : { role: selectedRole.resolved.name }),
+          ...(selectedRole?.docSkills === undefined
+            ? {}
+            : { roleSkills: selectedRole.docSkills }),
+          classes: installed.classes,
           // Issue #177: an unresolvable explicit --skill warns on the
           // boot's warn channel — never only on this debug sink the TUI
           // drops — so a typo cannot read as a loaded skill.

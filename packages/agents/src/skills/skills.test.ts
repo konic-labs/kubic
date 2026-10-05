@@ -546,6 +546,26 @@ describe('role scoping and capability gating (issue #36)', () => {
     expect(logged.join('\n')).toContain('write');
   });
 
+  // Issue #181 (§29.4): no role on the lane means no role scoping — the
+  // capability check alone decides, so a plain run keeps role-scoped
+  // skills it can actually run.
+  it('skips role scoping when the lane booted with no role', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/deploy/SKILL.md`,
+      skillMd('name: deploy\ndescription: Deploy\nroles: [implementer]'),
+    );
+    const { skills } = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+    });
+    const gated = gateSkills(skills, { classes: SOLO_DEFAULTS });
+    expect(gated.visible.map((skill) => skill.name)).toEqual(['deploy']);
+    expect(gated.withheld).toEqual([]);
+  });
+
   it('emits one XML block per visible skill with name/description/filePath', () => {
     const { env, bridge } = setup();
     env.fs.writeFile(

@@ -1317,6 +1317,9 @@ async function runHeadlessPromptImpl(
     // Nothing is invented, and an absent --role leaves the solo boot
     // byte-identical.
     let role: { resolved: ResolvedRole; prompt: string } | undefined;
+    // Issue #181 (§29.4): the resolved role document's `skills` list for
+    // the skill gate — hoisted because `selected` lives in the branch.
+    let roleDocSkills: string[] | undefined;
     // §67 (issue #191): the manager hands the worker its task — the
     // capability grant travels with the work, so the child registers exactly
     // `task.toolNames` instead of re-deriving a role from its own worktree
@@ -1407,6 +1410,7 @@ async function runHeadlessPromptImpl(
         `[policy] role=${selected.resolved.name} tools=${selected.resolved.tools.join(',')}`,
       );
       role = { resolved: selected.resolved, prompt: promptText };
+      roleDocSkills = selected.doc.skills;
       capture.role = selected.resolved.name;
     } else {
       // Issue #246: the stock solo run resolves no role document — the
@@ -1785,6 +1789,14 @@ async function runHeadlessPromptImpl(
       ...(deps.skills?.settingsSkills === undefined
         ? {}
         : { settingsSkills: deps.skills.settingsSkills }),
+      // Issue #181 (§29.4): the injected set depends on the resolved
+      // role and the installed classes — a worker child gates on its
+      // task role (no document is read there), else `--role`.
+      ...(task?.role === undefined && role?.resolved.name === undefined
+        ? {}
+        : { role: task?.role ?? (role?.resolved.name as string) }),
+      ...(roleDocSkills === undefined ? {} : { roleSkills: roleDocSkills }),
+      classes: installed.classes,
       // Issue #177: an unresolvable explicit --skill warns on stderr —
       // never only on the debug channel — so a typo cannot read as loaded.
       warn: warnLine,

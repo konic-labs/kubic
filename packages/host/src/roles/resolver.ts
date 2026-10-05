@@ -49,6 +49,10 @@ export interface RoleToolPolicy {
 export interface ParsedRoleDoc {
   name: string;
   tools?: string[];
+  // Issue #181 (§29.4): the skills this role sees, by skill name. Absent
+  // means no restriction (every gated-visible skill is offered); a
+  // declared list restricts the visible set to its names.
+  skills?: string[];
   classes: RoleToolPolicy;
 }
 
@@ -87,8 +91,10 @@ function parseToolsList(raw: string): string[] {
 // Frontmatter contract (role contents land in issue #44 — this is the
 // shape they must honor): a `---`-delimited block of `key: value` (or
 // `key = value`) lines. `role` names the role, `tools` is a `[a, b]`
-// (or bare `a, b`) list, and the five permission-class keys carry the
-// tool_policy. Unknown keys are refused fail-closed, never ignored.
+// (or bare `a, b`) list, `skills` is a `[a, b]` list of the skill names
+// this role sees (absent means unrestricted, issue #181), and the five
+// permission-class keys carry the tool_policy. Unknown keys are refused
+// fail-closed, never ignored.
 export function parseRoleDocument(markdown: string): ParsedRoleDoc {
   const lines = markdown.split('\n');
   if (lines[0]?.trim() !== '---') {
@@ -104,6 +110,7 @@ export function parseRoleDocument(markdown: string): ParsedRoleDoc {
   }
   let name: string | undefined;
   let tools: string[] | undefined;
+  let skills: string[] | undefined;
   const classes: RoleToolPolicy = {};
   for (const line of lines.slice(1, close)) {
     const trimmed = line.trim();
@@ -124,6 +131,8 @@ export function parseRoleDocument(markdown: string): ParsedRoleDoc {
       name = String(parseScalar(raw));
     } else if (key === 'tools') {
       tools = parseToolsList(raw);
+    } else if (key === 'skills') {
+      skills = parseToolsList(raw);
     } else if (CLASS_KEYS.has(key)) {
       classes[key as keyof RoleToolPolicy] = parseScalar(raw);
     } else {
@@ -133,7 +142,12 @@ export function parseRoleDocument(markdown: string): ParsedRoleDoc {
   if (name === undefined || name === '') {
     throw new RoleParseError("role document frontmatter must declare 'role'");
   }
-  return { name, ...(tools === undefined ? {} : { tools }), classes };
+  return {
+    name,
+    ...(tools === undefined ? {} : { tools }),
+    ...(skills === undefined ? {} : { skills }),
+    classes,
+  };
 }
 
 export class RoleRefusedError extends Error {

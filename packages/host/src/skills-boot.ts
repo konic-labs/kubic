@@ -12,6 +12,8 @@
 // (§29.3), and the loader is told, never asked to guess.
 
 import { basename, dirname, resolve, sep } from 'node:path';
+import type { PermissionClasses } from '../../agents/src/policy.js';
+import { SOLO_DEFAULTS } from '../../agents/src/policy.js';
 import type {
   DiscoverSkillsOptions,
   LoadedSkill,
@@ -20,8 +22,10 @@ import type {
 import {
   discoverSkills,
   formatSkillsForSystemPrompt,
+  gateSkills,
 } from '../../agents/src/skills/skills.js';
 import type { FileBridge } from '../../exec/src/file-bridge.js';
+import type { DoctorCheck } from './doctor.js';
 
 export interface BootSkillOptions {
   bridge: FileBridge;
@@ -51,6 +55,21 @@ export interface BootSkillOptions {
   // the same value.
   warn?: (line: string) => void;
   log?: (line: string) => void;
+  // Issue #181 (§29.4): the resolved role name for role-scoped skills.
+  // Absent means the lane booted with no role — role scoping is skipped
+  // and the capability check alone decides. The caller passes the name
+  // the lane resolved (a worker child's task role, else `--role`).
+  role?: string;
+  // Issue #181 (§29.4): the resolved role document's `skills` list, by
+  // skill name. Absent means the document declares none — no restriction.
+  // A declared list restricts the visible set to its names (merged with
+  // the skill-side `roles:` check: both must admit).
+  roleSkills?: string[];
+  // Issue #181 (§29.4): the capability classes the lane enforces, for the
+  // capability-aware check. Absent means the documented SOLO_DEFAULTS —
+  // the same default the lane installs, so the gate never withholds what
+  // the lane would run.
+  classes?: PermissionClasses;
 }
 
 export interface BootSkills {
@@ -64,6 +83,10 @@ export interface BootSkills {
   // Model-invisible skills (disableModelInvocation). Reported so a caller
   // can name them if it needs to; never injected.
   hidden: string[];
+  // Issue #181 (§29.4): skills the role/capability gate withheld, with
+  // the reason each was not offered. Reported (debug log + here) — never
+  // silently dropped. `kubic doctor` reads this same list.
+  withheld: WithheldSkill[];
   // Issue #177: the explicit --skill values that resolved to nothing. The
   // boot already warned each one via `warn`; reported as well so a caller
   // that renders its own diagnostics (doctor, tests) can read them.
@@ -121,7 +144,36 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
   for (const value of unknownSkills) {
     options.warn?.(`skill skipped (unknown skill '${value}')`);
   }
-  const visible = skills.filter(
+  // Issue #181 (§29.4, role-scoped + capability-aware): the injected set
+  // depends on the resolved role and the installed capability classes —
+  // a skill the role or the grant cannot use is not offered, with the
+  // reason logged (and returned) instead of failing silently mid-task.
+  // The role document's `skills` list restricts first (both sides must
+  // admit); the loader's own gate then applies role scoping (skipped with
+  // no role on the lane) and the capability check.
+  const roleWithheld: WithheldSkill[] = [];
+  const admitted = skills.filter((skill) => {
+    if (
+      options.roleSkills !== undefined &&
+      !options.roleSkills.includes(skill.name)
+    ) {
+      roleWithheld.push({
+        name: skill.name,
+        reason: "not listed in the role's skills",
+      });
+      return false;
+    }
+    return true;
+  });
+  for (const entry of roleWithheld) {
+    options.log?.(`skill '${entry.name}' withheld: ${entry.reason}`);
+  }
+  const gated = gateSkills(admitted, {
+    ...(options.role === undefined ? {} : { role: options.role }),
+    classes: options.classes ?? SOLO_DEFAULTS,
+    ...(options.log === undefined ? {} : { log: options.log }),
+  });
+  const visible = gated.visible.filter(
     (skill) => skill.disableModelInvocation !== true,
   );
   const hidden = skills
@@ -132,14 +184,32 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
     block:
       visible.length === 0 ? undefined : formatSkillsForSystemPrompt(visible),
     hidden,
+    withheld: [...roleWithheld, ...gated.withheld],
     unknownSkills,
-    readRoots: skillReadRoots(skills, options.cwd),
+    readRoots: skillReadRoots(visible, options.cwd),
   };
 }
 
-// The role/capability gate (§29.4, §71): a skill whose `roles` list does
-// not name the running role, or whose required tools the capability grant
-// does not provide, is withheld — reported by name, never silently
-// dropped. Kept here (not in the loader) because the loader owns
-// discovery, and the grant is a policy input the caller holds.
+// The role/capability gate (§29.4, issue #181): applied in `bootSkills`
+// above — discovery stays in the loader (it owns the roots and trust),
+// while the grant (the resolved role, its `skills` list, the installed
+// classes) is a boot input the caller holds. Withheld skills are reported
+// by name on the log sink and in `BootSkills.withheld`, never silently
+// dropped.
 export type { LoadedSkill, WithheldSkill };
+
+// Doctor surface (issue #181, §29.4): the same boot the lane runs, judged
+// with the lane's classes and no role — a skill the default lane would
+// not offer warns here with the gate's reason, never green. `kubic run
+// --role` narrows further; that narrowing is named by the run's own
+// debug log, not here.
+export function skillsDoctorProbe(input: BootSkillOptions): DoctorCheck[] {
+  const booted = bootSkills(input);
+  return booted.withheld.map((held) => ({
+    id: `skill:${held.name}`,
+    label: `skill ${held.name}`,
+    status: 'warn' as const,
+    reason: 'policy-mismatch' as const,
+    detail: held.reason,
+  }));
+}

@@ -496,3 +496,157 @@ describe('settings skills from config (issue #237, §29.2)', () => {
     expect(debug.join('\n')).toContain('team-helper@settings');
   });
 });
+
+describe('the role/capability gate reaches the live solo prompt (issue #181, §29.4)', () => {
+  function writeScopedSkill(
+    root: string,
+    name: string,
+    frontmatter: string,
+  ): void {
+    const dir = join(root, name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'SKILL.md'),
+      `---\nname: ${name}\ndescription: Scoped skill ${name}\n${frontmatter}\n---\n\nBody.\n`,
+    );
+  }
+
+  it('withholds a roles-scoped skill from the wrong role, and offers it to the named one', async () => {
+    const home = tmpRoot('skills-gate-home-');
+    const cwd = tmpRoot('skills-gate-cwd-');
+    writeScopedSkill(
+      join(cwd, '.agents', 'skills'),
+      'ship-it',
+      'roles: [implementer]',
+    );
+    const root = tmpRoot('skills-gate-sessions-');
+    const debug: string[] = [];
+    const reviewer = await runHeadlessPrompt(
+      'hello',
+      { role: 'reviewer' },
+      {
+        sessionsRoot: root,
+        models: fauxModels(['done']),
+        env: new FakeExecutionEnv({}),
+        debug: (line: string) => debug.push(line),
+        skills: { homeDir: home, cwd, trusted: true },
+      },
+    );
+    expect(reviewer.terminus).toBe('completed');
+    const reviewerPrompt = await committedPrompt(root, reviewer.sessionId);
+    expect(reviewerPrompt).not.toContain('<name>ship-it</name>');
+    expect(debug.join('\n')).toContain(
+      "skill 'ship-it' withheld: not visible to role 'reviewer'",
+    );
+    const implementer = await runHeadlessPrompt(
+      'hello',
+      { role: 'implementer' },
+      {
+        sessionsRoot: root,
+        models: fauxModels(['done']),
+        env: new FakeExecutionEnv({}),
+        skills: { homeDir: home, cwd, trusted: true },
+      },
+    );
+    expect(implementer.terminus).toBe('completed');
+    const implementerPrompt = await committedPrompt(
+      root,
+      implementer.sessionId,
+    );
+    expect(implementerPrompt).toContain('<name>ship-it</name>');
+  });
+
+  it('withholds a bash-needing skill when shell is denied, with the reason logged', async () => {
+    const home = tmpRoot('skills-cap-home-');
+    const cwd = tmpRoot('skills-cap-cwd-');
+    writeScopedSkill(
+      join(cwd, '.agents', 'skills'),
+      'shell-thing',
+      'tools: [bash]',
+    );
+    const root = tmpRoot('skills-cap-sessions-');
+    const debug: string[] = [];
+    const result = await runHeadlessPrompt(
+      'hello',
+      {},
+      {
+        sessionsRoot: root,
+        models: fauxModels(['done']),
+        env: new FakeExecutionEnv({}),
+        debug: (line: string) => debug.push(line),
+        policyClasses: {
+          filesystem: 'workspace-write',
+          shell: false,
+          network: 'none',
+          git: 'workspace',
+          credentials: 'none',
+        },
+        skills: { homeDir: home, cwd, trusted: true },
+      },
+    );
+    expect(result.terminus).toBe('completed');
+    const prompt = await committedPrompt(root, result.sessionId);
+    expect(prompt).not.toContain('<name>shell-thing</name>');
+    expect(debug.join('\n')).toContain(
+      "skill 'shell-thing' withheld: needs tool 'bash' denied by capability grant",
+    );
+  });
+
+  it("restricts the visible skills to the role document's skills list", async () => {
+    const home = tmpRoot('skills-doc-home-');
+    const cwd = tmpRoot('skills-doc-cwd-');
+    const skillsDir = join(cwd, '.agents', 'skills');
+    writeScopedSkill(skillsDir, 'kept-skill', '');
+    writeScopedSkill(skillsDir, 'dropped-skill', '');
+    mkdirSync(join(cwd, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(cwd, '.kubic', 'roles', 'custom.md'),
+      '---\nrole: custom\ntools: [read, ls]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\nskills: [kept-skill]\n---\n# Custom\nA custom role.\n\n## Prompt\n\nBe custom.\n',
+    );
+    const root = tmpRoot('skills-doc-sessions-');
+    const result = await runHeadlessPrompt(
+      'hello',
+      { role: 'custom' },
+      {
+        sessionsRoot: root,
+        models: fauxModels(['done']),
+        env: new FakeExecutionEnv({}),
+        skills: { homeDir: home, cwd, trusted: true },
+        // The repo role document resolves under role trust too — the
+        // run names this root trusted, like the project skills above.
+        roles: { cwd, trusted: true },
+      },
+    );
+    expect(result.terminus, result.summary).toBe('completed');
+    const prompt = await committedPrompt(root, result.sessionId);
+    expect(prompt).toContain('<name>kept-skill</name>');
+    expect(prompt).not.toContain('<name>dropped-skill</name>');
+  });
+
+  it('reports gate-withheld skills to the doctor probe with reasons', async () => {
+    const home = tmpRoot('skills-doctor-home-');
+    const dir = join(home, '.agents', 'skills', 'impl-only');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'SKILL.md'),
+      '---\nname: impl-only\ndescription: Implementers only\nroles: [implementer]\n---\n\nBody.\n',
+    );
+    const { skillsDoctorProbe } = await import('./skills-boot.js');
+    const checks = skillsDoctorProbe({
+      bridge: createNodeFileBridge(home),
+      cwd: home,
+      homeDir: home,
+      trusted: false,
+      role: 'reviewer',
+    });
+    expect(checks).toEqual([
+      {
+        id: 'skill:impl-only',
+        label: 'skill impl-only',
+        status: 'warn',
+        reason: 'policy-mismatch',
+        detail: "not visible to role 'reviewer'",
+      },
+    ]);
+  });
+});

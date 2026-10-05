@@ -78,7 +78,10 @@ export interface DiscoverSkillsResult {
 }
 
 export interface GateContext {
-  role: string;
+  // Issue #181 (§29.4): absent means the lane booted with no role — the
+  // role-scoping check is skipped (only the capability check applies), so
+  // a plain `kubic run` still sees role-scoped skills it can actually run.
+  role?: string;
   classes: PermissionClasses;
   log?: (line: string) => void;
 }
@@ -624,7 +627,13 @@ export function gateSkills(
   const visible: LoadedSkill[] = [];
   const withheld: WithheldSkill[] = [];
   for (const skill of skills) {
-    if (skill.roles !== undefined && !skill.roles.includes(context.role)) {
+    // Issue #181: no role on the lane means no role scoping — the skill
+    // is judged on capability alone.
+    if (
+      context.role !== undefined &&
+      skill.roles !== undefined &&
+      !skill.roles.includes(context.role)
+    ) {
       const reason = `not visible to role '${context.role}'`;
       withheld.push({ name: skill.name, reason });
       context.log?.(`skill '${skill.name}' withheld: ${reason}`);

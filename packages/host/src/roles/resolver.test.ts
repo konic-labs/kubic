@@ -34,6 +34,7 @@ describe('parseRoleDocument', () => {
     const doc = parseRoleDocument(PLANNER_MD);
     expect(doc.name).toBe('planner');
     expect(doc.tools).toEqual(['read', 'ls', 'find', 'grep']);
+    expect(doc.skills).toBeUndefined();
     expect(doc.classes).toMatchObject({
       filesystem: 'read',
       shell: false,
@@ -41,6 +42,15 @@ describe('parseRoleDocument', () => {
       git: false,
       credentials: 'none',
     });
+  });
+
+  // Issue #181 (§29.4): a role document may declare the skills it sees.
+  it("parses the role document's skills list", () => {
+    const doc = parseRoleDocument(
+      `---\nrole: reviewer\nskills: [diff-skill, lint-skill]\n---\n# Reviewer\n`,
+    );
+    expect(doc.name).toBe('reviewer');
+    expect(doc.skills).toEqual(['diff-skill', 'lint-skill']);
   });
 });
 

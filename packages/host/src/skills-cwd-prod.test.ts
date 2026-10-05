@@ -215,3 +215,27 @@ describe('settings skills from config on the tui lane (issue #237, §29.2)', () 
     );
   });
 });
+
+describe('the role gate on the tui lane (issue #181, §29.4)', () => {
+  it('kubic tui withholds a skill outside the resolved role', async () => {
+    const home = tmpRoot('skills-tui-gate-home-');
+    const cwd = tmpRoot('skills-tui-gate-work-');
+    const dir = join(cwd, '.agents', 'skills', 'impl-only');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'SKILL.md'),
+      '---\nname: impl-only\ndescription: Implementers only\nroles: [implementer]\n---\n\nBody.\n',
+    );
+    const captured: string[] = [];
+    const boot = await bootTuiLane(undefined, {
+      role: 'reviewer',
+      sessionsRoot: tmpRoot('skills-tui-gate-sessions-'),
+      models: fauxModels(['done'], captured),
+      env: new FakeExecutionEnv({}),
+      skills: { homeDir: home, cwd, trusted: true },
+    });
+    const prompt = await promptOf(boot, captured);
+    await boot.close?.();
+    expect(prompt).not.toContain('<name>impl-only</name>');
+  });
+});

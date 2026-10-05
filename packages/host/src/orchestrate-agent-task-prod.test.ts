@@ -478,3 +478,52 @@ describe('prod orchestrate path: the child refuses a bad task (issue #191)', () 
     expect(result.terminus).toBe('completed');
   });
 });
+
+describe('prod worker path: the child gates skills on its task role (issue #181)', () => {
+  it('withholds a skill outside the task role from the worker prompt', async () => {
+    // The manager forwards the skill (explicit intent, #170 channel); the
+    // child's own boot applies the §29.4 gate on the task's role — the
+    // reviewer never sees the implementer-scoped skill, with the reason on
+    // the child's debug sink.
+    const worktree = scratchRoot('kubic-orch-181-wt-');
+    const skillDir = join(worktree, '.agents', 'skills', 'impl-only');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, 'SKILL.md'),
+      '---\nname: impl-only\ndescription: Implementers only\nroles: [implementer]\n---\n\nBody.\n',
+    );
+    const built = buildAgentTask({
+      taskId: 'task-181',
+      parentSessionId: 'sess-181',
+      role: 'reviewer',
+      objective: 'review the thing',
+      worktree,
+      toolNames: ['read', 'ls'],
+      budget: {},
+      resources: { skills: [skillDir] },
+    });
+    if (!built.valid) throw new Error(built.errors.join('; '));
+    const taskFile = join(worktree, 'agent-task.json');
+    writeFileSync(taskFile, JSON.stringify(built.task));
+    vi.stubEnv('KUBIC_TASK_FILE', taskFile);
+    vi.stubEnv('KUBIC_WORKER_ID', 'alpha');
+    const debug: string[] = [];
+    const replayRoot = scratchRoot('kubic-orch-181-replay-');
+    const result = await runHeadlessPrompt(
+      'do the thing',
+      { skills: [skillDir] },
+      {
+        sessionsRoot: replayRoot,
+        models: fauxModels(),
+        env: new NodeExecutionEnv(worktree),
+        debug: (line: string) => debug.push(line),
+      },
+    );
+    expect(result.terminus).toBe('completed');
+    const prompt = await committedPrompt(replayRoot, result.sessionId);
+    expect(prompt).not.toContain('<name>impl-only</name>');
+    expect(debug.join('\n')).toContain(
+      "skill 'impl-only' withheld: not visible to role 'reviewer'",
+    );
+  });
+});

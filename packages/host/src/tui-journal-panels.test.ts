@@ -32,6 +32,7 @@ import {
   fauxProvider,
   fauxToolCall,
 } from '../../worker/src/pi-boundary.js';
+import { runJournalCommand } from './journal-cli.js';
 
 const made: string[] = [];
 
@@ -161,6 +162,34 @@ describe('tool entries share the sweep turn numbering (issue #436)', () => {
     for (const sweep of sweepEntries) {
       if (sweep.turn !== undefined) expect(sweep.turn).toBe(1);
     }
+    fake.feed('\x1b');
+    expect(await exit).toBe(0);
+  });
+
+  it("kubic diff --stat shows the turn on the TUI turn's write entry", async () => {
+    const sessionsRoot = tmpRoot();
+    const workspace = tmpRoot();
+    const { fake, exit } = await openTui(sessionsRoot, workspace, [
+      [fauxToolCall('write', { path: 't.txt', content: 't\n' })],
+      'wrote it',
+    ]);
+    await submit(fake, 'write t', 'wrote it');
+    const id = readdirSync(sessionsRoot).find((name) => {
+      try {
+        return readdirSync(join(sessionsRoot, name)).includes('journal');
+      } catch {
+        return false;
+      }
+    });
+    if (id === undefined) throw new Error('no session journal written');
+    const lines: string[] = [];
+    const code = await runJournalCommand(
+      { command: 'diff', stat: true, session: id },
+      { sessionsRoot, out: (line) => lines.push(line) },
+    );
+    expect(code).toBe(0);
+    // The write entry carries the first turn; the stat line names it.
+    expect(lines.some((line) => /t\.txt .*turn 1/.test(line))).toBe(true);
     fake.feed('\x1b');
     expect(await exit).toBe(0);
   });

@@ -139,10 +139,12 @@ export interface JournalEntryInput {
   timestamp: number;
   unattributed?: boolean;
   /**
-   * Issue #374 (§42.1): the interactive turn a reconciliation sweep entry
-   * belongs to — 1 for the session's first prompt in this process. Absent on
-   * tool-journaled entries (their toolCallId already attributes them) and on
-   * every entry written before the field existed.
+   * Issue #374 (§42.1): the interactive turn the entry belongs to — 1 for
+   * the session's first prompt in this process. Reconciliation sweep
+   * entries carry the turn they swept; tool-journaled entries carry the
+   * turn in flight when the call ran (issue #436; TUI only — headless
+   * runs are turn-less). Absent on every entry written before the field
+   * existed.
    */
   turn?: number;
   /**

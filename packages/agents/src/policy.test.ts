@@ -182,7 +182,11 @@ describe('checkAgreement every refuse branch (issue #220)', () => {
 
 describe('toolsForClasses over every level (issue #220)', () => {
   it('filesystem: none holds no fs tools, read holds reads, writes need workspace-write/full', () => {
-    const base: PermissionClasses = { ...SOLO_DEFAULTS, shell: false, git: false };
+    const base: PermissionClasses = {
+      ...SOLO_DEFAULTS,
+      shell: false,
+      git: false,
+    };
     expect(toolsForClasses({ ...base, filesystem: 'none' })).toEqual([]);
     expect(toolsForClasses({ ...base, filesystem: 'read' }).sort()).toEqual(
       ['find', 'grep', 'ls', 'read'].sort(),
@@ -196,7 +200,11 @@ describe('toolsForClasses over every level (issue #220)', () => {
   });
 
   it('shell: false holds no bash, the allowlist and full shell do', () => {
-    const base: PermissionClasses = { ...SOLO_DEFAULTS, filesystem: 'none', git: false };
+    const base: PermissionClasses = {
+      ...SOLO_DEFAULTS,
+      filesystem: 'none',
+      git: false,
+    };
     expect(toolsForClasses({ ...base, shell: false })).toEqual([]);
     for (const shell of ['read-only-allowlist', true] as const) {
       expect(toolsForClasses({ ...base, shell })).toEqual(['bash']);
@@ -204,7 +212,11 @@ describe('toolsForClasses over every level (issue #220)', () => {
   });
 
   it('git: false holds no git tools, workspace and full hold all eight', () => {
-    const base: PermissionClasses = { ...SOLO_DEFAULTS, filesystem: 'none', shell: false };
+    const base: PermissionClasses = {
+      ...SOLO_DEFAULTS,
+      filesystem: 'none',
+      shell: false,
+    };
     expect(toolsForClasses({ ...base, git: false })).toEqual([]);
     const all = [
       'git_status',

@@ -1451,6 +1451,35 @@ describe('journal CLI orchestration aggregation (issue #364)', () => {
       'worker-2',
     ]);
   });
+
+  // Review follow-up: `status`/`undo` keep the single-store contract —
+  // discovery must not even run for them, let alone print the notice.
+  it('status/undo never discover linked journals nor name them', async () => {
+    const { sessionsRoot, root } = orchSetup();
+    const ids = ['orch', 'orch-worker-1', 'orch-worker-2', 'solo'];
+    const workspaces = async (): Promise<Map<string, string>> =>
+      new Map(ids.map((id) => [id, root]));
+    for (const command of ['status', 'undo'] as const) {
+      const lines: string[] = [];
+      await runJournalCommand(
+        command === 'undo'
+          ? { command, session: 'orch', dryRun: true }
+          : { command, session: 'orch' },
+        {
+          sessionsRoot,
+          root,
+          sessionWorkspaces: workspaces,
+          // Discovery itself must not run for these commands — a throw
+          // here proves the gate, not just the notice.
+          linkedSessions: () => {
+            throw new Error(`linked discovery must not run for ${command}`);
+          },
+          out: (l: string) => lines.push(l),
+        },
+      );
+      expect(lines.join('\n')).not.toContain('linked worker journals');
+    }
+  });
 });
 
 describe('journal CLI diff path scope (issue #271)', () => {

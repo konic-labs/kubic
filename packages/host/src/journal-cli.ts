@@ -449,9 +449,13 @@ export async function runJournalCommand(
   }
   // Issue #364: worker-journal aggregation is keyed on the resolved
   // session id (explicit --session or the latest-session fallback) — a
-  // workspace store has no orchestration to aggregate.
+  // workspace store has no orchestration to aggregate. Review follow-up:
+  // discovery runs for `diff`/`log` only — `status`/`undo` keep the
+  // single-store contract, so even naming linked journals there would
+  // imply worker coverage the restore does not do.
   const linked =
-    resolved.sessionId === undefined
+    resolved.sessionId === undefined ||
+    (request.command !== 'diff' && request.command !== 'log')
       ? []
       : linkedJournals(
           deps,

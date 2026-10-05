@@ -381,7 +381,7 @@ describe('per-agent role and model binding (issue #178)', () => {
     const seen: WorkerSpawnInfo[] = [];
     const second = makeWorld({
       loadState: () => structuredClone(stored),
-      runWorker: (agentId, _worktree, _prompt, info) => {
+      runWorker: (_agentId, _worktree, _prompt, info) => {
         seen.push(info as WorkerSpawnInfo);
         return [];
       },
@@ -433,7 +433,7 @@ describe('per-agent role and model binding (issue #178)', () => {
       },
       {
         ...adopted.deps,
-        runWorker: (agentId, _worktree, _prompt, info) => {
+        runWorker: (_agentId, _worktree, _prompt, info) => {
           seen.push(info as WorkerSpawnInfo);
           return [];
         },

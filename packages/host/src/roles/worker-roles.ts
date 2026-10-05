@@ -51,7 +51,6 @@ export interface WorkerRoleAssignment {
    */
   modelRef: string | undefined;
   /**
-  /**
    * The document's own budget dims (issue #198, §71), or undefined when
    * the role declares none — absent means unbounded. A copy, so the plan
    * owns the dims the spawn gate will enforce.
@@ -61,7 +60,6 @@ export interface WorkerRoleAssignment {
    * The thinking level the worker child is told (issues #202/#225): the
    * run's explicit level (`KUBIC_MODEL_THINKING`) when set, else the
    * role's `[roles.<r>].thinking` config default, else the role's own
->>>>>>> bbfdd0ea (fix(roles): resolve config-file role thinking onto worker assignments)
    * §12 default. Undefined leaves the child's `[model].thinking` in force.
    */
   thinking: string | undefined;

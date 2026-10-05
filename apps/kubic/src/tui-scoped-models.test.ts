@@ -18,7 +18,8 @@ import {
 } from '../../../packages/worker/src/pi-boundary.js';
 import type { CliConfigResult } from './config-runtime.js';
 import { prodTuiDeps } from './prod-runners.js';
-import { bootTuiLane, tuiDepsWithDefaults } from './tui-run.js';
+import { bootTuiLane, runTuiCommand, tuiDepsWithDefaults } from './tui-run.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 
 const tempDirs: string[] = [];
 
@@ -85,6 +86,21 @@ function rerooted(
 }
 
 const IO = { out: (): void => {}, debug: (): void => {} };
+
+async function waitFor(
+  condition: () => boolean,
+  deadlineMs = 10_000,
+): Promise<void> {
+  // Deadline-based (issue #385): a tick count is a latency assertion in
+  // disguise — under contention a fixed poll lapses before the frame
+  // lands. A generous deadline only fails a true hang, never a slow
+  // scheduler.
+  const start = Date.now();
+  while (!condition() && Date.now() - start < deadlineMs) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  expect(condition()).toBe(true);
+}
 
 const PROJECT = '/nonexistent-cwd/.kubic/config.toml';
 
@@ -153,5 +169,67 @@ describe('scoped role set on the TUI lane (issue #255)', () => {
       loop.switchModel({ provider: 'local', modelId: 'b' }, loop.context),
     ).resolves.toBe('local/b');
     await boot.close?.();
+  });
+
+  it('reports the resolved set through the /scoped-models loop case', async () => {
+    // Review #255 (low, carried): the loop case had no loop-level test —
+    // only the pure helper and the help count were pinned. Dispatch
+    // `/scoped-models` through the real loop (fake terminal, prod boot)
+    // and assert the transcript carries the report, scoped and roleless.
+    const workspace = tmpRoot();
+    writeRole(workspace, 'reviewer');
+    const cfg = cliConfig({
+      [PROJECT]:
+        '[model]\nprovider = "local"\nid = "a"\n' +
+        '[roles.reviewer]\nmodels = ["local/*"]\n',
+    });
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cfg),
+      rerooted(workspace, tmpRoot(), twoProviders()),
+    );
+    const fake = terminalRig(100);
+    const pending = runTuiCommand(
+      { role: 'reviewer' },
+      { ...deps, createTerminal: () => fake.terminal, colorLevel: 'none' },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    const run = (command: string): void => {
+      fake.feed('\x15');
+      for (const ch of command) fake.feed(ch);
+      fake.feed('\r');
+    };
+    run('/scoped-models');
+    await waitFor(() =>
+      fake.writes.join('').includes("role 'reviewer' allows local/* only"),
+    );
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+
+  it('reports the allow-all set when the lane has no role', async () => {
+    const workspace = tmpRoot();
+    const cfg = cliConfig({
+      [PROJECT]: '[model]\nprovider = "local"\nid = "a"\n',
+    });
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cfg),
+      rerooted(workspace, tmpRoot(), twoProviders()),
+    );
+    const fake = terminalRig(100);
+    const pending = runTuiCommand(
+      {},
+      { ...deps, createTerminal: () => fake.terminal, colorLevel: 'none' },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    fake.feed('\x15');
+    for (const ch of '/scoped-models') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() =>
+      fake.writes
+        .join('')
+        .includes('no role on this lane — every registered model is allowed'),
+    );
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
   });
 });

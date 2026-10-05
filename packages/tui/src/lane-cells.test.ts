@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   entriesToCells,
+  forkPickerRows,
   type LaneEntryLike,
   sanitizeLaneText,
   summarizeToolArguments,
@@ -399,5 +400,39 @@ describe('userPromptsOf (issue #340)', () => {
         user('5', 'second\nline two'),
       ]),
     ).toEqual(['first', 'second\nline two']);
+  });
+});
+
+// Issue #332: the `/tree` picker — one row per earlier prompt, newest first,
+// each forking just BEFORE that prompt (so the operator retries from there).
+describe('forkPickerRows (issue #332)', () => {
+  it('lists prompts newest first with their entry and the fork point (headless snapshot)', () => {
+    const rows = forkPickerRows([
+      { entryId: 8, at: 7, text: 'fix the failing test' },
+      {
+        entryId: 14,
+        at: 13,
+        text: 'now refactor the parser into two modules and keep the public API exactly as it is',
+      },
+    ]);
+    expect(rows).toMatchInlineSnapshot(`
+      [
+        {
+          "description": "fork before this prompt (at #13)",
+          "label": "#14  now refactor the parser into two modules and keep the publi…",
+          "value": "13:14",
+        },
+        {
+          "description": "fork before this prompt (at #7)",
+          "label": "#8  fix the failing test",
+          "value": "7:8",
+        },
+      ]
+    `);
+  });
+
+  it('keeps a multi-line prompt on one label line', () => {
+    const [row] = forkPickerRows([{ entryId: 3, at: 2, text: 'one\ntwo' }]);
+    expect(row?.label).toBe('#3  one two');
   });
 });

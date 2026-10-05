@@ -475,6 +475,39 @@ export function userPromptsOf(entries: ReadonlyArray<LaneEntryLike>): string[] {
   return prompts;
 }
 
+// Issue #332: one fork point of the `/tree` picker — an earlier prompt
+// (`entryId`) and the entry just before it (`at`), which is where the fork
+// cuts so the operator can retry that prompt.
+export interface ForkPoint {
+  readonly entryId: number;
+  readonly at: number;
+  readonly text: string;
+}
+
+const FORK_LABEL_MAX = 60;
+
+// The `/tree` picker rows: newest prompt first, the label is the entry id and
+// a one-line preview (sanitized — prompt text came from the session file),
+// and the value carries `at:entryId` for the fork.
+export function forkPickerRows(
+  points: ReadonlyArray<ForkPoint>,
+): Array<{ value: string; label: string; description: string }> {
+  return [...points]
+    .sort((left, right) => right.entryId - left.entryId)
+    .map((point) => {
+      const oneLine = sanitizeLaneText(point.text).replace(/\s+/g, ' ').trim();
+      const preview =
+        [...oneLine].length > FORK_LABEL_MAX
+          ? `${[...oneLine].slice(0, FORK_LABEL_MAX - 1).join('')}…`
+          : oneLine;
+      return {
+        value: `${point.at}:${point.entryId}`,
+        label: `#${point.entryId}  ${preview}`,
+        description: `fork before this prompt (at #${point.at})`,
+      };
+    });
+}
+
 export function entriesToCells(
   entries: ReadonlyArray<LaneEntryLike>,
 ): TranscriptEntry[] {

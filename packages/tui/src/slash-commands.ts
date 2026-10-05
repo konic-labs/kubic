@@ -68,6 +68,22 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     command: 'session.attach',
   },
   {
+    // Issue #332 (§22.1, §66 session.fork): pi-durable branches by forking,
+    // so both commands fork the live session into a NEW one and switch to it;
+    // the original keeps the abandoned path.
+    name: 'tree',
+    summary: 'pick an earlier prompt and retry from there in a fork',
+    usage: '/tree',
+    command: 'session.fork',
+  },
+  {
+    name: 'fork',
+    summary: 'fork this session at an entry and switch to the fork',
+    usage: '/fork <entry>',
+    command: 'session.fork',
+    argumentHint: 'entry',
+  },
+  {
     // No §66 command: the posture toggle is a session decision, not a
     // response to an approval request (the vocabulary's `approval.respond`
     // needs a request id this has none of).

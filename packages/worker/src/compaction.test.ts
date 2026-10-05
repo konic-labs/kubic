@@ -595,26 +595,6 @@ describe('/compact focus instructions (issue #34)', () => {
   });
 });
 
-describe('/tree branch_summary entries (issue #34)', () => {
-  it('writes a branch_summary entry and restores it on switch-back', async () => {
-    const { BranchSummaryStore } = await import('./compaction.js');
-    const store = new BranchSummaryStore('main', 'main state');
-    store.writeBranchSummary({
-      branch: 'feature',
-      summary: 'feature work in progress',
-    });
-    store.switchBranch('feature', 'feature state');
-    expect(store.current()).toBe('feature');
-    expect(store.currentState()).toBe('feature state');
-    store.switchBranch('main');
-    expect(store.current()).toBe('main');
-    expect(store.currentState()).toBe('main state');
-    expect(store.readBranchSummary('feature')?.summary).toBe(
-      'feature work in progress',
-    );
-  });
-});
-
 describe('structured summaries with cumulative file ops (issue #34)', () => {
   it('lists cumulative created/modified/deleted structurally', async () => {
     const { accumulateFileOps, emptyFileOps, formatStructuredSummary } =

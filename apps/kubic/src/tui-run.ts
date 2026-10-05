@@ -122,6 +122,8 @@ import {
   parseKeybindingsJson,
 } from '../../../packages/tui/src/keybindings.js';
 import {
+  type ForkPoint,
+  forkPickerRows,
   type LaneEntryLike,
   userPromptsOf,
 } from '../../../packages/tui/src/lane-cells.js';
@@ -194,6 +196,7 @@ import {
 import {
   attachSession,
   createSession,
+  forkSession,
   listSessions,
   openSessionStore,
 } from '../../../packages/worker/src/lane/session-store.js';
@@ -694,6 +697,10 @@ export interface TuiLaneBoot {
   // Issue #336: the workspace's files for `@` mentions, workspace-relative —
   // the gitignore-aware, bounded walk the find/grep tools use.
   listFiles?: () => readonly string[];
+  // Issue #332 (§22.1, §66 session.fork): fork THIS session at an entry into a
+  // new session (the #265 store fork) and return its id. Needs the session's
+  // lock free: the loop closes this boot first.
+  forkAt?: (at: number) => Promise<string>;
   // Issue #307: the installed policy's own full-access predicate (the SAME
   // one its ask auto-approves on), read for the mode indicator at boot and
   // after every turn. Absent (a viewer boot with no policy) means approvals
@@ -1541,6 +1548,8 @@ export async function bootTuiLane(
         reconciliation?.rebaseline(turn);
       },
       listFiles: workspaceFileLister(env),
+      forkAt: async (at: number) =>
+        (await forkSession(store, id, { at }, context)).id,
       ...(modelNotices.length === 0
         ? {}
         : { modelNotice: modelNotices.join('; ') }),
@@ -3998,6 +4007,10 @@ export async function runTuiCommand(
         const previous = boot;
         const next = await deps.bootLane(nextSessionId, surface.seat, flags);
         await previous.close?.();
+        await adoptBoot(next);
+      };
+      // Every lane-bound object and session-scoped surface follows the boot.
+      const adoptBoot = async (next: TuiLaneBoot): Promise<void> => {
         boot = next;
         activeTurn = undefined;
         inFlightTurns = 0;
@@ -4131,6 +4144,105 @@ export async function runTuiCommand(
           });
         return 'accepted';
       };
+      // Issue #332 (§22.1, §66 session.fork): pi-durable branches by forking,
+      // so `/fork` and `/tree` fork the live session into a NEW session (the
+      // #265 store fork) and switch the TUI to it; the original keeps the
+      // abandoned path. The fork needs the session's lock, so this boot closes
+      // FIRST; a failed fork re-attaches the session the operator was in.
+      const forkInto = async (at: number, prefill?: string): Promise<void> => {
+        const previous = boot;
+        const fork = previous.forkAt;
+        if (fork === undefined) throw new Error('this session cannot fork');
+        const sourceId = previous.sessionId;
+        await previous.close?.();
+        let forkId: string;
+        try {
+          forkId = await fork(at);
+        } catch (error) {
+          await adoptBoot(await deps.bootLane(sourceId, surface.seat, flags));
+          throw error;
+        }
+        await adoptBoot(await deps.bootLane(forkId, surface.seat, flags));
+        if (prefill !== undefined) app.editor.setText(prefill);
+        app.setEditorFooter(
+          `fork: ${forkId} — from ${sourceId} at #${at}${prefill === undefined ? '' : ' (edit the prompt and press enter)'}`,
+        );
+      };
+      const runFork = (at: number, prefill?: string): TuiSubmitOutcome => {
+        app.setEditorFooter(`fork: forking at #${at}…`);
+        if (!stopped) screen?.render();
+        void forkInto(at, prefill)
+          .catch((error: unknown) => {
+            if (stopped) return;
+            app.setEditorFooter(
+              `fork: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          })
+          .finally(() => {
+            if (!stopped) screen?.render();
+          });
+        return 'accepted';
+      };
+      // `/tree`: the lane's earlier prompts, each forking just BEFORE itself.
+      const openTreePicker = (): TuiSubmitOutcome => {
+        const loop = boot.loop;
+        if (loop === undefined || boot.forkAt === undefined) {
+          app.setEditorFooter('tree: this session cannot fork');
+          if (!stopped) screen?.render();
+          return 'refused';
+        }
+        void loop
+          .entries(loop.context)
+          .then((raw) => {
+            if (stopped) return;
+            const sorted = [...raw].sort((a, b) => Number(a.id) - Number(b.id));
+            const points: ForkPoint[] = [];
+            for (let i = 1; i < sorted.length; i += 1) {
+              const lane = laneEntryFor(sorted[i] as EntryRecord);
+              const text =
+                lane === undefined ? undefined : userPromptsOf([lane])[0];
+              if (text === undefined) continue;
+              points.push({
+                entryId: Number(sorted[i]?.id),
+                at: Number(sorted[i - 1]?.id),
+                text,
+              });
+            }
+            if (points.length === 0) {
+              app.setEditorFooter('tree: no earlier prompts to fork from');
+              screen?.render();
+              return;
+            }
+            const opened = app.openPicker({
+              rows: forkPickerRows(points),
+              onSelect: (value) => {
+                const [at, entryId] = value.split(':').map(Number);
+                const point = points.find((p) => p.entryId === entryId);
+                if (at === undefined || point === undefined) return;
+                runFork(at, point.text);
+              },
+              onCancel: () => {
+                if (stopped) return;
+                app.setEditorFooter('tree: cancelled');
+                screen?.render();
+              },
+            });
+            if (!opened) {
+              app.setEditorFooter(
+                'tree needs a wider terminal — use kubic sessions fork',
+              );
+            }
+            screen?.render();
+          })
+          .catch((error: unknown) => {
+            if (stopped) return;
+            app.setEditorFooter(
+              `tree: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            screen?.render();
+          });
+        return 'accepted';
+      };
       const runLocalCommand = (
         command: ParsedSlashCommand,
       ): TuiSubmitOutcome => {
@@ -4141,6 +4253,21 @@ export async function runTuiCommand(
             return command.name === 'resume'
               ? openResumePicker()
               : openNewSession();
+          }
+          case 'session.fork': {
+            if (activeTurn?.isRunning() === true) return busyRefusal('fork');
+            if (command.name === 'tree') return openTreePicker();
+            const at = /^\d+$/.test(command.argument)
+              ? Number(command.argument)
+              : undefined;
+            if (at === undefined) {
+              app.setEditorFooter(
+                'usage: /fork <entry> — /tree picks an earlier prompt',
+              );
+              if (!stopped) screen?.render();
+              return 'refused';
+            }
+            return runFork(at);
           }
           default: {
             break;

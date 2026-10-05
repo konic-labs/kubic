@@ -1229,7 +1229,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     );
     expect(calls()).toBe(0);
     run('/help');
-    await waitFor(() => fake.writes.join('').includes('help: 12 commands'));
+    await waitFor(() => fake.writes.join('').includes('help: 14 commands'));
     // The list itself landed in the transcript, generated from the registry.
     expect(fake.writes.join('')).toContain('/quit — leave the TUI');
     run('/help resume');
@@ -1293,7 +1293,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     run('/session');
     await waitFor(() => fake.writes.join('').includes('in 0 out 0 (cached 0)'));
     run('/help');
-    await waitFor(() => fake.writes.join('').includes('help: 12 commands'));
+    await waitFor(() => fake.writes.join('').includes('help: 14 commands'));
     release();
     await waitFor(() => fake.writes.join('').includes('first answer'));
     fake.feed('\x03');
@@ -1323,7 +1323,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(fake.writes.join('')).toContain('/session');
     // Enter takes the first row: /help runs exactly as if it were typed.
     fake.feed('\r');
-    await waitFor(() => fake.writes.join('').includes('help: 12 commands'));
+    await waitFor(() => fake.writes.join('').includes('help: 14 commands'));
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(calls()).toBe(0);

@@ -257,54 +257,6 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export interface BranchSummaryEntry {
-  type: 'branch_summary';
-  branch: string;
-  summary: string;
-  at: number;
-}
-
-// /tree branch_summary entries with switch-back restore: the store
-// keeps per-branch compacted state; switching away snapshots the live
-// state and switching back restores it.
-export class BranchSummaryStore {
-  private states = new Map<string, string>();
-  private summaries = new Map<string, BranchSummaryEntry>();
-  private live: string;
-
-  constructor(initialBranch: string, initialState: string) {
-    this.states.set(initialBranch, initialState);
-    this.live = initialBranch;
-  }
-
-  writeBranchSummary(entry: Omit<BranchSummaryEntry, 'type' | 'at'>): void {
-    this.summaries.set(entry.branch, {
-      type: 'branch_summary',
-      branch: entry.branch,
-      summary: entry.summary,
-      at: Date.now(),
-    });
-  }
-
-  readBranchSummary(branch: string): BranchSummaryEntry | undefined {
-    return this.summaries.get(branch);
-  }
-
-  switchBranch(to: string, state?: string): void {
-    this.states.set(this.live, this.currentState());
-    if (state !== undefined) this.states.set(to, state);
-    this.live = to;
-  }
-
-  current(): string {
-    return this.live;
-  }
-
-  currentState(): string {
-    return this.states.get(this.live) ?? '';
-  }
-}
-
 export type FileOpKind = 'created' | 'modified' | 'deleted' | 'renamed';
 
 export interface FileOp {

@@ -836,6 +836,21 @@ the next `workspace_merge` executes it — `request-changes` records the
 diff under `discarded` (branch kept for inspection, `--resume` never
 retries it, `mergeOrder` never names it, the run continues) instead of
 merging. A worker with no verdict merges (the shipped default).
+`escalate` routes the §70 debugger loop: a tester whose *tests* fail
+(completed with failing rows — a crashed worker takes the `--on-failure`
+path instead) is followed by a debugger mint that inherits the failing
+tests, the diff ref and the worktree through the handoff, then the tester
+re-runs. The run absorbs `--max-attempts` debugger settlements (default
+3); the next debugger spawn escalates once (the `--escalation-model` rung
+overrides the pin, same model when none is configured); further debugger
+spawns refuse (`review_loop_bound`) and the run fails exit 1
+(`code=loop_bound_exceeded`) with the bound named, settled work saved.
+The bound counts spawn-path debugger settlements (follow-up
+re-settlements of the same worker are continuations, not new turns) and
+travels with the session, so `--resume` continues the count. The envelope
+names refused ids under `discarded`, each worker row carries its
+`reviewVerdict`, and the text report lists `discarded: <id> (<verdict>)`
+beside the merges.
 `workspace_apply` stages any settled worker's change — completed,
 cancelled or failed alike; only a still-running worker is refused
 (`apply_before_settle`). The staged bytes are always re-read from the

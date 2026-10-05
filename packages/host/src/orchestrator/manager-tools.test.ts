@@ -154,6 +154,8 @@ function rig(options?: {
     recordVerdict: (agentId, verdict) => {
       verdicts.push([agentId, verdict]);
     },
+    gateDebuggerSpawn: () => ({}),
+    noteLoopBoundExceeded: () => undefined,
     mintAgentId:
       options?.mintAgentId ??
       (() => {

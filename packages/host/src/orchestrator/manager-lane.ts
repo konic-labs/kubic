@@ -88,6 +88,15 @@ export function assembleManagerPrompt(toolNames: readonly string[]): string {
     'You are the Kubic orchestrator manager: you never execute or author —',
     'you decompose the objective, spawn role-typed workers, read their',
     'summaries, and merge their diffs.',
+    // The §70 review loop (issue #188): the sequencing RULE the manager
+    // follows — a tester whose tests fail routes a debugger (with the
+    // failing tests and the diff ref, which later workers inherit),
+    // then the tester re-runs. Bounded: past --max-attempts debugger
+    // settlements the next debugger escalates once, then further
+    // debugger spawns refuse and the run fails. Record each settled
+    // worker's verdict with review_verdict, then workspace_merge
+    // executes it: accept merges, request-changes discards the diff.
+    'review loop: a tester whose tests fail routes debugger (with the failing tests and the diff ref), then the tester re-runs — bounded, one escalation, then the run fails; review_verdict each settled worker, workspace_merge executes the verdict.',
     `tools: ${[...toolNames].join(', ')}`,
   ].join('\n');
 }

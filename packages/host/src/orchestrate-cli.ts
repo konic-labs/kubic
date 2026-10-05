@@ -4280,6 +4280,10 @@ export async function runOrchestrateCommand(
     // The drive's view of the run: restored settlements (a resume's
     // completions and merge records) plus every mint the lane spawns.
     const tracked = new Set<string>();
+    // The §70 loop-bound trip (issue #188): set when a debugger spawn
+    // refuses past the bound — the run fails closed with the bound named
+    // once the drive ends, instead of dribbling on unbounded.
+    let loopBoundTripped = false;
     const settledAgentResult = (agentId: string): AgentResult => {
       const settled = resultsByAgent.get(agentId);
       if (settled !== undefined) return settled;
@@ -4393,6 +4397,38 @@ export async function runOrchestrateCommand(
         };
         debug(`review verdict for '${agentId}': ${verdict}`);
       },
+      // The §70 debugger-loop spawn gate (issue #188): the run owns
+      // the bound, the adapter only asks. Within the bound the spawn
+      // proceeds; at the bound the single escalation fires (the rung
+      // overrides the pin, same model when none is configured); past
+      // bound plus escalation the spawn refuses by name.
+      gateDebuggerSpawn: () => {
+        const loop = state.reviewLoop ?? {
+          maxAttempts: REVIEW_LOOP_DEFAULT_MAX_ATTEMPTS,
+          debuggerSettlements: 0,
+          escalated: false,
+        };
+        if (loop.debuggerSettlements < loop.maxAttempts) return {};
+        if (!loop.escalated) {
+          state = {
+            ...state,
+            reviewLoop: { ...loop, escalated: true },
+          };
+          debug(
+            `debugger loop: bound of ${loop.maxAttempts} reached — escalating once${loop.escalationModel === undefined ? ' at the same model' : ` to ${loop.escalationModel}`}`,
+          );
+          return loop.escalationModel === undefined
+            ? {}
+            : { modelOverride: loop.escalationModel };
+        }
+        return {
+          refused: `loop bound exceeded: ${loop.debuggerSettlements} debugger settlement(s) (bound ${loop.maxAttempts}), escalated once — the tester still fails`,
+        };
+      },
+      noteLoopBoundExceeded: () => {
+        loopBoundTripped = true;
+        debug('debugger loop: bound trip recorded — the run fails closed');
+      },
       mintAgentId: () => {
         let candidate = '';
         do {
@@ -4402,12 +4438,15 @@ export async function runOrchestrateCommand(
         takenIds.add(candidate);
         return candidate;
       },
-      onSpawned: (agentId, role, task) => {
+      // The spawn's actual model rides the mint (issue #188): the §70
+      // escalation rung overrides the pin, so the recorded ref is what
+      // the child runs — never the role default it did not run.
+      onSpawned: (agentId, role, task, model) => {
         const spec = routerDeps.resolveRole(role);
         laneSpawnRoles.set(agentId, {
           role,
           tools: [...(spec?.tools ?? [])],
-          modelRef: spec?.modelRef,
+          modelRef: model ?? spec?.modelRef,
           thinking: spec?.thinking,
           ...(spec?.classes === undefined
             ? {}
@@ -4669,6 +4708,26 @@ export async function runOrchestrateCommand(
     laneSettleHook = (agentId: string): void => {
       releaseSlotOnce(agentId);
       observeAdmission();
+      // The §70 loop counter (issue #188): a settled debugger mint
+      // spends one loop turn — persisted at once, so a kill between the
+      // settle and the next save cannot replay the turn after resume.
+      // Follow-up re-settlements bypass this hook (adapter path), so the
+      // bound counts spawn-path turns, the unit the bound documents.
+      if (laneSpawnRoles.get(agentId)?.role === 'debugger') {
+        const loop = state.reviewLoop ?? {
+          maxAttempts: REVIEW_LOOP_DEFAULT_MAX_ATTEMPTS,
+          debuggerSettlements: 0,
+          escalated: false,
+        };
+        const debuggerSettlements = loop.debuggerSettlements + 1;
+        state = {
+          ...state,
+          reviewLoop: { ...loop, debuggerSettlements },
+        };
+        debug(
+          `debugger loop: '${agentId}' settled (${debuggerSettlements}/${loop.maxAttempts})`,
+        );
+      }
       try {
         settleTools.noteSettled(agentId, settledAgentResult(agentId));
       } catch (error) {
@@ -5011,6 +5070,19 @@ export async function runOrchestrateCommand(
           await reapSpawned(spawned);
           return saveFailure;
         }
+      }
+      // The §70 terminus (issue #188): the loop spent its bound plus
+      // its single escalation and the tester still fails — fail with the
+      // bound named, settled work saved above for inspection.
+      if (loopBoundTripped) {
+        const loop = state.reviewLoop;
+        await reapSpawned(spawned);
+        return fail(
+          RUN_EXIT_FAILED,
+          'loop_bound_exceeded',
+          `debugger loop bound exceeded after ${loop?.debuggerSettlements ?? 0} debugger settlement(s) (bound ${loop?.maxAttempts ?? REVIEW_LOOP_DEFAULT_MAX_ATTEMPTS}) with one escalation spent — the tester still fails: inspect the debugger findings or raise --max-attempts`,
+          partial(),
+        );
       }
     } finally {
       laneSettleHook = undefined;

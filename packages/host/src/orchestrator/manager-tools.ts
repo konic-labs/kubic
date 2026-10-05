@@ -146,7 +146,21 @@ export interface ManagerToolsDeps {
    * session linkage, and the role-composed task as the worker's plan step
    * (the lane has no template plan; the step is what the child runs).
    */
-  onSpawned?(agentId: string, role: string, task: string): void;
+  onSpawned?(agentId: string, role: string, task: string, model?: string): void;
+  /**
+   * §70 debugger-loop spawn gate (issue #188): the run owns the bound,
+   * the adapter only asks. `{}` proceeds; `{modelOverride}` is the
+   * single escalation (the rung overrides the pin); `{refused}` is past
+   * bound plus escalation — the adapter records the trip and refuses
+   * the spawn by name.
+   */
+  gateDebuggerSpawn(): { modelOverride?: string; refused?: string };
+  /**
+   * Record that a debugger spawn refused on the loop bound (issue
+   * #188): the run fails closed with the bound named once the drive
+   * ends.
+   */
+  noteLoopBoundExceeded(): void;
   /**
    * Record the reviewer verdict for a settled worker (issue #188, §70):
    * the merge call executes it (accept merges, request-changes discards,
@@ -548,9 +562,29 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
           `spawn refused for role '${role}': the run's --agents cap is ${deps.spawnCap} and ${held} worker(s) already spawned or queued`,
         );
       }
+      // The §70 debugger loop (issue #188): at the bound the next
+      // debugger spawn escalates once (the rung overrides the pin),
+      // past bound plus escalation the spawn refuses by name — before
+      // any worktree exists, like the cap above.
+      let spawnModel = model;
+      if (role === 'debugger') {
+        const gate = deps.gateDebuggerSpawn();
+        if (gate.refused !== undefined) {
+          deps.noteLoopBoundExceeded();
+          throw new ManagerToolRefusalError('review_loop_bound', gate.refused);
+        }
+        if (gate.modelOverride !== undefined) {
+          spawnModel = gate.modelOverride;
+        }
+      }
       const agentId = deps.mintAgentId();
       claimed.add(agentId);
-      deps.onSpawned?.(agentId, role, task);
+      deps.onSpawned?.(
+        agentId,
+        role,
+        task,
+        typeof spawnModel === 'string' ? spawnModel : undefined,
+      );
       const prepared = await deps.prepareWorker(agentId);
       const admission = deps.scheduler.requestSpawn(
         {
@@ -644,10 +678,12 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
           role,
           prompt: composeWorkerPrompt(spec.promptText, task),
           tools: [...spec.tools],
-          // The spawn pin outranks the role's pin (issue #202's precedence).
-          ...(model === undefined && spec.modelRef === undefined
+          // The spawn pin outranks the role's pin (issue #202's
+          // precedence); the §70 escalation rung outranks both (issue
+          // #188) — `spawnModel` already carries the gate's override.
+          ...(spawnModel === undefined && spec.modelRef === undefined
             ? {}
-            : { modelRef: model ?? spec.modelRef }),
+            : { modelRef: spawnModel ?? spec.modelRef }),
           ...(spec.thinking === undefined ? {} : { thinking: spec.thinking }),
           // Issue #198 (§71): an explicit spawn budget outranks the role
           // document's; absent, the document's dims ride the spawn, and

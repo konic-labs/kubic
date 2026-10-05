@@ -4002,6 +4002,188 @@ describe('orchestrate manager lane (issue #431)', () => {
     expect(envelope.mergeOrder).toEqual([]);
   });
 
+  it('a failing tester routes debugger then tester again with the handoff (issue #188)', async () => {
+    // S2b acceptance 1: the tester's TESTS fail (completed, failing
+    // rows — a crashed worker takes the #169 path instead), the manager
+    // spawns a debugger that inherits failing test + diff ref, then the
+    // tester re-runs inheriting the debugger's findings. Pre-fix the
+    // loop bound never trips and no escalation exists.
+    const seen: { agentId: string; prompt: string }[] = [];
+    const failingTester = (
+      agentId: string,
+      worktree: OrchestrateWorktree,
+      prompt: string,
+    ) => {
+      seen.push({ agentId, prompt });
+      const built = buildAgentResult({
+        status: 'completed',
+        summary: `${agentId} ran the suite`,
+        filesChanged: [`${agentId}-0.txt`],
+        provenance: {
+          workerId: agentId,
+          sessionId: workerSessionFor('lane-loop', agentId),
+          pid: null,
+          generation: 0,
+          worktree: worktree.path,
+          model: 'faux/m',
+        },
+        metrics: { wallMs: 1, latencyMs: 1 },
+      });
+      if (agentId === 'worker-1' || agentId === 'worker-3') {
+        built.tests = [
+          { name: 'unit', passed: false, output: 'timeout after 5s' },
+        ];
+      }
+      if (agentId === 'worker-2') {
+        built.findings = ['root cause: race on the seam'];
+      }
+      return {
+        result: built,
+        hunks: [
+          {
+            path: `${agentId}-0.txt`,
+            hunk: `@@ -0,0 +1 @@ +${agentId}`,
+          },
+        ],
+      };
+    };
+    const world = laneWorld(
+      [
+        toolTurn('spawn_agent', { role: 'tester', task: 'prove alpha' }),
+        toolTurn('wait_for_agent', { agentId: 'worker-1' }),
+        toolTurn('collect_result', { agentId: 'worker-1' }),
+        toolTurn('spawn_agent', { role: 'debugger', task: 'fix the timeout' }),
+        toolTurn('wait_for_agent', { agentId: 'worker-2' }),
+        toolTurn('collect_result', { agentId: 'worker-2' }),
+        toolTurn('spawn_agent', { role: 'tester', task: 'prove the fix' }),
+        toolTurn('wait_for_agent', { agentId: 'worker-3' }),
+        toolTurn('collect_result', { agentId: 'worker-3' }),
+        toolTurn('workspace_diff', { agentId: 'worker-1' }),
+        toolTurn('workspace_apply', { agentId: 'worker-1' }),
+        toolTurn('workspace_diff', { agentId: 'worker-2' }),
+        toolTurn('workspace_apply', { agentId: 'worker-2' }),
+        toolTurn('workspace_diff', { agentId: 'worker-3' }),
+        toolTurn('workspace_apply', { agentId: 'worker-3' }),
+        toolTurn('workspace_merge', {}),
+        toolTurn('workspace_merge', {}),
+        toolTurn('workspace_merge', {}),
+        fauxAssistantMessage('loop closed'),
+      ],
+      { runWorker: failingTester },
+    );
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'prove alpha, fix, prove again',
+        agents: ['alpha', 'beta', 'gamma'],
+        json: true,
+        session: 'lane-loop',
+      },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    // `seen` (not `world.ran`): this test overrides runWorker, so the
+    // laneWorld recorder never fills — the prompt capture is the record.
+    expect(seen.map((entry) => entry.agentId)).toEqual([
+      'worker-1',
+      'worker-2',
+      'worker-3',
+    ]);
+    const debuggerPrompt = seen.find((entry) => entry.agentId === 'worker-2');
+    expect(debuggerPrompt?.prompt).toContain('failing test: unit (timeout');
+    expect(debuggerPrompt?.prompt).toContain('worker-1 diff:');
+    const retester = seen.find((entry) => entry.agentId === 'worker-3');
+    expect(retester?.prompt).toContain('worker-2: root cause: race');
+    const saved = world.saved[world.saved.length - 1];
+    expect(saved?.reviewLoop?.debuggerSettlements).toBe(1);
+    expect(saved?.reviewLoop?.escalated).toBe(false);
+  });
+
+  it('the debugger loop stops after maxAttempts, escalates once, then fails loop bound exceeded (issue #188)', async () => {
+    // S2b acceptance 2: bound 1, rung faux/strong. The second debugger
+    // spawn escalates (same failing suite), the third refuses, and the
+    // run fails with the bound named. Pre-fix spawns never refuse.
+    const world = laneWorld(
+      [
+        toolTurn('spawn_agent', { role: 'tester', task: 'prove alpha' }),
+        toolTurn('wait_for_agent', { agentId: 'worker-1' }),
+        toolTurn('collect_result', { agentId: 'worker-1' }),
+        toolTurn('spawn_agent', { role: 'debugger', task: 'fix one' }),
+        toolTurn('wait_for_agent', { agentId: 'worker-2' }),
+        toolTurn('collect_result', { agentId: 'worker-2' }),
+        toolTurn('spawn_agent', { role: 'tester', task: 'prove again' }),
+        toolTurn('wait_for_agent', { agentId: 'worker-3' }),
+        toolTurn('collect_result', { agentId: 'worker-3' }),
+        toolTurn('spawn_agent', { role: 'debugger', task: 'fix two' }),
+        toolTurn('wait_for_agent', { agentId: 'worker-4' }),
+        toolTurn('collect_result', { agentId: 'worker-4' }),
+        toolTurn('spawn_agent', { role: 'tester', task: 'prove a third' }),
+        toolTurn('wait_for_agent', { agentId: 'worker-5' }),
+        toolTurn('collect_result', { agentId: 'worker-5' }),
+        toolTurn('spawn_agent', { role: 'debugger', task: 'fix three' }),
+        fauxAssistantMessage('bound hit'),
+      ],
+      {
+        runWorker: (
+          agentId: string,
+          worktree: OrchestrateWorktree,
+          _prompt: string,
+        ) => ({
+          result: buildAgentResult({
+            status: 'completed',
+            summary: `${agentId} ran the suite`,
+            filesChanged: [`${agentId}-0.txt`],
+            tests:
+              agentId === 'worker-2' || agentId === 'worker-4'
+                ? []
+                : [
+                    {
+                      name: 'unit',
+                      passed: false,
+                      output: 'timeout after 5s',
+                    },
+                  ],
+            provenance: {
+              workerId: agentId,
+              sessionId: workerSessionFor('lane-bound', agentId),
+              pid: null,
+              generation: 0,
+              worktree: worktree.path,
+              model: 'faux/m',
+            },
+            metrics: { wallMs: 1, latencyMs: 1 },
+          }),
+          hunks: [
+            {
+              path: `${agentId}-0.txt`,
+              hunk: `@@ -0,0 +1 @@ +${agentId}`,
+            },
+          ],
+        }),
+      },
+    );
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'prove until the bound trips',
+        // Six names lift the lane spawn cap past the five loop mints, so
+        // the sixth spawn reaches the loop gate instead of the cap.
+        agents: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'],
+        json: true,
+        session: 'lane-bound',
+        maxAttempts: 1,
+        escalationModel: 'faux/strong',
+      },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(world.errLines.join('\n')).toMatch(/loop bound exceeded/);
+    const saved = world.saved[world.saved.length - 1];
+    expect(saved?.reviewLoop?.debuggerSettlements).toBe(2);
+    expect(saved?.reviewLoop?.escalated).toBe(true);
+    expect(world.debugLines.join('\n')).toMatch(
+      /escalating once.*faux\/strong/,
+    );
+  });
+
   it('drives spawn to merge through the lane and merges the minted worker', async () => {
     const world = laneWorld([
       toolTurn('spawn_agent', { role: 'implementer', task: 'do alpha' }),

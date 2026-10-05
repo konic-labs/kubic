@@ -11,7 +11,7 @@
 // and reported on the readout. No new top-level --json field: the extra
 // per-row numbers are additive inside the existing `agents` entries.
 
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import {
   EXIT_FAILED,
   EXIT_OK,
@@ -25,6 +25,7 @@ import {
   createCliTheme,
 } from '../../../../core/src/cli/theme.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
+import { stripUnsafeCharacters } from '../../../../exec/src/runtime-exclude.js';
 import { bridgeToPiFileSystem } from '../../../../worker/src/lane/session-fs.js';
 import {
   listSessions,
@@ -52,6 +53,11 @@ import { defaultSessionsRoot } from '../../sessions-cli.js';
 import { transparentCachingNote } from './cache.js';
 import {
   type AgentCostInput,
+  type CostGroupBy,
+  DEFAULT_COST_GROUP_BY,
+  formatCostUsd,
+  groupCostRows,
+  isCostGroupBy,
   type PerAgentCostSummary,
   summarizePerAgentCost,
   toCostJson,
@@ -61,12 +67,29 @@ import {
 export interface CostOptions {
   readonly session?: string;
   readonly json?: boolean;
+  // Issue #250 (§39): `--all` lifts the default project scope; `--by`
+  // picks the aggregation level (default per-agent).
+  readonly all?: boolean;
+  readonly by?: string;
+}
+
+// What the loader filters and aggregates on: the argv flags plus the
+// invoking workspace (which never comes from argv).
+export interface CostQuery {
+  readonly workspace?: string;
+  readonly all?: boolean;
+  readonly by?: CostGroupBy;
 }
 
 export interface CostCommandDeps {
   loadRows: (
     sessionId?: string,
+    query?: CostQuery,
   ) => AgentCostInput[] | Promise<AgentCostInput[]>;
+  // The invoking workspace (the composition root's cwd): the default
+  // project scope filters to sessions touching it. Absent means unscoped
+  // (tests); prod always sets it.
+  workspace?: string;
   // stdout: the report or the one `--json` document.
   out: (line: string) => void;
   // stderr: diagnostics, one `error: …` line each (core/cli/logger).
@@ -231,9 +254,41 @@ async function openCostReadStorage(
   );
 }
 
-// Prod loader: one row per real session out of the session store, one row
-// per usage bucket the session recorded (each `provider/model`, and each tool
-// that reported its own usage), so the task total is still exactly Σ(rows).
+// Issue #250 (§39): the invoking workspace, canonically. Symlinks are
+// resolved (macOS /var → /private/var); a path that no longer exists keeps
+// its lexical form, matching journal-cli's rule, so it can then only match
+// itself.
+function canonicalWorkspace(path: string): string {
+  try {
+    return createNodeFileBridge('/').realPath?.(path) ?? path;
+  } catch {
+    return path;
+  }
+}
+
+// Issue #250: whether a session belongs to the invoking project. The
+// recorded workspace (`meta.workspace ?? meta.cwd`) matches when it nests
+// with the invocation either way — a run started at the repo root covers a
+// `cost` from a subdirectory, and a subdir run still belongs to a `cost`
+// from the root — so both directions count as touching the workspace.
+function touchesWorkspace(
+  recorded: string | undefined,
+  workspace: string,
+): boolean {
+  if (recorded === undefined || recorded === '') return false;
+  const left = canonicalWorkspace(recorded);
+  const right = canonicalWorkspace(workspace);
+  if (left === right) return true;
+  const below = (parent: string, child: string): boolean =>
+    child.startsWith(parent.endsWith(sep) ? parent : `${parent}${sep}`);
+  return below(left, right) || below(right, left);
+}
+
+// Prod loader: usage facts out of the session store, aggregated to the
+// `--by` level (issue #250; default per-agent). One base fact per session
+// per usage bucket (each `provider/model`, and each tool that reported its
+// own spend, labelled `tool:<name>`), so the task total is still exactly
+// Σ(rows).
 // A session whose storage another live run owns is SKIPPED, never opened
 // (pi-durable: one process per storage), and reported as a zero row so the
 // operator sees what the readout could not read.
@@ -248,7 +303,9 @@ async function openCostReadStorage(
 export async function loadSessionCostRows(
   sessionsRoot: string = defaultSessionsRoot(),
   sessionId?: string,
+  query?: CostQuery,
 ): Promise<AgentCostInput[]> {
+  const by = query?.by ?? DEFAULT_COST_GROUP_BY;
   const store = openSessionStore(
     sessionsRoot,
     createNodeFileBridge(sessionsRoot),
@@ -261,6 +318,7 @@ export async function loadSessionCostRows(
   // escape, never a marker row); a child that cannot be opened reports a
   // zero marker row like the listing sweep, so a still-running worker
   // (live lock) reads as `(locked)` instead of failing the report.
+  // A named session is explicit and ignores the project scope.
   const named =
     sessionId === undefined
       ? undefined
@@ -278,15 +336,42 @@ export async function loadSessionCostRows(
           (entry) =>
             entry.id !== named.id && entry.meta?.parentSessionId === named.id,
         );
-  const entries = named === undefined ? all : [named, ...children];
+  // Issue #250: the default scope is the invoking project — sessions
+  // touching its workspace — with `--all` for the machine-global total the
+  // command used to print.
+  const workspace = query?.workspace;
+  const scoped =
+    named !== undefined || query?.all === true || workspace === undefined
+      ? named === undefined
+        ? all
+        : [named, ...children]
+      : all.filter((entry) =>
+          touchesWorkspace(
+            entry.meta?.workspace ?? entry.meta?.cwd,
+            workspace,
+          ),
+        );
   const rows: AgentCostInput[] = [];
-  for (const entry of entries) {
+  for (const entry of scoped) {
     const isNamed = named !== undefined && entry.id === named.id;
+    const project = entry.meta?.workspace ?? entry.meta?.cwd;
+    // Base identity every row below carries (issue #250): the session id
+    // stays `agentId` (the stable contract), while `agent`/`role` name the
+    // #164 worker and `session`/`project` locate the fact.
+    const identity = {
+      agentId: entry.id,
+      session: entry.id,
+      ...(project === undefined ? {} : { project }),
+      ...(entry.meta?.agentId === undefined
+        ? {}
+        : { agent: entry.meta.agentId }),
+      ...(entry.meta?.role === undefined ? {} : { role: entry.meta.role }),
+    } as const;
     if (entry.format === 'legacy') {
       // A named legacy id escaped above; a legacy child of a named run
       // reports like any other unreadable listing entry.
       rows.push({
-        agentId: entry.id,
+        ...identity,
         model: '(unreadable)',
         costUsd: 0,
         input: 0,
@@ -317,7 +402,7 @@ export async function loadSessionCostRows(
       // Never opened: a live run owns this storage (pi-durable: one
       // process per storage).
       rows.push({
-        agentId: entry.id,
+        ...identity,
         model: '(locked)',
         costUsd: 0,
         input: 0,
@@ -335,7 +420,7 @@ export async function loadSessionCostRows(
         error instanceof SessionFormatError
       ) {
         rows.push({
-          agentId: entry.id,
+          ...identity,
           model: '(unreadable)',
           costUsd: 0,
           input: 0,
@@ -346,9 +431,35 @@ export async function loadSessionCostRows(
       throw error;
     }
     try {
+      // Issue #250 (§39 request level): one row per assistant entry that
+      // carries its response's usage — the model spend of that request.
+      // Tools that report their own spend aggregate at the higher levels;
+      // a request row never invents their attribution.
+      if (by === 'request') {
+        const items = entriesToTranscript(
+          await readSessionEntries(storage, BACKGROUND_CONTEXT),
+        );
+        for (const item of items) {
+          if (item.kind !== 'assistant' || item.usage === undefined) continue;
+          rows.push({
+            ...identity,
+            request: item.entryId,
+            model:
+              item.provider !== undefined && item.model !== undefined
+                ? `${item.provider}/${item.model}`
+                : 'unknown',
+            costUsd: num(item.usage.cost?.total),
+            input: num(item.usage.input),
+            output: num(item.usage.output),
+            cacheRead: item.usage.cacheRead,
+            cacheWrite: item.usage.cacheWrite,
+          });
+        }
+        continue;
+      }
       for (const row of await readSessionUsage(storage, BACKGROUND_CONTEXT)) {
         rows.push({
-          agentId: entry.id,
+          ...identity,
           // A tool bucket has no provider/model identity: it is labelled
           // `tool:<name>` so the readout never looks like a model row.
           model: row.kind === 'tool' ? `tool:${row.key}` : row.key,
@@ -367,7 +478,10 @@ export async function loadSessionCostRows(
       await storage.close(BACKGROUND_CONTEXT);
     }
   }
-  return rows;
+  // Marker rows (`(locked)`, `(unreadable)`) carry zero counters, so
+  // grouping keeps the task total exactly Σ(rows); at project level they
+  // merge into the project sum, at the other levels they stay visible.
+  return groupCostRows(rows, by);
 }
 
 // One run's usage as its `--json` report carries it (issue #185; §39,
@@ -434,24 +548,54 @@ export async function readSessionRunUsage(
   }
 }
 
-// Presentation over the per-agent rows: a table (box-drawn only on a
-// coloured terminal, plain aligned text otherwise), then the task total.
+// Presentation over the grouped rows (issue #250; §39): the group column
+// names the `--by` level, then the worker's role, the model, and the
+// separate in/out/cacheRead/cacheWrite counters the old combined-tokens
+// column hid. Box-drawn only on a coloured terminal, plain aligned text
+// otherwise. Role/agent/model values are operator- or model-authored, so
+// the display strips control characters (the stored rows keep them raw,
+// exactly like `sessions attach`).
 function costTable(
   summary: PerAgentCostSummary,
   deps: CostCommandDeps,
+  by: CostGroupBy,
 ): string {
+  const groupHeader =
+    by === 'request'
+      ? 'REQUEST'
+      : by === 'session'
+        ? 'SESSION'
+        : by === 'project'
+          ? 'PROJECT'
+          : 'AGENT';
+  const groupOf = (entry: AgentCostInput): string => {
+    if (by === 'request') return `#${entry.request ?? '?'}`;
+    if (by === 'session') return entry.session ?? entry.agentId;
+    if (by === 'project') return entry.project ?? '(unknown)';
+    return entry.agent ?? entry.agentId;
+  };
+  const cell = (value: string): string =>
+    stripUnsafeCharacters(value).replace(/\s+/g, ' ');
   const rows = summary.perAgent.map((entry) => [
-    entry.agentId,
-    entry.model,
-    String(entry.input + entry.output),
-    `$${entry.costUsd.toFixed(2)}`,
+    cell(groupOf(entry)),
+    entry.role === undefined ? '-' : cell(entry.role),
+    cell(entry.model),
+    String(entry.input),
+    String(entry.output),
+    String(entry.cacheRead ?? 0),
+    String(entry.cacheWrite ?? 0),
+    formatCostUsd(entry.costUsd),
   ]);
   return renderTable(
     rows,
     [
-      { header: 'AGENT' },
+      { header: groupHeader },
+      { header: 'ROLE' },
       { header: 'MODEL' },
-      { header: 'TOKENS', align: 'right' },
+      { header: 'IN', align: 'right' },
+      { header: 'OUT', align: 'right' },
+      { header: 'CACHE-R', align: 'right' },
+      { header: 'CACHE-W', align: 'right' },
       { header: 'COST', align: 'right' },
     ],
     { fancy: deps.fancy === true, theme: deps.theme ?? PLAIN },
@@ -479,9 +623,28 @@ export async function runCostCommand(
     );
     return EXIT_USAGE;
   }
+  // Issue #250: `--by` takes exactly the four §39 levels; anything else is
+  // a usage error, and the rejected value is argv-controlled, so it is
+  // redacted like the session id above.
+  const by =
+    options.by === undefined
+      ? DEFAULT_COST_GROUP_BY
+      : isCostGroupBy(options.by)
+        ? options.by
+        : undefined;
+  if (by === undefined) {
+    log.error(
+      `invalid --by ${redactSecretShapes(JSON.stringify(options.by))} (use request|agent|session|project)`,
+    );
+    return EXIT_USAGE;
+  }
   let rows: AgentCostInput[];
   try {
-    rows = await deps.loadRows(sessionId);
+    rows = await deps.loadRows(sessionId, {
+      all: options.all === true,
+      by,
+      ...(deps.workspace === undefined ? {} : { workspace: deps.workspace }),
+    });
   } catch (error) {
     if (error instanceof Error && error.name === 'SessionAttachError') {
       // SESSION_ID_PATTERN admits sk-shaped strings, so the validated id
@@ -507,10 +670,18 @@ export async function runCostCommand(
     deps.out('no cost rows');
     return EXIT_OK;
   }
-  deps.out(costTable(summary, deps));
+  deps.out(costTable(summary, deps, by));
+  const unit =
+    by === 'request'
+      ? 'requests'
+      : by === 'session'
+        ? 'sessions'
+        : by === 'project'
+          ? 'projects'
+          : 'agents';
   deps.out(
     theme.bold(
-      `task total $${summary.taskTotal.toFixed(2)} (${summary.perAgent.length} agents)`,
+      `task total ${formatCostUsd(summary.taskTotal)} (${summary.perAgent.length} ${unit})`,
     ),
   );
   // §62 lever 2 over real usage rows (issue #98): reported only when the
@@ -518,7 +689,7 @@ export async function runCostCommand(
   // shows a fabricated 0%.
   if (summary.cache !== null) {
     deps.out(
-      `cache: ${summary.cache.hits}/${summary.cache.total} sessions with prefix hits ` +
+      `cache: ${summary.cache.hits}/${summary.cache.total} ${unit} with prefix hits ` +
         `(${Math.round(summary.cache.rate * 100)}%)`,
     );
     deps.out(theme.muted(transparentCachingNote()));

@@ -2205,18 +2205,25 @@ written (`export-failed`); 2 a usage error or an empty match
 manifest is written last, so a failed batch leaves a partial JSONL and no
 `<out>.manifest.json` — the missing manifest is the completeness marker.
 
-## `kubic cost [--session <id>] [--json]`
+## `kubic cost [--session <id>] [--all] [--by <level>] [--json]`
 
-Reads real usage out of the durable session store: one `AGENT / MODEL /
-TOKENS / COST` row per usage bucket a session recorded — each
-`provider/model`, and each tool that reported its own spend (labelled
-`tool:<name>`) — followed by `task total $<sum> (<n> agents)`. The total is
-exactly the sum of the rows.
+Reads real usage out of the durable session store, scoped to the current
+project by default: only sessions touching the invoking workspace are
+reported, with `--all` for the machine-global total the command used to
+print. Rows aggregate to the `--by` level (`request | agent | session |
+project`, default `agent`), one `GROUP / ROLE / MODEL / IN / OUT / CACHE-R
+/ CACHE-W / COST` row each — the worker's role and model per §39, with
+input, output and prefix-cache counters split out — followed by
+`task total $<sum> (<n> <level>)`. The total is exactly the sum of the
+rows. Costs below $1 print at 4 decimals (`$0.0023`), $1 and above at 2.
 
-The numbers are the session's `pi.usage` documents, summed per bucket, so
-they match what `Harness.usage()` reports for the same run. Reading is
-read-only and never boots a lane. A session whose storage a live run owns
-is skipped, never opened (pi-durable: one process per storage), and
+The numbers are the sessions' `pi.usage` documents, so they match what
+`Harness.usage()` reports for the same run. Reading is read-only and never
+boots a lane. `--by request` lists one row per assistant entry that
+carries its response's usage (the model spend of that request — tools that
+report their own spend aggregate at the higher levels); `--by project`
+rolls each workspace to a single row. A session whose storage a live run
+owns is skipped, never opened (pi-durable: one process per storage), and
 reported as a zero row with `MODEL` `(locked)`; a session that cannot be
 read at all (a Pi 0.87 transcript, a half-written directory) is
 `(unreadable)` the same way. A session the operator NAMED with `--session`
@@ -2232,8 +2239,10 @@ prints `no cost rows` and exits 0.
 
 | Flag | Meaning |
 | --- | --- |
-| `--session <id>` | Reads only this session — or, when the id is an orchestrate run's, the run's total: the manager record plus every session whose metadata names it as parent, with one row per worker session. A live run's locked manager record is skipped in favour of its children, so a running run still has a cost view.  Ids follow the same `[A-Za-z0-9_-]` rule as `run`: anything else exits 2 before the store is touched, and an unknown session exits 1 (`error: unknown session: <id>`). |
-| `--json` | Prints the in-code `toCostJson` shape (`agents`, `taskTotal`) field-for-field. Exits 0. |
+| `--session <id>` | Reads only this session — or, when the id is an orchestrate run's, the run's total: the manager record plus every session whose metadata names it as parent, with one row per worker session. A live run's locked manager record is skipped in favour of its children, so a running run still has a cost view.  Ids follow the same `[A-Za-z0-9_-]` rule as `run`: anything else exits 2 before the store is touched, and an unknown session exits 1 (`error: unknown session: <id>`). An explicitly named session ignores the project scope. |
+| `--all` | Lifts the default project scope: report sessions from every project on the machine. |
+| `--by <level>` | Group rows at `request`, `agent` (the default), `session` or `project`. Anything else exits 2. |
+| `--json` | Prints the in-code `toCostJson` shape (`agents`, `taskTotal`) field-for-field — rows carry the same `agent`/`role`/`session`/`project`/`request` identity the table groups on. Exits 0. |
 
 ## `kubic perf --budget <kind> (--measure | --samples <csv>) [--json]`
 

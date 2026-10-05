@@ -791,10 +791,13 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         }),
       ),
     cost: (options) =>
-      // Per-agent cost over real session stats (one aggregate row per
-      // session); the task total is Σ(rows) by construction (issue #79).
+      // Per-agent cost over real session usage (issue #79; #250: scoped
+      // to the invoking project unless --all, grouped by --by); the task
+      // total is Σ(rows) by construction.
       runCostCommand(options, {
-        loadRows: (sessionId) => loadSessionCostRows(undefined, sessionId),
+        loadRows: (sessionId, query) =>
+          loadSessionCostRows(undefined, sessionId, query),
+        workspace: process.cwd(),
         ...report(),
       }),
     perf: (options) =>

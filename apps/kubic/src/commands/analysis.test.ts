@@ -398,6 +398,8 @@ describe('analysis commands: parsed options reach the runners', () => {
   it('maps flags to camel-cased option values, --flag=value included', async () => {
     const cases: [readonly string[], unknown][] = [
       [['cost', '--session=s-1', '--json'], { session: 's-1', json: true }],
+      // Issue #250: the project scope and grouping flags.
+      [['cost', '--all', '--by=project'], { all: true, by: 'project' }],
       [
         ['perf', '--budget', 'spawn', '--measure'],
         { budget: 'spawn', measure: true },
@@ -468,8 +470,11 @@ describe('analysis commands: happy paths over the real handlers', () => {
   it('cost prints a table and the task total', async () => {
     const run = await kubic(['cost'], true);
     expect(run.code).toBe(0);
-    expect(run.out[0]).toMatch(/^AGENT +MODEL +TOKENS +COST$/m);
-    expect(run.out[1]).toBe('task total $0.20 (1 agents)');
+    // Issue #250 (§39): group + role + split counters at sub-cent precision.
+    expect(run.out[0]).toMatch(
+      /^AGENT +ROLE +MODEL +IN +OUT +CACHE-R +CACHE-W +COST$/m,
+    );
+    expect(run.out[1]).toBe('task total $0.2000 (1 agents)');
     expect(run.err).toEqual([]);
   });
 

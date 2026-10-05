@@ -85,7 +85,7 @@ describe('ordered settlement queue (issue #46)', () => {
 });
 
 describe('two-branch shared/types.ts conflict (issue #46 §85)', () => {
-  it('reports the conflict, spawns a writer, re-merges; manager zero writes', () => {
+  it('builds the resolver spec carrying both diffs verbatim; manager zero writes', () => {
     const spec = buildResolverSpec({
       agentId: 'agent-2',
       role: 'implementer',

@@ -4,8 +4,8 @@
 // no real filesystem.
 import { describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
-import { createInvocation, MemoryMemoStore } from './memos.js';
 import { lsOperation } from './ls.js';
+import { createInvocation, MemoryMemoStore } from './memos.js';
 import type { OpContext, ToolInvocation } from './types.js';
 
 function ctx(): OpContext {
@@ -38,9 +38,7 @@ describe('ls bounds (issue #187)', () => {
     expect(result.notice).toContain('2000');
     const names = result.entries.map((entry) => entry.name);
     expect(names[0]).toBe('file-0000');
-    for (let i = 1; i < names.length; i++) {
-      expect(names[i - 1]! <= names[i]!).toBe(true);
-    }
+    expect(names).toEqual([...names].sort());
   });
 
   it('leaves a small dir alone: sorted, truncated false, no notice', async () => {

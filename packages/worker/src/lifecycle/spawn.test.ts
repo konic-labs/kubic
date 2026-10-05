@@ -176,10 +176,10 @@ describe('spawnWorker readiness scan (issue #187)', () => {
   } {
     let onUpdate:
       | ((snapshot: {
-        stdout: string;
-        stderr: string;
-        exitCode: number | null;
-      }) => void)
+          stdout: string;
+          stderr: string;
+          exitCode: number | null;
+        }) => void)
       | undefined;
     const shell: Shell = {
       spawn: (_cmd, _args, options) => {
@@ -202,13 +202,11 @@ describe('spawnWorker readiness scan (issue #187)', () => {
     return {
       shell,
       update: (stdout: unknown, stderr: unknown = '') =>
-        onUpdate?.(
-          {
-            stdout: stdout as string,
-            stderr: stderr as string,
-            exitCode: null,
-          },
-        ),
+        onUpdate?.({
+          stdout: stdout as string,
+          stderr: stderr as string,
+          exitCode: null,
+        }),
     };
   }
 
@@ -232,7 +230,7 @@ describe('spawnWorker readiness scan (issue #187)', () => {
   // A snapshot whose text explodes on contact: template/concat/includes
   // all route through toString/valueOf, while length/slice do not.
   function unreadable(text: string): string {
-    const boxed = new String(text) as String & {
+    const boxed = new String(text) as unknown as {
       toString(): string;
       valueOf(): string;
     };

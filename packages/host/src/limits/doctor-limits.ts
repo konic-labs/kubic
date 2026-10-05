@@ -16,6 +16,7 @@ import {
 } from '../../../core/src/cli/exit-codes.js';
 import { enforcedLimits } from '../../../worker/src/lifecycle/resources.js';
 import { alwaysAskAutoApprove, validatePolicy } from '../approvals.js';
+import { mcpRefusalMessage } from '../config/stances.js';
 import type { DoctorCheck } from '../doctor.js';
 
 // §78 provider-failure code, mirroring kubic run (§78): a doctor matrix
@@ -255,8 +256,10 @@ export function policyEnforceabilityCheck(raw: unknown): DoctorCheck {
       ...base,
       status: 'fail',
       reason: 'policy-mismatch',
-      detail:
-        'config key [mcp] is unsupported in v1 (Phase-4 arrival; §33, §59.1)',
+      // Issue #254 (§33): the refusal names the settled arrival
+      // requirements — built from the same constant the config-load
+      // refusal throws, so the two can never disagree.
+      detail: mcpRefusalMessage(),
     };
   }
   const refused = autoApprove.filter(

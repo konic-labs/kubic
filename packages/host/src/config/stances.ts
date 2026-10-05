@@ -13,24 +13,34 @@ export class McpUnsupportedError extends Error {
   }
 }
 
-// Refuse any `mcp` entry: MCP servers arrive in Phase-4 with containment,
-// per-role credential brokering, and trajectory auditing. Until then a
-// config that mentions MCP is misconfigured, not partially honored.
+// Refuse any `mcp` entry: MCP servers arrive in Phase-4 once the three
+// settled §33 requirements hold (named in the refusal, so a reader meets
+// the requirements at the refusal site instead of a bare section number).
+// Until then a config that mentions MCP is misconfigured, not partially
+// honored.
 export function assertNoMcpConfig(raw: unknown): void {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return;
   if (Object.hasOwn(raw, 'mcp')) {
-    throw new McpUnsupportedError(
-      'config key [mcp] is unsupported in v1 (Phase-4 arrival: containment + brokered credentials + audited calls)',
-    );
+    throw new McpUnsupportedError(mcpRefusalMessage());
   }
 }
 
-// Phase-4 MCP arrival requirements (pending until the Phase-4 epic).
+// Phase-4 MCP arrival requirements: the three §33 bullets, verbatim in
+// spirit — tool-policy mapping, in-worker execution, network conflict
+// surfaced as policy or approval. Recorded as data so the boundary is
+// explicit, and both [mcp] refusals are built from it.
 export const MCP_ARRIVAL_REQUIREMENTS = [
-  'spawn MCP servers under containment (Phase-4 epic)',
-  'broker MCP tool credentials per role via ScopedToken',
-  'audit every MCP tool call in the trajectory',
+  'map MCP tools into the agent tool policy (allow / deny / approve), not bolted on (§33)',
+  'execute MCP tools inside the worker process in orchestrator mode, sharing its lifetime and trajectory (§33)',
+  'treat an MCP network need the role disallows as a policy conflict — resolved at role resolution or surfaced as an approval, never silently granted (§33)',
 ] as const;
+
+// The [mcp] refusal names the settled requirements (issue #254): built
+// from the constant, so the refusal and the recorded requirements cannot
+// drift apart. Shared with the doctor's policy:enforceability check.
+export function mcpRefusalMessage(): string {
+  return `config key [mcp] is unsupported in v1 (Phase-4 arrival requires: ${MCP_ARRIVAL_REQUIREMENTS.join('; ')})`;
+}
 
 // ACP edge-only vocabulary (§34): internal chord + pi-protocol stay inside
 // the worker; the only ACP-shaped data that crosses to the host edge is a

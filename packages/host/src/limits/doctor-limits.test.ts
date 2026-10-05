@@ -3,6 +3,7 @@
 // builders with honest messages; provider-down maps to exit 6; --json
 // matches the #29 envelope shape. Faux-only: injected values, no I/O.
 import { describe, expect, it } from 'vitest';
+import { MCP_ARRIVAL_REQUIREMENTS } from '../config/stances.js';
 import type { DoctorCheck } from '../doctor.js';
 import { runDoctorCommand } from '../doctor.js';
 import { RUN_EXIT_PROVIDER_PROBE_FAILED } from '../run-cli.js';
@@ -104,6 +105,18 @@ describe('doctor matrix (issue #58)', () => {
     });
     expect(check.status).toBe('fail');
     expect(check.reason).toBe('policy-mismatch');
+  });
+
+  it('config-level mcp refusal names the §33 arrival requirements', () => {
+    const check = policyEnforceabilityCheck({
+      route: 'ask-user',
+      autoApprove: [],
+      mcp: { servers: [] },
+    });
+    expect(check.status).toBe('fail');
+    for (const req of MCP_ARRIVAL_REQUIREMENTS) {
+      expect(check.detail).toContain(req);
+    }
   });
 
   it('config-level mcp key fails the same honest way', () => {

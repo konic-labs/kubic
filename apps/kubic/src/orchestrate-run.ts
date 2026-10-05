@@ -31,6 +31,7 @@ import {
   createNodeFileBridge,
   type FileBridge,
 } from '../../../packages/exec/src/file-bridge.js';
+import { snapshotGitGuard } from '../../../packages/exec/src/git-guard-snapshot.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import type { PostureOptions } from '../../../packages/extensions/src/startup.js';
 import { enableSessionFullAccess } from '../../../packages/host/src/approvals.js';
@@ -99,6 +100,10 @@ import {
   WorktreeError,
   worktreeMissingError,
 } from '../../../packages/host/src/orchestrator/worktree/errors.js';
+import {
+  diffGitGuardSnapshots,
+  withHostGitGuard,
+} from '../../../packages/host/src/orchestrator/worktree/git-guard.js';
 import {
   branchForAgent,
   pathForAgent,
@@ -536,9 +541,14 @@ async function runGit(
   agentId: string,
   tool: string,
 ): Promise<ShellResult> {
+  // Issue #363: every host-side git invocation runs with repo hooks and
+  // fsmonitor disabled — a hook planted in a worker tree never executes
+  // during the orchestrator's own status/stage/commit/merge/abort reads.
   const env = new NodeExecutionEnv(cwd);
   return env.shell
-    .spawn('git', args, { provenance: provenanceFor(sessionId, agentId, tool) })
+    .spawn('git', withHostGitGuard(args), {
+      provenance: provenanceFor(sessionId, agentId, tool),
+    })
     .wait();
 }
 
@@ -1301,6 +1311,33 @@ export async function orchestrateDepsWithDefaults(
       // Intentionally swallowed — the named failure comes from the write path.
     }
   }
+
+  // Issue #363: baseline `.git/config` + `.git/hooks` before any worker
+  // runs. Verified after each worker settle and each merge — drift is
+  // reported on the run log (the worker journal already records the
+  // offending tool call; these lines name what it left behind). Best
+  // effort: an unreadable gitdir degrades to no baseline, never a failure.
+  let gitGuardBefore: ReturnType<typeof snapshotGitGuard> | undefined;
+  if (root !== undefined) {
+    try {
+      gitGuardBefore = snapshotGitGuard(root);
+    } catch {
+      gitGuardBefore = undefined;
+    }
+  }
+  const verifyGitGuard = (label: string): void => {
+    if (gitGuardBefore === undefined || root === undefined) return;
+    try {
+      for (const line of diffGitGuardSnapshots(
+        gitGuardBefore,
+        snapshotGitGuard(root),
+      )) {
+        debug(`${label}: ${line}`);
+      }
+    } catch {
+      // Best effort — reporting drift must never fail a settle.
+    }
+  };
 
   // Crash recovery (§51): a previous manager that died hard (SIGKILL,
   // crash past the signal guard) left rows claiming live workers. Reconcile
@@ -2379,6 +2416,7 @@ export async function orchestrateDepsWithDefaults(
               '-c',
               'user.email=kubic-worker@local',
               'commit',
+              '--no-verify',
               '-m',
               `worker ${agentId}: ${prompt.slice(0, 120)}`,
             ],
@@ -2391,6 +2429,9 @@ export async function orchestrateDepsWithDefaults(
               `worker commit failed: ${commit.stderr.trim().slice(0, 200)}`,
             );
         }
+        // Issue #363: the worker just wrote through its worktree — surface
+        // any `.git/config` / `.git/hooks` drift before the merge runs.
+        verifyGitGuard(`worker '${agentId}' settle`);
         // §61 (issue #158): time the branch-diff read — the telemetry's
         // `diffMs` leg, measured where the work really happens.
         const diffStartedAt = Date.now();
@@ -2538,6 +2579,9 @@ export async function orchestrateDepsWithDefaults(
           `git merge ${worktree.branch} failed (exit ${merged.exitCode}): ${merged.stderr.trim().slice(0, 200)}`,
         );
       }
+      // Issue #363: the merge just touched the shared checkout — surface
+      // any `.git/config` / `.git/hooks` drift while it is still attributable.
+      verifyGitGuard(`merge '${agentId}'`);
     },
     prepareMerge: async (agentId: string): Promise<void> => {
       await ensureCleanMergeState(needRoot(), agentId);
@@ -2779,6 +2823,7 @@ export async function orchestrateDepsWithDefaults(
             '-c',
             'user.email=kubic-resolver@local',
             'commit',
+            '--no-verify',
             '-m',
             `resolver ${request.agentId}: settle conflict`,
           ],

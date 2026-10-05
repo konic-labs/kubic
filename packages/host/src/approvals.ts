@@ -43,6 +43,7 @@ import {
   credentialAccessInPath,
 } from './approvals-credentials.js';
 import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
+import { isGitDirTarget } from './orchestrator/worktree/git-guard.js';
 import {
   appendToLedger,
   auditLedgerDirFor,
@@ -1379,6 +1380,9 @@ export function detectTriggers(
       found.push('outside-write');
     }
   }
+  // Issue #363: a write under the workspace's own `.git/` (hooks, config)
+  // is control-plane-grade tampering — a planted hook runs on the host's
+  // later git commands — so it raises the same always-ask capability.
   if (
     writeTargets(
       toolName,
@@ -1388,7 +1392,7 @@ export function detectTriggers(
     ).some(
       (target) =>
         controlPlaneClass(ctx.workspace, target, ctx.controlPlane) !==
-        undefined,
+          undefined || isGitDirTarget(ctx.workspace, target),
     )
   ) {
     found.push(KUBIC_STATE_WRITE);

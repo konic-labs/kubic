@@ -873,3 +873,51 @@ describe('credential-access detector (issue #275)', () => {
     ).toEqual(['credentials']);
   });
 });
+
+describe('git-dir writes raise kubic-state-write (issue #363)', () => {
+  // RED first: written before the isGitDirTarget check landed in
+  // detectTriggers — each of these returned [] on the unpatched detector.
+  const ctx = triggerContext();
+  it('raises for write/edit paths under .git/', () => {
+    expect(
+      detectTriggers('write', { path: '.git/hooks/pre-commit' }, ctx),
+    ).toEqual(['kubic-state-write']);
+    expect(detectTriggers('edit', { path: '.git/config' }, ctx)).toEqual([
+      'kubic-state-write',
+    ]);
+  });
+
+  it('raises for bash redirects, tee and cp targets under .git/', () => {
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'echo evil > .git/hooks/pre-commit' },
+        ctx,
+      ),
+    ).toEqual(['kubic-state-write']);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'cat payload | tee .git/hooks/post-checkout' },
+        ctx,
+      ),
+    ).toEqual(['kubic-state-write']);
+    expect(
+      detectTriggers('bash', { command: 'cp hook.sh .git/hooks/x' }, ctx),
+    ).toEqual(['kubic-state-write']);
+  });
+
+  it('raises for removing or moving hooks away (tampering by deletion)', () => {
+    expect(
+      detectTriggers('bash', { command: 'rm .git/hooks/pre-commit' }, ctx),
+    ).toEqual(['kubic-state-write']);
+  });
+
+  it('stays quiet for normal files and .gitignore-adjacent names', () => {
+    expect(detectTriggers('write', { path: 'src/index.ts' }, ctx)).toEqual([]);
+    expect(detectTriggers('write', { path: '.gitignore' }, ctx)).toEqual([]);
+    expect(
+      detectTriggers('bash', { command: 'echo x > src/out.txt' }, ctx),
+    ).toEqual([]);
+  });
+});

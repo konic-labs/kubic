@@ -31,8 +31,6 @@ import {
   Harness,
   UserEntry,
 } from '../pi-boundary.js';
-import { bootFauxLane } from './test-harness.js';
-import { readSessionEntries } from './transcript.js';
 import {
   acquireSessionLock,
   attachSession,
@@ -49,6 +47,8 @@ import {
   SessionLockError,
   sessionsTouchingWorkspace,
 } from './session-store.js';
+import { bootFauxLane } from './test-harness.js';
+import { readSessionEntries } from './transcript.js';
 
 const openSessions: SessionHandle[] = [];
 const scratchDirs: string[] = [];
@@ -178,8 +178,10 @@ describe('pi-durable session storage (issue #392)', () => {
     // The storage opens with its identity commit: the first JSONL line is
     // the format-1 commit creating the kubic.session document (the cwd
     // itself rides session.json, pinned exact in the header below).
-    const firstLine = readFileSync(join(session.dir, 'main.jsonl'), 'utf8')
-      .split('\n')[0] as string;
+    const firstLine = readFileSync(
+      join(session.dir, 'main.jsonl'),
+      'utf8',
+    ).split('\n')[0] as string;
     const first = JSON.parse(firstLine) as {
       format: number;
       type: string;
@@ -225,8 +227,9 @@ describe('pi-durable session storage (issue #392)', () => {
     const attached = track(
       await attachSession(storeFor(root), id, BACKGROUND_CONTEXT),
     );
-    expect(await readSessionEntries(attached.storage, BACKGROUND_CONTEXT))
-      .toEqual(committed);
+    expect(
+      await readSessionEntries(attached.storage, BACKGROUND_CONTEXT),
+    ).toEqual(committed);
   });
 
   it('records a declared workspace beside the cwd', async () => {

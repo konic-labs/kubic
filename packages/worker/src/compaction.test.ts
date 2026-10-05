@@ -593,7 +593,7 @@ describe('/compact focus instructions (issue #34)', () => {
     // section fails here instead of reaching the summarizer silently.
     expect(buildCompactPrompt({})).toBe(
       'Summarize this session for compaction: goal, decisions, open work, cumulative file ops, spill refs.\n' +
-        "Prefer compact state + artifacts + refs over history.",
+        'Prefer compact state + artifacts + refs over history.',
     );
   });
 });

@@ -16,6 +16,7 @@ import type { RunMode } from '../../../agents/src/budget.js';
 import {
   defineTool,
   type EntryRecord,
+  type JsonValue,
   type ToolRegistration,
   ToolResultEntry,
   Type,
@@ -24,6 +25,10 @@ import type { AgentResult, ResultStatus } from '../../../worker/src/result.js';
 import { buildAgentResult } from '../../../worker/src/result.js';
 import { composeWorkerPrompt } from '../roles/worker-roles.js';
 import { MAX_RUN_TIMEOUT_MS } from '../run-cli.js';
+import {
+  QUESTION_UNANSWERED_CODE,
+  type WorkerQuestionOutcome,
+} from './approvals/worker-questions.js';
 import {
   MANAGER_ALLOWLIST,
   rejectAuthoring,
@@ -153,6 +158,15 @@ export interface ManagerToolsDeps {
    * QueueStoppedError once the queue stopped on an unresolvable conflict.
    */
   applyStaged(): Promise<{ agentId: string } | undefined>;
+  /**
+   * Ask the run's seat one question on the manager's behalf. The prod
+   * contract: an interactive run presents it on the TUI/terminal seat and
+   * returns the answer; a headless run denies closed within the bound
+   * (the `boundedAskUser` shape — a timeout/EOF verdict, never a hang).
+   * The bound lives here in deps, never in the adapter: an unanswered
+   * seat resolves unanswered, so the manager proceeds on assumptions.
+   */
+  askSeat(question: string): Promise<WorkerQuestionOutcome>;
 }
 
 // The `--budget` dimension names a `spawn_agent(budget=…)` map may carry
@@ -298,6 +312,7 @@ export interface ManagerToolset {
   workspaceDiff: ToolRegistration;
   workspaceApply: ToolRegistration;
   workspaceMerge: ToolRegistration;
+  askUser: ToolRegistration;
   settle: {
     resultOf(agentId: string): AgentResult | undefined;
   };
@@ -927,6 +942,41 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
     },
   });
 
+  // ask_user (issue #417): the manager's free-text question to the run's
+  // seat. Same outcome vocabulary as the worker-side tool
+  // (createAskUserTool): an answered seat returns its text, an unanswered
+  // one returns a named error the model acts on — never a throw, never a
+  // hang (the bound is the deps' contract).
+  const askUser = defineTool({
+    name: 'ask_user',
+    description:
+      'Ask the user one short free-text question when you cannot proceed without their answer. Returns their answer, or an error when nobody answers in time — then continue with your best assumption and say so.',
+    parameters: Type.Object({
+      question: Type.String({ minLength: 1, maxLength: 2000 }),
+    }),
+    constrainedSampling: { type: 'json_schema', strict: 'prefer' },
+    // Asking twice is not harmful, but the answer is a human's: a replayed
+    // call re-reads the same answer by its memo key instead of asking again.
+    replay: 'safe',
+    execute: async (args) => {
+      const { question } = args as { question?: unknown };
+      if (typeof question !== 'string' || question.trim() === '') {
+        throw new ManagerToolRefusalError(
+          'invalid_args',
+          'ask_user needs a non-empty question',
+        );
+      }
+      const outcome = await deps.askSeat(question);
+      const text = outcome.answered
+        ? outcome.text
+        : `error ${QUESTION_UNANSWERED_CODE}: ${outcome.reason}`;
+      const details: JsonValue = outcome.answered
+        ? { ok: true }
+        : { ok: false, code: QUESTION_UNANSWERED_CODE };
+      return { content: [{ type: 'text' as const, text }], details };
+    },
+  });
+
   return {
     spawnAgent,
     waitForAgent,
@@ -937,6 +987,7 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
     workspaceDiff,
     workspaceApply,
     workspaceMerge,
+    askUser,
     settle: {
       resultOf: (agentId) => settle.resultOf(agentId),
     },
@@ -962,6 +1013,7 @@ export function managerToolsWithStubs(
     ['workspace_diff', tools.workspaceDiff],
     ['workspace_apply', tools.workspaceApply],
     ['workspace_merge', tools.workspaceMerge],
+    ['ask_user', tools.askUser],
   ]);
   const stubs = new Map(managerToolStubs().map((tool) => [tool.name, tool]));
   return MANAGER_ALLOWLIST.map((name) => {

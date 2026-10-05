@@ -16,6 +16,10 @@ import {
 } from '../../../worker/src/pi-boundary.js';
 import type { AgentResult } from '../../../worker/src/result.js';
 import { buildAgentResult } from '../../../worker/src/result.js';
+import {
+  QUESTION_UNANSWERED_CODE,
+  type WorkerQuestionOutcome,
+} from './approvals/worker-questions.js';
 import { bootManagerLane, type ManagerLaneHandle } from './manager-lane.js';
 import {
   type ManagerToolsDeps,
@@ -86,6 +90,8 @@ interface Rig {
   settleFollowUp(agentId: string, result?: AgentResult): void;
   queue: MergeQueue;
   landed: string[];
+  asked: string[];
+  seatScript: WorkerQuestionOutcome[];
 }
 
 function rig(options?: {
@@ -109,6 +115,8 @@ function rig(options?: {
   const followUpGates = new Map<string, (result: AgentResult) => void>();
   const queue = createMergeQueue();
   const landed: string[] = [];
+  const asked: string[] = [];
+  const seatScript: WorkerQuestionOutcome[] = [];
   let minted = 0;
   const spawned: string[] = [];
   const deps: ManagerToolsDeps = {
@@ -177,6 +185,16 @@ function rig(options?: {
       landed.push(next.agentId);
       return { agentId: next.agentId };
     },
+    askSeat: async (question) => {
+      asked.push(question);
+      return (
+        seatScript.shift() ?? {
+          answered: false,
+          code: QUESTION_UNANSWERED_CODE,
+          reason: 'no one is presenting manager questions',
+        }
+      );
+    },
   };
   const settleInto = (
     store: Map<string, AgentResult>,
@@ -204,6 +222,8 @@ function rig(options?: {
       settleInto(settledResults, followUpGates, agentId, result),
     queue,
     landed,
+    asked,
+    seatScript,
   };
 }
 
@@ -297,6 +317,29 @@ const callTool = (
   );
 };
 
+const toolTexts = async (
+  lane: ManagerLaneHandle,
+  name: string,
+): Promise<string[]> => {
+  const out: string[] = [];
+  for (const entry of await laneEntries(lane)) {
+    if (!ToolResultEntry.is(entry)) continue;
+    const message = (
+      entry.model as unknown as
+        | Array<{
+            role?: string;
+            toolName?: string;
+            isError?: boolean;
+            content?: Array<{ text?: string }>;
+          }>
+        | undefined
+    )?.[0];
+    if (message?.role !== 'toolResult' || message.toolName !== name) continue;
+    out.push((message.content ?? []).map((part) => part.text ?? '').join(''));
+  }
+  return out;
+};
+
 describe('manager spawn/wait/collect adapters (issue #414)', () => {
   const tests: Rig[] = [];
   afterEach(async () => {
@@ -356,7 +399,7 @@ describe('manager spawn/wait/collect adapters (issue #414)', () => {
     ]);
   });
 
-  it('the lane toolset is the allowlist in order: nine adapters, four stubs', async () => {
+  it('the lane toolset is the allowlist in order: ten adapters, three stubs', async () => {
     const test = useRig();
     const lane = await bootLane(test, [fauxAssistantMessage('ok')]);
     const names = lane.registry
@@ -407,7 +450,7 @@ describe('manager spawn/wait/collect adapters (issue #414)', () => {
     await expect(call('inspect_agent', { agentId: 'nobody' })).rejects.toThrow(
       /unknown_agent/,
     );
-    await expect(call('ask_user', {})).rejects.toThrow(/not wired yet/);
+    await expect(call('git_status', {})).rejects.toThrow(/not wired yet/);
   });
 
   it('an unknown role is refused with a named reason, spawning nothing', async () => {
@@ -741,29 +784,6 @@ describe('manager inspect/cancel/send adapters (issue #415)', () => {
     tests.push(test);
     return test;
   }
-
-  const toolTexts = async (
-    lane: ManagerLaneHandle,
-    name: string,
-  ): Promise<string[]> => {
-    const out: string[] = [];
-    for (const entry of await laneEntries(lane)) {
-      if (!ToolResultEntry.is(entry)) continue;
-      const message = (
-        entry.model as unknown as
-          | Array<{
-              role?: string;
-              toolName?: string;
-              isError?: boolean;
-              content?: Array<{ text?: string }>;
-            }>
-          | undefined
-      )?.[0];
-      if (message?.role !== 'toolResult' || message.toolName !== name) continue;
-      out.push((message.content ?? []).map((part) => part.text ?? '').join(''));
-    }
-    return out;
-  };
 
   it('cancel_agent on a running worker marks it cancelled and the run continues', async () => {
     const test = useRig({ maxConcurrency: 1 });
@@ -1163,5 +1183,71 @@ describe('manager workspace adapters (issue #416)', () => {
       /merge_blocked.*worker-1/,
     );
     expect(test.landed).toEqual([]);
+  });
+});
+
+describe('manager ask_user adapter (issue #417)', () => {
+  const tests: Rig[] = [];
+  afterEach(async () => {
+    for (const test of tests.splice(0)) {
+      for (const resolve of test.gates.values()) {
+        resolve(completedResult('cleanup', []));
+      }
+      for (const resolve of test.followUpGates.values()) {
+        resolve(completedResult('cleanup', []));
+      }
+      for (const lane of test.lanes.splice(0)) {
+        await lane.close(BACKGROUND_CONTEXT);
+      }
+    }
+  });
+  function useRig(options?: Parameters<typeof rig>[0]): Rig {
+    const test = rig(options);
+    tests.push(test);
+    return test;
+  }
+
+  it('a faux manager ask_user round returns the seat answer', async () => {
+    const test = useRig();
+    test.seatScript.push({ answered: true, text: 'ship the blue one' });
+    const lane = await bootLane(test, [
+      fauxAssistantMessage(
+        [fauxToolCall('ask_user', { question: 'which option ships?' })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('shipping blue'),
+    ]);
+    await runTurn(lane, 'go');
+    expect(test.asked).toEqual(['which option ships?']);
+    const texts = await toolTexts(lane, 'ask_user');
+    expect(texts).toEqual(['ship the blue one']);
+  });
+
+  it('an unanswered seat returns a named error, never a hang', async () => {
+    const test = useRig();
+    const lane = await bootLane(test, [fauxAssistantMessage('nothing to ask')]);
+    await runTurn(lane, 'go');
+    // Headless shape: the bound elapsed with nobody presenting.
+    const unanswered = (await callTool(lane, 'ask_user', {
+      question: 'which option ships?',
+    })) as { content: Array<{ text: string }>; details?: unknown };
+    expect(
+      (unanswered.content[0]?.text ?? '').startsWith(
+        'error question_unanswered: ',
+      ),
+    ).toBe(true);
+    expect(unanswered.details).toMatchObject({
+      ok: false,
+      code: 'question_unanswered',
+    });
+    // A seat that answers late still settles the call (bounded, not hung).
+    test.seatScript.push({ answered: true, text: 'late answer' });
+    const late = (await callTool(lane, 'ask_user', {
+      question: 'still need this?',
+    })) as { content: Array<{ text: string }> };
+    expect(late.content[0]?.text).toBe('late answer');
+    await expect(callTool(lane, 'ask_user', { question: '' })).rejects.toThrow(
+      /invalid_args/,
+    );
   });
 });

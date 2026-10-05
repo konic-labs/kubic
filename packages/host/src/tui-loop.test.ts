@@ -473,6 +473,59 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(calls()).toBe(2);
   });
 
+  it('queues a follow-up in the session a /new rebuilt (#333 review)', async () => {
+    // `/new` rebinds the lane and rebuilds the drivers, so the rebuilt runner
+    // needs the loop's in-place queue map too: its projector otherwise keeps
+    // its own empty map, resolves every inbox id to nothing and never renders
+    // the row. The #334 tests above only ever drive the initial runner.
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    let release: () => void = () => {};
+    const gated = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { models, calls } = fauxModels([
+      'first answer',
+      async () => {
+        await gated;
+        return fauxAssistantMessage('second answer');
+      },
+      'third answer',
+    ]);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    const send = (text: string): void => {
+      for (const ch of text) fake.feed(ch);
+      fake.feed('\r');
+    };
+    send('first prompt');
+    await waitFor(() => fake.writes.join('').includes('first answer'));
+    // A fresh session: the lane is rebound and the runner rebuilt.
+    fake.feed('\x15');
+    send('/new');
+    await waitFor(() => fake.writes.join('').includes('(new)'));
+    // The fresh session's first turn is gated (busy), so the next Enter is
+    // admitted to ITS inbox.
+    send('second prompt');
+    await waitFor(() => fake.writes.join('').includes('second prompt'));
+    send('third prompt');
+    await waitFor(() => fake.writes.join('').includes('queued: third prompt'));
+    release();
+    await waitFor(() => fake.writes.join('').includes('third answer'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    expect(calls()).toBe(3);
+  });
+
   it('Alt+Enter steers the running turn through the harness steer queue (#334)', async () => {
     // Acceptance (#334): the steer key is not a queued follow-up. The text
     // goes to pi-durable with `whenBusy: 'steer'`, which places it after the

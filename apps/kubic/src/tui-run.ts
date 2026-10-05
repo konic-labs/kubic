@@ -2992,48 +2992,55 @@ export async function runTuiCommand(
   // Issue #305: `/new` and `/resume` replace the lane, so the drivers are
   // rebuilt (a fresh runner starts with an empty feed and no subscription).
   let turn: TuiTurnRunner | undefined;
-  const buildTurn = (): TuiTurnRunner | undefined =>
-    boot.loop === undefined
-      ? undefined
-      : new TuiTurnRunner(
-          app,
-          boot.loop,
-          boot.model,
-          () => {
-            syncPosture();
-            if (!stopped) screen?.update();
-          },
-          (event) => {
-            if (event.type === 'tool-end') {
-              if (event.toolName === SHELL_TOOL_NAME) shellRanThisTurn = true;
-              journalFeed?.request();
-            }
-            // Issue #334: a fresh inbox list replaces the queued rows (it is
-            // a snapshot); a `run-start` names the submission the harness
-            // just PLACED, so its row becomes the pending echo instead.
-            if (event.type === 'inbox') {
-              queuedInbox = event.items;
-              if (!stopped) screen?.update();
-            }
-            if (event.type === 'run-start') {
-              for (const input of event.inputs) {
-                const id = String(input);
-                const text = queuedText.get(id);
-                if (text === undefined) continue;
-                queuedText.delete(id);
-                app.setPendingEcho(text);
-              }
-              // The placed submission is work in flight now: a queued
-              // follow-up that waited behind a failed run starts the spinner
-              // again (#334 review).
-              syncBusyForLoop?.();
-              if (!stopped) screen?.update();
-            }
-          },
-          boot.usageRows,
-        );
+  const buildTurn = (): TuiTurnRunner | undefined => {
+    if (boot.loop === undefined) return undefined;
+    const next = new TuiTurnRunner(
+      app,
+      boot.loop,
+      boot.model,
+      () => {
+        syncPosture();
+        if (!stopped) screen?.update();
+      },
+      (event) => {
+        if (event.type === 'tool-end') {
+          if (event.toolName === SHELL_TOOL_NAME) shellRanThisTurn = true;
+          journalFeed?.request();
+        }
+        // Issue #334: a fresh inbox list replaces the queued rows (it is
+        // a snapshot); a `run-start` names the submission the harness
+        // just PLACED, so its row becomes the pending echo instead.
+        // The rows are painted by the runner AFTER it writes the state
+        // (the sink's own repaint): this fan-out runs first because it
+        // owns the map the state resolves against, so a paint here would
+        // be the frame BEFORE the write (#333 review round 2).
+        if (event.type === 'inbox') {
+          queuedInbox = event.items;
+        }
+        if (event.type === 'run-start') {
+          for (const input of event.inputs) {
+            const id = String(input);
+            const text = queuedText.get(id);
+            if (text === undefined) continue;
+            queuedText.delete(id);
+            app.setPendingEcho(text);
+          }
+          // The placed submission is work in flight now: a queued
+          // follow-up that waited behind a failed run starts the spinner
+          // again (#334 review).
+          syncBusyForLoop?.();
+        }
+      },
+      boot.usageRows,
+    );
+    // Issue #333 (review round 2): EVERY runner gets the loop's in-place queue
+    // map, not just the initial one — `/new` and `/resume` rebuild the runner
+    // (`rebindSession`), and a rebuilt runner with its own empty map resolves
+    // every inbox id to nothing, so the `queued:` row never renders.
+    next.setQueuedText(queuedText);
+    return next;
+  };
   turn = buildTurn();
-  turn?.setQueuedText(queuedText);
   // Issue #327: the orchestrator turn the toggle switches to. Absent means
   // this boot is solo-only (viewer/fake lanes): the submit path refuses by
   // name instead of falling back into solo silently.

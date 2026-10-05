@@ -76,6 +76,10 @@ import {
   type SessionUsageRow,
 } from '../../../packages/host/src/ops/cost/cost-cli.js';
 import {
+  TurnSpans,
+  type TurnSpansSink,
+} from '../../../packages/host/src/ops/perf/run-spans.js';
+import {
   buildOrchestratorRefusal,
   parseOrchestratorToggle,
   resolveOrchestratorMode,
@@ -735,6 +739,11 @@ export interface TuiLaneBoot {
   // the existing #75 tests omit it — the loop then runs as the viewer shell,
   // which keeps the screen/restore contract testable on its own.
   loop?: TuiLaneLoop;
+  // Issue #290: per-turn spans. The runner forwards the turn's run/tool
+  // events to `turns`; a settled turn's artifact lines go through `write`.
+  // Absent (injected boots, the orchestrator-lane switch) means no spans —
+  // the turn works exactly as before.
+  turnSpans?: TurnSpansSink;
   // Issue #147: the outcome line for a turn a crashed process left open on
   // this session (durably aborted at boot). Shown in the editor footer from
   // the first render; absent when nothing was pending.
@@ -1581,6 +1590,19 @@ export async function bootTuiLane(
     return {
       sessionId: id,
       model: `${runningModel.provider}/${runningModel.id}`,
+      // Issue #290: per-turn spans next to the headless artifact — the
+      // session's spans.jsonl carries one run span per TUI turn plus its
+      // tool spans. Best-effort: telemetry never fails a turn or a boot.
+      turnSpans: {
+        turns: new TurnSpans(id),
+        write: (artifact: string): void => {
+          try {
+            bridge.appendFile(join(id, 'spans.jsonl'), artifact);
+          } catch {
+            // A failed artifact write is not a turn failure.
+          }
+        },
+      },
       // Issue #347: the gauge needs the running model's window; a catalog
       // that does not know it yields none and the gauge stays off.
       contextLimits: contextLimitsOf(
@@ -2298,6 +2320,12 @@ interface TuiRunState {
   submissionId?: string;
 }
 
+// Issue #290: the key a turn's spans hang on — the placed submission ids
+// the harness names on both `run-start` and `run-end`.
+function turnKey(inputs: readonly SubmissionId[]): string {
+  return inputs.map((input) => String(input)).join(',');
+}
+
 export class TuiTurnRunner {
   private readonly app: TuiApp;
   private readonly loop: TuiLaneLoop;
@@ -2336,6 +2364,9 @@ export class TuiTurnRunner {
   // requests a journal read on tool-end).
   private readonly onLaneEvent: ((event: KubicLaneEvent) => void) | undefined;
 
+  // Issue #290: per-turn spans (absent means the turn records none).
+  private readonly spans: TurnSpansSink | undefined;
+
   constructor(
     app: TuiApp,
     loop: TuiLaneLoop,
@@ -2346,6 +2377,8 @@ export class TuiTurnRunner {
     // event APPENDS to it instead of replacing the bar with the new row
     // alone (a resumed session's earlier turns are not re-emitted).
     usageRows: ReadonlyArray<StatusUsageRow> = [],
+    // Issue #290: per-turn spans; absent means the turn records none.
+    spans?: TurnSpansSink,
   ) {
     this.app = app;
     this.loop = loop;
@@ -2353,6 +2386,7 @@ export class TuiTurnRunner {
     this.onUpdate = onUpdate;
     this.onLaneEvent = onLaneEvent;
     this.usageRows = [...usageRows];
+    this.spans = spans;
     this.projector = new PresentationProjector(app.presentationSeed());
   }
 
@@ -2503,6 +2537,8 @@ export class TuiTurnRunner {
       // failed run) counts as work in flight from this moment (#334).
       this.markPlaced();
       this.markPlacedInputs(event.inputs);
+      // Issue #290: the turn's run span opens on placement.
+      this.spans?.turns.startRun(turnKey(event.inputs));
     }
     if (event.type === 'snapshot') {
       // REPLACE semantics (D2): the attach snapshot is the transcript.
@@ -2551,10 +2587,34 @@ export class TuiTurnRunner {
       this.foldLaneEntries([event.entry]);
       return;
     }
+    if (event.type === 'tool-start') {
+      // Issue #290: the turn's tool span opens with the call.
+      this.spans?.turns.startTool(event.toolCallId, event.toolName);
+    }
     if (event.type === 'tool-end' && event.entry !== undefined) {
       // A tool result that faulted or was orphaned has no entry: the tree
       // already shows the error, and the transcript has nothing to append.
       this.foldLaneEntries([event.entry]);
+    }
+    if (event.type === 'tool-end') {
+      // Issue #290: entry or not, the call settled — a faulted or orphaned
+      // call has no entry but its span still closes.
+      this.spans?.turns.endTool(event.toolCallId, event.isError);
+    }
+    if (event.type === 'run-end') {
+      // Issue #290: the turn settled — flush its artifact (run span plus
+      // its tool spans). Telemetry never fails a turn.
+      const spans = this.spans;
+      if (spans !== undefined) {
+        const artifact = spans.turns.endRun(turnKey(event.inputs));
+        if (artifact !== undefined) {
+          try {
+            spans.write(artifact);
+          } catch {
+            // A failed artifact write is not a turn failure.
+          }
+        }
+      }
     }
   };
 
@@ -3576,6 +3636,7 @@ export async function runTuiCommand(
         }
       },
       boot.usageRows,
+      boot.turnSpans,
     );
     // Issue #333 (review round 2): EVERY runner gets the loop's in-place queue
     // map, not just the initial one — `/new` and `/resume` rebuild the runner

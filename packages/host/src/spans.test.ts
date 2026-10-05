@@ -4,7 +4,6 @@ import {
   createTranscriptSink,
   DebugLog,
   makeWriteLogSink,
-  runHook,
   SpanRecorder,
 } from './spans.js';
 
@@ -45,6 +44,10 @@ describe('SpanRecorder (§49.3 order + startup isolation)', () => {
     recorder.end(startup);
     const tool = recorder.start('pi.tool.execute');
     recorder.end(tool);
+    // Issue #290: the manager-side worker.start span is wall-clock too —
+    // per-tool time still counts pi.tool.execute spans only.
+    const worker = recorder.start('kubic.worker.start');
+    recorder.end(worker);
     expect(recorder.startupMs()).toBe(100);
     expect(recorder.toolMsTotal()).toBe(20);
   });
@@ -82,28 +85,6 @@ describe('DebugLog (§50 --debug vocabulary, 9 classes)', () => {
     expect(joined).toContain('in=120 out=45 cached=30');
     expect(joined).toContain('exited cleanly');
     expect(joined).toContain('0 leaked handles');
-  });
-});
-
-describe('runHook (failing hook → handler_error, fails closed)', () => {
-  it('denies closed, surfaces handler_error in output and trace', async () => {
-    const lines: string[] = [];
-    const debug = new DebugLog((line: string) => lines.push(line));
-    const recorder = new SpanRecorder(() => 0);
-    const result = await runHook(
-      'onToolEnd',
-      () => {
-        throw new Error('boom');
-      },
-      { debug, recorder },
-    );
-    expect(result.ok).toBe(false);
-    expect(result.denied).toBe(true);
-    expect(lines.join('\n')).toContain('handler_error');
-    const hookSpan = recorder
-      .trace()
-      .find((span) => span.name === 'pi.harness.hook');
-    expect(hookSpan?.error).toContain('handler_error');
   });
 });
 
@@ -159,5 +140,21 @@ describe('SpanRecorder keyed lookup (issue #243)', () => {
     expect(read).not.toBeUndefined();
     if (read !== undefined) read.endMs = 999;
     expect(recorder.get(id)?.endMs).toBeNull();
+  });
+});
+
+describe('SpanRecorder explicit end (issue #290)', () => {
+  it('closes a span at the given end time', () => {
+    const recorder = new SpanRecorder(() => 999);
+    const id = recorder.start('kubic.worker.startup');
+    recorder.endAt(id, 140);
+    expect(recorder.get(id)).toMatchObject({ id, startMs: 999, endMs: 140 });
+  });
+
+  it('refuses an unknown span like end does', () => {
+    const recorder = new SpanRecorder(() => 0);
+    expect(() => recorder.endAt('span-404', 1)).toThrow(
+      'unknown span span-404',
+    );
   });
 });

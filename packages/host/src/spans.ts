@@ -59,6 +59,16 @@ export class SpanRecorder {
     if (error !== undefined) span.error = error;
   }
 
+  // Issue #290: close a span at a measured-elsewhere end time. The
+  // manager-side startup span reports the registry's startupMs, not a
+  // second wall-clock read, so the artifact duration equals it exactly.
+  endAt(id: string, endMs: number, error?: string): void {
+    const span = this.byId.get(id);
+    if (span === undefined) throw new Error(`unknown span ${id}`);
+    span.endMs = endMs;
+    if (error !== undefined) span.error = error;
+  }
+
   // Issue #243: read one span without copying the trace. The copy keeps
   // the ledger tamper-proof: a reader mutating the return never rewrites
   // a stored record (pinned by test).
@@ -155,40 +165,6 @@ export class DebugLog {
 
   handles(leaked: number): void {
     this.sink(`[handles] ${leaked} leaked handles`);
-  }
-}
-
-// Hook execution (§50 handler_error): a throwing hook fails closed —
-// the error surfaces as a handler_error debug line AND on the
-// pi.harness.hook span, and the caller gets denied=true. There is no
-// allow-on-error path: per policy the run must not proceed on a hook
-// failure it cannot classify.
-export interface HookDeps {
-  debug: DebugLog;
-  recorder: SpanRecorder;
-}
-
-export interface HookResult {
-  ok: boolean;
-  denied: boolean;
-  error?: string;
-}
-
-export async function runHook(
-  name: string,
-  hook: () => void | Promise<void>,
-  deps: HookDeps,
-): Promise<HookResult> {
-  const id = deps.recorder.start('pi.harness.hook');
-  try {
-    await hook();
-    deps.recorder.end(id);
-    return { ok: true, denied: false };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    deps.debug.hookError(name, error);
-    deps.recorder.end(id, `handler_error hook=${name} error=${message}`);
-    return { ok: false, denied: true, error: message };
   }
 }
 

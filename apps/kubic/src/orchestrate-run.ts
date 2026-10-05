@@ -50,6 +50,10 @@ import {
   assembleModels,
   modelsProjectRootFor,
 } from '../../../packages/host/src/models-cli.js';
+import {
+  RunSpans,
+  serializeSpanArtifact,
+} from '../../../packages/host/src/ops/perf/run-spans.js';
 import type {
   MergeApprovalVerdict,
   OrchestrateCommandDeps,
@@ -1344,6 +1348,12 @@ export async function orchestrateDepsWithDefaults(
     'repo-root',
   );
   const root = top.exitCode === 0 ? top.stdout.trim() : undefined;
+  // Issue #290: manager-side worker spans — one RunSpans for the run,
+  // one worker.start (+ nested startup) span per launch, appended per
+  // settled worker to <root>/.kubic/orchestrator/<session>.spans.jsonl.
+  // Shared across concurrent runWorker calls: span ids are unique per
+  // launch, so workers never share spans.
+  const managerSpans = new RunSpans(Date.now);
 
   const needRoot = (): string => {
     if (root === undefined) throw new Error('not a git repository');
@@ -2422,6 +2432,37 @@ export async function orchestrateDepsWithDefaults(
         },
       );
       launchedByAgent.set(agentId, launched);
+      // Issue #290: the worker.start span (with its nested startup span)
+      // opens at launch — startup begins when the child is spawned.
+      const workerSpan = managerSpans.startWorker(workerSession);
+      // Issue #290: settle the worker's spans and append its artifact.
+      // The startup duration is the registry's startupMs (pinned by endAt,
+      // never a second wall-clock read); a launch that never became ready
+      // reports startupMs null and gets a zero-duration startup, with the
+      // failure on the worker.start span. Best-effort: telemetry never
+      // fails a worker.
+      const settleWorkerSpans = (error?: string): void => {
+        try {
+          managerSpans.endWorkerStartup(
+            workerSpan,
+            launched.perf().sample.startupMs ?? null,
+          );
+          managerSpans.endWorker(workerSpan, error);
+          if (root === undefined || orchestratorSessionId === undefined) return;
+          createNodeFileBridge(join(root, '.kubic', 'orchestrator')).appendFile(
+            `${orchestratorSessionId}.spans.jsonl`,
+            serializeSpanArtifact(
+              managerSpans.flushWorker(workerSpan),
+              workerSpan,
+              workerSession,
+            ),
+          );
+        } catch (spanError) {
+          debug(
+            `spans: could not record the worker span: ${spanError instanceof Error ? spanError.message : String(spanError)}`,
+          );
+        }
+      };
       // A cancel that arrived between the readiness check above and this
       // launch (issue #206): the handle exists now, so the kill lands instead
       // of waiting out the child's own bound. `throwIfCancelled` still turns
@@ -2641,6 +2682,7 @@ export async function orchestrateDepsWithDefaults(
         }
         // The report validated: the agent is COMPLETED, not merely exited.
         launched.settleAgent('completed');
+        settleWorkerSpans();
         return {
           hunks,
           result: contract.result,
@@ -2662,6 +2704,9 @@ export async function orchestrateDepsWithDefaults(
             // The agent settled concurrently — its own verdict stands.
           }
         }
+        settleWorkerSpans(
+          error instanceof Error ? error.message : String(error),
+        );
         throw withResult(error);
       }
     },

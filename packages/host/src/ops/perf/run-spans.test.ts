@@ -22,6 +22,7 @@ import {
   RunSpans,
   runSpanHooks,
   serializeSpanArtifact,
+  TurnSpans,
 } from './run-spans.js';
 
 function ticks(values: number[]): () => number {
@@ -352,5 +353,91 @@ describe('RunSpans per-span cost (issue #243)', () => {
     }
     spans.endRun(run);
     expect(spans.trace()).toHaveLength(1001);
+  });
+});
+
+describe('RunSpans worker start/startup (issue #290)', () => {
+  it('nests a startup span under the worker start, tagged by worker session', () => {
+    const spans = new RunSpans(() => 50);
+    const start = spans.startWorker('sess-w1');
+    spans.endWorkerStartup(start, 120);
+    spans.endWorker(start);
+    const flushed = spans.flushWorker(start);
+    expect(flushed.map((span) => span.name)).toEqual([
+      'kubic.worker.start',
+      'kubic.worker.startup',
+    ]);
+    expect(flushed[1]).toMatchObject({ parentId: start });
+    // The startup duration IS the registry's number, not a second
+    // wall-clock read: the span reports the measured value by construction.
+    expect((flushed[1]?.endMs ?? 0) - (flushed[1]?.startMs ?? 0)).toBe(120);
+    for (const span of flushed) expect(span.sessionId).toBe('sess-w1');
+  });
+
+  it('closes a never-ready startup with zero duration, failing the start', () => {
+    const spans = new RunSpans(() => 50);
+    const start = spans.startWorker('sess-w9');
+    spans.endWorkerStartup(start, null);
+    spans.endWorker(start, 'spawn_failed');
+    const flushed = spans.flushWorker(start);
+    expect((flushed[1]?.endMs ?? -1) - (flushed[1]?.startMs ?? -1)).toBe(0);
+    expect(flushed[0]?.error).toBe('spawn_failed');
+  });
+
+  it('serializes the worker session link on the artifact lines', () => {
+    const spans = new RunSpans(() => 0);
+    const start = spans.startWorker('sess-w2');
+    spans.endWorkerStartup(start, 5);
+    spans.endWorker(start);
+    const lines = serializeSpanArtifact(
+      spans.flushWorker(start),
+      start,
+      'sess-w2',
+    )
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { run: string; sessionId: string });
+    expect(lines).toHaveLength(2);
+    for (const line of lines) {
+      expect(line.run).toBe(start);
+      expect(line.sessionId).toBe('sess-w2');
+    }
+  });
+});
+
+describe('TurnSpans per-turn attribution (issue #290)', () => {
+  it('records one run span and one tool span per tool call of the turn', () => {
+    const turns = new TurnSpans('sess-t1', () => 0);
+    turns.startRun('u1');
+    turns.startTool('call-1', 'read');
+    turns.endTool('call-1', false);
+    const artifact = turns.endRun('u1');
+    expect(artifact).toContain('kubic.agent.run');
+    expect(artifact).toContain('pi.tool.execute');
+    expect(artifact).toContain('"toolName":"read"');
+  });
+
+  it('keeps two turns apart and never serializes a span twice', () => {
+    const turns = new TurnSpans('sess-t1', () => 0);
+    turns.startRun('u1');
+    turns.endRun('u1');
+    turns.startRun('u2');
+    turns.startTool('call-9', 'write');
+    turns.endTool('call-9', true);
+    const second = turns.endRun('u2') ?? '';
+    expect(second).not.toContain('u1');
+    const runs = second
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { name: string });
+    expect(runs.map((span) => span.name)).toEqual([
+      'kubic.agent.run',
+      'pi.tool.execute',
+    ]);
+  });
+
+  it('ignores the end of a run it never saw start', () => {
+    const turns = new TurnSpans('sess-t1', () => 0);
+    expect(turns.endRun('ghost')).toBeUndefined();
   });
 });

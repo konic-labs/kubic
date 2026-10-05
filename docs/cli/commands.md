@@ -261,7 +261,7 @@ semantics are provided or tested.
 
 ### Where the spans go
 
-Lane and tool spans have two destinations, both documented:
+Lane, tool and worker spans have three destinations:
 
 1. **stderr, behind `--debug`** — each span close writes one
    `<label>: <name> …` line through the shared `DebugSink`. This is the
@@ -273,7 +273,19 @@ Lane and tool spans have two destinations, both documented:
    (`<sessions-root>/<session-id>/spans.jsonl`), one JSON object per
    closed span. The artifact is evidence, not a surface: nothing reads it
    back and no CLI command reports it yet (the aggregate is #95/#96's
-   telemetry work).
+   telemetry work). Every run surface writes the same file for its own
+   session: `kubic run` writes the lane accept/drive steps plus one
+   `pi.tool.execute` span per tool call (#98, #397); `kubic tui` appends
+   one `kubic.agent.run` span per settled turn plus that turn's tool spans
+   (#290); an orchestrator worker child writes its own session file like
+   a headless run, so the manager and worker traces join on the worker
+   session id.
+3. **the orchestrator artifact** — the manager writes one
+   `kubic.worker.start` span per launch with a nested
+   `kubic.worker.startup` span whose duration is the registry's
+   `startupMs` (#290), appended per settled worker to
+   `<repo>/.kubic/orchestrator/<session>.spans.jsonl` next to the run
+   state and trajectory files.
 
 Both are additive: a run with no spans still exits exactly as before.
 

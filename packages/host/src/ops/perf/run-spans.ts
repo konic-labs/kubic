@@ -27,6 +27,8 @@ export const RUN_SPAN_NAMES = {
   accept: 'kubic.lane.accept',
   drive: 'kubic.lane.drive',
   tool: 'pi.tool.execute',
+  workerStart: 'kubic.worker.start',
+  workerStartup: 'kubic.worker.startup',
 } as const;
 
 export type RunSpanName = (typeof RUN_SPAN_NAMES)[keyof typeof RUN_SPAN_NAMES];
@@ -34,6 +36,9 @@ export type RunSpanName = (typeof RUN_SPAN_NAMES)[keyof typeof RUN_SPAN_NAMES];
 export interface RunSpanRecord extends SpanRecord {
   // Present on pi.tool.execute spans only: which tool the call ran.
   toolName?: string;
+  // Present on manager-side worker spans only (issue #290): the worker
+  // session the span belongs to, so manager and worker traces join on it.
+  sessionId?: string;
 }
 
 export class RunSpans {
@@ -41,6 +46,9 @@ export class RunSpans {
   private readonly debug: DebugLog;
   private readonly lines: string[] = [];
   private readonly toolNames = new Map<string, string>();
+  private readonly spanSessions = new Map<string, string>();
+  // Manager-side worker spans (issue #290): start id → nested startup id.
+  private readonly workerStartups = new Map<string, string>();
   private readonly openCalls = new Map<string, string>();
   private readonly endMs = new Map<string, number | null>();
   private readonly startMs = new Map<string, number>();
@@ -117,12 +125,62 @@ export class RunSpans {
   trace(): RunSpanRecord[] {
     return this.recorder.trace().map((span) => {
       const toolName = this.toolNames.get(span.id);
-      return toolName === undefined ? { ...span } : { ...span, toolName };
+      const sessionId = this.spanSessions.get(span.id);
+      return {
+        ...span,
+        ...(toolName === undefined ? {} : { toolName }),
+        ...(sessionId === undefined ? {} : { sessionId }),
+      };
     });
   }
 
   debugLines(): string[] {
     return [...this.lines];
+  }
+
+  // Manager-side worker launch (issue #290): opens the worker.start span
+  // with its nested worker.startup span, both tagged with the worker
+  // session id. The startup span opens at launch — startup begins when
+  // the child is spawned — and endWorkerStartup pins its duration to the
+  // registry's startupMs (never a second wall-clock read).
+  startWorker(workerSessionId: string): string {
+    const start = this.recorder.start(RUN_SPAN_NAMES.workerStart);
+    const startup = this.recorder.start(RUN_SPAN_NAMES.workerStartup, start);
+    this.remember(start);
+    this.remember(startup);
+    this.spanSessions.set(start, workerSessionId);
+    this.spanSessions.set(startup, workerSessionId);
+    this.workerStartups.set(start, startup);
+    this.debug.agent(`worker start session=${workerSessionId}`);
+    return start;
+  }
+
+  // Pins the nested startup span's duration to the registry's number
+  // (issue #290): the artifact duration equals startupMs exactly. A null
+  // startupMs — the launch never became ready — closes the startup with
+  // zero duration; the failure itself lands on the worker.start span via
+  // endWorker. Repeat closes are no-ops.
+  endWorkerStartup(startId: string, startupMs: number | null): void {
+    const startup = this.workerStartups.get(startId);
+    if (startup === undefined || this.endMs.get(startup) !== null) return;
+    const started = this.recorder.get(startup)?.startMs ?? 0;
+    const ended = startupMs === null ? started : started + startupMs;
+    this.recorder.endAt(startup, ended);
+    this.endMs.set(startup, ended);
+  }
+
+  endWorker(startId: string, error?: string): void {
+    if (!this.workerStartups.has(startId)) return;
+    const elapsed = this.close(startId, error);
+    this.debug.agent(`worker end ms=${String(elapsed)}${this.suffix(error)}`);
+  }
+
+  // The two spans of one worker launch, for the per-worker artifact.
+  // Unknown ids flush nothing.
+  flushWorker(startId: string): RunSpanRecord[] {
+    const startup = this.workerStartups.get(startId);
+    const ids = new Set([startId, ...(startup === undefined ? [] : [startup])]);
+    return this.trace().filter((span) => ids.has(span.id));
   }
 
   private remember(id: string): void {
@@ -157,6 +215,66 @@ export class RunSpans {
   }
 }
 
+// Per-turn spans for event-driven surfaces (issue #290): the TUI folds
+// the conversation's committed lane events, so a turn is a run-start…run-end
+// pair with tool calls in between — not the headless lane accept/drive
+// shape. Each turn gets its own RunSpans keyed by the run-start inputs:
+// tool starts route to the LATEST open turn and tool ends broadcast to
+// every open turn (endTool is idempotent on unknown calls), so overlapping
+// turns may misattribute a tool span between concurrent runs but never
+// lose, duplicate, or early-close one.
+export class TurnSpans {
+  private readonly sessionId: string;
+  private readonly clock: () => number;
+  private readonly open = new Map<string, { spans: RunSpans; run: string }>();
+
+  constructor(sessionId: string, clock: () => number = Date.now) {
+    this.sessionId = sessionId;
+    this.clock = clock;
+  }
+
+  startRun(key: string): void {
+    if (this.open.has(key)) return;
+    const spans = new RunSpans(this.clock);
+    const run = spans.startRun();
+    this.open.set(key, { spans, run });
+  }
+
+  startTool(toolCallId: string, toolName: string): void {
+    this.latest()?.spans.startTool(toolCallId, toolName);
+  }
+
+  endTool(toolCallId: string, isError: boolean): void {
+    for (const { spans } of this.open.values()) {
+      spans.endTool(toolCallId, isError ? 'tool reported an error' : undefined);
+    }
+  }
+
+  // Closes the turn and returns its artifact lines (run span plus that
+  // turn's tool spans, tagged with this session). Unknown keys end
+  // nothing and serialize nothing.
+  endRun(key: string): string | undefined {
+    const turn = this.open.get(key);
+    if (turn === undefined) return undefined;
+    this.open.delete(key);
+    turn.spans.endRun(turn.run);
+    return serializeSpanArtifact(turn.spans.trace(), turn.run, this.sessionId);
+  }
+
+  private latest(): { spans: RunSpans; run: string } | undefined {
+    const keys = [...this.open.keys()];
+    const last = keys[keys.length - 1];
+    return last === undefined ? undefined : this.open.get(last);
+  }
+}
+
+// What a turn-driven surface (the TUI) passes its runner (issue #290):
+// the per-turn tracker plus where a settled turn's artifact lines go.
+export interface TurnSpansSink {
+  turns: TurnSpans;
+  write: (artifact: string) => void;
+}
+
 export function serializeSpanArtifact(
   spans: readonly RunSpanRecord[],
   runId: string,
@@ -174,6 +292,7 @@ export function serializeSpanArtifact(
         endMs: span.endMs,
         ...(span.error === undefined ? {} : { error: span.error }),
         ...(span.toolName === undefined ? {} : { toolName: span.toolName }),
+        ...(span.sessionId === undefined ? {} : { sessionId: span.sessionId }),
       }),
     )
     .join('\n')}\n`;

@@ -22,8 +22,8 @@ docs and code must never imply otherwise (design §59.1).
 | `config/stances.ts` | `McpUnsupportedError`, `assertNoMcpConfig` (+ secrets in `config/secrets.ts`) |
 | `config/role-credentials.ts` | `ProviderKeyEnv`, `ProviderKeyIndex`, `providerOfModelRef`, `resolveWorkerProvider`, `resolveProviderGrant`, `planWorkerCredentials`, `workerCredentialDoctorProbe` — §36.3 provider-credential scoping for orchestrator workers (#200): which provider a role resolves to, exactly which key env vars that provider needs, and when the run must refuse by provider name before any worktree exists (#200) |
 | `doctor.ts` | `DOCTOR_EXIT_OK/FAIL/USAGE/PROVIDER` (0/1/2/6), `DoctorStatus`, `DoctorReason`, `DoctorCheck`, `DoctorReport`, `ProviderProbe`, `DepProbe`, `SessionOverlapProbe`, `DoctorDeps`, `collectDoctorChecks` |
-| `spans.ts` | `SPAN_NAMES`, `SpanName`, `SpanRecord`, `SpanRecorder`, `DEBUG_CLASSES`, `DebugSink`, `ToolPhase`, `DebugLog`, `HookDeps`, `HookResult`, `TranscriptSink`, `createTranscriptSink`, `makeWriteLogSink`. Live on the run path since #98 (see "Spans") |
-| `ops/perf/` | `budgets.ts` (§61 ms constants + p50/p95 `evaluateBudget`), `perf-cli.ts` (`kubic perf`, `--measure` \| `--samples`), `measure.ts` (real spawn/worktree samples, #98), `run-spans.ts` (lane/tool spans on the run path, #98) |
+| `spans.ts` | `SPAN_NAMES`, `SpanName`, `SpanRecord`, `SpanRecorder`, `DEBUG_CLASSES`, `DebugSink`, `ToolPhase`, `DebugLog`, `TranscriptSink`, `createTranscriptSink`, `makeWriteLogSink`. Live on the run path since #98 (see "Spans") |
+| `ops/perf/` | `budgets.ts` (§61 ms constants + p50/p95 `evaluateBudget`), `perf-cli.ts` (`kubic perf`, `--measure` \| `--samples`), `measure.ts` (real spawn/worktree samples, #98), `run-spans.ts` (lane/tool/worker spans on the run paths, #98 + #290) |
 | `ops/cost/` | `cost-cli.ts` (`kubic cost`), `per-agent-cost.ts` (rows + Σ(per-agent) task total), `cache.ts` (§62 lever 2 prefix hit-rate, live since #98) |
 | `worker-manager.ts`, `dispatch.ts`, `root-agent.ts` | Pointer | Supervision state in `@kubic/worker` `lifecycle/registry.ts` (#42); dispatch in `orchestrator/manager.ts` (#40, live since #103); root agent is the solo lane `@kubic/worker` `lane/solo.ts` (#11) |
 | `orchestrator/` | Manager + worker-process orchestration (parallel limits, approval budgets). `orchestrator/manager.ts` is live since #103: `MANAGER_ALLOWLIST` + `registerManagerLane` gate the run's toolset and `buildManagerPlan` authors the per-worker prompts |
@@ -56,7 +56,7 @@ is `runSpanHooks` (#397): the run wiring (#395) installs it as the
 blocked call opens no span — `beforeTool` opens the span, `afterTool`
 closes it and returns the result unchanged (the hook never fails a call).
 
-Two destinations, both documented on the
+Three destinations, all documented on the
 [commands page](../cli/commands.md#where-the-spans-go):
 
 1. **stderr, behind `kubic run --debug`** — each span close emits one
@@ -67,7 +67,20 @@ Two destinations, both documented on the
 2. **the session artifact** — the same spans are serialized to
    `spans.jsonl` under the session directory (`<sessionsRoot>/<id>/`),
    one JSON object per closed span. Evidence only: nothing reads it back
-   yet (aggregation is #95/#96).
+   yet (aggregation is #95/#96). Since #290 every run surface writes the
+   same file for its own session: `kubic run` the lane accept/drive steps
+   plus one `pi.tool.execute` span per tool call, `kubic tui` one
+   `kubic.agent.run` span per settled turn plus that turn's tool spans
+   (`TurnSpans`, fed by the runner from the committed lane events), and
+   an orchestrator worker child its own session file like a headless run.
+   The manager's own spans go next to the run state instead: one
+   `kubic.worker.start` span per launch with a nested
+   `kubic.worker.startup` span whose duration is the registry's
+   `startupMs`, appended per settled worker to
+   `<repo>/.kubic/orchestrator/<session>.spans.jsonl`. Worker spans carry
+   the worker session id, so manager and worker traces join on it; the
+   startup span never counts toward `toolMsTotal` (it counts
+   `pi.tool.execute` spans only).
 
 A tool span whose call never settled before the run ended is closed by
 `endRun` (`error=run ended before the call settled`) instead of being

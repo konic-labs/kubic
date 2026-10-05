@@ -428,7 +428,7 @@ function registerTrust(program: Command, ctx: CommandContext): void {
 function registerSessions(program: Command, ctx: CommandContext): void {
   const sessions = program
     .command('sessions')
-    .description('create, list, attach to or prune sessions')
+    .description('create, list, attach to, fork or prune sessions')
     .option(
       '--json',
       'with no subcommand: list the sessions as one JSON array (same as `sessions list --json`)',
@@ -450,7 +450,7 @@ function registerSessions(program: Command, ctx: CommandContext): void {
     if (name === undefined) {
       if (opts.json !== true) {
         throw new CliUsageError(
-          'sessions needs a subcommand (create | list | attach | prune)',
+          'sessions needs a subcommand (create | list | attach | fork | prune)',
         );
       }
       await run({ command: 'list', json: true });
@@ -496,11 +496,50 @@ function registerSessions(program: Command, ctx: CommandContext): void {
       'transcript entries to print (default 10)',
       nonNegativeInt('integer'),
     )
+    .option(
+      '--ids',
+      'prefix each line with its entry id (for `sessions fork --at`)',
+    )
     .action(async (id, opts) => {
       await run({
         command: 'attach',
         id,
         ...(opts.tail === undefined ? {} : { tail: opts.tail }),
+        ...(opts.ids === true ? { ids: true } : {}),
+      });
+    });
+  sessions
+    .command('fork')
+    .description(
+      'fork a session into a new one (at an entry, default the newest; --tree copies every branch)',
+    )
+    .argument(
+      '<id>',
+      'the source session id ([A-Za-z0-9_-])',
+      rule(parseSessionIdArg),
+    )
+    .option(
+      '--at <entry>',
+      'fork at this entry id (inclusive; `kubic sessions attach --ids` shows them)',
+      nonNegativeInt('integer entry id'),
+    )
+    .option('--tree', 'copy the whole tree: every conversation and branch tip')
+    .option('--json', 'print {id, source, at} as one JSON document')
+    .addHelpText(
+      'after',
+      examples([
+        'kubic sessions fork <id>',
+        'kubic sessions fork <id> --at 12 --json',
+        'kubic tui --session "$(kubic sessions fork <id> --at 12)"',
+      ]),
+    )
+    .action(async (id, opts) => {
+      await run({
+        command: 'fork',
+        id,
+        ...(opts.at === undefined ? {} : { at: opts.at }),
+        ...(opts.tree === true ? { tree: true } : {}),
+        ...(opts.json === true ? { json: true } : {}),
       });
     });
   sessions

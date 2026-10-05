@@ -79,8 +79,9 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
 - **`kubic sessions` / `kubic models` / `kubic config`**: 0 success; 2
   usage errors (unknown option, missing or invalid value, stray operand,
   a missing `sessions` subcommand, `prune --yes --dry-run`); 1 op
-  failure (`models --resolve` failure, a refused config, attaching a
-  missing or live-locked session). An unknown `sessions` subcommand exits
+  failure (`models --resolve` failure, a refused config, attaching or
+  forking a missing or live-locked session, a `sessions fork --at` entry the
+  source does not have). An unknown `sessions` subcommand exits
   2 like an unknown top-level command (issue #372). `sessions prune`: 0 for a dry run
   (including a declined terminal prompt), `nothing to prune`, and a
   completed prune; 1 for a missing keep window (no `--keep-days`, no

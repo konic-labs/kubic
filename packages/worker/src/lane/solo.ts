@@ -56,7 +56,7 @@ import {
   PolicyRefusedError,
   toolsForNames,
 } from './policy.js';
-import type { SessionHandle } from './session-store.js';
+import { laneConversationIdOf, type SessionHandle } from './session-store.js';
 import { type KubicToolContext, kubicToolsToPiTools } from './tools-adapter.js';
 import {
   composeTools,
@@ -547,7 +547,20 @@ export async function bootSoloLane(
     { models: options.models, registry, settings },
     context,
   );
-  const conversation = await harness.root(context);
+  // Issue #265: a forked session's lane runs its recorded fork, never the
+  // reserved root (which holds the source's whole history in the copy).
+  const forkedLane = options.session.meta.conversation;
+  const conversation =
+    forkedLane === undefined
+      ? await harness.root(context)
+      : await harness.conversation(
+          laneConversationIdOf(options.session.meta),
+          context,
+        );
+  if (conversation === undefined)
+    throw new Error(
+      `session ${options.session.id}: its lane conversation ${forkedLane} is missing`,
+    );
   // The live `pi.agent` document drives currentWindow: attached once here,
   // disposed by close(). `value` is the committed state, so a configure from
   // any caller (this module, the TUI, a headless switch) moves the reserve.

@@ -144,6 +144,7 @@ import {
 import {
   attachSession,
   createSession,
+  laneConversationIdOf,
   openSessionStore,
   type SessionHandle,
   sessionsTouchingWorkspace,
@@ -589,7 +590,18 @@ async function appendPromptEntry(
     context,
   );
   try {
-    const conversation = await harness.root(context);
+    // Issue #265: a forked session's prompt lands on its lane conversation.
+    const conversation =
+      session.meta.conversation === undefined
+        ? await harness.root(context)
+        : await harness.conversation(
+            laneConversationIdOf(session.meta),
+            context,
+          );
+    if (conversation === undefined)
+      throw new Error(
+        `session ${session.id}: its lane conversation is missing`,
+      );
     await conversation.commit(async (tx) => {
       await tx.appendEntry(UserEntry, conversation.id, {
         model: [{ role: 'user', content: prompt, timestamp: Date.now() }],

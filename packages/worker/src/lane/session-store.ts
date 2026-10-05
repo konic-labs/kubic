@@ -48,11 +48,15 @@ import {
 } from '../../../exec/src/lock-file.js';
 import {
   type Context,
+  type ConversationId,
   createSession as createSessionKernel,
   defineDoc,
+  type EntryId,
   JsonlStorage,
   type JsonValue,
+  ROOT_CONVERSATION_ID,
   type Storage,
+  UsageDoc,
   uuidv7,
 } from '../pi-boundary.js';
 import { bridgeToPiFileSystem } from './session-fs.js';
@@ -104,6 +108,11 @@ export interface KubicSessionMeta {
   cwd: string;
   createdAt: string;
   workspace?: string;
+  // Issue #265 (§22.3): a forked session's lane runs a FORK of the source's
+  // conversation, not the reserved root: its id is recorded here (absent ⇒
+  // the root), with where it came from.
+  conversation?: number;
+  forkedFrom?: { session: string; at: number };
   [k: string]: JsonValue | undefined;
 }
 
@@ -116,6 +125,8 @@ export const KubicSessionDoc = defineDoc<{
   cwd: string;
   createdAt: string;
   workspace?: string;
+  conversation?: number;
+  forkedFrom?: { session: string; at: number };
 }>({
   kind: 'kubic.session',
   version: 1,
@@ -390,13 +401,198 @@ function metaFrom(
     typeof value.cwd === 'string' && value.cwd !== '' ? value.cwd : undefined;
   const createdAt = isoFrom(value.createdAt);
   if (cwd === undefined || createdAt === undefined) return undefined;
+  const conversation = value.conversation;
+  const forkedFrom = value.forkedFrom as Record<string, unknown> | undefined;
   return {
     cwd,
     createdAt,
     ...(typeof value.workspace === 'string' && value.workspace !== ''
       ? { workspace: value.workspace }
       : {}),
+    ...(typeof conversation === 'number' && Number.isSafeInteger(conversation)
+      ? { conversation }
+      : {}),
+    ...(forkedFrom !== undefined &&
+    typeof forkedFrom.session === 'string' &&
+    typeof forkedFrom.at === 'number'
+      ? { forkedFrom: { session: forkedFrom.session, at: forkedFrom.at } }
+      : {}),
   };
+}
+
+/**
+ * Issue #265: the conversation a session's lane runs — a fork's recorded
+ * conversation, else the reserved root. Every reader of "the session's
+ * transcript" resolves it through here.
+ */
+export function laneConversationIdOf(
+  meta: Pick<KubicSessionMeta, 'conversation'> | undefined,
+): ConversationId {
+  return meta?.conversation === undefined
+    ? ROOT_CONVERSATION_ID
+    : (meta.conversation as ConversationId);
+}
+
+/** A fork the store refused, named for the operator (exit code by the CLI). */
+export class SessionForkError extends Error {
+  override readonly name = 'SessionForkError';
+}
+
+export interface ForkSessionOptions {
+  /** Entry to fork at (inclusive); default: the source lane's newest entry. */
+  at?: number;
+  /** Copy the whole tree: every conversation and branch tip, lane unchanged. */
+  tree?: boolean;
+  /** The new session's id (default: a fresh uuid v7). */
+  id?: string;
+}
+
+export interface ForkSessionResult {
+  id: string;
+  source: string;
+  /** The entry the fork cut at; undefined for a `tree` copy. */
+  at?: number;
+}
+
+/**
+ * Issue #265 (§22.3): a new session forked from an existing one. The source
+ * storage files (`main.jsonl` + document sidecars) are copied into a fresh
+ * session directory — under the source's own lock, so a live session is
+ * refused (SessionLockError) and no run can start mid-copy — and nothing
+ * else: no journal, spans, posture or approvals (a fork starts enforced).
+ * A branch fork then creates, in the NEW session's storage, a pi-durable
+ * fork of the source lane at `at` (which inherits history through `at` and
+ * the agent as of it, and leaves pending work and usage behind) and records
+ * it as the lane conversation; a `tree` fork keeps every conversation and
+ * branch tip as it is. The new id is usable at once with `--session`.
+ */
+export async function forkSession(
+  store: SessionStore,
+  sourceId: string,
+  options: ForkSessionOptions,
+  context: Context,
+): Promise<ForkSessionResult> {
+  if (!isSessionId(sourceId)) throw new SessionIdError(sourceId);
+  const sourceDir = sessionDirOf(store, sourceId);
+  if (!store.bridge.exists(storagePathOf(sourceDir))) {
+    if (findLegacyTranscript(store, sourceId) !== undefined)
+      throw new SessionFormatError(sourceId);
+    throw new SessionAttachError(sourceId);
+  }
+  const id = options.id ?? uuidv7();
+  if (!isSessionId(id)) throw new SessionIdError(id);
+  const targetDir = sessionDirOf(store, id);
+  if (store.bridge.exists(storagePathOf(targetDir)))
+    throw new Error(`Session already exists: ${id}`);
+  acquireSessionLock(sourceDir, sourceId);
+  let sourceMeta: KubicSessionMeta | undefined;
+  try {
+    acquireSessionLock(targetDir, id);
+    try {
+      const sourceStorage = await openSessionStorage(store, sourceDir, context);
+      try {
+        sourceMeta = await readSessionMetadata(sourceStorage, context);
+      } finally {
+        await sourceStorage.close(context);
+      }
+      for (const entry of store.bridge.listDir(sourceDir)) {
+        if (!entry.isFile) continue;
+        if (entry.name !== 'main.jsonl' && !/^doc-\d+\.jsonl$/.test(entry.name))
+          continue;
+        store.bridge.writeFile(
+          join(targetDir, entry.name),
+          store.bridge.readBinaryFile(entry.path),
+          { mode: 0o600 },
+        );
+      }
+    } catch (error) {
+      releaseSessionLock(targetDir);
+      throw error;
+    }
+  } finally {
+    releaseSessionLock(sourceDir);
+  }
+  try {
+    if (sourceMeta === undefined)
+      throw new SessionForkError(`session ${sourceId} has no Kubic metadata`);
+    const lane = laneConversationIdOf(sourceMeta);
+    const meta: KubicSessionMeta = {
+      cwd: sourceMeta.cwd,
+      createdAt: new Date().toISOString(),
+      ...(sourceMeta.workspace === undefined
+        ? {}
+        : { workspace: sourceMeta.workspace }),
+    };
+    let at: number | undefined;
+    const storage = await openSessionStorage(store, targetDir, context);
+    const kernel = createSessionKernel(storage);
+    try {
+      await kernel.commit(async (tx) => {
+        const doc = await tx.doc(KubicSessionDoc);
+        doc.id = id;
+        doc.cwd = meta.cwd;
+        doc.createdAt = meta.createdAt;
+        if (meta.workspace !== undefined) doc.workspace = meta.workspace;
+        delete doc.conversation;
+        delete doc.forkedFrom;
+        // §22.3: a fork starts with no usage of its own — the copied
+        // conversations' `pi.usage` documents are emptied in the creating
+        // commit, so `kubic cost` never counts the source's spend twice.
+        let page = await tx.scanConversations({}, 256);
+        for (;;) {
+          for (const record of page.items) {
+            const usage = await tx.doc(UsageDoc, record.id);
+            usage.models = {};
+            usage.tools = {};
+          }
+          if (page.next === undefined) break;
+          page = await tx.scanConversations({}, 256, page.next);
+        }
+        if (options.tree === true) {
+          if (sourceMeta?.conversation !== undefined)
+            doc.conversation = sourceMeta.conversation;
+          return;
+        }
+        const newest = (
+          await tx.scanEntries({ conversationId: lane }, 1, undefined)
+        ).items[0];
+        if (newest === undefined)
+          throw new SessionForkError(
+            `session ${sourceId} has no entries to fork`,
+          );
+        at = options.at ?? Number(newest.id);
+        const forked = await tx.forkConversation(lane, at as EntryId, {
+          ownership: { kind: 'ownerless' },
+        });
+        doc.conversation = Number(forked.id);
+        doc.forkedFrom = { session: sourceId, at };
+      }, context);
+    } catch (error) {
+      if (error instanceof SessionForkError) throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new SessionForkError(
+        `cannot fork session ${sourceId}${options.at === undefined ? '' : ` at entry ${options.at}`}: ${detail}`,
+      );
+    } finally {
+      await kernel.close(context);
+    }
+    writeSessionHeader(store, targetDir, id, meta);
+    return { id, source: sourceId, ...(at === undefined ? {} : { at }) };
+  } catch (error) {
+    for (const entry of store.bridge.exists(targetDir)
+      ? store.bridge.listDir(targetDir)
+      : []) {
+      if (entry.name === 'lock.json') continue;
+      try {
+        store.bridge.remove(entry.path, false, true);
+      } catch {
+        // Best-effort cleanup; the failure that got us here is the report.
+      }
+    }
+    throw error;
+  } finally {
+    releaseSessionLock(targetDir);
+  }
 }
 
 function writeSessionHeader(

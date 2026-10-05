@@ -1252,6 +1252,16 @@ export const BUDGET_DIMENSIONS: readonly string[] = [
   'maxToolCalls',
 ];
 
+// Session ids that would collide with the orchestrator dir's fixed entries
+// (issue #174): `workers` IS `<repo>/.kubic/orchestrator/workers.json` —
+// the lifecycle rows a run under that id would overwrite on its first
+// save — and `approvals` IS the `approvals/` ledger directory. Reserved
+// on fresh runs and resumes alike, before anything loads or saves.
+export const RESERVED_SESSION_IDS: ReadonlySet<string> = new Set([
+  'workers',
+  'approvals',
+]);
+
 export interface ParsedBudgetSpec {
   shared?: Record<string, number>;
   byAgent: Record<string, Record<string, number>>;
@@ -1684,6 +1694,15 @@ export async function runOrchestrateCommand(
           byAgent: { ...parsed.budgetsByAgent },
         };
   let state: OrchestratorRunState;
+  // A reserved session id (issue #174) never names a run — not fresh, not
+  // resumed — so the rows file and the ledger dir stay what they are.
+  if (RESERVED_SESSION_IDS.has(sessionId)) {
+    return fail(
+      RUN_EXIT_USAGE,
+      'session_reserved',
+      `session id '${sessionId}' is reserved (it names the orchestrator's own record) — choose another --session id`,
+    );
+  }
   if (parsed.resume) {
     const loaded = await deps.loadState?.(sessionId);
     const resumed =

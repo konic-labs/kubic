@@ -199,6 +199,39 @@ describe('orchestrate usage (issue #76)', () => {
     }
   });
 
+  it("refuses the reserved session id 'workers' before anything loads or saves (issue #174)", async () => {
+    // `workers` IS <repo>/.kubic/orchestrator/workers.json (the lifecycle
+    // rows): a run under that id would overwrite the rows on its first
+    // save. Refused with exit 2 before the state is even loaded.
+    let loads = 0;
+    const world = makeWorld({
+      loadState: () => {
+        loads++;
+        return undefined;
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'x', agents: ['alpha'], session: 'workers' },
+      world.deps,
+    );
+    expect(code).toBe(2);
+    expect(world.errLines.join('\n')).toMatch(/code=session_reserved/);
+    expect(loads).toBe(0);
+    expect(world.saved).toEqual([]);
+    expect(world.calls.create).toEqual([]);
+  });
+
+  it('refuses --resume under a reserved session id too (issue #174)', async () => {
+    const world = makeWorld({ loadState: () => undefined });
+    const code = await runOrchestrateCommand(
+      { resume: true, session: 'workers' },
+      world.deps,
+    );
+    expect(code).toBe(2);
+    expect(world.errLines.join('\n')).toMatch(/code=session_reserved/);
+    expect(world.saved).toEqual([]);
+  });
+
   it('refuses an unsafe session id from a library caller (it names a state file)', async () => {
     const world = makeWorld();
     expect(

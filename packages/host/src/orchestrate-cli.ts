@@ -460,6 +460,12 @@ export interface OrchestratorRunState {
   // instead of silently reverting to all-or-nothing. A state written before
   // the policy existed has none, and `stop` is the default it implies.
   onFailure?: 'stop' | 'continue';
+  // The spawn CAP this run started with (issue #413): the `--agents` entry
+  // count on a fresh run. A model-driven manager lane may spawn at most
+  // this many workers; the template path spawns exactly the listed agents,
+  // so the cap never binds there. A state written before #413 has none,
+  // and the resume path adopts the stored agent count.
+  spawnCap?: number;
 }
 
 // Stored resume state is untrusted JSON (a torn write, a hand edit, or
@@ -534,6 +540,17 @@ export function parseOrchestratorRunState(
     value.onFailure !== 'continue'
   ) {
     return undefined;
+  }
+  // The spawn cap (issue #413): a non-negative integer when present —
+  // anything else is a torn or hand-edited state and fails closed.
+  if (value.spawnCap !== undefined) {
+    if (
+      typeof value.spawnCap !== 'number' ||
+      !Number.isSafeInteger(value.spawnCap) ||
+      value.spawnCap < 0
+    ) {
+      return undefined;
+    }
   }
   if (!Array.isArray(value.records)) return undefined;
   for (const record of value.records) {
@@ -1703,6 +1720,8 @@ export async function runOrchestrateCommand(
       sessionId,
       prompt: parsed.prompt as string,
       agents: parsed.agents,
+      // The --agents entry count is the run's spawn cap (issue #413).
+      spawnCap: parsed.agents.length,
       // The explicit assignment travels with the state (issue #178):
       // --resume replays it instead of falling back to a default role.
       ...(bindingIsEmpty(parsed.binding)
@@ -1763,6 +1782,12 @@ export async function runOrchestrateCommand(
   }
   if (parsed.resume && stateSkills.length === 0 && parsed.skills.length > 0) {
     state = { ...state, skills: [...parsed.skills] };
+  }
+  // A state written before #413 carries no cap: the stored agent count is
+  // the cap the run was launched under — adopted (and persisted below),
+  // the same adoption the skills and the binding get.
+  if (state.spawnCap === undefined) {
+    state = { ...state, spawnCap: state.agents.length };
   }
   const effectiveSkills = state.skills ?? parsed.skills;
   // A pre-#178 state adopts the flag's assignment, so a later resume replays
@@ -2345,6 +2370,12 @@ export async function runOrchestrateCommand(
   // silent queue. The autonomous run keeps the shipped rule (the shared
   // resolveBlockedSpawn contract): the cap bounds concurrency, it never asks.
   const concurrencyCap = scheduler.maxConcurrency();
+  // The --agents spawn cap (issue #413): adopted from stored state when the
+  // run predates it, so a resume never runs uncapped.
+  const spawnCap = state.spawnCap ?? state.agents.length;
+  // Workers refused by the spawn cap in the prepare loop below — skipped by
+  // the spawn loop, mirroring deniedSpawns.
+  const cappedSpawns = new Set<string>();
   const excessAgents =
     state.agents.length <= concurrencyCap
       ? []
@@ -2409,6 +2440,24 @@ export async function runOrchestrateCommand(
         kind: 'approval',
         code: 'spawn_agents_denied',
         message: refusalReasonFor(agentId),
+      });
+      continue;
+    }
+    // Issue #413: --agents is the run's spawn CAP, not just its roster — a
+    // worker past the cap fails before any worktree is created, with the
+    // refusal as its result (the same failed-worker contract as the denial
+    // above). The count is DISTINCT preparations: denials never reach this
+    // loop, so they never consume a slot, and a re-prepared worker (issue
+    // #175) spends the slot it already holds. On the template path the
+    // pending set is the agent list, so the cap never binds — the guard is
+    // live for the manager lane's spawn_agent adapter (issue #414).
+    if (!prepared.has(agentId) && prepared.size >= spawnCap) {
+      cappedSpawns.add(agentId);
+      await recordFailure(agentId, undefined, {
+        status: 'spawn_failed',
+        kind: 'process',
+        code: 'spawn_cap_exceeded',
+        message: `spawn refused for worker '${agentId}': the run's --agents cap is ${spawnCap} and ${prepared.size} worker(s) are already prepared`,
       });
       continue;
     }
@@ -2805,7 +2854,9 @@ export async function runOrchestrateCommand(
     // Issue #277: a worker the user refused to admit past the cap never got a
     // worktree — its failure result was recorded when the run reached it — so
     // it is skipped here rather than dereferencing a missing preparation.
-    if (deniedSpawns.has(agentId)) continue;
+    // A worker past the --agents spawn cap (issue #413) is skipped the same
+    // way: refused in the prepare loop above, never spawned here.
+    if (deniedSpawns.has(agentId) || cappedSpawns.has(agentId)) continue;
     const worktree = prepared.get(agentId) as OrchestrateWorktree;
     // §45 provider caps: the worker's own model pin names the provider its
     // child will call, so the admission layer judges the right one. The pin
@@ -3031,8 +3082,15 @@ export async function runOrchestrateCommand(
   for (const agentId of state.pending) {
     // A worker the run continued past (issue #169), and — issue #277 — one the
     // user refused past the concurrency cap: neither succeeded, so there is
-    // nothing to merge; both stay pending for `--resume` to retry.
-    if (partialFailures.has(agentId) || deniedSpawns.has(agentId)) continue;
+    // nothing to merge; both stay pending for `--resume` to retry. A worker
+    // past the --agents spawn cap (issue #413) never spawned either.
+    if (
+      partialFailures.has(agentId) ||
+      deniedSpawns.has(agentId) ||
+      cappedSpawns.has(agentId)
+    ) {
+      continue;
+    }
     const worktree = prepared.get(agentId) as OrchestrateWorktree;
     queue.enqueue({ agentId, branch: worktree.branch });
     enqueuedAtMs.set(agentId, now());
@@ -3458,6 +3516,19 @@ export async function runOrchestrateCommand(
     const refused = state.agents.find((agentId) => deniedSpawns.has(agentId));
     const reason = refusalReasonFor(refused ?? 'worker');
     return fail(RUN_EXIT_FAILED, 'spawn_agents_denied', reason, partial());
+  }
+
+  // Issue #413: a spawn refused by the --agents cap ends the run on the
+  // refusal once every in-cap candidate settled — the same terminus shape
+  // as the denial above, with the cap named.
+  if (cappedSpawns.size > 0) {
+    const refused = state.agents.find((agentId) => cappedSpawns.has(agentId));
+    return fail(
+      RUN_EXIT_FAILED,
+      'spawn_cap_exceeded',
+      `spawn refused for worker '${refused ?? 'worker'}': the run's --agents cap is ${spawnCap}`,
+      partial(),
+    );
   }
 
   const reapError = await reapSpawned(spawned);

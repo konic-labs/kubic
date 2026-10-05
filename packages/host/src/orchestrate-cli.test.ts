@@ -2900,3 +2900,81 @@ describe('merge telemetry (§61, issue #158)', () => {
     expect(telemetry.some((record) => record.queueMs > 0)).toBe(true);
   });
 });
+
+describe('spawn cap (issue #413)', () => {
+  const baseStored = (): OrchestratorRunState => ({
+    version: 1,
+    sessionId: 'sess-cap',
+    prompt: 'demo',
+    agents: ['a', 'b'],
+    merged: [],
+    pending: ['a', 'b'],
+    stopped: false,
+    records: [],
+  });
+
+  it('parses a stored spawn cap and refuses malformed ones', () => {
+    expect(
+      parseOrchestratorRunState({ ...baseStored(), spawnCap: 2 }, 'sess-cap'),
+    ).toMatchObject({ spawnCap: 2 });
+    // A state written before #413 has none: it still loads.
+    expect(
+      parseOrchestratorRunState({ ...baseStored() }, 'sess-cap'),
+    ).toMatchObject({ agents: ['a', 'b'] });
+    for (const spawnCap of [-1, 1.5, Number.NaN, '2', null]) {
+      expect(
+        parseOrchestratorRunState({ ...baseStored(), spawnCap }, 'sess-cap'),
+        JSON.stringify(spawnCap),
+      ).toBeUndefined();
+    }
+  });
+
+  it('persists the --agents count as the cap, adopted for pre-#413 states', async () => {
+    const first = makeWorld();
+    const code = await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['a', 'b'], session: 'sess-cap', yes: true },
+      first.deps,
+    );
+    expect(code).toBe(0);
+    expect(first.saved.length).toBeGreaterThan(0);
+    expect(first.saved[0]?.spawnCap).toBe(2);
+
+    // A pre-#413 stored state adopts agents.length and persists it.
+    const legacy = structuredClone(
+      first.saved[first.saved.length - 1] as OrchestratorRunState,
+    );
+    delete legacy.spawnCap;
+    const second = makeWorld({ loadState: () => structuredClone(legacy) });
+    const code2 = await runOrchestrateCommand(
+      { resume: true, session: 'sess-cap' },
+      second.deps,
+    );
+    expect(code2).toBe(0);
+    expect(second.saved[second.saved.length - 1]?.spawnCap).toBe(2);
+  });
+
+  it('refuses a spawn beyond the stored cap: no worktree, session or child', async () => {
+    const stored: OrchestratorRunState = {
+      ...baseStored(),
+      agents: ['a', 'b', 'c'],
+      pending: ['a', 'b', 'c'],
+      spawnCap: 2,
+    };
+    const world = makeWorld({ loadState: () => structuredClone(stored) });
+    const code = await runOrchestrateCommand(
+      { resume: true, session: 'sess-cap' },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(world.calls.ensure).toEqual(['a', 'b']);
+    expect(world.calls.create).toEqual(['a', 'b']);
+    expect(world.calls.run).toEqual(['a', 'b']);
+    const last = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    const refused = last.records.find((record) => record.agentId === 'c');
+    expect(refused?.result).toMatchObject({
+      status: 'spawn_failed',
+      error: expect.objectContaining({ kind: 'process' }),
+    });
+    expect(world.errLines.join('\n')).toMatch(/spawn_cap_exceeded/);
+  });
+});

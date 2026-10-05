@@ -64,6 +64,13 @@ export class ManagerToolsetError extends Error {
   }
 }
 
+export class ManagerToolNotWiredError extends Error {
+  constructor(toolName: string) {
+    super(`manager tool '${toolName}' is not wired yet`);
+    this.name = 'ManagerToolNotWiredError';
+  }
+}
+
 export class ManagerPolicyBlockedError extends Error {
   constructor(toolName: string) {
     super(

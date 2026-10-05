@@ -1019,6 +1019,10 @@ export interface TuiRunOptions {
   };
   noSkills?: boolean;
   skillsList?: string[];
+  // Issue #177: where an unresolvable explicit --skill warns. `kubic tui`
+  // projects the err channel here (with the boot's `warning: ` prefix);
+  // tests pass a collector. Absent means silent.
+  warn?: (line: string) => void;
   role?: string;
   roles?: { cwd?: string; layers?: RoleLayerInput[] };
   journalRetention?: JournalRetention;
@@ -1461,6 +1465,10 @@ export async function bootTuiLane(
           ...(options.skillsList === undefined
             ? {}
             : { cliSkills: options.skillsList }),
+          // Issue #177: an unresolvable explicit --skill warns on the
+          // boot's warn channel — never only on this debug sink the TUI
+          // drops — so a typo cannot read as a loaded skill.
+          ...(options.warn === undefined ? {} : { warn: options.warn }),
           log: () => {
             // TUI: no debug footer on the alt-screen; loader lines are
             // intentionally dropped (the block itself is observable).
@@ -2108,6 +2116,17 @@ export function tuiBootOptions(
   const projection = definedOnly(forwarded);
   return {
     ...projection,
+    // Issue #177: the err channel for unresolvable explicit --skill
+    // values, with the boot's `warning: ` prefix. Outside `forwarded`
+    // (issue #294's table): warn is a channel, not a config projection.
+    // Absent err means a silent boot.
+    ...(provided.err === undefined
+      ? {}
+      : {
+          warn: (line: string): void => {
+            provided.err?.(`warning: ${line}`);
+          },
+        }),
     ...(answer === undefined ? {} : { answer }),
     ...(flags?.role === undefined ? {} : { role: flags.role }),
     ...(flags?.noSkills === undefined ? {} : { noSkills: flags.noSkills }),

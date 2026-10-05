@@ -66,6 +66,9 @@ export interface DiscoverSkillsOptions {
 
 export interface DiscoverSkillsResult {
   skills: LoadedSkill[];
+  // Explicit --skill values that resolved to nothing (issue #177): the
+  // caller reports these on stderr — a silent skip reads as a loaded skill.
+  unknownSkills: string[];
 }
 
 export interface GateContext {
@@ -90,6 +93,31 @@ function joinPosix(...parts: string[]): string {
     segments.push(chunk);
   }
   return `/${segments.join('/')}`;
+}
+
+// Issue #177 (§29.2/§29.3): explicit skill paths anchor at the invoking
+// cwd, never at '/' and never at whatever root the caller's bridge
+// carries. Absolute values pass through (normalized); relative values —
+// './rel-skill', 'rel-skill', '../up/skill', 'rel/SKILL.md' — resolve
+// against the cwd, so `kubic run` (sessions-rooted bridge) and `kubic tui`
+// (cwd bridge) agree. joinPosix cannot do this: it roots everything at '/'.
+function normalizeSkillPath(path: string): string {
+  const absolute = path.startsWith('/');
+  const segments: string[] = [];
+  for (const chunk of path.split('/')) {
+    if (chunk === '' || chunk === '.') continue;
+    if (chunk === '..') {
+      if (segments.length > 0) segments.pop();
+      continue;
+    }
+    segments.push(chunk);
+  }
+  return `${absolute ? '/' : ''}${segments.join('/')}`;
+}
+
+function resolveSkillPath(cwd: string, value: string): string {
+  if (value.startsWith('/')) return normalizeSkillPath(value);
+  return normalizeSkillPath(`${cwd}/${value}`);
 }
 
 function basenameOf(path: string): string {
@@ -263,29 +291,32 @@ function loadSkillDir(
   return loadSkillFile(bridge, joinPosix(dir, 'SKILL.md'), source, log);
 }
 
-// A --skill value is a directory, a SKILL.md file, or a bare name resolved
-// against the enabled discovery roots (first hit wins).
+// A --skill value is a directory, a SKILL.md file, or a bare name. Paths
+// anchor at the invoking cwd (issue #177) — never at '/' (joinPosix's
+// rooting turned './my-skill' into '/my-skill/SKILL.md') and never at the
+// bridge's own root (which is the sessions root on `kubic run`). A bare
+// name resolves against the discovery roots first (first hit wins — the
+// shipped precedence), then against the cwd as a last resort; the old
+// absolute '/<name>' probe is gone (a stray filesystem-root hit must never
+// win over the roots).
 function loadExplicitSkill(
   bridge: FileBridge,
   value: string,
   roots: string[],
+  cwd: string,
   log?: (line: string) => void,
 ): LoadedSkill | undefined {
-  const candidates = value.endsWith('.md')
-    ? [value]
-    : [joinPosix(value, 'SKILL.md')];
-  for (const candidate of candidates) {
-    const hit = loadSkillFile(bridge, candidate, 'cli');
+  if (value.endsWith('.md')) {
+    return loadSkillFile(bridge, resolveSkillPath(cwd, value), 'cli', log);
+  }
+  if (value.includes('/')) {
+    return loadSkillDir(bridge, resolveSkillPath(cwd, value), 'cli', log);
+  }
+  for (const root of roots) {
+    const hit = loadSkillDir(bridge, joinPosix(root, value), 'cli', log);
     if (hit !== undefined) return hit;
   }
-  if (!value.includes('/')) {
-    for (const root of roots) {
-      const hit = loadSkillDir(bridge, joinPosix(root, value), 'cli');
-      if (hit !== undefined) return hit;
-    }
-  }
-  log?.(`skill skipped (unknown skill '${value}')`);
-  return undefined;
+  return loadSkillDir(bridge, joinPosix(cwd, value), 'cli', log);
 }
 
 function listSkillDirs(bridge: FileBridge, root: string): string[] {
@@ -402,13 +433,22 @@ export function discoverSkills(
   }
 
   // Explicit intent always applies, even under --no-skills or distrust.
+  // Settings dirs anchor at the invoking cwd like --skill values (issue
+  // #177): a relative dir in the settings file is cwd-relative, not
+  // bridge-root-relative.
   for (const dir of settingsSkills) {
-    add(loadSkillDir(bridge, dir, 'settings', log));
+    add(loadSkillDir(bridge, resolveSkillPath(cwd, dir), 'settings', log));
   }
+  // An explicit --skill that resolves to nothing is reported, not just
+  // debug-logged (issue #177): the caller warns on stderr, so a typo
+  // cannot read as a loaded skill.
+  const unknownSkills: string[] = [];
   for (const value of cliSkills) {
-    add(loadExplicitSkill(bridge, value, roots, log));
+    const skill = loadExplicitSkill(bridge, value, roots, cwd, log);
+    if (skill === undefined) unknownSkills.push(value);
+    else add(skill);
   }
-  return { skills: [...byName.values()] };
+  return { skills: [...byName.values()], unknownSkills };
 }
 
 export function gateSkills(

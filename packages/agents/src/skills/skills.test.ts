@@ -701,7 +701,7 @@ describe('explicit skill loading hardening (issue #69)', () => {
     expect(lines.some((line) => /unreadable/.test(line))).toBe(true);
   });
 
-  it('logs unknown --skill names without failing', () => {
+  it('reports unknown --skill names without failing (issue #177)', () => {
     const { bridge } = setup();
     const lines: string[] = [];
     const result = discoverSkills({
@@ -715,7 +715,10 @@ describe('explicit skill loading hardening (issue #69)', () => {
       },
     });
     expect(result.skills).toEqual([]);
-    expect(lines.some((line) => /unknown skill/.test(line))).toBe(true);
+    // The loader stays fail-open, but the miss is reported for the
+    // caller's stderr warning — never only a debug-log line.
+    expect(result.unknownSkills).toEqual(['ghost-skill']);
+    expect(lines.some((line) => /unknown skill/.test(line))).toBe(false);
   });
 
   it('loads a direct .md --skill path', () => {
@@ -813,6 +816,136 @@ describe('explicit skill loading hardening (issue #69)', () => {
       },
     });
     expect(lines.some((line) => /untrusted cwd/.test(line))).toBe(true);
+  });
+});
+
+// Explicit skill paths anchor at the invoking cwd (issue #177, §29.2/§29.3):
+// `./rel-skill`, `rel-skill` and `../up/skill` load from cwd-relative
+// locations, `rel/SKILL.md` never consults the bridge's own root, and a
+// stray filesystem-root hit never wins over the discovery roots.
+describe('explicit skill paths anchor at the invoking cwd (issue #177)', () => {
+  it('loads --skill ./rel-skill from the cwd', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${CWD}/rel-skill/SKILL.md`,
+      skillMd('name: rel\ndescription: Rel'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['./rel-skill'],
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['rel']);
+    expect(result.skills[0]?.filePath).toBe(`${CWD}/rel-skill/SKILL.md`);
+    expect(result.unknownSkills).toEqual([]);
+  });
+
+  it('loads a bare --skill name from the cwd when no root provides it', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${CWD}/local/SKILL.md`,
+      skillMd('name: local\ndescription: Local'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['local'],
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['local']);
+    expect(result.unknownSkills).toEqual([]);
+  });
+
+  it('prefers the discovery roots over the cwd for a bare name', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/shared/SKILL.md`,
+      skillMd('name: shared\ndescription: From root'),
+    );
+    env.fs.writeFile(
+      `${CWD}/shared/SKILL.md`,
+      skillMd('name: shared\ndescription: From cwd'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['shared'],
+    });
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0]?.description).toBe('From root');
+  });
+
+  it('loads --skill ../up/skill above the cwd', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      '/fakehome/up/skill/SKILL.md',
+      skillMd('name: upsy\ndescription: Up'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['../up/skill'],
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['upsy']);
+    expect(result.unknownSkills).toEqual([]);
+  });
+
+  it('loads --skill rel/SKILL.md against the cwd, not the bridge root', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${CWD}/rel/SKILL.md`,
+      skillMd('name: relfile\ndescription: Rel file'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['rel/SKILL.md'],
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['relfile']);
+    expect(result.unknownSkills).toEqual([]);
+  });
+
+  it('resolves relative settings skill dirs against the cwd', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${CWD}/team/SKILL.md`,
+      skillMd('name: team\ndescription: Team'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      settingsSkills: ['./team'],
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['team']);
+    expect(result.skills[0]?.source).toBe('settings');
+  });
+
+  it('never probes the filesystem root for a bare name', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      '/planted/SKILL.md',
+      skillMd('name: planted\ndescription: Planted'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['planted'],
+    });
+    expect(result.skills).toEqual([]);
+    expect(result.unknownSkills).toEqual(['planted']);
   });
 });
 

@@ -1684,6 +1684,9 @@ async function runHeadlessPromptImpl(
       ...(trustProject === undefined ? {} : { trustProject }),
       ...(options.noSkills === undefined ? {} : { noSkills: options.noSkills }),
       ...(options.skills === undefined ? {} : { cliSkills: options.skills }),
+      // Issue #177: an unresolvable explicit --skill warns on stderr —
+      // never only on the debug channel — so a typo cannot read as loaded.
+      warn: warnLine,
       log: (line) => debug?.(`skills: ${line}`),
     });
     capture.skills = skills.skills.map((skill) => skill.name);

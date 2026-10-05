@@ -39,6 +39,11 @@ export interface BootSkillOptions {
   // (the loader's own contract: explicit intent always applies).
   noSkills?: boolean;
   cliSkills?: string[];
+  // Issue #177: an explicit --skill that resolves to nothing warns here,
+  // on stderr — never on the debug log sink the TUI drops and --debug
+  // gates. The message is the loader's own skip text, so run and tui name
+  // the same value.
+  warn?: (line: string) => void;
   log?: (line: string) => void;
 }
 
@@ -53,6 +58,10 @@ export interface BootSkills {
   // Model-invisible skills (disableModelInvocation). Reported so a caller
   // can name them if it needs to; never injected.
   hidden: string[];
+  // Issue #177: the explicit --skill values that resolved to nothing. The
+  // boot already warned each one via `warn`; reported as well so a caller
+  // that renders its own diagnostics (doctor, tests) can read them.
+  unknownSkills: string[];
   // Issue #173 (§29.3): the read-only roots of every ADVERTISED skill that
   // lives outside the cwd (user roots under $HOME, trusted ancestor project
   // roots, explicit --skill paths): a `SKILL.md` opens its skill directory
@@ -97,7 +106,12 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
       : { cliSkills: options.cliSkills }),
     ...(options.log === undefined ? {} : { log: options.log }),
   };
-  const { skills } = discoverSkills(load);
+  const { skills, unknownSkills } = discoverSkills(load);
+  // Issue #177: explicit intent that resolved to nothing is a visible
+  // warning, not a debug line — otherwise a typo reads as a loaded skill.
+  for (const value of unknownSkills) {
+    options.warn?.(`skill skipped (unknown skill '${value}')`);
+  }
   const visible = skills.filter(
     (skill) => skill.disableModelInvocation !== true,
   );
@@ -109,6 +123,7 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
     block:
       visible.length === 0 ? undefined : formatSkillsForSystemPrompt(visible),
     hidden,
+    unknownSkills,
     readRoots: skillReadRoots(skills, options.cwd),
   };
 }

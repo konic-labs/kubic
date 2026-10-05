@@ -5,7 +5,13 @@
 // keys must equal operation names, and unknown tools fail with the exact
 // `unknown_tool` shape — never a bare throw.
 import { describe, expect, it } from 'vitest';
+import { BASH_RESULT_MAX_CHARS, BASH_RESULT_MAX_LINES } from './bash.js';
 import { OPERATIONS } from './registry.js';
+
+// Issue #190: the git read ops clip to the shared model cap; the pin is
+// built from the same constants as the descriptions so the bound cannot
+// drift from the contract.
+const GIT_CLIP = `Output clips to the shared model cap (last ${BASH_RESULT_MAX_LINES} lines, at most ${BASH_RESULT_MAX_CHARS} chars, tail-kept; truncated reports the cut and the full text is spilled when the lane provides a sink)`;
 
 const EXPECTED: Record<string, { description: string; replay: string }> = {
   read: {
@@ -49,16 +55,15 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
     replay: 'safe',
   },
   git_diff: {
-    description: 'Scoped diff of staged changes, a revision range, or a path',
+    description: `Scoped diff of staged changes, a revision range, or a path. ${GIT_CLIP}`,
     replay: 'safe',
   },
   git_log: {
-    description:
-      'Recent commits (sha, author, date, message), optionally only those touching path; max defaults to 20 and is capped at 100',
+    description: `Recent commits (sha, author, date, message), optionally only those touching path; max defaults to 20 and is capped at 100. ${GIT_CLIP}`,
     replay: 'safe',
   },
   git_show: {
-    description: 'Patch (diff) of a commit or other ref',
+    description: `Patch (diff) of a commit or other ref. ${GIT_CLIP}`,
     replay: 'safe',
   },
   git_stage: {

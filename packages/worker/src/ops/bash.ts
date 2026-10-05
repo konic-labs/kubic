@@ -204,7 +204,7 @@ function tailLines(text: string, maxLines: number): string {
   return text.slice(at + 1);
 }
 
-interface ClippedStream {
+export interface ClippedStream {
   text: string;
   truncated: boolean;
   spillPath?: string;
@@ -215,7 +215,7 @@ interface ClippedStream {
  * the lane gave the op a sink (issue #182). A spill that cannot be written
  * is not a failed call: the notice simply names no path.
  */
-function clipStream(
+export function clipStream(
   stream: 'stdout' | 'stderr',
   text: string,
   ctx: OpContext,

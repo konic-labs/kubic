@@ -1,8 +1,13 @@
 // Slice A: structured git status/diff ops (issue #19; §43.1; issue #193
 // switched the status parser to porcelain v2 -z).
 // RED: git ops do not exist yet.
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
+import { createSessionSpillSink } from '../spill.js';
+import { BASH_RESULT_MAX_CHARS } from './bash.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
@@ -19,6 +24,19 @@ function inv(): ToolInvocation {
     { invocationId: 'inv-g1', operationId: 'op-g1', turnId: 't-1' },
     new MemoryMemoStore(),
   );
+}
+
+const made: string[] = [];
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
+
+function tmp(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
 }
 
 const STATUS_OUT = [
@@ -154,5 +172,92 @@ describe('git ops (issue #19, slice A)', () => {
       expect(out.error.code).toBe('not_a_repo');
       expect(out.error.message).toContain('not a git repository');
     }
+  });
+});
+
+describe('git output bounds (issue #190)', () => {
+  // RED first: written before git_diff/git_show/git_log clipped anything —
+  // each result carried the full megabyte with no truncated flag.
+  it('git_diff over a 1 MB change returns <= cap with truncated true', async () => {
+    const big = `diff --git a/big.bin b/big.bin\n${'x'.repeat(1024 * 1024)}\n`;
+    const out = await callOperation(
+      'git_diff',
+      {},
+      inv(),
+      ctx({ 'git diff': { exitCode: 0, stdout: big, stderr: '' } }),
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.result.truncated).toBe(true);
+    expect(out.result.diff.length).toBeLessThanOrEqual(
+      BASH_RESULT_MAX_CHARS + 512,
+    );
+    // Tail kept: the end of the change survives, the head does not.
+    expect(out.result.diff.endsWith(`${'x'.repeat(64)}\n`)).toBe(true);
+    expect(out.result.diff).not.toContain('diff --git');
+  });
+
+  it('git_show clips a huge patch and spills the full text when sunk', async () => {
+    const big = `commit abc\n${'y'.repeat(200 * 1024)}\n`;
+    const session = tmp('git-190-session-');
+    const sunk = {
+      ...ctx({
+        'git show --format= --patch HEAD': {
+          exitCode: 0,
+          stdout: big,
+          stderr: '',
+        },
+      }),
+      spill: createSessionSpillSink(session),
+    };
+    const out = await callOperation('git_show', { ref: 'HEAD' }, inv(), sunk);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.result.truncated).toBe(true);
+    expect(out.result.spillPath).toBeDefined();
+    expect(readFileSync(out.result.spillPath as string, 'utf8')).toBe(big);
+    // No sink: same clip, no path, shape unchanged otherwise.
+    const bare = await callOperation(
+      'git_show',
+      { ref: 'HEAD' },
+      inv(),
+      ctx({
+        'git show --format= --patch HEAD': {
+          exitCode: 0,
+          stdout: big,
+          stderr: '',
+        },
+      }),
+    );
+    expect(bare.ok).toBe(true);
+    if (!bare.ok) return;
+    expect(bare.result.truncated).toBe(true);
+    expect(bare.result.spillPath).toBeUndefined();
+  });
+
+  it('git_log clips an unbounded history with truncated true', async () => {
+    const raw = Array.from(
+      { length: 5000 },
+      (_, n) =>
+        `sha${n}\u001fauthor\u001f2026-01-01\u001fmsg ${n} ${'z'.repeat(300)}`,
+    ).join('\n');
+    expect(raw.length).toBeGreaterThan(BASH_RESULT_MAX_CHARS);
+    const out = await callOperation(
+      'git_log',
+      {},
+      inv(),
+      ctx({
+        'git log --format=%H%x1f%an%x1f%ad%x1f%s --date=short -n 20': {
+          exitCode: 0,
+          stdout: raw,
+          stderr: '',
+        },
+      }),
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.result.truncated).toBe(true);
+    expect(out.result.entries.length).toBeGreaterThan(0);
+    expect(out.result.entries.length).toBeLessThan(5000);
   });
 });

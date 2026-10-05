@@ -2,6 +2,7 @@
 // RED: git_stage/git_commit/git_branch/git_checkpoint do not exist yet.
 import { describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
+import { OperationKillRegistry } from '../lane/abort.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
@@ -190,5 +191,53 @@ describe('git effects (issue #19, slice C)', () => {
     );
     expect(created.ok).toBe(true);
     if (created.ok) expect(created.result.created).toBe('feature/y');
+  });
+});
+
+describe('git kill registry (issue #190)', () => {
+  // The op hands its kill to the lane registry under the invocation's
+  // operation id and unregisters on settle — before this change runGit
+  // never called trackHandle, so the registry stayed empty mid-flight.
+  it('git_commit registers its kill under the operation id, then untracks', async () => {
+    const registry = new OperationKillRegistry();
+    const seen: string[] = [];
+    const scripts = {
+      'git commit -m wip': {
+        exitCode: 0,
+        stdout: '[main abc] wip',
+        stderr: '',
+      },
+      'git rev-parse HEAD': { exitCode: 0, stdout: 'abc\n', stderr: '' },
+      'git show -z --name-only --format= abc': {
+        exitCode: 0,
+        stdout: 'a.txt\0',
+        stderr: '',
+      },
+    };
+    const env = new FakeExecutionEnv(scripts);
+    const trackedCtx: OpContext = {
+      env,
+      sessionId: 's1',
+      agentId: 'root',
+      trackHandle: (kill, invocation) => {
+        seen.push(String(invocation.operationId));
+        return registry.track(String(invocation.operationId), kill);
+      },
+    };
+    const out = await callOperation(
+      'git_commit',
+      { message: 'wip' },
+      inv('git-commit-track-1'),
+      trackedCtx,
+    );
+    expect(out.ok).toBe(true);
+    // All three child spawns (commit, rev-parse, show) registered.
+    expect(seen).toEqual([
+      'git-commit-track-1',
+      'git-commit-track-1',
+      'git-commit-track-1',
+    ]);
+    // ...and every one unregistered on settle: no leak in the registry.
+    expect(registry.drain('git-commit-track-1')).toEqual([]);
   });
 });

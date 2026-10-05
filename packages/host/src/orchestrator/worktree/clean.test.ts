@@ -140,6 +140,66 @@ function repoScripts(
   };
 }
 
+// Issue #284 review: `worktree-remove` rows append through the real
+// filesystem bridge, so every test that disposes a tree roots the ledger
+// in scratch — the fake `/repo` this file used to resolve to stays
+// untouched (silent EACCES as non-root, real pollution as root).
+function tmpCleanRoot(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  scratch.push(root);
+  return root;
+}
+
+function tmpCleanScripts(
+  root: string,
+): Record<string, { exitCode: number; stdout: string; stderr: string }> {
+  return {
+    ...repoScripts(),
+    'git rev-parse --show-toplevel': {
+      exitCode: 0,
+      stdout: `${root}\n`,
+      stderr: '',
+    },
+    'git worktree list --porcelain': {
+      exitCode: 0,
+      stdout: THREE_WT_PORCELAIN.replaceAll('/repo', root),
+      stderr: '',
+    },
+    [`git worktree remove ${root}/.kubic/wt/agent-1`]: {
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    },
+    [`git worktree remove ${root}/.kubic/wt/agent-2`]: {
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    },
+    [`git worktree remove ${root}/.kubic/wt/agent-3`]: {
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    },
+    // Issue #146 (strict fake): the `-d` default probes merge status
+    // before deleting, with the repo `-C` root the probe uses.
+    [`git -C ${root} merge-base --is-ancestor kubic/agent-1 HEAD`]: {
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    },
+    [`git -C ${root} merge-base --is-ancestor kubic/agent-2 HEAD`]: {
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    },
+    [`git -C ${root} merge-base --is-ancestor kubic/agent-3 HEAD`]: {
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    },
+  };
+}
+
 describe('kubic clean (issue #45, #92)', () => {
   it('dry-run plans prunes but removes nothing', async () => {
     const env = new FakeExecutionEnv(repoScripts(), { strict: true });
@@ -184,7 +244,10 @@ describe('kubic clean (issue #45, #92)', () => {
   });
 
   it('real clean prunes worktrees and branches and applies journal retention', async () => {
-    const env = new FakeExecutionEnv(repoScripts(), { strict: true });
+    const root = tmpCleanRoot('clean141-');
+    // No explicit repoRoot: the toplevel script resolves it, so the
+    // pinned argv below includes the resolve step (issue #212).
+    const env = new FakeExecutionEnv(tmpCleanScripts(root), { strict: true });
     const lines: string[] = [];
     const errs: string[] = [];
     const policies: unknown[] = [];
@@ -228,21 +291,22 @@ describe('kubic clean (issue #45, #92)', () => {
       'git rev-parse --show-toplevel',
       'git worktree list --porcelain',
       'git branch --list kubic/* --format=%(refname:short)',
-      'git -C /repo merge-base --is-ancestor kubic/agent-1 HEAD',
-      'git worktree remove /repo/.kubic/wt/agent-1',
+      `git -C ${root} merge-base --is-ancestor kubic/agent-1 HEAD`,
+      `git worktree remove ${root}/.kubic/wt/agent-1`,
       'git branch -d kubic/agent-1',
-      'git -C /repo merge-base --is-ancestor kubic/agent-2 HEAD',
-      'git worktree remove /repo/.kubic/wt/agent-2',
+      `git -C ${root} merge-base --is-ancestor kubic/agent-2 HEAD`,
+      `git worktree remove ${root}/.kubic/wt/agent-2`,
       'git branch -d kubic/agent-2',
-      'git -C /repo merge-base --is-ancestor kubic/agent-3 HEAD',
-      'git worktree remove /repo/.kubic/wt/agent-3',
+      `git -C ${root} merge-base --is-ancestor kubic/agent-3 HEAD`,
+      `git worktree remove ${root}/.kubic/wt/agent-3`,
       'git branch -d kubic/agent-3',
       'git worktree prune',
     ]);
   });
 
   it('--journal alone prunes to the store default byte bound', async () => {
-    const env = new FakeExecutionEnv(repoScripts(), { strict: true });
+    const root = tmpCleanRoot('clean180-');
+    const env = new FakeExecutionEnv(tmpCleanScripts(root), { strict: true });
     const lines: string[] = [];
     const errs: string[] = [];
     const policies: { maxBytes?: number; maxAgeMs?: number }[] = [];
@@ -252,6 +316,7 @@ describe('kubic clean (issue #45, #92)', () => {
         env,
         out: (line: string) => lines.push(line),
         err: (line: string) => errs.push(line),
+        repoRoot: root,
         pruneJournal: async (policy: {
           maxBytes?: number;
           maxAgeMs?: number;
@@ -309,7 +374,8 @@ describe('kubic clean (issue #45, #92)', () => {
   // Issue #348: the newest entry is never dropped, so a bound it alone
   // exceeds is reported rather than silently ignored.
   it('reports an over-bound journal whose newest entry was kept', async () => {
-    const env = new FakeExecutionEnv(repoScripts(), { strict: true });
+    const root = tmpCleanRoot('clean241-');
+    const env = new FakeExecutionEnv(tmpCleanScripts(root), { strict: true });
     const lines: string[] = [];
     const errs: string[] = [];
     const code = await runCleanCommand(
@@ -318,6 +384,7 @@ describe('kubic clean (issue #45, #92)', () => {
         env,
         out: (line: string) => lines.push(line),
         err: (line: string) => errs.push(line),
+        repoRoot: root,
         pruneJournal: async () => ({ entries: 4, bytes: 1024, overBound: 7 }),
       },
     );
@@ -402,14 +469,16 @@ describe('kubic clean (issue #45, #92)', () => {
   });
 
   it('plans a custom-root worktree from the deps root, not the argv (issue #133)', async () => {
+    const root = tmpCleanRoot('clean133-');
     const env = new FakeExecutionEnv(
-      repoScripts({
-        'git -C /repo merge-base --is-ancestor kubic/agent-7 HEAD': {
+      {
+        ...tmpCleanScripts(root),
+        [`git -C ${root} merge-base --is-ancestor kubic/agent-7 HEAD`]: {
           exitCode: 0,
           stdout: '',
           stderr: '',
         },
-      }),
+      },
       { strict: true },
     );
     const lines: string[] = [];
@@ -422,9 +491,10 @@ describe('kubic clean (issue #45, #92)', () => {
         out: (line: string) => lines.push(line),
         err: (line: string) => errs.push(line),
         worktreeRoot: '.kubic-custom/wt',
+        repoRoot: root,
         lister: async () =>
           parseWorktreePorcelain(
-            `${THREE_WT_PORCELAIN}\nworktree /repo/.kubic-custom/wt/agent-7\nHEAD 7777777777777777\nbranch refs/heads/kubic/agent-7\n`,
+            `worktree ${root}\nHEAD abcdef0123456789\nbranch refs/heads/main\n\nworktree ${root}/.kubic-custom/wt/agent-7\nHEAD 7777777777777777\nbranch refs/heads/kubic/agent-7\n`,
           ),
         branchLister: async () => ['kubic/agent-7'],
         remover: async (_env: unknown, path: string) => {
@@ -435,19 +505,32 @@ describe('kubic clean (issue #45, #92)', () => {
       },
     );
     expect(code).toBe(0);
-    expect(removed).toEqual(['/repo/.kubic-custom/wt/agent-7']);
+    expect(removed).toEqual([`${root}/.kubic-custom/wt/agent-7`]);
     const parsed = JSON.parse(lines.join('\n')) as {
       worktrees: { path: string }[];
     };
     expect(parsed.worktrees).toEqual([
-      { path: '/repo/.kubic-custom/wt/agent-7', branch: 'kubic/agent-7' },
+      {
+        path: `${root}/.kubic-custom/wt/agent-7`,
+        branch: 'kubic/agent-7',
+      },
     ]);
   });
 
   it('records one worktree-remove ledger row per removed tree (issue #284)', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'clean284-'));
     scratch.push(repoRoot);
-    const env = new FakeExecutionEnv(repoScripts());
+    // The `-d` default probes merge status before every scripted delete
+    // (issue #146, strict fake): script the probes for the tmp root.
+    const probe = (branch: string): string =>
+      `git -C ${repoRoot} merge-base --is-ancestor ${branch} HEAD`;
+    const env = new FakeExecutionEnv(
+      repoScripts({
+        [probe('kubic/agent-1')]: { exitCode: 0, stdout: '', stderr: '' },
+        [probe('kubic/agent-2')]: { exitCode: 0, stdout: '', stderr: '' },
+        [probe('kubic/agent-3')]: { exitCode: 0, stdout: '', stderr: '' },
+      }),
+    );
     const lines: string[] = [];
     const errs: string[] = [];
     const code = await runCleanCommand(
@@ -498,7 +581,12 @@ describe('kubic clean (issue #45, #92)', () => {
     async () => {
       const repoRoot = mkdtempSync(join(tmpdir(), 'clean284-'));
       scratch.push(repoRoot);
-      const env = new FakeExecutionEnv(repoScripts());
+      const env = new FakeExecutionEnv(
+        repoScripts({
+          [`git -C ${repoRoot} merge-base --is-ancestor kubic/agent-1 HEAD`]:
+            { exitCode: 0, stdout: '', stderr: '' },
+        }),
+      );
       const errs: string[] = [];
       const ledgerDir = auditLedgerDirFor(repoRoot);
       mkdirSync(ledgerDir, { recursive: true });
@@ -685,7 +773,19 @@ describe('kubic clean (issue #45, #92)', () => {
           stdout: '',
           stderr: '',
         },
+        [`git -C ${repoRoot} merge-base --is-ancestor kubic/agent-1 HEAD`]: {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
         [`git -C ${repoRoot} merge-base --is-ancestor kubic/agent-2 HEAD`]: {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+        // The default branch list still names agent-3 (no worktree for
+        // it here): its probe fires before the plan drops it.
+        [`git -C ${repoRoot} merge-base --is-ancestor kubic/agent-3 HEAD`]: {
           exitCode: 0,
           stdout: '',
           stderr: '',
@@ -864,7 +964,8 @@ describe('kubic clean never disposes a live worker (§51 crash recovery)', () =>
       options: CleanOptions,
       command = 'node kubic.js run --session s-agent-2',
     ) => {
-      const env = new FakeExecutionEnv(repoScripts(), { strict: true });
+      const root = tmpCleanRoot('clean622-');
+      const env = new FakeExecutionEnv(tmpCleanScripts(root), { strict: true });
       const lines: string[] = [];
       const errs: string[] = [];
       const removed: string[] = [];
@@ -873,6 +974,7 @@ describe('kubic clean never disposes a live worker (§51 crash recovery)', () =>
         env,
         out: (line: string) => lines.push(line),
         err: (line: string) => errs.push(line),
+        repoRoot: root,
         remover: async (_e: unknown, path: string) => {
           removed.push(path);
         },
@@ -887,13 +989,15 @@ describe('kubic clean never disposes a live worker (§51 crash recovery)', () =>
       return { code, errs: errs.join('\n'), removed, killed };
     };
     const refused = await run({});
-    expect(refused.removed).not.toContain('/repo/.kubic/wt/agent-2');
-    expect(refused.removed).toContain('/repo/.kubic/wt/agent-1');
+    const disposed = (paths: string[], agent: string): boolean =>
+      paths.some((path) => path.endsWith(`/.kubic/wt/${agent}`));
+    expect(disposed(refused.removed, 'agent-2')).toBe(false);
+    expect(disposed(refused.removed, 'agent-1')).toBe(true);
     expect(refused.errs).toMatch(/agent-2.*still live.*pid 4242.*--force/);
     expect(refused.code).toBe(1);
 
     const forced = await run({ force: true });
-    expect(forced.removed).toContain('/repo/.kubic/wt/agent-2');
+    expect(disposed(forced.removed, 'agent-2')).toBe(true);
     expect(refused.killed).toEqual([]);
     // --force stops the live worker's process group before disposing.
     expect(forced.killed).toEqual([4242]);
@@ -902,11 +1006,14 @@ describe('kubic clean never disposes a live worker (§51 crash recovery)', () =>
     // as dead: never killed, and the worktree is disposed.
     const reused = await run({ force: true }, '/usr/bin/vim notes.txt');
     expect(reused.killed).toEqual([]);
-    expect(reused.removed).toContain('/repo/.kubic/wt/agent-2');
+    expect(disposed(reused.removed, 'agent-2')).toBe(true);
   });
 });
 
 describe('kubic clean --session is scoped to its own session (issue #144)', () => {
+  // One scratch root for the suite: both tests dispose session `sa`'s
+  // tree, so the rows land here — never at the fake `/repo` (issue #284).
+  const root = tmpCleanRoot('clean144-');
   const run = async (liveSession: string) => {
     const removed: string[] = [];
     const deleted: string[] = [];
@@ -918,12 +1025,12 @@ describe('kubic clean --session is scoped to its own session (issue #144)', () =
         env: new FakeExecutionEnv(repoScripts(), { strict: true }),
         out: () => undefined,
         err: (line: string) => errs.push(line),
-        repoRoot: '/repo',
+        repoRoot: root,
         sessionAgents: () => ['worker-1'],
         // What session `sa` left behind: its own retained tree and branch.
         lister: async () => [
           {
-            path: '/repo/.kubic/wt/sa/worker-1',
+            path: `${root}/.kubic/wt/sa/worker-1`,
             branch: 'kubic/sa/worker-1',
             bare: false,
             detached: false,
@@ -951,6 +1058,7 @@ describe('kubic clean --session is scoped to its own session (issue #144)', () =
   };
 
   it('retires the session state only after a failure-free disposal, naming the session and repo', async () => {
+    const root = tmpCleanRoot('clean713-');
     const retired: string[][] = [];
     const runWith = async (
       overrides: Partial<Parameters<typeof runCleanCommand>[1]>,
@@ -963,11 +1071,11 @@ describe('kubic clean --session is scoped to its own session (issue #144)', () =
           env: new FakeExecutionEnv(repoScripts(), { strict: true }),
           out: (line: string) => out.push(line),
           err: (line: string) => errs.push(line),
-          repoRoot: '/repo',
+          repoRoot: root,
           sessionAgents: () => ['worker-1'],
           lister: async () => [
             {
-              path: '/repo/.kubic/wt/sa/worker-1',
+              path: `${root}/.kubic/wt/sa/worker-1`,
               branch: 'kubic/sa/worker-1',
               bare: false,
               detached: false,
@@ -989,9 +1097,9 @@ describe('kubic clean --session is scoped to its own session (issue #144)', () =
     };
     const ok = await runWith({});
     expect(ok.code).toBe(0);
-    expect(retired).toEqual([['sa', '/repo']]);
+    expect(retired).toEqual([['sa', root]]);
     expect(ok.out).toContain(
-      'retired session state /repo/.kubic/orchestrator/sa.json',
+      `retired session state ${root}/.kubic/orchestrator/sa.json`,
     );
     // A failing branch delete leaves the worktree gone but the disposal
     // incomplete: the state stays.
@@ -1017,7 +1125,7 @@ describe('kubic clean --session is scoped to its own session (issue #144)', () =
   it('plans only kubic/<session>/<agent> and never kills another session’s same-named worker', async () => {
     const other = await run('sb-worker-1');
     expect(other.code, other.errs.join('\n')).toBe(0);
-    expect(other.removed).toEqual(['/repo/.kubic/wt/sa/worker-1']);
+    expect(other.removed).toEqual([`${root}/.kubic/wt/sa/worker-1`]);
     expect(other.deleted).toEqual(['kubic/sa/worker-1']);
     expect(other.killed).toEqual([]);
 

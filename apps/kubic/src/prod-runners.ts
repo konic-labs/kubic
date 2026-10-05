@@ -1440,9 +1440,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
           // paths) — the pinned role merges under them identically.
           ...runtimeLaneDeps(cliConfig),
           ...(compaction === undefined ? {} : { compaction }),
-          ...(systemPromptSection === undefined
-            ? {}
-            : { systemPromptSection }),
+          ...(systemPromptSection === undefined ? {} : { systemPromptSection }),
         },
       );
     },

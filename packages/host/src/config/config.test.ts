@@ -390,9 +390,9 @@ describe('[session] compaction keys (issue #239)', () => {
   });
 
   it('refuses malformed values by key name (fail-closed)', () => {
-    expect(() =>
-      parseTomlConfig('[session]\nautoCompact = "yes"\n'),
-    ).toThrow(/'session': 'autoCompact' must be a boolean/);
+    expect(() => parseTomlConfig('[session]\nautoCompact = "yes"\n')).toThrow(
+      /'session': 'autoCompact' must be a boolean/,
+    );
     for (const bad of ['-1', '0', '4.5', '"4000"']) {
       expect(() =>
         parseTomlConfig(`[session]\nreserveTokens = ${bad}\n`),
@@ -413,12 +413,12 @@ describe('[agent] systemPromptFile (issue #240)', () => {
       parseTomlConfig('[agent]\nsystemPromptFile = "SYSTEM.md"\n').agent
         ?.systemPromptFile,
     ).toBe('SYSTEM.md');
-    expect(() =>
-      parseTomlConfig('[agent]\nsystemPromptFile = 42\n'),
-    ).toThrow(/'agent': 'systemPromptFile' must be a non-empty string/);
-    expect(() =>
-      parseTomlConfig('[agent]\nsystemPromptFile = ""\n'),
-    ).toThrow(/'agent': 'systemPromptFile' must be a non-empty string/);
+    expect(() => parseTomlConfig('[agent]\nsystemPromptFile = 42\n')).toThrow(
+      /'agent': 'systemPromptFile' must be a non-empty string/,
+    );
+    expect(() => parseTomlConfig('[agent]\nsystemPromptFile = ""\n')).toThrow(
+      /'agent': 'systemPromptFile' must be a non-empty string/,
+    );
     expect(() =>
       parseTomlConfig('[agent]\nsystem_prompt_file = "x"\n'),
     ).toThrow(/unknown key/);

@@ -657,9 +657,7 @@ describe('session compaction projection (issue #239)', () => {
     // Orchestrator workers are `kubic run` children in their worktree:
     // they load the committed config themselves, so the run projection
     // IS the worker inheritance (no extra env travels).
-    const { home, cwd } = globalHome(
-      '[session]\nreserveTokens = 4000\n',
-    );
+    const { home, cwd } = globalHome('[session]\nreserveTokens = 4000\n');
     const result = loadCliConfig({ cwd, home, env: {} });
     expect(result.error).toBeUndefined();
     expect(prodRunDeps(result).compaction).toEqual({ reserveTokens: 4000 });
@@ -681,7 +679,9 @@ describe('session compaction projection (issue #239)', () => {
 
 describe('system prompt file section (issue #240)', () => {
   it('projects the file contents as the lane section', () => {
-    const { home, cwd } = globalHome('[agent]\nsystemPromptFile = "~/.kubic/SYSTEM.md"\n');
+    const { home, cwd } = globalHome(
+      '[agent]\nsystemPromptFile = "~/.kubic/SYSTEM.md"\n',
+    );
     writeFileSync(join(home, '.kubic', 'SYSTEM.md'), 'Be terse.\n');
     const result = loadCliConfig({ cwd, home, env: {} });
     expect(result.error).toBeUndefined();
@@ -699,7 +699,9 @@ describe('system prompt file section (issue #240)', () => {
   });
 
   it('prodRunDeps carries it: run and worker children assemble the same prompt', () => {
-    const { home, cwd } = globalHome('[agent]\nsystemPromptFile = "~/.kubic/SYSTEM.md"\n');
+    const { home, cwd } = globalHome(
+      '[agent]\nsystemPromptFile = "~/.kubic/SYSTEM.md"\n',
+    );
     writeFileSync(join(home, '.kubic', 'SYSTEM.md'), 'Be terse.\n');
     const result = loadCliConfig({ cwd, home, env: {} });
     expect(result.error).toBeUndefined();
@@ -752,15 +754,15 @@ describe('roleLayersFromConfig (issue #384)', () => {
     const layers = roleLayersFromConfig(runtime);
     expect(layers).toHaveLength(1);
     expect(layers[0]?.layer).toBe('project');
-    expect(layers[0]?.roles['implementer']).toEqual({
+    expect(layers[0]?.roles.implementer).toEqual({
       model: 'g/file',
       tools: ['read'],
     });
     // Copied out: the projection holds its own array, not the live one.
-    expect(layers[0]?.roles['implementer']?.tools).not.toBe(
-      runtime.config.roles?.['implementer']?.tools,
+    expect(layers[0]?.roles.implementer?.tools).not.toBe(
+      runtime.config.roles?.implementer?.tools,
     );
-    expect(runtime.config.roles?.['implementer']?.tools).toEqual(['read']);
+    expect(runtime.config.roles?.implementer?.tools).toEqual(['read']);
   });
 
   it('orders layers by CONFIG_LAYERS: global before project', () => {
@@ -784,8 +786,8 @@ describe('roleLayersFromConfig (issue #384)', () => {
     expect(result.error).toBeUndefined();
     const layers = roleLayersFromConfig(requireRuntimeConfig(result));
     expect(layers.map((entry) => entry.layer)).toEqual(['global', 'project']);
-    expect(layers[0]?.roles['alpha']).toEqual({ tools: ['read'] });
-    expect(layers[1]?.roles['beta']).toEqual({ model: 'g/file' });
+    expect(layers[0]?.roles.alpha).toEqual({ tools: ['read'] });
+    expect(layers[1]?.roles.beta).toEqual({ model: 'g/file' });
   });
 
   it('is empty when no layer declares a role leaf', () => {

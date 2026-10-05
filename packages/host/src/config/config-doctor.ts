@@ -105,7 +105,9 @@ export function configDoctorProbe(input: ConfigDoctorInput): DepProbe {
       `${input.effectiveValues ?? 0} effective value(s); ${projectTrustDetail(input)}; ` +
       `budgets ${input.budgetsConfigured ? 'configured' : 'none (§71: nothing is capped until you configure a limit)'}; ` +
       `runtime ignore split ${input.ignoreSplitApplicable ? 'complete' : 'not applicable (not a git repository)'}` +
-      (input.compactionSummary === undefined ? '' : `; ${input.compactionSummary}`),
+      (input.compactionSummary === undefined
+        ? ''
+        : `; ${input.compactionSummary}`),
   };
 }
 

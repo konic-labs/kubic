@@ -1233,7 +1233,12 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
     if (!isRecord(agent)) throw new ConfigError("'[agent]' must be a table");
     checkNoUnknown(agent, new Set(['name', 'systemPromptFile']), 'agent');
     const name = reqString(agent, 'name', 'agent', true);
-    const systemPromptFile = reqString(agent, 'systemPromptFile', 'agent', true);
+    const systemPromptFile = reqString(
+      agent,
+      'systemPromptFile',
+      'agent',
+      true,
+    );
     if (name !== undefined || systemPromptFile !== undefined) {
       config.agent = {
         ...(name === undefined ? {} : { name }),

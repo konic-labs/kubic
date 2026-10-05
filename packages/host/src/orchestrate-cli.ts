@@ -66,11 +66,7 @@ import {
   QUESTION_UNANSWERED_CODE,
   type WorkerQuestionOutcome,
 } from './orchestrator/approvals/worker-questions.js';
-import {
-  BUDGET_DIMENSIONS,
-  isModelRef,
-  storedBudgetDims,
-} from './orchestrator/budget-spec.js';
+import { isModelRef, storedBudgetDims } from './orchestrator/budget-spec.js';
 import type { ManagerLane, ManagerPlanStep } from './orchestrator/manager.js';
 import {
   buildManagerPlan,

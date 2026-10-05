@@ -5,18 +5,12 @@
 // adapter importing them back from orchestrate-cli.ts would form a cycle and
 // leave the class hierarchy and these constants undefined at load time.
 
+import { BUDGET_DIMENSIONS } from '../../../agents/src/budget.js';
 import { MAX_RUN_TIMEOUT_MS } from '../run-cli.js';
 
-// --budget maxToolCalls=10                                  (every worker)
-// --budget worker-1:maxToolCalls=10;worker-2:maxCostUsd=1   (per spawn)
-// Opt-in only: a malformed value is a usage error, never a silently dropped
-// limit (a dropped limit would run a worker unbounded while looking bounded).
-export const BUDGET_DIMENSIONS: readonly string[] = [
-  'maxTokens',
-  'maxCostUsd',
-  'maxRuntimeMs',
-  'maxToolCalls',
-];
+// The closed dimension set lives with the budget layer itself (issue #283
+// moved it to agents/src/budget.ts); re-exported here for the orchestrator.
+export { BUDGET_DIMENSIONS };
 
 // The `provider/id` shape an explicit per-agent model pin must carry.
 export function isModelRef(raw: string): boolean {

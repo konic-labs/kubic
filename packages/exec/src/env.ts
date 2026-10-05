@@ -161,7 +161,8 @@ export interface SpawnOptions {
    * kept (endings usually carry the error) and the final result gains a
    * header naming the dropped leading bytes. Default: 10 MiB per stream —
    * a chatty child (`yes`, a verbose build) must not OOM the run. Measured
-   * in UTF-8 bytes and trimmed on code-point boundaries (issue #354), so a
+   * in bytes of the DECODED stream (invalid UTF-8 arrives as U+FFFD, which
+   * costs 3 bytes) and trimmed on code-point boundaries (issue #354), so a
    * CJK or emoji stream cannot admit 3-4x the cap and the kept tail never
    * starts with half a surrogate pair.
    */
@@ -437,19 +438,23 @@ const ALLOWED_UPPER = new Set(TOOL_ENV_ALLOWLIST.map((k) => k.toUpperCase()));
 // value keeps its scheme, host and port and loses the userinfo; a proxy that
 // REQUIRES that auth is therefore not usable from a tool child (Kubic does
 // not broker proxy auth — see docs/architecture/journal-and-safety.md).
-const PROXY_VARS = new Set([
-  'HTTP_PROXY',
-  'HTTPS_PROXY',
-  'http_proxy',
-  'https_proxy',
-]);
+// Queried with the upper-cased key (Windows matches case-insensitively), so
+// the set holds the upper-case names only.
+const PROXY_VARS = new Set(['HTTP_PROXY', 'HTTPS_PROXY']);
 
 // The value without its userinfo: scheme and everything from the host on
 // survive verbatim, so no URL parser normalization (a trailing slash, a
 // lower-cased host) creeps into a value other tools must match byte for byte.
+// The scheme is anchored at position 0: searching the whole value for '://'
+// let a scheme-less value whose PATH contains '://' slice the authority out
+// of the path and return the credential untouched (issue #366 review). The
+// strip assumes a valid URL-shaped value; a raw '/' inside malformed
+// userinfo still ends the authority early, exactly as `urlsplit` would.
+const SCHEME_AT_START = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
+
 function stripProxyUserinfo(value: string): string {
-  const schemeAt = value.indexOf('://');
-  const start = schemeAt === -1 ? 0 : schemeAt + 3;
+  const scheme = SCHEME_AT_START.exec(value);
+  const start = scheme === null ? 0 : scheme[0].length;
   let end = value.length;
   for (const separator of ['/', '?', '#']) {
     const at = value.indexOf(separator, start);

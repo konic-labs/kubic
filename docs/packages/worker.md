@@ -24,7 +24,7 @@ every diff touching the boundary for maintainer review.
 | `lane/events.ts` | `KubicLaneEvent`, `LaneEventSink`, `KubicLaneTool`, `KubicLaneCompaction`, `toKubicLaneEvent`, `subscribeLaneEvents` |
 | `lane/failures.ts` | `FailureCode`, `FAILURE_CODES`, `RetryStrategy`, `RETRY_STRATEGIES`, `RetryDecisionKind`, `ClassifiedFailure`, `classifyFailure`, `RetryHints`, `RetryDecision`, `RetryBudget`, `chooseRetry` |
 | `lane/tools-adapter.ts` | `KubicToolContext`, `kubicToolsToPiTools` (registry schemas + json_schema/`prefer` constrained sampling — #168), `renderToolText`, `renderReadText`, `renderGrepText`, `renderBashText` (plain-text results with a header; [tools](../cli/tools.md)) |
-| `lane/interceptors.ts` | `PolicyTrigger`, `PolicyInterceptorOptions`, `ApprovalCall`, `ApprovalAskVerdict`, `defaultIsDestructive`, `isNetworkCommand`, `confinePath`, `redactReason`, `redactSecrets` (broad redactor for summaries/block reasons: inline credential rules + the shared `@kubic/core` shape table, #192), `policyInterceptorHooks` (ordered pi-durable `ToolTask.beforeTool` registrations, #397; one call per boot — the attempt counter and approved-call set live in that call, never across boots; first block wins, a throw blocks) |
+| `lane/interceptors.ts` | `PolicyTrigger`, `PolicyInterceptorOptions`, `ApprovalCall`, `ApprovalAskVerdict`, `defaultIsDestructive`, `isNetworkCommand`, `confinePath`, `redactReason`, `redactSecrets` (broad redactor for summaries/block reasons: inline credential rules + the shared `@kubic/core` shape table, #192), `policyInterceptorHooks` (ordered pi-durable `ToolTask.beforeTool` registrations, #397; one call per boot — the attempt counter and the exact-call stand-down set (call id + args hash, spent after the call, #194) live in that call, never across boots; first block wins, a throw blocks) |
 | `lane/policy.ts` | `PermissionClasses` (re-export), `PolicyRefusedError` |
 | `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `KubicSessionMeta`, `KubicSessionDoc`, `SessionHandle`, `SessionListEntry`, `createSession`, `attachSession`, `listSessions`, `readSessionMetadata`, `forkSession` / `ForkSessionOptions` / `ForkSessionResult` / `SessionForkError` (issue #265: a new session forked from an existing one), `laneConversationIdOf` (the conversation a session's lane runs — a fork's recorded `KubicSessionMeta.conversation`, else the reserved root; every transcript reader resolves it), `SessionAttachError`, `SessionFormatError`, `SessionIdError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionLockIsLive`, `sessionsTouchingWorkspace` — session storage on pi-durable ([session storage](#session-storage-issue-392)) |
 | `lane/session-fs.ts` | `bridgeToPiFileSystem` — the 1.0 `FileSystem` (19 members, `id`/`truncateFile`/`flushFile` included) over the exec file bridge |
@@ -58,7 +58,9 @@ Child output is capped at two independent layers, both keeping the **tail**
   capture independently. A chatty child (`yes`, a verbose build) can no
   longer OOM the run; the settled stream gains a
   `[kubic: output truncated — dropped N leading bytes, kept the last M]`
-  header. Both numbers are **bytes** (issue #354): the accumulator measures
+  header. Both numbers are **bytes of the decoded stream** (issue #354) —
+  invalid UTF-8 arrives as U+FFFD and costs 3 bytes, so a binary-producing
+  child is capped conservatively: the accumulator measures
   `Buffer.byteLength` per chunk and trims on a **code-point boundary**, so
   CJK or emoji output cannot admit 3-4x the promised memory the way a
   UTF-16 code-unit count did, and the kept tail can never start with half a

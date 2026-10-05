@@ -177,7 +177,11 @@ agent-visible string: the model's shell can read the child env, so the
 password would be one `echo $HTTPS_PROXY` away. Every tool child therefore
 receives the value with its userinfo stripped — scheme, host, port, path and
 query survive verbatim (`http://proxy.corp:3128`) — and the strip is the
-same in both spellings of the variable. A proxy that REQUIRES that
+same in both spellings of the variable. The strip is a URL-shaped heuristic,
+not a parser: it assumes a valid proxy value (the authority ends at the
+first `/`, `?` or `#`, and the scheme is anchored at the start), so a raw
+separator inside malformed userinfo ends the authority early — the same
+reading Python's `urlsplit` gives such a value. A proxy that REQUIRES that
 authentication is consequently not usable from a tool child; Kubic does not
 broker proxy auth (a tool that needs it must be run outside the model's
 shell). `NO_PROXY` lists hosts, never credentials, and is passed through.

@@ -16,6 +16,7 @@ import {
   SOLO_DEFAULTS,
   validateClasses,
 } from '../../../packages/agents/src/policy.js';
+import { expandSkillInvocation } from '../../../packages/agents/src/skills/skills.js';
 import {
   type AgentTask,
   validateAgentTask,
@@ -211,6 +212,10 @@ export interface HeadlessRunOptions {
   // explicit intent applies even under --no-skills).
   noSkills?: boolean;
   skills?: string[];
+  // Issue #183 (§29.4): `--invoke-skill <name>` — one explicit skill
+  // (hidden included) whose content runs as the turn prompt, with the
+  // run's prompt as instructions. Unknown names fail the run closed.
+  invokeSkill?: string;
   // §12.1 role selection (issue #99): `--role <name>` boots the lane as
   // the role document `.kubic/roles/<name>.md` defines — its prompt text
   // replaces the solo constant and its resolved tool set becomes the
@@ -1056,6 +1061,10 @@ async function runHeadlessPromptImpl(
     const invalid = `invalid maxTurns ${JSON.stringify(options.maxTurns)} (need a positive integer of turns)`;
     return finished('unassigned', 'usage', invalid, invalid);
   }
+  // Issue #183 (§29.4): the turn prompt `--invoke-skill` expands to.
+  // Assigned after the skills boot below; every downstream prompt use
+  // reads this, never the raw parameter.
+  let effectivePrompt = prompt;
   // §40.1 mechanism 1 (issue #273): the per-invocation tool selection is
   // validated before any lane boots — mutual exclusion, unknown names and
   // the §40.3 agreement with the permission classes all fail closed as the
@@ -1827,6 +1836,26 @@ async function runHeadlessPromptImpl(
       log: (line) => debug?.(`skills: ${line}`),
     });
     capture.skills = skills.skills.map((skill) => skill.name);
+    // Issue #183 (§29.4): `--invoke-skill` expands against the booted
+    // (gated-visible, hidden included) skills — the skill content runs as
+    // the turn prompt with the operator's prompt as instructions. An
+    // unknown name fails the run with the named error (exit 1, like a
+    // refused --role): the invocation IS the run, so fail-open would run
+    // the raw prompt as if the skill existed.
+    let invokedPrompt = prompt;
+    if (options.invokeSkill !== undefined) {
+      try {
+        invokedPrompt = expandSkillInvocation(
+          skills.skills,
+          options.invokeSkill,
+          prompt,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return finished(id, 'failed', message, message);
+      }
+      effectivePrompt = invokedPrompt;
+    }
     if (skills.skills.length > 0) {
       debug?.(
         `skills: ${skills.skills.length} loaded (${skills.skills
@@ -2058,18 +2087,22 @@ async function runHeadlessPromptImpl(
           // Issue #209: a context overflow compacts (#399) and retries
           // once on the fresh context; every other outcome passes through
           // exactly as runTurn reports it.
-          const recovered = await runTurnWithOverflowRecovery(solo, prompt, {
-            requestId,
-            context: guard.context,
-            // Headless keeps today's refusal: a run that somehow finds the
-            // conversation busy fails by name instead of queueing behind a
-            // turn nobody is watching (#334 owns follow-up UX).
-            whenBusy: 'reject',
-            onRetryDecision: (decision) => {
-              const text = overflowRecoveryNotice(decision);
-              if (text !== undefined) notice(text);
+          const recovered = await runTurnWithOverflowRecovery(
+            solo,
+            effectivePrompt,
+            {
+              requestId,
+              context: guard.context,
+              // Headless keeps today's refusal: a run that somehow finds the
+              // conversation busy fails by name instead of queueing behind a
+              // turn nobody is watching (#334 owns follow-up UX).
+              whenBusy: 'reject',
+              onRetryDecision: (decision) => {
+                const text = overflowRecoveryNotice(decision);
+                if (text !== undefined) notice(text);
+              },
             },
-          });
+          );
           outcome = recovered.outcome;
           retryDecision = recovered.decision;
           retryRetried = recovered.retried;
@@ -2200,8 +2233,12 @@ async function runHeadlessPromptImpl(
     // never a second copy for a prompt that is already carried. Done before
     // the capture below so the §46 trajectory carries the fallback write.
     try {
-      await ensurePromptDurable(solo, session, prompt, context, (message) =>
-        guardedReport(debug, message),
+      await ensurePromptDurable(
+        solo,
+        session,
+        effectivePrompt,
+        context,
+        (message) => guardedReport(debug, message),
       );
     } catch (error) {
       guardedReport(

@@ -305,6 +305,10 @@ export interface RunCommandDeps extends CliIo {
       // §12.1 role selection (issue #99): forwarded to the runner, which
       // loads `.kubic/roles/<name>.md` and fails closed on a refusal.
       role?: string;
+      // Issue #183 (§29.4): the explicit skill to invoke — forwarded to
+      // the runner, which expands it against the booted (gated-visible)
+      // skills and fails the run on an unknown name.
+      invokeSkill?: string;
       // §50 debug channel (issue #98): a boolean request is forwarded to the
       // runner, which owns the sink (stderr in prod). Never gates the run.
       debug?: boolean;
@@ -347,6 +351,8 @@ export interface RunCommandOptions {
   readonly role?: string;
   readonly skills?: readonly string[];
   readonly noSkills?: boolean;
+  // Issue #183 (§29.4): invoke one explicit skill first (run only).
+  readonly invokeSkill?: string;
   readonly debug?: boolean;
   readonly json?: boolean;
   // §41.4 (issue #308): session-scoped full access for this run's session.
@@ -527,6 +533,11 @@ export async function runRunCommand(
       timeoutMs: options.timeoutMs,
       maxTurns: options.maxTurns,
       ...(options.role === undefined ? {} : { role: options.role }),
+      // Issue #183 (§29.4): the explicit skill invocation travels with
+      // the run into the headless lane.
+      ...(options.invokeSkill === undefined
+        ? {}
+        : { invokeSkill: options.invokeSkill }),
       ...(options.noSkills === true ? { noSkills: true } : {}),
       ...(skills.length === 0 ? {} : { skills: [...skills] }),
       ...(options.debug === true ? { debug: true } : {}),

@@ -221,6 +221,58 @@ describe('`kubic run` through the prod runner enforces the config (issues #230, 
   });
 });
 
+// Issue #183 (§29.4): a disableModelInvocation skill is reachable only
+// through explicit invocation — `--invoke-skill` expands the skill content
+// against the booted (gated-visible, hidden included) skills and runs it
+// as the turn prompt; an unknown name fails the run closed.
+describe('explicit skill invocation reaches hidden skills (issue #183)', () => {
+  beforeEach(() => {
+    vi.stubEnv('KUBIC_PROVIDER', 'faux');
+  });
+
+  function hiddenSkillWorkspace(): { workspace: string; marker: string } {
+    const workspace = tmpRoot('kubic-prod-183-');
+    const marker = join(workspace, 'invoked');
+    // Project skills load inside a repository (issue #189: the walk stops
+    // at the git top level), so mark the workspace root.
+    mkdirSync(join(workspace, '.git'), { recursive: true });
+    mkdirSync(join(workspace, '.agents', 'skills', 'secret'), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(workspace, '.agents', 'skills', 'secret', 'SKILL.md'),
+      '---\nname: secret\ndescription: Hidden helper\ndisableModelInvocation: true\n---\n\n' +
+        `faux:tool write {"path":${JSON.stringify(marker)},"content":"invoked"}`,
+    );
+    return { workspace, marker };
+  }
+
+  it('invokes a hidden skill: the faux provider sees the skill content', async () => {
+    const { workspace, marker } = hiddenSkillWorkspace();
+    const { r } = runners(workspace);
+    const code = await r.run(
+      { prompt: 'do x', invokeSkill: 'secret', json: true },
+      cliConfig({}, { trust: TRUSTED }),
+    );
+    expect(code).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+  });
+
+  it('an unknown skill name fails the run with the named error', async () => {
+    const { workspace } = hiddenSkillWorkspace();
+    const { r, lines } = runners(workspace);
+    const code = await r.run(
+      { prompt: 'do x', invokeSkill: 'ghost', json: true },
+      cliConfig({}, { trust: TRUSTED }),
+    );
+    expect(code).not.toBe(0);
+    expect(lines.join('\n')).toContain("unknown skill 'ghost'");
+  });
+});
+// of the config classes and the role's, and the role's approval obligations
+// challenge on the installed triggers — for `kubic run`, and for worker
+// children through the task resources (covered in
+// orchestrate-agent-task-prod.test.ts).
 // Issue #196 (§40.2/§41.1): the lane installs the most restrictive merge
 // of the config classes and the role's, and the role's approval obligations
 // challenge on the installed triggers — for `kubic run`, and for worker

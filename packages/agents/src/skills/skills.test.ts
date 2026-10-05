@@ -7,8 +7,10 @@ import { describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { SOLO_DEFAULTS } from '../policy.js';
+import type { LoadedSkill } from './skills.js';
 import {
   discoverSkills,
+  expandSkillInvocation,
   formatSkillsForSystemPrompt,
   gateSkills,
   invokeSkill,
@@ -1023,6 +1025,21 @@ describe('skill gating and invocation hardening (issue #69)', () => {
 
   it('throws on unknown explicit skill names', () => {
     expect(() => invokeSkill([], 'ghost')).toThrow(/unknown skill/);
+  });
+
+  it('expands an explicit invocation to the skill content plus instructions (issue #183)', () => {
+    const skills = [
+      { name: 'secret', content: 'Hidden content.' },
+      { name: 'open', content: 'Open content.' },
+    ] as LoadedSkill[];
+    expect(expandSkillInvocation(skills, 'secret', 'do x')).toBe(
+      'Hidden content.\n\ndo x',
+    );
+    expect(expandSkillInvocation(skills, 'open')).toBe('Open content.');
+    expect(expandSkillInvocation(skills, 'open', '  ')).toBe('Open content.');
+    expect(() => expandSkillInvocation(skills, 'ghost', 'do x')).toThrow(
+      /unknown skill 'ghost'/,
+    );
   });
 
   it('reports unknown task refs with the unknown-skill reason', () => {

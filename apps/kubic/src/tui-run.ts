@@ -24,6 +24,10 @@ import {
   SOLO_DEFAULTS,
   validateClasses,
 } from '../../../packages/agents/src/policy.js';
+import {
+  expandSkillInvocation,
+  type LoadedSkill,
+} from '../../../packages/agents/src/skills/skills.js';
 import type { LaneImagePart } from '../../../packages/core/src/presentation.js';
 import {
   type FileSystem,
@@ -801,6 +805,16 @@ export interface TuiLaneBoot {
   // so the status bar's gauge can render from the first committed request.
   // Absent when the catalog does not know the window.
   contextLimits?: ContextLimits;
+  // Issue #183 (§29.4): explicit skill invocation — the booted
+  // (gated-visible, hidden included, withheld excluded) skill names for
+  // `/skill:` completion, with the expander that resolves a name plus the
+  // operator's instructions to turn-prompt text. The expander throws the
+  // named unknown-skill error; absent (injected viewer boots) means
+  // `/skill:` refuses by name.
+  skillInvocation?: {
+    names: string[];
+    invoke: (name: string, instructions?: string) => string;
+  };
 }
 
 // Issue #347: a model's context window and the token level at which the solo
@@ -1461,6 +1475,9 @@ export async function bootTuiLane(
     let liveThinkingRef: string | undefined;
     // The loaded skill names, for the §46 trajectory's resources (#383).
     let skillNames: string[] = [];
+    // Issue #183 (§29.4): the loaded (gated-visible, hidden included)
+    // skills themselves, so `/skill:` expands against the boot's own set.
+    let bootedSkillList: LoadedSkill[] = [];
     // Installed policy (issue #86): `kubic tui` drives the same solo lane as
     // `kubic run`, so it installs the same policy — one derivation
     // (host/approvals.installSoloPolicy), which is also what `doctor`
@@ -1588,6 +1605,7 @@ export async function bootTuiLane(
           },
         });
         skillNames = skills.skills.map((skill) => skill.name);
+        bootedSkillList = skills.skills;
 
         return {
           ...(skills.block === undefined
@@ -1745,6 +1763,14 @@ export async function bootTuiLane(
         turnCell.supplier = supplier;
       },
       listFiles: workspaceFileLister(env),
+      // Issue #183 (§29.4): explicit skill invocation over the same
+      // gated-visible skills the prompt was built from — hidden skills
+      // included, withheld skills excluded (their names resolve unknown).
+      skillInvocation: {
+        names: skillNames,
+        invoke: (name: string, instructions?: string) =>
+          expandSkillInvocation(bootedSkillList, name, instructions),
+      },
       forkAt: async (at: number) =>
         (await forkSession(store, id, { at }, context)).id,
       ...savedModeOf(bridge, join(root, id, 'mode.json')),
@@ -3267,6 +3293,36 @@ export const PASTE_IDLE_MS = 150;
 // still refusing a path that would be read whole for no reason.
 export const THEME_MAX_BYTES = 64 * 1024;
 
+export const SKILL_COMMAND_USAGE = 'usage: /skill:<name> [instructions]';
+
+export type TuiSkillInvokeCommand =
+  | {
+      readonly kind: 'invoke';
+      readonly name: string;
+      readonly instructions: string;
+    }
+  | { readonly kind: 'invalid'; readonly message: string };
+
+// Explicit skill invocation (issue #183, §29.4): `/skill:<name>` names the
+// skill, the rest is the operator's instructions. The registry owns the
+// static `skill` entry for discovery; this parser owns the colon form the
+// registry cannot enumerate. A bare `/skill` (or an empty name) is the
+// usage error; anything else is not a skill command at all.
+export function parseSkillInvokeCommand(
+  prompt: string,
+): TuiSkillInvokeCommand | undefined {
+  const trimmed = prompt.trim();
+  if (trimmed !== '/skill' && !trimmed.startsWith('/skill:')) {
+    return undefined;
+  }
+  const rest = trimmed === '/skill' ? '' : trimmed.slice('/skill:'.length);
+  const space = rest.search(/\s/);
+  const name = (space === -1 ? rest : rest.slice(0, space)).trim();
+  const instructions = space === -1 ? '' : rest.slice(space + 1).trim();
+  if (name === '') return { kind: 'invalid', message: SKILL_COMMAND_USAGE };
+  return { kind: 'invoke', name, instructions };
+}
+
 export function parseImageCommand(prompt: string): TuiImageCommand | undefined {
   const trimmed = prompt.trim();
   if (trimmed !== '/image' && !trimmed.startsWith('/image ')) {
@@ -3575,6 +3631,11 @@ export async function runTuiCommand(
     approvalSurface: surface,
     keys,
     ...(boot.listFiles === undefined ? {} : { listFiles: boot.listFiles }),
+    // Issue #183 (§29.4): the boot's skill names complete `/skill:` in the
+    // editor's popup.
+    ...(boot.skillInvocation === undefined
+      ? {}
+      : { skillNames: boot.skillInvocation.names }),
     // Issue #307/#327: the session mode comes from the resolution above —
     // never a literal, so the indicator and the submit routing cannot
     // disagree with what the entry actually selected. The approvals half
@@ -5231,10 +5292,47 @@ export async function runTuiCommand(
         // prompt. It runs through the same busy/cancel wrapper as a turn, so
         // the spinner shows and Ctrl-C aborts it; the command text itself
         // never reaches the model or the transcript.
+        // Issue #183 (§29.4): `/skill:<name> [instructions]` expands to
+        // the skill content plus instructions and submits AS the prompt —
+        // the mode, busy and attachment rules below apply unchanged. An
+        // unknown name refuses locally by name (withheld skills resolve
+        // unknown too, so the refusal never leaks their existence) and
+        // never reaches the model.
+        const skillCommand = parseSkillInvokeCommand(prompt);
+        if (skillCommand !== undefined) {
+          if (skillCommand.kind === 'invalid') {
+            app.setEditorFooter(SKILL_COMMAND_USAGE);
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
+          const invocation = boot.skillInvocation;
+          if (invocation === undefined) {
+            app.setEditorFooter(
+              'skill: explicit invocation is unavailable in this session',
+            );
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
+          try {
+            prompt = invocation.invoke(
+              skillCommand.name,
+              skillCommand.instructions,
+            );
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            app.setEditorFooter(`skill: ${message}`);
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
+        }
         // Issue #305: a slash command is never a prompt. An unknown one is
         // refused locally — it must not reach the model — and the registry's
-        // own commands dispatch below.
-        const slashCommand = parseSlashCommand(prompt);
+        // own commands dispatch below. Issue #183: an expanded skill is
+        // already a prompt, never a command — parsing it again would let a
+        // skill body starting with `/` hijack the submit.
+        const slashCommand =
+          skillCommand !== undefined ? undefined : parseSlashCommand(prompt);
         if (
           slashCommand !== undefined &&
           !SLASH_COMMAND_NAMES.has(slashCommand.name)
@@ -5245,7 +5343,10 @@ export async function runTuiCommand(
           if (!stopped) screen?.render();
           return 'refused';
         }
-        const compactCommand = parseTuiCompactCommand(prompt);
+        const compactCommand =
+          skillCommand !== undefined
+            ? undefined
+            : parseTuiCompactCommand(prompt);
         if (compactCommand !== undefined) {
           const lane = boot.loop;
           // The session's own transcript is the SOLO lane's; in orchestrator
@@ -5284,8 +5385,10 @@ export async function runTuiCommand(
           return 'accepted';
         }
         // Issue #328: `/thinking <level>` — same busy rule as `/model`: a
-        // live switch never races a run.
-        const thinkingCommand = parseThinkingCommand(prompt);
+        // live switch never races a run. Issue #183: skipped for an expanded
+        // skill (a prompt, never a command).
+        const thinkingCommand =
+          skillCommand !== undefined ? undefined : parseThinkingCommand(prompt);
         if (thinkingCommand !== undefined) {
           if (busy) {
             app.setEditorFooter(
@@ -5297,7 +5400,10 @@ export async function runTuiCommand(
           handleThinkingCommand(thinkingCommand);
           return 'accepted';
         }
-        const modelCommand = parseModelCommand(prompt);
+        // Issue #183: skipped for an expanded skill (a prompt, never a
+        // command).
+        const modelCommand =
+          skillCommand !== undefined ? undefined : parseModelCommand(prompt);
         if (modelCommand !== undefined) {
           // A live switch is a conversation.configure: it never races a run.
           if (busy) {

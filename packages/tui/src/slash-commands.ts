@@ -112,6 +112,17 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     summary: 'restore the journaled changes',
     usage: '/undo',
   },
+  // Issue #183 (§29.4): explicit skill invocation — hidden skills
+  // included. The skill name rides the command (`/skill:<name>`), so one
+  // static entry covers discovery (/help, the palette, the `/sk` prefix
+  // completion); the composition root parses the name, expands the
+  // booted skill and submits the expansion as the turn prompt. Per-skill
+  // `/skill:<name>` rows for the popup come from skillCommandSpecs below.
+  {
+    name: 'skill',
+    summary: 'invoke an explicit skill (hidden skills included)',
+    usage: '/skill:<name> [instructions]',
+  },
   {
     // No §66 command: quitting ends the process (the session close is part
     // of that), which the presentation vocabulary does not name.
@@ -235,6 +246,22 @@ export function helpLines(
     const keys = spec.keys === undefined ? '' : ` (${spec.keys})`;
     return `${spec.usage} — ${spec.summary}${keys}`;
   });
+}
+
+// Per-skill completion rows (issue #183): the composition root
+// synthesizes one spec per booted (gated-visible, hidden included) skill
+// so the editor's popup completes `/skill:<prefix>` to `/skill:<name>`.
+// Static registry entries cannot name boot-time skills, so these live
+// only in the autocomplete list the app builds — never in SLASH_COMMANDS
+// (`/help` and the palette stay static).
+export function skillCommandSpecs(
+  names: readonly string[],
+): readonly SlashCommandSpec[] {
+  return names.map((name) => ({
+    name: `skill:${name}`,
+    summary: `invoke the '${name}' skill explicitly`,
+    usage: `/skill:${name} [instructions]`,
+  }));
 }
 
 // The editor's autocomplete provider (issue #305): a draft that starts with

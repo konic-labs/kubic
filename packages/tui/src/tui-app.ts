@@ -80,7 +80,11 @@ import {
 } from './lane-cells.js';
 import { buildLayoutRoot, type Viewport } from './layout.js';
 import { QuestionView, type WorkerQuestionLike } from './question-view.js';
-import { SlashCommandAutocomplete } from './slash-commands.js';
+import {
+  SLASH_COMMANDS,
+  SlashCommandAutocomplete,
+  skillCommandSpecs,
+} from './slash-commands.js';
 import {
   formatStatusCost,
   StatusBar,
@@ -172,6 +176,10 @@ export interface TuiAppSeed {
   // Issue #336: the workspace files `@` mentions complete from — the
   // composition root's gitignore-aware walk. Absent: slash commands only.
   readonly listFiles?: () => readonly string[];
+  // Issue #183 (§29.4): the booted (gated-visible, hidden included) skill
+  // names — the composition root threads them so `/skill:<prefix>`
+  // completes to `/skill:<name>`. Absent means no per-skill rows.
+  readonly skillNames?: readonly string[];
   // Issue #276: told of every real session-mode change (Ctrl-G, /tree…), so
   // the composition root persists it with the session.
   readonly onModeChange?: (mode: StatusMode) => void;
@@ -825,11 +833,18 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // path still parses and dispatches.
   // Issue #305 + #336: one provider for the editor's single slot — the
   // slash commands, then the @-file mentions when a file source exists.
+  // Issue #183: the boot's skill names ride the same command provider as
+  // per-skill `/skill:<name>` rows, so `/skill:<prefix>` completes.
+  const skillSpecs = skillCommandSpecs(seed.skillNames ?? []);
+  const commandProvider = new SlashCommandAutocomplete([
+    ...SLASH_COMMANDS,
+    ...skillSpecs,
+  ]);
   editor.setAutocomplete(
     seed.listFiles === undefined
-      ? new SlashCommandAutocomplete()
+      ? commandProvider
       : new CombinedAutocomplete([
-          new SlashCommandAutocomplete(),
+          commandProvider,
           new FileMentionAutocomplete(seed.listFiles),
         ]),
   );

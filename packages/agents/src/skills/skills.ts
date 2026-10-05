@@ -686,6 +686,22 @@ export function invokeSkill(skills: LoadedSkill[], name: string): string {
   return hit.content;
 }
 
+// Explicit invocation expansion (issue #183, §29.4): a hidden skill runs
+// by giving the model its content, with the operator's instructions
+// appended — the turn prompt carries both, so the skill is reachable
+// without ever entering the system prompt. Withheld skills are not in the
+// input set (the caller passes the gated-visible skills), so invoking one
+// reports the same unknown-skill refusal — existence never leaks.
+export function expandSkillInvocation(
+  skills: LoadedSkill[],
+  name: string,
+  instructions?: string,
+): string {
+  const content = invokeSkill(skills, name);
+  const extra = instructions?.trim() ?? '';
+  return extra === '' ? content : `${content}\n\n${extra}`;
+}
+
 // Task resource resolution: withheld or unknown skill refs are reported,
 // never thrown — a withheld skill must not fail a task mid-run.
 export interface ResolvedTaskSkills {

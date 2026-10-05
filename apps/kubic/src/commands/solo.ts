@@ -159,6 +159,12 @@ function registerRun(program: Command, ctx: CommandContext): void {
       [] as string[],
     )
     .option('--no-skills', 'disable layered skill discovery')
+    // Issue #183 (§29.4): invoke one explicit skill — hidden skills
+    // included — as the turn prompt (run only; the TUI uses /skill:).
+    .option(
+      '--invoke-skill <name>',
+      'invoke one explicit skill first, its content as the turn prompt with -p/positional text as instructions',
+    )
     .option('--debug', 'emit lane/tool span lines on stderr')
     .option('--json', 'print one JSON envelope line instead of text')
     .option(
@@ -227,6 +233,11 @@ function registerRun(program: Command, ctx: CommandContext): void {
             ...(opts.maxTurns === undefined ? {} : { maxTurns: opts.maxTurns }),
             ...(opts.role === undefined ? {} : { role: opts.role }),
             ...(opts.skill.length === 0 ? {} : { skills: opts.skill }),
+            // Issue #183 (§29.4): the explicit skill invocation travels to
+            // the runner, which expands it against the booted skills.
+            ...(opts.invokeSkill === undefined
+              ? {}
+              : { invokeSkill: opts.invokeSkill }),
             ...(opts.skills === false ? { noSkills: true } : {}),
             ...(opts.debug === true ? { debug: true } : {}),
             ...(opts.json === true ? { json: true } : {}),

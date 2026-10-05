@@ -2313,7 +2313,7 @@ prints `no cost rows` and exits 0.
 
 | Flag | Meaning |
 | --- | --- |
-| `--session <id>` | Reads only this session — or, when the id is an orchestrate run's, the run's total: the manager record plus every session whose metadata names it as parent, with one row per worker session. A live run's locked manager record is skipped in favour of its children, so a running run still has a cost view.  Ids follow the same `[A-Za-z0-9_-]` rule as `run`: anything else exits 2 before the store is touched, and an unknown session exits 1 (`error: unknown session: <id>`). An explicitly named session ignores the project scope. |
+| `--session <id>` | Reads only this session — or, when the id is an orchestrate run's, the run's total: the manager record plus every session whose metadata names it as parent, with one row per worker session. This is the single per-worker usage surface (issue #433): the launch-layer `usage()` readout was deleted rather than duplicated. A live run's locked manager record is skipped in favour of its children, so a running run still has a cost view.  Ids follow the same `[A-Za-z0-9_-]` rule as `run`: anything else exits 2 before the store is touched, and an unknown session exits 1 (`error: unknown session: <id>`). An explicitly named session ignores the project scope. |
 | `--all` | Lifts the default project scope: report sessions from every project on the machine. |
 | `--by <level>` | Group rows at `request`, `agent` (the default), `session` or `project`. Anything else exits 2. |
 | `--json` | Prints the in-code `toCostJson` shape (`agents`, `taskTotal`) field-for-field — rows carry the same `agent`/`role`/`session`/`project`/`request` identity the table groups on. Exits 0. |

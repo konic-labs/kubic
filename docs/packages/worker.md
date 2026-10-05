@@ -39,7 +39,7 @@ every diff touching the boundary for maintainer review.
 | `lifecycle/env.ts` | `ENV_ALLOWLIST`, `filterSpawnEnv`, `roleCredentialEnv`, `roleGrantEnv`, `withRoleGrant`, `buildSpawnEnv`, `redactEnvForLog` |
 | `lifecycle/reap.ts` | `RawExit`, `ExitReport`, `reportExit`, `ReapTarget`, `ReapDeps`, `DetachedReap`, `TEARDOWN_BUDGET_MS`, `reapDetached` |
 | `lifecycle/budgets.ts` | `LIFECYCLE_BUDGETS_MS`, `PerfSample`, `PerfGateResult`, `checkPerfGate` |
-| `usage.ts` | `KubicUsageRow`, `ModelUsageSummary`, `UsageSummary`, `summarizeUsage`, `formatCost`, `usageRowFromEntry` |
+| `usage.ts` | `KubicUsageRow`, `formatCost`, `usageRowFromEntry` |
 | `model-select.ts` | `ModelSelectError`, `ModelSelection`, `AnyModel`, `selectModel`, `parseModelFlag`, `EscalationRecord`, `EscalationLadder`, `EscalationError`, `escalateModel`, `supportedThinking`, `clampThinking` |
 | `models-config.ts` | `CustomApi`, `CUSTOM_APIS`, `CustomModelSpec`, `CustomProviderSpec`, `ModelsJsonError`, `THINKING_LEVELS`, `isThinkingLevel`, `parseModelsJson`, `LOCAL_MODELS_EXAMPLE`, `registerCustomProviders` |
 | `prompts.ts` | `PromptCacheError`, `SystemPromptInput`, `assembleSystemPrompt`, `sortedToolNames`, `serializeMetadata`, `LaneBinding`, `LaneRegistry`, `AffinityEscalation`, `TaskAffinity`, `pinModelForTask`, `taskModelForTurn`, `assertSingleModelId`, `ModelEscalationEvent`, `escalatePinnedModel`, `CompactionRoute`, `buildCompactionRoute`, `SessionCacheCounters`, `emptyCacheCounters`, `recordCacheUsage`, `cacheHitRate`, `SessionCacheStats` |
@@ -643,10 +643,10 @@ compaction that did not cut abandons with the original failure.
 ### Usage (`usage.ts`, §39)
 
 `KubicUsageRow` is `{ model, provider, usage: Usage (Pi type),
-toolCallId?, entryId? }`. `summarizeUsage` folds
-rows into `UsageSummary` (`requests`, `input`, `output`, `cacheRead`,
-`cacheWrite`, `costTotal`, plus `byModel` per model) — pure, so cost
-tests use fixture rows, never network or paid tokens. Since #398 the rows
+toolCallId?, entryId? }`. There is no launch-layer rollup: the `usageRows`
+dep, `launched.usage()` and `summarizeUsage` were deleted (issue #433) —
+no production code ever supplied or read them, and the single roll-up
+surface is `kubic cost --session <run>` (#164). Since #398 the rows
 are built by `usageRowFromEntry` from the committed assistant entry, so
 `provider`/`model` are the ones that really answered (not the lane name or
 the boot model — #287). Issue #346 deleted the never-written

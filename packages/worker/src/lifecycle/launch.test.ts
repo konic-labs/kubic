@@ -555,56 +555,6 @@ describe('launchWorker (issue #94)', () => {
     expect(result.status).toBe<ResultStatus>('spawn_failed');
     expect(result.error?.kind).toBe('process');
   });
-
-  it('summarizes the child session usage for the run readout (§39)', async () => {
-    // The worker child leaves usage rows in its session; the launch
-    // reports the rollup so an orchestrate run can print what the
-    // workers actually spent. Summarizing is pure — the rows are
-    // injected here, exactly as a fixture (no network, no paid tokens).
-    const child = controllable();
-    const registry = new WorkerRegistry(() => 0);
-    const launched = launchWorker(request(), {
-      shell: child.shell,
-      registry,
-      clock: () => 0,
-      usageRows: () => [
-        {
-          model: 'faux-1',
-          provider: 'faux',
-          usage: {
-            input: 100,
-            output: 20,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 120,
-            cost: {
-              total: 0.25,
-              input: 0.2,
-              output: 0.05,
-              cacheRead: 0,
-              cacheWrite: 0,
-            },
-          },
-        },
-      ],
-    });
-    child.emit(`${READY}\n`);
-    await launched.ready;
-    const summary = launched.usage();
-    expect(summary.requests).toBe(1);
-    expect(summary.input).toBe(100);
-    expect(summary.output).toBe(20);
-    expect(summary.costTotal).toBeCloseTo(0.25);
-    expect(summary.byModel['faux-1']?.requests).toBe(1);
-    // No rows wired (a worker whose session was not read) is an empty
-    // rollup, never a crash.
-    const bare = launchWorker(request(), {
-      shell: controllable().shell,
-      registry: new WorkerRegistry(() => 0),
-      clock: () => 0,
-    });
-    expect(bare.usage().requests).toBe(0);
-  });
 });
 
 describe('launchWorker §82 resource enforcement (issue #163)', () => {

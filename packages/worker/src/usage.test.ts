@@ -8,7 +8,6 @@ import type {
   Usage,
 } from './pi-boundary.js';
 import {
-  formatUsageLine,
   type KubicUsageRow,
   summarizeUsage,
   usageRowFromEntry,
@@ -68,24 +67,6 @@ describe('usage rollups (issue #20, slice C)', () => {
     expect(summary.costTotal).toBeCloseTo(0.033);
     expect(summary.byModel['local/llama3']?.requests).toBe(1);
     expect(summary.byModel['faux/big']?.input).toBe(10);
-  });
-
-  it('formats a one-line status readout', () => {
-    const summary = summarizeUsage([
-      row({ usage: usage({ input: 100, output: 50, totalTokens: 150 }) }),
-    ]);
-    const line = formatUsageLine('local/llama3', 'off', summary);
-    expect(line).toContain('local/llama3');
-    expect(line).toContain('150 tokens');
-    expect(line).toContain('$0.00');
-  });
-
-  it('empty usage formats without NaN', () => {
-    const summary = summarizeUsage([]);
-    expect(summary.requests).toBe(0);
-    const line = formatUsageLine('m', 'off', summary);
-    expect(line).toContain('0 tokens');
-    expect(line).not.toContain('NaN');
   });
 
   it('builds a per-response row from the assistant entry that answered (#287, #398)', () => {

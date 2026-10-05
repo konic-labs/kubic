@@ -10,7 +10,7 @@
 // the status bar's TTFT/tool-ms segments — Pi 1.0 reports no timing Kubic
 // can read, and dead fields are the defect.
 
-import type { EntryRecord, ModelThinkingLevel, Usage } from './pi-boundary.js';
+import type { EntryRecord, Usage } from './pi-boundary.js';
 
 export interface KubicUsageRow {
   model: string;
@@ -85,13 +85,4 @@ export function summarizeUsage(rows: KubicUsageRow[]): UsageSummary {
 
 export function formatCost(total: number): string {
   return `$${total.toFixed(2)}`;
-}
-
-export function formatUsageLine(
-  model: string,
-  thinking: ModelThinkingLevel,
-  summary: UsageSummary,
-): string {
-  const tokens = summary.input + summary.output;
-  return `model ${model} | thinking ${thinking} | ${summary.requests} request(s), ${tokens} tokens (${formatCost(summary.costTotal)})`;
 }

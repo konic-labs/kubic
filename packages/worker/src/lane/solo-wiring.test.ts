@@ -4,6 +4,7 @@
 // binding, and the HarnessSettings the boot hands over.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
+import type { EscalationLadder } from '../model-select.js';
 import {
   BACKGROUND_CONTEXT,
   type Context,
@@ -320,7 +321,6 @@ describe('solo boot hands HarnessSettings compaction to #399 (issues #82, #399)'
   });
 
   it('the current-window getter follows an escalation (issue #82 rule 6)', async () => {
-    const { createLadder } = await import('../model-select.js');
     const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
     const solo = await bootSoloLane({
@@ -337,7 +337,11 @@ describe('solo boot hands HarnessSettings compaction to #399 (issues #82, #399)'
     const { escalateSoloModel } = await import('./solo.js');
     await escalateSoloModel(
       solo,
-      createLadder(['faux/big', 'faux/small'], { maxEscalations: 1 }),
+      {
+        steps: ['faux/big', 'faux/small'],
+        maxEscalations: 1,
+        record: [],
+      } satisfies EscalationLadder,
       'faux/small',
       'cheaper',
       BACKGROUND_CONTEXT,

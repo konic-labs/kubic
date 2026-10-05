@@ -1,16 +1,15 @@
-// Model selection, one-way escalation, thinking clamp + persist
-// (issue #20, slice B; §38).
+// Model selection, one-way escalation, thinking clamp (issue #20,
+// slice B; §38).
 //
 // Selection chain: explicit CLI selection (--model provider/id) beats the
 // recorded config default, which beats first-available. Escalation climbs
 // a caller-supplied ladder only (one-way: never down, never sideways off
 // the ladder), every step recorded with reason, total steps bounded.
 // Thinking levels clamp to what the model supports (Pi owns the map);
-// the level persists in a sidecar so attach restores it.
+// the level itself persists as durable agent state through `configure()`
+// + `pi.agent` (issue #225), never a sidecar — attach restores it from
+// the storage, so save/loadThinkingLevel were deleted (issue #216).
 
-import { join } from 'node:path';
-import type { FileBridge } from '../../exec/src/file-bridge.js';
-import { isThinkingLevel } from './models-config.js';
 import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
@@ -104,19 +103,6 @@ export class EscalationError extends Error {
   }
 }
 
-export function createLadder(
-  steps: string[],
-  options: { maxEscalations?: number } = {},
-): EscalationLadder {
-  if (steps.length === 0)
-    throw new EscalationError('escalation ladder must not be empty');
-  return {
-    steps,
-    maxEscalations: options.maxEscalations ?? steps.length,
-    record: [],
-  };
-}
-
 export function escalateModel(
   ladder: EscalationLadder,
   from: string,
@@ -171,42 +157,4 @@ export function clampThinking(
   level: ModelThinkingLevel,
 ): ModelThinkingLevel {
   return clampThinkingLevel(model, level);
-}
-
-const THINKING_FILE = 'thinking.json';
-
-export function saveThinkingLevel(
-  bridge: FileBridge,
-  sessionDir: string,
-  level: ModelThinkingLevel,
-): void {
-  // Issue #361: the stored thinking level is session state; 0600 at creation.
-  bridge.writeFile(join(sessionDir, THINKING_FILE), JSON.stringify({ level }), {
-    mode: 0o600,
-  });
-}
-
-export function loadThinkingLevel(
-  bridge: FileBridge,
-  sessionDir: string,
-): ModelThinkingLevel | null {
-  let raw: string;
-  try {
-    raw = bridge.readTextFile(join(sessionDir, THINKING_FILE));
-  } catch {
-    return null;
-  }
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      isThinkingLevel((parsed as Record<string, unknown>).level)
-    ) {
-      return (parsed as { level: ModelThinkingLevel }).level;
-    }
-    return null;
-  } catch {
-    return null;
-  }
 }

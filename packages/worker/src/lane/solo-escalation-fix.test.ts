@@ -5,6 +5,7 @@
 // live CompactionPolicy getter (#399).
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
+import type { EscalationLadder } from '../model-select.js';
 import {
   BACKGROUND_CONTEXT,
   type Context,
@@ -88,7 +89,6 @@ function handle(id = 'sess-1'): TestSession {
 }
 
 async function bootPinned(taskId = 'task-1') {
-  const { createLadder } = await import('../model-select.js');
   const faux = fauxProvider({ models: [{ id: 'a' }, { id: 'b' }] });
   const models = createModels();
   models.setProvider(faux.provider);
@@ -105,7 +105,11 @@ async function bootPinned(taskId = 'task-1') {
     taskId,
   });
   SOLOS.push(booted);
-  const ladder = createLadder(['faux/a', 'faux/b'], { maxEscalations: 1 });
+  const ladder: EscalationLadder = {
+    steps: ['faux/a', 'faux/b'],
+    maxEscalations: 1,
+    record: [],
+  };
   return { booted, ladder };
 }
 

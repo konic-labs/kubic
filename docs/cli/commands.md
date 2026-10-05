@@ -1094,6 +1094,59 @@ the built-in palette; see `[ui] theme` under
 | `Ctrl-Shift-F` | Search the transcript: `Enter` (or `Ctrl-G`) selects the next match, `Shift-Enter` (`Ctrl-Shift-G`) the previous one, `Esc` closes the search and returns the keys to the editor. |
 | EOF (closed stdin) | Quit — a detached tty or `kubic tui < /dev/null` never hangs the alt-screen. |
 
+### Keybindings file (`~/.kubic/keybindings.json`)
+
+Every key in the table above that Kubic claims ahead of the editor is an
+**action** in one keybinding registry (§16.6/§16.9), and
+`~/.kubic/keybindings.json` rebinds actions: a JSON object of
+`"action": "key"` or `"action": ["key", ...]` (a list replaces the defaults;
+`[]` unbinds the action). Key ids are pi-tui's — `ctrl+g`, `alt+enter`,
+`ctrl+shift+f`, `escape`, a single character — case-insensitive, modifiers in
+any order. A rebound action works under its new key everywhere at once: the
+dispatch, the idle key hints and the welcome block; the old key falls through
+to the editor. The editor's own keys (`Enter`, `Ctrl-J`, `Ctrl-A`/`Ctrl-E`,
+…) and pi-tui's alt-screen keys (`PageUp`/`PageDown`, `Home`/`End`, …) are
+Pi's and are not in the registry.
+
+```json
+{ "panel.diff": "ctrl+g", "session.mode": "alt+g" }
+```
+
+**Conflicts are reported at boot** (a `warning:` line on stderr before the
+alt-screen opens; the TUI still starts). A user binding beats a default: the
+default action loses that key (`keybinding: ctrl+g now runs panel.diff
+(override), so session.mode no longer has it`, plus `session.mode is
+unbound` when nothing is left). Two user bindings on one key are a conflict —
+the first action in the table below keeps it and both are named. Approval
+keys conflict only with each other (the approval owns the keys while it
+shows, which is why `Esc` can be both the global quit and the approval deny).
+**A broken file refuses the boot** (`error: keybindings '<file>': …`, exit 2,
+nothing opens): invalid JSON, an unknown action, a malformed key id, or a
+file that is not a regular file or is over 64 KB. A missing file means the
+shipped bindings.
+
+| Action | Default keys | What it does |
+|---|---|---|
+| `app.interrupt` | `ctrl+c` | cancel the running turn; idle: clear the draft, then quit |
+| `app.exit` | `escape` | quit on an empty draft (clears a draft first) |
+| `app.eof` | `ctrl+d` | quit on an empty draft; delete-forward while typing |
+| `app.palette` | `ctrl+p` | open the command palette |
+| `session.mode` | `ctrl+g` | switch solo / orchestrator between turns |
+| `view.tree` | `ctrl+t` | toggle the tree |
+| `panel.diff` | `ctrl+o` | toggle the diff panel |
+| `panel.journal` | `ctrl+r` | toggle the journal panel |
+| `transcript.expand` | `ctrl+x` | expand / collapse tool output |
+| `prompt.steer` | `alt+enter` | steer the running turn (submit when idle) |
+| `model.pick` | `alt+m` | open the model picker |
+| `model.thinking` | `alt+t` | cycle the thinking level |
+| `approvals.fullAccess` | `alt+a` | toggle full access for this session |
+| `panel.next` | `alt+down` | open panel: next file (diff) / next page (journal) |
+| `panel.previous` | `alt+up` | open panel: previous file (diff) / previous page (journal) |
+| `approval.allowOnce` | `a` | approval: allow once |
+| `approval.allowSession` | `ctrl+s` | approval: allow for the session |
+| `approval.deny` | `d`, `escape` | approval: deny |
+| `approval.page` | `v` | approval: next page of a long command |
+
 Both panels read the session's own journal through the same projection
 `kubic diff` prints (one change per path, latest attribution): once at boot
 — so `kubic tui --session <id>` shows earlier turns the first time `Ctrl-R`

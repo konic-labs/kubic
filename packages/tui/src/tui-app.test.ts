@@ -3,7 +3,7 @@
 // Headless snapshots only (no VirtualTerminal in Pi 0.85.1): the root
 // VStack renders pure, like renderLayout in layout.test.ts. Faux-only,
 // zero network.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type {
   KubicPresentationState,
   LaneSnapshot,
@@ -13,6 +13,7 @@ import type {
   ApprovalOverlayTui,
   ApprovalViewRequest,
 } from './approval-view.js';
+import { createKeyRegistry } from './keybindings.js';
 import { createTuiApp, seedFromPresentation } from './tui-app.js';
 
 const SESSION = 'sess-1';
@@ -1122,5 +1123,40 @@ describe('app-level wiring that no test executed (issue #320)', () => {
       approvalsSkipped: false,
     });
     expect('setNotice' in ui).toBe(false);
+  });
+});
+
+// Issue #303 (§16.6/§16.9): the app dispatches through the keybinding
+// registry, so an override rebinds the action everywhere — the dispatch,
+// the global-key claim ahead of the editor and the hints.
+describe('keybinding overrides in the app (issue #303)', () => {
+  const rebound = () =>
+    createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+      keys: createKeyRegistry({
+        'panel.diff': ['ctrl+g'],
+        'session.mode': ['alt+g'],
+      }),
+    });
+
+  it('ctrl+g toggles the diff panel and ctrl+o reaches the editor', () => {
+    const ui = rebound();
+    ui.handleInput('\x07');
+    expect(ui.panelMode()).toBe('diff');
+    ui.handleInput('\x07');
+    expect(ui.panelMode()).toBe('closed');
+    const toEditor = vi.spyOn(ui.editor, 'handleInput');
+    ui.handleInput('\x0f');
+    expect(toEditor).toHaveBeenCalledWith('\x0f');
+    expect(ui.panelMode()).toBe('closed');
+  });
+
+  it('the key hints name the rebound key', () => {
+    const frame = rebound().render(160).join('\n');
+    expect(frame).toContain('ctrl+g diff');
+    expect(frame).not.toContain('ctrl+o diff');
   });
 });

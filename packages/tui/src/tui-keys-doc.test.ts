@@ -13,13 +13,14 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { INLINE_APPROVAL_HEADER } from './approval-surface.js';
-import { APPROVAL_DEFAULT_KEYS, APPROVAL_MIN_WIDTH } from './approval-view.js';
+import { APPROVAL_MIN_WIDTH } from './approval-view.js';
+import {
+  DEFAULT_KEY_REGISTRY,
+  KEY_ACTION_IDS,
+  KEY_ACTIONS,
+} from './keybindings.js';
 
 const repoRoot = join(import.meta.dirname, '..', '..', '..');
-const appSource = readFileSync(
-  join(repoRoot, 'packages/tui/src/tui-app.ts'),
-  'utf8',
-);
 const commandsDoc = readFileSync(
   join(repoRoot, 'docs/cli/commands.md'),
   'utf8',
@@ -33,18 +34,20 @@ function tuiSection(): string {
   return commandsDoc.slice(start, next === -1 ? undefined : next);
 }
 
-/** Key ids the app compares against, e.g. 'ctrl+o' from `keyId === 'ctrl+o'`. */
+/**
+ * Key ids the app claims ahead of the editor: the keybinding registry's
+ * shipped defaults for the global and panel actions (issue #303 — the docs
+ * are checked against the registry, the one place the app reads them from).
+ */
 function boundKeyIds(): string[] {
   const ids = new Set<string>();
-  for (const match of appSource.matchAll(/keyId === '([^']+)'/g)) {
-    ids.add(match[1] as string);
+  for (const action of KEY_ACTION_IDS) {
+    if (KEY_ACTIONS[action].scope === 'approval') continue;
+    for (const key of DEFAULT_KEY_REGISTRY.keysFor(action)) ids.add(key);
   }
   return [...ids].sort();
 }
 
-// Source-text scans: under Stryker every literal in tui-app.ts is
-// instrumented, so `keyId === '...'` cannot match there (and a text scan
-// kills no mutants).
 describe.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(
   'the documented TUI keys match the app (#96 criterion 5)',
   () => {
@@ -52,7 +55,6 @@ describe.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(
       // A path or rename bug would otherwise let every assertion below pass
       // against an empty subject.
       expect(tuiSection().length).toBeGreaterThan(200);
-      expect(appSource.length).toBeGreaterThan(1000);
       expect(boundKeyIds().length).toBeGreaterThanOrEqual(4);
       expect(boundKeyIds()).toContain('ctrl+o');
       expect(boundKeyIds()).toContain('ctrl+r');
@@ -119,8 +121,8 @@ describe.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(
     });
 
     it('documents the approval decision keys the surface actually binds', () => {
-      // The shipped binding table itself, not a regex over its source text.
-      expect(APPROVAL_DEFAULT_KEYS).toEqual({
+      // The registry's approval bindings — what the surface is handed.
+      expect(DEFAULT_KEY_REGISTRY.approvalOverrides()).toEqual({
         'allow-once': ['a'],
         'allow-session': ['ctrl+s'],
         deny: ['d', 'escape'],
@@ -147,3 +149,18 @@ describe.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(
     });
   },
 );
+
+// Issue #303: the keybindings file is documented, action by action, from the
+// registry — an action missing from the doc is a binding nobody can find.
+describe('the keybindings file is documented from the registry (issue #303)', () => {
+  it('names the file and every action id with its default keys', () => {
+    const section = tuiSection();
+    expect(section).toContain('~/.kubic/keybindings.json');
+    for (const action of KEY_ACTION_IDS) {
+      const keys = DEFAULT_KEY_REGISTRY.keysFor(action)
+        .map((key) => `\`${key}\``)
+        .join(', ');
+      expect(section).toContain(`| \`${action}\` | ${keys} |`);
+    }
+  });
+});

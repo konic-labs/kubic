@@ -3,6 +3,9 @@
 // Headless snapshots through the real TuiAltScreen + a fake Terminal
 // (same pattern as screen.test.ts): alt-screen open/restore asserted on
 // captured writes. Faux lane boot only — zero network.
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   bootTuiLane,
@@ -258,5 +261,63 @@ describe('kubic tui colour isolation (issue #319)', () => {
     input('\x03');
     expect(await pending).toBe(0);
     expect(tuiTheme().level).toBe('none');
+  });
+});
+
+// Issue #303 (§16.9): ~/.kubic/keybindings.json is read at boot. Conflicting
+// overrides are reported before the screen opens (and the TUI still runs);
+// a broken file refuses the boot by name.
+describe('kubic tui keybindings file (issue #303)', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0))
+      rmSync(dir, { recursive: true, force: true });
+  });
+  const keybindingsFile = (json: string): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'kubic-303-'));
+    dirs.push(dir);
+    const file = join(dir, 'keybindings.json');
+    writeFileSync(file, json);
+    return file;
+  };
+
+  it('reports conflicting overrides at boot and still opens the TUI', async () => {
+    const errors: string[] = [];
+    let input!: (data: string) => void;
+    const terminal = fakeTerminal(100, (cb) => {
+      input = cb;
+    });
+    const pending = runTuiCommand(
+      {},
+      deps(terminal, {
+        err: (line) => errors.push(line),
+        keybindingsFile: keybindingsFile(
+          '{"panel.diff": "ctrl+y", "panel.journal": "ctrl+y"}',
+        ),
+      }),
+    );
+    await waitFor(() => terminal.started === 1);
+    input('\x03');
+    expect(await pending).toBe(0);
+    expect(errors).toContain(
+      'warning: keybinding conflict: ctrl+y is bound to both panel.diff and panel.journal — panel.diff keeps it',
+    );
+  });
+
+  it('refuses a keybindings file with an unknown action (exit 2, nothing opens)', async () => {
+    const errors: string[] = [];
+    const terminal = fakeTerminal(100);
+    const code = await runTuiCommand(
+      {},
+      deps(terminal, {
+        err: (line) => errors.push(line),
+        keybindingsFile: keybindingsFile('{"panel.dif": "ctrl+g"}'),
+      }),
+    );
+    expect(code).toBe(2);
+    expect(terminal.started).toBe(0);
+    expect(errors.join('\n')).toMatch(
+      /error: keybindings '.*': unknown action 'panel\.dif'/,
+    );
   });
 });

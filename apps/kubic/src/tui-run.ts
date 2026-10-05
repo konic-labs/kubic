@@ -112,6 +112,12 @@ import {
   scanInlineImageChunk,
   validateImageAttachment,
 } from '../../../packages/tui/src/attachments.js';
+import {
+  createKeyRegistry,
+  KeybindingsError,
+  type KeyRegistry,
+  parseKeybindingsJson,
+} from '../../../packages/tui/src/keybindings.js';
 import type { LaneEntryLike } from '../../../packages/tui/src/lane-cells.js';
 import type { Screen } from '../../../packages/tui/src/screen.js';
 import { bootScreen } from '../../../packages/tui/src/screen.js';
@@ -837,6 +843,9 @@ export interface TuiRunDeps {
   // (`default`, `dark`, `light`) or a path to a JSON theme file, resolved
   // and validated before the alt-screen opens.
   theme?: string;
+  // Issue #303 (§16.9): the keybindings file; default
+  // `~/.kubic/keybindings.json`. Absent means the shipped bindings.
+  keybindingsFile?: string;
   // Issue #327: the git probe behind the non-git orchestrator refusal
   // (exit 5). Consulted only when the resolved mode IS orchestrator; absent
   // means the caller owns the check (viewer boots and injected fakes).
@@ -2816,6 +2825,38 @@ export function resolveTuiTheme(
   return createThemeFromColors(parseThemeJson(text, ref), level);
 }
 
+// Issue #303 (§16.6/§16.9): the keybindings file → the registry the app
+// dispatches through. A missing file is the shipped bindings; a present one
+// is read through the exec bridge with the same regular-file and size guard
+// as a theme, and an invalid one is a `KeybindingsError` naming the file and
+// the entry, so the boot refuses it (exit 2) before the screen opens.
+export function resolveTuiKeybindings(
+  path: string,
+  files: FileBridge,
+): KeyRegistry {
+  if (!files.exists(path)) return createKeyRegistry();
+  let text: string;
+  try {
+    const info = files.fileInfo(path);
+    if (info.isFile === false) {
+      throw new KeybindingsError(`keybindings '${path}': not a regular file`);
+    }
+    if (info.size > THEME_MAX_BYTES) {
+      throw new KeybindingsError(
+        `keybindings '${path}': too large (> ${Math.round(THEME_MAX_BYTES / 1024)} KB)`,
+      );
+    }
+    text = files.readTextFile(path);
+  } catch (error) {
+    if (error instanceof KeybindingsError) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new KeybindingsError(
+      `keybindings '${path}': cannot read (${detail})`,
+    );
+  }
+  return createKeyRegistry(parseKeybindingsJson(text, path));
+}
+
 // The `/image <path>` command of the interactive loop (issue #338; §16.8).
 // `undefined` means the draft is a prompt, not the command. One parser for
 // the dispatch and its tests: `/image` alone is the usage error, anything
@@ -3062,12 +3103,32 @@ export async function runTuiCommand(
     }
     throw error;
   }
+  // Issue #303: the keybinding registry, resolved before anything opens. A
+  // broken file refuses the boot by name; conflicts and displaced defaults
+  // are reported on stderr (the main screen) and the TUI still starts.
+  let keys: KeyRegistry;
+  try {
+    keys = resolveTuiKeybindings(
+      deps.keybindingsFile ?? join(homedir(), '.kubic', 'keybindings.json'),
+      files,
+    );
+  } catch (error) {
+    if (error instanceof KeybindingsError) {
+      (deps.err ?? deps.out)(`error: ${error.message}`);
+      return RUN_EXIT_USAGE;
+    }
+    throw error;
+  }
+  for (const notice of keys.notices) {
+    (deps.err ?? deps.out)(`warning: ${notice}`);
+  }
   // Issue #96: the approval surface must exist BEFORE the lane boots, because
   // the boot installs the policy that consults the seat. The root therefore
   // creates the surface, hands its ask to the boot AS the seat, and attaches
   // the same surface to the app it builds for this boot — one object, so the
   // verdict collected on screen is the verdict the lane receives.
   const surface = createApprovalSurface({
+    keyOverrides: keys.approvalOverrides(),
     ...(deps.approvalArmingMs === undefined
       ? {}
       : { armingMs: deps.approvalArmingMs }),
@@ -3103,6 +3164,7 @@ export async function runTuiCommand(
     sessionId: boot.sessionId,
     model: boot.model,
     approvalSurface: surface,
+    keys,
     // Issue #307/#327: the session mode comes from the resolution above —
     // never a literal, so the indicator and the submit routing cannot
     // disagree with what the entry actually selected. The approvals half

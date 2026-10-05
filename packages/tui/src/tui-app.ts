@@ -56,7 +56,6 @@ import type {
   ApprovalViewRequest,
 } from './approval-view.js';
 import {
-  APPROVAL_PAGE_KEY,
   ApprovalView,
   approvalFitsOverlay,
   approvalOverlayOptions,
@@ -65,6 +64,11 @@ import {
   showApprovalOverlay,
 } from './approval-view.js';
 import { PromptEditor } from './editor-view.js';
+import {
+  DEFAULT_KEY_REGISTRY,
+  type KeyAction,
+  type KeyRegistry,
+} from './keybindings.js';
 import {
   entriesToCells,
   type LaneEntryLike,
@@ -151,6 +155,10 @@ export interface TuiAppSeed {
   // window — the context gauge then stays off.
   readonly contextWindow?: number;
   readonly compactionThreshold?: number;
+  // Issue #303 (§16.6/§16.9): the keybinding registry — defaults plus the
+  // user's ~/.kubic/keybindings.json overrides, resolved by the composition
+  // root. Every key the app claims ahead of the editor is looked up here.
+  readonly keys?: KeyRegistry;
 }
 
 // §66 replication: the TUI holds no authority — it reads the replicated
@@ -223,35 +231,9 @@ function keyIdOf(data: string): string | undefined {
   }
 }
 
-// The keys handleInput claims before the editor (see the key map above).
-const GLOBAL_KEYS: ReadonlySet<string> = new Set([
-  'ctrl+c',
-  'escape',
-  'ctrl+d',
-  'ctrl+g',
-  'ctrl+t',
-  'ctrl+o',
-  'ctrl+r',
-  'ctrl+x',
-  // Issue #334: Alt+Enter steers (or submits when idle). Pi's editor claims
-  // the newline keys Ctrl-J / Shift+Enter / backslash-Enter, never
-  // alt+enter, and the command repaints below must classify it here.
-  'alt+enter',
-  // Issue #328: the model picker and the thinking cycle. Alt+M / Alt+T are
-  // free (Pi's editor claims alt+b/f/d/y and alt+arrows/backspace/delete).
-  'alt+m',
-  'alt+t',
-  // Issue #305: the command palette. Ctrl-P is free (the editor claims
-  // ctrl+b/f/a/e/]/d/w/u/k/y/- and the alt-screen the ctrl+arrow pair).
-  'ctrl+p',
-  // Issue #309: the full-access toggle. Alt+A is free (the editor claims
-  // alt+b/f/d/y; the alt-screen the alt+arrow pair).
-  'alt+a',
-]);
-
-function isGlobalKey(keyId: string | undefined): boolean {
-  return keyId !== undefined && GLOBAL_KEYS.has(keyId);
-}
+// The keys handleInput claims before the editor live in the keybinding
+// registry (issue #303, keybindings.ts): each default there carries the probe
+// that shows Pi's editor and alt-screen leave it free.
 
 // Issue #328: one row of the `/model` picker overlay. `label` is the
 // `provider/id` the operator sees and the value the loop resolves.
@@ -475,18 +457,32 @@ export interface JournalFilterLike {
   readonly agent?: string;
 }
 
-// The key hints shown under the editor while idle.
-export const KEY_HINTS: ReadonlyArray<readonly [string, string]> = [
-  ['enter', 'send'],
-  ['ctrl+j', 'newline'],
-  ['ctrl+a/ctrl+e', 'line start/end'],
-  ['ctrl+x', 'expand output'],
-  ['ctrl+o', 'diff'],
-  ['ctrl+r', 'journal'],
-  ['ctrl+t', 'tree'],
-  ['ctrl+g', 'mode'],
-  ['esc', 'quit'],
-];
+// The key hints shown under the editor while idle. The editor's own keys are
+// fixed (Pi owns them); every Kubic action reads its key from the registry
+// (issue #303), so a rebound action is hinted under its new key and an
+// unbound one is not hinted at all.
+export function keyHints(
+  keys: KeyRegistry = DEFAULT_KEY_REGISTRY,
+): ReadonlyArray<readonly [string, string]> {
+  const actions: ReadonlyArray<readonly [KeyAction, string]> = [
+    ['transcript.expand', 'expand output'],
+    ['panel.diff', 'diff'],
+    ['panel.journal', 'journal'],
+    ['view.tree', 'tree'],
+    ['session.mode', 'mode'],
+    ['app.exit', 'quit'],
+  ];
+  return [
+    ['enter', 'send'],
+    ['ctrl+j', 'newline'],
+    ['ctrl+a/ctrl+e', 'line start/end'],
+    ...actions
+      .map(([action, what]) => [keys.label(action), what] as const)
+      .filter(([key]) => key !== ''),
+  ];
+}
+
+export const KEY_HINTS: ReadonlyArray<readonly [string, string]> = keyHints();
 
 // Issue #302: pi-tui's alt screen claims these keys ahead of the editor, so
 // they scroll the transcript — which is also why Home/End no longer reach
@@ -564,7 +560,9 @@ export function welcomeLines(info: {
   sessionId: string;
   model: string;
   notice?: string;
+  hints?: ReadonlyArray<readonly [string, string]>;
 }): string[] {
+  const hints = info.hints ?? KEY_HINTS;
   const theme = tuiTheme();
   const lines = [
     '',
@@ -578,9 +576,9 @@ export function welcomeLines(info: {
   // Three hints per row keeps every row inside a narrow terminal: the hint
   // rows are rendered at their natural width (the welcome block is not
   // re-wrapped), so a long row would be cut rather than continued.
-  for (let i = 0; i < KEY_HINTS.length; i += 3) {
+  for (let i = 0; i < hints.length; i += 3) {
     lines.push(
-      `  ${renderKeyHints(Number.POSITIVE_INFINITY, KEY_HINTS.slice(i, i + 3))}`,
+      `  ${renderKeyHints(Number.POSITIVE_INFINITY, hints.slice(i, i + 3))}`,
     );
   }
   lines.push(
@@ -600,11 +598,17 @@ class EditorRow implements Component {
   // which differ by lane (the orchestrator lane queues nothing).
   private readonly mode: () => StatusMode;
   private footer: string;
+  private readonly hints: ReadonlyArray<readonly [string, string]>;
   busySince: number | undefined;
 
-  constructor(editor: PromptEditor, mode: () => StatusMode) {
+  constructor(
+    editor: PromptEditor,
+    mode: () => StatusMode,
+    hints: ReadonlyArray<readonly [string, string]> = KEY_HINTS,
+  ) {
     this.editor = editor;
     this.mode = mode;
+    this.hints = hints;
     this.footer = '';
     this.busySince = undefined;
   }
@@ -645,7 +649,7 @@ class EditorRow implements Component {
         }),
       ];
     }
-    return [...lines, renderKeyHints(width)];
+    return [...lines, renderKeyHints(width, this.hints)];
   }
 
   invalidate(): void {
@@ -662,6 +666,7 @@ function lineComponent(render: (width: number) => string): Component {
 }
 
 export function createTuiApp(seed: TuiAppSeed): TuiApp {
+  const keys = seed.keys ?? DEFAULT_KEY_REGISTRY;
   const tree = new AgentTreeView(undefined, { label: seed.label ?? 'solo' });
   // Issue #96 — the approval's inline slot. Below APPROVAL_MIN_WIDTH the
   // overlay cannot be composited (Pi's visible() gate refuses), so the
@@ -690,7 +695,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     // zero callers (the boot's notices go to stderr before the alt-screen
     // opens, #308), so it was deleted rather than tested. `welcomeLines` keeps
     // its optional parameter for a host that does have one to render.
-    transcript.setWelcome(welcomeLines({ sessionId, model: modelLabel }));
+    transcript.setWelcome(
+      welcomeLines({ sessionId, model: modelLabel, hints: keyHints(keys) }),
+    );
   };
   refreshWelcome();
   // Issue #327: the session mode is live state, not a boot-time literal:
@@ -734,7 +741,11 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // typed (Pi's editor owns the popup and the completion keys); the submit
   // path still parses and dispatches.
   editor.setAutocomplete(new SlashCommandAutocomplete());
-  const editorRow = new EditorRow(editor, () => sessionMode.current);
+  const editorRow = new EditorRow(
+    editor,
+    () => sessionMode.current,
+    keyHints(keys),
+  );
   // Issue #96 — the panel row. Both panels stay mounted and keep their rows;
   // the layout hides the row entirely while the mode is 'closed', so a
   // keypress never leaves blank space behind.
@@ -869,7 +880,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // inline body below APPROVAL_MIN_WIDTH). pi-tui's hide() is permanent
   // ("cannot be shown again"), so each request gets a fresh ApprovalView and
   // the old one is dismissed first.
-  const approvalSurface = seed.approvalSurface ?? createApprovalSurface();
+  const approvalSurface =
+    seed.approvalSurface ??
+    createApprovalSurface({ keyOverrides: keys.approvalOverrides() });
   // Issue #96: the surface is created by the composition root (it must exist
   // before the lane boots — the boot installs the policy that consults the
   // seat), so the app cannot pass its own onChange at construction. It
@@ -884,7 +897,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // Boot-time key check (§16.9, criterion 1): a conflicting map is refused by
   // name here rather than binding one action to two keys silently.
   // Issue #315: an approval key may not shadow a loop key either.
-  approvalSurface.checkKeys([...GLOBAL_KEYS]);
+  approvalSurface.checkKeys([...keys.globalKeys()]);
   let overlayHost: ApprovalOverlayTui | undefined;
   let overlayHandle: ApprovalOverlayHandle | undefined;
   // Issue #328: the model picker overlay (at most one at a time).
@@ -1062,7 +1075,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // allow key must not answer the NEXT request too.
       if (
         isKeyRepeat(data) &&
-        (approvalSurface.isShowing() || isGlobalKey(keyId))
+        (approvalSurface.isShowing() || keys.isGlobalKey(keyId))
       ) {
         // Issue #315: a dropped repeat is still typing — it never reaches
         // decide(), so the surface is told to restart its arming window.
@@ -1085,20 +1098,26 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // Issue #316: `v` pages a long command in the dialog (never decides).
       if (
         approvalSurface.isShowing() &&
-        keyId === APPROVAL_PAGE_KEY &&
+        keys.actionFor('approval', keyId) === 'approval.page' &&
         approvalSurface.nextCommandPage()
       ) {
         return { quit: false, consumed: true, cancel: false };
       }
-      if (approvalSurface.isShowing() && !isGlobalKey(keyId)) {
+      if (approvalSurface.isShowing() && !keys.isGlobalKey(keyId)) {
         return { quit: false, consumed: true, cancel: false };
       }
       // Issue #301: the open panel's navigation. alt+up / alt+down cycle the
       // diff panel's files (and page the journal panel); neither key is
       // claimed by pi-tui's editor or alt-screen bindings, so the draft keeps
       // its own keys. A closed panel does not claim them at all.
-      if (mode !== 'closed' && (keyId === 'alt+up' || keyId === 'alt+down')) {
-        panelStep(keyId === 'alt+down' ? 1 : -1);
+      // Issue #303: every action below is looked up in the registry, so a
+      // rebound key acts and the old key falls through to the editor.
+      const action = keys.actionFor('global', keyId);
+      if (
+        mode !== 'closed' &&
+        (action === 'panel.next' || action === 'panel.previous')
+      ) {
+        panelStep(action === 'panel.next' ? 1 : -1);
         return { quit: false, consumed: true, cancel: false };
       }
       // Issue #309: a shown confirmation owns every key. Only its explicit
@@ -1107,7 +1126,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       if (confirmOverlay !== undefined) {
         if (keyId === confirmOverlay.options.confirmKey) {
           closeConfirm('confirm');
-        } else if (keyId === 'escape' || keyId === 'ctrl+c') {
+        } else if (action === 'app.exit' || action === 'app.interrupt') {
           closeConfirm('cancel');
         }
         return { quit: false, consumed: true, cancel: false };
@@ -1122,7 +1141,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         closeModelPicker(true);
       }
       if (modelPicker !== undefined) {
-        if (keyId === 'escape' || keyId === 'ctrl+c') {
+        if (action === 'app.exit' || action === 'app.interrupt') {
           closeModelPicker(true);
           return { quit: false, consumed: true, cancel: false };
         }
@@ -1143,10 +1162,11 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         }
         if (!busy && editor.getText() !== '') {
           editor.setText('');
+          const key = keys.label(
+            action === 'app.exit' ? 'app.exit' : 'app.interrupt',
+          );
           editorRow.setFooter(
-            keyId === 'escape'
-              ? 'esc: draft cleared — press esc again on an empty draft to quit'
-              : 'ctrl+c: draft cleared — press ctrl+c again on an empty draft to quit',
+            `${key}: draft cleared — press ${key} again on an empty draft to quit`,
           );
           return { quit: false, consumed: true, cancel: false };
         }
@@ -1156,13 +1176,13 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         return {
           quit: true,
           consumed: true,
-          cancel: keyId === 'ctrl+c' || busy,
+          cancel: action === 'app.interrupt' || busy,
         };
       };
-      if (keyId === 'ctrl+c' || keyId === 'escape') {
+      if (action === 'app.interrupt' || action === 'app.exit') {
         return cancelOrClearDraft();
       }
-      if (keyId === 'ctrl+d') {
+      if (action === 'app.eof') {
         // Ctrl-D quits only on an empty draft — the shell convention. While
         // typing it stays Pi's delete-forward, so the key is never a silent
         // no-op in either state.
@@ -1172,14 +1192,14 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         }
         return quit();
       }
-      if (keyId === 'ctrl+t') {
+      if (action === 'view.tree') {
         tree.handleInput('t');
         return { quit: false, consumed: true, cancel: false };
       }
       // Issue #327 (§17, §81): Ctrl-G switches the session between solo and
       // orchestrator. A turn owns the lane while it runs, so the key is
       // refused there — with the reason on the footer, never a silent no-op.
-      if (keyId === 'ctrl+g') {
+      if (action === 'session.mode') {
         if (busy) {
           editorRow.setFooter('mode: finish the current turn before switching');
           return { quit: false, consumed: true, cancel: false };
@@ -1192,17 +1212,17 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // a/b/c/d/e/f/g/j/k/u/w/y, the alt-screen claims the arrows, home/end,
       // page keys and ctrl+shift+*), and both are classified through the same
       // seam as every other global key.
-      if (keyId === 'ctrl+o') {
+      if (action === 'panel.diff') {
         // Through the setter, not a bare assignment: the panel reset (#301)
         // must run on the operator's real open path.
         setPanel(mode === 'diff' ? 'closed' : 'diff');
         return { quit: false, consumed: true, cancel: false };
       }
-      if (keyId === 'ctrl+r') {
+      if (action === 'panel.journal') {
         setPanel(mode === 'journal' ? 'closed' : 'journal');
         return { quit: false, consumed: true, cancel: false };
       }
-      if (keyId === 'ctrl+x') {
+      if (action === 'transcript.expand') {
         transcript.toggleExpanded();
         return { quit: false, consumed: true, cancel: false };
       }
@@ -1211,7 +1231,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // steered through the harness' own steer queue, an idle session gets
       // the text as a normal submit. An empty draft is a no-op, never a
       // blank steer.
-      if (keyId === 'alt+enter') {
+      if (action === 'prompt.steer') {
         const text = editor.getText().trim();
         if (text === '') return { quit: false, consumed: true, cancel: false };
         editor.setText('');
@@ -1219,12 +1239,12 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       }
       // Issue #305: Ctrl-P opens the command palette (the registry's rows);
       // the loop owns the list and the dispatch.
-      if (keyId === 'ctrl+p') {
+      if (action === 'app.palette') {
         return { quit: false, consumed: true, cancel: false, palette: true };
       }
       // Issue #309: Alt+A asks the loop to toggle full access (the loop
       // confirms before enabling and writes the posture).
-      if (keyId === 'alt+a') {
+      if (action === 'approvals.fullAccess') {
         return {
           quit: false,
           consumed: true,
@@ -1234,10 +1254,10 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       }
       // Issue #328: Alt+M opens the model picker; Alt+T cycles the thinking
       // level. Both are classified here and acted on by the loop.
-      if (keyId === 'alt+m') {
+      if (action === 'model.pick') {
         return { quit: false, consumed: true, cancel: false, pickModel: true };
       }
-      if (keyId === 'alt+t') {
+      if (action === 'model.thinking') {
         return {
           quit: false,
           consumed: true,

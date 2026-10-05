@@ -228,27 +228,4 @@ describe('doctor reports the §40.3 role posture on the production path (#99)', 
     expect(roles.every((c) => /builtin role/.test(c.detail ?? ''))).toBe(true);
     expect(parsed.ok).toBe(true);
   });
-
-  it('the wiring itself: the production runners inject the probe', async () => {
-    // The gap being closed is "nothing calls it". Import-level is not enough —
-    // assert the injection exists in the production wiring (the composition
-    // root's runner module since issue #135).
-    const source = await import('node:fs').then((fs) =>
-      fs.readFileSync(
-        join(
-          import.meta.dirname,
-          '..',
-          '..',
-          '..',
-          'apps',
-          'kubic',
-          'src',
-          'prod-runners.ts',
-        ),
-        'utf8',
-      ),
-    );
-    expect(source).toMatch(/probeRoles:\s*\(\)\s*=>/);
-    expect(source).toMatch(/rolesDoctorProbe\(/);
-  });
 });

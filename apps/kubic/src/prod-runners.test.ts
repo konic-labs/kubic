@@ -3,36 +3,49 @@
 // `kubic doctor` use — not a filesystem root, not an empty policy.
 import { type ChildProcess, spawn } from 'node:child_process';
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { makeExport } from '../../../packages/eval/src/rl/fixtures.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,
   type GitSandbox,
 } from '../../../packages/exec/src/test-support/git-sandbox.js';
 import { installedPolicyPosture } from '../../../packages/host/src/approvals.js';
-import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
+import {
+  NO_PROJECT_TRUST,
+  ProjectTrustStore,
+  projectTrustStorePath,
+} from '../../../packages/host/src/config/trust-store.js';
+import { approvalsSessionDir } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
 import {
   appendToLedger,
   auditLedgerDir,
   soloDecisionAudit,
 } from '../../../packages/host/src/policy/audit-ledger.js';
+import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
+import { buildTrajectoryExport } from '../../../packages/trajectory/src/export.js';
 import {
   type WorkerRow,
   writeWorkerRows,
 } from '../../../packages/worker/src/lifecycle/rows.js';
 import type { CliConfigResult } from './config-runtime.js';
 import { loadCliConfig } from './config-runtime.js';
-import { createProdRunners } from './prod-runners.js';
+import { createProdRunners, prodTuiDeps } from './prod-runners.js';
 
 const roots: string[] = [];
 let driver: GitSandbox | undefined;
@@ -776,5 +789,653 @@ describe('kubic workers refuses owner-derived state paths (issue #437)', () => {
     const { lines, r } = runners();
     expect(await r.workers({ command: 'list' }, noConfig)).toBe(0);
     expect(lines.join('\n')).not.toContain('tok=');
+  });
+});
+
+// Config `[session] retentionDays` reaches the runners that prune (issue
+// #381: replaces the source-regex wiring pins with behaviour through
+// createProdRunners — an aged session is pruned, an aged entry healed).
+describe('kubic sessions/journal retention (prod wiring)', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  // A home global layer setting `[session] retentionDays` (the project
+  // layer would need a trust grant first), loaded through the
+  // composition root's own config seam.
+  function configWithRetention(days: number): CliConfigResult {
+    const home = mkdtempSync(join(tmpdir(), 'prod-ret-home-'));
+    roots.push(home);
+    mkdirSync(join(home, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(home, '.kubic', 'config.toml'),
+      `[session]\nretentionDays = ${days}\n`,
+    );
+    const cwd = mkdtempSync(join(tmpdir(), 'prod-ret-cwd-'));
+    roots.push(cwd);
+    const loaded = loadCliConfig({ cwd, home, env: {} });
+    expect(loaded.error).toBeUndefined();
+    return loaded;
+  }
+
+  // A session-state dir shaped like the prune plan reads it, aged by ageMs.
+  function agedSession(root: string, id: string, ageMs: number): void {
+    const dir = join(root, id);
+    mkdirSync(join(dir, 'journal'), { recursive: true });
+    writeFileSync(join(dir, 'journal', 'index.jsonl'), 'index!!');
+    writeFileSync(join(dir, 'spans.jsonl'), 'spans');
+    const secs = (Date.now() - ageMs) / 1000;
+    utimesSync(dir, secs, secs);
+  }
+
+  it('sessions prune deletes an aged session under the configured window', async () => {
+    const config = configWithRetention(30);
+    // The runner reads the default sessions root (a temp HOME under test).
+    const sroot = defaultSessionsRoot();
+    mkdirSync(sroot, { recursive: true });
+    agedSession(sroot, 'aged-381', 31 * DAY_MS);
+    const { lines, r } = runners();
+    expect(await r.sessions({ command: 'prune', yes: true }, config)).toBe(0);
+    expect(existsSync(join(sroot, 'aged-381'))).toBe(false);
+    expect(lines.join('\n')).toContain('pruned aged-381');
+  });
+
+  it('journal log heals aged entries under the same window', async () => {
+    const config = configWithRetention(7);
+    const sroot = defaultSessionsRoot();
+    const journalDir = join(sroot, 'sess-381', 'journal');
+    const store = new FileJournalStore(journalDir);
+    store.append({
+      path: 'aged.txt',
+      op: 'write',
+      before: 'old\n',
+      after: 'older\n',
+      bytesDelta: 0,
+      sessionId: 'sess-381',
+      agentId: 'root',
+      toolCallId: 'call-aged',
+      timestamp: Date.now() - 30 * DAY_MS,
+    });
+    store.append({
+      path: 'fresh.txt',
+      op: 'write',
+      before: 'new\n',
+      after: 'newer\n',
+      bytesDelta: 0,
+      sessionId: 'sess-381',
+      agentId: 'root',
+      toolCallId: 'call-fresh',
+      timestamp: Date.now(),
+    });
+    const { lines, r } = runners();
+    expect(
+      await r.journal({ command: 'log', session: 'sess-381' }, config),
+    ).toBe(0);
+    const text = lines.join('\n');
+    expect(text).toContain('fresh.txt');
+    expect(text).not.toContain('aged.txt');
+    expect(
+      new FileJournalStore(journalDir).entries().map((entry) => entry.path),
+    ).toEqual(['fresh.txt']);
+  });
+});
+
+// The models/doctor wiring through createProdRunners (issue #381): a
+// broken project models.json is reported exactly once, and the roles
+// probe `kubic doctor` injects is visible in its report — the two
+// behaviours the deleted source-regex pins stood in for.
+describe('kubic models/doctor (prod wiring)', () => {
+  it('prints a broken project models.json note exactly once', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'prod-models-note-'));
+    roots.push(root);
+    writeFileSync(join(root, 'models.json'), '{ not json');
+    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
+    vi.spyOn(process, 'cwd').mockReturnValue(root);
+    const config = loadCliConfig({
+      cwd: root,
+      home: root,
+      env: { ...process.env, KUBIC_TRUST_PROJECT: '1' },
+    });
+    expect(config.error).toBeUndefined();
+    const { lines, errs, r } = runners();
+    expect(await r.models({}, config)).toBe(0);
+    const notes = [...lines, ...errs].filter((line) =>
+      line.includes('models.json ignored:'),
+    );
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain('models.json');
+  });
+
+  it('reports the roles probe: a contradictory role document fails by name', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'prod-doctor-roles-'));
+    roots.push(root);
+    mkdirSync(join(root, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(root, '.kubic', 'roles', 'liar.md'),
+      '---\nrole: liar\ntools: [read, write]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# liar\n\nGo.\n',
+    );
+    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
+    vi.spyOn(process, 'cwd').mockReturnValue(root);
+    const config = loadCliConfig({
+      cwd: root,
+      home: root,
+      env: { ...process.env, KUBIC_TRUST_PROJECT: '1' },
+    });
+    expect(config.error).toBeUndefined();
+    const { lines, r } = runners();
+    // A failing probe flips the exit code: the wiring carries the
+    // refusal all the way to the process result, not just the report.
+    expect(await r.doctor({ json: true }, config)).toBe(6);
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{ id: string; status: string; detail?: string }>;
+    };
+    const liar = report.checks.find((entry) => entry.id === 'role:liar');
+    expect(liar?.status).toBe('fail');
+    expect(liar?.detail ?? '').toMatch(
+      /filesystem is 'read' but write tool 'write'/,
+    );
+  });
+});
+
+// run/tui config projections through createProdRunners (issue #381): the
+// `[journal] outOfScope` exclusion and the `[agent] name` attribution the
+// deleted source-regex pins stood in for — observed in the journal the
+// lane writes, not in the composition root's source text.
+describe('kubic run projections (prod wiring)', () => {
+  function trustedProjectConfig(toml: string): {
+    config: CliConfigResult;
+    project: string;
+  } {
+    const home = mkdtempSync(join(tmpdir(), 'prod-run-home-'));
+    roots.push(home);
+    const project = mkdtempSync(join(tmpdir(), 'prod-run-project-'));
+    roots.push(project);
+    mkdirSync(join(project, '.kubic'), { recursive: true });
+    writeFileSync(join(project, '.kubic', 'config.toml'), toml);
+    new ProjectTrustStore(projectTrustStorePath(home)).set(project, true);
+    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
+    const loaded = loadCliConfig({
+      cwd: project,
+      home,
+      env: { ...process.env, KUBIC_TRUST_PROJECT: '1' },
+    });
+    expect(loaded.error).toBeUndefined();
+    expect(loaded.runtime).toBeDefined();
+    return { config: loaded, project };
+  }
+
+  function journalEntries(sessionId: string): Array<{
+    path?: string;
+    agentId?: string;
+  }> {
+    return new FileJournalStore(
+      join(defaultSessionsRoot(), sessionId, 'journal'),
+    ).entries() as Array<{ path?: string; agentId?: string }>;
+  }
+
+  // The `journal:<id>` ref the run envelope prints (no explicit --session
+  // was passed, so the run created its own).
+  function journalIdOf(lines: string[]): string {
+    const match = lines.join('\n').match(/journal:([A-Za-z0-9_-]+)/);
+    expect(match?.[1]).toBeDefined();
+    return match?.[1] as string;
+  }
+
+  it('excludes a configured out-of-scope path from the run journal', async () => {
+    const { config, project } = trustedProjectConfig(
+      '[journal]\noutOfScope = ["vendor"]\n',
+    );
+    mkdirSync(join(project, 'vendor'), { recursive: true });
+    vi.stubEnv('KUBIC_PROVIDER', 'faux');
+    vi.stubEnv('KUBIC_NO_NOTICE', '1');
+    vi.spyOn(process, 'cwd').mockReturnValue(project);
+    const { lines, r } = runners();
+    const code = await r.run(
+      {
+        prompt:
+          'faux:tool bash {"command":"echo v2 > in-scope.txt && echo gen > vendor/out.js"}',
+        json: true,
+      },
+      config,
+    );
+    expect(code).toBe(0);
+    expect(existsSync(join(project, 'in-scope.txt'))).toBe(true);
+    expect(existsSync(join(project, 'vendor', 'out.js'))).toBe(true);
+    // Both files changed on disk; only the in-scope one was journaled.
+    expect(
+      journalEntries(journalIdOf(lines)).map((entry) => entry.path),
+    ).toEqual(['in-scope.txt']);
+  });
+
+  it('attributes the run journal to the configured agent name', async () => {
+    const { config, project } = trustedProjectConfig(
+      '[agent]\nname = "alice"\n',
+    );
+    vi.stubEnv('KUBIC_PROVIDER', 'faux');
+    vi.stubEnv('KUBIC_NO_NOTICE', '1');
+    vi.spyOn(process, 'cwd').mockReturnValue(project);
+    const { lines, r } = runners();
+    const code = await r.run(
+      {
+        prompt: 'faux:tool bash {"command":"touch marker"}',
+        json: true,
+      },
+      config,
+    );
+    expect(code).toBe(0);
+    const entries = journalEntries(journalIdOf(lines));
+    expect(entries.length).toBeGreaterThan(0);
+    for (const entry of entries) expect(entry.agentId).toBe('alice');
+  });
+});
+
+// The clean wiring through createProdRunners (issue #381): a configured
+// `[orchestrator] root` is the disposal root — a worktree under the
+// custom root is listed by --dry-run and left in place.
+describe('kubic clean (prod wiring)', () => {
+  it('lists a retained worktree under the configured root on --dry-run', async () => {
+    const sandbox = createGitSandbox({ injectProcessEnv: true });
+    const root = sandbox.path;
+    writeFileSync(join(root, 'base.txt'), 'base\n');
+    sandbox.git(['add', '-A']);
+    sandbox.git(['commit', '-qm', 'base']);
+    const custom = join(root, '.kubic-custom', 'wt', 'worker-1');
+    sandbox.git(['worktree', 'add', custom, '-b', 'kubic/worker-1']);
+    mkdirSync(join(root, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(root, '.kubic', 'config.toml'),
+      '[orchestrator]\nroot = ".kubic-custom/wt"\n',
+    );
+    const home = mkdtempSync(join(tmpdir(), 'prod-clean-home-'));
+    roots.push(home);
+    new ProjectTrustStore(projectTrustStorePath(home)).set(root, true);
+    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
+    vi.spyOn(process, 'cwd').mockReturnValue(root);
+    const config = loadCliConfig({
+      cwd: root,
+      home,
+      env: { ...process.env, KUBIC_TRUST_PROJECT: '1' },
+    });
+    expect(config.error).toBeUndefined();
+    expect(config.runtime?.orchestrator.root).toBe('.kubic-custom/wt');
+    const { lines, r } = runners();
+    expect(await r.clean({ dryRun: true }, config)).toBe(0);
+    expect(lines.join('\n')).toContain(`would remove worktree ${custom}`);
+    // Dry-run mutates nothing: the worktree and its branch survive.
+    expect(existsSync(custom)).toBe(true);
+    expect(
+      sandbox.git([
+        'branch',
+        '--list',
+        'kubic/worker-1',
+        '--format=%(refname:short)',
+      ]),
+    ).toContain('kubic/worker-1');
+  });
+});
+
+// The tui wiring through createProdRunners (issue #381): orchestrator
+// mode outside a git repo is refused before the alt-screen opens, and
+// the lane projection the interactive boot consumes names the configured
+// agent — the tui third of the deleted lane-spread pin (the run third is
+// behavioural above; the interactive lane itself boots only on a TTY).
+describe('kubic tui (prod wiring)', () => {
+  it('refuses orchestrator mode outside a git repo, naming solo', async () => {
+    const plain = mkdtempSync(join(tmpdir(), 'prod-tui-plain-'));
+    roots.push(plain);
+    vi.spyOn(process, 'cwd').mockReturnValue(plain);
+    const { lines, errs, r } = runners();
+    expect(await r.tui({ orchestrator: true }, noConfig)).toBe(5);
+    expect([...lines, ...errs].join('\n')).toContain(
+      'orchestrator mode needs a git repository',
+    );
+  });
+
+  it('threads the configured agent id to the interactive lane deps', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'prod-tui-home-'));
+    roots.push(home);
+    const project = mkdtempSync(join(tmpdir(), 'prod-tui-project-'));
+    roots.push(project);
+    mkdirSync(join(project, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(project, '.kubic', 'config.toml'),
+      '[agent]\nname = "alice"\n',
+    );
+    new ProjectTrustStore(projectTrustStorePath(home)).set(project, true);
+    const loaded = loadCliConfig({ cwd: project, home, env: {} });
+    expect(loaded.error).toBeUndefined();
+    expect(
+      prodTuiDeps({ out: () => undefined, debug: () => undefined }, loaded)
+        .agentId,
+    ).toBe('alice');
+  });
+});
+
+// One positive smoke per remaining runner key through createProdRunners
+// (issue #381, acceptance "every key invoked"): each asserts an
+// observable effect of the composed deps, never the composition source.
+describe('remaining runners (prod wiring smokes)', () => {
+  it('git status names the branch of the working repo', async () => {
+    const sandbox = createGitSandbox({ injectProcessEnv: true });
+    writeFileSync(join(sandbox.path, 'base.txt'), 'base\n');
+    sandbox.git(['add', '-A']);
+    sandbox.git(['commit', '-qm', 'base']);
+    vi.spyOn(process, 'cwd').mockReturnValue(sandbox.path);
+    const { lines, r } = runners();
+    expect(await r.git({ command: 'status' }, noConfig)).toBe(0);
+    expect(lines.join('\n')).toContain('branch main');
+  });
+
+  it('skills lists nothing discovered over an empty tree', async () => {
+    const bare = mkdtempSync(join(tmpdir(), 'prod-skills-'));
+    roots.push(bare);
+    vi.spyOn(process, 'cwd').mockReturnValue(bare);
+    // The empty-discovery note is diagnostics (log.info), not stdout.
+    const { lines, errs, r } = runners();
+    expect(await r.skills({}, noConfig)).toBe(0);
+    expect([...lines, ...errs].join('\n')).toContain('no skills discovered');
+  });
+
+  it('config prints the effective configuration as one JSON document', async () => {
+    const empty = mkdtempSync(join(tmpdir(), 'prod-config-'));
+    roots.push(empty);
+    const loaded = loadCliConfig({ cwd: empty, home: empty, env: {} });
+    expect(loaded.error).toBeUndefined();
+    const { lines, r } = runners();
+    expect(await r.config({ json: true }, loaded)).toBe(0);
+    const parsed = JSON.parse(lines.join('\n')) as { layers?: unknown };
+    expect(parsed).toHaveProperty('layers');
+  });
+
+  it('trust --list reports an empty store by name', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'prod-trust-home-'));
+    roots.push(home);
+    const { lines, r } = runners();
+    expect(
+      await r.trust(
+        { list: true },
+        { ...noConfig, trust: { ...NO_PROJECT_TRUST, home } },
+      ),
+    ).toBe(0);
+    expect(lines.join('\n')).toContain('no project trust decisions recorded');
+  });
+
+  it('cost reports no rows for a workspace with no usage', async () => {
+    const ws = mkdtempSync(join(tmpdir(), 'prod-cost-'));
+    roots.push(ws);
+    vi.spyOn(process, 'cwd').mockReturnValue(ws);
+    const { lines, r } = runners();
+    expect(await r.cost({}, noConfig)).toBe(0);
+    expect(lines.join('\n')).toContain('no cost rows');
+  });
+
+  it('perf evaluates supplied samples against the named budget', async () => {
+    const { lines, r } = runners();
+    expect(await r.perf({ budget: 'spawn', samples: '5,6,7' }, noConfig)).toBe(
+      0,
+    );
+    expect(lines.join('\n')).toMatch(/within/);
+  });
+});
+
+// The orchestrate approval bound through createProdRunners (issue #381):
+// with no injected seat and stdin not a TTY, the runner attaches no seat
+// (the deleted orchestrate-run.ts source pin), so a worker's challenged
+// call denies closed on the child's own bound with the named reason.
+describe('kubic orchestrate approvals (prod wiring)', () => {
+  const ASK_MODULE = fileURLToPath(
+    new URL(
+      '../../../packages/host/src/orchestrator/approvals/worker-asks.js',
+      import.meta.url,
+    ),
+  );
+  const ASK_BOUND = `
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + String.fromCharCode(10));
+const dir = process.env.KUBIC_APPROVALS_DIR;
+const verifyKey = process.env.KUBIC_APPROVALS_VERIFY_KEY;
+const agentId = process.env.KUBIC_WORKER_ID ?? 'worker';
+const { publishWorkerAsk, awaitWorkerAskAnswer } = await import(
+  __ASK_MODULE_URL__,
+);
+const published = publishWorkerAsk(dir, {
+  trigger: 'network',
+  toolName: 'bash',
+  args: { command: 'curl https://example.com/release.tgz' },
+  justification: 'the plan step needs the release tarball',
+  sessionId: process.env.KUBIC_WORKER_SESSION ?? 'unknown',
+  agentId,
+  role: 'worker',
+  worktree: process.cwd(),
+  provenance: { parentSessionId: process.env.KUBIC_ORCHESTRATOR_SESSION ?? 'unknown' },
+});
+const answer = await awaitWorkerAskAnswer(dir, published.request.key, {
+  maxPendingMs: 100,
+  pollMs: 10,
+  verifyKey,
+  nonce: published.nonce,
+});
+writeFileSync(
+  join(dir, agentId + '.child.json'),
+  JSON.stringify({ key: published.request.key, answer }),
+);
+process.exit(answer.approved ? 0 : 4);
+`;
+  const ASK_LOADER = `
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+export async function resolve(specifier, context, next) {
+  if (specifier.endsWith('.js')) {
+    try {
+      const base = specifier.startsWith('file://')
+        ? specifier
+        : specifier.startsWith('/')
+          ? 'file://' + specifier
+          : context.parentURL === undefined
+            ? undefined
+            : new URL(specifier, context.parentURL).href;
+      if (base !== undefined) {
+        const candidate = new URL(base.slice(0, -3) + '.ts');
+        if (existsSync(fileURLToPath(candidate))) {
+          return next(candidate.href, context);
+        }
+      }
+    } catch { /* fall through */ }
+  }
+  return next(specifier, context);
+}
+`;
+
+  it('a worker ask with no seat denies closed on the bound, exit 4', async () => {
+    const sandbox = createGitSandbox({ injectProcessEnv: true });
+    const root = sandbox.path;
+    writeFileSync(join(root, 'base.txt'), 'base\n');
+    sandbox.git(['add', '-A']);
+    sandbox.git(['commit', '-qm', 'base']);
+    const childDir = mkdtempSync(join(tmpdir(), 'prod-ask-child-'));
+    roots.push(childDir);
+    const fixture = join(childDir, 'worker-child.mjs');
+    writeFileSync(
+      fixture,
+      ASK_BOUND.replace(
+        '__ASK_MODULE_URL__',
+        JSON.stringify(pathToFileURL(ASK_MODULE).href),
+      ),
+    );
+    writeFileSync(join(childDir, 'loader-hook.mjs'), ASK_LOADER);
+    writeFileSync(
+      join(childDir, 'loader-register.mjs'),
+      `import { register } from 'node:module';\nregister('./loader-hook.mjs', import.meta.url);\n`,
+    );
+    vi.stubEnv('KUBIC_PROVIDER', 'faux');
+    vi.spyOn(process, 'cwd').mockReturnValue(root);
+    const { r, lines, errs } = runners();
+    const started = Date.now();
+    // No approvalsSeat injected and stdin is not a TTY under test, so
+    // the runner's TTY default resolves to no seat: nothing answers.
+    const code = await r.orchestrate(
+      { prompt: 'do the work', session: 'orch-381', agents: ['worker-1'] },
+      noConfig,
+      {
+        workerEntry: {
+          cmd: process.execPath,
+          args: [
+            '--experimental-strip-types',
+            '--import',
+            join(childDir, 'loader-register.mjs'),
+            fixture,
+          ],
+        },
+      },
+    );
+    expect(code, [...lines, ...errs].join('\n')).toBe(4);
+    expect(Date.now() - started).toBeLessThan(30_000);
+    const evidence = JSON.parse(
+      readFileSync(
+        join(
+          approvalsSessionDir(
+            join(realpathSync(root), '.kubic', 'orchestrator'),
+            'orch-381',
+          ),
+          'worker-1.child.json',
+        ),
+        'utf8',
+      ),
+    ) as { answer: { approved: boolean; code: string; reason: string } };
+    expect(evidence.answer.approved).toBe(false);
+    expect(evidence.answer.code).toBe('approval_timeout');
+    expect(evidence.answer.reason).toMatch(/timed out after 100ms/);
+  }, 60_000);
+});
+
+// The replay third of the lane projection (issue #381): a deterministic
+// re-execution runs the recorded objective through the lane under the
+// config's projections — the journal it writes carries the configured
+// agent id, exactly as `kubic run` attributes its own.
+describe('kubic replay lane projection (prod wiring)', () => {
+  it('attributes the re-executed lane journal to the configured agent', async () => {
+    const { config, project } = (() => {
+      const home = mkdtempSync(join(tmpdir(), 'prod-replay-home-'));
+      roots.push(home);
+      const plan = mkdtempSync(join(tmpdir(), 'prod-replay-project-'));
+      roots.push(plan);
+      mkdirSync(join(plan, '.kubic'), { recursive: true });
+      writeFileSync(
+        join(plan, '.kubic', 'config.toml'),
+        '[agent]\nname = "alice"\n',
+      );
+      new ProjectTrustStore(projectTrustStorePath(home)).set(plan, true);
+      mkdirSync(join(plan, '.kubic', 'roles'), { recursive: true });
+      writeFileSync(
+        join(plan, '.kubic', 'roles', 'writer.md'),
+        '---\nrole: writer\ntools: [read, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# writer\n\n## Prompt\n\nWrite.\n',
+      );
+      const loaded = loadCliConfig({
+        cwd: plan,
+        home,
+        env: { ...process.env, KUBIC_TRUST_PROJECT: '1' },
+      });
+      expect(loaded.error).toBeUndefined();
+      return { config: loaded, project: plan };
+    })();
+    const dir = mkdtempSync(join(tmpdir(), 'prod-replay-traj-'));
+    roots.push(dir);
+    const trajectory = join(dir, 't.json');
+    writeFileSync(
+      trajectory,
+      JSON.stringify(
+        buildTrajectoryExport({
+          task: {
+            taskId: 'task-1',
+            objective: 'faux:tool bash {"command":"touch replay-marker"}',
+            role: 'writer',
+          },
+          identity: {
+            sessionId: 'sess-1',
+            agentId: 'agent-1',
+            workerId: null,
+          },
+          model: {
+            provider: 'faux',
+            model: 'echo',
+            thinking: null,
+            escalations: [],
+          },
+          prompt: { text: 'touch the marker', constraints: [] },
+          resources: { skills: [], promptTemplates: [] },
+          transfer: null,
+          actions: [],
+          observations: [],
+          state: { phase: 'done', snapshot: null },
+          provenance: {
+            sessionId: 'sess-1',
+            agentId: 'agent-1',
+            pid: null,
+            generation: 1,
+            worktree: '/repo/.kubic/wt/agent-1',
+            model: 'faux/echo',
+          },
+          environment: {
+            capturedFrom: 'used',
+            cwd: '/repo/.kubic/wt/agent-1',
+            env: {},
+          },
+          worktree: {
+            path: '/repo/.kubic/wt/agent-1',
+            baseRevision: 'abc123',
+            branch: null,
+          },
+          diff: { filesChanged: [], files: [] },
+          approvals: [],
+          timestamps: {
+            startedAt: '2026-09-23T10:00:00.000Z',
+            endedAt: '2026-09-23T10:01:00.000Z',
+          },
+          usage: {
+            inputTokens: 1,
+            outputTokens: 1,
+            cachedTokens: 0,
+            requests: 1,
+            costUsd: 0,
+            byModel: {},
+          },
+          result: {
+            status: 'completed',
+            summary: 'done',
+            failureCategory: null,
+            error: null,
+          },
+        }),
+      ),
+    );
+    const lockfile = join(dir, 'pins.json');
+    writeFileSync(lockfile, JSON.stringify({ models: { faux: ['echo'] } }));
+    vi.stubEnv('KUBIC_PROVIDER', 'faux');
+    vi.stubEnv('KUBIC_NO_NOTICE', '1');
+    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
+    vi.spyOn(process, 'cwd').mockReturnValue(project);
+    const { lines, errs, r } = runners();
+    const code = await r.replay(
+      { trajectory, tier: 'deterministic', model: 'faux/echo', lockfile },
+      config,
+    );
+    expect(code, [...lines, ...errs].join('\n')).toBe(0);
+    expect(existsSync(join(project, 'replay-marker'))).toBe(true);
+    // The re-executed lane journaled under the config's agent id — scan
+    // the default sessions root for the marker entry (the replay mints
+    // its own session, so the id is discovered, not assumed).
+    const { readdirSync } = await import('node:fs');
+    const found: Array<{ path?: string; agentId?: string }> = [];
+    for (const id of readdirSync(defaultSessionsRoot())) {
+      const journalDir = join(defaultSessionsRoot(), id, 'journal');
+      if (!existsSync(join(journalDir, 'index.jsonl'))) continue;
+      for (const entry of new FileJournalStore(journalDir).entries() as Array<{
+        path?: string;
+        agentId?: string;
+      }>) {
+        if (entry.path === 'replay-marker') found.push(entry);
+      }
+    }
+    expect(found.length).toBeGreaterThan(0);
+    for (const entry of found) expect(entry.agentId).toBe('alice');
   });
 });

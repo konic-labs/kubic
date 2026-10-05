@@ -262,36 +262,6 @@ describe('the run attaches a seat when a user is present (issue #105)', () => {
     expect(asked[0]).toContain('network');
   });
 
-  it('the prod deps factory is what consults the TTY decision', async () => {
-    // The mutation this pins: dropping the `?? workerSeatForRun(...)` fallback
-    // from `orchestrateDepsWithDefaults` left the pure-function tests above
-    // GREEN — they exercise `workerSeatForRun` directly, so nothing noticed
-    // that the production factory never called it. That is the exact defect
-    // this issue exists to fix (measured before the wiring: the real
-    // `kubic orchestrate` entry point passed no seat at all, so a worker's
-    // challenged call denied closed instead of reaching the user). The
-    // assertion is on the production SOURCE, because the decision is a
-    // property of that factory and cannot be observed from a request object.
-    const source = readFileSync(
-      join(
-        import.meta.dirname,
-        '..',
-        '..',
-        '..',
-        'apps',
-        'kubic',
-        'src',
-        'orchestrate-run.ts',
-      ),
-      'utf8',
-    );
-    expect(source).toContain('workerSeatForRun(process.stdin.isTTY === true)');
-    // And it must be the DEFAULT for the seat, not a branch that bypasses it.
-    expect(source).toMatch(
-      /options\.approvalsSeat\s*\?\?\s*workerSeatForRun\(process\.stdin\.isTTY === true\)/,
-    );
-  });
-
   it('a run with an injected seat uses it verbatim — prod only supplies the default', async () => {
     // The composition root's precedence rule: an injected seat WINS over the
     // TTY default, which is how an embedder (or a test) states its own

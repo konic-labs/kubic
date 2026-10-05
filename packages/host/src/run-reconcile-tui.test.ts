@@ -162,26 +162,4 @@ describe('end-of-run reconciliation, tui path (issue #87)', () => {
       new FileJournalStore(journalDir).entries().map((e) => e.path),
     ).toEqual(['in-scope.txt']);
   });
-
-  it('the wiring itself: the production runners thread the projection', async () => {
-    // Import-level is not enough — the defect this issue closes is exactly
-    // "the mechanism exists and nothing populates it", so the composition
-    // root's own line is pinned (same pattern as roles-doctor-prod.test.ts).
-    const source = readFileSync(
-      join(
-        import.meta.dirname,
-        '..',
-        '..',
-        '..',
-        'apps',
-        'kubic',
-        'src',
-        'prod-runners.ts',
-      ),
-      'utf8',
-    );
-    expect(source).toMatch(
-      /reconcileOutOfScope:\s*runtimeRunDeps\(cliConfig\)\.reconcileOutOfScope/,
-    );
-  });
 });

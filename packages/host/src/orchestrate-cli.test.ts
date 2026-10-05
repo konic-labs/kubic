@@ -3606,6 +3606,57 @@ describe('orchestrate manager lane (issue #431)', () => {
     expect(world.calls.merge).toEqual(['worker-1', 'worker-2']);
   });
 
+  it('the JSON envelope carries the manager final message as managerSummary', async () => {
+    // Issue #418: the envelope reports the manager's final summary —
+    // pre-fix the field is absent even though the state holds it.
+    const world = laneWorld([
+      toolTurn('spawn_agent', { role: 'implementer', task: 'do alpha' }),
+      toolTurn('wait_for_agent', { agentId: 'worker-1' }),
+      toolTurn('collect_result', { agentId: 'worker-1' }),
+      toolTurn('workspace_diff', { agentId: 'worker-1' }),
+      toolTurn('workspace_apply', { agentId: 'worker-1' }),
+      toolTurn('workspace_merge', {}),
+      fauxAssistantMessage('merged worker-1'),
+    ]);
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'ship alpha',
+        agents: ['alpha'],
+        json: true,
+        session: 'lane-envelope',
+      },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    const envelope = lastJsonLine(world.lines) as {
+      managerSummary?: string;
+    };
+    expect(envelope.managerSummary).toBe('merged worker-1');
+  });
+
+  it('the text result line is the manager final message on the lane path', async () => {
+    // Issue #418: the lane's `result:` line reports the manager's final
+    // message instead of the mechanical counts — pre-fix it prints the
+    // template wording even for a lane-driven run.
+    const world = laneWorld([
+      toolTurn('spawn_agent', { role: 'implementer', task: 'do alpha' }),
+      toolTurn('wait_for_agent', { agentId: 'worker-1' }),
+      toolTurn('collect_result', { agentId: 'worker-1' }),
+      toolTurn('workspace_diff', { agentId: 'worker-1' }),
+      toolTurn('workspace_apply', { agentId: 'worker-1' }),
+      toolTurn('workspace_merge', {}),
+      fauxAssistantMessage('merged worker-1'),
+    ]);
+    const code = await runOrchestrateCommand(
+      { prompt: 'ship alpha', agents: ['alpha'], session: 'lane-text' },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(
+      world.lines.find((line) => line.includes('result:')),
+    ).toBe('result: merged worker-1');
+  });
+
   it('consecutive workspace_merge calls name successive heads, never the same one twice', () => {
     // Review #431: the router peeked the staged head without consuming,
     // so back-to-back merges re-reported the same worker as 'merged'.

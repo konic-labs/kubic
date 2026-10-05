@@ -20,9 +20,9 @@ solo) — and `run` never delegates.
 
 - **The CLI registers the manager lane, then plans and merges.** The
   `kubic orchestrate` process registers its toolset through the §40
-  allowlist before anything spawns — the lane runs with exactly those ten
-  tools, and a lane that would carry an exec tool refuses to start rather
-  than running with one. It then reads `--agents`, authors a plan (one step
+  allowlist before anything spawns — the lane runs with exactly those
+  thirteen tools, and a lane that would carry an exec tool refuses to
+  start rather than running with one. It then reads `--agents`, authors a plan (one step
   per worker, in agent order), creates one worktree per agent, spawns one
   child `kubic run` per agent, and settles them through the merge queue.
 - **Each worker runs its own plan step, under an assigned role.** The
@@ -266,7 +266,16 @@ live: `packages/host/src/orchestrator/manager.ts` exports `MANAGER_ALLOWLIST`
 and the registration the run validates itself against, so the allowlist is
 what constrains delegation on this path — a requested lane that differs from
 it refuses to start with the named `ManagerToolsetError` (exit 1,
-`code=manager_toolset_refused`). The three git tools are read-only
+`code=manager_toolset_refused`). Opt-in model-driven management
+(`kubic orchestrate --manager-lane`, or `[orchestrator] manager = "lane"` —
+the default `"template"` keeps the plan above) hands the planning to the
+manager conversation instead: it calls the same thirteen tools through the
+same scheduler (concurrency, §71 budget gate and queueing rule), worktrees,
+merge queue and merge gate, and the run envelope reports its final message
+(`managerSummary` in `--json`, the text `result:` line) instead of the
+mechanical counts. `workspace_apply` stages any settled worker's change —
+completed, cancelled or failed; only a still-running worker is refused.
+The three git tools are read-only
 inspection (§43.1, issue #205): the writer git tools
 (`git_commit`/`git_stage`/`git_branch`/`git_checkpoint`) are not in the
 allowlist, so a lane carrying one refuses to start and `checkManagerCall`

@@ -706,13 +706,13 @@ prompt is the pending one), never appended as a duplicate prompt, and the
 | `--budget <dims>` | **Opt-in** per-spawn budget for every worker (`maxTokens`, `maxCostUsd`, `maxRuntimeMs`, `maxToolCalls` — positive numbers; `maxRuntimeMs` at most `2147483647`; e.g. `--budget maxToolCalls=20`). Per-spawn overrides: `--budget worker-1:maxToolCalls=5;worker-2:maxCostUsd=0.5`; a clause naming an agent that is not in the run (`--agents`, or the stored session on `--resume`) exits 2. Absent means **no limit is applied**. Each worker's own lane counts every tool attempt — including ones a policy guard blocks — plus its usage roll-up; the manager watches `maxRuntimeMs` and kills a worker that outlives it. Either end is `BUDGET_EXHAUSTED` (exit 3) naming the `limit=` that tripped, and a worker cannot raise its own budget. The spec persists with the session. |
 | `--dangerously-skip-approvals` | Session-scoped full-access posture (§41.4): approvals are skipped for **this session only**, indicated, recorded in the audit ledger, and warned on stderr. A fresh session starts enforced again. |
 | `--full-access` | Deprecated alias of `--dangerously-skip-approvals`; prints `hint: --full-access is deprecated — use --dangerously-skip-approvals` on stderr. |
-| `--json` | One JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `mode` — the §19 mode the run resolved (issue #278) —, `workers`, `mergeOrder`, `attribution`, `graph`, `parallel`, `retained`, optional `error` with a machine-readable `code`, optional `reapErrors`). `graph` is the delegation DAG as text lines (`node …`/`edge …`), naming the session and one node per worker — on a `--resume` run it describes the resumed session's agents. `parallel` is `{ running, queued, maxConcurrency }` (the same numbers the text lines print); `retained` is one row per retained worktree with its measured dirtiness. `reapErrors` lists `{ agentId, message }` for every reap that failed on a **failure** path, where the primary terminus wins: every spawned worker is still reaped, and the errors are reported instead of dropped. |
+| `--json` | One JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `mode` — the §19 mode the run resolved (issue #278) —, `workers`, `mergeOrder`, `attribution`, `graph`, `parallel`, `retained`, optional `error` with a machine-readable `code`, optional `reapErrors`, optional `managerSummary` — the manager's final message, present only on `--manager-lane` runs whose drive produced one (issue #418). `graph` is the delegation DAG as text lines (`node …`/`edge …`), naming the session and one node per worker — on a `--resume` run it describes the resumed session's agents. `parallel` is `{ running, queued, maxConcurrency }` (the same numbers the text lines print); `retained` is one row per retained worktree with its measured dirtiness. `reapErrors` lists `{ agentId, message }` for every reap that failed on a **failure** path, where the primary terminus wins: every spawned worker is still reaped, and the errors are reported instead of dropped. |
 
 Text output prints `session: <id> mode=<autonomous|interactive>` (the §19 mode, issue #278), one `worker: <id> branch=<b> hunks=<n>` line
 per worker, `merge order: a -> b`, `attribution: a=<n> hunk(s), …`, the
 `dag:` lines (`node …`/`edge …`) for the delegation graph, one
 `merged:`/`reaped:` line per worker, then the admission surface and the
-retained evidence, then `result:`. Two lines carry the §49.1/§50 admission
+retained evidence, then `result:`. On a `--manager-lane` run the `result:` line is the manager's final message (issue #418) — worktrees merged, conflicts, worker results — instead of the mechanical counts; the template path prints the counts. Two lines carry the §49.1/§50 admission
 numbers of the run — `parallel: running <n> queued <n> cap <n>` and
 `tree: <session> parallel <running>/<cap>` (with ` (queued <n>)` appended when
 anything was queued). One `retained: <agent> branch=<b> worktree=<path>
@@ -788,6 +788,10 @@ verdict applies). The lane carries 13 tools: the spawn/wait/collect,
 inspect/cancel/send, workspace diff/apply/merge and `ask_user` adapters
 plus read-only `git_status`/`git_diff`/`git_log` (bounded text, `HEAD` or a
 validated ref as the diff base — leading `-` and non-ref shapes refused).
+`workspace_apply` stages any settled worker's change — completed,
+cancelled or failed alike; only a still-running worker is refused
+(`apply_before_settle`). The staged bytes are always re-read from the
+worker's worktree: the model names the worker, never the patch.
 `ask_user` reaches the run's ask seat (a TTY is asked per question, a
 headless run denies closed); the seat is always raced against the ask
 bound, so an abandoned prompt resolves unanswered instead of hanging the

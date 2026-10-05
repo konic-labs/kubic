@@ -1359,6 +1359,11 @@ export interface OrchestrateEnvelope {
   } & Partial<WorkerResultView>)[];
   mergeOrder: string[];
   attribution: AttributedHunk[];
+  // The manager's final message (issue #418): present only on
+  // lane-driven runs whose drive produced one — the text `result:` line
+  // and this field report the same sentence, so the two surfaces cannot
+  // disagree. Absent on the template path (the mechanical counts stand).
+  managerSummary?: string;
   // The §54 delegation DAG of this run (§49.1 projection), rendered by
   // `delegationGraphLines`. Present on every envelope — a run that never
   // spawned still has a manager node, so the shape is stable for consumers.
@@ -5061,13 +5066,21 @@ export async function runOrchestrateCommand(
     // §44.1 retained-worktree status (issue #106) — after the run, one line
     // per retained worktree, dirty ones naming their files.
     ...retainedLines,
-    ...(partialError === undefined
+    // The manager's final message (issue #418) replaces the mechanical
+    // counts on lane-driven runs — it lived through the merges,
+    // conflicts and worker results, so it reports them. The fallback
+    // (no summary: template path) keeps the shipped wording untouched.
+    ...(state.managerSummary === undefined
       ? [
-          `${theme.success('result:')} orchestrated ${state.records.length} worker(s), merged ${state.merged.length}`,
+          ...(partialError === undefined
+            ? [
+                `${theme.success('result:')} orchestrated ${state.records.length} worker(s), merged ${state.merged.length}`,
+              ]
+            : [
+                `${theme.error('result:')} orchestrated with ${failedWorkers.length} failed worker(s) — merged ${state.merged.length}, pending ${state.pending.length} (retry with \`--resume --session ${sessionId}\`)`,
+              ]),
         ]
-      : [
-          `${theme.error('result:')} orchestrated with ${failedWorkers.length} failed worker(s) — merged ${state.merged.length}, pending ${state.pending.length} (retry with \`--resume --session ${sessionId}\`)`,
-        ]),
+      : [`${theme.success('result:')} ${state.managerSummary}`]),
   ];
   return emit(
     {
@@ -5079,6 +5092,9 @@ export async function runOrchestrateCommand(
       workers: workerRows(),
       mergeOrder: [...state.merged],
       attribution,
+      ...(state.managerSummary === undefined
+        ? {}
+        : { managerSummary: state.managerSummary }),
       // §61 per-agent merge telemetry (issue #158). Present only when the
       // loop recorded at least one candidate — an empty array would claim the
       // run measured merges it never had.

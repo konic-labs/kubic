@@ -232,6 +232,7 @@ interface LockHolder {
   pid?: number;
   startedAt?: number;
   procStart?: number;
+  nonce?: string;
 }
 
 function parseLockHolder(raw: string | undefined): LockHolder {
@@ -241,6 +242,7 @@ function parseLockHolder(raw: string | undefined): LockHolder {
       pid?: unknown;
       startedAt?: unknown;
       procStart?: unknown;
+      nonce?: unknown;
     };
     if (parsed === null || typeof parsed !== 'object') return {};
     return {
@@ -251,6 +253,9 @@ function parseLockHolder(raw: string | undefined): LockHolder {
       ...(typeof parsed.procStart === 'number'
         ? { procStart: parsed.procStart }
         : {}),
+      // Issue #424: the nonce survives the parse so release can prove
+      // ownership — it is the only per-attempt unique in the payload.
+      ...(typeof parsed.nonce === 'string' ? { nonce: parsed.nonce } : {}),
     };
   } catch {
     // torn write: treat as stale candidate
@@ -270,8 +275,13 @@ function pidIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    // Issue #424: EPERM means the process exists but belongs to another
+    // uid — alive, not stale. ESRCH (and any other failure) reads as not
+    // alive; the start-time reuse guard above is what doubts toward the
+    // holder, not the pid probe.
+    const code = (error as { code?: string } | null)?.code;
+    return code === 'EPERM';
   }
 }
 
@@ -347,7 +357,7 @@ function stealSessionLock(
 export function acquireSessionLock(
   sessionDir: string,
   sessionId: string,
-): void {
+): string {
   // Issue #361: a session directory is private state; an existing loose one
   // (created before this, or by hand) is closed on the way in — and so is the
   // sessions root, which is what `kubic doctor` reports and what the docs
@@ -358,12 +368,15 @@ export function acquireSessionLock(
   const lockPath = join(sessionDir, 'lock.json');
   const ownStart = processStartTimeOf(process.pid);
   // The nonce makes the post-write verification exact: only these bytes
-  // read as "acquired by this attempt".
+  // read as "acquired by this attempt". Returned so the owner's release
+  // can prove it (issue #424) — a stale handle's old nonce never matches
+  // a re-acquired lock.
+  const nonce = `${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2)}`;
   const payload = JSON.stringify({
     pid: process.pid,
     startedAt: Date.now(),
     ...(ownStart === undefined ? {} : { procStart: ownStart }),
-    nonce: `${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2)}`,
+    nonce,
   });
   // O_EXCL test-and-set via the exec seam (I/O confinement, §9; the
   // primitive creates the session dir eagerly so the lock can land there).
@@ -371,13 +384,14 @@ export function acquireSessionLock(
   // stale lock before our create: bytes that are not ours fall through to
   // the steal path, which re-evaluates the live occupant.
   if (createLockFile(lockPath, payload)) {
-    if (readLockFile(lockPath) === payload) return;
+    if (readLockFile(lockPath) === payload) return nonce;
   } else {
     const holder = readLockHolder(lockPath);
     if (holderIsLive(holder))
       throw new SessionLockError(sessionId, lockErrorHolder(holder));
   }
   stealSessionLock(lockPath, sessionId, payload);
+  return nonce;
 }
 
 // Read-only liveness view for consumers that must never pull state out
@@ -399,16 +413,22 @@ export function sessionLockIsLive(
   };
 }
 
-export function releaseSessionLock(sessionDir: string): void {
+export function releaseSessionLock(sessionDir: string, nonce?: string): void {
   const lockPath = join(sessionDir, 'lock.json');
-  // Owned-release only (issue #145): a lock naming another process is left
-  // alone. A lock is ours exactly when it names this pid — no other process
-  // can hold our pid while we run — so a refused attach or a failed create
-  // releases safely through here: what they never owned, they never delete.
-  // Missing, unreadable and torn payloads name nothing: the missing case is
-  // the idempotent second release, and a torn file is never provably ours
-  // (it stays a stale candidate for the next acquire).
-  if (readLockHolder(lockPath).pid !== process.pid) return;
+  const holder = readLockHolder(lockPath);
+  // Owned-release only (issue #145, hardened in #424): a lock naming
+  // another process is left alone. A nonced lock is ours exactly when it
+  // carries the releasing handle's nonce — the pid alone is not enough,
+  // because the same process can release, re-acquire, and then run a
+  // stale handle's release over its own live lock. A caller with no nonce
+  // never owned a nonced lock, and a torn payload is never provably ours
+  // (it stays a stale candidate for the next acquire). Legacy locks with
+  // no nonce keep the pid rule; missing stays the idempotent no-op.
+  if (holder.nonce !== undefined) {
+    if (nonce === undefined || holder.nonce !== nonce) return;
+  } else if (holder.pid !== process.pid) {
+    return;
+  }
   removeLockFile(lockPath);
 }
 
@@ -609,10 +629,13 @@ export async function forkSession(
   const targetDir = sessionDirOf(store, id);
   if (store.bridge.exists(storagePathOf(targetDir)))
     throw new Error(`Session already exists: ${id}`);
-  acquireSessionLock(sourceDir, sourceId);
+  const sourceNonce = acquireSessionLock(sourceDir, sourceId);
   let sourceMeta: KubicSessionMeta | undefined;
+  // Declared outside: the post-fork cleanup below releases the target
+  // lock past the try that acquired it.
+  let targetNonce: string | undefined;
   try {
-    acquireSessionLock(targetDir, id);
+    targetNonce = acquireSessionLock(targetDir, id);
     try {
       const sourceStorage = await openSessionStorage(store, sourceDir, context);
       try {
@@ -631,11 +654,11 @@ export async function forkSession(
         );
       }
     } catch (error) {
-      releaseSessionLock(targetDir);
+      releaseSessionLock(targetDir, targetNonce);
       throw error;
     }
   } finally {
-    releaseSessionLock(sourceDir);
+    releaseSessionLock(sourceDir, sourceNonce);
   }
   try {
     if (sourceMeta === undefined)
@@ -726,7 +749,7 @@ export async function forkSession(
     }
     throw error;
   } finally {
-    releaseSessionLock(targetDir);
+    releaseSessionLock(targetDir, targetNonce);
   }
 }
 
@@ -814,6 +837,9 @@ function handleFor(
   sessionDir: string,
   id: string,
   meta: KubicSessionMeta,
+  // The acquire's nonce: the handle's release proves ownership with it
+  // (issue #424) instead of the pid alone.
+  nonce: string,
 ): SessionHandle {
   let adopted = false;
   return {
@@ -829,7 +855,7 @@ function handleFor(
       try {
         if (!adopted) await storage.close(context);
       } finally {
-        releaseSessionLock(sessionDir);
+        releaseSessionLock(sessionDir, nonce);
       }
     },
   };
@@ -871,7 +897,7 @@ export async function createSession(
   // storage open, so it must be held before the storage exists, not after.
   // The lock primitive creates the session dir eagerly, which is also the
   // storage's directory.
-  acquireSessionLock(sessionDir, sessionId);
+  const createNonce = acquireSessionLock(sessionDir, sessionId);
   try {
     const meta: KubicSessionMeta = {
       cwd: opts.cwd,
@@ -913,6 +939,7 @@ export async function createSession(
       sessionDir,
       sessionId,
       meta,
+      createNonce,
     );
   } catch (error) {
     // A create that fails must not strand its lock, and must not leave a
@@ -920,7 +947,7 @@ export async function createSession(
     // retry as `Session already exists`. The files this call created are
     // removed (the directory and anything predating the call stay); any
     // orphaned sidecar is dropped by the next open's recovery.
-    releaseSessionLock(sessionDir);
+    releaseSessionLock(sessionDir, createNonce);
     for (const path of [storagePathOf(sessionDir), headerPathOf(sessionDir)]) {
       try {
         // FileBridge.remove takes positional flags, not an options object.
@@ -992,7 +1019,7 @@ export async function attachSession(
   // The lock is held before the storage is opened (issue #118, #392): no
   // reader ever observes a session another live attachment is writing, and no
   // second process ever opens the same pi-durable storage.
-  acquireSessionLock(sessionDir, sessionId);
+  const attachNonce = acquireSessionLock(sessionDir, sessionId);
   let storage: Storage | undefined;
   try {
     storage = await openSessionStorage(store, sessionDir, context);
@@ -1016,11 +1043,11 @@ export async function attachSession(
         writeSessionHeader(store, sessionDir, sessionId, meta);
       }
     }
-    return handleFor(storage, sessionDir, sessionId, meta);
+    return handleFor(storage, sessionDir, sessionId, meta, attachNonce);
   } catch (error) {
     // The lock above is ours; an attach that fails must not strand it.
     await storage?.close(context).catch(() => undefined);
-    releaseSessionLock(sessionDir);
+    releaseSessionLock(sessionDir, attachNonce);
     throw error;
   }
 }

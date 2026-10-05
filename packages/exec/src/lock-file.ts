@@ -178,32 +178,51 @@ export function processStartTimeOf(pid: number): number | undefined {
  * generation and every loser sees EEXIST. Returns `true` when this call's
  * payload landed, `false` when an occupant is already there (left
  * untouched). The temp name is dropped either way, so no litter survives.
- * LOCAL FILESYSTEM ONLY, like every lock read here.
+ * Issue #424: a temp-name collision (EEXIST on the exclusive create —
+ * vanishingly rare, but raw-thrown before) retries under a fresh name
+ * instead of throwing. LOCAL FILESYSTEM ONLY, like every lock read here.
  */
 export function claimLockLink(lockPath: string, payload: string): boolean {
   const dir = dirname(lockPath);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const tmp = join(
-    dir,
-    `.lock.tmp.${process.pid}.${Date.now().toString(36)}.${Math.floor(Math.random() * 1e9).toString(36)}`,
-  );
-  writeFileSync(tmp, payload, { flag: 'wx', mode: 0o600 });
-  const dropTemp = (): void => {
+  const stamp = Date.now().toString(36);
+  const rand = Math.floor(Math.random() * 1e9).toString(36);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const tmp = join(
+      dir,
+      `.lock.tmp.${process.pid}.${stamp}.${attempt}.${rand}`,
+    );
     try {
-      rmSync(tmp, { force: true });
-    } catch {
-      // Best-effort — the claim's outcome is what the caller reports.
+      writeFileSync(tmp, payload, { flag: 'wx', mode: 0o600 });
+    } catch (error) {
+      // Our own temp name is taken: retry under a fresh one. Anything
+      // else is a real I/O failure and still throws.
+      if (
+        (error as { code?: string } | null)?.code === 'EEXIST' &&
+        attempt < 2
+      )
+        continue;
+      throw error;
     }
-  };
-  try {
-    linkSync(tmp, lockPath);
-  } catch (error) {
+    const dropTemp = (): void => {
+      try {
+        rmSync(tmp, { force: true });
+      } catch {
+        // Best-effort — the claim's outcome is what the caller reports.
+      }
+    };
+    try {
+      linkSync(tmp, lockPath);
+    } catch (error) {
+      dropTemp();
+      if ((error as { code?: string } | null)?.code === 'EEXIST') return false;
+      throw error;
+    }
+    // The link and the temp are one inode now; dropping the temp name leaves
+    // the lock as its only name.
     dropTemp();
-    if ((error as { code?: string } | null)?.code === 'EEXIST') return false;
-    throw error;
+    return true;
   }
-  // The link and the temp are one inode now; dropping the temp name leaves
-  // the lock as its only name.
-  dropTemp();
-  return true;
+  // Unreachable: the loop either lands, loses, throws, or retries.
+  throw new Error('claimLockLink: temp-name retries exhausted');
 }

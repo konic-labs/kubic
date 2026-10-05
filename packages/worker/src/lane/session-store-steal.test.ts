@@ -52,4 +52,29 @@ describe('steal conditional clear (issue #145 review)', () => {
     expect(removeLockFile).not.toHaveBeenCalled();
     expect(claimLockLink).not.toHaveBeenCalled();
   });
+
+  it('EPERM counts as alive: a lock of another uid is never stolen (#424)', () => {
+    const FAKE_PID = 424243;
+    const rival = JSON.stringify({ pid: FAKE_PID, startedAt: Date.now() });
+    // No procStart on the rival: liveness is the pid probe alone, and the
+    // probe throws EPERM (process exists, other uid) instead of ESRCH.
+    vi.mocked(readLockFile).mockReturnValue(rival);
+    const kill = vi.spyOn(process, 'kill').mockImplementation((() => {
+      throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+    }) as never);
+    try {
+      let caught: unknown;
+      try {
+        acquireSessionLock('/no-such-dir', 'sess-eperm');
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(SessionLockError);
+      expect((caught as Error).message).toContain(String(FAKE_PID));
+    } finally {
+      kill.mockRestore();
+    }
+    expect(removeLockFile).not.toHaveBeenCalled();
+    expect(claimLockLink).not.toHaveBeenCalled();
+  });
 });

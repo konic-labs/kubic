@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   claimLockLink,
@@ -87,6 +87,28 @@ describe('atomic lock claim (issue #145)', () => {
     expect(claimLockLink(path, '{"pid":1}')).toBe(false);
     expect(readLockFile(path)).toBe('{"pid":9}');
     expect(readdirSync(join(path, '..')).sort()).toEqual(['lock.json']);
+  });
+
+  it('a temp-name collision retries with a fresh name (#424)', () => {
+    const path = tmpFile();
+    const dir = dirname(path);
+    const now = 1_700_000_000_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(now);
+    const randSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      // Squat on the attempt-0 temp name: the claim must not throw the
+      // raw EEXIST, it must retry under a fresh name and still land. The
+      // squat itself stays (it is the test's, not the claim's litter) —
+      // what must not survive is the claim's own attempt-1 temp.
+      const squatName = `.lock.tmp.${process.pid}.${now.toString(36)}.0.${Math.floor(0.5 * 1e9).toString(36)}`;
+      writeFileSync(join(dir, squatName), 'squat');
+      expect(claimLockLink(path, '{"pid":1}')).toBe(true);
+      expect(readLockFile(path)).toBe('{"pid":1}');
+      expect(readdirSync(dir).sort()).toEqual([squatName, 'lock.json']);
+    } finally {
+      nowSpy.mockRestore();
+      randSpy.mockRestore();
+    }
   });
 });
 

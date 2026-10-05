@@ -674,10 +674,15 @@ describe('session lock primitive (issue #118)', () => {
     }) as never);
   }
 
-  function readLock(dir: string): { pid?: unknown; startedAt?: unknown } {
+  function readLock(dir: string): {
+    pid?: unknown;
+    startedAt?: unknown;
+    nonce?: unknown;
+  } {
     return JSON.parse(readFileSync(join(dir, 'lock.json'), 'utf8')) as {
       pid?: unknown;
       startedAt?: unknown;
+      nonce?: unknown;
     };
   }
 
@@ -824,6 +829,20 @@ describe('session lock primitive (issue #118)', () => {
       kill.mockRestore();
     }
     expect(readFileSync(join(dir, 'lock.json'), 'utf8')).toBe(fixture);
+  });
+
+  it('a stale release cannot remove a re-acquired lock (#424)', () => {
+    const dir = lockDir();
+    const first = acquireSessionLock(dir, 'sess-nonce');
+    releaseSessionLock(dir, first);
+    expect(existsSync(join(dir, 'lock.json'))).toBe(false);
+    const second = acquireSessionLock(dir, 'sess-nonce');
+    expect(second).not.toBe(first);
+    // The stale handle's release names the old nonce: no-op.
+    releaseSessionLock(dir, first);
+    expect(readLock(dir)).toMatchObject({ pid: process.pid, nonce: second });
+    releaseSessionLock(dir, second);
+    expect(existsSync(join(dir, 'lock.json'))).toBe(false);
   });
 
   it('treats a torn lock.json as a stale candidate and steals it', () => {

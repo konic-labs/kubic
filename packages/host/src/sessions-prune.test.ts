@@ -634,6 +634,72 @@ describe('sessions prune, config flow (issue #119)', () => {
     expect(existsSync(join(root, 'aged-a'))).toBe(true);
   });
 
+  describe('sessions prune treats a run as a unit (issue #164)', () => {
+    // A session-shaped dir WITH a listing header + storage marker, so the
+    // planner's parent map sees it exactly as listSessions would.
+    function runSession(
+      root: string,
+      id: string,
+      ageMs: number,
+      parent?: string,
+    ): void {
+      sessionDir(root, id, 0);
+      writeFileSync(
+        join(root, id, 'session.json'),
+        `${JSON.stringify({
+          v: 1,
+          kind: 'kubic.session',
+          id,
+          cwd: '/repo',
+          createdAt: new Date(Date.now() - ageMs).toISOString(),
+          ...(parent === undefined ? {} : { parentSessionId: parent }),
+        })}\n`,
+      );
+      writeFileSync(join(root, id, 'main.jsonl'), '');
+      const secs = (Date.now() - ageMs) / 1000;
+      utimesSync(join(root, id), secs, secs);
+    }
+
+    it('keeps a recent child while its parent is old (the run is as young as its youngest member)', async () => {
+      const root = tmpRoot();
+      runSession(root, 'orch-1', 40 * DAY_MS);
+      runSession(root, 'orch-1-aaa', 60 * 60 * 1000, 'orch-1');
+      const { code, lines } = await prune(root, { keepDays: 30 });
+      expect(code).toBe(0);
+      expect(lines.join('\n')).toContain('nothing to prune');
+      expect(existsSync(join(root, 'orch-1'))).toBe(true);
+      expect(existsSync(join(root, 'orch-1-aaa'))).toBe(true);
+    });
+
+    it('prunes an old run together: parent and children are candidates in the same run', async () => {
+      const root = tmpRoot();
+      runSession(root, 'orch-1', 40 * DAY_MS);
+      runSession(root, 'orch-1-aaa', 40 * DAY_MS, 'orch-1');
+      runSession(root, 'orch-1-bbb', 40 * DAY_MS, 'orch-1');
+      runSession(root, 'solo-9', 40 * DAY_MS);
+      const { code, lines } = await prune(root, { keepDays: 30 });
+      expect(code).toBe(0);
+      const text = lines.join('\n');
+      for (const id of ['orch-1', 'orch-1-aaa', 'orch-1-bbb', 'solo-9']) {
+        expect(text).toContain(`would prune ${id}`);
+      }
+    });
+
+    it('keeps the children of an explicitly kept parent', async () => {
+      const root = tmpRoot();
+      runSession(root, 'orch-1', 40 * DAY_MS);
+      runSession(root, 'orch-1-aaa', 40 * DAY_MS, 'orch-1');
+      const { code } = await prune(root, {
+        keepDays: 30,
+        keepSession: ['orch-1'],
+        yes: true,
+      });
+      expect(code).toBe(0);
+      expect(existsSync(join(root, 'orch-1'))).toBe(true);
+      expect(existsSync(join(root, 'orch-1-aaa'))).toBe(true);
+    });
+  });
+
   it('retentionDays = 0 flows through as retention off', async () => {
     const loaded = loadCliConfig({
       home: loadedHome('0'),

@@ -60,7 +60,12 @@ export type SessionsInvocation =
       readonly cwd?: string;
       readonly dangerouslySkipApprovals?: boolean;
     }
-  | { readonly command: 'list'; readonly json?: boolean }
+  | {
+      readonly command: 'list';
+      readonly json?: boolean;
+      // Issue #164 (§23): show only the children of one run.
+      readonly parent?: string;
+    }
   | {
       readonly command: 'attach';
       readonly id: string;
@@ -128,12 +133,22 @@ async function runPruneCommand(
   const bridge = createNodeFileBridge(root);
   let plan: SessionPrunePlan;
   try {
+    // Issue #164 (§23): the run tree for the family rule — header reads
+    // only, so a session a live run holds is never opened here.
+    const store = openSessionStore(root, bridge);
+    const parents = new Map<string, string>();
+    for (const entry of await listSessions(store, BACKGROUND_CONTEXT)) {
+      if (entry.meta?.parentSessionId !== undefined) {
+        parents.set(entry.id, entry.meta.parentSessionId);
+      }
+    }
     plan = planSessionPrune({
       root,
       bridge,
       keepDays,
       keep: [...(parsed.keepSession ?? [])],
       ...(deps.now === undefined ? {} : { now: deps.now() }),
+      parentOf: (id) => parents.get(id),
     });
   } catch (error) {
     if (error instanceof SessionsRootError) {
@@ -147,7 +162,7 @@ async function runPruneCommand(
       `locked: ${locked.id} (held by pid ${locked.pid} since ${lockSince(locked.startedAt)}) — skipped`,
     );
   }
-  for (const id of plan.kept) deps.out(`kept: ${id} (--keep-session)`);
+  for (const kept of plan.kept) deps.out(`kept: ${kept.id} (${kept.why})`);
   for (const id of plan.unreadable) deps.out(`unreadable: ${id} — skipped`);
   if (plan.candidates.length === 0) {
     deps.out('nothing to prune');
@@ -240,7 +255,14 @@ export async function runSessionsCommand(
     return 0;
   }
   if (invocation.command === 'list') {
-    const sessions = await listSessions(store, BACKGROUND_CONTEXT);
+    const listed = await listSessions(store, BACKGROUND_CONTEXT);
+    // Issue #164 (§23): `--parent <id>` groups one run's children.
+    const sessions =
+      invocation.parent === undefined
+        ? listed
+        : listed.filter(
+            (entry) => entry.meta?.parentSessionId === invocation.parent,
+          );
     if (invocation.json === true) {
       // Always one JSON array — `[]` when there are no sessions, so a
       // `| jq` consumer never reads an empty stream (§78).
@@ -249,6 +271,17 @@ export async function runSessionsCommand(
           sessions.map((entry) => ({
             id: entry.id,
             cwd: entry.meta?.cwd ?? null,
+            // Ancestry keys appear only when the session has them: a root
+            // carries no parent key at all (never null, never '').
+            ...(entry.meta?.parentSessionId === undefined
+              ? {}
+              : { parentSessionId: entry.meta.parentSessionId }),
+            ...(entry.meta?.role === undefined
+              ? {}
+              : { role: entry.meta.role }),
+            ...(entry.meta?.agentId === undefined
+              ? {}
+              : { agentId: entry.meta.agentId }),
           })),
         ),
       );
@@ -268,9 +301,10 @@ export async function runSessionsCommand(
             entry.format === 'legacy'
               ? `${cwd} ${theme.muted('(legacy pi 0.87 — cannot attach)')}`
               : cwd,
+            entry.meta?.parentSessionId ?? theme.muted('—'),
           ];
         }),
-        [{ header: 'SESSION' }, { header: 'CWD' }],
+        [{ header: 'SESSION' }, { header: 'CWD' }, { header: 'PARENT' }],
         { fancy: deps.fancy === true, theme },
       ),
     );
@@ -292,6 +326,19 @@ export async function runSessionsCommand(
     const session = await attachSession(store, id, BACKGROUND_CONTEXT);
     try {
       deps.out(`session ${session.id}  cwd=${session.meta.cwd ?? '(none)'}`);
+      // Issue #164 (§23): the run this session belongs to, when it has one.
+      if (session.meta.parentSessionId !== undefined) {
+        const scoped = [
+          `parent=${session.meta.parentSessionId}`,
+          ...(session.meta.role === undefined
+            ? []
+            : [`role=${session.meta.role}`]),
+          ...(session.meta.agentId === undefined
+            ? []
+            : [`agent=${session.meta.agentId}`]),
+        ].join(' ');
+        deps.out(scoped);
+      }
       const posture = new FileApprovalStore(join(root, id)).loadPosture();
       deps.out(
         posture.fullAccess

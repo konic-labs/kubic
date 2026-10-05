@@ -646,6 +646,9 @@ export interface WorkerSessionRequest {
   agentId: string;
   workerSessionId: string;
   worktree: OrchestrateWorktree;
+  // Issue #164 (§23): the role the worker spawns as, recorded on the
+  // worker session beside the parent linkage. Absent means unassigned.
+  role?: string;
 }
 
 // The id the child attaches to, handed to runWorker so the create step and
@@ -2461,6 +2464,12 @@ export async function runOrchestrateCommand(
         agentId,
         workerSessionId,
         worktree,
+        // Issue #164 (§23): the assignment travels to the session record
+        // so the worker session names its role beside its parent.
+        ...(() => {
+          const role = spawnRoleInfo(agentId, rolePlan).role;
+          return role === undefined ? {} : { role };
+        })(),
       });
       if (created === undefined) {
         const noHook = `spawn failed for worker '${agentId}': no session-creation hook is wired for session '${workerSessionId}' — a spawned child could only die at attach ("unknown session")`;

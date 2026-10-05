@@ -218,10 +218,26 @@ export async function loadSessionCostRows(
     sessionsRoot,
     createNodeFileBridge(sessionsRoot),
   );
+  // Issue #164 (§23): a NAMED orchestrate session rolls its run up — the
+  // manager record plus every session whose metadata names it as parent,
+  // so `kubic cost --session <orch>` is the run's total with per-child
+  // rows. The named parent keeps its contract (unknown/locked/legacy
+  // escape, never a marker row); a child that cannot be opened reports a
+  // zero marker row like the listing sweep, so a still-running worker
+  // (live lock) reads as `(locked)` instead of failing the report.
   const entries =
     sessionId === undefined
       ? await listSessions(store, BACKGROUND_CONTEXT)
-      : [{ id: sessionId }];
+      : [
+          { id: sessionId },
+          ...(await listSessions(store, BACKGROUND_CONTEXT))
+            .filter(
+              (entry) =>
+                entry.id !== sessionId &&
+                entry.meta?.parentSessionId === sessionId,
+            )
+            .map((entry) => ({ id: entry.id })),
+        ];
   const rows: AgentCostInput[] = [];
   for (const entry of entries) {
     let session: Awaited<ReturnType<typeof attachSession>>;
@@ -231,9 +247,11 @@ export async function loadSessionCostRows(
       // A session the operator NAMED is never silently skipped: an unknown
       // id, a live lock and a 0.87 transcript all escape so
       // `runCostCommand` prints the refusal and exits 1, as it did before
-      // the durable store. Marker rows are for the listing sweep only.
+      // the durable store. Marker rows are for the listing sweep — and for
+      // the NAMED run's children — only.
       if (
         sessionId !== undefined &&
+        entry.id === sessionId &&
         (error instanceof SessionAttachError ||
           error instanceof SessionLockError ||
           error instanceof SessionFormatError)

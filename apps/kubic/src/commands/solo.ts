@@ -481,10 +481,16 @@ function registerSessions(program: Command, ctx: CommandContext): void {
     .command('list')
     .description('list the recorded sessions')
     .option('--json', 'print one JSON array')
+    .option(
+      '--parent <id>',
+      'show only the children of one orchestrate run',
+      rule(parseSessionIdArg),
+    )
     .action(async (opts) => {
       await run({
         command: 'list',
         ...(opts.json === true ? { json: true } : {}),
+        ...(opts.parent === undefined ? {} : { parent: opts.parent }),
       });
     });
   sessions

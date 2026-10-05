@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
 import {
+  attachSession,
   createSession,
   openSessionStore,
 } from '../../../../worker/src/lane/session-store.js';
@@ -542,6 +543,58 @@ describe('kubic cost durable usage (issue #400)', () => {
     expect(rows[0]?.input).toBeGreaterThan(0);
     expect(rows[0]?.costUsd).toBeGreaterThanOrEqual(0);
     expect(rows[0]?.cacheRead).toBeGreaterThanOrEqual(0);
+  });
+
+  it('rolls one orchestrate run up: --session <orch> sums the children (issue #164)', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const parent = await createSession(
+      store,
+      { id: 'orch-1', cwd: '/repo' },
+      BACKGROUND_CONTEXT,
+    );
+    await parent.release(BACKGROUND_CONTEXT);
+    const childTotals: number[] = [];
+    for (const agent of ['aaa', 'bbb']) {
+      const worker = await createSession(
+        store,
+        {
+          id: `orch-1-${agent}`,
+          cwd: `/repo/.kubic/wt/${agent}`,
+          parentSessionId: 'orch-1',
+          role: 'implementer',
+          agentId: agent,
+        },
+        BACKGROUND_CONTEXT,
+      );
+      await fauxRun(worker.adopt());
+      await worker.release(BACKGROUND_CONTEXT);
+      const readable = await attachSession(
+        store,
+        `orch-1-${agent}`,
+        BACKGROUND_CONTEXT,
+      );
+      try {
+        childTotals.push(
+          totalSessionUsage(
+            await readSessionUsage(readable.storage, BACKGROUND_CONTEXT),
+          ).costUsd,
+        );
+      } finally {
+        await readable.release(BACKGROUND_CONTEXT);
+      }
+    }
+    const rows = await loadSessionCostRows(root, 'orch-1');
+    // Per-child rows, keyed by the worker session — never the parent id.
+    expect(rows.map((row) => row.agentId).sort()).toEqual([
+      'orch-1-aaa',
+      'orch-1-bbb',
+    ]);
+    const expected = (childTotals[0] ?? 0) + (childTotals[1] ?? 0);
+    expect(rows.reduce((sum, row) => sum + row.costUsd, 0)).toBeCloseTo(
+      expected,
+    );
+    expect(expected).toBeGreaterThanOrEqual(0);
   });
 
   it('still refuses an unknown explicit --session (exit 1), never a marker row', async () => {

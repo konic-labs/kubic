@@ -162,6 +162,79 @@ describe('sessions CLI (issue #14, slice F)', () => {
     expect(o.lines.join('\n')).toContain('(legacy pi 0.87');
   });
 
+  it('list --json carries the parent linkage of a worker session (issue #164)', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const parent = await createSession(
+      store,
+      { id: 'orch-1', cwd: '/repo' },
+      BACKGROUND_CONTEXT,
+    );
+    await parent.release(BACKGROUND_CONTEXT);
+    const worker = await createSession(
+      store,
+      {
+        id: 'orch-1-aaa',
+        cwd: '/repo/.kubic/wt/aaa',
+        parentSessionId: 'orch-1',
+        role: 'implementer',
+        agentId: 'aaa',
+      },
+      BACKGROUND_CONTEXT,
+    );
+    await worker.release(BACKGROUND_CONTEXT);
+    const listing = out();
+    const code = await runSessionsCommand(
+      { command: 'list', json: true },
+      { sessionsRoot: root, out: listing.write },
+    );
+    expect(code).toBe(0);
+    const rows = JSON.parse(listing.lines.join('\n')) as Record<
+      string,
+      unknown
+    >[];
+    const child = rows.find((row) => row.id === 'orch-1-aaa');
+    expect(child).toMatchObject({
+      parentSessionId: 'orch-1',
+      role: 'implementer',
+      agentId: 'aaa',
+    });
+    // A root carries no parent key at all (never null, never '').
+    expect(rows.find((row) => row.id === 'orch-1')).not.toHaveProperty(
+      'parentSessionId',
+    );
+  });
+
+  it("list --parent shows only that run's children (issue #164)", async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    for (const id of ['orch-1', 'orch-1-aaa', 'orch-1-bbb', 'solo-9']) {
+      const session = await createSession(
+        store,
+        {
+          id,
+          cwd: '/repo',
+          ...(id.startsWith('orch-1-')
+            ? { parentSessionId: 'orch-1', agentId: id.slice(7) }
+            : {}),
+        },
+        BACKGROUND_CONTEXT,
+      );
+      await session.release(BACKGROUND_CONTEXT);
+    }
+    const listing = out();
+    const code = await runSessionsCommand(
+      { command: 'list', json: true, parent: 'orch-1' },
+      { sessionsRoot: root, out: listing.write },
+    );
+    expect(code).toBe(0);
+    const rows = JSON.parse(listing.lines.join('\n')) as { id: string }[];
+    expect(rows.map((row) => row.id).sort()).toEqual([
+      'orch-1-aaa',
+      'orch-1-bbb',
+    ]);
+  });
+
   it('list --json emits one {id, cwd} object per session', async () => {
     const root = tmpRoot();
     const o = out();

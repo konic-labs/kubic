@@ -1197,6 +1197,9 @@ export async function orchestrateDepsWithDefaults(
   // id it carries is the run's own. The resolver seam below derives its own
   // session id from it rather than inventing one.
   let orchestratorSessionId: string | undefined;
+  // Issue #164: in-flight manager-session ensures by run id (see
+  // createWorkerSession) — concurrent spawns share one attach-or-create.
+  const managerSessionEnsured = new Map<string, Promise<void>>();
   // Worktree creation time per agent, so a launch sample can assert the
   // §61 worktree budget alongside its own spawn/teardown legs.
   // §61 (issue #158): worktree creation duration and session attach duration
@@ -1857,6 +1860,53 @@ export async function orchestrateDepsWithDefaults(
     },
     createWorkerSession: async (input) => {
       orchestratorSessionId = input.sessionId;
+      // Issue #164 (§22–§23): the spawnAgent parent-linkage rule, enforced
+      // where sessions are actually created — a worker session id that IS
+      // the run id would parent the tree to itself.
+      if (input.workerSessionId === input.sessionId) {
+        throw new Error(
+          `spawn failed for worker '${input.agentId}': sessionId must differ from parentSessionId (parent linkage)`,
+        );
+      }
+      // The manager session record: the tree root every worker session
+      // parents to. Attach-or-create (a resumed run reuses it); a record
+      // only, never booted — its cwd is the run's repo root. Spawns admit
+      // concurrently (#206), and the Kubic lock refuses even a same-process
+      // second attach, so concurrent ensures share ONE in-flight task:
+      // the winner attaches-or-creates while the rest await it, and a
+      // failure drops the entry so the next spawn retries instead of
+      // awaiting a rejected promise forever.
+      const live = managerSessionEnsured.get(input.sessionId);
+      if (live !== undefined) {
+        await live;
+      } else {
+        const task = (async (): Promise<void> => {
+          try {
+            const manager = await attachSession(
+              sessionStore,
+              input.sessionId,
+              BACKGROUND_CONTEXT,
+            );
+            await manager.release(BACKGROUND_CONTEXT);
+          } catch (error) {
+            if (!(error instanceof SessionAttachError)) throw error;
+            const manager = await createSession(
+              sessionStore,
+              { id: input.sessionId, cwd: root ?? cwd },
+              BACKGROUND_CONTEXT,
+            );
+            await manager.release(BACKGROUND_CONTEXT);
+          }
+        })();
+        managerSessionEnsured.set(input.sessionId, task);
+        try {
+          await task;
+        } finally {
+          if (managerSessionEnsured.get(input.sessionId) === task) {
+            managerSessionEnsured.delete(input.sessionId);
+          }
+        }
+      }
       // §61 (issue #158): time the create/attach leg — the sample's attachMs.
       const attachStartedAt = Date.now();
       // Create the worker's session before the child spawns (issue #85):
@@ -1911,7 +1961,13 @@ export async function orchestrateDepsWithDefaults(
       }
       const session = await createSession(
         sessionStore,
-        { id: input.workerSessionId, cwd: input.worktree.path },
+        {
+          id: input.workerSessionId,
+          cwd: input.worktree.path,
+          parentSessionId: input.sessionId,
+          ...(input.role === undefined ? {} : { role: input.role }),
+          agentId: input.agentId,
+        },
         BACKGROUND_CONTEXT,
       );
       const id = session.id;

@@ -872,6 +872,85 @@ describe('session state permissions (issue #361)', () => {
     },
   );
 
+  describe('session ancestry (issue #164)', () => {
+    it('records parentSessionId, role and agentId on the worker session', async () => {
+      const root = tmpRoot();
+      const store = storeFor(root);
+      const parent = track(
+        await createSession(store, { cwd: '/repo' }, BACKGROUND_CONTEXT),
+      );
+      await parent.release(BACKGROUND_CONTEXT);
+      const worker = track(
+        await createSession(
+          store,
+          {
+            cwd: '/repo/.kubic/wt/aaa',
+            parentSessionId: parent.id,
+            role: 'implementer',
+            agentId: 'aaa',
+          },
+          BACKGROUND_CONTEXT,
+        ),
+      );
+      expect(worker.meta.parentSessionId).toBe(parent.id);
+      expect(worker.meta.role).toBe('implementer');
+      expect(worker.meta.agentId).toBe('aaa');
+      // The durable document carries the same linkage.
+      expect(
+        await readSessionMetadata(worker.storage, BACKGROUND_CONTEXT),
+      ).toEqual(worker.meta);
+      await worker.release(BACKGROUND_CONTEXT);
+      // The listing header carries it too, so listSessions surfaces the
+      // tree without opening any storage.
+      const listed = await listSessions(store, BACKGROUND_CONTEXT);
+      const child = listed.find((entry) => entry.id === worker.id);
+      expect(child?.meta?.parentSessionId).toBe(parent.id);
+      expect(child?.meta?.role).toBe('implementer');
+      expect(child?.meta?.agentId).toBe('aaa');
+    });
+
+    it('keeps child metadata free of parent transcript references', async () => {
+      const root = tmpRoot();
+      const store = storeFor(root);
+      const parent = track(
+        await createSession(store, { cwd: '/repo' }, BACKGROUND_CONTEXT),
+      );
+      await parent.release(BACKGROUND_CONTEXT);
+      const worker = track(
+        await createSession(
+          store,
+          {
+            cwd: '/repo/.kubic/wt/aaa',
+            parentSessionId: parent.id,
+            role: 'implementer',
+            agentId: 'aaa',
+          },
+          BACKGROUND_CONTEXT,
+        ),
+      );
+      await worker.release(BACKGROUND_CONTEXT);
+      const header = readHeader(root, worker.id);
+      for (const key of Object.keys(header)) {
+        expect(key).not.toMatch(/transcript|message|history|entries/i);
+      }
+      const value = JSON.stringify(header);
+      expect(value).not.toContain('user:');
+      expect(value).not.toContain('assistant:');
+    });
+
+    it('refuses a parentSessionId outside the session id alphabet', async () => {
+      const root = tmpRoot();
+      const store = storeFor(root);
+      await expect(
+        createSession(
+          store,
+          { cwd: '/work', parentSessionId: '../evil' },
+          BACKGROUND_CONTEXT,
+        ),
+      ).rejects.toThrow(SessionIdError);
+    });
+  });
+
   it.skipIf(process.platform === 'win32')(
     'tightens an existing loose session directory when the lock is taken',
     async () => {

@@ -206,13 +206,36 @@ describe('git wait rejection cleanup (issue #432)', () => {
         untracked += 1;
       },
     };
-    await expect(
-      runGit(context, inv(), 'git_status', ['status'], { timeoutSec: 0.05 }),
-    ).rejects.toThrow('wait blew up');
+    // A clearTimeout spy instead of a sleep: the timer runGit arms is
+    // the first one created in the window, and it must be cleared —
+    // fully deterministic, no timing margin.
+    const created: unknown[] = [];
+    const cleared: unknown[] = [];
+    const origSet = globalThis.setTimeout;
+    const origClear = globalThis.clearTimeout;
+    globalThis.setTimeout = ((...args: never[]) => {
+      const timer = (origSet as (...a: never[]) => unknown)(...args);
+      created.push(timer);
+      return timer;
+    }) as unknown as typeof globalThis.setTimeout;
+    globalThis.clearTimeout = ((timer: unknown) => {
+      cleared.push(timer);
+      (origClear as (t: unknown) => void)(timer);
+    }) as unknown as typeof globalThis.clearTimeout;
+    try {
+      await expect(
+        runGit(context, inv(), 'git_status', ['status'], {
+          timeoutSec: 0.05,
+        }),
+      ).rejects.toThrow('wait blew up');
+    } finally {
+      globalThis.setTimeout = origSet;
+      globalThis.clearTimeout = origClear;
+    }
     expect(untracked).toBe(1);
     expect(removed).toBe(1);
-    // The 50 ms timer must be gone: nothing kills after the settle.
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(created.length).toBeGreaterThan(0);
+    expect(cleared).toContain(created[0]);
     expect(kills).toBe(0);
   });
 });
@@ -309,6 +332,24 @@ describe('git clipped results carry a stat summary (issue #432)', () => {
     );
     expect(out.ok).toBe(true);
     if (out.ok) expect(out.result.stat).toContain('a.txt');
+  });
+
+  it('a throwing stat twin never fails the op', async () => {
+    // No 'git diff --stat' script: the strict fake throws on the twin
+    // (timeout/abort shape), and the op still stands without a summary.
+    const out = await callOperation(
+      'git_diff',
+      {},
+      inv(),
+      strictCtx({
+        'git diff': { exitCode: 0, stdout: big, stderr: '' },
+      }),
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.result.truncated).toBe(true);
+      expect(out.result.stat).toBe(undefined);
+    }
   });
 
   it('a failing stat query never fails the op', async () => {

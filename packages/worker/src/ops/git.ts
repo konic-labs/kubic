@@ -126,17 +126,22 @@ function capStat(out: string): string {
 }
 
 // Best-effort `--stat` twin of a clipped query (issue #432): undefined
-// when the stat query itself fails, so a summary can never fail the op.
+// when the stat query itself fails, so a summary can never fail the op —
+// a twin timeout or abort-throw degrades the same way as a non-zero exit.
 async function gitStatSummary(
   ctx: OpContext,
   inv: ToolInvocation,
   operation: string,
   statArgs: string[],
 ): Promise<string | undefined> {
-  const run = await runGit(ctx, inv, operation, statArgs);
-  if (run.exitCode !== 0) return undefined;
-  const capped = capStat(run.stdout);
-  return capped === '' ? undefined : capped;
+  try {
+    const run = await runGit(ctx, inv, operation, statArgs);
+    if (run.exitCode !== 0) return undefined;
+    const capped = capStat(run.stdout);
+    return capped === '' ? undefined : capped;
+  } catch {
+    return undefined;
+  }
 }
 
 export function notARepoError(op: string, stderr: string): OpError {

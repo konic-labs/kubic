@@ -881,6 +881,52 @@ describe('journal CLI worktree status (issue #126)', () => {
       `repo: branch main, dirty: no, root ${realpathSync(root)}`,
     );
   });
+
+  // Review gap on issue #380: the ahead/behind and conflicts branches
+  // of the repo line need a direct render pin — a mutant deleting those
+  // parts.push lines must fail.
+  it('status renders ahead/behind and conflicts on a real repository', async () => {
+    const journalDir = mkTmp('j-');
+    const origin = mkTmp('origin-');
+    execFileSync('git', ['init', '--bare', '-q', origin]);
+    const root = mkTmp('repo-');
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+    execFileSync('git', ['config', 'user.email', 't@t'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 't'], { cwd: root });
+    execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: root });
+    const commit = (name: string, content: string, message: string) => {
+      writeFileSync(join(root, name), content);
+      execFileSync('git', ['add', '--', name], { cwd: root });
+      execFileSync('git', ['commit', '-qm', message], { cwd: root });
+    };
+    commit('a.txt', 'one\n', 'first');
+    execFileSync('git', ['remote', 'add', 'origin', origin], { cwd: root });
+    execFileSync('git', ['push', '-qu', 'origin', 'main'], { cwd: root });
+    commit('b.txt', 'two\n', 'second');
+    commit('f.txt', 'base\n', 'base file');
+    execFileSync('git', ['checkout', '-qb', 'feature'], { cwd: root });
+    commit('f.txt', 'theirs\n', 'theirs');
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: root });
+    commit('f.txt', 'ours\n', 'ours');
+    try {
+      execFileSync('git', ['merge', 'feature'], {
+        cwd: root,
+        stdio: 'ignore',
+      });
+    } catch {
+      // A conflicting merge exits 1 by design; the state is the subject.
+    }
+    const lines: string[] = [];
+    const code = await runJournalCommand(
+      { command: 'status' },
+      { journalDir, root, out: (l) => lines.push(l) },
+    );
+    expect(code).toBe(0);
+    const text = lines.join('\n');
+    // Three main-side commits past the push: second, base file, ours.
+    expect(text).toContain('ahead 3, behind 0');
+    expect(text).toContain('conflicts: f.txt');
+  });
 });
 
 // Issue #126: `diff --json` carries full before/after strings, so a session

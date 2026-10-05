@@ -1632,8 +1632,23 @@ describe('unbounded settle waits (issue #431)', () => {
     await runTurn(lane, 'go');
     await vi.waitFor(() => expect(test.prepared).toEqual(['worker-1']));
     const waited = toolCall(lane, 'wait_for_agent', { agentId: 'worker-1' });
-    // Yield well past the 1ms overflow: the wait must still be pending.
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    let finished = false;
+    void waited.then(
+      () => {
+        finished = true;
+      },
+      () => {
+        finished = true;
+      },
+    );
+    // `setTimeout(Infinity)` overflows to 1ms: poll the clock past that
+    // window (load-proof — a fixed sleep flakes under L-D26 load) and
+    // require the wait to still be pending before settling it.
+    const start = Date.now();
+    await vi.waitFor(() =>
+      expect(Date.now() - start).toBeGreaterThanOrEqual(25),
+    );
+    expect(finished).toBe(false);
     test.settle('worker-1', completedResult('late work', ['late.txt']));
     await expect(waited).resolves.toBeDefined();
   });

@@ -70,6 +70,7 @@ import {
   runtimeSkillsDeps,
   runtimeStreamTuning,
   runtimeSystemPromptSection,
+  runtimeThinking,
   selectModelUnderPolicy,
   sessionRetentionDays,
 } from './config-runtime.js';
@@ -1236,5 +1237,75 @@ describe('settings skills from config (issue #237, §29.2)', () => {
     expect(row?.layer).toBe('global');
     expect(row?.value).toContain(shared);
     expect(row?.disposition).toBe('consumed');
+describe('cli thinking layer (issue #225)', () => {
+  function homeWithThinking(thinking: string): { home: string; cwd: string } {
+    const home = tmp('cli-thinking-home-');
+    const cwd = tmp('cli-thinking-cwd-');
+    mkdirSync(join(home, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(home, '.kubic', 'config.toml'),
+      `[model]\nprovider = "g"\nid = "file"\nthinking = "${thinking}"\n`,
+    );
+    return { home, cwd };
+  }
+
+  it('projects the file default with its source', () => {
+    const { home, cwd } = homeWithThinking('high');
+    const result = loadCliConfig({ cwd, home, env: {} });
+    expect(result.error).toBeUndefined();
+    expect(runtimeThinking(result)).toEqual({
+      level: 'high',
+      source: 'global',
+    });
+    expect(runtimeLaneDeps(result).thinking).toEqual({
+      level: 'high',
+      source: 'global',
+    });
+  });
+
+  it('orders --thinking > env > file', () => {
+    const { home, cwd } = homeWithThinking('high');
+    const env = loadCliConfig({
+      cwd,
+      home,
+      env: { KUBIC_MODEL_THINKING: 'low' },
+    });
+    expect(runtimeThinking(env)).toEqual({ level: 'low', source: 'env' });
+    const cli = loadCliConfig({
+      cwd,
+      home,
+      env: { KUBIC_MODEL_THINKING: 'low' },
+      thinking: 'minimal',
+    });
+    expect(runtimeThinking(cli)).toEqual({
+      level: 'minimal',
+      source: 'cli',
+    });
+  });
+
+  it('fails closed on a malformed env value, naming the variable', () => {
+    const { home, cwd } = homeWithThinking('high');
+    const result = loadCliConfig({
+      cwd,
+      home,
+      env: { KUBIC_MODEL_THINKING: 'banana' },
+    });
+    expect(result.runtime).toBeUndefined();
+    expect(result.error).toMatch(/KUBIC_MODEL_THINKING.*banana/);
+  });
+
+  it('carries the role thinking default in the lane layers (issue #225)', () => {
+    const home = tmp('cli-thinking-roles-home-');
+    const cwd = tmp('cli-thinking-roles-cwd-');
+    mkdirSync(join(home, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(home, '.kubic', 'config.toml'),
+      '[roles.reviewer]\nthinking = "low"\n',
+    );
+    const result = loadCliConfig({ cwd, home, env: {} });
+    expect(result.error).toBeUndefined();
+    expect(runtimeLaneDeps(result).roles?.layers).toEqual([
+      { layer: 'global', roles: { reviewer: { thinking: 'low' } } },
+    ]);
   });
 });

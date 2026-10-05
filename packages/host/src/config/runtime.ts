@@ -49,6 +49,7 @@ import {
   checkOutOfScopeEntries,
   checkRoleModelRef,
   checkSessionCompaction,
+  checkThinkingLevel,
   checkVerifyConfig,
   defaultLayerPaths,
   type KubicConfig,
@@ -149,7 +150,7 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   'model.thinking': {
     effect:
-      'default thinking level reported by `kubic config`; per-run override is --model',
+      'thinking level the run/tui lane boots with (clamped to the model); per-run override is --thinking, then KUBIC_MODEL_THINKING',
   },
   'model.timeoutMs': {
     effect:
@@ -348,6 +349,15 @@ export interface RuntimeModelSelection {
   thinking?: string;
 }
 
+// The effective thinking level (issue #225; §38.3) with where it came from.
+// `cli`/`env` sources are per-run overrides that beat a session's persisted
+// level; a file-layer source is the config default, which a persisted
+// session level and a role default both beat (resolved at lane boot).
+export interface RuntimeThinking {
+  level: string;
+  source: ConfigValueSource;
+}
+
 // A cli/env model pin the frozen enterprise `[model]` overrode (issue #295;
 // §35.1): reported instead of being dropped silently, so `kubic run --model x`
 // against an enterprise pin says it ran the pin, not `x`.
@@ -473,7 +483,7 @@ export interface RuntimeConfigInputs {
   // Trust gate for the project layer (§35.1). An explicit true is the
   // caller's accepted trust prompt; KUBIC_TRUST_PROJECT=1 also opts in.
   projectTrusted?: boolean;
-  cli?: { model?: RuntimeModelSelection };
+  cli?: { model?: RuntimeModelSelection; thinking?: string };
   // Session/agent layers arrive programmatically, never as files.
   session?: KubicConfig;
   agent?: KubicConfig;
@@ -498,6 +508,9 @@ export interface RuntimeConfig {
   policy: EffectivePolicy;
   model: RuntimeModelSelection | undefined;
   modelSource: ConfigValueSource;
+  // Undefined when nothing set a level: the lane then boots at the session's
+  // persisted level, a role default, or Pi's 'off'.
+  thinking: RuntimeThinking | undefined;
   approvals: RuntimeApprovals;
   permissions: RuntimePermissions;
   journal: RuntimeJournal;
@@ -558,6 +571,9 @@ export interface EffectiveConfigView {
   };
   model: RuntimeModelSelection | undefined;
   modelSource: ConfigValueSource;
+  // The effective thinking level with its source (issue #225), so
+  // `kubic config --json` reports what the lane boots with.
+  thinking: RuntimeThinking | undefined;
   modes: RuntimeModes;
   budgets: RuntimeBudgets;
   projectTrusted: boolean;
@@ -975,38 +991,63 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     envModelRaw === undefined
       ? undefined
       : parseEnvModel(envModelRaw, RUNTIME_ENV_OVERRIDES.model);
-  const envThinking = env[RUNTIME_ENV_OVERRIDES.modelThinking];
+  const envThinking = checkThinkingLevel(
+    env[RUNTIME_ENV_OVERRIDES.modelThinking],
+    RUNTIME_ENV_OVERRIDES.modelThinking,
+  );
+  const cliThinking = checkThinkingLevel(inputs.cli?.thinking, '--thinking');
   const cliModel = inputs.cli?.model;
   const fileModel = modelFrom(config);
   // §35.1: enterprise keys are frozen against every override — a lower file
   // layer, an env override, and a CLI flag included. Nothing un-sets them.
   const frozen = (key: string): boolean => loaded.sources[key] === 'enterprise';
+  // §38.3 thinking level (issue #225): --thinking > KUBIC_MODEL_THINKING >
+  // the file layers — and an enterprise level is frozen against both (an
+  // explicit flag is refused by name; the env override is not applied).
+  let thinking: RuntimeThinking | undefined;
+  const fileThinking = config.model?.thinking;
+  if (frozen('model.thinking')) {
+    if (cliThinking !== undefined) {
+      throw new ConfigError(
+        `--thinking ${JSON.stringify(cliThinking)} refused: model.thinking is frozen by the enterprise layer`,
+      );
+    }
+    thinking = { level: fileThinking as string, source: 'enterprise' };
+  } else if (cliThinking !== undefined) {
+    thinking = { level: cliThinking, source: 'cli' };
+  } else if (envThinking !== undefined) {
+    thinking = { level: envThinking, source: 'env' };
+  } else if (fileThinking !== undefined) {
+    thinking = {
+      level: fileThinking,
+      source: loaded.sources['model.thinking'] ?? 'defaults',
+    };
+  }
+  // The selected pin carries the effective level too, so `kubic config`'s
+  // "selected model … (thinking: …)" line reports what the lane boots with.
+  const withThinking = (
+    selection: RuntimeModelSelection,
+  ): RuntimeModelSelection => {
+    const pin = { provider: selection.provider, id: selection.id };
+    return thinking === undefined ? pin : { ...pin, thinking: thinking.level };
+  };
   let model: RuntimeModelSelection | undefined;
   let modelSource: ConfigValueSource;
   if (frozen('model.provider') || frozen('model.id')) {
-    model = fileModel;
+    model = fileModel === undefined ? undefined : withThinking(fileModel);
     modelSource = 'enterprise';
   } else if (cliModel !== undefined) {
-    model = cliModel;
+    model = withThinking(cliModel);
     modelSource = 'cli';
   } else if (envModel !== undefined) {
-    model =
-      envThinking === undefined
-        ? envModel
-        : { ...envModel, thinking: envThinking };
+    model = withThinking(envModel);
     modelSource = 'env';
   } else if (fileModel !== undefined) {
-    model =
-      envThinking === undefined
-        ? fileModel
-        : { ...fileModel, thinking: envThinking };
+    model = withThinking(fileModel);
     modelSource =
       loaded.sources['model.provider'] ??
       loaded.sources['model.id'] ??
       'defaults';
-  } else if (envThinking !== undefined) {
-    model = undefined;
-    modelSource = 'env';
   } else {
     model = undefined;
     modelSource = 'defaults';
@@ -1142,6 +1183,10 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   // malformed `provider/id` ref is refused by name, never carried to the lane.
   for (const [name, role] of Object.entries(config.roles ?? {})) {
     checkRoleModelRef(role.model, name);
+    // Issue #225: the programmatic session/agent layers never pass through
+    // the TOML parser — a malformed role thinking default is refused by
+    // name here, never carried to the lane.
+    checkThinkingLevel(role.thinking, `'roles.${name}': 'thinking'`);
   }
   // §48 gate commands (issue #267): re-validated for the programmatic
   // layers, which never pass through the TOML parser.
@@ -1173,12 +1218,8 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     loaded.sources['model.provider'] = 'env';
     loaded.sources['model.id'] = 'env';
   }
-  if (
-    model !== undefined &&
-    model.thinking !== undefined &&
-    envThinking !== undefined
-  ) {
-    loaded.sources['model.thinking'] = 'env';
+  if (thinking?.source === 'cli' || thinking?.source === 'env') {
+    loaded.sources['model.thinking'] = thinking.source;
   }
   if (approvals.source === 'env') loaded.sources['approvals.route'] = 'env';
   if (retentionEnvApplies) loaded.sources['journal.retentionDays'] = 'env';
@@ -1212,6 +1253,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     policy,
     model,
     modelSource,
+    thinking,
     approvals,
     permissions,
     journal,
@@ -1323,6 +1365,8 @@ export function effectiveConfigView(
     },
     model: runtime.model === undefined ? undefined : { ...runtime.model },
     modelSource: runtime.modelSource,
+    thinking:
+      runtime.thinking === undefined ? undefined : { ...runtime.thinking },
     modes: { ...runtime.modes },
     budgets: { ...runtime.budgets },
     projectTrusted: runtime.projectTrusted,
@@ -1390,6 +1434,14 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
   } else {
     lines.push(
       `selected model: first available provider (${view.modelSource}) — no model pin configured`,
+    );
+  }
+  // The effective thinking level with its source (issue #225): what the
+  // lane boots with before the model clamp. The `model.thinking` value row
+  // above names the file default; this names the winner.
+  if (view.thinking !== undefined) {
+    lines.push(
+      `thinking level: ${view.thinking.level} (${view.thinking.source})`,
     );
   }
   // An always-ask capability in autoApprove never applies (issue #324): named

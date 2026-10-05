@@ -450,6 +450,11 @@ describe('solo boot on the durable harness (issue #394)', () => {
     );
     await first.close(BACKGROUND_CONTEXT);
 
+    // Issue #225 (§38.3) supersedes store-verbatim: the lane resolves the
+    // stored level against the effective model at boot, so a level the
+    // model does not support is clamped with a named notice — never kept
+    // silently, never dropped silently.
+    const notices: string[] = [];
     const second = await bootSoloLane({
       session: handle(
         await openNodeJsonlStorage(dir, BACKGROUND_CONTEXT),
@@ -460,9 +465,13 @@ describe('solo boot on the durable harness (issue #394)', () => {
       env,
       sessionId: 'think',
       agentId: 'root',
+      onThinkingNotice: (line) => notices.push(line),
     });
     SOLOS.push(second);
     const agent = await second.conversation.agent(BACKGROUND_CONTEXT);
-    expect(agent.thinkingLevel).toBe('high');
+    expect(agent.thinkingLevel).toBe('off');
+    expect(notices).toEqual([
+      expect.stringMatching(/thinking 'high'.*clamped to 'off'/),
+    ]);
   });
 });

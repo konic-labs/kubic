@@ -17,8 +17,12 @@ import {
   DEFAULT_RESERVE_TOKENS,
   soloCompactionSettings,
 } from '../compaction.js';
-import type { EscalationLadder } from '../model-select.js';
-import { ModelSelectError, validateEscalation } from '../model-select.js';
+import type { EscalationLadder, ThinkingInputs } from '../model-select.js';
+import {
+  ModelSelectError,
+  resolveThinkingLevel,
+  validateEscalation,
+} from '../model-select.js';
 import {
   AgentDoc,
   BACKGROUND_CONTEXT,
@@ -269,6 +273,18 @@ export interface SoloBootOptions {
   // here it is written on boot; absent, a resumed session keeps its stored
   // level (and #225 becomes a config/flag issue only).
   thinkingLevel?: ModelThinkingLevel;
+  // Issue #225 (§38.3): the lane's thinking-level request. `override` is a
+  // per-run level (cli `--thinking` / `KUBIC_MODEL_THINKING`, source named);
+  // `role` is the `[roles.<name>] thinking` default; `config` is the
+  // `[model].thinking` file default with its layer. `persisted` is never
+  // passed — the lane reads the session's stored level itself, so the
+  // precedence (override > session > role > config) holds on attach too.
+  // An explicit `thinkingLevel` above is the same level as `override`.
+  thinking?: Omit<ThinkingInputs, 'persisted'>;
+  // The one-line clamp notice for the resolved level (issue #225): a
+  // request the model does not support is never silently rewritten.
+  // Absent means `onModelNotice` — both name stderr on `kubic run`.
+  onThinkingNotice?: (line: string) => void;
   // Harness-wide run policy (retry, stream, toolExecution, steering/follow
   // up). Compaction is NOT passable: it is built from `compaction` through
   // soloCompactionSettings so the Kubic clamp cannot be bypassed. Extension
@@ -651,15 +667,38 @@ export async function bootSoloLane(
     }),
   );
 
+  // Issue #225 (§38.3): resolve the thinking request against the session's
+  // stored level and clamp it to the EFFECTIVE model (the #148 rule above
+  // may keep the session's own model, so clamping to the selection would
+  // answer for the wrong model). A clamp is never silent.
+  const resolvedThinking = resolveThinkingLevel(effectiveModel, {
+    ...(options.thinking === undefined ? {} : options.thinking),
+    // The explicit level is the same level as `override`, and wins over
+    // it: one variable, two spellings, no silent double application.
+    ...(options.thinkingLevel === undefined
+      ? {}
+      : {
+          override: {
+            level: options.thinkingLevel,
+            source: 'override',
+          },
+        }),
+    persisted: storedAgent?.thinkingLevel ?? null,
+  });
+  if (resolvedThinking.notice !== undefined) {
+    (options.onThinkingNotice ?? options.onModelNotice)?.(
+      resolvedThinking.notice,
+    );
+  }
   // Model and thinking level are one durable agent change; unset fields
   // keep their stored value (a resumed session keeps its stored level).
   // The offered tools follow below (class policy, then role narrowing).
   await conversation.configure(
     {
       model: { provider: effectiveModel.provider, modelId: effectiveModel.id },
-      ...(options.thinkingLevel === undefined
+      ...(resolvedThinking.source === 'default'
         ? {}
-        : { thinkingLevel: options.thinkingLevel }),
+        : { thinkingLevel: resolvedThinking.level }),
     },
     context,
   );

@@ -376,6 +376,25 @@ describe('kubic run', () => {
     );
   });
 
+  // Issue #225: `--thinking` is the same kind of input as `--model` — a
+  // config-layer value dispatch pre-scans, never a runner option — so the
+  // runner input carries no trace of it, and a malformed level is
+  // commander's exit 2 with the levels named, never a silent default.
+  it('accepts the config-layer --thinking flag without copying it into the runner options', async () => {
+    expect(
+      (await kubic(['run', '-p', 'hi', '--thinking', 'high'])).calls,
+    ).toEqual([{ key: 'run', input: { prompt: 'hi' } }]);
+  });
+
+  it('refuses a malformed --thinking value with commander exit 2', async () => {
+    expect(
+      await usageError(['run', '-p', 'hi', '--thinking', 'banana']),
+    ).toContain("unknown thinking level 'banana'");
+    expect(await usageError(['run', '-p', 'hi', '--thinking'])).toContain(
+      'argument missing',
+    );
+  });
+
   it('refuses an empty prompt', async () => {
     expect(await usageError(['run', '--prompt='])).toContain(
       'the prompt is empty',

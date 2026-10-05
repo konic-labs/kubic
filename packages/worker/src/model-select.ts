@@ -10,6 +10,7 @@
 // + `pi.agent` (issue #225), never a sidecar — attach restores it from
 // the storage, so save/loadThinkingLevel were deleted (issue #216).
 
+import { isThinkingLevel, THINKING_LEVELS } from './models-config.js';
 import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
@@ -71,6 +72,18 @@ export function selectModel(
       ? 'no models available: register a provider first'
       : "no models available: register a provider first (set a built-in provider's env key, e.g. ANTHROPIC_API_KEY, or add models.json)",
   );
+}
+
+// The `--thinking <level>` value rule (issue #225): the level vocabulary is
+// the shared one, so `--thinking banana` is refused by name with the levels
+// that exist — the same wording `/thinking` uses (tui-run.ts).
+export function parseThinkingFlag(flag: string): ModelThinkingLevel {
+  if (!isThinkingLevel(flag)) {
+    throw new ModelSelectError(
+      `unknown thinking level '${flag}' (levels: ${THINKING_LEVELS.join(', ')})`,
+    );
+  }
+  return flag;
 }
 
 export function parseModelFlag(flag: string): ModelSelection {
@@ -157,4 +170,65 @@ export function clampThinking(
   level: ModelThinkingLevel,
 ): ModelThinkingLevel {
   return clampThinkingLevel(model, level);
+}
+
+// A requested level with the name of whoever requested it: 'cli'/'env'/
+// 'enterprise' for a per-run override, a config layer name otherwise.
+export interface ThinkingRequest {
+  level: string;
+  source: string;
+}
+
+export interface ThinkingInputs {
+  // A per-run override (--thinking, KUBIC_MODEL_THINKING, or an enterprise
+  // freeze): beats everything, including the session's persisted level.
+  override?: ThinkingRequest;
+  // The level the session recorded at its last boot (restored on attach).
+  persisted?: ModelThinkingLevel | null;
+  // The role's `thinking` default (`[roles.<name>] thinking`).
+  role?: string;
+  // `[model] thinking` from the config file layers.
+  config?: ThinkingRequest;
+}
+
+export interface ResolvedThinking {
+  // What the lane boots with — always one of the model's supported levels.
+  level: ModelThinkingLevel;
+  // cli | env | enterprise | session | role | <config layer> | default
+  source: string;
+  // Present when the requested level was clamped: names the model, the
+  // request and the level applied instead.
+  notice?: string;
+}
+
+// §38.3 (issue #225): pick the requested level by precedence
+// override > session > role > config, then clamp it to what the model
+// supports. Pi owns the support map; an unsupported request is never
+// silently rewritten — the notice says what happened.
+export function resolveThinkingLevel(
+  model: AnyModel,
+  inputs: ThinkingInputs,
+): ResolvedThinking {
+  const request: ThinkingRequest | undefined =
+    inputs.override ??
+    (inputs.persisted === undefined || inputs.persisted === null
+      ? undefined
+      : { level: inputs.persisted, source: 'session' }) ??
+    (inputs.role === undefined
+      ? undefined
+      : { level: inputs.role, source: 'role' }) ??
+    inputs.config;
+  if (request === undefined) return { level: 'off', source: 'default' };
+  if (!isThinkingLevel(request.level)) {
+    throw new ModelSelectError(
+      `thinking level ${JSON.stringify(request.level)} (${request.source}) is not one of the known levels`,
+    );
+  }
+  const level = clampThinkingLevel(model, request.level);
+  if (level === request.level) return { level, source: request.source };
+  return {
+    level,
+    source: request.source,
+    notice: `thinking '${request.level}' (${request.source}) is not supported by ${model.provider}/${model.id}; clamped to '${level}' (supported: ${getSupportedThinkingLevels(model).join(', ')})`,
+  };
 }

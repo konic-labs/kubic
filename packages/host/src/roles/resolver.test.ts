@@ -156,6 +156,22 @@ describe('mergeRoleLayers', () => {
     // No layer sets one: the merge invents nothing.
     expect(mergeRoleLayers(doc, []).model).toBeUndefined();
   });
+
+  it('thinking defaults merge first-wins; attempts are reported (issue #225)', () => {
+    const doc = parseRoleDocument(PLANNER_MD);
+    const merged = mergeRoleLayers(doc, [
+      { layer: 'agent', roles: { planner: { thinking: 'low' } } },
+      { layer: 'enterprise', roles: { planner: { thinking: 'high' } } },
+    ]);
+    expect(merged.thinking).toBe('high');
+    expect(merged.overriddenAttempts).toContain('roles.planner.thinking');
+    expect(mergeRoleLayers(doc, []).thinking).toBeUndefined();
+    expect(
+      resolveRole(parseRoleDocument(PLANNER_MD), [
+        { layer: 'project', roles: { planner: { thinking: 'medium' } } },
+      ]).thinking,
+    ).toBe('medium');
+  });
 });
 
 describe('resolveRole', () => {

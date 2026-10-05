@@ -610,6 +610,98 @@ describe('runtime config load (issue #90)', () => {
   });
 });
 
+describe('thinking level load (issue #225; §38.3)', () => {
+  const MODEL_HIGH =
+    '[model]\nprovider = "local"\nid = "llama3"\nthinking = "high"\n';
+
+  it('resolves --thinking > env > file, and the pin carries it', () => {
+    const file = load({ [PROJECT]: MODEL_HIGH }, { projectTrusted: true });
+    expect(file.thinking).toEqual({ level: 'high', source: 'project' });
+    expect(file.model).toMatchObject({ thinking: 'high' });
+
+    const env = load(
+      { [PROJECT]: MODEL_HIGH },
+      {
+        projectTrusted: true,
+        env: { [RUNTIME_ENV_OVERRIDES.modelThinking]: 'low' },
+      },
+    );
+    expect(env.thinking).toEqual({ level: 'low', source: 'env' });
+    expect(env.model).toMatchObject({
+      provider: 'local',
+      id: 'llama3',
+      thinking: 'low',
+    });
+
+    const cli = load(
+      { [PROJECT]: MODEL_HIGH },
+      {
+        projectTrusted: true,
+        env: { [RUNTIME_ENV_OVERRIDES.modelThinking]: 'low' },
+        cli: { thinking: 'minimal' },
+      },
+    );
+    expect(cli.thinking).toEqual({ level: 'minimal', source: 'cli' });
+    expect(cli.model).toMatchObject({ thinking: 'minimal' });
+  });
+
+  it('keeps an env-only level without inventing a model pin', () => {
+    const runtime = load(
+      {},
+      {
+        projectTrusted: true,
+        env: { [RUNTIME_ENV_OVERRIDES.modelThinking]: 'low' },
+      },
+    );
+    expect(runtime.model).toBeUndefined();
+    expect(runtime.thinking).toEqual({ level: 'low', source: 'env' });
+  });
+
+  it('refuses a malformed env value fail-closed, naming the variable', () => {
+    expect(() =>
+      load(
+        {},
+        {
+          projectTrusted: true,
+          env: { [RUNTIME_ENV_OVERRIDES.modelThinking]: 'banana' },
+        },
+      ),
+    ).toThrow(/KUBIC_MODEL_THINKING.*banana/);
+  });
+
+  it('refuses a malformed --thinking value fail-closed, naming the flag', () => {
+    expect(() =>
+      load({}, { projectTrusted: true, cli: { thinking: 'banana' } }),
+    ).toThrow(/--thinking.*banana/);
+  });
+
+  it('freezes an enterprise level against the flag; the env override is not applied', () => {
+    const files = {
+      '/etc/kubic/config.toml': MODEL_HIGH,
+      [PROJECT]: '[model]\nprovider = "local"\nid = "llama3"\n',
+    };
+    const frozen = load(files, { projectTrusted: true });
+    expect(frozen.thinking).toEqual({ level: 'high', source: 'enterprise' });
+    expect(() =>
+      load(files, { projectTrusted: true, cli: { thinking: 'low' } }),
+    ).toThrow(/--thinking.*frozen by the enterprise layer/);
+    const envIgnored = load(files, {
+      projectTrusted: true,
+      env: { [RUNTIME_ENV_OVERRIDES.modelThinking]: 'low' },
+    });
+    expect(envIgnored.thinking).toEqual({
+      level: 'high',
+      source: 'enterprise',
+    });
+  });
+
+  it('names --thinking (not --model) as the per-run override', () => {
+    const text = runtimeKeyEffectText(RUNTIME_KEY_EFFECTS['model.thinking']);
+    expect(text).toContain('--thinking');
+    expect(text).not.toContain('--model');
+  });
+});
+
 describe('effective config view (issue #90)', () => {
   it('reports every value with the layer it came from, machine-readable', () => {
     const runtime = load(

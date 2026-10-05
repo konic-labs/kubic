@@ -61,7 +61,10 @@ import {
   type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
-import type { RuntimeOrchestrator } from '../../../packages/host/src/config/runtime.js';
+import type {
+  RuntimeOrchestrator,
+  RuntimeThinking,
+} from '../../../packages/host/src/config/runtime.js';
 import {
   FAUX_FOOTER,
   FAUX_MODEL_ID,
@@ -1145,6 +1148,12 @@ export interface TuiRunOptions {
   // — the session override (`/model`, the same level as `--model`, §38.1)
   // cannot leave it, exactly as the flag cannot.
   modelPinFrozen?: boolean;
+  // §38.3 thinking level (issue #225): the effective level with its source
+  // (`--thinking` > `KUBIC_MODEL_THINKING` > file layers), from the SAME
+  // runtimeThinking projection `kubic run` consumes. The boot resolves it
+  // against the session's stored level and the role default and clamps it
+  // to the effective model — a clamp is never silent.
+  thinking?: RuntimeThinking;
   // Issue #327: the config `[orchestrator]` projection (worktree parent and
   // worker cap) the interactive drive hands the manager lane, and the
   // approval snapshot a delegated conflict resolver runs under.
@@ -1591,12 +1600,44 @@ export async function bootTuiLane(
         ? undefined
         : options.streamTuning?.roles?.[options.role],
     );
+    // Issue #225 (§38.3): the same request shape as `kubic run` — a
+    // per-run source is the override, a file-layer source the config
+    // default, and the role default loses to the session's stored level.
+    // A clamp joins the model notices: it names the model, the request
+    // and the level applied, and the footer line says the same thing.
+    const requestThinking = options.thinking;
+    const roleThinking = selectedRole?.resolved.thinking;
     const booted = await bootSoloLane({
       session,
       models,
       model,
       modelPolicy: explicitModel ? 'selected' : 'stored',
       onModelNotice: (line) => modelNotices.push(line),
+      onThinkingNotice: (line) => modelNotices.push(line),
+      ...(requestThinking === undefined && roleThinking === undefined
+        ? {}
+        : {
+            thinking: {
+              ...(requestThinking === undefined
+                ? {}
+                : requestThinking.source === 'cli' ||
+                    requestThinking.source === 'env' ||
+                    requestThinking.source === 'enterprise'
+                  ? {
+                      override: {
+                        level: requestThinking.level,
+                        source: requestThinking.source,
+                      },
+                    }
+                  : {
+                      config: {
+                        level: requestThinking.level,
+                        source: requestThinking.source,
+                      },
+                    }),
+              ...(roleThinking === undefined ? {} : { role: roleThinking }),
+            },
+          }),
       env,
       sessionId: id,
       agentId: options.agentId ?? 'root',
@@ -2368,6 +2409,10 @@ export function tuiBootOptions(
     // and the `[roles.<name>]` layers `--role` merges under the document.
     agentId: provided.agentId,
     roles: provided.roles,
+    // Issue #225 (§38.3): the effective thinking level with its source
+    // (`--thinking` > `KUBIC_MODEL_THINKING` > file layers) — the lane
+    // resolves it against the session's stored level and the role default.
+    thinking: provided.thinking,
     model: provided.model,
     // §58 enterprise policy (issue #288): the role-grant, model and tool
     // gates of the interactive boot all read this one object.

@@ -747,6 +747,15 @@ describe('config validation hardening (issue #69)', () => {
     );
   });
 
+  it('parses [roles.<name>] thinking, refusing unknown levels by name (issue #225)', () => {
+    expect(
+      parseTomlConfig('[roles.a]\nthinking = "high"\n').roles?.a?.thinking,
+    ).toBe('high');
+    expect(() => parseTomlConfig('[roles.a]\nthinking = "ultra"\n')).toThrow(
+      /'roles\.a': 'thinking' must be one of/,
+    );
+  });
+
   it('rejects negative numbers and non-string role tools', () => {
     expect(() => parseTomlConfig('[journal]\nretentionDays = -1\n')).toThrow(
       /non-negative number/,

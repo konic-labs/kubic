@@ -17,6 +17,7 @@ function runtime(): RuntimeConfig {
     policy: resolveEffectivePolicy([]).policy,
     model: { provider: 'local', id: 'llama3' },
     modelSource: 'global',
+    thinking: undefined,
     approvals: {
       policy: {
         route: 'deny',

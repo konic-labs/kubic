@@ -44,6 +44,7 @@ import {
   effectiveConfigView,
   loadRuntimeConfig,
   type RuntimeConfig,
+  type RuntimeThinking,
   type RuntimeVerify,
 } from '../../../packages/host/src/config/runtime.js';
 import {
@@ -125,6 +126,13 @@ export interface CliConfigOptions {
    * mutation that could bypass the freeze.
    */
   model?: ModelSelection;
+  /**
+   * The `--thinking` session override (issue #225; §38.3): the `cli` layer
+   * of the same ONE load, above `KUBIC_MODEL_THINKING` and the file
+   * layers. Same freeze rule as `--model` — an input to the load, never a
+   * post-load patch.
+   */
+  thinking?: string;
 }
 
 // The §35/§91 runtime exclude entries for a worktree parent (issue #133):
@@ -237,13 +245,22 @@ export function loadCliConfig(options: CliConfigOptions = {}): CliConfigResult {
   const trusted = options.projectTrusted === true || stored.trusted;
   const trust = trusted === stored.trusted ? stored : { ...stored, trusted };
   try {
+    const cli =
+      options.model === undefined && options.thinking === undefined
+        ? undefined
+        : {
+            ...(options.model === undefined ? {} : { model: options.model }),
+            ...(options.thinking === undefined
+              ? {}
+              : { thinking: options.thinking }),
+          };
     const runtime = loadRuntimeConfig({
       bridge,
       home,
       cwd,
       projectRoot,
       env,
-      ...(options.model === undefined ? {} : { cli: { model: options.model } }),
+      ...(cli === undefined ? {} : { cli }),
       projectTrusted: trusted,
     });
     return { runtime, error: undefined, ignoreSplit, projectRoot, trust };
@@ -639,10 +656,12 @@ export function runtimeRunDeps(result: CliConfigResult): {
 // two one-line consumers — `kubic run` (headless-run.ts) and `kubic tui`
 // (tui-run.ts) — so both entry points name the lane and layer the roles
 // identically. Absent means the shipped behaviour: agent id 'root', no
-// layers.
+// layers. Issue #225 adds the effective thinking level with its source, which
+// the lane resolves against the session's record and the role default.
 export function runtimeLaneDeps(result: CliConfigResult): {
   agentId?: string;
   roles?: { layers: RoleLayerInput[]; trustProject: ProjectTrustCheck };
+  thinking?: RuntimeThinking;
 } {
   const runtime = result.runtime;
   if (runtime === undefined) return {};
@@ -658,6 +677,9 @@ export function runtimeLaneDeps(result: CliConfigResult): {
     // Always present (even with no layers): the trust check travels on
     // `roles` so callers never default to an untrusted load.
     roles: { layers, trustProject },
+    ...(runtime.thinking === undefined
+      ? {}
+      : { thinking: { ...runtime.thinking } }),
   };
 }
 
@@ -682,6 +704,18 @@ export function runtimeSkillsDeps(result: CliConfigResult): {
     }
   }
   return { settingsSkills: [...skills] };
+}
+
+// The effective thinking level (issue #225; §38.3) with its source — the
+// per-run override the run/tui lane boots with, resolved once at load
+// (`--thinking` > `KUBIC_MODEL_THINKING` > file layers, enterprise-frozen).
+// Undefined when nothing set a level: the lane then boots at the session's
+// persisted level, a role default, or Pi's 'off'.
+export function runtimeThinking(
+  result: CliConfigResult,
+): RuntimeThinking | undefined {
+  const thinking = result.runtime?.thinking;
+  return thinking === undefined ? undefined : { ...thinking };
 }
 
 // The config `[roles.<name>]` table as resolver layer inputs (issue #133):
@@ -716,6 +750,12 @@ export function roleLayersFromConfig(runtime: RuntimeConfig): RoleLayerInput[] {
         runtime.sources[`roles.${name}.model`] === layer
       ) {
         spec.model = entry.model;
+      }
+      if (
+        entry.thinking !== undefined &&
+        runtime.sources[`roles.${name}.thinking`] === layer
+      ) {
+        spec.thinking = entry.thinking;
       }
       if (Object.keys(spec).length > 0) specs[name] = spec;
     }

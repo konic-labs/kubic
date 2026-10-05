@@ -134,6 +134,10 @@ export interface RoleConfig {
   // Issue #196 (§41.1): tool names that always require approval under
   // this role — forwarded to the resolver layers like `tools`.
   requires?: string[];
+  // §12.1/§63 per-role thinking default (issue #225): one of
+  // THINKING_LEVELS, below the session-persisted level and above
+  // `[model].thinking` in the lane's resolution.
+  thinking?: string;
 }
 
 export interface OrchestratorConfig {
@@ -1092,6 +1096,22 @@ export function checkRoleModelRef(
   return value;
 }
 
+// One thinking-level rule for every spelling of it (issue #225): the
+// `[model]` and `[roles.*]` keys, KUBIC_MODEL_THINKING and --thinking all
+// refuse a value outside THINKING_LEVELS by the name the operator used.
+export function checkThinkingLevel(
+  value: string | undefined,
+  label: string,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (!(THINKING_LEVELS as readonly string[]).includes(value)) {
+    throw new ConfigError(
+      `${label} must be one of ${THINKING_LEVELS.join(', ')} (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
 // Shared by the TOML parser and the programmatic session/agent layers
 // (runtime.ts), which never pass through the parser: a blank or non-string
 // command and a non-positive or fractional timeout are refused by name.
@@ -1360,15 +1380,10 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
     );
     const provider = reqString(model, 'provider', 'model', true);
     const id = reqString(model, 'id', 'model', true);
-    const thinking = reqString(model, 'thinking', 'model', true);
-    if (
-      thinking !== undefined &&
-      !(THINKING_LEVELS as readonly string[]).includes(thinking)
-    ) {
-      throw new ConfigError(
-        `'model': 'thinking' must be one of ${THINKING_LEVELS.join(', ')}`,
-      );
-    }
+    const thinking = checkThinkingLevel(
+      reqString(model, 'thinking', 'model', true),
+      "'model': 'thinking'",
+    );
     config.model = {
       ...(provider === undefined ? {} : { provider }),
       ...(id === undefined ? {} : { id }),
@@ -1487,6 +1502,7 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
           'model',
           'tools',
           'requires',
+          'thinking',
           'timeoutMs',
           'maxRetries',
           'maxRetryDelayMs',
@@ -1497,10 +1513,15 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
       const modelRef = checkRoleModelRef(spec.model, name);
       const tools = optStringArray(spec, 'tools', `roles.${name}`);
       const requires = optStringArray(spec, 'requires', `roles.${name}`);
+      const thinking = checkThinkingLevel(
+        reqString(spec, 'thinking', `roles.${name}`, true),
+        `'roles.${name}': 'thinking'`,
+      );
       parsed[name] = {
         ...(modelRef === undefined ? {} : { model: modelRef }),
         ...(tools === undefined ? {} : { tools }),
         ...(requires === undefined ? {} : { requires }),
+        ...(thinking === undefined ? {} : { thinking }),
         ...checkModelStreamTuning(spec, `roles.${name}`),
       };
     }

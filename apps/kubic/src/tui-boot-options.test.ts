@@ -79,6 +79,20 @@ describe('tuiBootOptions (issue #227)', () => {
     expect('model' in options).toBe(false);
   });
 
+  it('forwards the effective thinking level with its source (issue #225)', () => {
+    const options = tuiBootOptions(
+      { out: () => {}, thinking: { level: 'high', source: 'cli' } },
+      undefined,
+      undefined,
+    );
+    expect(options.thinking).toEqual({ level: 'high', source: 'cli' });
+    // Absent means absent: no key, so the boot resolves the session
+    // record, the role default, or Pi's default instead.
+    expect(
+      'thinking' in tuiBootOptions({ out: () => {} }, undefined, undefined),
+    ).toBe(false);
+  });
+
   it('forwards the answer seat and the parsed parity flags', () => {
     const answer = async () => undefined;
     const options = tuiBootOptions(

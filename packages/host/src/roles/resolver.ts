@@ -305,6 +305,8 @@ export interface RoleLayerSpec {
   // shape `[roles.<name>].model` declares. The role document itself has no
   // model key — the layers are where a model pin comes from.
   model?: string;
+  // The layer's per-role thinking default (issue #225; §12.1/§63).
+  thinking?: string;
 }
 
 export interface RoleLayerInput {
@@ -327,6 +329,7 @@ export interface MergedRole {
   // Issue #198 (§71): the document's own budget dims, if it declares
   // any — no layer tier exists, so this passes through untouched.
   budget?: Record<string, number>;
+  thinking: string | undefined;
   overriddenAttempts: string[];
 }
 
@@ -357,6 +360,7 @@ export function mergeRoleLayers(
   // document's list plus every layer's, deduped and sorted for a
   // deterministic grant. A layer can add obligations, never remove them.
   const required = new Set<string>(doc.requires ?? []);
+  let thinking: string | undefined;
   const classLeaves = new Map<string, unknown>();
   for (const input of ordered) {
     const spec = input.roles[doc.name];
@@ -377,6 +381,14 @@ export function mergeRoleLayers(
     }
     if (spec.requires !== undefined) {
       for (const tool of spec.requires) required.add(tool);
+    }
+    if (spec.thinking !== undefined) {
+      if (thinking === undefined) {
+        thinking = spec.thinking;
+      } else if (thinking !== spec.thinking) {
+        overriddenAttempts.push(`roles.${doc.name}.thinking`);
+      }
+    }
     }
     if (spec.classes !== undefined) {
       for (const key of CLASS_ORDER) {
@@ -410,6 +422,7 @@ export function mergeRoleLayers(
     ...(doc.description === undefined ? {} : { description: doc.description }),
     model,
     ...(doc.budget === undefined ? {} : { budget: { ...doc.budget } }),
+    thinking,
     overriddenAttempts,
   };
 }
@@ -454,6 +467,8 @@ export interface ResolvedRole {
   // Issue #198 (§71): the document's own budget dims, if it declares
   // any — no layer tier exists, so this passes through untouched.
   budget?: Record<string, number>;
+  // The layer-supplied thinking default (issue #225), or undefined.
+  thinking: string | undefined;
   overriddenAttempts: string[];
 }
 
@@ -488,6 +503,7 @@ export function resolveRole(
       : { description: merged.description }),
     model: merged.model,
     ...(merged.budget === undefined ? {} : { budget: merged.budget }),
+    thinking: merged.thinking,
     overriddenAttempts: merged.overriddenAttempts,
   };
   const toolPolicy = options.toolPolicy;

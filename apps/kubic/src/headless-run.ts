@@ -59,7 +59,10 @@ import {
   type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
-import type { RuntimeVerify } from '../../../packages/host/src/config/runtime.js';
+import type {
+  RuntimeThinking,
+  RuntimeVerify,
+} from '../../../packages/host/src/config/runtime.js';
 import {
   matchableSecrets,
   redactBridgeWrites,
@@ -312,6 +315,13 @@ export interface HeadlessRunDeps {
   // in the worktree after the run settles; their verdicts become the
   // trajectory's `signal:*` labels. Absent means nothing is verified.
   verify?: RuntimeVerify;
+  // §38.3 thinking level (issue #225), from `runtimeLaneDeps` via
+  // prodRunDeps: the effective level with its source. A per-run source
+  // (`cli` `--thinking` / `env` `KUBIC_MODEL_THINKING`, enterprise-frozen
+  // included) is the lane's override; a file-layer source is the lane's
+  // config default. Absent means the lane boots at the session's stored
+  // level, a role default, or Pi's 'off'.
+  thinking?: RuntimeThinking;
   // The installed-policy seat (issue #86). Absent means the shipped
   // DEFAULT: the documented SOLO_DEFAULTS classes plus the destructive/
   // network/confine guards and the approval ask, all derived by
@@ -820,6 +830,10 @@ interface RunCapture {
   sessionId?: string;
   cwd?: string;
   model?: { provider: string; id: string };
+  // §38.3 (issue #225): the thinking level the lane actually booted with
+  // (post-clamp) — the trajectory names the applied level, the same source
+  // as the envelope, never the request that may have been clamped.
+  thinking?: string;
   role?: string;
   /** §67 (issue #191): the manager's task, when this run was handed one. */
   task?: AgentTask;
@@ -1052,6 +1066,7 @@ export async function runHeadlessPrompt(
           }),
       entries: capture.entries,
       ...(capture.model === undefined ? {} : { model: capture.model }),
+      ...(capture.thinking === undefined ? {} : { thinking: capture.thinking }),
       cwd: cwd ?? process.cwd(),
       skills: capture.skills,
       startedAt: capture.startedAt,
@@ -2086,6 +2101,38 @@ async function runHeadlessPromptImpl(
         ? undefined
         : deps.streamTuning?.roles?.[streamRoleName],
     );
+    // Issue #225 (§38.3): the lane's thinking request. A per-run source
+    // (cli `--thinking` / env `KUBIC_MODEL_THINKING`, enterprise-frozen
+    // included) is the override and beats the session's stored level; a
+    // file-layer source is the config default the stored level and the
+    // role default beat. The lane reads the stored level itself and clamps
+    // to the effective model — the notice channel stays the model's (a
+    // clamp names the model, the request, and the level applied).
+    const requestThinking = deps.thinking;
+    const roleThinking = role?.resolved.thinking;
+    const laneThinking =
+      requestThinking === undefined && roleThinking === undefined
+        ? undefined
+        : {
+            ...(requestThinking === undefined
+              ? {}
+              : requestThinking.source === 'cli' ||
+                  requestThinking.source === 'env' ||
+                  requestThinking.source === 'enterprise'
+                ? {
+                    override: {
+                      level: requestThinking.level,
+                      source: requestThinking.source,
+                    },
+                  }
+                : {
+                    config: {
+                      level: requestThinking.level,
+                      source: requestThinking.source,
+                    },
+                  }),
+            ...(roleThinking === undefined ? {} : { role: roleThinking }),
+          };
     try {
       solo = await bootSoloLane({
         session,
@@ -2093,6 +2140,7 @@ async function runHeadlessPromptImpl(
         model,
         modelPolicy: explicitModel ? 'selected' : 'stored',
         onModelNotice: notice,
+        ...(laneThinking === undefined ? {} : { thinking: laneThinking }),
         env,
         sessionId: id,
         agentId: resolveRunAgentId(deps.agentId),
@@ -2212,6 +2260,13 @@ async function runHeadlessPromptImpl(
     // reports) — the §60 rows name this, not the pre-boot pick.
     liveThinkingRef =
       (await solo.conversation.agent(context)).thinkingLevel ?? 'off';
+    // Issue #225 (§38.3): what the lane booted with (post-clamp), read
+    // from the committed agent doc — the same source the envelope reports.
+    // Unset stays unset: the trajectory omits the key rather than
+    // inventing a level the lane never committed.
+    const bootedThinking = (await solo.conversation.agent(context))
+      .thinkingLevel;
+    if (bootedThinking !== undefined) capture.thinking = bootedThinking;
     report.model = await liveModelId(solo, context);
     // §71 (issue #208) + the turn guard: one event subscription per
     // conversation (#398) feeds the budget meter's usage half and counts the

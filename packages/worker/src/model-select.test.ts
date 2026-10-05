@@ -6,6 +6,8 @@ import {
   clampThinking,
   type EscalationLadder,
   escalateModel,
+  parseThinkingFlag,
+  resolveThinkingLevel,
   selectModel,
   supportedThinking,
 } from './model-select.js';
@@ -76,5 +78,75 @@ describe('model selection + escalation + thinking (issue #20, slice B)', () => {
     expect(Array.isArray(levels)).toBe(true);
     const clamped = clampThinking(models, model, 'max');
     expect(levels.includes(clamped)).toBe(true);
+  });
+});
+
+describe('thinking level resolution at lane boot (issue #225; §38.3)', () => {
+  function reasoningModel() {
+    const models = createModels();
+    const faux = fauxProvider({
+      provider: 'think',
+      models: [{ id: 'deep', reasoning: true }],
+    });
+    models.setProvider(faux.provider);
+    return selectModel(models, { provider: 'think', id: 'deep' });
+  }
+
+  it('orders override > session > role > config', () => {
+    const model = reasoningModel();
+    const config = { level: 'high', source: 'project' };
+    expect(
+      resolveThinkingLevel(model, {
+        override: { level: 'minimal', source: 'cli' },
+        persisted: 'low',
+        role: 'medium',
+        config,
+      }),
+    ).toMatchObject({ level: 'minimal', source: 'cli' });
+    expect(
+      resolveThinkingLevel(model, {
+        persisted: 'low',
+        role: 'medium',
+        config,
+      }),
+    ).toMatchObject({ level: 'low', source: 'session' });
+    expect(
+      resolveThinkingLevel(model, { role: 'medium', config }),
+    ).toMatchObject({ level: 'medium', source: 'role' });
+    expect(resolveThinkingLevel(model, { config })).toMatchObject({
+      level: 'high',
+      source: 'project',
+    });
+    expect(resolveThinkingLevel(model, {})).toEqual({
+      level: 'off',
+      source: 'default',
+    });
+  });
+
+  it('clamps an unsupported level with a named notice', () => {
+    const models = modelsWithFaux();
+    const model = selectModel(models, undefined);
+    const resolved = resolveThinkingLevel(model, {
+      config: { level: 'high', source: 'project' },
+    });
+    expect(resolved.level).toBe('off');
+    expect(resolved.notice).toMatch(/thinking 'high'.*clamped to 'off'/);
+    expect(resolved.notice).toContain(`${model.provider}/${model.id}`);
+  });
+
+  it('refuses an unknown level by name, never silently', () => {
+    const model = reasoningModel();
+    expect(() =>
+      resolveThinkingLevel(model, {
+        override: { level: 'banana', source: 'KUBIC_MODEL_THINKING' },
+      }),
+    ).toThrow(/"banana".*KUBIC_MODEL_THINKING/);
+  });
+
+  it('parses --thinking against the known levels (issue #225)', () => {
+    expect(parseThinkingFlag('high')).toBe('high');
+    expect(() => parseThinkingFlag('banana')).toThrow(
+      /unknown thinking level 'banana'/,
+    );
   });
 });

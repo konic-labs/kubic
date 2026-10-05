@@ -66,7 +66,7 @@ with the hint above (L-D7). Solo mode runs in-process with your user authority: 
 isolation, no containment — approvals plus the journal are the controls.
 Orchestrator mode (`orchestrate`) is opt-in — `run` never delegates.
 
-## `kubic run [-p] <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--model <provider/id>] [--skill <path>]... [--invoke-skill <name>] [--no-skills] [--tools <a,b,...>] [--no-tools] [--budget <dims>] [--debug] [--autonomous] [--json] [--dangerously-skip-approvals]`
+## `kubic run [-p] <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--model <provider/id>] [--thinking <level>] [--skill <path>]... [--invoke-skill <name>] [--no-skills] [--tools <a,b,...>] [--no-tools] [--budget <dims>] [--debug] [--autonomous] [--json] [--dangerously-skip-approvals]`
 
 Non-interactive solo run: no alt-screen, no prompt, consumable output.
 
@@ -78,6 +78,7 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | `--max-turns <n>` | Optional turn bound (positive integer). A turn is one committed model response, counted from the lane's own usage events; durable provider retries the harness performs inside a turn are not turns. Exceeding the bound ends the run `budget_exhausted` (exit 3) with the same abort-and-drain path as `--timeout`. Unset means no turn bound — the wall clock is the only limit. |
 | `--role <name>` | Boot as a §12 role: the `.kubic/roles/<name>.md` document when the workspace has one, else the preset of that name embedded in the binary (issue #203). The document's prompt text, tool set and model pin apply either way. A project document loads only for a trusted project root (issue #430, §33 — same gate as project skills): untrusted, `--role` naming it refuses with the trust message and `kubic doctor` warns what trust would unlock. The document may declare a `skills: [...]` list (issue #181, §29.4): only the named skills reach the role's prompt — merged with each skill's own `roles:` list, so both must admit. Skills outside the role, or needing tools the lane's classes deny, are withheld with reasons (debug log; `kubic doctor` warns each as `skill:<name>`) — never offered, never silently failing. The role's permission classes merge with the config's, most restrictive wins (issue #196, §40.2), and the role document (or a `[roles.<name>]` layer) may declare `requires: [...]` — tools that always require approval under the role (issue #196, §41.1). `kubic doctor` prints each role's effective classes under the run's config. Roles match by the declared `role:` name, not the filename (issue #293): `review.md` declaring `role: reviewer` boots `--role reviewer` with review.md's own `## Prompt` body — the prompt is never re-read from `<name>.md`. Robustness (issue #236): one malformed document never blocks the other roles — `--role` naming it refuses with that file's parse error, `kubic doctor` fails it as `role:<file-stem>`; two documents declaring the same `role:` name are refused by name everywhere (run refusal + doctor fail), both files listed, and neither copy wins. |
 | `--model <provider/id>` | Session model override (§38.1): the `cli` config layer, above `KUBIC_MODEL` and every file layer — and never above a frozen enterprise key, which still wins (one stderr note names the ignored flag or `KUBIC_MODEL` pin: `note: --model x ignored: model pinned by enterprise policy (corp/approved)`; stdout and a `--json` envelope are untouched). An unknown provider/model exits 6 with the id and the input that carried the pin named (`--model`, `KUBIC_MODEL`, `[model] in <layer> config`, `role model`); the flag is an input to the one config load, so `kubic config --model` reports the same selection. |
+| `--thinking <level>` | Session thinking-level override (§38.3, issue #225): the `cli` config layer — `--thinking` beats `KUBIC_MODEL_THINKING`, which beats `[model].thinking`, and a frozen enterprise `model.thinking` beats the flag (refused by name: `--thinking <level> refused: model.thinking is frozen by the enterprise layer`; the env override is silently not applied). The lane resolves it against the session's stored level and the role default (`--thinking` > env > session > role > config) and clamps it to the effective model — a clamp is one stderr notice naming the model, the request and the level applied, never a silent rewrite. The applied level is committed to the session (a reattach keeps it) and recorded in `trajectory.json`. An unknown level exits 2 naming the levels that exist. |
 | `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). A directory, a `SKILL.md` file, or a bare name (discovery roots first, then the cwd). Relative values resolve against the invoking cwd on both `run` and `tui` (issue #177) — never against the sessions root — and an unresolvable value warns on stderr (`skill skipped (unknown skill '…')`), without needing `--debug`. |
 | `--invoke-skill <name>` | Invoke one booted skill by name (`run` only): its full content runs as the turn prompt — including skills hidden from the model (`disableModelInvocation`, issue #183, §29.4) — followed by `-p`/operand text as further instructions. An unknown name fails the run with `unknown skill '<name>'` (exit 1); a withheld skill (role gate, trust gate) resolves as unknown and fails the same way. |
 | `--no-skills` | Turn layered skill discovery off. |
@@ -953,7 +954,7 @@ before the alt-screen). The id follows the `[A-Za-z0-9_-]` rule (anything
 else exits 2). The full flag surface (`--role`, `--model`, `--orchestrator`,
 `--dangerously-skip-approvals`, …) stays on `kubic tui`.
 
-## `kubic tui [--session <id>] [--role <name>] [--model <provider/id>] [--skill <path>]... [--no-skills] [--tools <a,b,...>] [--no-tools] [--budget <dims>] [--orchestrator] [--dangerously-skip-approvals]`
+## `kubic tui [--session <id>] [--role <name>] [--model <provider/id>] [--thinking <level>] [--skill <path>]... [--no-skills] [--tools <a,b,...>] [--no-tools] [--budget <dims>] [--orchestrator] [--dangerously-skip-approvals]`
 
 Interactive solo TUI: the alt-screen over the solo lane. Tree,
 transcript, and status rows render in root order, with the prompt editor
@@ -972,7 +973,7 @@ session, 6 with no provider available, 1 otherwise, each with one
 #227 adds the same pins): `--model <provider/id>`, `KUBIC_MODEL`,
 `[model]`, a role's `[roles.<name>].model`, or `KUBIC_PROVIDER=faux` —
 the status bar and usage rows name the model the lane actually runs, and a
-kept or switched model is named in the first footer. In the loop,
+kept or switched model is named in the first footer. `--thinking <level>` boots the lane at that level under the same rule as `kubic run` (resolved against the session record and the role default, clamped to the model with a named notice); the status bar seeds from the committed level. In the loop,
 `/model <provider/id>` switches the live lane: the id is resolved against
 the catalogue, committed to the session as a config update, and the
 header, welcome block and status bar all move to it; `/model` alone
@@ -2011,14 +2012,16 @@ e.g. `[model] provider = "anthropic"`, `id = "claude-sonnet-4-6"`.
 Usage errors (unknown option, `--resolve` without a value, an operand)
 exit 2 on stderr. `--help`/`-h` prints the generated help and exits 0.
 
-## `kubic config [--json] [--model <provider/id>]`
+## `kubic config [--json] [--model <provider/id>] [--thinking <level>]`
 
 The effective configuration with the layer each value came from — see
 [configuration](configuration.md#seeing-the-effective-values). `--json`
 prints one pretty-printed JSON document. `--model <provider/id>` reports
 the config as if that session override were passed, so the `model.*` rows
 and the `selected model:` line carry the `(cli)` source the `run`/`tui`
-lane would use. A refused config prints
+lane would use. `--thinking <level>` does the same for the thinking level:
+the `thinking level:` line carries the `(cli)` source the lane boots with.
+A refused config prints
 `error: <reason>` on stderr and exits 1; usage errors exit 2.
 
 ## `kubic trust [--revoke] [--list] [path]`

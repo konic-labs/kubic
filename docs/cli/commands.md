@@ -2199,8 +2199,10 @@ reported as a zero row with `MODEL` `(locked)`; a session that cannot be
 read at all (a Pi 0.87 transcript, a half-written directory) is
 `(unreadable)` the same way. A session the operator NAMED with `--session`
 is never skipped that way: an unknown id, a live lock and a 0.87 transcript
-each print their refusal and exit 1. Skip reporting, the lock-free read and the
-session-dir mtime question are [#251](https://github.com/konic-labs/kubic/issues/251)'s.
+each print their refusal and exit 1. The read path is lock-free
+([#251](https://github.com/konic-labs/kubic/issues/251)): `kubic cost` never
+creates or removes `lock.json`, so session dir mtimes (the prune age
+signal) are untouched and a concurrent attach is never blocked.
 
 When the sessions carry prefix-cache counters, the readout adds the
 cache line and the transparent-caching note. With no sessions stored it

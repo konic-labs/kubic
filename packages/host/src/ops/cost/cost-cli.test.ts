@@ -1,9 +1,16 @@
 // `kubic cost` CLI tests (issue #79; §62). RED first: cost-cli.ts lands
 // after this file. Faux-only, zero network — rows are injected.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
 import {
   attachSession,
@@ -35,6 +42,25 @@ import {
   totalSessionUsage,
 } from './cost-cli.js';
 import { summarizePerAgentCost, toCostJson } from './per-agent-cost.js';
+
+const attached = vi.hoisted(() => ({ calls: [] as Array<readonly unknown[]> }));
+
+vi.mock(
+  '../../../../worker/src/lane/session-store.js',
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import('../../../../worker/src/lane/session-store.js')
+      >();
+    return {
+      ...actual,
+      attachSession: (...args: Parameters<typeof actual.attachSession>) => {
+        attached.calls.push(args);
+        return actual.attachSession(...args);
+      },
+    };
+  },
+);
 
 const ROWS = [
   {
@@ -737,5 +763,129 @@ describe('kubic cost durable usage (issue #400)', () => {
     expect(measured.usage.toolCalls).toBe(1);
     expect(measured.usage.input).toBeGreaterThan(0);
     expect(measured.usage.costUsd).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('kubic cost lock-free reads (issue #251)', () => {
+  const made: string[] = [];
+  const open: Harness[] = [];
+
+  function tmpRoot(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'cost-251-'));
+    made.push(dir);
+    return dir;
+  }
+
+  afterEach(async () => {
+    for (const harness of open.splice(0)) {
+      await harness.close(BACKGROUND_CONTEXT).catch(() => undefined);
+    }
+    for (const dir of made.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  async function fauxRun(storage: Storage) {
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const harness = await Harness.open(
+      storage,
+      { models, registry: createRegistry() },
+      BACKGROUND_CONTEXT,
+    );
+    open.push(harness);
+    const conversation = await harness.root(BACKGROUND_CONTEXT, {
+      agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+    });
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('read', { path: 'a.txt' })], {
+        stopReason: 'toolUse',
+      }),
+      fauxAssistantMessage('done'),
+    ]);
+    await (
+      await conversation.submit(
+        { type: 'input', content: 'read a.txt' },
+        BACKGROUND_CONTEXT,
+      )
+    ).wait(BACKGROUND_CONTEXT);
+    return harness;
+  }
+
+  it('leaves every session dir mtime untouched', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const ids: string[] = [];
+    for (let i = 0; i < 2; i += 1) {
+      const session = await createSession(
+        store,
+        { cwd: '/work' },
+        BACKGROUND_CONTEXT,
+      );
+      await fauxRun(session.adopt());
+      await session.release(BACKGROUND_CONTEXT);
+      ids.push(session.id);
+    }
+    // Pin the age signal prune reads: any lock.json create/remove bumps
+    // the dir mtime off this baseline (attach+release does both).
+    const baseline = 1_700_000_000_000;
+    for (const id of ids) {
+      utimesSync(join(root, id), baseline / 1000, baseline / 1000);
+    }
+    const rows = await loadSessionCostRows(root);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const id of ids) {
+      expect(statSync(join(root, id)).mtimeMs).toBe(baseline);
+    }
+  });
+
+  it('never attaches while reading, so a concurrent attach is not blocked', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    await fauxRun(session.adopt());
+    await session.release(BACKGROUND_CONTEXT);
+
+    attached.calls.length = 0;
+    const rows = await loadSessionCostRows(root);
+    expect(rows.length).toBeGreaterThan(0);
+    // The old attach+release path held each session's lock while reading
+    // it, so a concurrent `kubic run --session` refused with
+    // SessionLockError. The lock-free path never attaches at all.
+    expect(attached.calls).toEqual([]);
+    const holder = await attachSession(store, session.id, BACKGROUND_CONTEXT);
+    try {
+      expect(holder.id).toBe(session.id);
+    } finally {
+      await holder.release(BACKGROUND_CONTEXT);
+    }
+  });
+
+  it('exits 0 and reports the locked session in the text view', async () => {
+    const cap = capture();
+    const code = await runCostCommand(
+      {},
+      {
+        loadRows: () => [
+          {
+            agentId: 'sess-live',
+            model: '(locked)',
+            costUsd: 0,
+            input: 0,
+            output: 0,
+          },
+        ],
+        out: cap.out,
+        err: cap.err,
+      },
+    );
+    expect(code).toBe(0);
+    expect(cap.lines.join('\n')).toContain('(locked)');
+    expect(cap.errs).toEqual([]);
   });
 });

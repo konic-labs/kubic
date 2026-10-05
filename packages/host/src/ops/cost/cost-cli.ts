@@ -11,6 +11,7 @@
 // and reported on the readout. No new top-level --json field: the extra
 // per-row numbers are additive inside the existing `agents` entries.
 
+import { join } from 'node:path';
 import {
   EXIT_FAILED,
   EXIT_OK,
@@ -24,13 +25,14 @@ import {
   createCliTheme,
 } from '../../../../core/src/cli/theme.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
+import { bridgeToPiFileSystem } from '../../../../worker/src/lane/session-fs.js';
 import {
-  attachSession,
   listSessions,
   openSessionStore,
   SessionAttachError,
   SessionFormatError,
   SessionLockError,
+  sessionLockIsLive,
 } from '../../../../worker/src/lane/session-store.js';
 import {
   entriesToTranscript,
@@ -39,6 +41,7 @@ import {
 import {
   BACKGROUND_CONTEXT,
   type Context,
+  JsonlStorage,
   type Storage,
   type Usage,
   UsageDoc,
@@ -202,14 +205,46 @@ export function totalSessionUsage(
   };
 }
 
+// Issue #251: lock-free read-only open of one session's storage. The
+// caller classified the session via `listSessions` and probed no live
+// holder via `sessionLockIsLive`, so this never creates or removes
+// `lock.json` — the session dir mtime (the prune age signal) is untouched
+// and a concurrent attach is never blocked. A missing storage is an
+// unknown session, exactly as `attachSession` reports it.
+async function openCostReadStorage(
+  sessionsRoot: string,
+  sessionId: string,
+): Promise<Storage> {
+  const bridge = createNodeFileBridge(sessionsRoot);
+  if (!bridge.exists(join(sessionsRoot, sessionId, 'main.jsonl'))) {
+    throw new SessionAttachError(sessionId);
+  }
+  // The portable core over the exec bridge, never the `/node` entry point:
+  // session bytes keep crossing the I/O seam, where the #359 secret
+  // scrubbing and the #361 file modes live (see session-fs.ts). fsync stays
+  // off — cost never commits, so there is nothing to flush.
+  return JsonlStorage.open(
+    join(sessionsRoot, sessionId),
+    bridgeToPiFileSystem(bridge),
+    BACKGROUND_CONTEXT,
+    { fsync: false },
+  );
+}
+
 // Prod loader: one row per real session out of the session store, one row
 // per usage bucket the session recorded (each `provider/model`, and each tool
 // that reported its own usage), so the task total is still exactly Σ(rows).
 // A session whose storage another live run owns is SKIPPED, never opened
 // (pi-durable: one process per storage), and reported as a zero row so the
-// operator sees what the readout could not read. #251 owns the richer
-// skip/unreadable report (and the lock-free read that stops cost refreshing
-// the session dir's prune age).
+// operator sees what the readout could not read.
+//
+// Issue #251: the read path is lock-free by construction. Sessions are
+// classified by `listSessions` (header reads only) and a live holder is
+// detected by the read-only `sessionLockIsLive` probe — `attachSession`
+// never appears here, so `kubic cost` creates no `lock.json`, removes none,
+// leaves every session dir mtime (the prune age signal) untouched, and a
+// concurrent `kubic run --session` is never blocked. Unreadable sessions
+// report a zero marker row instead of failing the report.
 export async function loadSessionCostRows(
   sessionsRoot: string = defaultSessionsRoot(),
   sessionId?: string,
@@ -218,6 +253,7 @@ export async function loadSessionCostRows(
     sessionsRoot,
     createNodeFileBridge(sessionsRoot),
   );
+  const all = await listSessions(store, BACKGROUND_CONTEXT);
   // Issue #164 (§23): a NAMED orchestrate session rolls its run up — the
   // manager record plus every session whose metadata names it as parent,
   // so `kubic cost --session <orch>` is the run's total with per-child
@@ -225,64 +261,82 @@ export async function loadSessionCostRows(
   // escape, never a marker row); a child that cannot be opened reports a
   // zero marker row like the listing sweep, so a still-running worker
   // (live lock) reads as `(locked)` instead of failing the report.
-  const listed =
+  const named =
     sessionId === undefined
+      ? undefined
+      : all.find((entry) => entry.id === sessionId);
+  if (sessionId !== undefined && named === undefined) {
+    throw new SessionAttachError(sessionId);
+  }
+  if (named?.format === 'legacy') {
+    throw new SessionFormatError(named.id);
+  }
+  const children =
+    named === undefined
       ? []
-      : (await listSessions(store, BACKGROUND_CONTEXT))
-          .filter(
-            (entry) =>
-              entry.id !== sessionId &&
-              entry.meta?.parentSessionId === sessionId,
-          )
-          .map((entry) => ({ id: entry.id }));
-  const entries =
-    sessionId === undefined
-      ? await listSessions(store, BACKGROUND_CONTEXT)
-      : [{ id: sessionId }, ...listed];
+      : all.filter(
+          (entry) =>
+            entry.id !== named.id && entry.meta?.parentSessionId === named.id,
+        );
+  const entries = named === undefined ? all : [named, ...children];
   const rows: AgentCostInput[] = [];
   for (const entry of entries) {
-    let session: Awaited<ReturnType<typeof attachSession>>;
-    try {
-      session = await attachSession(store, entry.id, BACKGROUND_CONTEXT);
-    } catch (error) {
-      // A session the operator NAMED is never silently skipped: an unknown
-      // id, a live lock and a 0.87 transcript all escape so
-      // `runCostCommand` prints the refusal and exits 1, as it did before
-      // the durable store. Marker rows are for the listing sweep — and for
-      // the NAMED run's children — only.
+    const isNamed = named !== undefined && entry.id === named.id;
+    if (entry.format === 'legacy') {
+      // A named legacy id escaped above; a legacy child of a named run
+      // reports like any other unreadable listing entry.
+      rows.push({
+        agentId: entry.id,
+        model: '(unreadable)',
+        costUsd: 0,
+        input: 0,
+        output: 0,
+      });
+      continue;
+    }
+    const live = sessionLockIsLive(join(sessionsRoot, entry.id));
+    if (live !== undefined) {
+      // A session the operator NAMED is never silently skipped: a live
+      // lock escapes so `runCostCommand` prints the refusal and exits 1,
+      // as it did before the durable store. Marker rows are for the
+      // listing sweep — and for the NAMED run's children — only.
       // Review #164: a live run's manager record is lock-held by the run
       // itself — refusing the whole report would leave a running run with
       // no cost view. With children recorded, the parent row is skipped
       // and the report covers the children; without children the named
       // contract below still escapes.
-      if (
-        sessionId !== undefined &&
-        entry.id === sessionId &&
-        error instanceof SessionLockError &&
-        listed.length > 0
-      ) {
+      if (isNamed && children.length > 0) {
         continue;
       }
-      if (
-        sessionId !== undefined &&
-        entry.id === sessionId &&
-        (error instanceof SessionAttachError ||
-          error instanceof SessionLockError ||
-          error instanceof SessionFormatError)
-      ) {
-        throw error;
+      if (isNamed) {
+        throw new SessionLockError(entry.id, {
+          pid: live.pid,
+          startedAt: live.startedAt ?? 0,
+        });
       }
+      // Never opened: a live run owns this storage (pi-durable: one
+      // process per storage).
+      rows.push({
+        agentId: entry.id,
+        model: '(locked)',
+        costUsd: 0,
+        input: 0,
+        output: 0,
+      });
+      continue;
+    }
+    let storage: Storage;
+    try {
+      storage = await openCostReadStorage(sessionsRoot, entry.id);
+    } catch (error) {
+      if (isNamed) throw error;
       if (
-        error instanceof SessionLockError ||
         error instanceof SessionAttachError ||
         error instanceof SessionFormatError
       ) {
-        // Never opened: the lock is taken before the storage (and a 0.87
-        // directory has no storage at all).
         rows.push({
           agentId: entry.id,
-          model:
-            error instanceof SessionLockError ? '(locked)' : '(unreadable)',
+          model: '(unreadable)',
           costUsd: 0,
           input: 0,
           output: 0,
@@ -292,10 +346,7 @@ export async function loadSessionCostRows(
       throw error;
     }
     try {
-      for (const row of await readSessionUsage(
-        session.storage,
-        BACKGROUND_CONTEXT,
-      )) {
+      for (const row of await readSessionUsage(storage, BACKGROUND_CONTEXT)) {
         rows.push({
           agentId: entry.id,
           // A tool bucket has no provider/model identity: it is labelled
@@ -311,7 +362,9 @@ export async function loadSessionCostRows(
         });
       }
     } finally {
-      await session.release(BACKGROUND_CONTEXT);
+      // No lock was taken, so there is none to give back: closing the
+      // storage is the whole release.
+      await storage.close(BACKGROUND_CONTEXT);
     }
   }
   return rows;
@@ -330,13 +383,28 @@ export async function readSessionRunUsage(
     sessionsRoot,
     createNodeFileBridge(sessionsRoot),
   );
-  const session = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
+  // Issue #251: the same lock-free contract as `loadSessionCostRows` — a
+  // named unknown id, a live lock and a 0.87 transcript escape exactly as
+  // `attachSession` reported them, but nothing is ever locked.
+  const found = (await listSessions(store, BACKGROUND_CONTEXT)).find(
+    (entry) => entry.id === sessionId,
+  );
+  if (found === undefined) throw new SessionAttachError(sessionId);
+  if (found.format === 'legacy') throw new SessionFormatError(sessionId);
+  const live = sessionLockIsLive(join(sessionsRoot, sessionId));
+  if (live !== undefined) {
+    throw new SessionLockError(sessionId, {
+      pid: live.pid,
+      startedAt: live.startedAt ?? 0,
+    });
+  }
+  const storage = await openCostReadStorage(sessionsRoot, sessionId);
   try {
     const totals = totalSessionUsage(
-      await readSessionUsage(session.storage, BACKGROUND_CONTEXT),
+      await readSessionUsage(storage, BACKGROUND_CONTEXT),
     );
     const items = entriesToTranscript(
-      await readSessionEntries(session.storage, BACKGROUND_CONTEXT),
+      await readSessionEntries(storage, BACKGROUND_CONTEXT),
     );
     let toolCalls = 0;
     let model: string | undefined;
@@ -362,7 +430,7 @@ export async function readSessionRunUsage(
       ...(model === undefined ? {} : { model }),
     };
   } finally {
-    await session.release(BACKGROUND_CONTEXT);
+    await storage.close(BACKGROUND_CONTEXT);
   }
 }
 

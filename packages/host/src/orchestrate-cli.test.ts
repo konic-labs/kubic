@@ -1479,6 +1479,40 @@ describe('orchestrate worker session creation (issue #85)', () => {
     expect(world.calls.order).toEqual(['create:beta', 'run:beta']);
     expect(world.calls.create).toEqual(['beta']);
   });
+
+  it('a fresh run with stored state — including a stopped blocked-conflict record — is refused before anything is saved (issues #144, #165)', async () => {
+    // The stopped queue's blocked record is exactly what a silent overwrite
+    // would erase: the refusal fires on ANY stored state, before any save.
+    const blocked: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-1',
+      prompt: 'demo',
+      agents: ['alpha', 'beta'],
+      merged: ['alpha'],
+      pending: ['beta'],
+      stopped: true,
+      blocked: { agentId: 'beta', oursDiff: 'o', theirsDiff: 't' },
+      records: [
+        {
+          agentId: 'alpha',
+          branch: 'kubic/alpha',
+          hunks: [{ path: 'a.txt', hunk: '@@ a' }],
+        },
+      ],
+    };
+    const world = makeWorld({ loadState: () => structuredClone(blocked) });
+    const code = await runOrchestrateCommand(
+      { prompt: 'anew', agents: ['alpha', 'beta'], session: 'sess-1' },
+      world.deps,
+    );
+    expect(code).toBe(2);
+    expect(world.errLines.join('\n')).toMatch(/code=session_exists/);
+    // Nothing was saved, spawned, or merged: the stored run is untouched.
+    expect(world.saved).toEqual([]);
+    expect(world.calls.create).toEqual([]);
+    expect(world.calls.run).toEqual([]);
+    expect(world.calls.merge).toEqual([]);
+  });
 });
 
 describe('orchestrate spawn failures (issue #85)', () => {

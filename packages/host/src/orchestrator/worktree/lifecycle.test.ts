@@ -6,7 +6,11 @@ import {
   FakeExecutionEnv,
   type FakeSpawnCall,
 } from '../../../../exec/src/env.js';
-import { removeWorktree } from './remove.js';
+import {
+  deleteSpawnedBranch,
+  pruneWorktrees,
+  removeWorktree,
+} from './remove.js';
 import { getWorktreeStatus, markMerged, settleWorktree } from './status.js';
 
 // Exact argv issued, in order — the strict fake throws on anything
@@ -108,6 +112,58 @@ describe('removeWorktree (issue #45)', () => {
     expect(argvOf(env)).toEqual([
       'git worktree remove /repo/.kubic/wt/agent-1',
     ]);
+  });
+
+  it.each(['main', 'feature/x', 'kubic/'])(
+    'deleteSpawnedBranch rejects %s with zero git calls (issue #214)',
+    async (branch) => {
+      const env = new FakeExecutionEnv({}, { strict: true });
+      await expect(deleteSpawnedBranch(env, branch)).rejects.toMatchObject({
+        code: 'remove_failed',
+      });
+      expect(argvOf(env)).toEqual([]);
+    },
+  );
+
+  it('maps non-zero prune/delete exits to remove_failed with truncated stderr (issue #214)', async () => {
+    const overflow = 'x'.repeat(300);
+    const pruneEnv = new FakeExecutionEnv(
+      {
+        'git worktree prune': {
+          exitCode: 128,
+          stdout: '',
+          stderr: overflow,
+        },
+      },
+      { strict: true },
+    );
+    const pruneError = await pruneWorktrees(pruneEnv).catch(
+      (error: unknown) => error,
+    );
+    expect(pruneError).toMatchObject({ code: 'remove_failed' });
+    const pruneMessage = (pruneError as Error).message;
+    expect(pruneMessage).toContain('x'.repeat(200));
+    expect(pruneMessage).not.toContain('x'.repeat(201));
+
+    const deleteEnv = new FakeExecutionEnv(
+      {
+        'git branch -d kubic/agent-1': {
+          exitCode: 1,
+          stdout: '',
+          stderr: overflow,
+        },
+      },
+      { strict: true },
+    );
+    const deleteError = await deleteSpawnedBranch(
+      deleteEnv,
+      'kubic/agent-1',
+    ).catch((error: unknown) => error);
+    expect(deleteError).toMatchObject({ code: 'remove_failed' });
+    const deleteMessage = (deleteError as Error).message;
+    expect(deleteMessage).toContain('git branch -d kubic/agent-1 failed');
+    expect(deleteMessage).toContain('x'.repeat(200));
+    expect(deleteMessage).not.toContain('x'.repeat(201));
   });
 
   it('passes --force only when asked', async () => {

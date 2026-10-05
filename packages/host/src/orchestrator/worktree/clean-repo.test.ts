@@ -740,6 +740,22 @@ describe('unmerged branches survive plain clean (issue #146)', () => {
     expect(kubicBranches(root)).toEqual([]);
   });
 
+  it('prunes a hand-deleted worktree dir and deletes its branch, then has nothing to prune (issue #214)', async () => {
+    const root = scratchRepo();
+    const retained = retainWorktree(root, 'worker-1');
+    rmSync(retained, { recursive: true, force: true });
+
+    const first = await clean(root, {});
+
+    expect(first.code).toBe(0);
+    expect(first.lines).toContain('deleted branch kubic/worker-1');
+    expect(kubicBranches(root)).toEqual([]);
+
+    const second = await clean(root, {});
+    expect(second.code).toBe(0);
+    expect(second.lines.join('\n')).toContain('nothing to prune');
+  });
+
   it('refuses a branch-only unmerged branch without --force', async () => {
     const root = scratchRepo();
     const retained = retainWorktree(root, 'worker-1');

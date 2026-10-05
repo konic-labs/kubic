@@ -74,42 +74,126 @@ export function diffEntries(
     const first = list[0];
     const last = list[list.length - 1];
     if (first === undefined || last === undefined) continue;
-    const before = store.readBefore(first);
-    const after = store.readAfter(last);
-    // "Unexpectedly null while hashes exist" (issue #111): unattributed
-    // entries legitimately carry a hash-only pre-image (no before-blob by
-    // design), so that absence is not corruption; everything else missing
-    // under a recorded hash is.
-    const beforeLost =
-      first.beforeHash !== null &&
-      before === null &&
-      first.unattributed !== true &&
-      first.beforeOmitted !== true;
-    // A hash-only sweep after-side (issue #120) is a designed absence: the
-    // entry records the walk hash but deliberately no content.
-    const afterLost =
-      last.afterHash !== null && after === null && last.afterOmitted !== true;
-    // Unreachable (markers never reach the map), but the guard is what
-    // narrows `op` to `FileOp` — the grouping above erases the filter's
-    // narrowing, and a cast would hide a future leak.
-    if (last.op === 'marker') continue;
-    out.push({
+    const change = buildChange(
       path,
-      op: last.op,
-      agentId: last.agentId,
-      toolCallId: last.toolCallId,
-      sessionId: last.sessionId,
-      timestamp: last.timestamp,
-      unattributed: last.unattributed === true,
-      reversible: before !== null || isUndoableCreate(first),
-      before,
-      after,
-      corrupt: beforeLost || afterLost,
-      afterOmitted: last.afterOmitted === true,
-      ...(last.afterBytes === undefined ? {} : { afterBytes: last.afterBytes }),
-    });
+      first,
+      last,
+      (e) => store.readBefore(e),
+      (e) => store.readAfter(e),
+    );
+    if (change !== null) out.push(change);
   }
   return out;
+}
+
+// Issue #364: read-only multi-store diff — `kubic diff --session <orch>`
+// covering the orchestration's linked worker journals. Blobs are read from
+// each entry's home store (a worker's before-content lives under its own
+// session dir, never the orch's). Groups key on session+path: two workers'
+// worktrees share relative paths, and merging them into one hunk would
+// misattribute both — each worker's path renders as its own change with
+// its own agent tag. Null when the group's latest entry is a marker (keeps
+// `FileChange.op` marker-free; see `FileOp`).
+//
+// One store behaves exactly like `diffEntries` (same path key), so the
+// single-store command keeps calling that instead — this stays the
+// aggregation-only path.
+export function diffEntriesMany(
+  stores: FileJournalStore[],
+  filter: DiffFilter,
+): FileChange[] {
+  const byKey = new Map<
+    string,
+    {
+      path: string;
+      first: JournalEntry;
+      last: JournalEntry;
+      readBefore: (e: JournalEntry) => string | null;
+      readAfter: (e: JournalEntry) => string | null;
+    }
+  >();
+  for (const store of stores) {
+    const readBefore = (e: JournalEntry): string | null => store.readBefore(e);
+    const readAfter = (e: JournalEntry): string | null => store.readAfter(e);
+    for (const e of store.entries()) {
+      if (e.op === 'marker') continue;
+      if (filter.path !== undefined && e.path !== filter.path) continue;
+      if (filter.agent !== undefined && e.agentId !== filter.agent) continue;
+      const key = `${e.sessionId}\0${e.path}`;
+      const group = byKey.get(key);
+      if (group === undefined) {
+        byKey.set(key, {
+          path: e.path,
+          first: e,
+          last: e,
+          readBefore,
+          readAfter,
+        });
+      } else {
+        group.last = e;
+        group.readBefore = readBefore;
+        group.readAfter = readAfter;
+      }
+    }
+  }
+  // Groups are per-session (each session writes exactly one store), so
+  // arrival order within a group is chronological — the same first/last
+  // `diffEntries` would pick.
+  const out: FileChange[] = [];
+  for (const group of byKey.values()) {
+    const change = buildChange(
+      group.path,
+      group.first,
+      group.last,
+      group.readBefore,
+      group.readAfter,
+    );
+    if (change !== null) out.push(change);
+  }
+  return out;
+}
+
+function buildChange(
+  path: string,
+  first: JournalEntry,
+  last: JournalEntry,
+  readBefore: (e: JournalEntry) => string | null,
+  readAfter: (e: JournalEntry) => string | null,
+): FileChange | null {
+  const before = readBefore(first);
+  const after = readAfter(last);
+  // "Unexpectedly null while hashes exist" (issue #111): unattributed
+  // entries legitimately carry a hash-only pre-image (no before-blob by
+  // design), so that absence is not corruption; everything else missing
+  // under a recorded hash is.
+  const beforeLost =
+    first.beforeHash !== null &&
+    before === null &&
+    first.unattributed !== true &&
+    first.beforeOmitted !== true;
+  // A hash-only sweep after-side (issue #120) is a designed absence: the
+  // entry records the walk hash but deliberately no content.
+  const afterLost =
+    last.afterHash !== null && after === null && last.afterOmitted !== true;
+  // Unreachable (markers never reach the map), but the guard is what
+  // narrows `op` to `FileOp` — the grouping above erases the filter's
+  // narrowing, and a cast would hide a future leak.
+  if (last.op === 'marker') return null;
+  return {
+    path,
+    op: last.op,
+    agentId: last.agentId,
+    toolCallId: last.toolCallId,
+    sessionId: last.sessionId,
+    timestamp: last.timestamp,
+    unattributed: last.unattributed === true,
+    reversible: before !== null || isUndoableCreate(first),
+    before,
+    after,
+    corrupt: beforeLost || afterLost,
+    afterOmitted: last.afterOmitted === true,
+    ...(last.afterBytes === undefined ? {} : { afterBytes: last.afterBytes }),
+  };
 }
 
 // Minimal unified hunks: changed region plus context lines, with real

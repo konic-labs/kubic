@@ -229,7 +229,15 @@ export function journalStatus(
 // "0 of 0" is the honest answer, and it keeps the surface's shape stable
 // for scripts.
 export function reconciliationSummary(store: FileJournalStore): string {
-  const entries = store.entries();
+  return reconciliationSummaryFor(store.entries());
+}
+
+// Issue #364: the same line over an already-merged entry list — `log
+// --session <orch>` counts the orchestration's workers together with its
+// own journal instead of reporting the primary store alone.
+export function reconciliationSummaryFor(
+  entries: readonly { unattributed?: boolean }[],
+): string {
   const unattributed = entries.filter((e) => e.unattributed === true).length;
   return `unattributed: ${unattributed} of ${entries.length} entr(ies) reconciled at run end`;
 }

@@ -10,6 +10,7 @@ import {
   clipContent,
   DEFAULT_MAX_CONTENT_BYTES,
   diffEntries,
+  diffEntriesMany,
   type FileChange,
   renderDiff,
   unifiedHunks,
@@ -346,5 +347,45 @@ describe('HEAD-move markers (issue #378)', () => {
       'b.txt',
       'c.txt',
     ]);
+  });
+});
+
+describe('multi-store diff (issue #364)', () => {
+  function storeWith(
+    sessionId: string,
+    agentId: string,
+    path: string,
+    content: string,
+  ): FileJournalStore {
+    const store = new FileJournalStore(tmpRoot());
+    store.append({
+      path,
+      op: 'write',
+      before: null,
+      after: content,
+      bytesDelta: content.length,
+      sessionId,
+      agentId,
+      toolCallId: 't',
+      timestamp: 100,
+    });
+    return store;
+  }
+
+  it('reads blobs from each entry home store and never merges workers paths', () => {
+    const w1 = storeWith('orch-worker-1', 'worker-1', 'same.txt', 'one\n');
+    const w2 = storeWith('orch-worker-2', 'worker-2', 'same.txt', 'two\n');
+    const changes = diffEntriesMany([w1, w2], {});
+    expect(changes).toHaveLength(2);
+    expect(
+      changes.map((c) => [c.sessionId, c.agentId, c.after]).sort(),
+    ).toEqual([
+      ['orch-worker-1', 'worker-1', 'one\n'],
+      ['orch-worker-2', 'worker-2', 'two\n'],
+    ]);
+    // --agent selects one worker's changes across stores.
+    expect(
+      diffEntriesMany([w1, w2], { agent: 'worker-2' }).map((c) => c.path),
+    ).toEqual(['same.txt']);
   });
 });

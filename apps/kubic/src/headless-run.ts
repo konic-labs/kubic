@@ -777,6 +777,23 @@ export function laneActivityDebugLine(
   return undefined;
 }
 
+// Issue #364: the run's agent id. An orchestrated worker child carries its
+// orchestrator-assigned identity in KUBIC_WORKER_ID (set by launch, §3.8
+// allowlisted) — a non-empty value wins, so the worker's journal, reconcile
+// and trajectory entries are tagged with the worker id instead of 'root'
+// and `kubic diff --agent <id>` can see them. Blank means absent (issue
+// #159); without it the configured `[agent].name` applies, then 'root' —
+// the solo behaviour, byte for byte. `env` is injectable so tests drive
+// the precedence without touching the process environment.
+export function resolveRunAgentId(
+  depsAgentId: string | undefined,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  const workerId = env.KUBIC_WORKER_ID;
+  if (workerId !== undefined && workerId !== '') return workerId;
+  return depsAgentId ?? 'root';
+}
+
 export async function runHeadlessPrompt(
   prompt: string,
   options: HeadlessRunOptions,
@@ -876,7 +893,7 @@ export async function runHeadlessPrompt(
     const path = persistRunTrajectory({
       sessionsRoot: capture.sessionsRoot,
       sessionId: capture.sessionId,
-      agentId: deps.agentId ?? 'root',
+      agentId: resolveRunAgentId(deps.agentId),
       role: capture.role ?? 'solo',
       prompt: scrub(prompt),
       // §67 (issue #191): the worker's task is recorded with the run, so a
@@ -1663,7 +1680,7 @@ async function runHeadlessPromptImpl(
         root: env.cwd,
         runId: id,
         sessionId: id,
-        agentId: deps.agentId ?? 'root',
+        agentId: resolveRunAgentId(deps.agentId),
         // #107 review follow-up: a very large file (or a bridge without ranged
         // reads) is named on the existing debug channel rather than silently
         // costing its size at boot.
@@ -1774,7 +1791,7 @@ async function runHeadlessPromptImpl(
         onModelNotice: notice,
         env,
         sessionId: id,
-        agentId: deps.agentId ?? 'root',
+        agentId: resolveRunAgentId(deps.agentId),
         journal,
         // Issue #154 (§14.2): an orchestrator worker child can ask the USER a
         // free-text question through its run's mailbox (the same dir and

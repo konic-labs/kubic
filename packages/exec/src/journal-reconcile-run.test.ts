@@ -563,3 +563,24 @@ describe('HEAD-move markers end to end (issue #378)', () => {
     expect(store.entries().some((e) => e.op === 'marker')).toBe(false);
   });
 });
+
+describe('sweep attribution (issue #364)', () => {
+  it('tags unattributed sweep entries with the run agent id', () => {
+    const root = workspace();
+    const store = new FileJournalStore(tmpRoot('j-agent-'));
+    const run = beginReconciliation({
+      store,
+      root,
+      runId: 'sess-worker-1',
+      sessionId: 'sess-worker-1',
+      agentId: 'worker-1',
+      now: () => NOW,
+    });
+    writeFileSync(join(root, 'keep.txt'), 'v2-external\n');
+    expect(run.sweep()).toBe(1);
+    const entries = store.entries();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.agentId).toBe('worker-1');
+    expect(entries[0]?.unattributed).toBe(true);
+  });
+});

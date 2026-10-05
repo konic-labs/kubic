@@ -1321,3 +1321,134 @@ describe('journal CLI HEAD moves (issue #378)', () => {
     expect(lines.join('\n')).toContain('head-moved');
   });
 });
+
+describe('journal CLI orchestration aggregation (issue #364)', () => {
+  function orchSetup(): { sessionsRoot: string; root: string } {
+    const sessionsRoot = mkTmp('sess-');
+    const root = mkTmp('ws-');
+    const orch = new FileJournalStore(join(sessionsRoot, 'orch', 'journal'));
+    orch.append({
+      path: 'plan.md',
+      op: 'write',
+      before: null,
+      after: '# plan\n',
+      bytesDelta: 7,
+      sessionId: 'orch',
+      agentId: 'manager',
+      toolCallId: 'm1',
+      timestamp: 2000,
+    });
+    const w1 = new FileJournalStore(
+      join(sessionsRoot, 'orch-worker-1', 'journal'),
+    );
+    w1.append({
+      path: 'a.txt',
+      op: 'write',
+      before: null,
+      after: 'from one\n',
+      bytesDelta: 9,
+      sessionId: 'orch-worker-1',
+      agentId: 'worker-1',
+      toolCallId: 'w1',
+      timestamp: 1000,
+    });
+    const w2 = new FileJournalStore(
+      join(sessionsRoot, 'orch-worker-2', 'journal'),
+    );
+    w2.append({
+      path: 'b.txt',
+      op: 'write',
+      before: null,
+      after: 'from two\n',
+      bytesDelta: 9,
+      sessionId: 'orch-worker-2',
+      agentId: 'worker-2',
+      toolCallId: 'w2',
+      timestamp: 3000,
+    });
+    // A non-worker session the prefix scan must ignore.
+    const other = new FileJournalStore(join(sessionsRoot, 'solo', 'journal'));
+    other.append({
+      path: 'z.txt',
+      op: 'write',
+      before: null,
+      after: 'elsewhere\n',
+      bytesDelta: 10,
+      sessionId: 'solo',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 1500,
+    });
+    return { sessionsRoot, root };
+  }
+
+  it('diff --session <orch> --agent worker-2 shows only worker-2 changes', async () => {
+    const { sessionsRoot, root } = orchSetup();
+    const lines: string[] = [];
+    const code = await runJournalCommand(
+      { command: 'diff', session: 'orch', agent: 'worker-2' },
+      { sessionsRoot, root, out: (l: string) => lines.push(l) },
+    );
+    expect(code).toBe(0);
+    const text = lines.join('\n');
+    expect(text).toContain('b.txt');
+    expect(text).not.toContain('a.txt');
+    expect(text).not.toContain('plan.md');
+    expect(text).not.toContain('z.txt');
+  });
+
+  it('diff --session <orch> covers both workers and names the linkage in --json', async () => {
+    const { sessionsRoot, root } = orchSetup();
+    const json: string[] = [];
+    const code = await runJournalCommand(
+      { command: 'diff', session: 'orch', json: true },
+      { sessionsRoot, root, out: (l: string) => json.push(l) },
+    );
+    expect(code).toBe(0);
+    const doc = JSON.parse(json.join('\n')) as {
+      session: string;
+      linkedSessions: string[];
+      changes: Array<{ path: string; agentId: string }>;
+    };
+    expect(doc.session).toBe('orch');
+    expect(doc.linkedSessions).toEqual(['orch-worker-1', 'orch-worker-2']);
+    expect(doc.changes.map((c) => [c.path, c.agentId]).sort()).toEqual([
+      ['a.txt', 'worker-1'],
+      ['b.txt', 'worker-2'],
+      ['plan.md', 'manager'],
+    ]);
+  });
+
+  it('log --session <orch> interleaves both workers by timestamp with agent tags', async () => {
+    const { sessionsRoot, root } = orchSetup();
+    const lines: string[] = [];
+    const code = await runJournalCommand(
+      { command: 'log', session: 'orch' },
+      { sessionsRoot, root, out: (l: string) => lines.push(l) },
+    );
+    expect(code).toBe(0);
+    const text = lines.join('\n');
+    expect(text).toContain('worker-1');
+    expect(text).toContain('worker-2');
+    expect(text).not.toContain('z.txt');
+    const order = [
+      text.indexOf('a.txt'),
+      text.indexOf('plan.md'),
+      text.indexOf('b.txt'),
+    ];
+    expect(order).toEqual([...order].sort((x, y) => x - y));
+    const json: string[] = [];
+    await runJournalCommand(
+      { command: 'log', session: 'orch', json: true },
+      { sessionsRoot, root, out: (l: string) => json.push(l) },
+    );
+    const doc = JSON.parse(json.join('\n')) as {
+      entries: Array<{ path: string; agentId: string }>;
+    };
+    expect(doc.entries.map((e) => e.agentId)).toEqual([
+      'worker-1',
+      'manager',
+      'worker-2',
+    ]);
+  });
+});

@@ -332,11 +332,17 @@ function planInverse(
   // A missing file (null) is recorded as such — no content is invented.
   let preUndo: string | null = null;
   let preUndoHash: string | null = null;
+  // The pre-image's byte length, whether or not it survived the utf-8 round
+  // trip: `bytesDelta` is the change this record describes, and an omitted
+  // (lossy) pre-image is still bytes that were there (review of #352 — the
+  // same accounting `write` uses for a hash-only pre-image).
+  let preUndoBytes = 0;
   let lossyBefore = false;
   try {
     const bytes = Buffer.from(
       createNodeFileBridge(root).readBinaryFile(resolve(root, step.path)),
     );
+    preUndoBytes = bytes.length;
     const decoded = bytes.toString('utf8');
     if (Buffer.from(decoded, 'utf8').equals(bytes)) {
       preUndo = decoded;
@@ -364,8 +370,7 @@ function planInverse(
               : { beforeHash: preUndoHash, beforeOmitted: true }),
             after: restoredContent,
             bytesDelta:
-              Buffer.byteLength(restoredContent, 'utf8') -
-              (preUndo === null ? 0 : Buffer.byteLength(preUndo, 'utf8')),
+              Buffer.byteLength(restoredContent, 'utf8') - preUndoBytes,
             sessionId: UNDO_AGENT_ID,
             agentId: UNDO_AGENT_ID,
             toolCallId: null,

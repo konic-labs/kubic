@@ -201,7 +201,10 @@ pre-undo content read as BYTES and checked for a lossless utf-8 round-trip
 (issue #352, the same rule the create-removal path applies): binary content is
 recorded as `beforeHash` + `beforeOmitted` with no blob — never a U+FFFD
 decode — the undo warns that it cannot be redone, and `undo --step` then
-reports it non-reversible instead of writing mangled bytes back. The record is planned —
+reports it non-reversible instead of writing mangled bytes back. Its
+`bytesDelta` counts the bytes that were there either way: an omitted pre-image
+is still its own length of content, not zero (the accounting `write` uses for a
+hash-only pre-image). The record is planned —
 and measured against the store's bound — BEFORE the restore: an inverse
 entry whose own content (the pre-undo file stored whole, plus the restored
 pre-image) would not fit the bound makes the step skip with a warning and

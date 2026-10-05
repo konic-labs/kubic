@@ -793,6 +793,12 @@ describe('undo refuses to record a lossy pre-undo copy (issue #352)', () => {
     expect(record?.agentId).toBe('kubic-undo');
     expect(record?.beforeOmitted).toBe(true);
     expect(record?.beforeHash).toBe(sha256HexOfBytes(binary));
+    // `bytesDelta` counts the bytes that were actually there: the 4-byte
+    // binary pre-image against the 3-byte restored text (an omitted pre-image
+    // is not "0 bytes before" — review of #352).
+    expect(record?.bytesDelta).toBe(
+      Buffer.byteLength('v1\n', 'utf8') - binary.length,
+    );
     expect(record === undefined ? null : store.readBefore(record)).toBeNull();
     expect(result.warnings.join('\n')).toMatch(/bin\.dat.*cannot be redone/);
 

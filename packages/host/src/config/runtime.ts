@@ -1291,8 +1291,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
       ? undefined
       : {
           steps: [...modelEscalate],
-          maxEscalations:
-            config.model?.maxEscalations ?? modelEscalate.length,
+          maxEscalations: config.model?.maxEscalations ?? modelEscalate.length,
         };
 
   const rawPermissions = config.permissions ?? {};

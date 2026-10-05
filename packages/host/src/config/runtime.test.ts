@@ -205,7 +205,10 @@ describe('runtime config load (issue #90)', () => {
     // Unset max defaults to the ladder length (the ladder itself bounds).
     expect(
       load(
-        { [PROJECT]: '[model]\nprovider = "local"\nid = "a"\nescalate = ["local/a", "local/b"]\n' },
+        {
+          [PROJECT]:
+            '[model]\nprovider = "local"\nid = "a"\nescalate = ["local/a", "local/b"]\n',
+        },
         { projectTrusted: true },
       ).escalate,
     ).toEqual({ steps: ['local/a', 'local/b'], maxEscalations: 2 });
@@ -223,9 +226,9 @@ describe('runtime config load (issue #90)', () => {
       expect(runtimeKeyDisposition(keyEffectFor(key))).toBe('consumed');
     }
     // The per-role ladder falls back to the `roles` section row.
-    expect(
-      runtimeKeyDisposition(keyEffectFor('roles.reviewer.escalate')),
-    ).toBe('consumed');
+    expect(runtimeKeyDisposition(keyEffectFor('roles.reviewer.escalate'))).toBe(
+      'consumed',
+    );
   });
 
   it('projects [journal] outOfScope with its layer, refusing an empty entry by name', () => {

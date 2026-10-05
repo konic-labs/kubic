@@ -136,3 +136,28 @@ describe('debug transcript (headless transcript + PI_TUI_WRITE_LOG ANSI path)', 
     expect(makeWriteLogSink({}, () => undefined)).toBeNull();
   });
 });
+
+describe('SpanRecorder keyed lookup (issue #243)', () => {
+  it('reads one span by id without copying the trace', () => {
+    const recorder = new SpanRecorder(() => 7);
+    const first = recorder.start('kubic.agent.run');
+    const second = recorder.start('pi.tool.execute', first);
+    recorder.end(second, 'boom');
+    expect(recorder.get(first)).toMatchObject({ id: first, endMs: null });
+    expect(recorder.get(second)).toMatchObject({
+      id: second,
+      name: 'pi.tool.execute',
+      error: 'boom',
+    });
+    expect(recorder.get('span-404')).toBeUndefined();
+  });
+
+  it('hands out a copy, so a reader cannot rewrite the record', () => {
+    const recorder = new SpanRecorder(() => 0);
+    const id = recorder.start('rpc');
+    const read = recorder.get(id);
+    expect(read).not.toBeUndefined();
+    if (read !== undefined) read.endMs = 999;
+    expect(recorder.get(id)?.endMs).toBeNull();
+  });
+});

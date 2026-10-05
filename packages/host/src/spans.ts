@@ -26,6 +26,10 @@ export interface SpanRecord {
 
 export class SpanRecorder {
   private spans: SpanRecord[] = [];
+  // Issue #243: O(1) lookup by id. The array keeps insertion order for
+  // `trace()`; the map serves the per-span hot path (`end`, `get`) so a
+  // run with N spans costs O(N), not O(N^2).
+  private readonly byId = new Map<string, SpanRecord>();
   private seq = 0;
   private readonly clock: () => number;
 
@@ -36,21 +40,31 @@ export class SpanRecorder {
   start(name: SpanName, parentId?: string | null): string {
     const id = `span-${this.seq}`;
     this.seq += 1;
-    this.spans.push({
+    const record: SpanRecord = {
       id,
       name,
       parentId: parentId ?? null,
       startMs: this.clock(),
       endMs: null,
-    });
+    };
+    this.spans.push(record);
+    this.byId.set(id, record);
     return id;
   }
 
   end(id: string, error?: string): void {
-    const span = this.spans.find((entry) => entry.id === id);
+    const span = this.byId.get(id);
     if (span === undefined) throw new Error(`unknown span ${id}`);
     span.endMs = this.clock();
     if (error !== undefined) span.error = error;
+  }
+
+  // Issue #243: read one span without copying the trace. The copy keeps
+  // the ledger tamper-proof: a reader mutating the return never rewrites
+  // a stored record (pinned by test).
+  get(id: string): SpanRecord | undefined {
+    const span = this.byId.get(id);
+    return span === undefined ? undefined : { ...span };
   }
 
   trace(): SpanRecord[] {

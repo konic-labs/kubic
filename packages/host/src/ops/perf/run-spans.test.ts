@@ -2,7 +2,7 @@
 // lands after this file. The recorder is the §29 SpanRecorder; this module
 // only maps live lane/tool events onto it and serializes the result.
 // Faux-only: injected clock, no I/O, no network.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -16,6 +16,7 @@ import {
   MemoryStorage,
   Type,
 } from '../../../../worker/src/pi-boundary.js';
+import { SpanRecorder } from '../../spans.js';
 import {
   RUN_SPAN_NAMES,
   RunSpans,
@@ -328,5 +329,28 @@ describe('runSpanHooks (issue #98, #397)', () => {
     expect(
       await handlers.afterTool?.({ id: 'c1', name: 'read' }, result, {}, {}),
     ).toBe(result);
+  });
+});
+
+describe('RunSpans per-span cost (issue #243)', () => {
+  it('opens and closes 1,000 tool spans without copying the trace', () => {
+    const spans = new RunSpans(() => 0);
+    const run = spans.startRun();
+    const seen = vi.spyOn(SpanRecorder.prototype, 'trace');
+    try {
+      seen.mockClear();
+      for (let index = 0; index < 1000; index += 1) {
+        const call = `call-${String(index)}`;
+        spans.startTool(call, 'read');
+        spans.endTool(call);
+      }
+      // Opening or closing one span must never map-copy every span:
+      // the hot path stays O(1) per tool call, not O(n^2) per run.
+      expect(seen).not.toHaveBeenCalled();
+    } finally {
+      seen.mockRestore();
+    }
+    spans.endRun(run);
+    expect(spans.trace()).toHaveLength(1001);
   });
 });

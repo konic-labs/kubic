@@ -126,7 +126,8 @@ export class RunSpans {
   }
 
   private remember(id: string): void {
-    const span = this.recorder.trace().find((entry) => entry.id === id);
+    // Issue #243: one keyed read, never a trace copy plus linear find.
+    const span = this.recorder.get(id);
     this.startMs.set(id, span?.startMs ?? 0);
     this.endMs.set(id, null);
   }
@@ -136,7 +137,8 @@ export class RunSpans {
   private close(id: string, error?: string): number {
     if (this.endMs.get(id) === null) {
       this.recorder.end(id, error);
-      const span = this.recorder.trace().find((entry) => entry.id === id);
+      // Issue #243: one keyed read, never a trace copy plus linear find.
+      const span = this.recorder.get(id);
       this.endMs.set(id, span?.endMs ?? null);
     }
     const end = this.endMs.get(id);

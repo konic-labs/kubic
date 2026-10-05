@@ -76,7 +76,7 @@ function modelsWith(
 
 async function budgetedRun(
   responses: Parameters<ReturnType<typeof fauxProvider>['setResponses']>[0],
-  budget: { maxToolCalls?: number; maxCostUsd?: number },
+  budget: { maxToolCalls?: number; maxCostUsd?: number; maxRuntimeMs?: number },
 ) {
   const sessionsRoot = tmp('hbudget-sessions-');
   const ws = tmp('hbudget-ws-');
@@ -157,6 +157,25 @@ describe('solo --budget end to end (issue #283)', () => {
     } finally {
       await lane.cleanup().catch(() => undefined);
     }
+  });
+
+  // Review #283 (med): `maxRuntimeMs` was accepted but dead — no live
+  // path ever fed `runtimeMs`, so a wall-clock-only budget never tripped.
+  // The guard arms at min(timeout, maxRuntimeMs) with the budget error.
+  it('a tiny maxRuntimeMs ends budget_exhausted naming wallClock', async () => {
+    const result = await budgetedRun(
+      [
+        fauxAssistantMessage(
+          [fauxToolCall('write', { path: 'a.txt', content: 'a\n' })],
+          { stopReason: 'toolUse' },
+        ),
+        fauxAssistantMessage('done'),
+      ],
+      { maxRuntimeMs: 1 },
+    );
+    expect(result.terminus).toBe('budget_exhausted');
+    expect(mapTerminusToExitCode(result.terminus, undefined)).toBe(3);
+    expect(result.summary).toContain('wallClock');
   });
 
   it('a run inside budget completes (no false trip)', async () => {

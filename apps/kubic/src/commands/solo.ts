@@ -153,7 +153,7 @@ function registerRun(program: Command, ctx: CommandContext): void {
     )
     .option(
       '--budget <dims>',
-      'opt-in §71 budget (e.g. toolCalls=10,maxCostUsd=0.5,maxRuntimeMs=60000); a breach ends the run budget_exhausted',
+      'opt-in §71 budget (e.g. maxToolCalls=10,maxCostUsd=0.5,maxRuntimeMs=60000); a breach ends the run budget_exhausted',
       rule(parseSoloBudget),
     )
     .option('--model <provider/id>', MODEL_FLAG_HELP, rule(parseModelFlag))
@@ -285,7 +285,7 @@ function registerTui(program: Command, ctx: CommandContext): void {
     .option('--no-skills', 'disable layered skill discovery')
     .option(
       '--budget <dims>',
-      'opt-in §71 budget (e.g. toolCalls=10,maxCostUsd=0.5,maxRuntimeMs=60000); a breach ends the run budget_exhausted',
+      'opt-in §71 budget (e.g. maxToolCalls=10,maxCostUsd=0.5,maxRuntimeMs=60000); a breach ends the run budget_exhausted',
       rule(parseSoloBudget),
     )
     .option(

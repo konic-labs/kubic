@@ -1390,10 +1390,21 @@ async function runHeadlessPromptImpl(
     // and the turn), not with the boot: a slow boot is not a slow turn. The
     // prompt entry is written by `submit` itself (#247), so there is no
     // pre-boot prompt write to fail here.
+    // Review #283 (med): an accepted `maxRuntimeMs` with no live path
+    // was a dead limit. The guard arms at the tighter of the two
+    // wall-clock bounds — a breached --budget trips the §71 error
+    // (`budget_exhausted`, exit 3), never the timeout one.
     const boundMs = options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+    const budgetMs = options.budget?.maxRuntimeMs;
+    const wallClockBudget = budgetMs !== undefined && budgetMs <= boundMs;
     deadline = setTimeout(
-      () => tripGuard(new WallClockError(boundMs)),
-      boundMs,
+      () =>
+        tripGuard(
+          wallClockBudget
+            ? new ExtensionBudgetError('wallClock')
+            : new WallClockError(boundMs),
+        ),
+      wallClockBudget && budgetMs !== undefined ? budgetMs : boundMs,
     );
     const afterBound = bootInterrupted();
     if (afterBound !== undefined) return afterBound;

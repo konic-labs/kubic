@@ -413,7 +413,7 @@ export function parseRunMaxTurns(value: string): number {
 }
 
 // `--budget <dims>` (issue #283; §71): the opt-in solo budget, reusing
-// orchestrate's dimension grammar (`toolCalls=10,maxCostUsd=0.5`) but
+// orchestrate's dimension grammar (`maxToolCalls=10,maxCostUsd=0.5`) but
 // WITHOUT agent scoping — a solo run has one lane, so an `agent:` clause
 // is a usage error naming the flag. No defaults: absence leaves the key
 // out upstream. Host never imports the extensions package (structural
@@ -435,13 +435,13 @@ export function parseSoloBudget(value: string): SoloBudgetLimits {
     const trimmed = part.trim();
     if (trimmed.length === 0) {
       throw new RunArgumentError(
-        `--budget ${JSON.stringify(value)}: need dims like toolCalls=10,maxCostUsd=0.5`,
+        `--budget ${JSON.stringify(value)}: need dims like maxToolCalls=10,maxCostUsd=0.5`,
       );
     }
     const equals = trimmed.indexOf('=');
     if (equals <= 0) {
       throw new RunArgumentError(
-        `--budget ${JSON.stringify(value)}: need dims like toolCalls=10,maxCostUsd=0.5`,
+        `--budget ${JSON.stringify(value)}: need dims like maxToolCalls=10,maxCostUsd=0.5`,
       );
     }
     const name = trimmed.slice(0, equals).trim();
@@ -453,14 +453,14 @@ export function parseSoloBudget(value: string): SoloBudgetLimits {
       (name === 'maxRuntimeMs' && amount > MAX_RUN_TIMEOUT_MS)
     ) {
       throw new RunArgumentError(
-        `--budget ${JSON.stringify(value)}: need dims like toolCalls=10,maxCostUsd=0.5`,
+        `--budget ${JSON.stringify(value)}: need dims like maxToolCalls=10,maxCostUsd=0.5`,
       );
     }
     dims[name] = amount;
   }
   if (Object.keys(dims).length === 0) {
     throw new RunArgumentError(
-      `--budget ${JSON.stringify(value)}: need dims like toolCalls=10,maxCostUsd=0.5`,
+      `--budget ${JSON.stringify(value)}: need dims like maxToolCalls=10,maxCostUsd=0.5`,
     );
   }
   return {

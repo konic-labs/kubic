@@ -471,9 +471,16 @@ describe('prod orchestrate path: §51 cancellation grace (issue #249)', () => {
     // reapGroup), not just the kill.
     const signals = fakeSignals();
     const marker = join(scratchRoot('kubic-orch-settle-'), 'abort.done');
+    // Issue #438: the 500 ms abort nominally fits a 2 s grace, but under
+    // full-suite load a starved event loop + process scheduling pushed the
+    // drain past it and the escalation cut the settle off (marker missing).
+    // The ceiling below is test-scoped headroom, not product budget: the
+    // test proceeds as soon as the settle completes, so a generous ceiling
+    // costs no time in the common case — it only absorbs load. The ordering
+    // under test is unchanged (abort << grace, row `settled` not `forced`).
     const { settled, deps } = await startLiveWorker(signals, {
       prompt: `work SLOW_ABORT=500 ABORT_MARKER=${marker} STUBBORN_GRANDCHILD`,
-      cancelGraceMs: 2_000,
+      cancelGraceMs: 15_000,
     });
     deps.cancelWorker?.('worker-1');
     await settled;

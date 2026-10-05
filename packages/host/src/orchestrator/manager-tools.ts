@@ -24,8 +24,14 @@ import type { AgentResult, ResultStatus } from '../../../worker/src/result.js';
 import { buildAgentResult } from '../../../worker/src/result.js';
 import { composeWorkerPrompt } from '../roles/worker-roles.js';
 import { MAX_RUN_TIMEOUT_MS } from '../run-cli.js';
-import { MANAGER_ALLOWLIST } from './manager.js';
+import {
+  MANAGER_ALLOWLIST,
+  rejectAuthoring,
+  validateWorkspaceApply,
+  validateWorkspaceDiff,
+} from './manager.js';
 import { managerToolStubs } from './manager-lane.js';
+import { QueueStoppedError } from './merge/queue.js';
 import type { ParallelScheduler } from './parallel/scheduler.js';
 
 /** A refusal the model can act on: a stable code plus the reason. */
@@ -50,6 +56,17 @@ export interface SpawnRoleSpec {
 export interface PreparedWorker {
   agentId: string;
   worktreePath: string;
+}
+
+/**
+ * A worker's pending change as its own bytes: what `workspace_diff`
+ * shows and `workspace_apply` stages. The patch travels worker → lane,
+ * never model → lane (`rejectAuthoring` refuses the reverse).
+ */
+export interface WorkerChange {
+  agentId: string;
+  filesChanged: string[];
+  patch: string;
 }
 
 /**
@@ -115,6 +132,27 @@ export interface ManagerToolsDeps {
    * `wait_for_agent` / `collect_result`.
    */
   runFollowUp(agentId: string, prompt: string): Promise<AgentResult>;
+  /**
+   * Read a worker's pending change (its bytes, for review): the file list
+   * plus the patch text. Read-only — the manager reviews these bytes
+   * through `workspace_diff` but never supplies its own.
+   */
+  readWorkerChange(
+    agentId: string,
+    worktree: string,
+    base?: string,
+  ): Promise<WorkerChange>;
+  /**
+   * Enqueue a settled worker's change into the run's merge queue (FIFO).
+   * Returns the queue position (1-based).
+   */
+  stageWorker(agentId: string, branch: string): Promise<{ position: number }>;
+  /**
+   * Dequeue the queue head and merge it into the main worktree. Returns
+   * the merged worker, or undefined when nothing is staged. Throws
+   * QueueStoppedError once the queue stopped on an unresolvable conflict.
+   */
+  applyStaged(): Promise<{ agentId: string } | undefined>;
 }
 
 // The `--budget` dimension names a `spawn_agent(budget=…)` map may carry
@@ -257,12 +295,18 @@ export interface ManagerToolset {
   inspectAgent: ToolRegistration;
   cancelAgent: ToolRegistration;
   sendToAgent: ToolRegistration;
+  workspaceDiff: ToolRegistration;
+  workspaceApply: ToolRegistration;
+  workspaceMerge: ToolRegistration;
   settle: {
     resultOf(agentId: string): AgentResult | undefined;
   };
 }
 
-/** Build the step-2 (spawn/wait/collect) and step-3 (inspect/cancel/send) adapters over the run's seams. */
+/**
+ * Build the step-2 (spawn/wait/collect), step-3 (inspect/cancel/send) and
+ * step-4 (workspace diff/apply/merge) adapters over the run's seams.
+ */
 export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
   const settle = new SettleRegistry();
   const worktrees = new Map<string, string>();
@@ -728,6 +772,161 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
     },
   });
 
+  // Workspace tools (issue #416): the manager merges worker-produced
+  // bytes it references, never bytes it supplies. `rejectAuthoring` runs
+  // first in every one (schemas omit the fields; a direct call still
+  // hits the guard). Like the control tools they operate on the lane's
+  // spawned set, whose worktrees the lane tracked at spawn.
+  const workspaceDiff = defineTool({
+    name: 'workspace_diff',
+    description:
+      'Show a worker change (files and patch, read-only) — never author file contents.',
+    parameters: Type.Object({
+      agentId: Type.String(),
+      base: Type.Optional(Type.String()),
+    }),
+    execute: async (args) => {
+      rejectAuthoring(args as Record<string, unknown>);
+      const { agentId, base } = args as {
+        agentId?: unknown;
+        base?: unknown;
+      };
+      if (typeof agentId !== 'string' || agentId === '') {
+        throw new ManagerToolRefusalError(
+          'invalid_args',
+          'workspace_diff needs a spawned agent id',
+        );
+      }
+      if (base !== undefined && typeof base !== 'string') {
+        throw new ManagerToolRefusalError(
+          'invalid_args',
+          'workspace_diff base must be a ref when provided',
+        );
+      }
+      const worktree = worktrees.get(agentId);
+      if (worktree === undefined) {
+        throw new ManagerToolRefusalError(
+          'unknown_agent',
+          `no worker '${agentId}' was spawned by this run`,
+        );
+      }
+      const checked = validateWorkspaceDiff(
+        base === undefined ? { worktree } : { worktree, base },
+      );
+      if (!checked.valid) {
+        throw new ManagerToolRefusalError(
+          'invalid_args',
+          `workspace_diff: ${checked.errors.join('; ')}`,
+        );
+      }
+      const change = await deps.readWorkerChange(agentId, worktree, base);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              agentId: change.agentId,
+              filesChanged: [...change.filesChanged],
+              patch: change.patch,
+            }),
+          },
+        ],
+      };
+    },
+  });
+
+  const workspaceApply = defineTool({
+    name: 'workspace_apply',
+    description:
+      'Stage a settled worker change into the merge queue — references only, never file contents.',
+    parameters: Type.Object({ agentId: Type.String() }),
+    execute: async (args) => {
+      rejectAuthoring(args as Record<string, unknown>);
+      const { agentId } = args as { agentId?: unknown };
+      if (typeof agentId !== 'string' || agentId === '') {
+        throw new ManagerToolRefusalError(
+          'invalid_args',
+          'workspace_apply needs a spawned agent id',
+        );
+      }
+      const worktree = worktrees.get(agentId);
+      if (worktree === undefined) {
+        throw new ManagerToolRefusalError(
+          'unknown_agent',
+          `no worker '${agentId}' was spawned by this run`,
+        );
+      }
+      if (settle.resultOf(agentId) === undefined) {
+        throw new ManagerToolRefusalError(
+          'apply_before_settle',
+          `worker '${agentId}' is still running — stage only settled changes`,
+        );
+      }
+      // The staged bytes are the worker's own, re-read here: the model
+      // never supplies a patch, so there is nothing to smuggle through.
+      const change = await deps.readWorkerChange(agentId, worktree);
+      const checked = validateWorkspaceApply({
+        worktree,
+        patch: change.patch,
+      });
+      if (!checked.valid) {
+        throw new ManagerToolRefusalError(
+          'invalid_args',
+          `workspace_apply: ${checked.errors.join('; ')}`,
+        );
+      }
+      const row = deps.inspectWorker(agentId);
+      if (row === undefined) {
+        throw new ManagerToolRefusalError(
+          'unknown_agent',
+          `no worker '${agentId}' was spawned by this run`,
+        );
+      }
+      const staged = await deps.stageWorker(agentId, row.branch);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ agentId, position: staged.position }),
+          },
+        ],
+      };
+    },
+  });
+
+  const workspaceMerge = defineTool({
+    name: 'workspace_merge',
+    description:
+      'Merge the merge-queue head into the main worktree (FIFO — the queue owns the order).',
+    parameters: Type.Object({}),
+    execute: async (args) => {
+      rejectAuthoring(args as Record<string, unknown>);
+      let staged: { agentId: string } | undefined;
+      try {
+        staged = await deps.applyStaged();
+      } catch (error) {
+        if (error instanceof QueueStoppedError) {
+          throw new ManagerToolRefusalError('merge_blocked', error.message);
+        }
+        throw error;
+      }
+      if (staged === undefined) {
+        throw new ManagerToolRefusalError(
+          'merge_queue_empty',
+          'merge queue is empty — stage a worker change first',
+        );
+      }
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ agentId: staged.agentId, status: 'merged' }),
+          },
+        ],
+      };
+    },
+  });
+
   return {
     spawnAgent,
     waitForAgent,
@@ -735,6 +934,9 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
     inspectAgent,
     cancelAgent,
     sendToAgent,
+    workspaceDiff,
+    workspaceApply,
+    workspaceMerge,
     settle: {
       resultOf: (agentId) => settle.resultOf(agentId),
     },
@@ -742,9 +944,9 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
 }
 
 /**
- * The lane's 13 tools in allowlist order: the step-2 and step-3 adapters
- * plus the remaining stubs (steps 4–5 replace them). The lane boots this
- * set.
+ * The lane's 13 tools in allowlist order: the step-2, step-3 and step-4
+ * adapters plus the remaining stubs (step 5 replaces them). The lane
+ * boots this set.
  */
 export function managerToolsWithStubs(
   deps: ManagerToolsDeps,
@@ -757,6 +959,9 @@ export function managerToolsWithStubs(
     ['cancel_agent', tools.cancelAgent],
     ['inspect_agent', tools.inspectAgent],
     ['collect_result', tools.collectResult],
+    ['workspace_diff', tools.workspaceDiff],
+    ['workspace_apply', tools.workspaceApply],
+    ['workspace_merge', tools.workspaceMerge],
   ]);
   const stubs = new Map(managerToolStubs().map((tool) => [tool.name, tool]));
   return MANAGER_ALLOWLIST.map((name) => {

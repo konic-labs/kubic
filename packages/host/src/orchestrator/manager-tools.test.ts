@@ -23,6 +23,7 @@ import {
   managerToolsWithStubs,
   type WorkerSpawnRequest,
 } from './manager-tools.js';
+import { createMergeQueue, type MergeQueue } from './merge/queue.js';
 import { ParallelScheduler } from './parallel/scheduler.js';
 
 interface FakeRoles {
@@ -83,6 +84,8 @@ interface Rig {
   followUps: Array<{ agentId: string; prompt: string }>;
   followUpGates: Map<string, (result: AgentResult) => void>;
   settleFollowUp(agentId: string, result?: AgentResult): void;
+  queue: MergeQueue;
+  landed: string[];
 }
 
 function rig(options?: {
@@ -104,6 +107,8 @@ function rig(options?: {
   const cancelled: string[] = [];
   const followUps: Array<{ agentId: string; prompt: string }> = [];
   const followUpGates = new Map<string, (result: AgentResult) => void>();
+  const queue = createMergeQueue();
+  const landed: string[] = [];
   let minted = 0;
   const spawned: string[] = [];
   const deps: ManagerToolsDeps = {
@@ -156,6 +161,22 @@ function rig(options?: {
         followUps.push({ agentId, prompt });
         followUpGates.set(agentId, resolve);
       }),
+    readWorkerChange: async (agentId) => ({
+      agentId,
+      filesChanged: [`${agentId}.txt`],
+      patch: `--- a/${agentId}.txt\n+++ b/${agentId}.txt\n@@ -0,0 +1 @@\n+done\n`,
+    }),
+    stageWorker: async (agentId, branch) => {
+      queue.enqueue({ agentId, branch });
+      return { position: queue.list().length };
+    },
+    applyStaged: async () => {
+      // The real queue: refused once stopped, preserved otherwise.
+      const next = queue.dequeue();
+      if (next === undefined) return undefined;
+      landed.push(next.agentId);
+      return { agentId: next.agentId };
+    },
   };
   const settleInto = (
     store: Map<string, AgentResult>,
@@ -181,6 +202,8 @@ function rig(options?: {
     followUpGates,
     settleFollowUp: (agentId, result) =>
       settleInto(settledResults, followUpGates, agentId, result),
+    queue,
+    landed,
   };
 }
 
@@ -333,7 +356,7 @@ describe('manager spawn/wait/collect adapters (issue #414)', () => {
     ]);
   });
 
-  it('the lane toolset is the allowlist in order: six adapters, seven stubs', async () => {
+  it('the lane toolset is the allowlist in order: nine adapters, four stubs', async () => {
     const test = useRig();
     const lane = await bootLane(test, [fauxAssistantMessage('ok')]);
     const names = lane.registry
@@ -1018,5 +1041,127 @@ describe('manager spawn review findings (issue #414 round 1)', () => {
       summary: 'first done',
       status: 'completed',
     });
+  });
+});
+
+describe('manager workspace adapters (issue #416)', () => {
+  const tests: Rig[] = [];
+  afterEach(async () => {
+    for (const test of tests.splice(0)) {
+      for (const resolve of test.gates.values()) {
+        resolve(completedResult('cleanup', []));
+      }
+      for (const resolve of test.followUpGates.values()) {
+        resolve(completedResult('cleanup', []));
+      }
+      for (const lane of test.lanes.splice(0)) {
+        await lane.close(BACKGROUND_CONTEXT);
+      }
+    }
+  });
+  function useRig(options?: Parameters<typeof rig>[0]): Rig {
+    const test = rig(options);
+    tests.push(test);
+    return test;
+  }
+
+  it('a faux manager diff→apply→merge round lands the worker change', async () => {
+    const test = useRig();
+    const lane = await bootLane(test, [
+      fauxAssistantMessage(
+        [fauxToolCall('spawn_agent', { role: 'tester', task: 'prove it' })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('spawned'),
+      fauxAssistantMessage(
+        [
+          fauxToolCall('workspace_diff', { agentId: 'worker-1' }),
+          fauxToolCall('workspace_apply', { agentId: 'worker-1' }),
+          fauxToolCall('workspace_merge', {}),
+        ],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('merged'),
+    ]);
+    await runTurn(lane, 'go');
+    test.settle('worker-1', completedResult('proved it', ['worker-1.txt']));
+    await callTool(lane, 'wait_for_agent', { agentId: 'worker-1' });
+    await runTurn(lane, 'merge it');
+    // The worker's change landed through the real queue, in FIFO order.
+    expect(test.landed).toEqual(['worker-1']);
+    expect(test.queue.list()).toEqual([]);
+    const diffed = (await callTool(lane, 'workspace_diff', {
+      agentId: 'worker-1',
+    })) as { content: Array<{ text: string }> };
+    expect(JSON.parse(diffed.content[0]?.text ?? '{}')).toEqual({
+      agentId: 'worker-1',
+      filesChanged: ['worker-1.txt'],
+      patch: '--- a/worker-1.txt\n+++ b/worker-1.txt\n@@ -0,0 +1 @@\n+done\n',
+    });
+  });
+
+  it('inline file contents in a manager tool call are refused', async () => {
+    const test = useRig();
+    const lane = await bootLane(test, [
+      fauxAssistantMessage(
+        [fauxToolCall('spawn_agent', { role: 'tester', task: 'prove it' })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('spawned'),
+    ]);
+    await runTurn(lane, 'go');
+    test.settle('worker-1');
+    await callTool(lane, 'wait_for_agent', { agentId: 'worker-1' });
+    await expect(
+      callTool(lane, 'workspace_diff', {
+        agentId: 'worker-1',
+        contents: 'authored',
+      }),
+    ).rejects.toThrow(/inline authoring/);
+    await expect(
+      callTool(lane, 'workspace_apply', {
+        agentId: 'worker-1',
+        content: 'authored',
+      }),
+    ).rejects.toThrow(/inline authoring/);
+    await expect(
+      callTool(lane, 'workspace_merge', { contents: 'authored' }),
+    ).rejects.toThrow(/inline authoring/);
+    expect(test.landed).toEqual([]);
+  });
+
+  it('apply on a running worker and merge on an empty or stopped queue refuse by name', async () => {
+    const test = useRig();
+    const lane = await bootLane(test, [
+      fauxAssistantMessage(
+        [fauxToolCall('spawn_agent', { role: 'tester', task: 'prove it' })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('spawned'),
+    ]);
+    await runTurn(lane, 'go');
+    await expect(
+      callTool(lane, 'workspace_apply', { agentId: 'worker-1' }),
+    ).rejects.toThrow(/apply_before_settle.*worker-1/);
+    await expect(callTool(lane, 'workspace_merge', {})).rejects.toThrow(
+      /merge_queue_empty/,
+    );
+    await expect(
+      callTool(lane, 'workspace_diff', { agentId: 'nobody' }),
+    ).rejects.toThrow(/unknown_agent.*nobody/);
+    test.settle('worker-1');
+    await callTool(lane, 'wait_for_agent', { agentId: 'worker-1' });
+    await callTool(lane, 'workspace_apply', { agentId: 'worker-1' });
+    expect(test.queue.list()).toEqual([
+      { agentId: 'worker-1', branch: 'kubic/run-414/worker-1' },
+    ]);
+    test.queue.markUnresolvable('worker-1', {
+      oursDiff: 'ours',
+      theirsDiff: 'theirs',
+    });
+    await expect(callTool(lane, 'workspace_merge', {})).rejects.toThrow(
+      /merge_blocked.*worker-1/,
+    );
+    expect(test.landed).toEqual([]);
   });
 });

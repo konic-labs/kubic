@@ -28,6 +28,7 @@ import {
   hasToolPolicy,
   PolicyDeniedError,
 } from '../policy/enterprise.js';
+import { MAX_RUN_TIMEOUT_MS } from '../run-cli.js';
 
 export class RoleParseError extends Error {
   constructor(message: string) {
@@ -46,6 +47,16 @@ export interface RoleToolPolicy {
 
 export interface ParsedRoleDoc {
   name: string;
+  // Issue #198 (§12, Pi-agent shape): `description` is shown by doctor.
+  description?: string;
+  // Issue #198 (§12): the document's own `provider/id` model pin — the
+  // lowest model tier (spawn/CLI > config `[roles.<r>]` > document).
+  // Validated at parse, so a malformed ref is refused by name everywhere.
+  model?: string;
+  // Issue #198 (§71): the document's own budget dims (the --budget set) —
+  // applies to a spawned worker only when present, and only when no
+  // spawn/CLI budget outranks it. Validated at parse, like --budget.
+  budget?: Record<string, number>;
   tools?: string[];
   // Issue #181 (§29.4): the skills this role sees, by skill name. Absent
   // means no restriction (every gated-visible skill is offered); a
@@ -90,6 +101,64 @@ function parseToolsList(raw: string): string[] {
     .filter((entry) => entry !== '');
 }
 
+// The document-budget dimension set (issue #198): exactly the --budget
+// dims (orchestrate-cli BUDGET_DIMENSIONS) — a document can never invent
+// a dimension the spawn gate would not enforce. `retryBudget` is not one:
+// --budget does not accept it either.
+const DOCUMENT_BUDGET_DIMENSIONS: ReadonlySet<string> = new Set([
+  'maxTokens',
+  'maxCostUsd',
+  'maxRuntimeMs',
+  'maxToolCalls',
+]);
+
+// A document `budget = { maxToolCalls = 5, maxCostUsd = 2 }` value (issue
+// #198): the shipped `.kubic/roles/*.md` examples already spell dims with
+// `=` (a `:` inside the braces would split the frontmatter line itself, so
+// only `=` is accepted). Same rules as --budget: known dims only, finite
+// positive numbers, maxRuntimeMs under the setTimeout ceiling (run-cli
+// MAX_RUN_TIMEOUT_MS — above it the watchdog would fire almost
+// immediately and misreport limit=wallClock). Empty braces mean absent.
+function parseDocumentBudget(
+  raw: string,
+  roleName: string,
+): Record<string, number> | undefined {
+  let inner = raw;
+  if (inner.startsWith('{') && inner.endsWith('}')) {
+    inner = inner.slice(1, -1);
+  }
+  const dims: Record<string, number> = {};
+  for (const part of inner.split(',')) {
+    const trimmed = part.trim();
+    if (trimmed === '') continue;
+    const equals = trimmed.indexOf('=');
+    if (equals <= 0) {
+      throw new RoleParseError(
+        `role '${roleName}': 'budget' dims must be 'name = number' (got ${JSON.stringify(trimmed)})`,
+      );
+    }
+    const dim = trimmed.slice(0, equals).trim();
+    const value = Number(trimmed.slice(equals + 1));
+    if (!DOCUMENT_BUDGET_DIMENSIONS.has(dim)) {
+      throw new RoleParseError(
+        `role '${roleName}': unknown budget dimension '${dim}' (one of ${[...DOCUMENT_BUDGET_DIMENSIONS].join(', ')})`,
+      );
+    }
+    if (!Number.isFinite(value) || !(value > 0)) {
+      throw new RoleParseError(
+        `role '${roleName}': budget '${dim}' must be a positive number (got ${JSON.stringify(trimmed.slice(equals + 1).trim())})`,
+      );
+    }
+    if (dim === 'maxRuntimeMs' && value > MAX_RUN_TIMEOUT_MS) {
+      throw new RoleParseError(
+        `role '${roleName}': budget 'maxRuntimeMs' must be no more than ${MAX_RUN_TIMEOUT_MS}`,
+      );
+    }
+    dims[dim] = value;
+  }
+  return Object.keys(dims).length === 0 ? undefined : dims;
+}
+
 // Frontmatter contract (role contents land in issue #44 — this is the
 // shape they must honor): a `---`-delimited block of `key: value` (or
 // `key = value`) lines. `role` names the role, `tools` is a `[a, b]`
@@ -118,6 +187,10 @@ export function parseRoleDocument(markdown: string): ParsedRoleDoc {
     );
   }
   let name: string | undefined;
+  let alias: string | undefined;
+  let description: string | undefined;
+  let modelRaw: string | undefined;
+  let budgetRaw: string | undefined;
   let tools: string[] | undefined;
   let skills: string[] | undefined;
   let requires: string[] | undefined;
@@ -139,6 +212,16 @@ export function parseRoleDocument(markdown: string): ParsedRoleDoc {
     const raw = trimmed.slice(trimmed.indexOf(sep) + 1);
     if (key === 'role') {
       name = String(parseScalar(raw));
+    } else if (key === 'name') {
+      // Issue #198 (§12): Pi-agent alias of `role` — a second name for
+      // the same document, refused when the two disagree.
+      alias = String(parseScalar(raw));
+    } else if (key === 'description') {
+      description = String(parseScalar(raw));
+    } else if (key === 'model') {
+      modelRaw = String(parseScalar(raw));
+    } else if (key === 'budget') {
+      budgetRaw = raw.trim();
     } else if (key === 'tools') {
       tools = parseToolsList(raw);
     } else if (key === 'skills') {
@@ -152,10 +235,38 @@ export function parseRoleDocument(markdown: string): ParsedRoleDoc {
     }
   }
   if (name === undefined || name === '') {
-    throw new RoleParseError("role document frontmatter must declare 'role'");
+    if (alias === undefined || alias === '') {
+      throw new RoleParseError(
+        "role document frontmatter must declare 'role' (or its Pi-agent alias 'name')",
+      );
+    }
+    name = alias;
+  } else if (alias !== undefined && alias !== '' && alias !== name) {
+    throw new RoleParseError(
+      `'role' (${JSON.stringify(name)}) disagrees with 'name' (${JSON.stringify(alias)}): one document, one role`,
+    );
+  }
+  // The document model pin (issue #198): `provider/id`, both sides
+  // non-empty — the same rule the config `[roles.<r>].model` check and
+  // the runtime `roleModelSelection` enforce, so a malformed ref is
+  // refused here with its reason instead of reaching a lane.
+  let model: string | undefined;
+  if (modelRaw !== undefined) {
+    const slash = modelRaw.indexOf('/');
+    if (slash <= 0 || slash === modelRaw.length - 1) {
+      throw new RoleParseError(
+        `role '${name}': 'model' must be 'provider/id' (got ${JSON.stringify(modelRaw)})`,
+      );
+    }
+    model = modelRaw;
   }
   return {
     name,
+    ...(description === undefined ? {} : { description }),
+    ...(model === undefined ? {} : { model }),
+    ...(budgetRaw === undefined
+      ? {}
+      : { budget: parseDocumentBudget(budgetRaw, name) }),
     ...(tools === undefined ? {} : { tools }),
     ...(skills === undefined ? {} : { skills }),
     ...(requires === undefined ? {} : { requires }),
@@ -207,7 +318,15 @@ export interface MergedRole {
   // Issue #196 (§41.1): the union of the document's `requires` and every
   // layer's — every named tool requires approval under this role.
   requires: string[];
+  // Issue #198 (§12): the document's description, shown by doctor.
+  description?: string;
+  // The layer-supplied `provider/id` pin (issue #133), or the document's
+  // own pin (issue #198) when no layer sets one — the run path then keeps
+  // its own selection default only when neither sets one.
   model: string | undefined;
+  // Issue #198 (§71): the document's own budget dims, if it declares
+  // any — no layer tier exists, so this passes through untouched.
+  budget?: Record<string, number>;
   overriddenAttempts: string[];
 }
 
@@ -277,6 +396,10 @@ export function mergeRoleLayers(
   const rawClasses: Record<string, unknown> = {
     ...(doc.classes as Record<string, unknown>),
   };
+  // Issue #198: the document pin is the fallback tier under every layer —
+  // a layer winning over the document is precedence (the documented
+  // spawn/CLI > config > document order), never an overridden attempt.
+  if (model === undefined) model = doc.model;
   for (const [key, value] of classLeaves) {
     rawClasses[key] = value;
   }
@@ -284,7 +407,9 @@ export function mergeRoleLayers(
     tools: tools ?? doc.tools,
     classes: validateClasses(rawClasses),
     requires: [...required].sort(),
+    ...(doc.description === undefined ? {} : { description: doc.description }),
     model,
+    ...(doc.budget === undefined ? {} : { budget: { ...doc.budget } }),
     overriddenAttempts,
   };
 }
@@ -320,9 +445,15 @@ export interface ResolvedRole {
   // this role — the union of the document's `requires` and every layer's,
   // threaded into the installed policy's trigger context. Empty when none.
   requires: string[];
-  // The layer-supplied `provider/id` pin (issue #133), or undefined when no
-  // layer set one — the run path then keeps its own selection default.
+  // Issue #198 (§12): the document's description, shown by doctor.
+  description?: string;
+  // The layer-supplied `provider/id` pin (issue #133), or the document's
+  // own pin (issue #198) when no layer sets one — the run path then keeps
+  // its own selection default only when neither sets one.
   model: string | undefined;
+  // Issue #198 (§71): the document's own budget dims, if it declares
+  // any — no layer tier exists, so this passes through untouched.
+  budget?: Record<string, number>;
   overriddenAttempts: string[];
 }
 
@@ -352,7 +483,11 @@ export function resolveRole(
     tools,
     classes: merged.classes,
     requires: merged.requires,
+    ...(merged.description === undefined
+      ? {}
+      : { description: merged.description }),
     model: merged.model,
+    ...(merged.budget === undefined ? {} : { budget: merged.budget }),
     overriddenAttempts: merged.overriddenAttempts,
   };
   const toolPolicy = options.toolPolicy;
@@ -495,10 +630,13 @@ export function roleDoctorChecks(
       ...base,
       status: 'pass' as const,
       reason: 'ok' as const,
+      // Issue #198 (§12): the document description, when the role
+      // declares one — right after the source, before the tool/effective
+      // detail, in both detail shapes.
       detail:
         configClasses === undefined
-          ? `${sources[resolved.name] ?? 'builtin'} role — ${resolved.tools.length} tool(s): ${resolved.tools.join(', ')}`
-          : `${sources[resolved.name] ?? 'builtin'} role — effective ${formatEffectiveClasses(effectiveRoleClasses(configClasses, resolved.classes))}${resolved.requires.length === 0 ? '' : ` — requires approval: ${resolved.requires.join(', ')}`}`,
+          ? `${sources[resolved.name] ?? 'builtin'} role${resolved.description === undefined ? '' : ` — ${resolved.description}`} — ${resolved.tools.length} tool(s): ${resolved.tools.join(', ')}`
+          : `${sources[resolved.name] ?? 'builtin'} role${resolved.description === undefined ? '' : ` — ${resolved.description}`} — effective ${formatEffectiveClasses(effectiveRoleClasses(configClasses, resolved.classes))}${resolved.requires.length === 0 ? '' : ` — requires approval: ${resolved.requires.join(', ')}`}`,
     };
   });
 }

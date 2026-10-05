@@ -14,6 +14,7 @@ import { createRoleToolGuard } from './resolver.js';
 import {
   composeWorkerPrompt,
   planWorkerRoles,
+  roleBudgetForAgent,
   roleForAgent,
   type WorkerRolesPlan,
 } from './worker-roles.js';
@@ -466,6 +467,88 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
 // `kubic run --role` refuses a role that declares a denied tool, so the
 // manager's plan must refuse the same assignment up front — before a
 // worktree or a process exists — instead of gating roles not at all.
+describe('document model and budget on the delegation path (issue #198)', () => {
+  const BUDGET_WRITER =
+    'tools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n';
+
+  function budgetedCwd(): Record<string, string> {
+    return {
+      [`${CWD}/.kubic/roles/implementer.md`]: roleText(
+        'implementer',
+        `${BUDGET_WRITER}model: acme/doc-1\nbudget = { maxToolCalls = 5 }\n`,
+        'You are the implementer.',
+      ),
+      [`${CWD}/.kubic/roles/planner.md`]: roleText(
+        'planner',
+        READ_ONLY,
+        'You are the planner.',
+      ),
+    };
+  }
+
+  function budgetedPlan(
+    agents: readonly string[],
+    extra: Record<string, unknown> = {},
+  ): WorkerRolesPlan {
+    return planWorkerRoles({
+      bridge: memBridge(budgetedCwd()),
+      cwd: CWD,
+      trusted: true,
+      agents,
+      roles: { alpha: 'implementer' },
+      ...extra,
+    });
+  }
+
+  it("carries the document's model and budget to the assignment", () => {
+    const plan = budgetedPlan(['alpha']);
+    expect(plan.refused).toEqual([]);
+    expect(plan.assignments[0]?.modelRef).toBe('acme/doc-1');
+    expect(plan.assignments[0]?.budget).toEqual({ maxToolCalls: 5 });
+  });
+
+  it('model precedence: explicit pin > config > document > manager default', () => {
+    // Document only: the document pin resolves.
+    expect(budgetedPlan(['alpha']).assignments[0]?.modelRef).toBe('acme/doc-1');
+    // No pin anywhere: the manager's model is inherited.
+    const bare = planWorkerRoles({
+      bridge: memBridge({
+        [`${CWD}/.kubic/roles/implementer.md`]: roleText(
+          'implementer',
+          BUDGET_WRITER,
+          'You are the implementer.',
+        ),
+      }),
+      cwd: CWD,
+      trusted: true,
+      agents: ['alpha'],
+      roles: { alpha: 'implementer' },
+      parentModel: 'acme/manager-1',
+    });
+    expect(bare.assignments[0]?.modelRef).toBe('acme/manager-1');
+    // Explicit per-agent pin outranks the document pin.
+    const pinned = budgetedPlan(['alpha'], {
+      models: { alpha: 'acme/pinned-1' },
+    });
+    expect(pinned.assignments[0]?.modelRef).toBe('acme/pinned-1');
+  });
+
+  it('roleBudgetForAgent returns the assignment budget, else undefined', () => {
+    const plan = budgetedPlan(['alpha', 'beta'], {
+      roles: { alpha: 'implementer', beta: 'planner' },
+    });
+    expect(roleBudgetForAgent(plan, 'alpha')).toEqual({ maxToolCalls: 5 });
+    expect(roleBudgetForAgent(plan, 'beta')).toBeUndefined();
+    expect(roleBudgetForAgent(plan, 'ghost')).toBeUndefined();
+  });
+
+  it('absent document budget means unbounded (no assignment budget)', () => {
+    const plan = planFor(['beta'], { roles: { beta: 'implementer' } });
+    expect(plan.assignments[0]?.budget).toBeUndefined();
+    expect(roleBudgetForAgent(plan, 'beta')).toBeUndefined();
+  });
+});
+
 describe('delegation-path role assignment under the enterprise tool policy (issue #288)', () => {
   const denyBash = resolveEffectivePolicy([
     { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },

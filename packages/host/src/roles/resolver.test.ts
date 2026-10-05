@@ -62,6 +62,44 @@ describe('parseRoleDocument', () => {
     expect(parseRoleDocument(crlf)).toEqual(parseRoleDocument(lf));
     expect(parseRoleDocument(`\uFEFF${lf}`)).toEqual(parseRoleDocument(lf));
   });
+
+  // Issue #198 (§12): the Pi-agent keys — `name` aliases `role`,
+  // `description` is shown by doctor, `model` is a validated provider/id
+  // pin, `budget` carries the --budget dims.
+  it('parses name/description/model/budget from a Pi-agent-shaped doc', () => {
+    const doc = parseRoleDocument(
+      `---\nname: reviewer\ndescription: Reviews diffs\ntools: [read]\nmodel: acme/reviewer-1\nbudget = { maxToolCalls = 5 }\n---\n# Reviewer\n`,
+    );
+    expect(doc.name).toBe('reviewer');
+    expect(doc.description).toBe('Reviews diffs');
+    expect(doc.model).toBe('acme/reviewer-1');
+    expect(doc.budget).toEqual({ maxToolCalls: 5 });
+  });
+
+  it("refuses disagreeing 'role' and 'name' by name", () => {
+    expect(() =>
+      parseRoleDocument(`---\nrole: reviewer\nname: writer\n---\n# Reviewer\n`),
+    ).toThrow(/disagree/);
+  });
+
+  it('refuses a malformed model ref with a named reason', () => {
+    expect(() =>
+      parseRoleDocument(`---\nrole: reviewer\nmodel: not-a-ref\n---\n# R\n`),
+    ).toThrow(/model.*provider\/id/);
+  });
+
+  it('refuses an unknown budget dimension and a non-positive value', () => {
+    expect(() =>
+      parseRoleDocument(
+        `---\nrole: reviewer\nbudget = { maxUnicorns = 5 }\n---\n# R\n`,
+      ),
+    ).toThrow(/unknown budget dimension/);
+    expect(() =>
+      parseRoleDocument(
+        `---\nrole: reviewer\nbudget = { maxToolCalls = 0 }\n---\n# R\n`,
+      ),
+    ).toThrow(/maxToolCalls.*positive/);
+  });
 });
 
 const REVIEWER_MD = `---
@@ -154,6 +192,30 @@ describe('resolveRole', () => {
     expect(() => validateResolvedRole(resolved)).toThrow(
       /unknown tool 'teleport'/,
     );
+  });
+
+  // Issue #198 (§12): the document model resolves when no layer sets
+  // one; a layer pin outranks it (spawn/CLI > config > document).
+  it('a document model resolves, and a layer pin outranks it', () => {
+    const doc = parseRoleDocument(
+      `---\nrole: reviewer\nmodel: acme/doc-1\n---\n# R\n`,
+    );
+    expect(resolveRole(doc, []).model).toBe('acme/doc-1');
+    expect(
+      resolveRole(doc, [
+        { layer: 'project', roles: { reviewer: { model: 'acme/cfg-1' } } },
+      ]).model,
+    ).toBe('acme/cfg-1');
+  });
+
+  it('a document budget passes through, and absent means unbounded', () => {
+    const doc = parseRoleDocument(
+      `---\nrole: reviewer\nbudget = { maxToolCalls = 5 }\n---\n# R\n`,
+    );
+    expect(resolveRole(doc, []).budget).toEqual({ maxToolCalls: 5 });
+    expect(
+      resolveRole(parseRoleDocument(PLANNER_MD), []).budget,
+    ).toBeUndefined();
   });
 });
 
@@ -536,6 +598,15 @@ describe('roleDoctorChecks', () => {
       reason: 'policy-mismatch',
     });
     expect(checks[1]?.detail).toMatch(/filesystem.*read.*write/i);
+  });
+
+  // Issue #198 (§12): the document description is shown by doctor.
+  it('shows the document description in the role detail', () => {
+    const doc = parseRoleDocument(
+      `---\nrole: planner\ndescription: Plans only\ntools: [read]\n---\n# P\n`,
+    );
+    const checks = roleDoctorChecks([resolveRole(doc, [])]);
+    expect(checks[0]?.detail).toContain('Plans only');
   });
 });
 

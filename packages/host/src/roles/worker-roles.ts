@@ -46,15 +46,34 @@ export interface WorkerRoleAssignment {
    * The resolved `provider/model` pin the worker child is told, or undefined
    * when no level chose one (issue #202): the child then keeps its own
    * selection default instead of being forced onto an invented provider.
-   * Precedence: `[roles.<r>].model` config > the manager's effective model.
+   * Precedence: explicit per-agent pin > `[roles.<r>].model` config > the
+   * document's own pin > the manager's effective model.
    */
   modelRef: string | undefined;
+  /**
+   * The document's own budget dims (issue #198, §71), or undefined when
+   * the role declares none — absent means unbounded. A copy, so the plan
+   * owns the dims the spawn gate will enforce.
+   */
+  budget?: Record<string, number>;
   /**
    * The thinking level the worker child is told (issue #202): the run's
    * explicit level (`KUBIC_MODEL_THINKING`) when set, else the role's own
    * §12 default. Undefined leaves the child's `[model].thinking` in force.
    */
   thinking: string | undefined;
+}
+
+// The document budget in force for one worker (issue #198): the
+// assignment's own dims, or undefined when the role declares none (the
+// spawn gate then enforces nothing for this worker). The orchestrate
+// budget composition calls this only after the CLI's own by-agent and
+// shared specs — spawn/CLI > document.
+export function roleBudgetForAgent(
+  plan: WorkerRolesPlan,
+  agentId: string,
+): Record<string, number> | undefined {
+  return plan.assignments.find((entry) => entry.agentId === agentId)?.budget;
 }
 
 export interface WorkerRolesPlan {
@@ -265,6 +284,12 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
           selected.resolved.model ??
           input.parentModel,
         thinking: input.thinkingOverride ?? fallbackThinking,
+        // Issue #198 (§71): the document's own budget dims ride the
+        // assignment, so the spawn gate can enforce them when no
+        // spawn/CLI budget outranks them. Absent stays absent.
+        ...(selected.resolved.budget === undefined
+          ? {}
+          : { budget: { ...selected.resolved.budget } }),
       });
     } catch (error) {
       refusedByName.set(

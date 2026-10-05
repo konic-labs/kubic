@@ -762,6 +762,53 @@ describe('manager spawn/wait/collect adapters (issue #414)', () => {
     ).rejects.toThrow(/invalid_budget/);
     expect(test.launched).toHaveLength(1);
   });
+
+  it('a role document budget rides the spawn; an explicit spawn budget wins; absent means unbounded (issue #198)', async () => {
+    const test = useRig();
+    const lane = await bootLane(
+      test,
+      [
+        fauxAssistantMessage(
+          [
+            fauxToolCall('spawn_agent', {
+              role: 'capped',
+              task: 'doc budget',
+            }),
+            fauxToolCall('spawn_agent', {
+              role: 'capped',
+              task: 'explicit wins',
+              budget: { maxToolCalls: 50 },
+            }),
+            fauxToolCall('spawn_agent', {
+              role: 'tester',
+              task: 'no budget anywhere',
+            }),
+          ],
+          { stopReason: 'toolUse' },
+        ),
+        fauxAssistantMessage('spawned'),
+      ],
+      managerToolsWithStubs({
+        ...test.deps,
+        validRoles: [...test.deps.validRoles, 'capped'],
+        resolveRole: (role) =>
+          role === 'capped'
+            ? {
+                promptText: 'CAPPED-TEXT',
+                tools: ['read'],
+                budget: { maxToolCalls: 5 },
+              }
+            : test.deps.resolveRole(role),
+      }),
+    );
+    await runTurn(lane, 'go');
+    // The document budget applies when the spawn names none…
+    expect(test.launched[0]?.budget).toEqual({ maxToolCalls: 5 });
+    // …an explicit spawn budget outranks it…
+    expect(test.launched[1]?.budget).toEqual({ maxToolCalls: 50 });
+    // …and absent everywhere means unbounded.
+    expect(test.launched[2]?.budget).toBeUndefined();
+  });
 });
 
 describe('manager inspect/cancel/send adapters (issue #415)', () => {

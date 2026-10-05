@@ -56,6 +56,11 @@ export interface SpawnRoleSpec {
   tools: string[];
   modelRef?: string;
   thinking?: string;
+  /**
+   * Issue #198 (§71): the role document's own budget dims, if it declares
+   * any — the fallback tier under an explicit `spawn_agent(budget=…)`.
+   */
+  budget?: Record<string, number>;
 }
 
 export interface PreparedWorker {
@@ -550,7 +555,14 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
             ? {}
             : { modelRef: model ?? spec.modelRef }),
           ...(spec.thinking === undefined ? {} : { thinking: spec.thinking }),
-          ...(dims === undefined ? {} : { budget: dims }),
+          // Issue #198 (§71): an explicit spawn budget outranks the role
+          // document's; absent, the document's dims ride the spawn, and
+          // absent those the spawn is unbounded (opt-in only).
+          ...(dims === undefined
+            ? spec.budget === undefined
+              ? {}
+              : { budget: spec.budget }
+            : { budget: dims }),
           worktreePath: prepared.worktreePath,
         }),
         'failed to launch',

@@ -109,6 +109,7 @@ import { BUILTIN_ROLE_NAMES, isBuiltinRole } from './roles/roles-data.js';
 import type { WorkerRolesPlan } from './roles/worker-roles.js';
 import {
   applyRolesToPlan,
+  roleBudgetForAgent,
   workerRoleAssignment,
 } from './roles/worker-roles.js';
 import {
@@ -2222,10 +2223,16 @@ export async function runOrchestrateCommand(
       ? {}
       : { budget: effectiveBudget.shared }),
     // Per-spawn overrides (`--budget worker-1:maxToolCalls=5`) reach the gate
-    // of THAT spawn only; absent, the shared spec applies. The spec read here
-    // is the EFFECTIVE one: a resume re-applies what the state stored.
+    // of THAT spawn only; absent, the shared spec applies; absent that, the
+    // worker's role DOCUMENT applies when it declares a budget (issue #198:
+    // spawn/CLI > document — the role pin is the fallback tier, reported by
+    // the approvals layer's own debug line when it is the spec in force).
+    // The spec read here is the EFFECTIVE one: a resume re-applies what
+    // the state stored.
     budgetForAgent: (agentId: string) =>
-      effectiveBudget?.byAgent[agentId] ?? effectiveBudget?.shared,
+      effectiveBudget?.byAgent[agentId] ??
+      effectiveBudget?.shared ??
+      roleBudgetForAgent(rolePlan, agentId),
     ...(parsed.fullAccess ? { fullAccess: true } : {}),
     // A fresh run of a reused id must not find the old run's full-access
     // record or memoized decisions; only `--resume` continues them.

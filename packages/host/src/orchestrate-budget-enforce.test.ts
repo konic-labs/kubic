@@ -57,6 +57,7 @@ import {
 } from './orchestrate-cli.js';
 import { createOrchestratorApprovalsRun } from './orchestrator/approvals/worker-asks.js';
 import type { MergedHunk } from './orchestrator/merge/attribution.js';
+import { planWorkerRoles } from './roles/worker-roles.js';
 import { mapTerminusToExitCode } from './run-cli.js';
 
 const PROVENANCE: Provenance = {
@@ -921,4 +922,165 @@ describe('the budget spec persists and --resume re-applies it (issue #208, AC5)'
     expect(code2).toBe(0);
     expect(world2.spawnBudgets).toEqual([{ maxToolCalls: 1 }]);
   });
+});
+
+describe('a role document budget caps its spawned worker (issue #198)', () => {
+  const WRITER =
+    'tools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n';
+
+  function implementerDoc(budgetLine: string): string {
+    return `---\nrole: implementer\n${WRITER}${budgetLine}---\n\n# Implementer\n\n## Prompt\n\nYou are the implementer.\n`;
+  }
+
+  function memBridge(files: Record<string, string>) {
+    return {
+      listDir: (dir: string) =>
+        Object.keys(files)
+          .filter((path) => path.startsWith(`${dir}/`))
+          .filter((path) => !path.slice(dir.length + 1).includes('/'))
+          .map((path) => ({
+            name: path.slice(dir.length + 1),
+            path,
+            isDirectory: false,
+            isSymbolicLink: false,
+            size: 0,
+            mtimeMs: 0,
+          })),
+      readTextFile: (path: string) => {
+        const text = files[path];
+        if (text === undefined) throw new Error(`ENOENT: ${path}`);
+        return text;
+      },
+    };
+  }
+
+  // The delegation path reads `.kubic/roles/*.md` through the exec
+  // FileBridge; here the bridge is in-memory and the project is trusted,
+  // so the document budget is what the test varies — never the fs.
+  function docRoles(files: Record<string, string>) {
+    return {
+      loadWorkerRoles: (
+        agents: readonly string[],
+        binding?: { roles: Record<string, string> },
+      ) =>
+        planWorkerRoles({
+          bridge: memBridge(files),
+          cwd: '/repo',
+          trusted: true,
+          agents,
+          ...(binding === undefined || Object.keys(binding.roles).length === 0
+            ? {}
+            : { roles: binding.roles }),
+        }),
+    };
+  }
+
+  const BUDGETED = {
+    '/repo/.kubic/roles/implementer.md': '',
+  };
+  BUDGETED['/repo/.kubic/roles/implementer.md'] = implementerDoc(
+    'budget = { maxToolCalls = 2 }\n',
+  );
+  const UNBUDGETED = {
+    '/repo/.kubic/roles/implementer.md': implementerDoc(''),
+  };
+
+  it('a document {maxToolCalls=2} ends the worker BUDGET_EXHAUSTED with no --budget flag', async () => {
+    const sessionsRoot = scratchRoot('kubic-198-sessions-');
+    const store = openSessionStore(
+      sessionsRoot,
+      createNodeFileBridge(sessionsRoot),
+    );
+    const models = fauxToolCallModels(3);
+    const env = new FakeExecutionEnv({});
+    env.fs.writeFile('a.txt', 'budget fixture\n');
+    let childResult: string | undefined;
+    const world = makeWorld({
+      overrides: {
+        ...docRoles(BUDGETED),
+        createWorkerSession: async (input) => {
+          const session = await createSession(
+            store,
+            { cwd: '/fake', id: input.workerSessionId },
+            BACKGROUND_CONTEXT,
+          );
+          await session.release(BACKGROUND_CONTEXT);
+          return { sessionId: input.workerSessionId };
+        },
+      },
+      runWorker: async (agentId, _worktree, _prompt, info) => {
+        // The document budget is the ONLY spec in force: the CLI passed
+        // none, so the approvals layer resolved the role's own dims.
+        expect(world.approvals.budgetFor(agentId)).toEqual({
+          maxToolCalls: 2,
+        });
+        const resolved = world.approvals.budgetFor(agentId);
+        if (resolved !== undefined) {
+          vi.stubEnv('KUBIC_BUDGET', JSON.stringify(resolved));
+        }
+        const result = await runHeadlessPrompt(
+          'work',
+          { sessionId: info?.workerSessionId },
+          { sessionsRoot, models, env },
+        );
+        childResult = result.terminus;
+        if (result.terminus !== 'completed') {
+          const error = new Error(
+            result.error?.message ?? result.terminus,
+          ) as Error & { approval?: { code: string; exitCode: number } };
+          error.approval =
+            result.terminus === 'budget_exhausted'
+              ? { code: 'BUDGET_EXHAUSTED', exitCode: 3 }
+              : {
+                  code: result.terminus,
+                  exitCode: mapTerminusToExitCode(result.terminus),
+                };
+          throw error;
+        }
+        return [{ path: `${agentId}.txt`, hunk: 'x' }];
+      },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the work',
+        agents: ['worker-1:implementer'],
+        session: 'orch-198',
+      },
+      world.deps,
+    );
+    // Three attempts against a document maxToolCalls=2: the third is
+    // blocked, the child ends budget_exhausted, the run exits 3.
+    expect(childResult).toBe('budget_exhausted');
+    expect(code).toBe(3);
+    expect(world.errLines.join('\n')).toContain('limit=toolCalls');
+  }, 60_000);
+
+  it('CLI --budget outranks the document budget; absent everywhere means unbounded', async () => {
+    const cliWins = makeWorld({ overrides: { ...docRoles(BUDGETED) } });
+    const cliCode = await runOrchestrateCommand(
+      {
+        prompt: 'do the work',
+        agents: ['worker-1:implementer'],
+        session: 'orch-198-cli',
+        budget: budgetSpec('maxToolCalls=7'),
+      },
+      cliWins.deps,
+    );
+    expect(cliCode).toBe(0);
+    expect(cliWins.spawnBudgets).toEqual([{ maxToolCalls: 7 }]);
+
+    const unbounded = makeWorld({
+      overrides: { ...docRoles(UNBUDGETED) },
+    });
+    const unboundedCode = await runOrchestrateCommand(
+      {
+        prompt: 'do the work',
+        agents: ['worker-1:implementer'],
+        session: 'orch-198-none',
+      },
+      unbounded.deps,
+    );
+    expect(unboundedCode).toBe(0);
+    expect(unbounded.spawnBudgets).toEqual([undefined]);
+  }, 60_000);
 });

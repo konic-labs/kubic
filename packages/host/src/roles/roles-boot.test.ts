@@ -96,8 +96,8 @@ describe('role documents resolve at the project root (issue #229)', () => {
       projectRoot: '/repo',
       trusted: true,
     });
-    expect(loaded.sources['scout']).toBe('repo');
-    expect(loaded.texts['scout']).toContain('Do scout things.');
+    expect(loaded.sources.scout).toBe('repo');
+    expect(loaded.texts.scout).toContain('Do scout things.');
   });
 
   it('still loads the embedded presets when the project root has no roles dir', () => {
@@ -125,7 +125,7 @@ describe('project role documents are trust-gated (issue #430, §33)', () => {
       projectRoot: '/repo',
     });
     expect(loaded.docs.map((doc) => doc.name)).not.toContain('scout');
-    expect(loaded.sources['scout']).toBeUndefined();
+    expect(loaded.sources.scout).toBeUndefined();
     expect(loaded.withheld).toEqual([
       {
         name: 'scout',

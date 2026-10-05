@@ -1003,9 +1003,7 @@ describe('role documents under the enterprise tool policy on the doctor and orch
     const layeredReport = JSON.parse(layered.lines.join('\n')) as {
       checks: { id: string; status: string; detail: string }[];
     };
-    const refused = layeredReport.checks.find(
-      (c) => c.id === 'role:planner',
-    );
+    const refused = layeredReport.checks.find((c) => c.id === 'role:planner');
     expect(refused?.status).toBe('fail');
     expect(refused?.detail).toMatch(/filesystem.*read.*write/i);
     // Control: the same workspace with no `[roles]` section judges the

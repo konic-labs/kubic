@@ -103,6 +103,12 @@ export function assertManagerToolset(activeTools: readonly string[]): void {
       `manager toolset must equal the allowlist exactly (${detail || 'mismatch'})`,
     );
   }
+  // Defence in depth (issue #422): the exact-equality check above compares
+  // against MANAGER_ALLOWLIST itself, so it cannot see the allowlist being
+  // widened to include an exec-forbidden tool — a future edit adding one
+  // there would still compare equal. This loop re-asserts the invariant
+  // directly on the active set, so that drift fails closed here instead of
+  // reaching the per-call live path (checkManagerCall) below.
   for (const forbidden of EXEC_FORBIDDEN_TOOLS) {
     if (active.includes(forbidden)) {
       throw new ManagerToolsetError(

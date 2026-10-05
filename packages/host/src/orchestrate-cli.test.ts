@@ -3355,3 +3355,46 @@ describe('orchestrate completion tip validation (review #429)', () => {
     expect(world.calls.run).toEqual([]);
   });
 });
+
+describe('spawn cap raise on resume (issue #422)', () => {
+  const baseStored = (): OrchestratorRunState => ({
+    version: 1,
+    sessionId: 'sess-cap',
+    prompt: 'demo',
+    agents: ['a', 'b', 'c'],
+    merged: [],
+    pending: ['a', 'b', 'c'],
+    stopped: false,
+    records: [],
+    spawnCap: 2,
+  });
+
+  it('resume with a larger --agents list raises the stored cap and admits the refused worker', async () => {
+    const world = makeWorld({
+      loadState: () => structuredClone(baseStored()),
+    });
+    const code = await runOrchestrateCommand(
+      { resume: true, session: 'sess-cap', agents: ['a', 'b', 'c', 'd'] },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.calls.run).toEqual(['a', 'b', 'c']);
+    const last = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(last.spawnCap).toBe(4);
+  });
+
+  it('resume with a smaller --agents list never shrinks the stored cap', async () => {
+    const world = makeWorld({
+      loadState: () => structuredClone(baseStored()),
+    });
+    const code = await runOrchestrateCommand(
+      { resume: true, session: 'sess-cap', agents: ['a'] },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(world.calls.run).toEqual(['a', 'b']);
+    const last = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(last.spawnCap).toBe(2);
+    expect(world.errLines.join('\n')).toMatch(/spawn_cap_exceeded/);
+  });
+});

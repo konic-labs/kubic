@@ -1867,6 +1867,23 @@ export async function runOrchestrateCommand(
   if (state.spawnCap === undefined) {
     state = { ...state, spawnCap: state.agents.length };
   }
+  // Issue #422: a run a previous attempt capped has a repair path —
+  // `--resume --agents <larger list>` raises the stored cap to the flag's
+  // count, so a worker refused by the old cap is admitted instead of
+  // refused again. Only the COUNT is adopted (the ids stay ignored on
+  // resume, as before), and the cap never shrinks: a shorter or equal
+  // list leaves the stored cap in force.
+  if (
+    parsed.resume &&
+    options.agents !== undefined &&
+    parsed.agents.length > (state.spawnCap ?? state.agents.length)
+  ) {
+    const raisedFrom = state.spawnCap ?? state.agents.length;
+    state = { ...state, spawnCap: parsed.agents.length };
+    debug(
+      `resume: --agents raises the spawn cap ${raisedFrom} → ${parsed.agents.length} — a worker refused by the old cap is admitted`,
+    );
+  }
   const effectiveSkills = state.skills ?? parsed.skills;
   // A pre-#178 state adopts the flag's assignment, so a later resume replays
   // it (the budget rule's adoption, issue #208).

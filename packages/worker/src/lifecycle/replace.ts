@@ -28,7 +28,6 @@ export interface ReplaceOutcome {
   sessionId: string;
   generation: number;
   resumed: boolean;
-  memosSurvived: boolean;
 }
 
 export class StaleGenerationError extends Error {
@@ -63,14 +62,13 @@ export async function replaceWorker(
   await deps.terminate(request.workerId);
   const lane = await deps.openSession(request.sessionId);
   const resumed = await deps.resumeLane(lane);
+  // Issue #153: memo survival rides pi-durable's committed task record
+  // (api.memo scoped to the invocation), not a Kubic outcome flag — so a
+  // replaced worker carries no memos field at all.
   return {
     workerId: request.workerId,
     sessionId: request.sessionId,
     generation,
     resumed: resumed.resumed,
-    // Memos live outside the dead proc (MemoryMemoStore travels with the
-    // session scope, never inside the reaped process) — by the time the
-    // lane resumes, memoOnce answers are already in place.
-    memosSurvived: true,
   };
 }

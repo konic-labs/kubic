@@ -55,7 +55,9 @@ describe('replaceWorker (issue #42)', () => {
     );
     expect(replayed).toEqual(['approved-gen-1']);
     expect(out.generation).toBe(2);
-    expect(out.memosSurvived).toBe(true);
+    // Issue #153: memo survival rides the durable task record, not a
+    // Kubic field — the outcome carries no memos flag.
+    expect(out).not.toHaveProperty('memosSurvived');
   });
 
   it('stale replace leaves the live worker untouched and throws StaleGenerationError', async () => {

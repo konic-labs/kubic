@@ -163,17 +163,21 @@ that decide them:
 - The journal still skips `.kubic/`, so an approved `kubic-state-write` is not
   reversible with `kubic undo` — which is why it is never auto-approved.
 - **Repo hooks never run on host git, and `.git/` writes always ask
-  (issue #363).** Every host-side git invocation (status, stage, commit,
-  merge, abort) runs with `-c core.hooksPath=/dev/null
-  -c core.fsmonitor=false`, and host-side commits add `--no-verify` — a
-  hook planted in a worker tree cannot execute during the orchestrator's
-  commit or merge, even when `.git/config` itself was tampered with (the
-  `-c` flags beat file config). Any write tool call or bash redirect/tee/cp
-  target under `<workspace>/.git/` (hooks, `config`) raises the always-ask
-  `kubic-state-write` capability. The run snapshots `.git/config` and
-  `.git/hooks` at start and reports drift after each worker settle and each
-  merge, so tampering that bypassed the tools (e.g. `git config
-  core.hooksPath …` typed at the shell) is still named in the run log.
+  (issues #363, #428).** Every host-side git invocation (status, stage,
+  commit, merge, abort) runs with `-c core.hooksPath=/dev/null
+  -c core.fsmonitor=false`, and host-side commits add `--no-verify`
+  through the single `hostGitArgs` choke point — a hook planted in a
+  worker tree cannot execute during the orchestrator's commit or merge,
+  even when `.git/config` itself was tampered with (the `-c` flags beat
+  file config). Any write tool call or bash redirect/tee/cp target under
+  the workspace's OWN `.git/` or any ANCESTOR's (a worker's worktree sits
+  under the repo, so the shared main-checkout `.git/` is covered) raises
+  the always-ask `kubic-state-write` capability, and so does a
+  config-mutating `git config` in bash (`--get`/`--list`/single-name reads
+  stay quiet). The run snapshots `.git/config` and `.git/hooks` at start
+  and reports drift after each worker settle and each merge, so tampering
+  that bypassed the tools (e.g. `git config core.hooksPath …` typed at
+  the shell) is still named in the run log.
 
 ## Tool process environment (§3.8)
 

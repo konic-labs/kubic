@@ -103,6 +103,7 @@ import {
 } from '../../../packages/host/src/orchestrator/worktree/errors.js';
 import {
   diffGitGuardSnapshots,
+  withHostGitCommitGuard,
   withHostGitGuard,
 } from '../../../packages/host/src/orchestrator/worktree/git-guard.js';
 import {
@@ -566,6 +567,22 @@ function provenanceFor(sessionId: string, agentId: string, tool: string) {
   };
 }
 
+/**
+ * Route host-side git argv through the guard (issue #363, #428): every
+ * invocation carries the hooksPath/fsmonitor overrides, and commits
+ * additionally carry `--no-verify` via `withHostGitCommitGuard`. This is
+ * the ONLY place host argv gains the commit flag — call sites pass plain
+ * argv, so no commit path can hand-roll (and forget) it. The subcommand
+ * is read past leading `-c` pairs (the run's own identity flags); any
+ * other leading global-flag shape falls back to the plain guard.
+ */
+export function hostGitArgs(args: readonly string[]): string[] {
+  let index = 0;
+  while (args[index] === '-c' && index + 1 < args.length) index += 2;
+  if (args[index] === 'commit') return withHostGitCommitGuard(args);
+  return withHostGitGuard(args);
+}
+
 async function runGit(
   cwd: string,
   args: string[],
@@ -578,7 +595,7 @@ async function runGit(
   // during the orchestrator's own status/stage/commit/merge/abort reads.
   const env = new NodeExecutionEnv(cwd);
   return env.shell
-    .spawn('git', withHostGitGuard(args), {
+    .spawn('git', hostGitArgs(args), {
       provenance: provenanceFor(sessionId, agentId, tool),
     })
     .wait();
@@ -2499,7 +2516,6 @@ export async function orchestrateDepsWithDefaults(
               '-c',
               'user.email=kubic-worker@local',
               'commit',
-              '--no-verify',
               '-m',
               `worker ${agentId}: ${prompt.slice(0, 120)}`,
             ],
@@ -2906,7 +2922,6 @@ export async function orchestrateDepsWithDefaults(
             '-c',
             'user.email=kubic-resolver@local',
             'commit',
-            '--no-verify',
             '-m',
             `resolver ${request.agentId}: settle conflict`,
           ],

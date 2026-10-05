@@ -921,3 +921,54 @@ describe('git-dir writes raise kubic-state-write (issue #363)', () => {
     ).toEqual([]);
   });
 });
+
+describe('git config mutation raises kubic-state-write (issue #428)', () => {
+  // RED first: `git config core.hooksPath …` mutates .git/config with no
+  // file-write target, so no approval fired at all.
+  const ctx = triggerContext();
+  it('raises for git config sets, unsets and adds', () => {
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'git config core.hooksPath /tmp/hooks' },
+        ctx,
+      ),
+    ).toEqual(['kubic-state-write']);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'git -C repo config --global user.name worker' },
+        ctx,
+      ),
+    ).toEqual(['kubic-state-write']);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'git config --unset core.fsmonitor' },
+        ctx,
+      ),
+    ).toEqual(['kubic-state-write']);
+    expect(
+      detectTriggers('bash', { command: 'git config --add a.b c' }, ctx),
+    ).toEqual(['kubic-state-write']);
+  });
+
+  it('stays quiet for git config reads', () => {
+    expect(
+      detectTriggers('bash', { command: 'git config --get user.name' }, ctx),
+    ).toEqual([]);
+    expect(
+      detectTriggers('bash', { command: 'git config --list' }, ctx),
+    ).toEqual([]);
+    expect(
+      detectTriggers('bash', { command: 'git config user.name' }, ctx),
+    ).toEqual([]);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'git config --global --get user.email' },
+        ctx,
+      ),
+    ).toEqual([]);
+  });
+});

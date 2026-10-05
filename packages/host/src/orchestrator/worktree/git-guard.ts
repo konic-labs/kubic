@@ -22,7 +22,7 @@
 //     for the `kubic-state-write` (always-ask) capability in
 //     `packages/host/src/approvals.ts`.
 
-import { join, relative, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import type { GitGuardSnapshot } from '../../../../exec/src/git-guard-snapshot.js';
 
 /** `-c` overrides prepended to every host-side git invocation (issue #363). */
@@ -138,24 +138,37 @@ function stripSurroundingQuotes(target: string): string {
 }
 
 /**
- * True when a write target lands at or under `<workspace>/.git/` —
- * lexically (no fs access), case-folded like the control-plane guard
- * (macOS/Windows filesystems are case-insensitive). `..` escapes resolve
- * outside and do not match; globs stay literal and still match by prefix.
+ * True when a write target lands at or under a gitdir — lexically (no fs
+ * access), case-folded like the control-plane guard (macOS/Windows
+ * filesystems are case-insensitive). `..` escapes resolve outside and do
+ * not match; globs stay literal and still match by prefix.
+ *
+ * The workspace's OWN `.git/` plus every ANCESTOR's (issue #428): an
+ * orchestrator worker's workspace is its worktree at
+ * `<repo>/.kubic/wt/<agent>`, so the shared `<repo>/.git` — hooks and
+ * config every later git command trusts — sits above it, exactly like the
+ * `.kubic` ancestor walk in the control-plane guard. A target under an
+ * unrelated `.git` (a sibling subtree, another checkout) does not match.
  */
 export function isGitDirTarget(workspace: string, target: string): boolean {
   const trimmed = stripSurroundingQuotes(target.trim());
   if (trimmed === '') return false;
   const ws = resolve(workspace);
-  const abs = resolve(ws, trimmed);
-  const gitDir = `${join(ws, '.git')}${sep}`;
-  const folded = abs.toLowerCase();
-  const foldedGitDir = gitDir.toLowerCase();
-  if (folded === foldedGitDir.slice(0, -1)) return true;
-  if (!folded.startsWith(foldedGitDir)) return false;
+  const folded = resolve(ws, trimmed).toLowerCase();
+  for (let dir = ws; ; dir = dirname(dir)) {
+    if (underGitDir(dir, folded)) return true;
+    const parent = dirname(dir);
+    if (parent === dir) return false;
+  }
+}
+
+function underGitDir(dir: string, foldedTarget: string): boolean {
+  const foldedGitDir = `${join(dir, '.git')}${sep}`.toLowerCase();
+  if (foldedTarget === foldedGitDir.slice(0, -1)) return true;
+  if (!foldedTarget.startsWith(foldedGitDir)) return false;
   // The target resolves under .git/: confirm the FIRST segment below the
-  // workspace really is `.git` (a prefix hit on a case-folded sibling like
+  // dir really is `.git` (a prefix hit on a case-folded sibling like
   // `.github/` is impossible here, but belt and braces cost nothing).
-  const rel = relative(ws.toLowerCase(), folded);
+  const rel = relative(dir.toLowerCase(), foldedTarget);
   return rel === '.git' || rel.startsWith(`.git${sep}`);
 }

@@ -447,6 +447,95 @@ function gitPushOrRemoteMutation(command: string): boolean {
   return false;
 }
 
+// `git config` that MUTATES (issue #428): `git config core.hooksPath …`
+// rewrites `.git/config` with no file-write target, so the write-target
+// detectors never fire — only the settle drift check reports it
+// afterwards. Reads (`--get`, `--list`, a bare single-name lookup) stay
+// quiet; anything that writes — a set with a value, `--add`, `--unset`
+// and friends, `--edit`, a scoped write via `--file` — raises. Same
+// two-reader walk as the push detector (quote-aware plus plain
+// whitespace-split), linear in the command, failing toward asking.
+const GIT_CONFIG_VERB = /^config$/i;
+const GIT_CONFIG_READ =
+  /^(--get|--get-all|--get-regexp|--list|-l|--get-urlmatch|--get-color|--get-colorbool|--show-origin|--show-scope)$/i;
+const GIT_CONFIG_WRITE =
+  /^(--add|--unset|--unset-all|--replace-all|--rename-section|--remove-section|--edit)$/i;
+const GIT_CONFIG_VALUE_OPTION = /^--file$/i;
+const GIT_CONFIG_FLAG = /^(--[a-z][a-z-]*(=[\s\S]*)?|-[a-z])$/i;
+
+function configMutationFollows(
+  command: string,
+  from: number,
+  explored: Set<number>,
+  read: TokenReader,
+): boolean {
+  let position = from;
+  let subcommand = false;
+  let readOnly = false;
+  let positionals = 0;
+  for (;;) {
+    const token = read(command, position);
+    if (token === undefined) break;
+    position = token.end;
+    const text = token.text;
+    if (!subcommand) {
+      // Linear-time memo (same scheme as the push detector): every token
+      // an earlier `git` evaluated in pre-subcommand mode evaluates the
+      // same way again, so revisiting one ends this walk — the earlier
+      // walk already determined what follows from here.
+      if (explored.has(token.start)) return false;
+      explored.add(token.start);
+      // Global options before the subcommand: `-c`/`-C` and the value
+      // options consume their argument; anything else flag-shaped skips.
+      if (GIT_ARG_OPTION.test(text) || GIT_VALUE_OPTION.test(text)) {
+        const value = read(command, position);
+        if (value === undefined) return false;
+        position = value.end;
+        continue;
+      }
+      if (GIT_FLAG.test(text) || GIT_VALUE_ASSIGNED.test(text)) continue;
+      if (GIT_CONFIG_VERB.test(text)) {
+        subcommand = true;
+        continue;
+      }
+      return false;
+    }
+    if (GIT_CONFIG_WRITE.test(text)) return true;
+    if (GIT_CONFIG_READ.test(text)) {
+      readOnly = true;
+      continue;
+    }
+    if (GIT_CONFIG_VALUE_OPTION.test(text)) {
+      const value = read(command, position);
+      if (value === undefined) break;
+      position = value.end;
+      continue;
+    }
+    if (GIT_CONFIG_FLAG.test(text)) continue;
+    positionals += 1;
+  }
+  if (!subcommand) return false;
+  if (readOnly) return false;
+  // `git config <name>` reads one value; `git config <name> <value>`
+  // (scope flags aside) writes it.
+  return positionals >= 2;
+}
+
+function gitConfigMutation(command: string): boolean {
+  const quoted = new Set<number>();
+  const plain = new Set<number>();
+  for (const origin of command.matchAll(GIT_WORD)) {
+    const from = origin.index + origin[0].length;
+    if (
+      configMutationFollows(command, from, quoted, nextShellToken) ||
+      configMutationFollows(command, from, plain, nextPlainToken)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Package installs and fetch-and-run launchers (issue #357): every one can
 // run arbitrary lifecycle or downloaded code. npm/pnpm/yarn/bun installs,
 // npm ci/exec/x, npx/bunx/uvx, pnpm/yarn dlx, a bare `yarn` (which
@@ -1287,6 +1376,9 @@ export function detectTriggers(
     if (networkGated(ctx.network) && ctx.isNetworkCommand(command))
       found.push('network');
     if (gitPushOrRemoteMutation(command)) found.push('git-push');
+    // Issue #428: `git config` sets rewrite `.git/config` with no
+    // file-write target, so the write-target detectors never fire.
+    if (gitConfigMutation(command)) found.push(KUBIC_STATE_WRITE);
     if (INSTALL.test(command)) found.push('install');
     if (DEPLOY.test(command)) found.push('deploy');
     // Every write target (redirect, tee, cp/mv/install) goes through one

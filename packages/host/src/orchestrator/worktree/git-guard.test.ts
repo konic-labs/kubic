@@ -188,3 +188,27 @@ describe('guarded git never runs a planted hook (issue #363, real git)', () => {
     expect(guarded.status).toBe(0);
   });
 });
+
+describe('isGitDirTarget ancestor coverage (issue #428)', () => {
+  // RED first: only <workspace>/.git matched, so a worker writing the
+  // MAIN checkout's .git raised a mere auto-approvable outside-write.
+  it('flags the shared main-checkout .git from a worker worktree', () => {
+    const root = scratch();
+    const ws = join(root, '.kubic', 'wt', 'agent-1');
+    expect(isGitDirTarget(ws, join(root, '.git', 'hooks', 'pre-commit'))).toBe(
+      true,
+    );
+    expect(isGitDirTarget(ws, join(root, '.git', 'config'))).toBe(true);
+    expect(isGitDirTarget(ws, join(root, '.git'))).toBe(true);
+  });
+
+  it('does not flag unrelated .git dirs or the sibling worktree gitdir', () => {
+    const root = scratch();
+    const ws = join(root, '.kubic', 'wt', 'agent-1');
+    expect(isGitDirTarget(ws, join(root, 'other', '.git', 'x'))).toBe(false);
+    expect(
+      isGitDirTarget(ws, join(root, '.kubic', 'wt', 'agent-2', '.git', 'x')),
+    ).toBe(false);
+    expect(isGitDirTarget(ws, 'src/index.ts')).toBe(false);
+  });
+});

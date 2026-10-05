@@ -9,8 +9,9 @@
 //
 // The script runs as a REAL worker child (written to scratch and executed
 // by the run under test): it writes work.txt into its worktree (its cwd),
-// commits it so the lane's `git diff HEAD...branch` has a change to drive,
-// then reports the §68 result shape and exits 0. Each commit pins its own
+// echoes the KUBIC_BUDGET child env to budget.txt, commits both so the
+// lane's `git diff HEAD...branch` has a change to drive, then reports the
+// §68 result shape and exits 0. Each commit pins its own
 // identity and the prelude scrubs the inherited git view (an empty HOME,
 // no system config, no GIT_* inheritance), so neither a hostile developer
 // config nor ambient GIT_* state can shape the run — defense in depth
@@ -43,7 +44,7 @@ const ident = [
   'commit.gpgsign=false',
 ];
 const commitWork = () => {
-  git([...ident, 'add', 'work.txt']);
+  git([...ident, 'add', 'work.txt', 'budget.txt']);
   git([...ident, 'commit', '-m', 'worker-1 work']);
 };
 `;
@@ -52,6 +53,10 @@ export const LANE_WORKER_CHILD = `
 import { writeFileSync } from 'node:fs';
 ${SCRUB_PRELUDE}
 writeFileSync(join(process.cwd(), 'work.txt'), 'lane acceptance\\n');
+// The #198/#431 budget follow-up: echo the child-side budget env the run
+// hands every worker (empty when no spec is in force) so a prod assertion
+// can read which dims reached the worker — no ask traffic needed.
+writeFileSync(join(process.cwd(), 'budget.txt'), process.env.KUBIC_BUDGET ?? '');
 commitWork();
 process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
 const a = process.argv;

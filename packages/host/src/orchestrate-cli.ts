@@ -856,6 +856,13 @@ export interface WorkerSpawnInfo {
    */
   classes?: PermissionClasses;
   requires?: string[];
+  /**
+   * Issue #198 (§71, #431 follow-up): the assigned role document's own
+   * budget dims, when it declares any — the fallback tier under an
+   * explicit spawn budget. Carried for lane mints exactly like
+   * classes/requires so the per-spawn gate enforces them.
+   */
+  budget?: Record<string, number>;
 }
 
 // The §54 delegation DAG (§49.1 projection): the shipped run is one manager
@@ -2289,7 +2296,13 @@ export async function runOrchestrateCommand(
     string,
     Pick<
       WorkerSpawnInfo,
-      'role' | 'tools' | 'modelRef' | 'thinking' | 'classes' | 'requires'
+      | 'role'
+      | 'tools'
+      | 'modelRef'
+      | 'thinking'
+      | 'classes'
+      | 'requires'
+      | 'budget'
     >
   >();
   // The role half of a worker's spawn info (issue #104): the assigned role,
@@ -2301,7 +2314,13 @@ export async function runOrchestrateCommand(
     roles: WorkerRolesPlan,
   ): Pick<
     WorkerSpawnInfo,
-    'role' | 'tools' | 'modelRef' | 'thinking' | 'classes' | 'requires'
+    | 'role'
+    | 'tools'
+    | 'modelRef'
+    | 'thinking'
+    | 'classes'
+    | 'requires'
+    | 'budget'
   > => {
     // The lane's mints (issue #431): minted ids carry no plan assignment —
     // their role travels in the lane map the spawn adapter fills (role
@@ -2491,6 +2510,11 @@ export async function runOrchestrateCommand(
     budgetForAgent: (agentId: string) =>
       effectiveBudget?.byAgent[agentId] ??
       effectiveBudget?.shared ??
+      // Lane mints (#431 follow-up): a minted id has no roster
+      // assignment, so the roster lookup below never fires for it — the
+      // mint's role-document dims travel in the lane map instead. Issue
+      // #198 precedence holds: both CLI tiers already won above.
+      laneSpawnRoles.get(agentId)?.budget ??
       roleBudgetForAgent(rolePlan, agentId),
     ...(parsed.fullAccess ? { fullAccess: true } : {}),
     // A fresh run of a reused id must not find the old run's full-access
@@ -3833,6 +3857,12 @@ export async function runOrchestrateCommand(
             ...(match?.requires === undefined
               ? {}
               : { requires: [...match.requires] }),
+            // Issue #198 (#431 follow-up): the same documents' budget
+            // dims travel as the fallback tier under an explicit
+            // spawn_agent(budget=…) — absent stays absent.
+            ...(match?.budget === undefined
+              ? {}
+              : { budget: { ...match.budget } }),
           };
         }
         const assignment = rolePlan.assignments.find(
@@ -3851,6 +3881,10 @@ export async function runOrchestrateCommand(
           ...(assignment.requires === undefined
             ? {}
             : { requires: [...assignment.requires] }),
+          // Issue #198 (#431 follow-up): the fallback tier, as above.
+          ...(assignment.budget === undefined
+            ? {}
+            : { budget: { ...assignment.budget } }),
         };
       },
       spawnedIds: () => [...spawned],
@@ -3877,6 +3911,9 @@ export async function runOrchestrateCommand(
           ...(spec?.requires === undefined
             ? {}
             : { requires: [...spec.requires] }),
+          // Issue #198 (#431 follow-up): the document dims ride the
+          // mint so the per-spawn gate finds them by minted id.
+          ...(spec?.budget === undefined ? {} : { budget: { ...spec.budget } }),
         });
         tracked.add(agentId);
         // The lane has no template plan: the mint's plan step IS its
@@ -4183,6 +4220,9 @@ export async function runOrchestrateCommand(
           ...(spec?.requires === undefined
             ? {}
             : { requires: [...spec.requires] }),
+          // Issue #198 (#431 follow-up): re-resolved, so a resumed
+          // drive keeps the same document fallback as the first.
+          ...(spec?.budget === undefined ? {} : { budget: { ...spec.budget } }),
         });
       }
     }

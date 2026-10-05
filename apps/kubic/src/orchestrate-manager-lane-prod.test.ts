@@ -3,6 +3,7 @@
 // git and a real child process, and an unreachable manager provider fails
 // the run fast with `lane_provider_unreachable` instead of hanging it.
 import {
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -206,5 +207,89 @@ describe('prod manager lane behind the L-D34 opt-in (issue #431)', () => {
     expect(state.laneDriven).toBe(true);
     expect(state.managerSummary).toBe('acceptance done');
     expect(state.merged).toContain('worker-1');
+  });
+
+  it("a minted worker inherits its role document's budget dims (issue #198 fallback)", async () => {
+    // The role document declares budget dims; the lane manager names no
+    // explicit budget, so the document is the fallback tier. Pre-fix the
+    // prod resolveRole never mapped the document dims onto the mint and
+    // the gate saw nothing: no per-spawn debug line, empty child env.
+    const root = initRepo();
+    mkdirSync(join(root, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(root, '.kubic', 'roles', 'implementer.md'),
+      '---\nrole: implementer\ntools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\nbudget = { maxToolCalls = 5 }\n---\n\n# implementer\n\n## Prompt\n\nYou are the implementer. Do the task.\n',
+    );
+    // The merge gate refuses a dirty main tree: the doc is run input.
+    git(root, ['add', '.kubic/roles/implementer.md']);
+    git(root, ['commit', '--no-verify', '-q', '-m', 'role doc']);
+    const faux = fauxProvider({
+      provider: 'faux',
+      models: [
+        {
+          id: 'echo',
+          name: 'Faux echo (testing provider)',
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        },
+      ],
+    });
+    const script = [
+      toolTurn('spawn_agent', { role: 'implementer', task: 'do budget work' }),
+      toolTurn('wait_for_agent', { agentId: 'worker-1' }),
+      toolTurn('collect_result', { agentId: 'worker-1' }),
+      toolTurn('workspace_diff', { agentId: 'worker-1' }),
+      toolTurn('workspace_apply', { agentId: 'worker-1' }),
+      toolTurn('workspace_merge', {}),
+      fauxAssistantMessage('budget acceptance done'),
+    ];
+    faux.setResponses(script);
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const assembled: AssembledModels = {
+      models,
+      notes: [],
+      providers: new Map([['faux', { origin: 'testing', usable: true }]]),
+      sources: [],
+      fallbackProviders: ['faux'],
+      keyEnv: new Map(),
+    };
+    const lines: string[] = [];
+    const debugs: string[] = [];
+    const errs: string[] = [];
+    const deps = await orchestrateDepsWithDefaults({
+      out: (line) => lines.push(line),
+      err: (line) => errs.push(line),
+      debug: (line) => debugs.push(line),
+      cwd: root,
+      sessionsRoot: scratchRoot('kubic-lane-prod-sessions-'),
+      registry: new WorkerRegistry(),
+      workerEntry: fixtureEntry(),
+      signals: { install: () => () => undefined, reraise: () => undefined },
+      models: assembled,
+      managerLane: true,
+      // The role document lives under the scratch root: grant that root
+      // outright (test-owned; nothing else exists to trust here).
+      projectTrust: () => true,
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'ship budget work',
+        agents: ['alpha'],
+        json: true,
+        session: 'lane-budget',
+        yes: true,
+      },
+      deps,
+    );
+    expect(code, errs.join('\n')).toBe(0);
+    // The document dims reached the mint's gate: the approvals layer names
+    // the per-spawn plan on its debug channel when it differs from shared.
+    expect(debugs.join('\n')).toMatch(
+      /worker-1: budget for this spawn: maxToolCalls/,
+    );
+    // ...and the child env carried them: the fixture echoes KUBIC_BUDGET.
+    expect(readFileSync(join(root, 'budget.txt'), 'utf8')).toContain(
+      '"maxToolCalls":5',
+    );
   });
 });

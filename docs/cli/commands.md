@@ -779,7 +779,10 @@ launches, inspects, follows up, diffs, stages and merges through the
 same scheduler (concurrency, §71 budget gate and queueing rule — an
 interactive run fail-fasts a blocked lane spawn, an autonomous one
 queues it), worktrees, merge queue and merge gate as the template
-path. Minted workers are named `worker-<n>` (skipping ids the roster
+path. A minted worker inherits its role document's budget dims when the
+document declares any (issue #198 — the fallback tier; an explicit
+`spawn_agent(budget=…)` still wins, as do the CLI `--budget` tiers).
+Minted workers are named `worker-<n>` (skipping ids the roster
 takes), recorded with `parentSessionId`/`role`/`agentId` linkage, and merged
 in queue order after the merge gate approves — the gate's approval is the
 review verdict routing the settle apply path (`applySettlementAfterReview`:

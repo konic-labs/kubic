@@ -122,7 +122,8 @@ const PARSED: Readonly<Record<string, unknown>> = {
   // `--skill` is repeatable: commander's collector yields [] when unused.
   orchestrate: { skills: [] },
   clean: { dryRun: true },
-  workers: { json: true },
+  // Issue #167: the bare form routes as the list invocation.
+  workers: { command: 'list', json: true },
   git: { command: 'status' },
   diff: { command: 'diff', json: true },
   undo: { command: 'undo', step: true },

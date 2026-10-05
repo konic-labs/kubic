@@ -174,9 +174,13 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   `--json` emits `{ok, exitCode, dryRun, worktrees, branches, journal,
   failures?}` and reports the same code in `exitCode`.
 - **`kubic workers`**: 0 (an empty record included); 2 usage errors
-  (unknown flag, stray operand, `--json=1`) with one `error:` line on
+  (unknown flag, unknown subcommand, `--json=1`) with one `error:` line on
   stderr. The old usage-exit remap (1 → 2) is gone: the parser exits 2
-  itself, so a 1 is always a real failure.
+  itself, so a 1 is always a real failure. `inspect`/`terminate` on an
+  unknown id exit 1 (`code=no_such_worker`); `terminate` on a settled
+  worker, a gone pid or a reused pid exits 1 (`code=worker_not_running`)
+  without signalling anything; `terminate --generation <n>` on a replaced
+  worker exits 2 (`code=stale_generation`).
 - **`kubic tui`**: 0 clean quit (final document printed), 2 usage
   errors (unknown options, missing values, operands, bad `--session`), 5
   missing session, 6 no reachable provider, 1 any other lane boot failure.

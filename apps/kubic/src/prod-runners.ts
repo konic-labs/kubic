@@ -10,6 +10,7 @@
 // fail-closed instead of scoring fiction (the refusal is pinned verbatim
 // by dispatch.test.ts).
 
+import { join } from 'node:path';
 import {
   EXIT_FAILED,
   EXIT_USAGE,
@@ -79,6 +80,8 @@ import {
   cleanDepsWithDefaults,
   runCleanCommand,
 } from '../../../packages/host/src/orchestrator/worktree/clean.js';
+import { parseWorktreePorcelain } from '../../../packages/host/src/orchestrator/worktree/list.js';
+import { branchForAgent } from '../../../packages/host/src/orchestrator/worktree/naming.js';
 import {
   loadProdAuditSecrets,
   runAuditCommand,
@@ -107,11 +110,19 @@ import {
   runSessionsCommand,
 } from '../../../packages/host/src/sessions-cli.js';
 import { runTrustCommand } from '../../../packages/host/src/trust-cli.js';
-import { runWorkersCommand } from '../../../packages/host/src/workers-cli.js';
+import {
+  runWorkerInspectCommand,
+  runWorkersCommand,
+  runWorkerTerminateCommand,
+  type WorkerListRow,
+  type WorkerRunView,
+  type WorkerWorktreeView,
+} from '../../../packages/host/src/workers-cli.js';
 import {
   openSessionStore,
   sessionsTouchingWorkspace,
 } from '../../../packages/worker/src/lane/session-store.js';
+import { killProcessGroup } from '../../../packages/worker/src/lifecycle/orphans.js';
 import { workersListFromRepo } from '../../../packages/worker/src/lifecycle/rows.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 import {
@@ -336,6 +347,197 @@ export function prodTuiDeps(
     // interactive lane names itself and layers `--role` identically.
     ...runtimeLaneDeps(cliConfig),
   };
+}
+
+// Worker inspect/terminate prod providers (issue #167): the durable rows
+// plus two local process probes (ps for the pid-reuse guard, git for the
+// worktree facet) and two more durable reads (the run state for budget and
+// settled usage, the §60 ledger for the last decision). No model, no
+// network; every read is defensive — a missing file reads as an absent
+// facet, never a crash.
+function prodSpawnOutput(
+  args: string[],
+  cwd: string,
+): Promise<string | undefined> {
+  try {
+    const handle = new NodeExecutionEnv(cwd).shell.spawn('git', args, {
+      provenance: {
+        sessionId: 'cli',
+        agentId: 'manager',
+        toolCallId: 'workers-inspect-git',
+        turnId: 0,
+        operation: 'inspect',
+      },
+    });
+    return handle
+      .wait()
+      .then((done) => (done.exitCode === 0 ? done.stdout : undefined));
+  } catch {
+    return Promise.resolve(undefined);
+  }
+}
+
+async function prodWorkerCommand(pid: number): Promise<string | undefined> {
+  try {
+    const handle = new NodeExecutionEnv(process.cwd()).shell.spawn(
+      'ps',
+      ['-ww', '-o', 'command=', '-p', String(pid)],
+      {
+        provenance: {
+          sessionId: 'cli',
+          agentId: 'manager',
+          toolCallId: 'workers-terminate-probe',
+          turnId: 0,
+          operation: 'terminate',
+        },
+      },
+    );
+    const done = await handle.wait();
+    return done.exitCode === 0 ? done.stdout.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// The run session an owner names (`orchestrate:<run>`), or undefined for a
+// legacy row — without it there is no run state to read.
+function prodRunSessionOf(row: WorkerListRow): string | undefined {
+  const prefix = 'orchestrate:';
+  return row.owner.startsWith(prefix)
+    ? row.owner.slice(prefix.length)
+    : undefined;
+}
+
+async function prodInspectWorktree(
+  repoRoot: string,
+  row: WorkerListRow,
+): Promise<WorkerWorktreeView | undefined> {
+  const runSession = prodRunSessionOf(row);
+  if (runSession === undefined) return undefined;
+  const listed = await prodSpawnOutput(
+    ['worktree', 'list', '--porcelain'],
+    repoRoot,
+  );
+  if (listed === undefined) return undefined;
+  const wanted = branchForAgent(row.workerId, runSession);
+  const entry = parseWorktreePorcelain(listed).find(
+    (candidate) => candidate.branch === wanted,
+  );
+  if (entry === undefined) return undefined;
+  const status = await prodSpawnOutput(
+    ['status', '--porcelain=v1'],
+    entry.path,
+  );
+  if (status === undefined) {
+    return { path: entry.path, branch: wanted, clean: true, changed: 0 };
+  }
+  const changed = status
+    .split('\n')
+    .filter((line) => line.trim().length > 0).length;
+  return { path: entry.path, branch: wanted, clean: changed === 0, changed };
+}
+
+function numericRecord(value: unknown): Record<string, number> | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const out: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) return undefined;
+    out[key] = raw;
+  }
+  return out;
+}
+
+function prodInspectRun(repoRoot: string, row: WorkerListRow): WorkerRunView {
+  const view: WorkerRunView = {
+    usageHint: `kubic cost --session ${row.sessionId}`,
+    pendingApproval: row.agentStatus === 'waiting',
+  };
+  // The newest §60 decision for the worker session, when any.
+  try {
+    const ledger = readAuditLedger(auditLedgerDirFor(process.cwd()));
+    const last = ledger
+      .filter((record) => record.agent.session === row.sessionId)
+      .at(-1);
+    if (last !== undefined) {
+      view.lastDecision = `${last.result} ${last.what} — ${last.reason}`;
+    }
+  } catch {
+    // No ledger: no decision.
+  }
+  const runSession = prodRunSessionOf(row);
+  if (runSession === undefined) return view;
+  let state: unknown;
+  try {
+    const raw = createNodeFileBridge(
+      join(repoRoot, '.kubic', 'orchestrator'),
+    ).readTextFile(`${runSession}.json`);
+    state = JSON.parse(raw) as unknown;
+  } catch {
+    return view;
+  }
+  if (typeof state !== 'object' || state === null) return view;
+  const budget = (state as { budget?: unknown }).budget;
+  if (typeof budget === 'object' && budget !== null) {
+    const shared = numericRecord((budget as { shared?: unknown }).shared);
+    const byAgent = (budget as { byAgent?: unknown }).byAgent;
+    const worker =
+      typeof byAgent === 'object' && byAgent !== null
+        ? numericRecord((byAgent as Record<string, unknown>)[row.workerId])
+        : undefined;
+    if (shared !== undefined || worker !== undefined) {
+      view.budget = {
+        ...(shared === undefined ? {} : { shared }),
+        ...(worker === undefined ? {} : { worker }),
+      };
+    }
+  }
+  // Settled usage: the run's own record carries the §68 metrics rollup.
+  const records = state as { records?: unknown; completed?: unknown };
+  const candidates = [
+    ...(Array.isArray(records.records) ? records.records : []),
+    ...(Array.isArray(records.completed) ? records.completed : []),
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'object' || candidate === null) continue;
+    const entry = candidate as { agentId?: unknown; result?: unknown };
+    if (entry.agentId !== row.workerId) continue;
+    const metrics =
+      typeof entry.result === 'object' && entry.result !== null
+        ? (entry.result as { metrics?: unknown }).metrics
+        : undefined;
+    const numbers =
+      typeof metrics === 'object' && metrics !== null
+        ? (metrics as Record<string, unknown>)
+        : undefined;
+    if (numbers === undefined) continue;
+    const pick = (key: string): number | undefined =>
+      typeof numbers[key] === 'number' && Number.isFinite(numbers[key])
+        ? (numbers[key] as number)
+        : undefined;
+    const usage = {
+      ...(pick('inputTokens') === undefined
+        ? {}
+        : { inputTokens: pick('inputTokens') as number }),
+      ...(pick('outputTokens') === undefined
+        ? {}
+        : { outputTokens: pick('outputTokens') as number }),
+      ...(pick('cachedTokens') === undefined
+        ? {}
+        : { cachedTokens: pick('cachedTokens') as number }),
+      ...(pick('toolCalls') === undefined
+        ? {}
+        : { toolCalls: pick('toolCalls') as number }),
+      ...(pick('costUsd') === undefined
+        ? {}
+        : { costUsd: pick('costUsd') as number }),
+    };
+    if (Object.keys(usage).length > 0) {
+      view.usage = usage;
+      view.usageHint = undefined;
+      return view;
+    }
+  }
+  return view;
 }
 
 export function createProdRunners(io: ProdRunnerIo): ProdRunners {
@@ -858,7 +1060,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         loadSecrets: loadProdAuditSecrets,
         ...report(),
       }),
-    workers: async (options) => {
+    workers: async (invocation) => {
       // Issue #94: the rows come from the SHARED durable record the
       // orchestration writes (`<repo>/.kubic/orchestrator/workers.json`).
       // The in-process WorkerRegistry is the orchestrator run's own view —
@@ -869,13 +1071,54 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       // KUBIC_DEBUG=1) adds the §50 spawn/exit lines on stderr.
       const theme = stdoutTheme();
       const mode = outputModeFor({
-        json: options.json === true,
+        json: invocation.json === true,
         stdinTTY: process.stdin.isTTY === true,
         stdoutTTY: process.stdout.isTTY === true,
         colorEnabled: theme.enabled,
       });
+      const repoRoot = resolveRepoRuntimeRoot(process.cwd());
+      if (invocation.command === 'inspect') {
+        return runWorkerInspectCommand(
+          invocation.id,
+          { json: invocation.json },
+          {
+            find: (id) =>
+              workersListFromRepo(resolveRepoRuntimeRoot(process.cwd())).find(
+                (row) => row.workerId === id,
+              ),
+            worktree: (row) => prodInspectWorktree(repoRoot, row),
+            run: (row) => prodInspectRun(repoRoot, row),
+            out,
+            err: debug,
+            theme,
+            errTheme: stderrTheme(),
+            fancy: mode.fancy,
+          },
+        );
+      }
+      if (invocation.command === 'terminate') {
+        return runWorkerTerminateCommand(
+          invocation.id,
+          {
+            generation: invocation.generation,
+            json: invocation.json,
+          },
+          {
+            find: (id) =>
+              workersListFromRepo(resolveRepoRuntimeRoot(process.cwd())).find(
+                (row) => row.workerId === id,
+              ),
+            command: (pid) => prodWorkerCommand(pid),
+            signal: (pid) => killProcessGroup(pid),
+            out,
+            err: debug,
+            theme,
+            errTheme: stderrTheme(),
+          },
+        );
+      }
       return runWorkersCommand(
-        { ...options, debug: debugEnabled(options) },
+        { json: invocation.json, debug: debugEnabled(invocation) },
         {
           // The rows live at the repo runtime root (issue #281) — the
           // same resolver `kubic audit` uses (issue #279) — so a run

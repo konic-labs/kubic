@@ -1921,7 +1921,7 @@ limits a stock CLI run does not configure are reported as available but
 unconfigured (there is no flag or config key for them today), never as
 protection the run does not deliver.
 
-## `kubic workers [--json] [--debug]`
+## `kubic workers [--json] [--debug] [inspect <id> | terminate <id>]`
 
 Worker list read from the repo's persisted record
 (`<repo>/.kubic/orchestrator/workers.json` — one shared record, never a
@@ -1957,8 +1957,38 @@ an orchestrator has no record — nothing on stdout (`--json` prints `[]`), an
 | `--debug` | `[worker] spawn …` per row plus `[exit] code=0 exited cleanly` on stderr (`KUBIC_DEBUG=1` does the same). Spawn env values are always redacted (`KUBIC_ROLE_*` never prints). |
 
 `kubic workers --help` prints the generated help and exits 0. An unknown
-flag, a stray operand, or a value on a boolean flag (`--json=1`) prints one
-`error: …` line on stderr and exits 2 (no stack trace).
+flag, an unknown subcommand (`error: unknown command '<name>'`), or a value
+on a boolean flag (`--json=1`) prints one `error: …` line on stderr and
+exits 2 (no stack trace).
+
+### `kubic workers inspect <id> [--json]`
+
+One worker's full row plus the four operator facets: the worktree (found by
+its `kubic/<run>/<agent>` branch, so a custom worktree root still resolves —
+path, branch, `clean` or `dirty: N files`, `not found` when the tree is
+gone), the run's stored budget for the worker (`worker …`, `shared …`, or
+`none recorded`), usage (the settled rollup from the run's own record, or
+`accruing (kubic cost --session <worker-session>)` while the worker runs —
+live usage accrues inside the worker session, which `kubic cost` reads), and
+approvals (`1 ask pending (worker is waiting)` when the agent state is
+`waiting`, with the newest §60 decision for the worker session when any).
+`--json` prints the same facets as one object. An unknown id exits 1
+(`code=no_such_worker`).
+
+### `kubic workers terminate <id> [--generation <n>] [--json]`
+
+Stop a runaway worker through the lifecycle layer instead of a raw `kill`:
+the pid-reuse guard (the pid's command line must name the worker's own
+`--session`) then the process-group reap. The child observes the SIGTERM
+and reports `cancelled` in its own §68 report, so the owning run settles
+the worker as `cancelled` rather than as a crash when its wait resolves —
+whether or not the manager is still alive. `--generation <n>` names the
+generation the operator saw: a worker replaced since is refused (`code=
+stale_generation`, exit 2) before anything is signalled, so the signal can
+never land on its successor. An unknown id exits 1 (`code=no_such_worker`);
+a settled worker, a gone pid, or a reused pid exits 1 (`code=
+worker_not_running`) without signalling anything. Success prints
+`terminated worker '<id>' (pid <n>, generation <n>)`, exit 0.
 
 ## Analysis commands: shared rules
 

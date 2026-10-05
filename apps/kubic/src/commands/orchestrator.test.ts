@@ -386,11 +386,15 @@ describe('kubic workers (commander)', () => {
     expect(help).toContain('--debug');
   });
 
-  it('passes --json/--debug to the runner and its exit code through', async () => {
+  it('passes --json/--debug to the list runner and its exit code through', async () => {
     const result = await run(['workers', '--json', '--debug']);
     expect(result.code).toBe(0);
     expect(result.calls).toEqual([
-      { runner: 'workers', config: CONFIG, args: { json: true, debug: true } },
+      {
+        runner: 'workers',
+        config: CONFIG,
+        args: { command: 'list', json: true, debug: true },
+      },
     ]);
     // No remap any more: usage errors never reach the handler, so a 1 from
     // it is a real failure and stays 1.
@@ -399,7 +403,9 @@ describe('kubic workers (commander)', () => {
 
   it('refuses an unknown flag, a stray operand and --json=1 with exit 2', async () => {
     expectUsage(await run(['workers', '--nope']), /unknown option '--nope'/);
-    expectUsage(await run(['workers', 'extra']), /too many arguments/);
+    // The group owns the operands (issue #167): an unknown subcommand is
+    // the documented unknown-command refusal, not excess arguments.
+    expectUsage(await run(['workers', 'extra']), /unknown command 'extra'/);
     expectUsage(await run(['workers', '--json=1']), /--json/);
   });
 
@@ -407,6 +413,75 @@ describe('kubic workers (commander)', () => {
     const result = await run(['workers', '--']);
     expect(result.code).toBe(0);
     expect(result.calls).toHaveLength(1);
+  });
+});
+
+describe('kubic workers inspect/terminate (commander, issue #167)', () => {
+  it('routes inspect <id> [--json] to the runner', async () => {
+    expect(await run(['workers', 'inspect', 'w-1'])).toMatchObject({
+      code: 0,
+      calls: [
+        {
+          runner: 'workers',
+          config: CONFIG,
+          args: { command: 'inspect', id: 'w-1' },
+        },
+      ],
+    });
+    expect(await run(['workers', 'inspect', 'w-1', '--json'])).toMatchObject({
+      code: 0,
+      calls: [
+        {
+          runner: 'workers',
+          config: CONFIG,
+          args: { command: 'inspect', id: 'w-1', json: true },
+        },
+      ],
+    });
+  });
+
+  it('routes terminate <id> [--generation <n>] [--json] to the runner', async () => {
+    expect(await run(['workers', 'terminate', 'w-1'])).toMatchObject({
+      code: 0,
+      calls: [
+        {
+          runner: 'workers',
+          config: CONFIG,
+          args: { command: 'terminate', id: 'w-1' },
+        },
+      ],
+    });
+    const result = await run([
+      'workers',
+      'terminate',
+      'w-1',
+      '--generation',
+      '2',
+      '--json',
+    ]);
+    expect(result).toMatchObject({
+      code: 0,
+      calls: [
+        {
+          runner: 'workers',
+          config: CONFIG,
+          args: { command: 'terminate', id: 'w-1', generation: 2, json: true },
+        },
+      ],
+    });
+  });
+
+  it('refuses an unknown subcommand and a missing id with exit 2', async () => {
+    expectUsage(await run(['workers', 'bogus']), /unknown command 'bogus'/);
+    expectUsage(
+      await run(['workers', '--json', 'bogus']),
+      /unknown command 'bogus'/,
+    );
+    expectUsage(await run(['workers', 'inspect']), /missing.*argument/i);
+    expectUsage(
+      await run(['workers', 'terminate', 'w-1', '--generation', 'x']),
+      /--generation/,
+    );
   });
 });
 

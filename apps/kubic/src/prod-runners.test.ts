@@ -1,6 +1,7 @@
 // Prod runner wiring for the analysis surfaces: the runners must read the
 // user's working directory and the SAME installed policy `kubic run` and
 // `kubic doctor` use — not a filesystem root, not an empty policy.
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -186,7 +187,7 @@ describe('kubic workers from a subdirectory (issue #281)', () => {
     writeRowsAt(root);
     vi.spyOn(process, 'cwd').mockReturnValue(join(root, 'a', 'b'));
     const { lines, r } = runners();
-    await r.workers({ json: true }, noConfig);
+    await r.workers({ command: 'list', json: true }, noConfig);
     expect(lines.join('\n')).toContain('"workerId": "w1"');
   });
 
@@ -196,8 +197,131 @@ describe('kubic workers from a subdirectory (issue #281)', () => {
     writeRowsAt(dir);
     vi.spyOn(process, 'cwd').mockReturnValue(dir);
     const { lines, r } = runners();
-    await r.workers({ json: true }, noConfig);
+    await r.workers({ command: 'list', json: true }, noConfig);
     expect(lines.join('\n')).toContain('"workerId": "w1"');
+  });
+});
+
+describe('kubic workers inspect/terminate (prod wiring, issue #167)', () => {
+  let child: ChildProcess | undefined;
+  afterEach(() => {
+    // A terminated fixture stays dead; a failed assertion must not leak it.
+    try {
+      child?.kill('SIGKILL');
+    } catch {
+      // Already gone.
+    }
+    child = undefined;
+  });
+
+  function git(cwd: string, args: string[]): void {
+    const done = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    if (done.status !== 0) {
+      throw new Error(`git ${args.join(' ')} failed: ${done.stderr}`);
+    }
+  }
+
+  it('inspect finds the worktree by branch and reports honest facets', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'prod-inspect-'));
+    roots.push(root);
+    git(root, ['init', '-q']);
+    git(root, ['checkout', '-q', '-b', 'kubic/run-1/alpha']);
+    // §35 keeps runtime state out of the commit path, like a real repo.
+    writeFileSync(join(root, '.gitignore'), '.kubic/\n');
+    git(root, ['add', '.gitignore']);
+    git(root, [
+      '-c',
+      'user.email=test@local',
+      '-c',
+      'user.name=test',
+      'commit',
+      '-qm',
+      'init',
+    ]);
+    mkdirSync(join(root, '.kubic', 'orchestrator'), { recursive: true });
+    writeWorkerRows(
+      createNodeFileBridge(join(root, '.kubic', 'orchestrator')),
+      'workers.json',
+      [
+        {
+          workerId: 'alpha',
+          sessionId: 'run-1-alpha',
+          generation: 1,
+          status: 'ready',
+          agentStatus: 'running',
+          startedAtMs: Date.now(),
+          ageMs: 0,
+          owner: 'orchestrate:run-1',
+          pid: process.pid,
+        },
+      ],
+    );
+    vi.spyOn(process, 'cwd').mockReturnValue(root);
+    const { lines, r } = runners();
+    expect(await r.workers({ command: 'inspect', id: 'alpha' }, noConfig)).toBe(
+      0,
+    );
+    const text = lines.join('\n');
+    expect(text).toContain('alpha');
+    expect(text).toContain(`kubic/run-1/alpha, clean`);
+    expect(text).toContain('budget: none recorded');
+    expect(text).toContain(
+      'usage: accruing (kubic cost --session run-1-alpha)',
+    );
+    expect(text).toContain('approvals: none pending');
+  });
+
+  it('terminate signals a live fixture group and refuses it once gone', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prod-terminate-'));
+    roots.push(dir);
+    mkdirSync(join(dir, '.kubic', 'orchestrator'), { recursive: true });
+    // A detached sleeper whose command line names the worker session —
+    // the pid-reuse guard's positive case, with no worker lane involved.
+    // (A script file, not `node -e`: node parses `-e` trailing flags as
+    // its own options and dies with `bad option`.)
+    writeFileSync(join(dir, 'sleeper.js'), 'setInterval(() => {}, 500);\n');
+    child = spawn(
+      process.execPath,
+      [join(dir, 'sleeper.js'), '--session', 'run-9-w9'],
+      { detached: true, stdio: 'ignore' },
+    );
+    child.unref();
+    const pid = child.pid ?? 0;
+    expect(pid).toBeGreaterThan(1);
+    const exited = new Promise<void>((resolve) => {
+      child?.once('exit', () => resolve());
+    });
+    writeWorkerRows(
+      createNodeFileBridge(join(dir, '.kubic', 'orchestrator')),
+      'workers.json',
+      [
+        {
+          workerId: 'w9',
+          sessionId: 'run-9-w9',
+          generation: 3,
+          status: 'ready',
+          agentStatus: 'running',
+          startedAtMs: Date.now(),
+          ageMs: 0,
+          owner: 'orchestrate:run-9',
+          pid,
+        },
+      ],
+    );
+    vi.spyOn(process, 'cwd').mockReturnValue(dir);
+    const first = runners();
+    expect(
+      await first.r.workers({ command: 'terminate', id: 'w9' }, noConfig),
+    ).toBe(0);
+    expect(first.lines.join('\n')).toContain(`terminated worker 'w9'`);
+    await exited;
+    // The row still claims live but the pid is gone: refused, never
+    // signalled blind (a second terminate is not a second kill).
+    const second = runners();
+    expect(
+      await second.r.workers({ command: 'terminate', id: 'w9' }, noConfig),
+    ).toBe(1);
+    expect(second.lines).toEqual([]);
   });
 });
 

@@ -11,9 +11,13 @@
 import { describe, expect, it } from 'vitest';
 import { createCliTheme } from '../../core/src/cli/theme.js';
 import {
+  runWorkerInspectCommand,
   runWorkersCommand,
+  runWorkerTerminateCommand,
+  type WorkerInspectDeps,
   type WorkerListRow,
   type WorkersCommandDeps,
+  type WorkerTerminateDeps,
 } from './workers-cli.js';
 
 const ROW: WorkerListRow = {
@@ -194,5 +198,222 @@ describe('kubic workers (issue #42)', () => {
       { ...deps([]), debug: (line: string) => debug.push(line) },
     );
     expect(debug).toEqual([]);
+  });
+});
+
+describe('kubic workers inspect (issue #167)', () => {
+  const INSPECT_ROW: WorkerListRow = {
+    ...ROW,
+    sessionId: 'run-1-w-1',
+    owner: 'orchestrate:run-1',
+  };
+  function inspectDeps(
+    lines: string[],
+    errs: string[],
+    overrides: Partial<WorkerInspectDeps> = {},
+  ): WorkerInspectDeps {
+    return {
+      find: (id) => (id === 'w-1' ? INSPECT_ROW : undefined),
+      worktree: () => ({
+        path: '/repo/.kubic/wt/run-1/w-1',
+        branch: 'kubic/run-1/w-1',
+        clean: false,
+        changed: 3,
+      }),
+      run: () => ({
+        budget: { worker: { maxTokens: 1000 } },
+        usageHint: 'kubic cost --session run-1-w-1',
+        pendingApproval: false,
+      }),
+      now: () => 100_000,
+      out: (line: string) => lines.push(line),
+      err: (line: string) => errs.push(line),
+      ...overrides,
+    };
+  }
+
+  it('prints the row plus worktree, budget, usage and approvals', async () => {
+    const lines: string[] = [];
+    const errs: string[] = [];
+    const code = await runWorkerInspectCommand(
+      'w-1',
+      {},
+      inspectDeps(lines, errs),
+    );
+    expect(code).toBe(0);
+    expect(errs).toEqual([]);
+    expect(lines.join('\n')).toContain('w-1');
+    expect(lines.join('\n')).toContain(
+      'worktree: /repo/.kubic/wt/run-1/w-1 (kubic/run-1/w-1, dirty: 3 files)',
+    );
+    expect(lines.join('\n')).toContain('budget: worker maxTokens=1000');
+    expect(lines.join('\n')).toContain(
+      'usage: accruing (kubic cost --session run-1-w-1)',
+    );
+    expect(lines.join('\n')).toContain('approvals: none pending');
+  });
+
+  it('names a waiting worker and its last decision, and a settled usage rollup', async () => {
+    const lines: string[] = [];
+    const waiting: WorkerListRow = {
+      ...INSPECT_ROW,
+      agentStatus: 'waiting',
+    };
+    const code = await runWorkerInspectCommand(
+      'w-1',
+      {},
+      inspectDeps(lines, [], {
+        find: () => waiting,
+        run: () => ({
+          usage: { inputTokens: 100, outputTokens: 50, costUsd: 0.01 },
+          pendingApproval: true,
+          lastDecision: 'deny tool:exec — needs approval',
+        }),
+      }),
+    );
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toContain(
+      'approvals: 1 ask pending (worker is waiting); last: deny tool:exec — needs approval',
+    );
+    expect(lines.join('\n')).toContain(
+      'usage: input=100 output=50 costUsd=0.01',
+    );
+  });
+
+  it('is honest about missing facets instead of inventing them', async () => {
+    const lines: string[] = [];
+    const code = await runWorkerInspectCommand(
+      'w-1',
+      {},
+      inspectDeps(lines, [], {
+        worktree: () => undefined,
+        run: () => undefined,
+      }),
+    );
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toContain('worktree: not found');
+    expect(lines.join('\n')).toContain('budget: none recorded');
+    expect(lines.join('\n')).toContain('usage: no record yet');
+    expect(lines.join('\n')).toContain('approvals: none pending');
+  });
+
+  it('--json prints one object with every facet', async () => {
+    const lines: string[] = [];
+    const code = await runWorkerInspectCommand(
+      'w-1',
+      { json: true },
+      inspectDeps(lines, []),
+    );
+    expect(code).toBe(0);
+    const parsed = JSON.parse(lines.join('\n')) as Record<string, unknown>;
+    expect(parsed.workerId).toBe('w-1');
+    expect(parsed.worktree).toEqual({
+      path: '/repo/.kubic/wt/run-1/w-1',
+      branch: 'kubic/run-1/w-1',
+      clean: false,
+      changed: 3,
+    });
+    expect(parsed.budget).toEqual({ worker: { maxTokens: 1000 } });
+    expect(parsed.usageHint).toBe('kubic cost --session run-1-w-1');
+  });
+
+  it('an unknown id exits 1 with the documented code', async () => {
+    const lines: string[] = [];
+    const errs: string[] = [];
+    const code = await runWorkerInspectCommand(
+      'ghost',
+      {},
+      inspectDeps(lines, errs),
+    );
+    expect(code).toBe(1);
+    expect(lines).toEqual([]);
+    expect(errs.join('\n')).toMatch(/code=no_such_worker/);
+  });
+});
+
+describe('kubic workers terminate (issue #167)', () => {
+  function terminateDeps(
+    lines: string[],
+    errs: string[],
+    overrides: Partial<WorkerTerminateDeps> = {},
+  ): WorkerTerminateDeps & { signalled: number[] } {
+    const signalled: number[] = [];
+    const deps: WorkerTerminateDeps & { signalled: number[] } = {
+      find: (id) => (id === 'w-1' ? ROW : undefined),
+      command: () =>
+        Promise.resolve('node bin/kubic.js run -p x --session s-1'),
+      signal: (pid) => {
+        signalled.push(pid);
+      },
+      out: (line: string) => lines.push(line),
+      err: (line: string) => errs.push(line),
+      ...overrides,
+      signalled,
+    };
+    return deps;
+  }
+
+  it('signals the verified pid and names the worker it stopped', async () => {
+    const lines: string[] = [];
+    const deps = terminateDeps(lines, []);
+    const code = await runWorkerTerminateCommand('w-1', {}, deps);
+    expect(code).toBe(0);
+    expect(deps.signalled).toEqual([4242]);
+    expect(lines.join('\n')).toContain("terminated worker 'w-1'");
+    expect(lines.join('\n')).toContain('pid 4242');
+  });
+
+  it('a matching --generation proceeds; a stale one exits 2 without signalling', async () => {
+    const lines: string[] = [];
+    const errs: string[] = [];
+    const deps = terminateDeps(lines, errs);
+    expect(
+      await runWorkerTerminateCommand('w-1', { generation: 2 }, deps),
+    ).toBe(0);
+    expect(deps.signalled).toEqual([4242]);
+    const errs2: string[] = [];
+    const deps2 = terminateDeps([], errs2);
+    expect(
+      await runWorkerTerminateCommand('w-1', { generation: 1 }, deps2),
+    ).toBe(2);
+    expect(deps2.signalled).toEqual([]);
+    expect(errs2.join('\n')).toMatch(/code=stale_generation/);
+  });
+
+  it('an unknown id exits 1 with the documented code', async () => {
+    const errs: string[] = [];
+    const deps = terminateDeps([], errs);
+    expect(await runWorkerTerminateCommand('ghost', {}, deps)).toBe(1);
+    expect(deps.signalled).toEqual([]);
+    expect(errs.join('\n')).toMatch(/code=no_such_worker/);
+  });
+
+  it('a settled worker is refused, never signalled', async () => {
+    const errs: string[] = [];
+    const settled: WorkerListRow = { ...ROW, agentStatus: 'completed' };
+    const deps = terminateDeps([], errs, { find: () => settled });
+    expect(await runWorkerTerminateCommand('w-1', {}, deps)).toBe(1);
+    expect(deps.signalled).toEqual([]);
+    expect(errs.join('\n')).toMatch(/code=worker_not_running/);
+  });
+
+  it('a reused pid (command line is foreign) is refused, never signalled', async () => {
+    const errs: string[] = [];
+    const deps = terminateDeps([], errs, {
+      command: () => Promise.resolve('postgres: checkpointer'),
+    });
+    expect(await runWorkerTerminateCommand('w-1', {}, deps)).toBe(1);
+    expect(deps.signalled).toEqual([]);
+    expect(errs.join('\n')).toMatch(/code=worker_not_running/);
+  });
+
+  it('a gone pid (no command line) is refused, never signalled blind', async () => {
+    const errs: string[] = [];
+    const deps = terminateDeps([], errs, {
+      command: () => Promise.resolve(undefined),
+    });
+    expect(await runWorkerTerminateCommand('w-1', {}, deps)).toBe(1);
+    expect(deps.signalled).toEqual([]);
+    expect(errs.join('\n')).toMatch(/code=worker_not_running/);
   });
 });

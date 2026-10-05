@@ -9,6 +9,7 @@
 // (packages/host) receive typed options and own the run itself.
 
 import { InvalidArgumentError, Option } from '@commander-js/extra-typings';
+import { CliUsageError } from '../../../../packages/core/src/cli/exit-codes.js';
 import {
   BUDGET_DIMENSIONS,
   type ParsedBudgetSpec,
@@ -222,15 +223,53 @@ export const registerOrchestratorCommands: CommandRegistrar = (
       ctx.setExitCode(await runners.clean(options, config));
     });
 
-  program
+  // `kubic workers` is a group (issue #167; the `sessions` shape): the bare
+  // form lists, `inspect <id>` shows one worker, `terminate <id>` stops one.
+  // The group action owns the operands so an unknown subcommand is the
+  // documented `error: unknown command '<name>'` (exit 2), not commander's
+  // excess-arguments line.
+  const workers = program
     .command('workers')
-    .description('list orchestrator workers from the repo record')
+    .description('list, inspect or terminate orchestrator workers')
     .option('--json', 'print the rows as one JSON array')
     .option(
       '--debug',
       'also print §50 spawn/exit lines on stderr (or KUBIC_DEBUG=1)',
     )
-    .action(async (options) => {
-      ctx.setExitCode(await runners.workers(options, config));
+    .allowExcessArguments();
+  workers.action(async (options, command) => {
+    const name = command.args[0] as string | undefined;
+    if (name === undefined) {
+      ctx.setExitCode(
+        await runners.workers({ command: 'list', ...options }, config),
+      );
+      return;
+    }
+    throw new CliUsageError(`unknown command '${name}' (inspect | terminate)`);
+  });
+  workers
+    .command('inspect')
+    .description("show one worker's row, worktree, budget, usage and approvals")
+    .argument('<id>', 'the worker id', sessionId)
+    .option('--json', 'print the worker as one JSON object')
+    .action(async (id, options) => {
+      ctx.setExitCode(
+        await runners.workers({ command: 'inspect', id, ...options }, config),
+      );
+    });
+  workers
+    .command('terminate')
+    .description('stop a runaway worker via the lifecycle layer (group reap)')
+    .argument('<id>', 'the worker id', sessionId)
+    .option(
+      '--generation <n>',
+      'only stop the generation the operator saw (a replaced worker is refused)',
+      positiveInt,
+    )
+    .option('--json', 'print the termination as one JSON object')
+    .action(async (id, options) => {
+      ctx.setExitCode(
+        await runners.workers({ command: 'terminate', id, ...options }, config),
+      );
     });
 };

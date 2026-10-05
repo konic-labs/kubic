@@ -29,6 +29,7 @@ import type {
 } from './orchestrate-cli.js';
 import {
   assignedApprovalRole,
+  createMergeHeadCursor,
   MergeConflictError,
   managerCallsForMerge,
   parseOrchestratorRunState,
@@ -3530,6 +3531,21 @@ describe('orchestrate manager lane (issue #431)', () => {
     expect(envelope.workers.map((entry) => entry.agentId)).toContain(
       'worker-1',
     );
+  });
+
+  it('consecutive workspace_merge calls name successive heads, never the same one twice', () => {
+    // Review #431: the router peeked the staged head without consuming,
+    // so back-to-back merges re-reported the same worker as 'merged'.
+    // The cursor advances per call over the live staged list.
+    const staged = ['worker-1', 'worker-2'];
+    const heads = createMergeHeadCursor(staged);
+    expect(heads.nextHead()).toBe('worker-1');
+    expect(heads.nextHead()).toBe('worker-2');
+    expect(heads.nextHead()).toBeUndefined();
+    // A stage that lands after partial advance is still reachable.
+    staged.push('worker-3');
+    expect(heads.nextHead()).toBe('worker-3');
+    expect(heads.nextHead()).toBeUndefined();
   });
 
   it('a resume re-attaches the lane without re-running or re-merging', async () => {

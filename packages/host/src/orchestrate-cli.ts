@@ -784,6 +784,33 @@ export function workerSessionFor(sessionId: string, agentId: string): string {
   return `${sessionId}-${agentId}`;
 }
 
+/** The lane merge cursor: names each staged head exactly once. */
+export interface MergeHeadCursor {
+  /** The next staged head, advancing past it; undefined when drained. */
+  nextHead(): string | undefined;
+}
+
+/**
+ * A cursor over the router's live staged list (issue #431 review): the
+ * router's `applyStaged` peeked `stagedForMerge[0]` without consuming,
+ * so consecutive `workspace_merge` calls re-reported the same head as
+ * 'merged'. Each call now advances past the head it names; stages that
+ * land later stay reachable because the list is read live.
+ */
+export function createMergeHeadCursor(
+  staged: readonly string[],
+): MergeHeadCursor {
+  let index = 0;
+  return {
+    nextHead: () => {
+      const head = staged[index];
+      if (head === undefined) return undefined;
+      index += 1;
+      return head;
+    },
+  };
+}
+
 // What the manager must do before spawning a worker (issue #85): `kubic run
 // --session <id>` only ATTACHES, so the manager creates the session with an
 // explicit id first. The spawn then happens with the same id.
@@ -3725,6 +3752,7 @@ export async function runOrchestrateCommand(
     const cancelledByManager = new Set<string>();
     const releasedSlots = new Set<string>();
     const stagedForMerge: string[] = [];
+    const mergeHeads = createMergeHeadCursor(stagedForMerge);
     const consumedFailures = new Set<string>();
     // The drive's view of the run: restored settlements (a resume's
     // completions and merge records) plus every mint the lane spawns.
@@ -4059,7 +4087,7 @@ export async function runOrchestrateCommand(
         return { position: stagedForMerge.indexOf(agentId) + 1 };
       },
       applyStaged: async () => {
-        const agentId = stagedForMerge[0];
+        const agentId = mergeHeads.nextHead();
         if (agentId === undefined) return undefined;
         return { agentId };
       },

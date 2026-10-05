@@ -327,7 +327,10 @@ function stealSessionLock(
     if (holderIsLive(holder))
       throw new SessionLockError(sessionId, lockErrorHolder(holder));
     // Conditional clear: only remove the occupant judged stale above.
-    if (observed !== undefined && readLockFile(lockPath) !== observed) continue;
+    // Unconditional compare (review #145): an absent read licenses
+    // nothing — `undefined` compares correctly, so a live lock that lands
+    // after an absent read is re-evaluated, never removed.
+    if (readLockFile(lockPath) !== observed) continue;
     removeLockFile(lockPath);
     if (
       claimLockLink(lockPath, payload) &&

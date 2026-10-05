@@ -844,6 +844,9 @@ describe('end to end: the project [model] pin reaches the prod run runner (issue
     expect(result.error).toBeUndefined();
     expect(runtimeModelPin(result)).toEqual({ provider: 'g', id: 'file' });
     expect(prodRunDeps(result).model).toEqual({ provider: 'g', id: 'file' });
+  });
+});
+
 describe('settings skills from config (issue #237, §29.2)', () => {
   it('resolves a relative project entry against the config file directory', () => {
     const home = tmpDir('kubic-skills-home-');

@@ -73,6 +73,28 @@ describe('tuiBootOptions (issue #227)', () => {
     ).toBe(false);
   });
 
+  it('forwards the roles projection with the global home (issue #241)', () => {
+    // The TUI resolves `--role` through the same global `~/.kubic/roles`
+    // layer as `kubic run`: the projection must carry the home directory
+    // or the boot's global documents silently vanish.
+    const roles = {
+      layers: [],
+      trustProject: () => true,
+      homeDir: '/home/ada',
+    };
+    const options = tuiBootOptions(
+      { out: () => {}, roles },
+      undefined,
+      undefined,
+    );
+    expect(options.roles).toBe(roles);
+    expect(options.roles?.homeDir).toBe('/home/ada');
+    // Absent means absent: no key, so the boot resolves no global source.
+    expect(
+      'roles' in tuiBootOptions({ out: () => {} }, undefined, undefined),
+    ).toBe(false);
+  });
+
   it('omits the model when no pin is configured', () => {
     const options = tuiBootOptions({ out: () => {} }, undefined, undefined);
     expect(options).toEqual({});

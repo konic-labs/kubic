@@ -63,6 +63,13 @@ export interface RolesDirInput {
   // means the cwd itself, so a `kubic run --role` from a subdirectory finds
   // the same `<root>/.kubic/roles/*.md` as one from the root.
   projectRoot?: string;
+  // Issue #241 (§35): the home directory whose `.kubic/roles/*.md` load as
+  // a lower-precedence source below the project documents — personal roles
+  // that apply in every repo. Absent means no global source (all existing
+  // callers): the composition root passes the real home explicitly, tests
+  // inject a fixture. Never trust-gated (L-D27): only the repo documents
+  // are withheld from untrusted roots.
+  home?: string;
   // Issue #430 (§33, L-D27): project trust for the repo documents —
   // exactly like project skills. The check runs against the project root
   // (one path, not per ancestor). Absent both inputs means untrusted:
@@ -89,8 +96,9 @@ export interface RolesDirInput {
 }
 
 // Where a role's winning document came from (issue #203): the preset bundled
-// with the binary, or a document the workspace overrides it with.
-export type RoleSource = 'builtin' | 'repo';
+// with the binary, a `~/.kubic/roles/*.md` personal document (issue #241),
+// or a project document the workspace overrides both with.
+export type RoleSource = 'builtin' | 'global' | 'repo';
 
 export interface LoadedRoles {
   docs: ParsedRoleDoc[];
@@ -111,11 +119,13 @@ export interface LoadedRoles {
   // `selectRole` still refuses when the SELECTED name matches one of
   // these stems; doctor fails each one by name.
   invalid: Array<{ name: string; path: string; reason: string }>;
-  // Issue #236: declared names claimed by two or more repo documents —
-  // refused by name (doctor fail + selection refusal), both files
-  // listed. No copy wins: a forked name resolves to nothing, not even a
-  // same-named builtin. A single repo document overriding a builtin
-  // (issue #203) is not a duplicate and still wins.
+  // Issue #236: declared names claimed by two or more documents of the
+  // same layer — refused by name (doctor fail + selection refusal), all
+  // files listed. No copy wins: a forked name resolves to nothing, not
+  // even a same-named builtin or a unique copy in the other layer. A
+  // single repo document overriding a builtin (issue #203), or a repo
+  // document over a unique global one (issue #241), is not a duplicate
+  // and still wins.
   duplicates: Array<{ name: string; paths: string[] }>;
   // Repo documents withheld by project trust (issue #430, §33, L-D27) —
   // named, never silently dropped: an untrusted root's roles are not
@@ -129,8 +139,12 @@ export interface LoadedRoles {
 // same name REPLACES the preset instead of joining it (one document per role,
 // so a repo file can tighten or loosen its own role but not fork it). A
 // document declaring a name no preset has joins the set as a new role.
+// Issue #241: the lower layers arrive in precedence order (global personal
+// documents first, project documents last) and each REPLACES the same-named
+// winner below it — a project document wins over a global one, a global one
+// over a preset, under exactly the same per-document rules.
 function withBuiltins(
-  repoDocs: Array<{ doc: ParsedRoleDoc; text: string }>,
+  lowerDocs: Array<{ doc: ParsedRoleDoc; text: string; source: RoleSource }>,
 ): Pick<LoadedRoles, 'docs' | 'texts' | 'sources'> {
   const texts: Record<string, string> = {};
   const sources: Record<string, RoleSource> = {};
@@ -140,14 +154,37 @@ function withBuiltins(
     sources[name] = BUILTIN_PRESET_SOURCE;
     docs.push(parseRoleDocument(text));
   }
-  for (const { doc, text } of repoDocs) {
+  for (const { doc, text, source } of lowerDocs) {
     texts[doc.name] = text;
-    sources[doc.name] = 'repo';
+    sources[doc.name] = source;
     const at = docs.findIndex((entry) => entry.name === doc.name);
     if (at === -1) docs.push(doc);
     else docs[at] = doc;
   }
   return { docs, texts, sources };
+}
+
+// The `.md` entries directly under one source directory, sorted by name —
+// a document whose file stem differs from its `role:` line is legal (it
+// registers under the declared name), so callers keep each entry's own
+// path. An absent directory is the normal case (most workspaces configure
+// no roles) and lists as empty; an unreadable directory that DOES exist
+// still throws — the distinction is between "nothing there" and "there but
+// broken", and only the former is silent.
+function listSourceDir(
+  bridge: Pick<FileBridge, 'listDir'>,
+  dir: string,
+): Array<{ name: string; path: string }> {
+  try {
+    return bridge
+      .listDir(dir)
+      .filter((entry) => !entry.isDirectory && entry.name.endsWith('.md'))
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+      .map((entry) => ({ name: entry.name, path: entry.path }));
+  } catch (error) {
+    if (!isAbsentDir(error, dir)) throw error;
+    return [];
+  }
 }
 
 // Every .md under .kubic/roles, parsed and resolved. A parse failure is
@@ -165,6 +202,17 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
       ? input.trustProject(root)
       : (input.trusted ?? false);
   const withheld: Array<{ name: string; reason: string }> = [];
+  // Issue #241 (§35): the global personal documents, read under the same
+  // per-document rules as the repo ones — a listed document that cannot
+  // be read throws named with its own path, a parse failure is recorded
+  // in `invalid` — but never under the trust gate (L-D27): only the repo
+  // documents are withheld from untrusted roots. Loaded below, after the
+  // shared `invalid` record exists.
+  const globalDocs: Array<{
+    doc: ParsedRoleDoc;
+    text: string;
+    path: string;
+  }> = [];
   // Each entry is read and parsed as ITSELF — the text always comes from the
   // path that was listed, never re-derived from the parsed role name (a
   // document whose file stem differs from its `role:` line is legal: it
@@ -179,6 +227,40 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
   // selection (see selectRole); the rest surface in doctor.
   const invalid: Array<{ name: string; path: string; reason: string }> = [];
   let entries: Array<{ name: string; path: string }>;
+  // Issue #241 (§35): load the global personal documents here — after
+  // `invalid` exists, before the repo layer below. Never trust-gated.
+  if (input.home !== undefined) {
+    for (const entry of listSourceDir(
+      input.bridge,
+      `${input.home}/.kubic/roles`,
+    )) {
+      let text: string;
+      try {
+        text = input.bridge.readTextFile(entry.path);
+      } catch (error) {
+        throw new RoleBootError(
+          `role document ${entry.path} is unreadable: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      try {
+        globalDocs.push({
+          doc: parseRoleDocument(text),
+          text,
+          path: entry.path,
+        });
+      } catch (error) {
+        if (error instanceof RoleParseError) {
+          invalid.push({
+            name: entry.name.slice(0, -'.md'.length),
+            path: entry.path,
+            reason: error.message,
+          });
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
   if (!repoTrusted) {
     // Untrusted: name what is withheld (stems only — contents are never
     // read) so doctor and `--role` can say what trust would unlock. An
@@ -253,11 +335,30 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
   for (const [name, paths] of byName) {
     if (paths.length > 1) duplicates.push({ name, paths });
   }
+  // Issue #241: the same partitioning for global-vs-global forks — a
+  // global name claimed twice resolves to nothing, exactly like a repo
+  // fork. A name claimed once globally and once (uniquely) in the repo
+  // is NOT a fork: both layers pass the filter and the project document
+  // wins by precedence in the merge below. A name forked in EITHER
+  // layer poisons the name everywhere: an ambiguous project layer never
+  // silently falls back to the global copy.
+  const globalByName = new Map<string, string[]>();
+  for (const { doc, path } of globalDocs) {
+    globalByName.set(doc.name, [...(globalByName.get(doc.name) ?? []), path]);
+  }
+  for (const [name, paths] of globalByName) {
+    if (paths.length > 1) duplicates.push({ name, paths });
+  }
   duplicates.sort((a, b) => (a.name < b.name ? -1 : 1));
   const dupNames = new Set(duplicates.map((dup) => dup.name));
-  const { docs, texts, sources } = withBuiltins(
-    repoDocs.filter(({ doc }) => !dupNames.has(doc.name)),
-  );
+  const { docs, texts, sources } = withBuiltins([
+    ...globalDocs
+      .filter(({ doc }) => !dupNames.has(doc.name))
+      .map((entry) => ({ ...entry, source: 'global' as const })),
+    ...repoDocs
+      .filter(({ doc }) => !dupNames.has(doc.name))
+      .map((entry) => ({ ...entry, source: 'repo' as const })),
+  ]);
   const resolved: ResolvedRole[] = [];
   const refused: Array<{ name: string; reason: string }> = [];
   for (const doc of docs) {

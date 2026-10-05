@@ -758,7 +758,11 @@ export function runtimeRunDeps(result: CliConfigResult): {
 // the lane resolves against the session's record and the role default.
 export function runtimeLaneDeps(result: CliConfigResult): {
   agentId?: string;
-  roles?: { layers: RoleLayerInput[]; trustProject: ProjectTrustCheck };
+  roles?: {
+    layers: RoleLayerInput[];
+    trustProject: ProjectTrustCheck;
+    homeDir?: string;
+  };
   thinking?: RuntimeThinking;
   /** The merged `[model]` ladder (issue #210; §38.4) — the lane climbs
    * the role's own rungs first when the role names any. */
@@ -776,8 +780,15 @@ export function runtimeLaneDeps(result: CliConfigResult): {
   return {
     ...(agentId === undefined ? {} : { agentId }),
     // Always present (even with no layers): the trust check travels on
-    // `roles` so callers never default to an untrusted load.
-    roles: { layers, trustProject },
+    // `roles` so callers never default to an untrusted load. Issue #241
+    // (§35): the home directory travels with it, so both lanes layer the
+    // global `~/.kubic/roles` under the project documents — absent (an
+    // empty home, tests and embeddings) means no global source.
+    roles: {
+      layers,
+      trustProject,
+      ...(result.trust.home === '' ? {} : { homeDir: result.trust.home }),
+    },
     ...(runtime.thinking === undefined
       ? {}
       : { thinking: { ...runtime.thinking } }),

@@ -448,6 +448,175 @@ describe('rolePromptFor refuses instruction-less roles by name (issue #211)', ()
   });
 });
 
+describe('global ~/.kubic/roles layer (issue #241)', () => {
+  const HOME = '/home';
+  const globalDoc = (name: string): Record<string, string> => ({
+    [`${HOME}/.kubic/roles/${name}.md`]: roleDoc(name),
+  });
+
+  it('resolves a role defined only in the global dir, with no trust flags', () => {
+    const bridge = memBridge(globalDoc('scout'));
+    const selected = selectRole({
+      bridge,
+      cwd: '/repo',
+      home: HOME,
+      role: 'scout',
+    });
+    expect(selected.doc.name).toBe('scout');
+    expect(selected.source).toBe('global');
+    expect(selected.markdown).toContain('Do scout things.');
+  });
+
+  it('a project document with the same name wins over the global one', () => {
+    const bridge = memBridge({
+      ...globalDoc('scout'),
+      '/repo/.kubic/roles/scout.md': roleDoc('scout').replace(
+        'Do scout things.',
+        'Do project scout things.',
+      ),
+    });
+    const loaded = loadRoles({
+      bridge,
+      cwd: '/repo',
+      projectRoot: '/repo',
+      trusted: true,
+      home: HOME,
+    });
+    expect(loaded.sources.scout).toBe('repo');
+    expect(loaded.texts.scout).toContain('Do project scout things.');
+  });
+
+  it('a global document overrides the builtin preset of the same name', () => {
+    const bridge = memBridge({
+      [`${HOME}/.kubic/roles/reviewer.md`]: roleDoc('reviewer'),
+    });
+    const loaded = loadRoles({ bridge, cwd: '/repo', home: HOME });
+    expect(loaded.sources.reviewer).toBe('global');
+    expect(loaded.texts.reviewer).toContain('Do reviewer things.');
+  });
+
+  it('an absent global dir is silent: builtins still resolve', () => {
+    const bridge = memBridge({});
+    const loaded = loadRoles({ bridge, cwd: '/repo', home: HOME });
+    expect(loaded.sources.reviewer).toBe('builtin');
+    expect(loaded.docs.some((doc) => doc.name === 'reviewer')).toBe(true);
+  });
+
+  it('an unreadable global document names its own path', () => {
+    const bad = `${HOME}/.kubic/roles/bad.md`;
+    const bridge = memBridge(globalDoc('scout'));
+    const throwing = {
+      ...bridge,
+      readTextFile: (path: string): string => {
+        if (path === bad) throw new Error('EACCES: permission denied');
+        return bridge.readTextFile(path);
+      },
+      listDir: (dir: string) => [
+        ...bridge.listDir(dir),
+        ...(dir === `${HOME}/.kubic/roles`
+          ? [
+              {
+                name: 'bad.md',
+                path: bad,
+                isDirectory: false,
+                isSymbolicLink: false,
+                size: 0,
+                mtimeMs: 0,
+              },
+            ]
+          : []),
+      ],
+    };
+    expect(() =>
+      loadRoles({ bridge: throwing, cwd: '/repo', home: HOME }),
+    ).toThrow(new RegExp(`role document ${bad} is unreadable`));
+  });
+
+  it('the doctor probe lists a global role with its source', () => {
+    const bridge = memBridge(globalDoc('scout'));
+    const checks = rolesDoctorProbe({ bridge, cwd: '/repo', home: HOME });
+    const check = checks.find((entry) => entry.id === 'role:scout');
+    expect(check?.status).toBe('pass');
+    expect(check?.detail).toContain('global role');
+  });
+
+  it('an untrusted root still loads the global layer (trust gates repo only)', () => {
+    const bridge = memBridge({
+      ...globalDoc('scout'),
+      '/repo/.kubic/roles/held.md': roleDoc('held'),
+    });
+    const loaded = loadRoles({ bridge, cwd: '/repo', home: HOME });
+    expect(loaded.sources.scout).toBe('global');
+    expect(loaded.withheld.map((entry) => entry.name)).toContain('held');
+    expect(loaded.sources.held).toBeUndefined();
+  });
+
+  it('a malformed global document is recorded, never aborting the load', () => {
+    // Same per-document rules as the repo layer (issue #236): the parse
+    // failure is recorded with its stem and path, the healthy global
+    // role still resolves, selecting the bad stem refuses.
+    const bridge = memBridge({
+      ...globalDoc('scout'),
+      [`${HOME}/.kubic/roles/b.md`]: '---\nrole: b\ntools: [read]\n\n# b\n',
+    });
+    const input = { bridge, cwd: '/repo', home: HOME };
+    const loaded = loadRoles(input);
+    expect(loaded.sources.scout).toBe('global');
+    expect(loaded.invalid).toHaveLength(1);
+    expect(loaded.invalid[0]?.path).toContain('b.md');
+    expect(loaded.invalid[0]?.reason).toContain('never closed');
+    expect(() => selectRole({ ...input, role: 'b' })).toThrow(
+      /b\.md.*never closed/,
+    );
+  });
+
+  it('two global documents declaring one name are a fork: refused by name', () => {
+    const bridge = memBridge({
+      [`${HOME}/.kubic/roles/first.md`]: roleDoc('x'),
+      [`${HOME}/.kubic/roles/second.md`]: roleDoc('x'),
+      ...globalDoc('scout'),
+    });
+    const input = { bridge, cwd: '/repo', home: HOME };
+    const loaded = loadRoles(input);
+    expect(loaded.duplicates).toEqual([
+      {
+        name: 'x',
+        paths: [
+          `${HOME}/.kubic/roles/first.md`,
+          `${HOME}/.kubic/roles/second.md`,
+        ],
+      },
+    ]);
+    // Fail-closed: no copy wins, and the healthy global role is unaffected.
+    expect(loaded.docs.map((doc) => doc.name)).not.toContain('x');
+    expect(selectRole({ ...input, role: 'scout' }).doc.name).toBe('scout');
+    expect(() => selectRole({ ...input, role: 'x' })).toThrow(
+      /first\.md.*second\.md/,
+    );
+  });
+
+  it('a repo fork poisons the name even when the global copy is unique', () => {
+    // A name forked in EITHER layer resolves to nothing: an ambiguous
+    // project layer never silently falls back to the global copy — not
+    // even when a builtin preset shares the name.
+    const bridge = memBridge({
+      ...globalDoc('scout'),
+      '/repo/.kubic/roles/first.md': roleDoc('scout'),
+      '/repo/.kubic/roles/second.md': roleDoc('scout'),
+    });
+    const input = {
+      bridge,
+      cwd: '/repo',
+      projectRoot: '/repo',
+      trusted: true,
+      home: HOME,
+    };
+    const loaded = loadRoles(input);
+    expect(loaded.duplicates.map((dup) => dup.name)).toEqual(['scout']);
+    expect(() => selectRole({ ...input, role: 'scout' })).toThrow(/ambiguous/);
+  });
+});
+
 describe('selectRole unknown roles (issue #211)', () => {
   it('lists the loaded names in the refusal', () => {
     const bridge = memBridge({

@@ -1011,6 +1011,10 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
           // Issue #229: the same project root the config load resolves,
           // so the posture describes the roles the run would actually use.
           projectRoot: cliConfig.projectRoot,
+          // Issue #241 (§35): the same global roles the run would see.
+          ...(cliConfig.trust.home === ''
+            ? {}
+            : { home: cliConfig.trust.home }),
           agents: ORCHESTRATE_DEFAULT_AGENTS,
           // §38.1 (#202): the same model levels the run resolves — the
           // manager's own pin under each role's `[roles.<r>].model`, and the
@@ -1191,6 +1195,11 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
             // Issue #430 (§33, L-D27): judge the trust the run would see —
             // an untrusted root's withheld roles warn here, never green.
             trustProject: projectTrustFor(cliConfig),
+            // Issue #241 (§35): judge the global roles the run would see —
+            // absent (tests and embeddings with no home) means no source.
+            ...(cliConfig.trust.home === ''
+              ? {}
+              : { home: cliConfig.trust.home }),
           }),
         // Skills gate (issue #181, §29.4): the same boot the lane runs,
         // judged with the lane's classes and no role — a skill the lane

@@ -773,3 +773,34 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     expect(plan.assignments.map((entry) => entry.role)).toEqual(['planner']);
   });
 });
+
+describe('global ~/.kubic/roles on the delegation path (issue #241)', () => {
+  it('plans a global override of a fixed role with no trust flags', () => {
+    // The manager plans the same roles the worker's own `kubic run --role`
+    // will resolve (§35): a global document overriding a fixed role name
+    // reaches the plan, and the global layer needs no trust opt-in —
+    // L-D27 gates the repo documents only — so the planning carries no
+    // trust flags at all and still resolves.
+    const home = '/home/ada';
+    const files = {
+      [`${home}/.kubic/roles/reviewer.md`]: roleText(
+        'reviewer',
+        'tools: [read, bash]\nfilesystem: read\nshell: true\nnetwork: none\ngit: false\ncredentials: none\nrequires: [write]\n',
+        'Global reviewer instructions.',
+      ),
+    };
+    const plan = planWorkerRoles({
+      bridge: memBridge(files),
+      cwd: CWD,
+      home,
+      agents: ['alpha'],
+      roles: { alpha: 'reviewer' },
+    });
+    expect(plan.refused).toEqual([]);
+    expect(plan.assignments).toHaveLength(1);
+    expect(plan.assignments[0]?.promptText).toContain(
+      'Global reviewer instructions.',
+    );
+    expect(plan.assignments[0]?.requires).toEqual(['write']);
+  });
+});

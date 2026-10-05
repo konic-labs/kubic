@@ -384,6 +384,10 @@ export interface HeadlessRunDeps {
     // (`runtimeLaneDeps`); absent both means the root is untrusted.
     trusted?: boolean;
     trustProject?: (dir: string) => boolean;
+    // Issue #241 (§35): the home directory whose `.kubic/roles` layer
+    // under the project documents. Absent means no global source — the
+    // composition root passes the real home; tests inject a fixture.
+    homeDir?: string;
   };
   // Interrupt source (Ctrl-C, a supervisor SIGTERM, a closed terminal SIGHUP). Absent means the
   // real process. Tool children run in detached process groups, so a
@@ -1568,6 +1572,11 @@ async function runHeadlessPromptImpl(
           ...(deps.roles?.trustProject === undefined
             ? {}
             : { trustProject: deps.roles.trustProject }),
+          // Issue #241 (§35): the global `~/.kubic/roles` layer under the
+          // project documents — absent means no global source.
+          ...(deps.roles?.homeDir === undefined
+            ? {}
+            : { home: deps.roles.homeDir }),
           // §58 enterprise policy (issue #288): a role document declaring a
           // denied tool is refused here, by name, before the lane boots.
           ...(enterprisePolicy === undefined

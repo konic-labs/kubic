@@ -1041,6 +1041,9 @@ describe('remaining projections stay fail-closed (issue #384)', () => {
     expect(lane.agentId).toBe('alice');
     expect(lane.roles?.layers).toEqual([]);
     expect(typeof lane.roles?.trustProject).toBe('function');
+    // Issue #241 (§35): the fixture home travels on the projection, so
+    // both lanes layer the global `~/.kubic/roles` under the documents.
+    expect(lane.roles?.homeDir).toBe(home);
     // A refused config contributes nothing: the command fails closed first.
     const refused = refusedGlobal();
     expect(sessionRetentionDays(refused)).toBeUndefined();

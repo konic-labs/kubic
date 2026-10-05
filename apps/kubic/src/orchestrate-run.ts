@@ -2129,6 +2129,9 @@ export async function orchestrateDepsWithDefaults(
         // Issue #229: worker roles resolve at the manager's project
         // root, not wherever the manager was launched from.
         projectRoot: findProjectRoot(createNodeFileBridge(cwd), cwd, homedir()),
+        // Issue #241 (§35): the manager plans the same global roles the
+        // worker's own `kubic run --role` will resolve.
+        home: homedir(),
         agents,
         // §38.1 (#202): the manager's own effective model is the fallback
         // level under each role's `[roles.<r>].model`, and the run's explicit

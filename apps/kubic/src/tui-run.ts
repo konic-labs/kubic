@@ -1141,6 +1141,10 @@ export interface TuiRunOptions {
     // same projection as `kubic run`. Absent both means untrusted.
     trusted?: boolean;
     trustProject?: (dir: string) => boolean;
+    // Issue #241 (§35): the home directory whose `.kubic/roles` layer
+    // under the project documents — same projection as `kubic run`.
+    // Absent means no global source.
+    homeDir?: string;
   };
   journalRetention?: JournalRetention;
   // [agent] systemPromptFile contents (issue #240): the same projection
@@ -1482,6 +1486,11 @@ export async function bootTuiLane(
         ...(options.roles?.trustProject === undefined
           ? {}
           : { trustProject: options.roles.trustProject }),
+        // Issue #241 (§35): the global `~/.kubic/roles` layer under the
+        // project documents — same projection as `kubic run`.
+        ...(options.roles?.homeDir === undefined
+          ? {}
+          : { home: options.roles.homeDir }),
         ...(enterprisePolicy === undefined
           ? {}
           : { toolPolicy: enterprisePolicy }),

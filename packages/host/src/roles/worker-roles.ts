@@ -126,6 +126,10 @@ export interface WorkerRolesInput {
   // forwarded to the live loader; absent both means untrusted.
   trusted?: boolean;
   trustProject?: (dir: string) => boolean;
+  // Issue #241 (§35): the home directory whose `.kubic/roles` the planning
+  // layers under the project documents — the same roles the worker's own
+  // `kubic run --role` will resolve. Absent means no global source.
+  home?: string;
   agents: readonly string[];
   layers?: RoleLayerInput[];
   // §38.1 model levels (issue #202) plus the role thinking default (issue
@@ -210,6 +214,7 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
       ...(input.projectRoot === undefined
         ? {}
         : { projectRoot: input.projectRoot }),
+      ...(input.home === undefined ? {} : { home: input.home }),
       ...(input.layers === undefined ? {} : { layers: input.layers }),
       ...(input.trusted === undefined ? {} : { trusted: input.trusted }),
       ...(input.trustProject === undefined
@@ -256,6 +261,7 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
         ...(input.projectRoot === undefined
           ? {}
           : { projectRoot: input.projectRoot }),
+        ...(input.home === undefined ? {} : { home: input.home }),
         ...(input.layers === undefined ? {} : { layers: input.layers }),
         ...(input.trusted === undefined ? {} : { trusted: input.trusted }),
         ...(input.trustProject === undefined

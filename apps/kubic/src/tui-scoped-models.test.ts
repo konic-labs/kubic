@@ -16,10 +16,10 @@ import {
   fauxProvider,
   type MutableModels,
 } from '../../../packages/worker/src/pi-boundary.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import type { CliConfigResult } from './config-runtime.js';
 import { prodTuiDeps } from './prod-runners.js';
 import { bootTuiLane, runTuiCommand, tuiDepsWithDefaults } from './tui-run.js';
-import { terminalRig } from '../../../test/fake-terminal.js';
 
 const tempDirs: string[] = [];
 

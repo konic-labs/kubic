@@ -294,9 +294,11 @@ export async function dispatchCommand(
           ...(trust === undefined ? {} : { projectTrusted: trust }),
         },
   );
-  // A refused config stops the agent-executing modes: they may not run on
-  // built-in defaults while the user believes their config file is in force.
-  // `config` and `doctor` still run so the named reason can be reported.
+  // A refused config stops every command that consumes it (issue #242):
+  // the agent-executing modes plus clean, policy, eval and benchmark may
+  // not run on built-in defaults while the user believes their config
+  // file is in force. The reporting commands still run so the named
+  // reason can be reported.
   const refusalExit = configRefusalExit(cliConfig, command);
   if (refusalExit !== undefined) {
     const reason = cliConfig.error ?? 'config refused';

@@ -335,11 +335,26 @@ const CONFIG_REPORTING_COMMANDS = new Set(['config', 'doctor', 'trust']);
 // `replay` joins them (issue #114): its re-execution tiers run the agent
 // under the effective config exactly like `kubic run`, so a refused config
 // must stop them the same way.
-const CONFIG_CONSUMING_COMMANDS = new Set([
+// Exported so the dispatch gate-membership test pins it: a command whose
+// runner reads `result.runtime` must be listed here (issue #242). `clean`
+// reads the orchestrator root, `policy` reports the posture a run would
+// enforce, `attach`/`resume` boot the same lane as `tui`, and
+// `eval`/`benchmark` run agent lanes under the same projections — all fail
+// closed on a refused config instead of proceeding on built-in defaults.
+// The reporting commands (`config`, `doctor`, `trust`) must still run so
+// the named reason can surface; sessions/journal read only
+// `session.retentionDays` (undefined-safe: no invented window).
+export const CONFIG_CONSUMING_COMMANDS: ReadonlySet<string> = new Set([
   'run',
   'orchestrate',
   'tui',
+  'attach',
+  'resume',
   'replay',
+  'clean',
+  'policy',
+  'eval',
+  'benchmark',
 ]);
 
 // Exit code for a refused config on the given command, or undefined when the

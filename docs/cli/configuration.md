@@ -165,21 +165,29 @@ permissions, journal retention and out-of-scope paths, modes, budgets).
 the same thing as one object — `values`: `{ key, value, layer }` per set
 key, and one object per projection. A broken config (unknown key, refused
 project layer, `[budgets]`, a secret ref) exits 1 with the named reason
-instead of printing defaults. The agent-executing commands (`run`,
-`orchestrate`, `tui`, `replay`) refuse a broken config the same way: one
-`error: <reason>` line on stderr, exit 1, stdout empty (so a `--json`
-consumer never parses the refusal as data).
+instead of printing defaults. The commands that consume the config (`run`,
+`orchestrate`, `tui` — including `attach` and `resume`, which boot the same
+lane — `replay`, `clean`, `policy`, `eval`, `benchmark`) refuse a broken
+config the same way: one `error: <reason>` line on stderr, exit 1, stdout
+empty (so a `--json` consumer never parses the refusal as data). `clean`
+refuses because it reads the configured worktree root, and `policy` refuses
+because it reports the posture a run would actually enforce — answering
+from built-in defaults would be more permissive than what you configured.
 `kubic config --help` (or `-h`) prints the generated help and exits 0
 without loading anything; an unknown flag prints one `error: …` line on
 stderr and exits 2.
 
-A refusal also stops the modes that execute an agent: `kubic run`,
-`kubic orchestrate` and `kubic tui` exit 1 with the named reason rather than
-proceeding on built-in defaults while you believe your config file is in
-force. `kubic config` and `kubic doctor` still run, so you can see what is
-wrong (doctor reports the load as `dep:config-load (deps-missing)`).
-Commands that consume no config projection (`git`, `diff`, `clean`, …) are
-unaffected. `kubic sessions` reads exactly one projection —
+A refusal also stops every other command that reads the config: `kubic run`,
+`kubic orchestrate`, `kubic tui` (including `attach`/`resume`), `kubic replay`,
+`kubic clean`, `kubic policy`, `kubic eval` and `kubic benchmark` exit 1 with
+the named reason rather than proceeding on built-in defaults while you
+believe your config file is in force. `kubic config`, `kubic doctor` and
+`kubic trust` still run, so you can see what is wrong (doctor reports the
+load as `dep:config-load (deps-missing)`).
+Commands that consume no config projection (`git`, `diff`, `cost`, `perf`,
+`audit`, `workers`, `export`, …) are unaffected. `kubic models` reads only
+the trust report, which exists independently of the load, so it is
+unaffected too. `kubic sessions` reads exactly one projection —
 `session.retentionDays`, the default keep-window for `kubic sessions prune`
 — and `kubic log` reads the same key to self-heal session journals at read
 time; a refused config simply leaves both without a window: prune then

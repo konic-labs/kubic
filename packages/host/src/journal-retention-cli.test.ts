@@ -252,6 +252,38 @@ describe('read-time journal self-heal (issue #119)', () => {
     expect(o.lines.join('\n')).toContain('aged.txt');
   });
 
+  it('a refused config leaves no window either: log --session never writes (issue #242)', async () => {
+    // A typo refuses the whole load, so the read path has no window —
+    // exactly like the unset case — and writes nothing.
+    const { sessionsRoot, root, journalDir } = seedCase();
+    const before = treeSnapshot(journalDir);
+    const home = tmpRoot('home-');
+    mkdirSync(join(home, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(home, '.kubic', 'config.toml'),
+      '[session]\nretentionDays = 30\n[nope]\nkey = 1\n',
+    );
+    const loaded = loadCliConfig({ home, cwd: tmpRoot('cwd-'), env: {} });
+    expect(loaded.runtime).toBeUndefined();
+    expect(loaded.error).toContain('nope');
+    expect(sessionRetentionDays(loaded)).toBeUndefined();
+
+    const o = out();
+    const code = await runJournalCommand(
+      { command: 'log', session: 'sess-1' },
+      {
+        root,
+        sessionsRoot,
+        out: o.write,
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(treeSnapshot(journalDir)).toBe(before);
+    expect(indexLines(journalDir)).toHaveLength(2);
+    expect(o.lines.join('\n')).toContain('aged.txt');
+  });
+
   it('with retentionDays = 0 (retention off), log --session never writes either', async () => {
     const { sessionsRoot, root, journalDir } = seedCase();
     const before = treeSnapshot(journalDir);

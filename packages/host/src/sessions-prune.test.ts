@@ -634,6 +634,39 @@ describe('sessions prune, config flow (issue #119)', () => {
     expect(existsSync(join(root, 'aged-a'))).toBe(true);
   });
 
+  it('a refused config leaves no window either: prune refuses, deletes nothing (issue #242)', async () => {
+    // A typo refuses the whole load, so sessionRetentionDays is undefined
+    // exactly like the unset case — prune still demands --keep-days.
+    const home = tmpRoot('home-');
+    mkdirSync(join(home, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(home, '.kubic', 'config.toml'),
+      '[session]\nretentionDays = 30\n[nope]\nkey = 1\n',
+    );
+    const loaded = loadCliConfig({
+      home,
+      cwd: tmpRoot('cwd-'),
+      env: {},
+    });
+    expect(loaded.runtime).toBeUndefined();
+    expect(loaded.error).toContain('nope');
+    expect(sessionRetentionDays(loaded)).toBeUndefined();
+    const root = tmpRoot();
+    sessionDir(root, 'aged-a', 90 * DAY_MS);
+    const o = out();
+    const code = await runSessionsCommand(
+      { command: 'prune', yes: true },
+      {
+        sessionsRoot: root,
+        out: o.write,
+        retentionDays: sessionRetentionDays(loaded),
+      },
+    );
+    expect(code).toBe(1);
+    expect(o.lines.join('\n')).toContain('--keep-days');
+    expect(existsSync(join(root, 'aged-a'))).toBe(true);
+  });
+
   describe('sessions prune treats a run as a unit (issue #164)', () => {
     // A session-shaped dir WITH a listing header + storage marker, so the
     // planner's parent map sees it exactly as listSessions would.

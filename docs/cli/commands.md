@@ -1915,7 +1915,9 @@ Worker list read from the repo's persisted record
 (`<repo>/.kubic/orchestrator/workers.json` — one shared record, never a
 fresh empty registry): one line per worker with the two §13 states, age,
 owner, pid, startup span ms, and resources (`skills=… templates=…`, `-` when
-none).
+none). The record is read at the repo runtime root — the same resolver
+`kubic audit` uses — so a run from any subdirectory lists the run's rows
+instead of an empty list.
 
 A row that FAILED also names the code it settled on — `failed(<code>)` in the
 **AGENT** cell and a `failure: {code, message}` field in `--json` (issue

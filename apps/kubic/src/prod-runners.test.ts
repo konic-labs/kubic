@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { makeExport } from '../../../packages/eval/src/rl/fixtures.js';
+import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { installedPolicyPosture } from '../../../packages/host/src/approvals.js';
 import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
 import {
@@ -13,6 +14,10 @@ import {
   auditLedgerDir,
   soloDecisionAudit,
 } from '../../../packages/host/src/policy/audit-ledger.js';
+import {
+  type WorkerRow,
+  writeWorkerRows,
+} from '../../../packages/worker/src/lifecycle/rows.js';
 import type { CliConfigResult } from './config-runtime.js';
 import { loadCliConfig } from './config-runtime.js';
 import { createProdRunners } from './prod-runners.js';
@@ -148,6 +153,51 @@ describe('kubic audit from a subdirectory', () => {
     const { lines, r } = runners();
     await r.audit({ json: true }, noConfig);
     expect(lines.join('\n')).toContain('"mode": "solo"');
+  });
+});
+
+describe('kubic workers from a subdirectory (issue #281)', () => {
+  const liveRow: WorkerRow = {
+    workerId: 'w1',
+    sessionId: 'sess',
+    generation: 1,
+    status: 'ready',
+    agentStatus: 'running',
+    startedAtMs: Date.now(),
+    ageMs: 0,
+    owner: 'orch:sess',
+    // The test's own pid is alive, so the row reads live either way.
+    pid: process.pid,
+  };
+  function writeRowsAt(repo: string): void {
+    mkdirSync(join(repo, '.kubic', 'orchestrator'), { recursive: true });
+    writeWorkerRows(
+      createNodeFileBridge(join(repo, '.kubic', 'orchestrator')),
+      'workers.json',
+      [liveRow],
+    );
+  }
+
+  it('lists rows orchestrate wrote at the repo root', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'prod-workers-sub-'));
+    roots.push(root);
+    mkdirSync(join(root, '.git'));
+    mkdirSync(join(root, 'a', 'b'), { recursive: true });
+    writeRowsAt(root);
+    vi.spyOn(process, 'cwd').mockReturnValue(join(root, 'a', 'b'));
+    const { lines, r } = runners();
+    await r.workers({ json: true }, noConfig);
+    expect(lines.join('\n')).toContain('"workerId": "w1"');
+  });
+
+  it('outside git the cwd behaviour is unchanged', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prod-workers-nogit-'));
+    roots.push(dir);
+    writeRowsAt(dir);
+    vi.spyOn(process, 'cwd').mockReturnValue(dir);
+    const { lines, r } = runners();
+    await r.workers({ json: true }, noConfig);
+    expect(lines.join('\n')).toContain('"workerId": "w1"');
   });
 });
 

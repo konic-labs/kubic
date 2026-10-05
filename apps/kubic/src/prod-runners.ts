@@ -86,6 +86,7 @@ import {
 import {
   auditLedgerDirFor,
   readAuditLedger,
+  resolveRepoRuntimeRoot,
 } from '../../../packages/host/src/policy/audit-ledger.js';
 import { enterpriseDoctorChecks } from '../../../packages/host/src/policy/enterprise.js';
 import {
@@ -873,7 +874,12 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       return runWorkersCommand(
         { ...options, debug: debugEnabled(options) },
         {
-          list: () => workersListFromRepo(process.cwd()),
+          // The rows live at the repo runtime root (issue #281) — the
+          // same resolver `kubic audit` uses (issue #279) — so a run
+          // from a subdirectory lists what orchestrate wrote at the
+          // root. Outside git the resolver returns the cwd itself.
+          list: () =>
+            workersListFromRepo(resolveRepoRuntimeRoot(process.cwd())),
           out,
           err: debug,
           debug,

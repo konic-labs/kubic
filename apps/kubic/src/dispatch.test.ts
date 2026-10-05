@@ -1104,7 +1104,11 @@ describe('workers runner reads the durable record (issue #132)', () => {
         `${name} must not import the lifecycle registry`,
       ).not.toMatch(/lifecycle\/registry\.js/);
     }
-    // The one list source the runner reads: the durable record, directly.
-    expect(seam).toMatch(/workersListFromRepo\(process\.cwd\(\)\)/);
+    // The one list source the runner reads: the durable record, directly —
+    // at the repo runtime root (issue #281), so a subdirectory lists the
+    // root's rows.
+    expect(seam).toMatch(
+      /workersListFromRepo\(resolveRepoRuntimeRoot\(process\.cwd\(\)\)\)/,
+    );
   });
 });

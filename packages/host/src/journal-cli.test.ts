@@ -27,6 +27,7 @@ import {
   type JournalRequest,
   runJournalCommand,
 } from './journal-cli.js';
+import { auditLedgerDirFor, readAuditLedger } from './policy/audit-ledger.js';
 
 const made: string[] = [];
 
@@ -142,6 +143,22 @@ describe('journal CLI (issue #18, slice D)', () => {
       ),
     ).toBe(0);
     expect(status.join('\n')).toContain('non-repo');
+  });
+
+  it('records one undo-restore ledger row per real undo, none for dry-run (issue #284)', async () => {
+    const { journalDir, root, out } = setup();
+    const deps = { journalDir, root, out: out.write };
+    expect(
+      await runJournalCommand({ command: 'undo', dryRun: true }, deps),
+    ).toBe(0);
+    expect(readAuditLedger(auditLedgerDirFor(root))).toEqual([]);
+    expect(await runJournalCommand({ command: 'undo' }, deps)).toBe(0);
+    const rows = readAuditLedger(auditLedgerDirFor(root));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.what).toBe('undo-restore');
+    expect(rows[0]?.result).toBe('ok');
+    expect(rows[0]?.reason).toContain('a.txt');
+    expect(rows[0]?.mode).toBe('solo');
   });
 
   it('exits 1 on partial undo (skips never reuse the usage code)', async () => {

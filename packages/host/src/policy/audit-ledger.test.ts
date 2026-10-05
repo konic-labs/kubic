@@ -16,10 +16,16 @@ import {
   credentialUseAudit,
   mergeDecisionAudit,
   orchestratorDecisionAudit,
+  PRIVILEGED_ACTION_KINDS,
   readAuditLedger,
   resolveRunBaseRevision,
   soloDecisionAudit,
+  undoRestoreAudit,
   workerGenerationFromEnv,
+  workerSpawnAudit,
+  workerTerminateAudit,
+  worktreeCreateAudit,
+  worktreeRemoveAudit,
 } from './audit-ledger.js';
 
 const roots: string[] = [];
@@ -457,6 +463,154 @@ describe('§60 audit ledger', () => {
       '{"type":"orchestrator-ask-raised","detail":"legacy"}\n{torn\n',
     );
     expect(readAuditLedger(dir)).toEqual([]);
+  });
+
+  describe('privileged-action audit rows (issue #284)', () => {
+    it('defines the closed privileged-action set', () => {
+      expect(PRIVILEGED_ACTION_KINDS).toEqual([
+        'full-access-grant',
+        'merge',
+        'worktree-create',
+        'worktree-remove',
+        'worker-spawn',
+        'worker-terminate',
+        'undo-restore',
+      ]);
+    });
+
+    it('records a worker spawn with live registry provenance', () => {
+      const record = workerSpawnAudit({
+        sessionId: 'orch',
+        agentId: 'worker-1',
+        role: 'implementer',
+        pid: 4242,
+        generation: 0,
+        worktree: '/repo/.kubic/wt/worker-1',
+        base: 'abc123',
+        model: 'faux/faux-1',
+        thinking: 'off',
+        posture: 'approvals',
+      });
+      expect(record.who).toBe('agent:worker-1');
+      expect(record.what).toBe('worker-spawn:worker-1');
+      expect(record.mode).toBe('orchestrator');
+      expect(record.agent).toEqual({ session: 'orch', role: 'manager' });
+      expect(record.worker).toEqual({
+        pid: 4242,
+        generation: 0,
+        role: 'implementer',
+      });
+      expect(record.workspace).toEqual({
+        path: '/repo/.kubic/wt/worker-1',
+        base: 'abc123',
+      });
+      expect(record.model).toEqual({
+        provider: 'faux',
+        id: 'faux-1',
+        thinking: 'off',
+      });
+      expect(record.result).toBe('ok');
+    });
+
+    it('records worker termination with ok and error results', () => {
+      const base = {
+        sessionId: 'orch',
+        agentId: 'worker-1',
+        role: 'implementer',
+        pid: 4242,
+        generation: 0,
+        worktree: '/repo/.kubic/wt/worker-1',
+        base: 'abc123',
+        posture: 'approvals' as const,
+      };
+      const ok = workerTerminateAudit({ ...base, reason: 'ok', result: 'ok' });
+      expect(ok.what).toBe('worker-terminate:worker-1');
+      expect(ok.result).toBe('ok');
+      expect(ok.reason).toBe('ok');
+      const failed = workerTerminateAudit({
+        ...base,
+        reason: 'worker_failed',
+        result: 'error',
+      });
+      expect(failed.result).toBe('error');
+      expect(failed.reason).toBe('worker_failed');
+    });
+
+    it('records an undo restore with restored paths and skip count', () => {
+      const record = undoRestoreAudit({
+        sessionId: 'sess',
+        workspace: '/repo',
+        base: 'abc123',
+        restored: ['a.txt', 'b.txt'],
+        skipped: 1,
+      });
+      expect(record.who).toBe('user:cli');
+      expect(record.what).toBe('undo-restore');
+      expect(record.mode).toBe('solo');
+      expect(record.result).toBe('error');
+      expect(record.reason).toContain('2 file(s)');
+      expect(record.reason).toContain('a.txt');
+      expect(record.reason).toContain('1 skipped');
+      const clean = undoRestoreAudit({
+        sessionId: 'sess',
+        workspace: '/repo',
+        base: 'abc123',
+        restored: ['a.txt'],
+        skipped: 0,
+      });
+      expect(clean.result).toBe('ok');
+    });
+
+    it('records worktree creation and removal', () => {
+      const created = worktreeCreateAudit({
+        sessionId: 'orch',
+        agentId: 'worker-1',
+        path: '/repo/.kubic/wt/worker-1',
+        branch: 'kubic/orch/worker-1',
+        base: 'abc123',
+        posture: 'approvals',
+      });
+      expect(created.what).toBe('worktree-create:kubic/orch/worker-1');
+      expect(created.mode).toBe('orchestrator');
+      expect(created.workspace).toEqual({
+        path: '/repo/.kubic/wt/worker-1',
+        base: 'abc123',
+      });
+      const removed = worktreeRemoveAudit({
+        sessionId: 'cli',
+        path: '/repo/.kubic/wt/worker-1',
+        branch: 'kubic/orch/worker-1',
+      });
+      expect(removed.who).toBe('user:cli');
+      expect(removed.what).toBe('worktree-remove:kubic/orch/worker-1');
+      expect(removed.mode).toBe('solo');
+      expect(removed.workspace.path).toBe('/repo/.kubic/wt/worker-1');
+    });
+
+    it('names the worktree path on approved merges', () => {
+      const withTree = mergeDecisionAudit({
+        sessionId: 'orch',
+        agentId: 'worker-1',
+        branch: 'kubic/orch/worker-1',
+        workspace: '/repo',
+        worktree: '/repo/.kubic/wt/worker-1',
+        approved: true,
+        by: '--yes',
+        posture: 'approvals',
+      });
+      expect(withTree.what).toBe('merge:kubic/orch/worker-1');
+      expect(withTree.reason).toContain('/repo/.kubic/wt/worker-1');
+      const without = mergeDecisionAudit({
+        sessionId: 'orch',
+        agentId: 'worker-1',
+        branch: 'kubic/orch/worker-1',
+        workspace: '/repo',
+        approved: true,
+        by: '--yes',
+        posture: 'approvals',
+      });
+      expect(without.reason).toBe('approved');
+    });
   });
 
   it('kubic audit reads the ledger records back, filtered by mode', async () => {

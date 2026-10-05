@@ -757,6 +757,8 @@ export interface MergeDecisionRecord {
   sessionId: string;
   agentId: string;
   branch: string;
+  /** The worker worktree merged from (issue #284): named in the row. */
+  worktree?: string;
   approved: boolean;
   by: '--yes' | 'user';
   reason?: string;
@@ -3428,6 +3430,7 @@ export async function runOrchestrateCommand(
       sessionId,
       agentId,
       branch: worktree.branch,
+      worktree: worktree.path,
       approved: verdict.verdict === 'approve',
       by: parsed.autoApprove ? '--yes' : 'user',
       ...(verdict.verdict === 'timeout'

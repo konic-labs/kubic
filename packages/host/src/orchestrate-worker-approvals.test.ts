@@ -731,6 +731,7 @@ describe('--yes answers the merge gate only (issue #323)', () => {
       {
         agentId: 'worker-1',
         branch: 'kubic/worker-1',
+        worktree: '/repo/.kubic/wt/worker-1',
         approved: true,
         by: '--yes',
         sessionId: 'orch-105',
@@ -747,6 +748,7 @@ describe('--yes answers the merge gate only (issue #323)', () => {
       {
         agentId: 'worker-1',
         branch: 'kubic/worker-1',
+        worktree: '/repo/.kubic/wt/worker-1',
         approved: true,
         by: 'user',
         sessionId: 'orch-105',
@@ -760,6 +762,7 @@ describe('--yes answers the merge gate only (issue #323)', () => {
       {
         agentId: 'worker-1',
         branch: 'kubic/worker-1',
+        worktree: '/repo/.kubic/wt/worker-1',
         approved: false,
         by: 'user',
         reason: 'denied',

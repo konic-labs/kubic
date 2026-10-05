@@ -27,6 +27,7 @@ import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+import { gitHeadOf } from '../../exec/src/git-clean.js';
 import { FileJournalStore } from '../../exec/src/journal.js';
 import {
   clipChangeContent,
@@ -50,6 +51,11 @@ import {
 } from '../../worker/src/lane/session-store.js';
 import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import { MS_PER_DAY } from './config/runtime.js';
+import {
+  appendToLedger,
+  auditLedgerDirFor,
+  undoRestoreAudit,
+} from './policy/audit-ledger.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
 import { defaultSessionsRoot } from './sessions-cli.js';
 
@@ -642,6 +648,31 @@ function journalUndo(run: JournalRun, request: JournalUndoOptions): number {
     dryRun,
     force: request.force === true,
   });
+  // Every real restore lands one `undo-restore` row in the workspace's
+  // own §60 ledger (issue #284): which session undid, what came back, what
+  // stayed. A dry run restores nothing, so it records nothing. The base is
+  // the restored workspace's own HEAD ('none' outside git); a failed
+  // append surfaces on stderr and never fails the undo.
+  if (!dryRun) {
+    // The restored workspace's own HEAD (null outside git → 'none').
+    const base = gitHeadOf(root)?.revision ?? 'none';
+    try {
+      appendToLedger(
+        auditLedgerDirFor(root),
+        undoRestoreAudit({
+          sessionId: run.resolved.sessionId,
+          workspace: root,
+          base,
+          restored: result.restored,
+          skipped: result.skipped.length,
+        }),
+      );
+    } catch (error) {
+      run.log.error(
+        `audit: undo-restore not recorded: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
   // Stale refusals and already-undone skips get their own line shapes so
   // scripts (and humans) can tell "cannot reverse" from "refused because
   // the file changed since" from "a previous undo already unwound it".

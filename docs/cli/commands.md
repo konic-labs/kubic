@@ -594,7 +594,20 @@ Unapproved worker execution needs the explicit `--full-access` posture. Every
 settled merge decision is appended to the §60 audit ledger
 (`.kubic/orchestrator/approvals/audit.jsonl`, read by `kubic audit`) as a
 `merge:<branch>` row whose approval is `approved by --yes` for the standing
-answer, `approved by user` for an answered prompt, or `denied`.
+answer, `approved by user` for an answered prompt, or `denied`. An approved
+merge names the worktree it merged from in its reason (`approved from
+<path>`). Beyond approval decisions the ledger records every privileged
+action, one row per act with the same provenance block (session, mode,
+model, worker pid and generation, workspace path and base): the closed set
+is `full-access-grant` (`posture:full-access`, one per grant),
+`merge` (`merge:<branch>`), `worktree-create`/`worktree-remove`
+(`worktree-create:<branch>`, `worktree-remove:<branch>`), `worker-spawn`/
+`worker-terminate` (one pair bracketing each child's process lifetime — the
+terminate reason is `ok` or the failure code), and `undo-restore` (one per
+`kubic undo` that restores, naming the restored paths and the skipped
+count; a dry run records nothing). `kubic audit --json` returns the full
+14-field records; a ledger append that fails surfaces on stderr and never
+fails the action.
 
 The interactive merge gate is **bounded like every other ask** (issue #130,
 §41.2). A TTY run asks each merge under the run's approval policy

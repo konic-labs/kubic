@@ -121,6 +121,9 @@ import {
   auditLedgerDirFor,
   mergeDecisionAudit,
   resolveRepoRuntimeRoot,
+  workerSpawnAudit,
+  workerTerminateAudit,
+  worktreeCreateAudit,
 } from '../../../packages/host/src/policy/audit-ledger.js';
 import type { EffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
 import { findProjectRoot } from '../../../packages/host/src/project-root.js';
@@ -1048,6 +1051,20 @@ function drawableText(text: string): string {
   return sanitizeReasonField(text.replace(/\r?\n/g, ' '));
 }
 
+// The §60 `worker-terminate` reason (issue #284): how the child process
+// ended. A wait that threw names the run failure (preferring the child's
+// own terminus) or the lifecycle failure — never a bare 'error' when a
+// code exists. A wait that settled is reasoned at the settle point.
+function terminateReasonOf(
+  error: unknown,
+  failure: { code: string } | undefined,
+): string {
+  if (error instanceof WorkerRunFailure) {
+    return error.approval?.code ?? error.code;
+  }
+  return failure?.code ?? 'error';
+}
+
 function workerRunError(
   agentId: string,
   done: { exitCode: number; stdout: string; stderr: string },
@@ -1808,6 +1825,86 @@ export async function orchestrateDepsWithDefaults(
       );
     }
   };
+  // §60 privileged-action rows (issue #284): one row per worker spawn /
+  // terminate and per worktree creation, with the same provenance block as
+  // the ask rows. Best-effort: a failed append surfaces on the debug
+  // channel (stderr) and never fails the run. The ledger is the repo
+  // runtime root's (issue #279), like the merge rows.
+  const appendPrivileged = (
+    record: ReturnType<typeof workerSpawnAudit>,
+    kind: string,
+  ): void => {
+    appendToLedger(auditLedgerDirFor(needRoot()), record, (message) =>
+      debug(`audit: ${kind} not recorded — ${message}`),
+    );
+  };
+  const privilegedPosture = (): string =>
+    approvalsActive?.fullAccessGrant() === undefined
+      ? POSTURE_APPROVALS
+      : POSTURE_FULL_ACCESS;
+  const workerLedgerBase = (input: {
+    agentId: string;
+    role: string;
+    worktree: string;
+    model?: string;
+    pid?: number;
+    generation: number;
+  }): {
+    sessionId: string;
+    agentId: string;
+    role: string;
+    worktree: string;
+    model?: string;
+    thinking?: string;
+    base?: string;
+    pid?: number;
+    generation: number;
+    posture: string;
+  } => {
+    const thinking = thinkingByAgent.get(input.agentId);
+    const base = baseByAgent.get(input.agentId);
+    return {
+      sessionId: orchestratorSessionId ?? 'orch',
+      agentId: input.agentId,
+      role: input.role,
+      worktree: input.worktree,
+      ...(input.model === undefined ? {} : { model: input.model }),
+      ...(thinking === undefined ? {} : { thinking }),
+      ...(base === undefined ? {} : { base }),
+      ...(input.pid === undefined ? {} : { pid: input.pid }),
+      generation: input.generation,
+      posture: privilegedPosture(),
+    };
+  };
+  const auditWorkerSpawn = (input: {
+    agentId: string;
+    role: string;
+    worktree: string;
+    model?: string;
+    pid?: number;
+    generation: number;
+  }): void => {
+    appendPrivileged(workerSpawnAudit(workerLedgerBase(input)), 'worker:spawn');
+  };
+  const auditWorkerTerminate = (input: {
+    agentId: string;
+    role: string;
+    worktree: string;
+    model?: string;
+    pid?: number;
+    generation: number;
+    reason: string;
+    result: 'ok' | 'error';
+  }): void => {
+    appendPrivileged(
+      workerTerminateAudit({
+        ...workerLedgerBase(input),
+        reason: input.reason,
+        result: input.result,
+      }),
+      'worker:terminate',
+    );
+  };
   return {
     out: options.out,
     err: options.err,
@@ -1962,6 +2059,21 @@ export async function orchestrateDepsWithDefaults(
         // at creation, best-effort (a failed probe keeps the honest
         // unknown rather than failing the spawn).
         await captureWorktreeBase(agentId, added.path, ownerSession);
+        // §60 privileged-action row (issue #284): the fresh creation, with
+        // the base just captured above. A resumed tree is not a creation —
+        // it records nothing here.
+        const createdBase = baseByAgent.get(agentId);
+        appendPrivileged(
+          worktreeCreateAudit({
+            sessionId: ownerSession ?? orchestratorSessionId ?? 'cli',
+            agentId,
+            path: added.path,
+            branch: added.branch,
+            ...(createdBase === undefined ? {} : { base: createdBase }),
+            posture: privilegedPosture(),
+          }),
+          'worktree:create',
+        );
         return { path: added.path, branch: added.branch };
       } catch (error) {
         if (!isWorktreeError(error) || error.code !== 'already_exists') {
@@ -2492,6 +2604,20 @@ export async function orchestrateDepsWithDefaults(
           );
         }
       };
+      // §60 privileged-action row (issue #284): the spawn half of the
+      // spawn/terminate pair bracketing this child's process lifetime.
+      // Snapshot once — the terminate half below spreads this, so the two
+      // halves can never disagree about pid, generation or model.
+      const spawnPid = launched.pid ?? workerRegistry.get(agentId)?.pid;
+      const ledgerWorker = {
+        agentId,
+        role: info?.role ?? 'worker',
+        worktree: worktree.path,
+        ...(modelPin === undefined ? {} : { model: modelPin }),
+        ...(spawnPid === undefined ? {} : { pid: spawnPid }),
+        generation: launched.generation,
+      };
+      auditWorkerSpawn(ledgerWorker);
       // A cancel that arrived between the readiness check above and this
       // launch (issue #206): the handle exists now, so the kill lands instead
       // of waiting out the child's own bound. `throwIfCancelled` still turns
@@ -2591,12 +2717,31 @@ export async function orchestrateDepsWithDefaults(
               : await Promise.race([launched.wait(), wallClockExceeded]);
         } catch (error) {
           persistWorkerRowsNow();
+          // The process ended by kill (watchdog, cancel): the terminate
+          // half names the failure, and the throw below still carries it.
+          auditWorkerTerminate({
+            ...ledgerWorker,
+            reason: terminateReasonOf(error, launched.failure()),
+            result: 'error',
+          });
           throw error;
         } finally {
           if (wallClockWatchdog !== undefined) clearTimeout(wallClockWatchdog);
           untrack();
         }
         finished = done;
+        // The process ended: the terminate half. Later funnels (exit-code
+        // throw, settle throw) must not record again — one spawn, one
+        // terminate per child.
+        const endReason =
+          done.exitCode === 0 && launched.agentStatus() !== 'spawn_failed'
+            ? 'ok'
+            : (launched.failure()?.code ?? `exit-${done.exitCode}`);
+        auditWorkerTerminate({
+          ...ledgerWorker,
+          reason: endReason,
+          result: endReason === 'ok' ? 'ok' : 'error',
+        });
         throwIfCancelled(agentId);
         if (done.exitCode !== 0 || launched.agentStatus() === 'spawn_failed') {
           persistWorkerRowsNow();
@@ -3007,13 +3152,42 @@ export async function orchestrateDepsWithDefaults(
       );
       const untrack = trackLive(launched);
       persistWorkerRowsNow();
+      // §60 privileged-action rows (issue #284): the resolver is a
+      // delegated child too, so its process lifetime brackets the same
+      // spawn/terminate pair (no model pin: it inherits the ambient one).
+      const resolverPid =
+        launched.pid ?? workerRegistry.get(request.agentId)?.pid;
+      const ledgerResolver = {
+        agentId: request.agentId,
+        role: request.spec.role,
+        worktree: request.worktree.path,
+        ...(resolverPid === undefined ? {} : { pid: resolverPid }),
+        generation: launched.generation,
+      };
+      auditWorkerSpawn(ledgerResolver);
       let done: { exitCode: number; stdout: string; stderr: string };
       try {
         done = await launched.wait();
+      } catch (error) {
+        auditWorkerTerminate({
+          ...ledgerResolver,
+          reason: terminateReasonOf(error, launched.failure()),
+          result: 'error',
+        });
+        throw error;
       } finally {
         untrack();
         persistWorkerRowsNow();
       }
+      const resolverReason =
+        done.exitCode === 0 && launched.agentStatus() !== 'spawn_failed'
+          ? 'ok'
+          : (launched.failure()?.code ?? `exit-${done.exitCode}`);
+      auditWorkerTerminate({
+        ...ledgerResolver,
+        reason: resolverReason,
+        result: resolverReason === 'ok' ? 'ok' : 'error',
+      });
       throwIfCancelled(request.agentId);
       if (done.exitCode !== 0 || launched.agentStatus() === 'spawn_failed') {
         const failure = launched.failure();

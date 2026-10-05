@@ -26,6 +26,7 @@ import {
   Harness,
   ToolResultEntry,
 } from '../../worker/src/pi-boundary.js';
+import { auditLedgerDirFor, readAuditLedger } from './policy/audit-ledger.js';
 import { runSessionsCommand } from './sessions-cli.js';
 
 const made: string[] = [];
@@ -696,6 +697,22 @@ describe('sessions CLI approvals posture (issue #16, slice D)', () => {
     expect(o2.lines.some((line) => line.includes('posture: full-access'))).toBe(
       true,
     );
+  });
+
+  it('appends exactly one full-access ledger row on create with the flag (issue #284)', async () => {
+    const root = tmpRoot();
+    const ws = tmpRoot();
+    const o = out();
+    const code = await runSessionsCommand(
+      { command: 'create', cwd: ws, dangerouslySkipApprovals: true },
+      { sessionsRoot: root, out: o.write },
+    );
+    expect(code).toBe(0);
+    const rows = readAuditLedger(auditLedgerDirFor(ws));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.what).toBe('posture:full-access');
+    expect(rows[0]?.posture).toBe('full-access');
+    expect(rows[0]?.mode).toBe('solo');
   });
 
   it('defaults to approvals enforced and rejects bad ids', async () => {

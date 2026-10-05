@@ -36,7 +36,12 @@ import {
   killProcessGroup,
 } from '../../../../worker/src/lifecycle/orphans.js';
 import { workersListFromRepo } from '../../../../worker/src/lifecycle/rows.js';
-import { resolveRepoRuntimeRoot } from '../../policy/audit-ledger.js';
+import {
+  appendToLedger,
+  auditLedgerDirFor,
+  resolveRepoRuntimeRoot,
+  worktreeRemoveAudit,
+} from '../../policy/audit-ledger.js';
 import { SESSION_ID_PATTERN } from '../../run-cli.js';
 import {
   approvalsSessionDir,
@@ -729,6 +734,21 @@ export async function runCleanCommand(
     try {
       await remover(deps.env, item.path, { force: options.force === true });
       removed.push(item);
+      // Every disposed tree lands one `worktree-remove` row in the repo's
+      // own §60 ledger (issue #284). A failed append surfaces on stderr
+      // and never fails the disposal.
+      try {
+        appendToLedger(
+          auditLedgerDirFor(repoRoot),
+          worktreeRemoveAudit({
+            sessionId: options.sessionId ?? 'cli',
+            path: item.path,
+            branch: item.branch,
+          }),
+        );
+      } catch (error) {
+        log.error(`audit: worktree-remove not recorded: ${messageOf(error)}`);
+      }
     } catch (error) {
       failures.push({ target: item.path, message: messageOf(error) });
       // Never half-dispose: a worktree that is still standing keeps its

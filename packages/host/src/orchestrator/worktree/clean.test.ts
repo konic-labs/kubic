@@ -39,6 +39,10 @@ afterEach(() => {
 });
 
 import type { FakeSpawnCall } from '../../../../exec/src/env.js';
+import {
+  auditLedgerDirFor,
+  readAuditLedger,
+} from '../../policy/audit-ledger.js';
 import type { WorktreeEntry } from './list.js';
 import { parseWorktreePorcelain } from './list.js';
 
@@ -437,6 +441,50 @@ describe('kubic clean (issue #45, #92)', () => {
     expect(parsed.worktrees).toEqual([
       { path: '/repo/.kubic-custom/wt/agent-7', branch: 'kubic/agent-7' },
     ]);
+  });
+
+  it('records one worktree-remove ledger row per removed tree (issue #284)', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'clean284-'));
+    scratch.push(repoRoot);
+    const env = new FakeExecutionEnv(repoScripts());
+    const lines: string[] = [];
+    const errs: string[] = [];
+    const code = await runCleanCommand(
+      {},
+      {
+        env,
+        out: (line: string) => lines.push(line),
+        err: (line: string) => errs.push(line),
+        repoRoot,
+        lister: async () =>
+          parseWorktreePorcelain(
+            [1, 2, 3]
+              .map(
+                (n) =>
+                  `worktree ${repoRoot}/.kubic/wt/agent-${n}\nHEAD 777777777777777${n}\nbranch refs/heads/kubic/agent-${n}\n`,
+              )
+              .join('\n'),
+          ),
+        branchLister: async () => [
+          'kubic/agent-1',
+          'kubic/agent-2',
+          'kubic/agent-3',
+        ],
+        remover: async () => undefined,
+        branchDeleter: async () => undefined,
+        pruner: async () => undefined,
+        pruneJournal: () => ({ entries: 0, bytes: 0, overBound: 0 }),
+      },
+    );
+    expect(code).toBe(0);
+    const rows = readAuditLedger(auditLedgerDirFor(repoRoot));
+    expect(rows.map((row) => row.what)).toEqual([
+      'worktree-remove:kubic/agent-1',
+      'worktree-remove:kubic/agent-2',
+      'worktree-remove:kubic/agent-3',
+    ]);
+    expect(rows[0]?.mode).toBe('solo');
+    expect(rows[0]?.workspace.path).toBe(`${repoRoot}/.kubic/wt/agent-1`);
   });
 
   it('never plans a namespace-shaped worktree sitting on a foreign branch', () => {

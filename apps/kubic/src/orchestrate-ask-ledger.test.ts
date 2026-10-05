@@ -105,7 +105,11 @@ describe('ask ledger provenance on the live orchestrate path (issue #282)', () =
       askInput(worktree.path, 'curl https://example.com/a.tgz'),
       { autoApprove: true },
     );
-    const [record] = readAuditLedger(auditLedgerDirFor(repo));
+    // ensureWorktree now records its own `worktree-create` row first
+    // (issue #284) — the ask row is the one this test pins.
+    const [record] = readAuditLedger(auditLedgerDirFor(repo)).filter(
+      (row) => !row.what.startsWith('worktree-create:'),
+    );
     expect(record?.worker).toMatchObject({ pid: 4242, generation: 0 });
     expect(record?.workspace.base).toBe(
       git(worktree.path, ['rev-parse', 'HEAD']).trim(),
@@ -151,7 +155,9 @@ describe('ask ledger provenance on the live orchestrate path (issue #282)', () =
       askInput(worktree.path, 'curl https://example.com/b.tgz'),
       { autoApprove: true },
     );
-    const records = readAuditLedger(auditLedgerDirFor(repo));
+    const records = readAuditLedger(auditLedgerDirFor(repo)).filter(
+      (row) => !row.what.startsWith('worktree-create:'),
+    );
     expect(records.map((record) => record.worker)).toMatchObject([
       { pid: 4242, generation: 0 },
       { pid: 9876, generation: 1 },

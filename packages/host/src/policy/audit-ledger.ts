@@ -416,6 +416,8 @@ export interface MergeDecisionInput {
   agentId: string;
   branch: string;
   workspace: string;
+  /** The worker worktree merged from (issue #284): named in the reason. */
+  worktree?: string;
   approved: boolean;
   by: '--yes' | 'user';
   reason?: string;
@@ -441,7 +443,191 @@ export function mergeDecisionAudit(input: MergeDecisionInput): AuditInput {
     mode: 'orchestrator',
     posture: input.posture,
     result,
-    reason,
+    // An approved merge names the worktree it merged from (issue #284);
+    // without one the reason keeps its shipped 'approved'.
+    reason:
+      input.approved && input.worktree !== undefined
+        ? `approved from ${input.worktree}`
+        : reason,
+  };
+}
+
+// The privileged actions (issue #284, §60): the closed set of manager- and
+// user-level operations beyond approval decisions that each emit one
+// OrgAuditRecord with the same provenance block as decisions. The `what`
+// each kind writes is fixed beside it: full-access-grant writes
+// `posture:full-access` (fullAccessEnabledAudit) and merge writes
+// `merge:<branch>` (mergeDecisionAudit) — both predate the union and keep
+// their shipped shapes; the five builders below write `<kind>:<identity>`.
+export const PRIVILEGED_ACTION_KINDS = [
+  'full-access-grant',
+  'merge',
+  'worktree-create',
+  'worktree-remove',
+  'worker-spawn',
+  'worker-terminate',
+  'undo-restore',
+] as const;
+
+export type PrivilegedActionKind = (typeof PRIVILEGED_ACTION_KINDS)[number];
+
+// §60 record for a worker spawn (issue #284): the manager's act of starting
+// a worker child. pid/generation come from the live registry row at launch
+// (0/unknown where the row is absent — the honest fallback, never a guess).
+export interface WorkerSpawnInput {
+  sessionId: string;
+  agentId: string;
+  role: string;
+  pid?: number;
+  generation?: number;
+  worktree: string;
+  base?: string;
+  model?: string;
+  thinking?: string;
+  posture: string;
+}
+
+export function workerSpawnAudit(input: WorkerSpawnInput): AuditInput {
+  return {
+    who: `agent:${input.agentId || UNKNOWN}`,
+    what: `worker-spawn:${input.agentId || UNKNOWN}`,
+    agent: { session: input.sessionId || UNKNOWN, role: 'manager' },
+    model: { ...parseModel(input.model), thinking: input.thinking || UNKNOWN },
+    worker: {
+      pid: input.pid ?? 0,
+      generation: input.generation ?? 0,
+      role: input.role,
+    },
+    workspace: { path: input.worktree, base: input.base || UNKNOWN },
+    permission: {
+      permission: 'worker:spawn',
+      approval: `started by orchestrator ${input.sessionId || UNKNOWN}`,
+    },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    mode: 'orchestrator',
+    posture: input.posture,
+    result: 'ok',
+    reason: `spawned ${input.role} worker ${input.agentId || UNKNOWN}`,
+  };
+}
+
+// §60 record for a worker's end (issue #284): brackets the child process
+// lifetime with the spawn row — one terminate per spawn. reason names how
+// the process ended ('ok' or the failure code); result is 'ok' only for a
+// clean end.
+export interface WorkerTerminateInput extends WorkerSpawnInput {
+  reason: string;
+  result: 'ok' | 'error';
+}
+
+export function workerTerminateAudit(input: WorkerTerminateInput): AuditInput {
+  const spawned = workerSpawnAudit(input);
+  return {
+    ...spawned,
+    what: `worker-terminate:${input.agentId || UNKNOWN}`,
+    permission: {
+      permission: 'worker:terminate',
+      approval: `reaped by orchestrator ${input.sessionId || UNKNOWN}`,
+    },
+    result: input.result,
+    reason: input.reason,
+  };
+}
+
+// §60 record for a journal undo restore (issue #284): the user-level act of
+// putting files back. restored names the restored paths, skipped counts the
+// steps left in place — a partial restore (exit 1) records 'error'.
+export interface UndoRestoreInput {
+  /** Absent for a workspace-scoped undo (no session) — records unknown. */
+  sessionId?: string;
+  workspace: string;
+  base?: string;
+  restored: string[];
+  skipped?: number;
+}
+
+export function undoRestoreAudit(input: UndoRestoreInput): AuditInput {
+  const skipped = input.skipped ?? 0;
+  const files =
+    input.restored.length === 1 ? '1 file' : `${input.restored.length} file(s)`;
+  return {
+    who: 'user:cli',
+    what: 'undo-restore',
+    agent: { session: input.sessionId || UNKNOWN, role: 'user' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    worker: { pid: process.pid, generation: 0, role: 'user' },
+    workspace: { path: input.workspace, base: input.base || UNKNOWN },
+    permission: { permission: 'journal:undo', approval: 'user command' },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    mode: 'solo',
+    posture: 'approvals',
+    result: skipped > 0 ? 'error' : 'ok',
+    reason:
+      `restored ${files}: ${input.restored.join(', ')}` +
+      (skipped > 0 ? `; ${skipped} skipped` : ''),
+  };
+}
+
+// §60 record for a worker worktree creation (issue #284): the manager lane's
+// fresh `git worktree add`, recorded with the base just captured there.
+export interface WorktreeCreateInput {
+  sessionId: string;
+  agentId: string;
+  path: string;
+  branch: string;
+  base?: string;
+  posture: string;
+}
+
+export function worktreeCreateAudit(input: WorktreeCreateInput): AuditInput {
+  return {
+    who: `agent:${input.agentId || UNKNOWN}`,
+    what: `worktree-create:${input.branch || UNKNOWN}`,
+    agent: { session: input.sessionId || UNKNOWN, role: 'manager' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    worker: { pid: process.pid, generation: 0, role: 'manager' },
+    workspace: { path: input.path, base: input.base || UNKNOWN },
+    permission: {
+      permission: 'worktree:create',
+      approval: `created by orchestrator ${input.sessionId || UNKNOWN}`,
+    },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    mode: 'orchestrator',
+    posture: input.posture,
+    result: 'ok',
+    reason: `branch ${input.branch || UNKNOWN} for worker ${input.agentId || UNKNOWN}`,
+  };
+}
+
+// §60 record for a worker worktree removal (issue #284): `kubic clean`
+// disposing a spawned tree. base is unknowable by construction — the tree
+// is gone when the row is written — so the row honestly says 'unknown' and
+// identifies the tree by path and branch instead.
+export interface WorktreeRemoveInput {
+  sessionId: string;
+  path: string;
+  /** Null for a non-spawned tree (still disposed, still recorded). */
+  branch: string | null;
+}
+
+export function worktreeRemoveAudit(input: WorktreeRemoveInput): AuditInput {
+  return {
+    who: 'user:cli',
+    what: `worktree-remove:${input.branch || UNKNOWN}`,
+    agent: { session: input.sessionId || UNKNOWN, role: 'user' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    worker: { pid: process.pid, generation: 0, role: 'user' },
+    workspace: { path: input.path, base: UNKNOWN },
+    permission: { permission: 'worktree:remove', approval: 'user command' },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    mode: 'solo',
+    posture: 'approvals',
+    result: 'ok',
+    reason: `removed worktree ${input.path} (branch ${input.branch || UNKNOWN})`,
   };
 }
 

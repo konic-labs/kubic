@@ -9,6 +9,11 @@ import {
   type OrgAuditRecord,
 } from './audit.js';
 import { runAuditCommand } from './audit-cli.js';
+import {
+  undoRestoreAudit,
+  workerSpawnAudit,
+  workerTerminateAudit,
+} from './audit-ledger.js';
 import { containsSecretShape, REDACTED_SECRET } from './secret-shapes.js';
 
 // Shape-matching but inert (FAUX marker, never a live key): exercises the
@@ -209,6 +214,63 @@ describe('kubic audit query (issue #79)', () => {
     expect(code).toBe(0);
     expect(cap.lines).toEqual(['no audit records']);
   });
+});
+
+it('returns the privileged-action rows under --json with all 14 fields (issue #284)', async () => {
+  const when = '2023-11-14T22:13:20.000Z';
+  const spawned = workerSpawnAudit({
+    sessionId: 'orch',
+    agentId: 'worker-1',
+    role: 'implementer',
+    pid: 4242,
+    generation: 1,
+    worktree: '/repo/.kubic/wt/worker-1',
+    base: 'abc123',
+    posture: 'approvals',
+  });
+  const records: OrgAuditRecord[] = [
+    { ...spawned, when },
+    {
+      ...workerTerminateAudit({
+        sessionId: 'orch',
+        agentId: 'worker-1',
+        role: 'implementer',
+        pid: 4242,
+        generation: 1,
+        worktree: '/repo/.kubic/wt/worker-1',
+        base: 'abc123',
+        posture: 'approvals',
+        reason: 'ok',
+        result: 'ok',
+      }),
+      when,
+    },
+    {
+      ...undoRestoreAudit({
+        sessionId: 'sess',
+        workspace: '/repo',
+        base: 'abc123',
+        restored: ['a.txt'],
+        skipped: 0,
+      }),
+      when,
+    },
+  ];
+  const cap = capture();
+  const code = await runAuditCommand(
+    { json: true },
+    { loadRecords: () => records, out: cap.out, err: cap.err },
+  );
+  expect(code).toBe(0);
+  const parsed = JSON.parse(cap.lines.join('\n')) as OrgAuditRecord[];
+  expect(parsed.map((row) => row.what)).toEqual([
+    'worker-spawn:worker-1',
+    'worker-terminate:worker-1',
+    'undo-restore',
+  ]);
+  for (const row of parsed) {
+    expect(Object.keys(row).sort()).toEqual([...AUDIT_FIELDS].sort());
+  }
 });
 
 describe('kubic audit usage (issue #79, §78)', () => {

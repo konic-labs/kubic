@@ -59,15 +59,21 @@ export type TuiAskSeat = (
 export function workerAskSeatFromAnswer(answer: TuiAskSeat): WorkerAskSeat {
   return async (
     request: OrchestratorApprovalRequest,
+    signal?: AbortSignal,
   ): Promise<OrchestratorVerdict> => {
-    const decision = await answer({
-      key: request.key,
-      capability: request.trigger,
-      toolName: request.toolName,
-      summary: `worker '${request.agentId}': ${request.summary}`,
-      ...(request.command === undefined ? {} : { command: request.command }),
-      justification: request.justification,
-    });
+    // Issue #409: the router's abort reaches the overlay, which withdraws
+    // exactly this ask (the #232 withdrawal) when the bound expires.
+    const decision = await answer(
+      {
+        key: request.key,
+        capability: request.trigger,
+        toolName: request.toolName,
+        summary: `worker '${request.agentId}': ${request.summary}`,
+        ...(request.command === undefined ? {} : { command: request.command }),
+        justification: request.justification,
+      },
+      signal,
+    );
     if (decision === undefined) {
       // A seat that answers nothing is not consent; deny by name so the
       // worker unblocks instead of waiting out its own bound.

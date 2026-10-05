@@ -112,7 +112,12 @@ solo) — and `run` never delegates.
   and a prompt already on screen is answered into a §60 row rather than into a
   mailbox the child has left (a manager-side cancel for that window is a named
   follow-up) — and the surface that was asking the human is told to close that
-  dialog rather than leave an obsolete modal blocking the next one. A planted
+  dialog rather than leave an obsolete modal blocking the next one. The
+  manager's own router bound withdraws the same way (issue #409): the router
+  races the seat with an AbortSignal and aborts it when its bound expires, so
+  on the TUI `--orchestrator` path the overlay drops exactly the ask the router
+  just denied, the next queued ask takes the screen, and a key pressed after
+  the expiry answers the ask on screen — never the expired one. A planted
   `decisions.json` or full-access record
   is dropped at router construction, audited (one §60 `state:dropped` row per
   drop) and scrubbed rather than honoured. The mailbox is also scoped to the

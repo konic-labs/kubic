@@ -275,6 +275,8 @@ export class RouterAuditTrace {
 
 export type WorkerAskSeat = (
   request: OrchestratorApprovalRequest,
+  // Issue #409: aborts when the router's bound expires (withdraw the ask).
+  signal?: AbortSignal,
 ) => Promise<OrchestratorVerdict | undefined>;
 
 // The USER's seat on an interactive run: what a TTY orchestration attaches so

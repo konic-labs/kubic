@@ -46,8 +46,12 @@ export class MemoryDecisionStore implements DecisionStore {
 export interface RouterOptions {
   maxPendingMs: number;
   store?: DecisionStore;
+  // Issue #409: the signal aborts when the router's own bound expires, so a
+  // seat that presented the ask (the TUI overlay) withdraws exactly that ask
+  // instead of showing a request the router already denied.
   awaitAnswer?: (
     request: OrchestratorApprovalRequest,
+    signal?: AbortSignal,
   ) => Promise<OrchestratorVerdict | undefined>;
   audit?: (event: { type: string; detail: string }) => void;
 }
@@ -269,10 +273,16 @@ export function createOrchestratorRouter(
       });
       return verdict;
     };
-    const answer = options.awaitAnswer?.(req);
+    const presented = new AbortController();
+    const answer = options.awaitAnswer?.(req, presented.signal);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<undefined>((resolve) => {
-      timer = setTimeout(() => resolve(undefined), options.maxPendingMs);
+      timer = setTimeout(() => {
+        // The bound expired: withdraw the presentation BEFORE the deny
+        // settles, so no seat keeps an answered-by-timeout ask on screen.
+        presented.abort();
+        resolve(undefined);
+      }, options.maxPendingMs);
       timer.unref?.();
     });
     const promise: Promise<OrchestratorVerdict> =

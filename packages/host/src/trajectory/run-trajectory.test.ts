@@ -206,6 +206,33 @@ describe('assembleRunTrajectory (issue #383)', () => {
     expect(exported.schema_version).toBe('1.2');
   });
 
+  it('carries the lane escalation record into model.escalations (issue #210)', () => {
+    const exported = assembleRunTrajectory(
+      input({
+        escalations: [
+          {
+            reason: '3 consecutive tool failures',
+            at: new Date(STARTED + 50).toISOString(),
+            fromModel: 'faux/echo',
+            toModel: 'faux/big',
+            thinking: null,
+          },
+        ],
+      }),
+    );
+    expect(exported.model.escalations).toHaveLength(1);
+    expect(exported.model.escalations[0]).toEqual({
+      reason: '3 consecutive tool failures',
+      at: new Date(STARTED + 50).toISOString(),
+      fromModel: 'faux/echo',
+      toModel: 'faux/big',
+      thinking: null,
+    });
+    expect(() =>
+      parseTrajectoryExport(JSON.parse(JSON.stringify(exported))),
+    ).not.toThrow();
+  });
+
   it('records the run provenance: session, agent, pid, generation, worktree, model', () => {
     const exported = assembleRunTrajectory(input({ generation: 3, pid: 7 }));
     expect(exported.provenance).toEqual({

@@ -129,6 +129,25 @@ describe('persistRunTrajectory (issue #383)', () => {
     expect(exported.budget).toBeUndefined();
   });
 
+  it('carries the lane escalation record into model.escalations (issue #210)', () => {
+    const { exported } = persist(
+      {},
+      {
+        escalations: [
+          {
+            reason: '3 consecutive tool failures',
+            at: new Date(1_500).toISOString(),
+            fromModel: 'faux/echo',
+            toModel: 'faux/big',
+            thinking: null,
+          },
+        ],
+      },
+    );
+    expect(exported.model.escalations).toHaveLength(1);
+    expect(exported.model.escalations[0]?.toModel).toBe('faux/big');
+  });
+
   it('records a selected model and defaults thinking to null', () => {
     const { exported } = persist(
       {},

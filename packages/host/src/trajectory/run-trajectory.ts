@@ -28,6 +28,7 @@ import type {
   TrajectoryAction,
   TrajectoryApproval,
   TrajectoryBudget,
+  TrajectoryEscalation,
   TrajectoryExport,
   TrajectoryFailureCode,
   TrajectoryModelUsage,
@@ -95,6 +96,10 @@ export interface RunTrajectoryInput {
   // The run verifier's `signal:*` labels (issue #267); absent means none —
   // every gate stays unknown.
   evalLabels?: Record<string, string>;
+  // The lane's escalation record (issue #210): every model climb this
+  // run recorded, oldest first. Absent means no climb — never an empty
+  // array from a lane that cannot climb.
+  escalations?: TrajectoryEscalation[];
   // The §71 budget block (issue #285): the limits the run started with,
   // the measured spend and the breach. Absent means the run was
   // unbounded — never an empty object.
@@ -392,7 +397,7 @@ export function assembleRunTrajectory(
       // #282: a caller that cannot name the level still records the one the
       // responses actually ran at.
       thinking: input.model.thinking ?? thinkingLevelOf(items),
-      escalations: [],
+      escalations: input.escalations ?? [],
     },
     prompt: { text: input.prompt, constraints: [] },
     resources: { skills: input.skills, promptTemplates: [] },

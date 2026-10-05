@@ -280,6 +280,17 @@ import {
   type StreamTuningTables,
 } from '../../../packages/worker/src/stream-options.js';
 import {
+  AUTO_ESCALATION_TOOL_FAILURES,
+  createAutoEscalation,
+  formatEscalationRow,
+  markAutoEscalated,
+  nextLadderRung,
+  noteAutoEscalationTurn,
+  resetAutoEscalation,
+  shouldAutoEscalate,
+  toTrajectoryEscalation,
+} from './auto-escalation.js';
+import {
   resolveLaneLadder,
   resolveRoleThinking,
   roleModelScope,
@@ -436,6 +447,10 @@ export interface TuiLaneLoop {
   // <sessions-root>/<id>/trajectory.json here. Absent (injected test loops)
   // means no trajectory; a failure never changes the turn's outcome.
   recordTurn?: (turn: TuiTurnRecord) => Promise<void> | void;
+  // Issue #210 (slice 5): the transcript rows for climbs recorded since
+  // the last drain. The runner drains this after every settled turn so
+  // each climb is reported once; absent means this boot records no climbs.
+  drainEscalationRows?: () => string[];
 }
 
 // Issue #328: one row of the model picker's catalog (the lane's `listModels`
@@ -1556,6 +1571,12 @@ export async function bootTuiLane(
     // escalateSoloModel call reports to — the trajectory event and the
     // transcript line (slice 5) read them from here.
     const escalationEvents: ModelEscalationEvent[] = [];
+    // The single automatic trigger's streak (issue #210, slice 4):
+    // consecutive tool-failure turns climb one rung, once per run.
+    const autoEscalation = createAutoEscalation();
+    // Transcript rows already reported (issue #210, slice 5): the drain
+    // below reports each recorded climb once, however many turns settle.
+    let reportedEscalations = 0;
     const env = options.env ?? new NodeExecutionEnv(process.cwd());
     // §60 audit identity (issue #282): the base revision this run started
     // from — captured once here, `none` outside git — and the thinking
@@ -2174,6 +2195,10 @@ export async function bootTuiLane(
           // Issue #282: the switch committed a re-clamped level with the
           // model — the §60 rows follow it.
           liveThinkingRef = effective;
+          // Issue #210 (slice 4): an explicit climb moves the auto
+          // trigger's streak out from under it — restart the count on
+          // the new model without spending the single auto slot.
+          resetAutoEscalation(autoEscalation);
           return liveModelRef;
         },
         model: async (loopContext) => {
@@ -2254,7 +2279,43 @@ export async function bootTuiLane(
           // The live model can have moved since boot (`/model`), so the
           // trajectory records what the lane actually runs — the same read
           // the returned `model` and the status bar use.
-          const live = await liveModelOf(booted, context);
+          let live = await liveModelOf(booted, context);
+          // Issue #210 (slice 4): the single automatic trigger — N
+          // consecutive tool-failure turns climb one rung, once per run,
+          // never back. Runs before the trajectory persist so the
+          // settling turn's own record already carries the climb.
+          noteAutoEscalationTurn(
+            autoEscalation,
+            turn.turn?.kind === 'failed' ? turn.turn.reason : undefined,
+          );
+          if (laneLadder !== undefined && shouldAutoEscalate(autoEscalation)) {
+            const next = nextLadderRung(
+              laneLadder.steps,
+              `${live.provider}/${live.id}`,
+            );
+            if (next !== undefined) {
+              try {
+                await escalateSoloModel(
+                  booted,
+                  laneLadder,
+                  next,
+                  `${AUTO_ESCALATION_TOOL_FAILURES} consecutive tool failures`,
+                  context,
+                  (event) => escalationEvents.push(event),
+                );
+                markAutoEscalated(autoEscalation);
+                // The climb moved the lane: the trajectory below names
+                // what the lane runs now, not what ran the settled turn.
+                live = await liveModelOf(booted, context);
+              } catch {
+                // Best-effort: a refused climb (the shared budget burned
+                // by explicit climbs since the streak started) leaves the
+                // run intact; the next tool-failure retries while the
+                // streak holds. escalateSoloModel validates before it
+                // mutates, so a refusal records nothing.
+              }
+            }
+          }
           persistRunTrajectory({
             sessionsRoot: root,
             sessionId: id,
@@ -2268,7 +2329,28 @@ export async function bootTuiLane(
             startedAt: turn.startedAt,
             endedAt: Date.now(),
             outcome: tuiTurnOutcome(turn, entriesToTranscript(entries)),
+            // Issue #210 (slice 5): every climb this run recorded —
+            // explicit and automatic — lands on the trajectory, oldest
+            // first. The file is overwritten per settled turn, so the
+            // full sink ships every time, never a delta.
+            ...(escalationEvents.length === 0
+              ? {}
+              : {
+                  escalations: escalationEvents.map((event) =>
+                    toTrajectoryEscalation(event, null),
+                  ),
+                }),
           });
+        },
+        // Issue #210 (slice 5): the transcript rows for recorded climbs.
+        // The runner drains this after every settled turn — each climb is
+        // reported once, however many turns settle afterwards.
+        drainEscalationRows: () => {
+          const rows = escalationEvents
+            .slice(reportedEscalations)
+            .map((event) => formatEscalationRow(event));
+          reportedEscalations = escalationEvents.length;
+          return rows;
         },
       },
       close,
@@ -3271,6 +3353,14 @@ export class TuiTurnRunner {
     } catch {
       // The trajectory observes the turn; it never changes its outcome.
     }
+    // Issue #210 (slice 5): report recorded climbs — explicit or
+    // automatic — as transcript rows, each exactly once. The drain is
+    // idempotent, so a turn settling right after a switch reports the
+    // row even when the switch already drained it (then: nothing new).
+    for (const row of this.loop.drainEscalationRows?.() ?? []) {
+      this.app.appendNotice([row]);
+    }
+
     return outcome;
   }
 
@@ -5252,6 +5342,12 @@ export async function runTuiCommand(
           .switchModel(selection, reason)
           .then(async (label) => {
             if (stopped) return;
+            // Issue #210 (slice 5): the climb just recorded reports its
+            // transcript row now — not on the next settled turn. The
+            // drain is idempotent, so the turn drain later finds nothing.
+            for (const row of boot.loop?.drainEscalationRows?.() ?? []) {
+              app.appendNotice([row]);
+            }
             // Issue #338: the new model may not accept images (§16.8). The
             // attachments were validated against the OLD model, so they are
             // dropped rather than sent to a model that cannot take them.

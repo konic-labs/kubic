@@ -655,23 +655,22 @@ function journalUndo(run: JournalRun, request: JournalUndoOptions): number {
   // append surfaces on stderr and never fails the undo.
   if (!dryRun) {
     // The restored workspace's own HEAD (null outside git → 'none').
+    // appendToLedger never throws (it reports through onError), so the
+    // callback — not a try/catch — is what surfaces a failed append.
     const base = gitHeadOf(root)?.revision ?? 'none';
-    try {
-      appendToLedger(
-        auditLedgerDirFor(root),
-        undoRestoreAudit({
-          sessionId: run.resolved.sessionId,
-          workspace: root,
-          base,
-          restored: result.restored,
-          skipped: result.skipped.length,
-        }),
-      );
-    } catch (error) {
-      run.log.error(
-        `audit: undo-restore not recorded: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    appendToLedger(
+      auditLedgerDirFor(root),
+      undoRestoreAudit({
+        sessionId: run.resolved.sessionId,
+        workspace: root,
+        base,
+        restored: result.restored,
+        skipped: result.skipped.length,
+      }),
+      (message) => {
+        run.log.error(`audit: undo-restore not recorded: ${message}`);
+      },
+    );
   }
   // Stale refusals and already-undone skips get their own line shapes so
   // scripts (and humans) can tell "cannot reverse" from "refused because

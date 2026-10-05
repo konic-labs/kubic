@@ -3,6 +3,8 @@
 import { execFileSync } from 'node:child_process';
 import {
   appendFileSync,
+  chmodSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -160,6 +162,38 @@ describe('journal CLI (issue #18, slice D)', () => {
     expect(rows[0]?.reason).toContain('a.txt');
     expect(rows[0]?.mode).toBe('solo');
   });
+
+  // POSIX-only: the failure is an unwritable ledger dir (root ignores
+  // modes, win32 has none) — like the chmod-skipped audit tests.
+  const posixOnly =
+    process.platform === 'win32' ||
+    (typeof process.getuid === 'function' && process.getuid() === 0);
+  it.skipIf(posixOnly)(
+    'a failed ledger append surfaces on stderr and never fails the undo (issue #284)',
+    async () => {
+      const { journalDir, root, out } = setup();
+      const errs: string[] = [];
+      const deps = {
+        journalDir,
+        root,
+        out: out.write,
+        err: (line: string): void => {
+          errs.push(line);
+        },
+      };
+      const ledgerDir = auditLedgerDirFor(root);
+      mkdirSync(ledgerDir, { recursive: true });
+      chmodSync(ledgerDir, 0o555);
+      try {
+        expect(await runJournalCommand({ command: 'undo' }, deps)).toBe(0);
+      } finally {
+        chmodSync(ledgerDir, 0o755);
+      }
+      // Nothing recorded, the undo still landed, the failure is named.
+      expect(readAuditLedger(ledgerDir)).toEqual([]);
+      expect(errs.join('\n')).toContain('audit: undo-restore not recorded');
+    },
+  );
 
   it('exits 1 on partial undo (skips never reuse the usage code)', async () => {
     const { journalDir, root, out } = setup();

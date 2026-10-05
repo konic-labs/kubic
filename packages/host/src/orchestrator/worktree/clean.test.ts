@@ -4,6 +4,7 @@
 // posture holds on the faux seam before the scratch-repo suite
 // (clean-repo.test.ts) proves it against real git.
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -487,6 +488,51 @@ describe('kubic clean (issue #45, #92)', () => {
     expect(rows[0]?.workspace.path).toBe(`${repoRoot}/.kubic/wt/agent-1`);
   });
 
+  // POSIX-only: the failure is an unwritable repo ledger dir (root ignores
+  // modes, win32 has none) — like the chmod-skipped audit tests.
+  const posixOnly =
+    process.platform === 'win32' ||
+    (typeof process.getuid === 'function' && process.getuid() === 0);
+  it.skipIf(posixOnly)(
+    'a failed ledger append surfaces on stderr and never fails the disposal (issue #284)',
+    async () => {
+      const repoRoot = mkdtempSync(join(tmpdir(), 'clean284-'));
+      scratch.push(repoRoot);
+      const env = new FakeExecutionEnv(repoScripts());
+      const errs: string[] = [];
+      const ledgerDir = auditLedgerDirFor(repoRoot);
+      mkdirSync(ledgerDir, { recursive: true });
+      chmodSync(ledgerDir, 0o555);
+      let code: number;
+      try {
+        code = await runCleanCommand(
+          {},
+          {
+            env,
+            out: () => undefined,
+            err: (line: string) => errs.push(line),
+            repoRoot,
+            lister: async () =>
+              parseWorktreePorcelain(
+                `worktree ${repoRoot}/.kubic/wt/agent-1\nHEAD 7777777777777771\nbranch refs/heads/kubic/agent-1\n`,
+              ),
+            branchLister: async () => ['kubic/agent-1'],
+            remover: async () => undefined,
+            branchDeleter: async () => undefined,
+            pruner: async () => undefined,
+            pruneJournal: () => ({ entries: 0, bytes: 0, overBound: 0 }),
+          },
+        );
+      } finally {
+        chmodSync(ledgerDir, 0o755);
+      }
+      // The disposal landed, nothing recorded, the failure is named.
+      expect(code).toBe(0);
+      expect(readAuditLedger(ledgerDir)).toEqual([]);
+      expect(errs.join('\n')).toContain('audit: worktree-remove not recorded');
+    },
+  );
+
   it('never plans a namespace-shaped worktree sitting on a foreign branch', () => {
     const entries: WorktreeEntry[] = [
       ...parseWorktreePorcelain(THREE_WT_PORCELAIN),
@@ -608,14 +654,43 @@ describe('kubic clean (issue #45, #92)', () => {
   });
 
   it('reports a hard failure when a dirty worktree refuses removal', async () => {
+    // Tmp-rooted (issue #284 review): the removed tree's ledger row must
+    // land in scratch, never at the fake `/repo` path the default
+    // porcelain names.
+    const repoRoot = mkdtempSync(join(tmpdir(), 'clean284-'));
+    scratch.push(repoRoot);
+    const wt1 = `${repoRoot}/.kubic/wt/agent-1`;
+    const wt2 = `${repoRoot}/.kubic/wt/agent-2`;
+    const porcelain =
+      `worktree ${repoRoot}\nHEAD abcdef0123456789\nbranch refs/heads/main\n\n` +
+      `worktree ${wt1}\nHEAD 1111111111111111\nbranch refs/heads/kubic/agent-1\n\n` +
+      `worktree ${wt2}\nHEAD 2222222222222222\nbranch refs/heads/kubic/agent-2\n`;
     const env = new FakeExecutionEnv(
-      repoScripts({
-        'git worktree remove /repo/.kubic/wt/agent-1': {
-          exitCode: 128,
-          stdout: '',
-          stderr: 'fatal: contains modified or untracked files, use --force',
+      {
+        ...repoScripts({
+          [`git worktree remove ${wt1}`]: {
+            exitCode: 128,
+            stdout: '',
+            stderr:
+              'fatal: contains modified or untracked files, use --force',
+          },
+        }),
+        'git worktree list --porcelain': {
+          exitCode: 0,
+          stdout: porcelain,
+          stderr: '',
         },
-      }),
+        [`git worktree remove ${wt2}`]: {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+        [`git -C ${repoRoot} merge-base --is-ancestor kubic/agent-2 HEAD`]: {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+      },
       { strict: true },
     );
     const lines: string[] = [];
@@ -626,6 +701,7 @@ describe('kubic clean (issue #45, #92)', () => {
         env,
         out: (line: string) => lines.push(line),
         err: (line: string) => errs.push(line),
+        repoRoot,
       },
     );
     expect(code).toBe(1);

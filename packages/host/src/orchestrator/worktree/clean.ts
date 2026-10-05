@@ -735,20 +735,20 @@ export async function runCleanCommand(
       await remover(deps.env, item.path, { force: options.force === true });
       removed.push(item);
       // Every disposed tree lands one `worktree-remove` row in the repo's
-      // own §60 ledger (issue #284). A failed append surfaces on stderr
-      // and never fails the disposal.
-      try {
-        appendToLedger(
-          auditLedgerDirFor(repoRoot),
-          worktreeRemoveAudit({
-            sessionId: options.sessionId ?? 'cli',
-            path: item.path,
-            branch: item.branch,
-          }),
-        );
-      } catch (error) {
-        log.error(`audit: worktree-remove not recorded: ${messageOf(error)}`);
-      }
+      // own §60 ledger (issue #284). appendToLedger never throws (it
+      // reports through onError), so the callback — not a try/catch — is
+      // what surfaces a failed append; the disposal never fails over it.
+      appendToLedger(
+        auditLedgerDirFor(repoRoot),
+        worktreeRemoveAudit({
+          sessionId: options.sessionId ?? 'cli',
+          path: item.path,
+          branch: item.branch,
+        }),
+        (message) => {
+          log.error(`audit: worktree-remove not recorded: ${message}`);
+        },
+      );
     } catch (error) {
       failures.push({ target: item.path, message: messageOf(error) });
       // Never half-dispose: a worktree that is still standing keeps its

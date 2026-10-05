@@ -141,6 +141,7 @@ file that no longer exists, or when a row's file has become reachable
 | 58 | `packages/eval/src/rl/index.ts` | #99 | wire: RL dataset export (phase 4, design §53) — keep behind the eval CLI |
 | 4 | `packages/exec/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/exec/src/paths.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 225 | `packages/exec/src/test-support/git-sandbox.ts` | #365 | keep: test-only real-git sandbox factory (scrubbed env, activated process.env, `git`/`gitResult` runners) imported exclusively by `*.test.ts` files, which the value-import walk excludes by rule — a test seam can never be `reachable` |
 | 4 | `packages/exec/src/workspace.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 58 | `packages/extensions/src/cancellation.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
 | 55 | `packages/extensions/src/facets.ts` | #93 | wire: first-party bundle loaded at startup (#93) |

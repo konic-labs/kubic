@@ -5,29 +5,23 @@
 // local bare remote, diff variants, stage, commit, checkpoint (subject and
 // apply), log, show, and branch list/create.
 //
-// Hermetic: system git config is off (GIT_CONFIG_NOSYSTEM=1 is allowlisted
-// into the ops' spawn env, packages/exec/src/env.ts, and stubbed into the
-// process here), and global config has nowhere to live — HOME and
-// XDG_CONFIG_HOME are stubbed to empty per-repo directories, so op-spawned
-// git sees exactly the repo-local config this file writes, never the
-// host's. The git driven directly gets the same two directories plus an
-// explicit GIT_CONFIG_GLOBAL override, so an ambient config path cannot
-// leak. Every scratch directory is removed in afterEach; nothing touches
-// the network.
+// Hermetic (issue #365): every scratch repo is a shared git sandbox —
+// system git config is off, global config has nowhere to live, and the
+// ambient GIT_DIR family is scrubbed — so op-spawned git (via
+// NodeExecutionEnv on the inherited environment) sees exactly the
+// repo-local config this file writes, never the host's. The sandbox is
+// activated into process.env per repo; every scratch directory is removed
+// in afterEach; nothing touches the network.
 
-import { execFileSync } from 'node:child_process';
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { NodeExecutionEnv } from '../../../exec/src/env.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../../exec/src/test-support/git-sandbox.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import {
   callOperation,
@@ -36,70 +30,24 @@ import {
 } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
 
-interface Repo {
-  // Scratch parent holding home/ (empty HOME) and repo/ (the work tree).
-  parent: string;
-  // Repository root, realpath-resolved: macOS /var is a symlink and git
-  // reports the resolved toplevel.
-  path: string;
-  // Empty HOME for this repo's git, so no developer config leaks in. It
-  // lives outside the work tree or it would show up as untracked.
-  home: string;
-  // Empty XDG_CONFIG_HOME, same purpose for $XDG_CONFIG_HOME/git/config.
-  xdg: string;
-}
-
-const scratchDirs: string[] = [];
-
 afterEach(() => {
-  vi.unstubAllEnvs();
-  for (const dir of scratchDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  disposeAllGitSandboxes();
 });
 
-function git(repo: Repo, args: string[]): string {
-  return execFileSync('git', args, {
-    cwd: repo.path,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      HOME: repo.home,
-      XDG_CONFIG_HOME: repo.xdg,
-      GIT_CONFIG_NOSYSTEM: '1',
-      // No ambient GIT_CONFIG_GLOBAL either: a missing path is no config.
-      GIT_CONFIG_GLOBAL: join(repo.home, 'no-global-config'),
-    },
+// Activated: the ops under test spawn git through NodeExecutionEnv on the
+// inherited environment, so process.env itself must be the sandbox's while
+// the test runs; disposeAllGitSandboxes restores it afterwards.
+function scratchRepo(): GitSandbox {
+  return createGitSandbox({
+    prefix: 'kubic-git-real-',
+    injectProcessEnv: true,
   });
 }
 
-function scratchRepo(): Repo {
-  const parent = realpathSync(mkdtempSync(join(tmpdir(), 'kubic-git-real-')));
-  scratchDirs.push(parent);
-  const home = join(parent, 'home');
-  const xdg = join(parent, 'xdg');
-  const path = join(parent, 'repo');
-  mkdirSync(home);
-  mkdirSync(xdg);
-  mkdirSync(path);
-  // HOME, XDG_CONFIG_HOME and GIT_CONFIG_NOSYSTEM are allowlisted into the
-  // ops' spawn env, so stubbing them keeps op-spawned git on the same
-  // config-free view as git().
-  vi.stubEnv('HOME', home);
-  vi.stubEnv('XDG_CONFIG_HOME', xdg);
-  vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1');
-  const repo: Repo = { parent, path, home, xdg };
-  git(repo, ['init', '-q', '-b', 'main']);
-  git(repo, ['config', 'user.email', 'kubic-test@local']);
-  git(repo, ['config', 'user.name', 'kubic test']);
-  git(repo, ['config', 'commit.gpgsign', 'false']);
-  return repo;
-}
-
-function commitFile(repo: Repo, name: string, content: string): void {
+function commitFile(repo: GitSandbox, name: string, content: string): void {
   writeFileSync(join(repo.path, name), content);
-  git(repo, ['add', '--', name]);
-  git(repo, ['commit', '-q', '-m', `add ${name}`]);
+  repo.git(['add', '--', name]);
+  repo.git(['commit', '-q', '-m', `add ${name}`]);
 }
 
 function ctx(dir: string): OpContext {
@@ -128,7 +76,7 @@ describe('git_status over real git (issue #193)', () => {
   it('reports a renamed file by its new path with the old path', async () => {
     const repo = scratchRepo();
     commitFile(repo, 'old name.txt', 'one\n');
-    git(repo, ['mv', 'old name.txt', 'new name.txt']);
+    repo.git(['mv', 'old name.txt', 'new name.txt']);
 
     const status = await ok('git_status', {}, repo.path, 'st-rename');
     expect(status.staged).toContain('new name.txt');
@@ -144,7 +92,7 @@ describe('git_status over real git (issue #193)', () => {
   it('reports a rename that is also modified in the worktree (RM)', async () => {
     const repo = scratchRepo();
     commitFile(repo, 'old.txt', 'one\n');
-    git(repo, ['mv', 'old.txt', 'new.txt']);
+    repo.git(['mv', 'old.txt', 'new.txt']);
     writeFileSync(join(repo.path, 'new.txt'), 'one\ntwo\n');
 
     const status = await ok('git_status', {}, repo.path, 'st-rm');
@@ -159,11 +107,11 @@ describe('git_status over real git (issue #193)', () => {
 
   it('reports a copy with the path it came from', async () => {
     const repo = scratchRepo();
-    git(repo, ['config', 'status.renames', 'copies']);
+    repo.git(['config', 'status.renames', 'copies']);
     commitFile(repo, 'source.txt', 'shared content\n');
-    git(repo, ['mv', 'source.txt', 'copy.txt']);
+    repo.git(['mv', 'source.txt', 'copy.txt']);
     writeFileSync(join(repo.path, 'source.txt'), 'shared content\nplus more\n');
-    git(repo, ['add', '--', 'source.txt']);
+    repo.git(['add', '--', 'source.txt']);
 
     const status = await ok('git_status', {}, repo.path, 'st-copy');
     expect(status.staged).toContain('copy.txt');
@@ -190,7 +138,7 @@ describe('git_status over real git (issue #193)', () => {
     const repo = scratchRepo();
     commitFile(repo, 'both.txt', 'one\n');
     writeFileSync(join(repo.path, 'both.txt'), 'one\nstaged\n');
-    git(repo, ['add', '--', 'both.txt']);
+    repo.git(['add', '--', 'both.txt']);
     writeFileSync(join(repo.path, 'both.txt'), 'one\nstaged\nworktree\n');
 
     const status = await ok('git_status', {}, repo.path, 'st-mm');
@@ -212,7 +160,7 @@ describe('git_status over real git (issue #193)', () => {
   it('reports a detached HEAD as null, never a branch name', async () => {
     const repo = scratchRepo();
     commitFile(repo, 'a.txt', 'a\n');
-    git(repo, ['checkout', '-q', '--detach', 'HEAD']);
+    repo.git(['checkout', '-q', '--detach', 'HEAD']);
 
     const status = await ok('git_status', {}, repo.path, 'st-detached');
     expect(status.branch).toBeNull();
@@ -222,25 +170,25 @@ describe('git_status over real git (issue #193)', () => {
   it('tracks ahead/behind against a local bare remote', async () => {
     const repo = scratchRepo();
     const bare = join(repo.parent, 'remote.git');
-    git(repo, ['init', '-q', '--bare', '-b', 'main', bare]);
+    repo.git(['init', '-q', '--bare', '-b', 'main', bare]);
     commitFile(repo, 'a.txt', 'a\n');
-    git(repo, ['remote', 'add', 'origin', bare]);
-    git(repo, ['push', '-q', '-u', 'origin', 'main']);
+    repo.git(['remote', 'add', 'origin', bare]);
+    repo.git(['push', '-q', '-u', 'origin', 'main']);
 
     const even = await ok('git_status', {}, repo.path, 'st-even');
     expect(even.ahead).toBe(0);
     expect(even.behind).toBe(0);
 
     writeFileSync(join(repo.path, 'a.txt'), 'a\nb\n');
-    git(repo, ['commit', '-qam', 'v2']);
+    repo.git(['commit', '-qam', 'v2']);
     const ahead = await ok('git_status', {}, repo.path, 'st-ahead');
     expect(ahead.ahead).toBe(1);
     expect(ahead.behind).toBe(0);
 
     // Push the local commit, then wind the branch back: the remote is now
     // one ahead of the checked-out commit.
-    git(repo, ['push', '-q', 'origin', 'main']);
-    git(repo, ['reset', '-q', '--hard', 'HEAD~1']);
+    repo.git(['push', '-q', 'origin', 'main']);
+    repo.git(['reset', '-q', '--hard', 'HEAD~1']);
     const behind = await ok('git_status', {}, repo.path, 'st-behind');
     expect(behind.ahead).toBe(0);
     expect(behind.behind).toBe(1);
@@ -252,10 +200,10 @@ describe('git read/effect ops over real git (issue #193)', () => {
     const repo = scratchRepo();
     writeFileSync(join(repo.path, 'a.txt'), 'a1\n');
     writeFileSync(join(repo.path, 'b.txt'), 'b1\n');
-    git(repo, ['add', '--', 'a.txt', 'b.txt']);
-    git(repo, ['commit', '-q', '-m', 'v1']);
+    repo.git(['add', '--', 'a.txt', 'b.txt']);
+    repo.git(['commit', '-q', '-m', 'v1']);
     writeFileSync(join(repo.path, 'a.txt'), 'a2\n');
-    git(repo, ['add', '--', 'a.txt']);
+    repo.git(['add', '--', 'a.txt']);
     writeFileSync(join(repo.path, 'b.txt'), 'b2\n');
 
     const unstaged = await ok('git_diff', {}, repo.path, 'diff-worktree');
@@ -280,7 +228,7 @@ describe('git read/effect ops over real git (issue #193)', () => {
     expect(scoped.diff).toContain('b.txt');
     expect(scoped.diff).not.toContain('a.txt');
 
-    git(repo, ['commit', '-q', '-m', 'v2']);
+    repo.git(['commit', '-q', '-m', 'v2']);
     const ranged = await ok(
       'git_diff',
       { range: 'HEAD~1..HEAD' },
@@ -329,7 +277,7 @@ describe('git read/effect ops over real git (issue #193)', () => {
     );
     expect(committed.sha).toMatch(/^[0-9a-f]{40}$/);
     expect(committed.files.sort()).toEqual(['a.txt', 'b.txt']);
-    expect(git(repo, ['rev-parse', 'HEAD']).trim()).toBe(committed.sha);
+    expect(repo.git(['rev-parse', 'HEAD']).trim()).toBe(committed.sha);
 
     const log = await ok('git_log', { max: 1 }, repo.path, 'commit-log');
     expect(log.entries[0]?.message).toBe('feat: add files');
@@ -365,17 +313,14 @@ describe('git read/effect ops over real git (issue #193)', () => {
     expect(checkpoint.sha).toMatch(/^[0-9a-f]{40}$/);
     // git prefixes a stash subject with `On <branch>: `; the given message
     // must be the rest of it, never a stray `-m` argv artifact.
-    const subject = git(repo, [
-      'log',
-      '-1',
-      '--format=%s',
-      checkpoint.sha,
-    ]).trim();
+    const subject = repo
+      .git(['log', '-1', '--format=%s', checkpoint.sha])
+      .trim();
     expect(subject).toBe(`On main: ${message}`);
 
     // The checkpoint left the tree alone and restores without a stash ref.
-    git(repo, ['checkout', '-q', '--', 'a.txt']);
-    git(repo, ['stash', 'apply', '-q', checkpoint.sha]);
+    repo.git(['checkout', '-q', '--', 'a.txt']);
+    repo.git(['stash', 'apply', '-q', checkpoint.sha]);
     expect(readFileSync(join(repo.path, 'a.txt'), 'utf8')).toBe('one\ntwo\n');
   });
 
@@ -401,8 +346,8 @@ describe('git read/effect ops over real git (issue #193)', () => {
   it('lists only real branches on a detached HEAD, never the "(HEAD detached at …)" pseudo-entry', async () => {
     const repo = scratchRepo();
     commitFile(repo, 'a.txt', 'a\n');
-    git(repo, ['branch', 'feature/x']);
-    git(repo, ['checkout', '-q', '--detach', 'HEAD']);
+    repo.git(['branch', 'feature/x']);
+    repo.git(['checkout', '-q', '--detach', 'HEAD']);
 
     const listed = await ok('git_branch', {}, repo.path, 'branch-detached');
     expect(listed.branches).toEqual(['feature/x', 'main']);
@@ -411,7 +356,7 @@ describe('git read/effect ops over real git (issue #193)', () => {
   it('lists a branch by its full name even when a tag shares it', async () => {
     const repo = scratchRepo();
     commitFile(repo, 'a.txt', 'a\n');
-    git(repo, ['tag', 'main']);
+    repo.git(['tag', 'main']);
 
     const listed = await ok('git_branch', {}, repo.path, 'branch-tag-clash');
     expect(listed.branches).toEqual(['main']);
@@ -445,10 +390,10 @@ describe('git read/effect ops over real git (issue #193)', () => {
   it('git_commit keeps stderr as the reason when git wrote one', async () => {
     const repo = scratchRepo();
     commitFile(repo, 'a.txt', 'a\n');
-    git(repo, ['config', 'user.useConfigOnly', 'true']);
-    git(repo, ['config', '--unset', 'user.email']);
+    repo.git(['config', 'user.useConfigOnly', 'true']);
+    repo.git(['config', '--unset', 'user.email']);
     writeFileSync(join(repo.path, 'a.txt'), 'b\n');
-    git(repo, ['add', '--', 'a.txt']);
+    repo.git(['add', '--', 'a.txt']);
 
     const out = await callOperation(
       'git_commit',
@@ -505,14 +450,14 @@ describe('git read/effect ops over real git (issue #193)', () => {
   it("git_checkpoint names a clean tree, and an unborn branch by git's own words", async () => {
     const repo = scratchRepo();
     writeFileSync(join(repo.path, 'a.txt'), 'a\n');
-    git(repo, ['add', '--', 'a.txt']);
+    repo.git(['add', '--', 'a.txt']);
     expect(
       await failure('git_checkpoint', { message: 'm' }, repo.path, 'cp-unborn'),
     ).toBe(
       'git_checkpoint failed (exit 1): You do not have the initial commit yet',
     );
 
-    git(repo, ['commit', '-q', '-m', 'first']);
+    repo.git(['commit', '-q', '-m', 'first']);
     expect(
       await failure('git_checkpoint', { message: 'm' }, repo.path, 'cp-clean'),
     ).toBe('git_checkpoint: no changes to checkpoint (clean tree)');
@@ -522,7 +467,7 @@ describe('git read/effect ops over real git (issue #193)', () => {
     const repo = scratchRepo();
     commitFile(repo, 'a.txt', 'one\n');
     writeFileSync(join(repo.path, 'a.txt'), 'one\ntwo\n');
-    git(repo, ['commit', '-qam', 'v2']);
+    repo.git(['commit', '-qam', 'v2']);
 
     const shown = await ok('git_show', { ref: 'HEAD' }, repo.path, 'show');
     expect(shown.patch).toContain('+two');

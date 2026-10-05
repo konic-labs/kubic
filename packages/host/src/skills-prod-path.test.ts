@@ -655,11 +655,7 @@ describe('the role/capability gate reaches the live solo prompt (issue #181, §2
 // admitted + gate-passed, hidden included, withheld excluded — so a
 // role/capability-withheld skill resolves as unknown on the invoke path.
 describe('the invocable set gates explicit invocation (issue #183)', () => {
-  function writeRawSkill(
-    dir: string,
-    name: string,
-    frontmatter: string,
-  ): void {
+  function writeRawSkill(dir: string, name: string, frontmatter: string): void {
     mkdirSync(join(dir, name), { recursive: true });
     writeFileSync(
       join(dir, name, 'SKILL.md'),
@@ -679,12 +675,8 @@ describe('the invocable set gates explicit invocation (issue #183)', () => {
       trusted: true,
       roleSkills: ['kept-hidden'],
     });
-    expect(boot.invocable.map((skill) => skill.name)).toEqual([
-      'kept-hidden',
-    ]);
-    expect(boot.withheld.map((held) => held.name)).toEqual([
-      'dropped-visible',
-    ]);
+    expect(boot.invocable.map((skill) => skill.name)).toEqual(['kept-hidden']);
+    expect(boot.withheld.map((held) => held.name)).toEqual(['dropped-visible']);
   });
 
   it('excludes capability-withheld skills', () => {

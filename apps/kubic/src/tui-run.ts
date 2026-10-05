@@ -1799,6 +1799,13 @@ export async function bootTuiLane(
         ...(options.roles?.layers === undefined
           ? {}
           : { roleLayers: options.roles.layers }),
+        // The config `skills` projection (issue #237, §29.2): the drive
+        // forwards it into the manager lane, so workers spawned from
+        // `kubic tui` load the settings skills exactly like CLI-spawned
+        // workers do — "every orchestrator worker's child".
+        ...(options.skills?.settingsSkills === undefined
+          ? {}
+          : { settingsSkills: options.skills.settingsSkills }),
         // The lane's current model (issue #202): read at each delegation, so
         // a `/model` switch is the model the workers inherit — the same
         // §38.1 `parentModel` `kubic orchestrate` passes from its resolved

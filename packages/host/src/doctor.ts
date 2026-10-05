@@ -62,6 +62,7 @@ export type DoctorReason =
   | 'full-access'
   | 'unsupported-level'
   | 'detection-only'
+  | 'sink-unreachable'
   | 'skipped';
 
 export interface DoctorCheck {
@@ -132,6 +133,12 @@ export interface DoctorDeps extends CliIo {
   // is configured at all — means no enterprise checks and an unchanged
   // default matrix. A throwing probe becomes one named failing check.
   enterpriseChecks?: () => DoctorCheck[];
+  // §58 configured audit sinks (issue #286): the checks
+  // `auditSinksDoctorChecks` derives from the loaded `[[audit]]` tables,
+  // built by the composition root with real reachability probes. Absent
+  // means no sink checks and an unchanged default matrix. A throwing
+  // probe becomes one named failing check, never a crash.
+  probeAuditSinks?: () => DoctorCheck[];
   // Repo-level session overlap (issue #118; §42.5): the local session
   // store's view of sessions recorded against one workspace — two or more
   // reports a warn note (concurrent different-session runs are legal; the
@@ -738,6 +745,22 @@ export function collectDoctorChecks(
         label: 'policy enterprise',
         status: 'fail',
         reason: 'policy-mismatch',
+        detail: probeMessage(error),
+      });
+    }
+  }
+  // §58 configured audit sinks (issue #286): opt-in via the injected
+  // probe — absent means no sink checks, so legacy matrices are unchanged.
+  // A throwing probe becomes one named failing check, never a crash.
+  if (deps.probeAuditSinks !== undefined) {
+    try {
+      checks.push(...deps.probeAuditSinks());
+    } catch (error) {
+      checks.push({
+        id: 'audit:sinks',
+        label: 'audit sinks',
+        status: 'fail',
+        reason: 'sink-unreachable',
         detail: probeMessage(error),
       });
     }

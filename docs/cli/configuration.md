@@ -297,7 +297,7 @@ quietly stop configuring anything.
 | `policy.require_credential_broker`, `policy.deny_local_credentials` | Parsed and resolved into the effective policy, but **not enforced**: the credential broker is not on the worker spawn path yet, so `require_credential_broker = true` protects nothing today (issues #289, #359). `kubic config` lists both keys (`kept`); `kubic doctor` does not report them. |
 | `policy.data_policy`, `policy.logging_policy` | Parsed and carried (for example `no-external-training`, `full-audit`); no local mechanism can promise a provider-side policy, so they are reported, never claimed as enforced. |
 | `policy.agent_policy` | `{ max_agents, max_cost_usd }`, parsed into the effective policy's `agent` bounds; the orchestrator does not consume them yet, so they are **not enforced**; `kubic config` lists them (`kept`), `kubic doctor` does not report them (issue #289). |
-| `audit` (`[[audit]]`) | Sink tables (`sink` = `syslog` \| `file` \| `memory`, `level` = `privileged` \| `all`, optional `target`/`facility`). Parsed and validated fail-closed (an unknown kind, level or key is named); sink construction is a named follow-up, so the CLI cannot write to them yet. |
+| `audit` (`[[audit]]`) | Sink tables (`sink` = `syslog` \| `file` \| `memory`, `level` = `privileged` \| `all`, optional `target`/`facility`). Parsed and validated fail-closed (an unknown kind, level or key is named); every §60 row fans out to the configured sinks plus the mandatory repo ledger (see [Audit sinks](#audit-sinks-audit)). |
 
 ### Settings skills (`skills`, §29.2)
 
@@ -604,6 +604,47 @@ them:
   below. See [design drift, item 22](../design-drift.md#item-22--363-tool-credential-brokering-is-not-implemented).
 - `[[audit]]` — repeatable sink tables (`sink`, `level`, optional `target`
   and `facility`). Unknown kinds, levels and keys are refused by name.
+  See [Audit sinks](#audit-sinks-audit).
+
+### Audit sinks (`[[audit]]`)
+
+Enterprises expect audit records to reach syslog or another org sink — a
+JSONL file inside a repo the agent can write to is not tamper-evident.
+Every §60 row (decisions and privileged actions alike) fans out to each
+configured sink **plus** the mandatory repo ledger
+(`.kubic/orchestrator/approvals/audit.jsonl`, read by `kubic audit`):
+
+```toml
+[[audit]]
+sink = "syslog"
+level = "privileged"
+
+[[audit]]
+sink = "file"
+level = "all"
+target = "/var/log/kubic.jsonl"
+```
+
+- `sink`: `syslog` (one RFC 5424 line per record), `file` (one JSON line
+  per record appended at the exact `target` path), or `memory`
+  (process-scoped, for embedders and tests).
+- `level`: `privileged` keeps approval decisions (`tool:<name>`) and the
+  seven privileged actions, dropping everything else; `all` keeps every
+  row. The repo ledger always keeps everything regardless of level.
+- `target` (syslog): a unix datagram socket path (bare `/dev/log` or
+  `unix:/path`; the default is `/var/run/syslog` on macos and `/dev/log`
+  elsewhere) or a `host[:port]` UDP destination (port 514 when absent).
+  UDP delivery is best-effort by protocol design. `target` (file): the
+  exact file path (required). `memory` takes no target.
+- `facility` (syslog): an RFC 5424 facility name (`local0`–`local7`,
+  `user`, `authpriv`, …) or number 0–23; default `local0`. Unknown
+  facilities and malformed targets are refused by name when the sinks
+  build — the table is skipped (named on stderr and in `kubic doctor`)
+  while the repo ledger keeps recording.
+- A sink that fails at runtime records the failure and notes it on
+  stderr once per process; the repo write is never blocked. `kubic doctor`
+  lists every configured sink with a reachability probe (`audit:sink:*`)
+  plus any runtime failure the process recorded.
 
 Unknown keys inside `[policy]` fail closed and are named. `kubic policy
 --tool <name>` answers from the merged enterprise and installed policy and

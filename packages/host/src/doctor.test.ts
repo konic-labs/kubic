@@ -838,3 +838,71 @@ describe('full-access sessions (issue #310)', () => {
     expect(installed?.detail).toContain('FULL ACCESS recorded');
   });
 });
+
+describe('audit sink checks (issue #286)', () => {
+  function reportOf(lines: string[]): Array<{
+    id: string;
+    status: string;
+    reason: string;
+    detail: string;
+  }> {
+    return (
+      JSON.parse(lines.join('\n')) as {
+        checks: Array<{
+          id: string;
+          status: string;
+          reason: string;
+          detail: string;
+        }>;
+      }
+    ).checks;
+  }
+
+  it('lists the injected sink checks, absent without the probe', async () => {
+    const withProbe: string[] = [];
+    await runDoctorCommand(
+      { json: true },
+      {
+        ...cleanDeps((line: string) => withProbe.push(line)),
+        probeAuditSinks: () => [
+          {
+            id: 'audit:sink:syslog-1',
+            label: 'audit sink syslog',
+            status: 'pass',
+            reason: 'ok',
+            detail: 'audit[1] syslog unix:/dev/log (privileged)',
+          },
+        ],
+      },
+    );
+    expect(
+      reportOf(withProbe).find((entry) => entry.id === 'audit:sink:syslog-1')
+        ?.status,
+    ).toBe('pass');
+    const withoutProbe: string[] = [];
+    await runDoctorCommand(
+      { json: true },
+      { ...cleanDeps((line: string) => withoutProbe.push(line)) },
+    );
+    expect(
+      reportOf(withoutProbe).some((entry) => entry.id.startsWith('audit:')),
+    ).toBe(false);
+  });
+
+  it('a throwing sink probe becomes one named failing check', async () => {
+    const lines: string[] = [];
+    await runDoctorCommand(
+      { json: true },
+      {
+        ...cleanDeps((line: string) => lines.push(line)),
+        probeAuditSinks: () => {
+          throw new Error('sink probe blew up');
+        },
+      },
+    );
+    const check = reportOf(lines).find((entry) => entry.id === 'audit:sinks');
+    expect(check?.status).toBe('fail');
+    expect(check?.reason).toBe('sink-unreachable');
+    expect(check?.detail).toContain('sink probe blew up');
+  });
+});

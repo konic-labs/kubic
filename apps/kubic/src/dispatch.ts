@@ -18,6 +18,10 @@ import {
 import { formatJson } from '../../../packages/core/src/cli/output.js';
 import { formatVersionLine } from '../../../packages/core/src/license.js';
 import { refusedOrchestrateEnvelope } from '../../../packages/host/src/orchestrate-cli.js';
+import {
+  buildConfiguredSinks,
+  setAuditSinks,
+} from '../../../packages/host/src/policy/audit-ledger.js';
 import { refusedReplayEnvelope } from '../../../packages/host/src/replay/replay.js';
 import {
   buildRunEnvelope,
@@ -314,6 +318,18 @@ export async function dispatchCommand(
       deps.out(envelope(reason, refusalExit));
     }
     return refusalExit;
+  }
+  // §58 configured audit sinks (issue #286): one build per process from
+  // the loaded `[[audit]]` tables — every command below fans its §60 rows
+  // out to these plus the mandatory repo ledger. An unbuildable table is
+  // named on stderr here (and fails its doctor check); it never stops the
+  // command, and the repo ledger still records everything.
+  if (cliConfig.runtime !== undefined) {
+    const built = buildConfiguredSinks(cliConfig.runtime.config.audit ?? []);
+    setAuditSinks(built.sinks);
+    for (const problem of built.problems) {
+      (deps.err ?? deps.out)(`warning: [[audit]] ${problem}`);
+    }
   }
   // Issue #91 (design §35, D34/D35): `.kubic/` runtime state must never
   // reach a user repo's commit path. Before either mode that creates it,

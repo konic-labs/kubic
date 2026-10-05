@@ -2,24 +2,35 @@
 // emitted through emitAudit as OrgAuditRecords and read back by the same
 // reader `kubic audit` uses.
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createWorkerAskRouter } from '../orchestrator/approvals/worker-asks.js';
+import type { AuditInput } from './audit.js';
 import { runAuditCommand } from './audit-cli.js';
 import {
   AUDIT_LEDGER_FILE,
   appendToLedger,
   auditLedgerDir,
   auditLedgerDirFor,
+  auditSinksDoctorChecks,
+  buildConfiguredSinks,
   credentialUseAudit,
   fullAccessEnabledAudit,
+  isPrivilegedAuditWhat,
   mergeDecisionAudit,
   orchestratorDecisionAudit,
   PRIVILEGED_ACTION_KINDS,
   readAuditLedger,
   resolveRunBaseRevision,
+  setAuditSinks,
   soloDecisionAudit,
   undoRestoreAudit,
   workerGenerationFromEnv,
@@ -28,6 +39,7 @@ import {
   worktreeCreateAudit,
   worktreeRemoveAudit,
 } from './audit-ledger.js';
+import { REDACTED_SECRET } from './secret-shapes.js';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -632,6 +644,311 @@ describe('§60 audit ledger', () => {
     expect(code).toBe(0);
     const parsed = JSON.parse(lines.join('\n')) as unknown[];
     expect(parsed).toHaveLength(1);
+  });
+});
+
+// Configured sink fan-out (issue #286; §58): appendToLedger fans out to the
+// configured [[audit]] sinks plus the mandatory repo ledger. Faux-only: a
+// fake transport captures syslog lines, never a socket.
+describe('configured sink fan-out (issue #286)', () => {
+  afterEach(() => {
+    setAuditSinks([]);
+  });
+
+  function fakeLines(): { lines: string[]; send(line: string): void } {
+    const lines: string[] = [];
+    return {
+      lines,
+      send: (line: string): void => {
+        lines.push(line);
+      },
+    };
+  }
+
+  function spawnInput(): AuditInput {
+    return workerSpawnAudit({
+      sessionId: 'sess-1',
+      agentId: 'worker-1',
+      role: 'implementer',
+      worktree: '/repo/.kubic/wt/worker-1',
+      generation: 0,
+      posture: 'restricted',
+    });
+  }
+
+  it('isPrivilegedAuditWhat keeps decisions and the seven kinds, drops the rest', () => {
+    for (const what of [
+      'tool:bash',
+      'posture:full-access',
+      'merge:kubic/worker-1',
+      'worker-spawn:worker-1',
+      'worker-terminate:worker-1',
+      'undo-restore',
+      'worktree-create:kubic/worker-1',
+      'worktree-remove:kubic/worker-1',
+    ]) {
+      expect(isPrivilegedAuditWhat(what)).toBe(true);
+    }
+    for (const what of [
+      'state:dropped',
+      'credential:openai',
+      'posture:approvals',
+    ]) {
+      expect(isPrivilegedAuditWhat(what)).toBe(false);
+    }
+  });
+
+  it('fans a decision out to syslog plus the repo ledger, MSG redacted', () => {
+    const dir = auditLedgerDir(repo());
+    mkdirSync(dir, { recursive: true });
+    const fake = fakeLines();
+    const built = buildConfiguredSinks(
+      [{ sink: 'syslog', level: 'privileged' }],
+      { syslogTransport: fake },
+    );
+    expect(built.problems).toEqual([]);
+    setAuditSinks(built.sinks);
+    const errors: string[] = [];
+    const input = {
+      ...spawnInput(),
+      reason: 'key sk-faux-test-key-0001 echoed',
+    };
+    const record = appendToLedger(dir, input, (message) => {
+      errors.push(message);
+    });
+    expect(record).toBeDefined();
+    expect(errors).toEqual([]);
+    // The repo ledger stays mandatory: one row.
+    expect(readAuditLedger(dir)).toHaveLength(1);
+    // The syslog sink got exactly one line whose MSG is the REDACTED record.
+    expect(fake.lines).toHaveLength(1);
+    const msg = fake.lines[0]?.slice(fake.lines[0]?.indexOf('{') ?? 0) ?? '';
+    expect(msg).not.toContain('sk-faux-test-key-0001');
+    expect(msg).toContain(REDACTED_SECRET);
+  });
+
+  it('level=privileged drops non-privileged records from the sink, never the ledger', () => {
+    const dir = auditLedgerDir(repo());
+    mkdirSync(dir, { recursive: true });
+    const fake = fakeLines();
+    setAuditSinks(
+      buildConfiguredSinks([{ sink: 'syslog', level: 'privileged' }], {
+        syslogTransport: fake,
+      }).sinks,
+    );
+    const errors: string[] = [];
+    appendToLedger(
+      dir,
+      credentialUseAudit({
+        sessionId: 'sess-1',
+        role: 'implementer',
+        provider: 'faux',
+        ref: 'faux-key-ref',
+        purpose: 'test read',
+        workspace: '/repo',
+      }),
+      (message) => {
+        errors.push(message);
+      },
+    );
+    // Dropped from syslog…
+    expect(fake.lines).toHaveLength(0);
+    // …but the repo ledger keeps everything.
+    expect(readAuditLedger(dir)).toHaveLength(1);
+    expect(errors).toEqual([]);
+  });
+
+  it('level=all keeps non-privileged records', () => {
+    const dir = auditLedgerDir(repo());
+    mkdirSync(dir, { recursive: true });
+    const fake = fakeLines();
+    setAuditSinks(
+      buildConfiguredSinks([{ sink: 'syslog', level: 'all' }], {
+        syslogTransport: fake,
+      }).sinks,
+    );
+    appendToLedger(
+      dir,
+      credentialUseAudit({
+        sessionId: 'sess-1',
+        role: 'implementer',
+        provider: 'faux',
+        ref: 'faux-key-ref',
+        purpose: 'test read',
+        workspace: '/repo',
+      }),
+    );
+    expect(fake.lines).toHaveLength(1);
+    expect(readAuditLedger(dir)).toHaveLength(1);
+  });
+
+  it('a throwing sink surfaces once on stderr and never blocks the repo write', () => {
+    const dir = auditLedgerDir(repo());
+    mkdirSync(dir, { recursive: true });
+    setAuditSinks(
+      buildConfiguredSinks([{ sink: 'syslog', level: 'all' }], {
+        syslogTransport: {
+          send: (): void => {
+            throw new Error('syslog down');
+          },
+        },
+      }).sinks,
+    );
+    const errors: string[] = [];
+    const onError = (message: string): void => {
+      errors.push(message);
+    };
+    // Same failing sink twice: one stderr note per process, two repo rows.
+    expect(appendToLedger(dir, spawnInput(), onError)).toBeDefined();
+    expect(appendToLedger(dir, spawnInput(), onError)).toBeDefined();
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('syslog down');
+    expect(readAuditLedger(dir)).toHaveLength(2);
+  });
+
+  it('buildConfiguredSinks reports bad targets as problems, never throws', () => {
+    const built = buildConfiguredSinks([
+      { sink: 'syslog', level: 'privileged', target: 'loghost:notaport' },
+      { sink: 'syslog', level: 'privileged', facility: 'carrier-pigeon' },
+      { sink: 'file', level: 'all' },
+    ]);
+    expect(built.sinks).toEqual([]);
+    expect(built.problems).toHaveLength(3);
+    expect(built.problems[0]).toMatch(/audit\[1\]/);
+  });
+
+  it('buildConfiguredSinks builds file sinks at the exact target path', () => {
+    const root = repo();
+    const target = join(root, 'extra.jsonl');
+    const built = buildConfiguredSinks([
+      { sink: 'file', level: 'all', target },
+    ]);
+    expect(built.problems).toEqual([]);
+    setAuditSinks(built.sinks);
+    const dir = auditLedgerDir(root);
+    mkdirSync(dir, { recursive: true });
+    appendToLedger(dir, spawnInput());
+    expect(readAuditLedger(dir)).toHaveLength(1);
+    const lines = readFileSync(target, 'utf8').trim().split('\n');
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({
+      what: 'worker-spawn:worker-1',
+    });
+  });
+});
+
+// Audit-sink doctor checks (issue #286; §58): `kubic doctor` lists the
+// configured [[audit]] sinks with a reachability probe per sink, plus one
+// failing check per sink that recorded a runtime failure.
+describe('audit sink doctor checks (issue #286)', () => {
+  const probes = {
+    socketExists: (path: string): boolean => path === '/dev/log',
+    udpAvailable: (): boolean => true,
+  };
+
+  it('returns no checks without configured tables', () => {
+    expect(
+      auditSinksDoctorChecks({
+        tables: [],
+        problems: [],
+        snapshot: [],
+        probes,
+      }),
+    ).toEqual([]);
+  });
+
+  it('passes a reachable unix syslog sink, naming target and level', () => {
+    const checks = auditSinksDoctorChecks({
+      tables: [{ sink: 'syslog', level: 'privileged', target: '/dev/log' }],
+      problems: [],
+      snapshot: [],
+      probes,
+    });
+    expect(checks).toHaveLength(1);
+    expect(checks[0]).toMatchObject({
+      id: 'audit:sink:syslog-1',
+      status: 'pass',
+      reason: 'ok',
+    });
+    expect(checks[0]?.detail).toContain('/dev/log');
+    expect(checks[0]?.detail).toContain('privileged');
+  });
+
+  it('fails a missing unix socket with a named check', () => {
+    const checks = auditSinksDoctorChecks({
+      tables: [
+        { sink: 'syslog', level: 'all', target: '/nonexistent/syslog.sock' },
+      ],
+      problems: [],
+      snapshot: [],
+      probes,
+    });
+    expect(checks).toHaveLength(1);
+    expect(checks[0]).toMatchObject({
+      id: 'audit:sink:syslog-1',
+      status: 'fail',
+      reason: 'sink-unreachable',
+    });
+    expect(checks[0]?.detail).toContain('/nonexistent/syslog.sock');
+  });
+
+  it('fails a table that never built, naming the problem', () => {
+    const checks = auditSinksDoctorChecks({
+      tables: [
+        { sink: 'syslog', level: 'privileged', target: 'loghost:notaport' },
+      ],
+      problems: ['audit[1]: invalid syslog target "loghost:notaport"'],
+      snapshot: [],
+      probes,
+    });
+    expect(checks).toHaveLength(1);
+    expect(checks[0]).toMatchObject({ status: 'fail' });
+    expect(checks[0]?.detail).toContain('invalid syslog target');
+  });
+
+  it('fails a sink that recorded a runtime failure this process', () => {
+    const checks = auditSinksDoctorChecks({
+      tables: [{ sink: 'syslog', level: 'all' }],
+      problems: [],
+      snapshot: [
+        {
+          source: 'audit[1]',
+          kind: 'syslog',
+          name: 'syslog:local0',
+          level: 'all' as const,
+          failures: ['syslog down'],
+        },
+      ],
+      probes,
+    });
+    expect(checks).toHaveLength(1);
+    expect(checks[0]).toMatchObject({
+      status: 'fail',
+      reason: 'sink-unreachable',
+    });
+    expect(checks[0]?.detail).toContain('syslog down');
+  });
+
+  it('probes UDP availability, failing closed when dgram is down', () => {
+    const tables = [{ sink: 'syslog', level: 'privileged', target: 'loghost' }];
+    const pass = auditSinksDoctorChecks({
+      tables,
+      problems: [],
+      snapshot: [],
+      probes,
+    });
+    expect(pass[0]).toMatchObject({ status: 'pass' });
+    expect(pass[0]?.detail).toContain('loghost:514');
+    const fail = auditSinksDoctorChecks({
+      tables,
+      problems: [],
+      snapshot: [],
+      probes: { ...probes, udpAvailable: () => false },
+    });
+    expect(fail[0]).toMatchObject({
+      status: 'fail',
+      reason: 'sink-unreachable',
+    });
   });
 });
 

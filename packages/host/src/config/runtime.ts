@@ -295,7 +295,7 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
     kept: 'max_agents/max_cost_usd resolve into the effective policy but are NOT enforced: the orchestrator cap is a named follow-up (doctor does not report it yet)',
   },
   audit: {
-    kept: '[[audit]] sinks are parsed and validated; sink construction is a named follow-up, so the CLI cannot write to them yet',
+    kept: '[[audit]] sinks are parsed, validated and built: appendToLedger fans every §60 row out to the configured sinks plus the mandatory repo ledger (level = privileged keeps decisions and privileged actions only)',
   },
 };
 

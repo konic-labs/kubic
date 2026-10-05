@@ -8,6 +8,7 @@
 // nothing is imported from worker impl and nothing existing is modified.
 // Faux-only, zero network; no node:fs (sinks are injected).
 
+import { hostname } from 'node:os';
 import type { AuditSinkKind } from './enterprise.js';
 import {
   containsSecretShape,
@@ -117,6 +118,133 @@ export function createMemorySink(name = 'memory'): MemoryAuditSink {
     records,
     write: (record: OrgAuditRecord): void => {
       records.push(record);
+    },
+  };
+}
+
+// RFC 5424 facilities (issue #286; §58): names plus local0–local7 for the
+// enterprise collector. A `[[audit]] facility` that names none of these is
+// refused at sink construction, never silently mapped to a wrong facility.
+const SYSLOG_FACILITIES: Readonly<Record<string, number>> = {
+  kern: 0,
+  user: 1,
+  mail: 2,
+  daemon: 3,
+  auth: 4,
+  syslog: 5,
+  lpr: 6,
+  news: 7,
+  uucp: 8,
+  cron: 9,
+  authpriv: 10,
+  ftp: 11,
+  ntp: 12,
+  logaudit: 13,
+  logalert: 14,
+  cron2: 15,
+  local0: 16,
+  local1: 17,
+  local2: 18,
+  local3: 19,
+  local4: 20,
+  local5: 21,
+  local6: 22,
+  local7: 23,
+};
+
+export function resolveSyslogFacility(
+  facility: string | number | undefined,
+): number {
+  if (facility === undefined) return SYSLOG_FACILITIES.local0 ?? 16;
+  if (typeof facility === 'number') {
+    if (Number.isInteger(facility) && facility >= 0 && facility <= 23) {
+      return facility;
+    }
+    throw new AuditSinkError(`unknown syslog facility '${facility}'`);
+  }
+  const code = SYSLOG_FACILITIES[facility];
+  if (code === undefined) {
+    throw new AuditSinkError(`unknown syslog facility '${facility}'`);
+  }
+  return code;
+}
+
+export type SyslogTarget =
+  | { kind: 'unix'; path: string }
+  | { kind: 'udp'; host: string; port: number };
+
+// The platform's syslog socket (issue #286): `/var/run/syslog` on macOS,
+// `/dev/log` elsewhere. No import needed — `process.platform` is global.
+export function defaultSyslogSocketPath(): string {
+  return process.platform === 'darwin' ? '/var/run/syslog' : '/dev/log';
+}
+
+// A `[[audit]] target` for `sink = "syslog"`: a bare or `unix:`-prefixed
+// socket path (unix datagram), otherwise a `host[:port]` UDP destination
+// (port 514 when absent). Refused by name — a mistyped target must never
+// route the audit trail into the void.
+export function parseSyslogTarget(target: string | undefined): SyslogTarget {
+  if (target !== undefined && target.trim() === '') {
+    throw new AuditSinkError(`invalid syslog target ${JSON.stringify(target)}`);
+  }
+  if (target === undefined || target.startsWith('/')) {
+    return {
+      kind: 'unix',
+      path: target ?? defaultSyslogSocketPath(),
+    };
+  }
+  const rest = target.startsWith('unix:')
+    ? target.slice('unix:'.length)
+    : target;
+  if (rest.startsWith('/')) return { kind: 'unix', path: rest };
+  const match = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(target);
+  const host = match?.[1];
+  const portText = match?.[2];
+  if (host === undefined || host === '') {
+    throw new AuditSinkError(`invalid syslog target ${JSON.stringify(target)}`);
+  }
+  const port = portText === undefined ? 514 : Number(portText);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new AuditSinkError(`invalid syslog target ${JSON.stringify(target)}`);
+  }
+  return { kind: 'udp', host, port };
+}
+
+// The injectable syslog transport (issue #286): one RFC 5424 line per
+// call, synchronously (`appendAudit` refuses async sinks). Prod transports
+// (unix datagram, UDP) live in `syslog-transport.ts` — this module stays
+// socket-free so its tests never touch the network.
+export interface SyslogTransport {
+  send(line: string): void;
+}
+
+export interface SyslogSinkOptions {
+  transport: SyslogTransport;
+  facility?: string | number;
+  appName?: string;
+  hostname?: string;
+}
+
+// One record → one RFC 5424 line:
+// `<PRI>1 <record.when> <host> <app> <worker.pid> - - <record JSON>`.
+// The acting pid (not the sender's) rides the PID field so the line names
+// who acted; severity is info for `ok`, warning for `deny`/`error`. The
+// record arrives already redacted — redaction is the ledger's job, not the
+// wire's — so the MSG is the record JSON verbatim.
+export function createSyslogSink(options: SyslogSinkOptions): AuditSink {
+  const facility = resolveSyslogFacility(options.facility);
+  const appName = options.appName ?? 'kubic';
+  const host = options.hostname ?? hostname();
+  const name = `syslog:${options.facility ?? 'local0'}`;
+  return {
+    name,
+    kind: 'syslog',
+    write: (record: OrgAuditRecord): void => {
+      const severity = record.result === 'ok' ? 6 : 4;
+      const priority = facility * 8 + severity;
+      options.transport.send(
+        `<${priority}>1 ${record.when} ${host} ${appName} ${record.worker.pid} - - ${JSON.stringify(record)}`,
+      );
     },
   };
 }

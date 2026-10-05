@@ -1,3 +1,5 @@
+import { createSocket } from 'node:dgram';
+
 // Production wiring for the command dispatch (issue #135): one runner per
 // command in the if-chain, built from the same objects `main()` built
 // inline before the extraction. This module is the composition root's prod
@@ -95,6 +97,10 @@ import {
 } from '../../../packages/host/src/policy/audit-cli.js';
 import {
   auditLedgerDirFor,
+  auditSinkSnapshot,
+  auditSinksDoctorChecks,
+  buildConfiguredSinks,
+  isSyslogTargetAvailable,
   readAuditLedger,
   resolveRepoRuntimeRoot,
 } from '../../../packages/host/src/policy/audit-ledger.js';
@@ -253,6 +259,27 @@ function stderrTheme(): CliTheme {
 }
 
 const PLAIN = createCliTheme('none');
+
+// §58 audit-sink reachability probes (issue #286): the real platform — a
+// unix syslog socket must exist; UDP needs a creatable dgram socket
+// (connectionless, so delivery stays best-effort past this point).
+const auditProbes = {
+  socketExists: (path: string): boolean => {
+    try {
+      return createNodeFileBridge('/').exists(path);
+    } catch {
+      return false;
+    }
+  },
+  udpAvailable: (): boolean => {
+    try {
+      createSocket('udp4').close();
+      return true;
+    } catch {
+      return false;
+    }
+  },
+};
 
 // Report colours and table style for a migrated command, decided once from
 // the real stdout: colour only on a TTY that allows it (NO_COLOR,
@@ -975,19 +1002,39 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
           configured: {},
         }),
         // §58 enterprise policy (issue #289): the SAME effective resolution
-        // `kubic policy` reports, checked for enforceability. `syslogAvailable:
-        // false` is the honest value today: `[[audit]]` sinks are parsed and
-        // validated, but sink construction is a named follow-up
-        // (docs/cli/configuration.md), so a configured syslog sink cannot be
-        // written — the check fails closed instead of claiming an audit trail
-        // that does not exist. The probe is wired only for a configured
-        // `[policy]`, so the default matrix is unchanged.
+        // `kubic policy` reports, checked for enforceability. `syslogAvailable`
+        // is probed for real now (issue #286): every enterprise syslog target
+        // must be reachable, or the check fails closed instead of claiming
+        // an audit trail that does not exist. The probe is wired only for a
+        // configured `[policy]`, so the default matrix is unchanged.
         ...(enterprisePolicy === undefined || !policyConfigured
           ? {}
           : {
               enterpriseChecks: () =>
                 enterpriseDoctorChecks(enterprisePolicy, {
-                  syslogAvailable: false,
+                  syslogAvailable: enterprisePolicy.audit.sinks.every(
+                    (sink) =>
+                      sink.kind !== 'syslog' ||
+                      isSyslogTargetAvailable(sink.target, auditProbes),
+                  ),
+                }),
+            }),
+        // §58 configured `[[audit]]` sinks (issue #286): the SAME tables
+        // dispatch built this process's sinks from, probed for reachability
+        // plus the runtime failures recorded so far. Wired only when tables
+        // exist, so the default matrix is unchanged.
+        ...(cliConfig.runtime?.config.audit === undefined ||
+        cliConfig.runtime.config.audit.length === 0
+          ? {}
+          : {
+              probeAuditSinks: () =>
+                auditSinksDoctorChecks({
+                  tables: cliConfig.runtime?.config.audit ?? [],
+                  problems: buildConfiguredSinks(
+                    cliConfig.runtime?.config.audit ?? [],
+                  ).problems,
+                  snapshot: auditSinkSnapshot(),
+                  probes: auditProbes,
                 }),
             }),
         // First-party extensions (issues #80, #93): doctor reports the SAME

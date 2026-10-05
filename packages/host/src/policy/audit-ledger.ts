@@ -12,17 +12,27 @@
 
 import { basename, dirname, join, resolve } from 'node:path';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
+import type { AuditTableConfig } from '../config/config.js';
 import { matchableSecrets } from '../config/secrets.js';
 import type { OrchestratorApprovalRequest } from '../orchestrator/approvals/request.js';
 import type { OrchestratorVerdict } from '../orchestrator/approvals/routing.js';
 import {
   type AuditInput,
   type AuditSink,
+  createMemorySink,
+  createSyslogSink,
   emitAudit,
   type OrgAuditRecord,
+  parseSyslogTarget,
+  type SyslogTarget,
+  type SyslogTransport,
   toCredentialSentinel,
 } from './audit.js';
 import { redactSecretShapes } from './secret-shapes.js';
+import {
+  createUdpSyslogTransport,
+  createUnixSyslogTransport,
+} from './syslog-transport.js';
 
 export const AUDIT_LEDGER_FILE = 'audit.jsonl';
 
@@ -471,6 +481,318 @@ export const PRIVILEGED_ACTION_KINDS = [
 
 export type PrivilegedActionKind = (typeof PRIVILEGED_ACTION_KINDS)[number];
 
+// The `level = "privileged"` filter (issue #286; §58): a `[[audit]]` sink
+// at the privileged level keeps approval decisions (`tool:<name>`, solo and
+// orchestrator) and the seven privileged-action whats, and drops the rest
+// (`state:dropped`, `credential:<provider>`, `posture:approvals`). The repo
+// ledger always keeps everything — the level only gates configured sinks.
+export function isPrivilegedAuditWhat(what: string): boolean {
+  return (
+    what.startsWith('tool:') ||
+    what === 'posture:full-access' ||
+    what === 'undo-restore' ||
+    what.startsWith('merge:') ||
+    what.startsWith('worktree-create:') ||
+    what.startsWith('worktree-remove:') ||
+    what.startsWith('worker-spawn:') ||
+    what.startsWith('worker-terminate:')
+  );
+}
+
+export type AuditSinkLevel = 'privileged' | 'all';
+
+export interface ConfiguredAuditSink {
+  sink: AuditSink;
+  level: AuditSinkLevel;
+  // The `[[audit]]` table this sink was built from (`audit[1]`), naming
+  // the source in sink-failure notes and the doctor report.
+  source: string;
+  failures: string[];
+  stderrNoted: boolean;
+}
+
+// The process's configured `[[audit]]` sinks (issue #286): empty means the
+// repo ledger only (current behavior). The composition root sets them once
+// per process from the loaded config; tests reset with `setAuditSinks([])`.
+let configuredAuditSinks: ConfiguredAuditSink[] = [];
+
+export function setAuditSinks(sinks: ConfiguredAuditSink[]): void {
+  configuredAuditSinks = [...sinks];
+}
+
+// A read-only snapshot for the doctor probe: the configured sources and
+// the failures they recorded this process.
+export function auditSinkSnapshot(): ReadonlyArray<{
+  source: string;
+  kind: string;
+  name: string;
+  level: AuditSinkLevel;
+  failures: readonly string[];
+}> {
+  return configuredAuditSinks.map((entry) => ({
+    source: entry.source,
+    kind: entry.sink.kind,
+    name: entry.sink.name,
+    level: entry.level,
+    failures: [...entry.failures],
+  }));
+}
+
+export interface BuiltAuditSinks {
+  sinks: ConfiguredAuditSink[];
+  // Invalid tables are never built and never throw here: each problem names
+  // its table, so `kubic doctor` can report it instead of the process
+  // dying before doctor runs.
+  problems: string[];
+}
+
+// Build the process's configured sinks from parsed `[[audit]]` tables
+// (issue #286). `syslogTransport` injects the syslog wire for tests — prod
+// builds real transports from the target (unix socket path, defaulting per
+// platform, or `host[:port]` UDP defaulting to 514).
+export function buildConfiguredSinks(
+  tables: readonly AuditTableConfig[],
+  overrides: { syslogTransport?: SyslogTransport } = {},
+): BuiltAuditSinks {
+  const sinks: ConfiguredAuditSink[] = [];
+  const problems: string[] = [];
+  tables.forEach((table, index) => {
+    const source = `audit[${index + 1}]`;
+    const level = table.level;
+    if (level !== 'privileged' && level !== 'all') {
+      problems.push(`${source}: invalid level ${JSON.stringify(level)}`);
+      return;
+    }
+    if (table.sink === 'syslog') {
+      let target: SyslogTarget;
+      try {
+        target = parseSyslogTarget(table.target);
+      } catch (error) {
+        problems.push(`${source}: ${probeMessage(error)}`);
+        return;
+      }
+      let transport = overrides.syslogTransport;
+      if (transport === undefined) {
+        transport =
+          target.kind === 'unix'
+            ? createUnixSyslogTransport(target.path)
+            : createUdpSyslogTransport(target.host, target.port);
+      }
+      let sink: AuditSink;
+      try {
+        sink = createSyslogSink({
+          transport,
+          facility: table.facility,
+        });
+      } catch (error) {
+        problems.push(`${source}: ${probeMessage(error)}`);
+        return;
+      }
+      sinks.push({ sink, level, source, failures: [], stderrNoted: false });
+      return;
+    }
+    if (table.sink === 'file') {
+      if (table.target === undefined || table.target === '') {
+        problems.push(`${source}: sink "file" needs a target path`);
+        return;
+      }
+      sinks.push({
+        sink: createTargetFileSink(table.target),
+        level,
+        source,
+        failures: [],
+        stderrNoted: false,
+      });
+      return;
+    }
+    if (table.sink === 'memory') {
+      if (table.target !== undefined) {
+        problems.push(
+          `${source}: sink "memory" takes no target (got ${JSON.stringify(table.target)})`,
+        );
+        return;
+      }
+      sinks.push({
+        sink: createMemorySink(source),
+        level,
+        source,
+        failures: [],
+        stderrNoted: false,
+      });
+      return;
+    }
+    problems.push(`${source}: unknown sink kind ${JSON.stringify(table.sink)}`);
+  });
+  return { sinks, problems };
+}
+
+// A `[[audit]] file` sink (issue #286): one validated record per line at
+// the EXACT target path (unlike the repo ledger, which owns its filename).
+// Fail-open dirs like the repo ledger: the parent is created when missing.
+function createTargetFileSink(target: string): AuditSink {
+  const bridge = createNodeFileBridge(dirname(target));
+  const file = basename(target);
+  return {
+    name: `file:${target}`,
+    kind: 'file',
+    write: (record: OrgAuditRecord): void => {
+      if (!bridge.exists('.')) bridge.createDir('.', true);
+      bridge.appendFile(file, `${JSON.stringify(record)}\n`);
+    },
+  };
+}
+
+function probeMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export interface AuditSinkProbes {
+  socketExists(path: string): boolean;
+  udpAvailable(): boolean;
+}
+
+// One syslog target's reachability (issue #286): unix sockets must exist,
+// UDP needs a creatable socket (connectionless — delivery stays
+// best-effort). Garbage targets fail closed.
+export function isSyslogTargetAvailable(
+  target: string | undefined,
+  probes: AuditSinkProbes,
+): boolean {
+  let parsed: SyslogTarget;
+  try {
+    parsed = parseSyslogTarget(target);
+  } catch {
+    return false;
+  }
+  if (parsed.kind === 'unix') return probes.socketExists(parsed.path);
+  return probes.udpAvailable();
+}
+
+export interface AuditSinkDoctorInput {
+  tables: readonly AuditTableConfig[];
+  problems: readonly string[];
+  snapshot: ReturnType<typeof auditSinkSnapshot>;
+  probes: AuditSinkProbes;
+}
+
+// The `[[audit]]` doctor report (issue #286; §58): one check per configured
+// table — reachable sinks pass naming target and level, missing sockets
+// and unbuilt tables fail — plus the runtime failures the process recorded
+// (`audit:sink:<kind>`). No tables means no checks, so the default matrix
+// is unchanged.
+export function auditSinksDoctorChecks(
+  input: AuditSinkDoctorInput,
+): import('../doctor.js').DoctorCheck[] {
+  const { tables, problems, snapshot, probes } = input;
+  const failuresBySource = new Map<string, readonly string[]>();
+  for (const entry of snapshot) {
+    if (entry.failures.length > 0) {
+      failuresBySource.set(entry.source, entry.failures);
+    }
+  }
+  return tables.map((table, index) => {
+    const source = `audit[${index + 1}]`;
+    const id = `audit:sink:${table.sink}-${index + 1}`;
+    const label = `audit sink ${table.sink}`;
+    const level = table.level ?? 'privileged';
+    const problem = problems.find((entry) => entry.startsWith(`${source}:`));
+    if (problem !== undefined) {
+      return {
+        id,
+        label,
+        status: 'fail' as const,
+        reason: 'sink-unreachable' as const,
+        detail: `${source} not built: ${problem.slice(source.length + 2)}`,
+      };
+    }
+    const failures = failuresBySource.get(source);
+    if (failures !== undefined) {
+      return {
+        id,
+        label,
+        status: 'fail' as const,
+        reason: 'sink-unreachable' as const,
+        detail: `${source} recorded ${failures.length} failure(s) this process: ${failures[failures.length - 1]}`,
+      };
+    }
+    if (table.sink === 'syslog') {
+      let target: SyslogTarget;
+      try {
+        target = parseSyslogTarget(table.target);
+      } catch (error) {
+        return {
+          id,
+          label,
+          status: 'fail' as const,
+          reason: 'sink-unreachable' as const,
+          detail: `${source}: ${probeMessage(error)}`,
+        };
+      }
+      if (target.kind === 'unix') {
+        if (!probes.socketExists(target.path)) {
+          return {
+            id,
+            label,
+            status: 'fail' as const,
+            reason: 'sink-unreachable' as const,
+            detail: `${source} syslog socket missing: ${target.path} (${level})`,
+          };
+        }
+        return {
+          id,
+          label,
+          status: 'pass' as const,
+          reason: 'ok' as const,
+          detail: `${source} syslog unix:${target.path} (${level})`,
+        };
+      }
+      if (!probes.udpAvailable()) {
+        return {
+          id,
+          label,
+          status: 'fail' as const,
+          reason: 'sink-unreachable' as const,
+          detail: `${source} syslog UDP unavailable for ${target.host}:${target.port} (${level})`,
+        };
+      }
+      return {
+        id,
+        label,
+        status: 'pass' as const,
+        reason: 'ok' as const,
+        // UDP is connectionless: reachable means routable here, delivery
+        // stays best-effort by protocol design.
+        detail: `${source} syslog udp:${target.host}:${target.port} (${level}; delivery best-effort)`,
+      };
+    }
+    if (table.sink === 'file') {
+      return {
+        id,
+        label,
+        status: 'pass' as const,
+        reason: 'ok' as const,
+        detail: `${source} file appends ${table.target} (${level})`,
+      };
+    }
+    if (table.sink === 'memory') {
+      return {
+        id,
+        label,
+        status: 'pass' as const,
+        reason: 'ok' as const,
+        detail: `${source} memory sink, process-scoped (${level})`,
+      };
+    }
+    return {
+      id,
+      label,
+      status: 'fail' as const,
+      reason: 'sink-unreachable' as const,
+      detail: `${source}: unknown sink kind ${JSON.stringify(table.sink)}`,
+    };
+  });
+}
+
 // §60 record for a worker spawn (issue #284): the manager's act of starting
 // a worker child. pid/generation come from the live registry row at launch
 // (0/unknown where the row is absent — the honest fallback, never a guess).
@@ -804,7 +1126,36 @@ export function appendToLedger(
     // dummy key (`gw`, `ollama` for provider `ollama`) is a word the record
     // legitimately carries, and refusing over it silently dropped the
     // credential-use row (issue #359).
-    return emitAudit([createLedgerSink(dir)], redactInput(input), {
+    // Configured `[[audit]]` sinks (issue #286) fan out beside the repo
+    // ledger, which always leads and is mandatory: the `what` is checked
+    // pre-redaction (a redacted `what` would never match the level filter).
+    // A configured sink's failure is recorded on its entry and noted on
+    // `onError` ONCE per process per sink — then swallowed, so a dead
+    // syslog never blocks the repo write (or the action). A repo-ledger
+    // failure still throws below and reaches `onError` every time.
+    const privileged = isPrivilegedAuditWhat(input.what);
+    const sinks: AuditSink[] = [createLedgerSink(dir)];
+    for (const entry of configuredAuditSinks) {
+      if (entry.level === 'privileged' && !privileged) continue;
+      const configured = entry.sink;
+      sinks.push({
+        name: configured.name,
+        kind: configured.kind,
+        write: (record: OrgAuditRecord): void => {
+          try {
+            configured.write(record);
+          } catch (error) {
+            const message = probeMessage(error);
+            entry.failures.push(message);
+            if (!entry.stderrNoted) {
+              entry.stderrNoted = true;
+              onError(`audit sink '${entry.source}' failed: ${message}`);
+            }
+          }
+        },
+      });
+    }
+    return emitAudit(sinks, redactInput(input), {
       secrets: matchableSecrets(secrets),
     });
   } catch (error) {

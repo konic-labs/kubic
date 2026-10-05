@@ -184,7 +184,7 @@ export interface PolicyConfig {
   agentPolicy?: PolicyAgentConfig;
 }
 
-// §58 `[[audit]]` (parsed here; sink construction is a named follow-up).
+// §58 `[[audit]]` (parsed here; built in policy/audit-ledger.ts).
 export interface AuditTableConfig {
   sink: string;
   level?: string;

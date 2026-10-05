@@ -1352,6 +1352,9 @@ describe('settings skills from config (issue #237, §29.2)', () => {
     expect(row?.layer).toBe('global');
     expect(row?.value).toContain(shared);
     expect(row?.disposition).toBe('consumed');
+  });
+});
+
 describe('cli thinking layer (issue #225)', () => {
   function homeWithThinking(thinking: string): { home: string; cwd: string } {
     const home = tmp('cli-thinking-home-');

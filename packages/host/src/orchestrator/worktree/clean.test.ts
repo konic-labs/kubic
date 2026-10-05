@@ -87,9 +87,29 @@ function repoScripts(
       stderr: '',
     },
     'git worktree prune': { exitCode: 0, stdout: '', stderr: '' },
+    // Issue #146: the delete default is safe (`-d`); only --force uses -D.
+    // The probe reports every fixture branch merged unless a test overrides.
+    'git branch -d kubic/agent-1': { exitCode: 0, stdout: '', stderr: '' },
+    'git branch -d kubic/agent-2': { exitCode: 0, stdout: '', stderr: '' },
+    'git branch -d kubic/agent-3': { exitCode: 0, stdout: '', stderr: '' },
     'git branch -D kubic/agent-1': { exitCode: 0, stdout: '', stderr: '' },
     'git branch -D kubic/agent-2': { exitCode: 0, stdout: '', stderr: '' },
     'git branch -D kubic/agent-3': { exitCode: 0, stdout: '', stderr: '' },
+    'git -C /repo merge-base --is-ancestor kubic/agent-1 HEAD': {
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    },
+    'git -C /repo merge-base --is-ancestor kubic/agent-2 HEAD': {
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    },
+    'git -C /repo merge-base --is-ancestor kubic/agent-3 HEAD': {
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    },
     'git worktree remove /repo/.kubic/wt/agent-1': {
       exitCode: 0,
       stdout: '',
@@ -139,12 +159,16 @@ describe('kubic clean (issue #45, #92)', () => {
     expect(text).toMatch(/would remove worktree \/repo\/\.kubic\/wt\/agent-3/);
     expect(text).toMatch(/would delete branch kubic\/agent-1/);
     expect(text).toContain('nothing changed');
-    // A dry run plans only: resolve, list, branch list — no remover,
-    // no branch delete, no prune.
+    // A dry run plans only: resolve, list, branch list, one read-only
+    // merge probe per branch (issue #146) — no remover, no branch delete,
+    // no prune.
     expect(argvOf(env)).toEqual([
       'git rev-parse --show-toplevel',
       'git worktree list --porcelain',
       'git branch --list kubic/* --format=%(refname:short)',
+      'git -C /repo merge-base --is-ancestor kubic/agent-1 HEAD',
+      'git -C /repo merge-base --is-ancestor kubic/agent-2 HEAD',
+      'git -C /repo merge-base --is-ancestor kubic/agent-3 HEAD',
     ]);
   });
 
@@ -185,18 +209,23 @@ describe('kubic clean (issue #45, #92)', () => {
       'kubic/agent-3',
     ]);
     expect(parsed.journal.entries).toBe(4);
-    // Full disposal order, pinned: each worktree is removed before its
-    // branch is deleted (never half-disposed), prune runs last.
+    // Full disposal order, pinned: each branch is merge-probed before its
+    // worktree is removed before its branch is deleted (never
+    // half-disposed), prune runs last. The delete default is safe `-d`
+    // (issue #146); only --force escalates to -D.
     expect(argvOf(env)).toEqual([
       'git rev-parse --show-toplevel',
       'git worktree list --porcelain',
       'git branch --list kubic/* --format=%(refname:short)',
+      'git -C /repo merge-base --is-ancestor kubic/agent-1 HEAD',
       'git worktree remove /repo/.kubic/wt/agent-1',
-      'git branch -D kubic/agent-1',
+      'git branch -d kubic/agent-1',
+      'git -C /repo merge-base --is-ancestor kubic/agent-2 HEAD',
       'git worktree remove /repo/.kubic/wt/agent-2',
-      'git branch -D kubic/agent-2',
+      'git branch -d kubic/agent-2',
+      'git -C /repo merge-base --is-ancestor kubic/agent-3 HEAD',
       'git worktree remove /repo/.kubic/wt/agent-3',
-      'git branch -D kubic/agent-3',
+      'git branch -d kubic/agent-3',
       'git worktree prune',
     ]);
   });
@@ -359,7 +388,16 @@ describe('kubic clean (issue #45, #92)', () => {
   });
 
   it('plans a custom-root worktree from the deps root, not the argv (issue #133)', async () => {
-    const env = new FakeExecutionEnv(repoScripts(), { strict: true });
+    const env = new FakeExecutionEnv(
+      repoScripts({
+        'git -C /repo merge-base --is-ancestor kubic/agent-7 HEAD': {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+      }),
+      { strict: true },
+    );
     const lines: string[] = [];
     const errs: string[] = [];
     const removed: string[] = [];
@@ -542,6 +580,148 @@ describe('kubic clean (issue #45, #92)', () => {
     // Never half-disposed: no branch delete for the worktree that survived.
     expect(text).not.toContain('deleted branch kubic/agent-1');
     expect(text).toContain('deleted branch kubic/agent-2');
+  });
+});
+
+describe('kubic clean keeps unmerged branches without --force (issue #146)', () => {
+  // RED first: the merge probe does not exist yet, so the strict fake
+  // throws on the merge-base argv and plain clean deletes the branch —
+  // every assertion below fails until the probe and the `-d` default land.
+  const MERGED = {
+    'git -C /repo merge-base --is-ancestor kubic/agent-1 HEAD': {
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    },
+    'git -C /repo merge-base --is-ancestor kubic/agent-2 HEAD': {
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    },
+    'git -C /repo merge-base --is-ancestor kubic/agent-3 HEAD': {
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    },
+  };
+  const UNMERGED_AGENT_1 = {
+    ...MERGED,
+    'git -C /repo merge-base --is-ancestor kubic/agent-1 HEAD': {
+      exitCode: 1,
+      stdout: '',
+      stderr: '',
+    },
+  };
+
+  it('dry-run marks an unmerged branch would-refuse and removes nothing', async () => {
+    const env = new FakeExecutionEnv(repoScripts(UNMERGED_AGENT_1), {
+      strict: true,
+    });
+    const lines: string[] = [];
+    const removed: string[] = [];
+    const code = await runCleanCommand(
+      { dryRun: true },
+      {
+        env,
+        out: (line: string) => lines.push(line),
+        err: () => {},
+        remover: async (_e: unknown, path: string) => {
+          removed.push(path);
+        },
+      },
+    );
+    expect(code).toBe(0);
+    const text = lines.join('\n');
+    expect(text).toMatch(/would refuse: unmerged branch kubic\/agent-1/);
+    expect(text).not.toContain('would remove worktree /repo/.kubic/wt/agent-1');
+    expect(text).toContain('would remove worktree /repo/.kubic/wt/agent-2');
+    expect(removed).toEqual([]);
+  });
+
+  it('plain clean skips the unmerged worktree and branch, exits 1', async () => {
+    const env = new FakeExecutionEnv(repoScripts(UNMERGED_AGENT_1), {
+      strict: true,
+    });
+    const lines: string[] = [];
+    const errs: string[] = [];
+    const code = await runCleanCommand(
+      {},
+      {
+        env,
+        out: (line: string) => lines.push(line),
+        err: (line: string) => errs.push(line),
+      },
+    );
+    expect(code).toBe(1);
+    expect(errs.join('\n')).toMatch(/unmerged branch kubic\/agent-1.*--force/);
+    const text = lines.join('\n');
+    expect(text).not.toContain('removed worktree /repo/.kubic/wt/agent-1');
+    expect(text).not.toContain('deleted branch kubic/agent-1');
+    expect(text).toContain('deleted branch kubic/agent-2');
+  });
+
+  it('--force deletes the unmerged worktree and branch', async () => {
+    const env = new FakeExecutionEnv(
+      repoScripts({
+        ...UNMERGED_AGENT_1,
+        'git worktree remove /repo/.kubic/wt/agent-1 --force': {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+        'git worktree remove /repo/.kubic/wt/agent-2 --force': {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+        'git worktree remove /repo/.kubic/wt/agent-3 --force': {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+      }),
+      { strict: true },
+    );
+    const lines: string[] = [];
+    const code = await runCleanCommand(
+      { force: true },
+      {
+        env,
+        out: (line: string) => lines.push(line),
+        err: () => {},
+      },
+    );
+    expect(code).toBe(0);
+    const text = lines.join('\n');
+    expect(text).toContain('removed worktree /repo/.kubic/wt/agent-1');
+    expect(text).toContain('deleted branch kubic/agent-1');
+  });
+
+  it('--json names the refused branch in failures', async () => {
+    const env = new FakeExecutionEnv(repoScripts(UNMERGED_AGENT_1), {
+      strict: true,
+    });
+    const lines: string[] = [];
+    const code = await runCleanCommand(
+      { json: true },
+      {
+        env,
+        out: (line: string) => lines.push(line),
+        err: () => {},
+      },
+    );
+    expect(code).toBe(1);
+    const doc = JSON.parse(lines.join('')) as {
+      ok: boolean;
+      exitCode: number;
+      failures: { target: string; message: string }[];
+    };
+    expect(doc.ok).toBe(false);
+    expect(doc.exitCode).toBe(1);
+    expect(doc.failures).toContainEqual({
+      target: 'kubic/agent-1',
+      message: expect.stringContaining('--force') as unknown as string,
+    });
   });
 });
 

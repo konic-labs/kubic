@@ -70,6 +70,7 @@ import {
 } from './naming.js';
 import {
   deleteSpawnedBranch,
+  isBranchMerged,
   pruneWorktrees,
   removeWorktree,
 } from './remove.js';
@@ -565,6 +566,41 @@ export async function runCleanCommand(
 
   const planEmpty = plan.worktrees.length === 0 && plan.branches.length === 0;
 
+  // An unmerged spawned branch keeps its worktree too (issue #146): the
+  // probe runs before any removal, so a plain clean never half-disposes.
+  // Under --force there is nothing to probe — the delete escalates to -D.
+  // Defined ahead of the dry-run block, which reports the same refusal.
+  // One probe per branch per run: the dry-run lists attached branches twice
+  // (worktree row plus branch row), and a repeated `git merge-base` would
+  // be pure waste.
+  const probeCache = new Map<
+    string,
+    { target: string; message: string } | undefined
+  >();
+  const refuseUnmerged = async (
+    branch: string,
+    worktree: string | null,
+  ): Promise<{ target: string; message: string } | undefined> => {
+    if (options.force === true) return undefined;
+    if (probeCache.has(branch)) return probeCache.get(branch);
+    let refusal: { target: string; message: string } | undefined;
+    try {
+      if (!(await isBranchMerged(deps.env, repoRoot, branch))) {
+        refusal = {
+          target: branch,
+          message:
+            `refusing to delete unmerged branch ${branch}` +
+            (worktree === null ? '' : ` (worktree ${worktree} kept)`) +
+            ' — rerun with --force',
+        };
+      }
+    } catch (error) {
+      refusal = { target: branch, message: messageOf(error) };
+    }
+    probeCache.set(branch, refusal);
+    return refusal;
+  };
+
   if (options.dryRun === true) {
     // A session-scoped clean retires the session's state (and its approvals
     // directory) once nothing of it is left standing.
@@ -588,10 +624,31 @@ export async function runCleanCommand(
       deps.out(theme.muted('clean: nothing to prune'));
       return CLEAN_EXIT_OK;
     }
+    // Issue #146: an unmerged branch is reported, not planned (dry-run
+    // JSON still lists the plan; the text view marks each refusal).
+    const refused = new Set<string>();
     for (const item of plan.worktrees) {
+      if (item.branch !== null) {
+        const refusal = await refuseUnmerged(item.branch, item.path);
+        if (refusal !== undefined) {
+          refused.add(item.branch);
+          deps.out(
+            `${theme.warning('would refuse:')} unmerged branch ${item.branch} (rerun with --force)`,
+          );
+          continue;
+        }
+      }
       deps.out(`${theme.warning('would remove')} worktree ${item.path}`);
     }
     for (const branch of plan.branches) {
+      if (refused.has(branch)) continue;
+      const refusal = await refuseUnmerged(branch, null);
+      if (refusal !== undefined) {
+        deps.out(
+          `${theme.warning('would refuse:')} unmerged branch ${branch} (rerun with --force)`,
+        );
+        continue;
+      }
       deps.out(`${theme.warning('would delete')} branch ${branch}`);
     }
     if (wouldRetire && options.sessionId !== undefined) {
@@ -620,7 +677,10 @@ export async function runCleanCommand(
   const branchDeleter =
     deps.branchDeleter ??
     ((env, branch) =>
-      deleteSpawnedBranch(env, branch, { sessionId: options.sessionId }));
+      deleteSpawnedBranch(env, branch, {
+        sessionId: options.sessionId,
+        force: options.force === true,
+      }));
   const pruner =
     deps.pruner ??
     ((env) => pruneWorktrees(env, { sessionId: options.sessionId }));
@@ -666,6 +726,15 @@ export async function runCleanCommand(
       });
       continue;
     }
+    // Issue #146: probe merge state before touching the checkout — an
+    // unmerged branch keeps its worktree (a probe failure refuses too).
+    if (item.branch !== null) {
+      const refusal = await refuseUnmerged(item.branch, item.path);
+      if (refusal !== undefined) {
+        failures.push(refusal);
+        continue;
+      }
+    }
     try {
       await remover(deps.env, item.path, { force: options.force === true });
       removed.push(item);
@@ -689,6 +758,12 @@ export async function runCleanCommand(
   const covered = new Set(plan.worktrees.map((item) => item.branch));
   for (const branch of plan.branches) {
     if (covered.has(branch)) continue;
+    // Issue #146: a branch-only unmerged branch is refused, not deleted.
+    const refusal = await refuseUnmerged(branch, null);
+    if (refusal !== undefined) {
+      failures.push(refusal);
+      continue;
+    }
     try {
       await branchDeleter(deps.env, branch);
       deleted.push(branch);

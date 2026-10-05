@@ -672,3 +672,89 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     expect(kubicBranches(root)).toEqual([]);
   });
 });
+
+// Committed-but-unmerged worker work (issue #146): a merge_conflict or
+// approval_denied run commits onto `kubic/<agent>` and retains it as
+// evidence — plain `kubic clean` must not `branch -D` that evidence away.
+// RED first: the probe, the refusal and the `-d` default do not exist yet,
+// so plain clean deletes the branch and every assertion below fails.
+function commitInWorktree(wt: string, file: string, content: string): void {
+  writeFileSync(join(wt, file), content);
+  git(wt, ['add', file]);
+  git(wt, [
+    '-c',
+    'user.email=kubic-test@local',
+    '-c',
+    'user.name=kubic test',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-q',
+    '-m',
+    file,
+  ]);
+}
+
+describe('unmerged branches survive plain clean (issue #146)', () => {
+  it('plain clean refuses an unmerged branch and keeps the worktree', async () => {
+    const root = scratchRepo();
+    const retained = retainWorktree(root, 'worker-1');
+    commitInWorktree(retained, 'work.txt', 'unmerged work\n');
+    const listedBefore = worktreeList(root);
+
+    const { code, errs } = await clean(root, {});
+
+    expect(code).toBe(1);
+    expect(errs.join('\n')).toMatch(/unmerged branch kubic\/worker-1.*--force/);
+    expect(kubicBranches(root)).toEqual(['kubic/worker-1']);
+    expect(worktreeList(root)).toBe(listedBefore);
+    expect(existsSync(join(retained, 'work.txt'))).toBe(true);
+  });
+
+  it('--force deletes the unmerged worktree and branch', async () => {
+    const root = scratchRepo();
+    const retained = retainWorktree(root, 'worker-1');
+    commitInWorktree(retained, 'work.txt', 'unmerged work\n');
+
+    const { code, lines } = await clean(root, { force: true });
+
+    expect(code).toBe(0);
+    expect(lines).toContain(`removed worktree ${retained}`);
+    expect(lines).toContain('deleted branch kubic/worker-1');
+    expect(existsSync(retained)).toBe(false);
+    expect(kubicBranches(root)).toEqual([]);
+  });
+
+  it('plain clean still deletes a merged branch', async () => {
+    const root = scratchRepo();
+    const retained = retainWorktree(root, 'worker-1');
+    commitInWorktree(retained, 'work.txt', 'merged work\n');
+    git(root, ['merge', '--ff-only', 'kubic/worker-1']);
+
+    const { code, lines } = await clean(root, {});
+
+    expect(code).toBe(0);
+    expect(lines).toContain(`removed worktree ${retained}`);
+    expect(lines).toContain('deleted branch kubic/worker-1');
+    expect(existsSync(retained)).toBe(false);
+    expect(kubicBranches(root)).toEqual([]);
+  });
+
+  it('refuses a branch-only unmerged branch without --force', async () => {
+    const root = scratchRepo();
+    const retained = retainWorktree(root, 'worker-1');
+    commitInWorktree(retained, 'work.txt', 'unmerged work\n');
+    git(root, ['worktree', 'remove', '--force', retained]);
+    expect(kubicBranches(root)).toEqual(['kubic/worker-1']);
+
+    const { code, errs } = await clean(root, {});
+
+    expect(code).toBe(1);
+    expect(errs.join('\n')).toMatch(/unmerged branch kubic\/worker-1.*--force/);
+    expect(kubicBranches(root)).toEqual(['kubic/worker-1']);
+
+    const forced = await clean(root, { force: true });
+    expect(forced.code).toBe(0);
+    expect(kubicBranches(root)).toEqual([]);
+  });
+});

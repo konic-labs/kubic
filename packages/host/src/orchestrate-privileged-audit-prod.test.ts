@@ -36,8 +36,16 @@ afterEach(() => {
   }
 });
 
+// Hermetic git env (issue #284 review — same as the sibling #282 test):
+// machine-global config (hooks, signing) must not flake the fixture.
+const GIT_ENV = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_NOSYSTEM: '1',
+};
+
 function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' });
+  return execFileSync('git', args, { cwd, encoding: 'utf8', env: GIT_ENV });
 }
 
 describe('privileged-action audit rows on the prod path (issue #284)', () => {

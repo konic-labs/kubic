@@ -14,6 +14,7 @@ import {
   auditLedgerDir,
   auditLedgerDirFor,
   credentialUseAudit,
+  fullAccessEnabledAudit,
   mergeDecisionAudit,
   orchestratorDecisionAudit,
   PRIVILEGED_ACTION_KINDS,
@@ -631,5 +632,111 @@ describe('§60 audit ledger', () => {
     expect(code).toBe(0);
     const parsed = JSON.parse(lines.join('\n')) as unknown[];
     expect(parsed).toHaveLength(1);
+  });
+});
+
+// The closed privileged-action set (issue #284 review): every kind in
+// PRIVILEGED_ACTION_KINDS maps to a builder whose `what` carries the kind —
+// a kind without coverage, or coverage without a kind, fails here. The two
+// pre-union kinds keep their shipped shapes (`posture:full-access`,
+// `merge:<branch>`); the five #284 builders write `<kind>:<identity>`.
+describe('privileged-action kinds map to whats (issue #284)', () => {
+  const sessionId = 'sess-kinds';
+  const spawn = {
+    sessionId,
+    agentId: 'worker-1',
+    role: 'implementer',
+    worktree: '/repo/.kubic/wt/worker-1',
+    generation: 0,
+    posture: 'restricted',
+  };
+
+  it.each([
+    ['full-access-grant', 'posture:full-access'],
+    ['merge', 'merge:kubic/worker-1'],
+    ['worktree-create', 'worktree-create:kubic/worker-1'],
+    ['worktree-remove', 'worktree-remove:kubic/worker-1'],
+    ['worker-spawn', 'worker-spawn:worker-1'],
+    ['worker-terminate', 'worker-terminate:worker-1'],
+    ['undo-restore', 'undo-restore'],
+  ] as const)('kind %s writes what %s', (kind, what) => {
+    expect(PRIVILEGED_ACTION_KINDS).toContain(kind);
+    switch (kind) {
+      case 'full-access-grant':
+        expect(
+          fullAccessEnabledAudit({
+            sessionId,
+            command: 'kubic run',
+            workspace: '/repo',
+            mode: 'solo',
+          }).what,
+        ).toBe(what);
+        break;
+      case 'merge':
+        expect(
+          mergeDecisionAudit({
+            sessionId,
+            agentId: 'worker-1',
+            branch: 'kubic/worker-1',
+            workspace: '/repo',
+            approved: true,
+            by: 'user',
+            posture: 'approvals',
+          }).what,
+        ).toBe(what);
+        break;
+      case 'worktree-create':
+        expect(
+          worktreeCreateAudit({
+            sessionId,
+            agentId: 'worker-1',
+            path: '/repo/.kubic/wt/worker-1',
+            branch: 'kubic/worker-1',
+            posture: 'approvals',
+          }).what,
+        ).toBe(what);
+        break;
+      case 'worktree-remove':
+        expect(
+          worktreeRemoveAudit({
+            sessionId,
+            path: '/repo/.kubic/wt/worker-1',
+            branch: 'kubic/worker-1',
+          }).what,
+        ).toBe(what);
+        break;
+      case 'worker-spawn':
+        expect(workerSpawnAudit(spawn).what).toBe(what);
+        break;
+      case 'worker-terminate':
+        expect(
+          workerTerminateAudit({ ...spawn, reason: 'ok', result: 'ok' }).what,
+        ).toBe(what);
+        break;
+      case 'undo-restore':
+        expect(
+          undoRestoreAudit({
+            sessionId,
+            workspace: '/repo',
+            restored: ['a.txt'],
+            skipped: 0,
+          }).what,
+        ).toBe(what);
+        break;
+    }
+  });
+
+  it('the set is closed: no more and no fewer than the seven kinds', () => {
+    expect([...PRIVILEGED_ACTION_KINDS].sort()).toEqual(
+      [
+        'full-access-grant',
+        'merge',
+        'undo-restore',
+        'worker-spawn',
+        'worker-terminate',
+        'worktree-create',
+        'worktree-remove',
+      ].sort(),
+    );
   });
 });

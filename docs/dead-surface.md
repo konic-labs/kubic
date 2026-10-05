@@ -215,4 +215,15 @@ non-test caller nor a row below (issue #359).
 | `useScopedToken` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 broker, not implemented (design drift item 22) |
 | `substituteTokenHost` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 host substitution, not implemented (design drift item 22) |
 | `revokeAllTokens` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 settle/exit revocation, not implemented (design drift item 22) |
+| `emptyFileOps` | `packages/worker/src/compaction.ts` | #34 | keep: §27 structured-summary/file-ops vocabulary; the spill path is not implemented |
+| `accumulateFileOps` | `packages/worker/src/compaction.ts` | #34 | keep: §27 structured-summary/file-ops vocabulary; the spill path is not implemented |
+| `formatStructuredSummary` | `packages/worker/src/compaction.ts` | #34 | keep: §27 structured-summary vocabulary; summaries are not rendered anywhere yet |
+| `resolveTruncatedOutput` | `packages/worker/src/compaction.ts` | #34 | keep: spill-path resolver; the spill path is not implemented |
+| `buildSpillArtifact` | `packages/worker/src/compaction.ts` | #34 | keep: spill artifact constructor; spill artifacts are not implemented |
+| `passThroughOutput` | `packages/worker/src/compaction.ts` | #34 | keep: no-truncation guarantee for the spill path; the spill path is not implemented |
+| `assertSingleModelId` | `packages/worker/src/prompts.ts` | #215 | wire: single-model-per-turn guard; no per-turn re-selection site exists yet to gate |
+| `SessionCacheStats` | `packages/worker/src/prompts.ts` | #215 | keep: cache hit/miss observability vocabulary; no status surface reads it yet (TUI footer / cost) |
+| `buildCompactionRoute` | `packages/worker/src/prompts.ts` | #215 | keep: Rule 7 fresh-routing-id guard; no routing-id compaction site exists yet |
+| `compositionOrder` | `packages/worker/src/lane/wrap.ts` | #215 | keep: extension wrap-order formatter; the boot order is fixed, nothing formats it yet |
+| `settleSubmission` | `packages/worker/src/lane/settle.ts` | #215 | keep: submission-settlement kernel; the live path settles via `settleTerminalStatus` directly |
 

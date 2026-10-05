@@ -621,7 +621,7 @@ describe('structured summaries with cumulative file ops (issue #34)', () => {
   });
 });
 
-describe('tool-output spill wiring (issue #34: truncated bash resolves via spill path)', () => {
+describe('tool-output spill helpers (issue #34: pure helpers; the spill path itself is not implemented)', () => {
   it('resolves truncated bash output to its spill path artifact ref', async () => {
     const { buildSpillArtifact, resolveTruncatedOutput } = await import(
       './compaction.js'

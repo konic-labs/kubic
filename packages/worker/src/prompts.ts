@@ -17,18 +17,9 @@ export class PromptCacheError extends Error {
   }
 }
 
-// The 7 cache-preservation rules (§26): assembly keeps 1-4, the lane
-// lifecycle keeps 5-6, compaction keeps 7.
-export const PROMPT_CACHE_RULES: readonly string[] = [
-  'stable-prefix: identical inputs assemble byte-identical system prompts',
-  'stable-tool-order: tool definitions sort by name',
-  'stable-metadata: metadata serializes with sorted keys',
-  'append-only-turns: per-turn content appends as suffix, prefix untouched',
-  'reuse-lane: continuations reuse the bound lane, re-spawn is rejected',
-  'pin-model: one model id per task, no per-action reselect',
-  'fresh-compaction-ids: compaction uses fresh routing ids, no cache write',
-];
-
+// NOTE (issue #215): the PROMPT_CACHE_RULES list was deleted — it named
+// no production reader (the rules live in §26 and are pinned by the
+// assembly, lifecycle and two-turn tests, not by a constant).
 export interface SystemPromptInput {
   role: string;
   cwd: string;
@@ -59,21 +50,11 @@ export function assembleSystemPrompt(input: SystemPromptInput): string {
   return sections.join('\n');
 }
 
-// Rule 4: turn-varying content may only extend the prompt. Anything else
-// shifts prefix bytes and voids the cache.
-export function appendTurnContent(prefix: string, turn: string): string {
-  if (turn.length === 0) {
-    throw new PromptCacheError('turn content must not be empty');
-  }
-  return `${prefix}\nturn: ${turn}`;
-}
-
-export function assertStartsWithPrefix(full: string, prefix: string): void {
-  if (!full.startsWith(prefix)) {
-    throw new PromptCacheError('prompt prefix bytes changed mid-session');
-  }
-}
-
+// Rule 4 lives structurally in assembleSystemPrompt above (extra sections
+// append last; nothing shifts prefix bytes) and is pinned at lane level by
+// the no-new-pi.system-entry two-turn test — there is no per-turn prompt
+// extension in the pi-durable design, so the standalone append/assert
+// helpers were deleted (issue #215).
 export interface LaneBinding {
   sessionId: string;
   lane: string;

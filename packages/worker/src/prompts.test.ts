@@ -36,23 +36,6 @@ describe('prompt assembly byte-stability (issue #33, rule 1-3)', () => {
   });
 });
 
-describe('append-only turns (issue #33, rule 4)', () => {
-  it('turn content appends as suffix; prefix bytes are untouched', async () => {
-    const { appendTurnContent, assembleSystemPrompt } = await import(
-      './prompts.js'
-    );
-    const prefix = assembleSystemPrompt({
-      role: 'r',
-      cwd: '/w',
-      toolNames: ['bash'],
-      metadata: {},
-    });
-    const full = appendTurnContent(prefix, 'turn 7 user text');
-    expect(full.slice(0, prefix.length)).toBe(prefix);
-    expect(full.slice(prefix.length)).toContain('turn 7 user text');
-  });
-});
-
 describe('lane lifecycle (issue #33, rule 5)', () => {
   it('continuation reuses the lane; re-spawn for continuation is rejected', async () => {
     const { LaneRegistry } = await import('./prompts.js');

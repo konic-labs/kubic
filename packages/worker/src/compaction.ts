@@ -351,11 +351,6 @@ export interface CompactedState {
   artifacts: SpillArtifact[];
 }
 
-// Compact state + artifacts + refs over history: the compacted state
-// carries the structured summary and spill artifact refs only.
-export function buildCompactedState(
-  summary: StructuredSummary,
-  artifacts: SpillArtifact[],
-): CompactedState {
-  return { summary, artifacts };
-}
+// NOTE (issue #215): the buildCompactedState constructor was deleted — no
+// caller ever built one (spill artifacts are not implemented). The
+// CompactedState shape stays for the spill work that needs it.

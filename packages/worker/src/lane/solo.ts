@@ -45,6 +45,7 @@ import {
   pinModelForTask,
   type SystemPromptInput,
   type TaskAffinity,
+  taskModelForTurn,
 } from '../prompts.js';
 import { createSessionSpillSink } from '../spill.js';
 import { OperationKillRegistry } from './abort.js';
@@ -119,15 +120,8 @@ export function defaultSoloModelId(model: {
   return `${model.provider}/${model.id}`;
 }
 
-export function defaultSoloPrompt(cwd: string): string {
-  return [
-    'You are a coding agent working in a terminal.',
-    `Working directory: ${cwd}.`,
-    'Use the read, write, edit, grep, find, ls, and bash tools to inspect and change files.',
-    'Keep answers short and technical.',
-  ].join('\n');
-}
-
+// NOTE (issue #215): defaultSoloPrompt lived here — deleted, it had no
+// callers (the run paths always assemble an explicit prompt).
 export interface SoloPolicyOptions {
   classes?: PermissionClasses;
   interceptors?: PolicyInterceptorOptions;
@@ -365,7 +359,9 @@ export async function escalateSoloModel(
       'no pinned affinity: boot with taskId before escalating',
     );
   }
-  const from = solo.affinity.modelId;
+  // Issue #215: the per-turn model read goes through the affinity helper,
+  // so the helper has a lane-level caller (not a test-only export).
+  const from = taskModelForTurn(solo.affinity);
   if (to === from) {
     throw new PromptCacheError(
       `refusing no-op escalation: already on '${to}' (same-model step)`,

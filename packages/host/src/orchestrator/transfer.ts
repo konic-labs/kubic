@@ -92,11 +92,29 @@ export function artifactFromResult(
   opts: { worktree: string; diffRef?: string },
 ): TaskArtifact {
   const findings = result.findings ?? [];
-  const testResults = (result.tests ?? []).map((test) => ({
-    name: test.name,
-    passed: test.passed,
-    ...(test.output === undefined ? {} : { output: test.output }),
-  }));
+  // Test rows are prompt-bound (§70 debugger starts from the failing
+  // tests), so they validate here — not just at the §69 gate.
+  const testResults = (result.tests ?? []).map((test) => {
+    if (
+      typeof test !== 'object' ||
+      test === null ||
+      typeof (test as { name?: unknown }).name !== 'string' ||
+      ((test as { name?: string }).name as string).trim() === '' ||
+      typeof (test as { passed?: unknown }).passed !== 'boolean' ||
+      ((test as { output?: unknown }).output !== undefined &&
+        typeof (test as { output?: unknown }).output !== 'string')
+    ) {
+      throw new TransferRejectedError(
+        'invalid_record',
+        `artifact for '${agentId}' needs test rows with a name, a passed flag and optional string output`,
+      );
+    }
+    return {
+      name: test.name,
+      passed: test.passed,
+      ...(test.output === undefined ? {} : { output: test.output }),
+    };
+  });
   const artifact: TaskArtifact = {
     summary: result.summary,
     fileRefs: [...result.filesChanged],
@@ -204,6 +222,7 @@ export interface Handoff {
   summary: string;
   fileRefs: string[];
   findings: string[];
+  testResults: Array<{ name: string; passed: boolean; output?: string }>;
   diffRef?: string;
   worktree: string;
   constraints: string[];
@@ -225,6 +244,7 @@ export function buildHandoff(
     summary: artifact.summary,
     fileRefs: [...artifact.fileRefs],
     findings: [...artifact.findings],
+    testResults: artifact.testResults.map((test) => ({ ...test })),
     ...(artifact.diffRef === undefined ? {} : { diffRef: artifact.diffRef }),
     worktree: artifact.worktree,
     constraints: [...constraints],
@@ -235,14 +255,31 @@ export function buildHandoff(
 
 /**
  * Render a handoff as previous-findings lines: one summary line naming
- * the files, then one line per finding — all plain strings, prompt-safe.
+ * the files, one line per finding, one per FAILING test (name plus the
+ * first output line, clipped — the §70 debugger starts there), then the
+ * diff ref and the implementer's worktree. All plain strings,
+ * prompt-safe; the same handoff always renders the same lines.
  */
 export function handoffFindingLines(handoff: Handoff): string[] {
   const files = handoff.fileRefs.join(', ') || 'no files';
-  return [
+  const lines = [
     `${handoff.fromAgentId}: ${handoff.summary} (${files})`,
     ...handoff.findings.map((finding) => `${handoff.fromAgentId}: ${finding}`),
   ];
+  for (const test of handoff.testResults) {
+    if (test.passed) continue;
+    const firstLine = (test.output ?? '').split('\n')[0] ?? '';
+    const clipped =
+      firstLine.length > 200 ? `${firstLine.slice(0, 200)}…` : firstLine;
+    lines.push(
+      `${handoff.fromAgentId} failing test: ${test.name}${clipped === '' ? '' : ` (${clipped})`}`,
+    );
+  }
+  if (handoff.diffRef !== undefined) {
+    lines.push(`${handoff.fromAgentId} diff: ${handoff.diffRef}`);
+  }
+  lines.push(`${handoff.fromAgentId} worktree: ${handoff.worktree}`);
+  return lines;
 }
 
 /**

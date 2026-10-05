@@ -2119,6 +2119,13 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
         metrics: { wallMs: 1, latencyMs: 1 },
       });
       built.findings = findings as string[];
+      // Alpha also fails a test: the §70 consumer (debugger) starts from
+      // failing tests and the diff ref, so the handoff must name both.
+      if (agentId === 'alpha') {
+        built.tests = [
+          { name: 'unit', passed: false, output: 'timeout after 5s' },
+        ];
+      }
       return built;
     }
 
@@ -2156,6 +2163,11 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
       expect(beta).toBeDefined();
       expect(beta?.prompt).toContain('alpha: alpha done (alpha-0.txt)');
       expect(beta?.prompt).toContain('alpha: the seam is threaded');
+      expect(beta?.prompt).toContain(
+        'alpha failing test: unit (timeout after 5s)',
+      );
+      expect(beta?.prompt).toContain('alpha diff: branch:kubic/alpha');
+      expect(beta?.prompt).toContain('alpha worktree: /repo/.kubic/wt/alpha');
       expect(beta?.prompt).toContain('Task: ship the seam work');
       expect(beta?.prompt).not.toMatch(/\{\s*"role"/);
       const last = world.saved[world.saved.length - 1] as OrchestratorRunState;

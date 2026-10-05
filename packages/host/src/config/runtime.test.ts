@@ -682,6 +682,25 @@ describe('effective config view (issue #90)', () => {
     );
   });
 
+  it('reports the highest-precedence contributing layer for split compaction keys (issue #239 review)', () => {
+    // autoCompact from project, reserveTokens from global: the old
+    // first-set-key rule named 'project' (autoCompact sorts first in key
+    // order); the provenance must name 'global' — the
+    // highest-precedence layer that contributed a key.
+    const runtime = load(
+      {
+        [GLOBAL]: '[session]\nreserveTokens = 4000\n',
+        [PROJECT]: '[session]\nautoCompact = false\n',
+      },
+      { projectTrusted: true },
+    );
+    expect(runtime.compaction).toEqual({
+      enabled: false,
+      reserveTokens: 4000,
+      source: 'global',
+    });
+  });
+
   it('reports compaction defaults when nothing is configured (issue #239)', () => {
     const runtime = load({});
     expect(runtime.compaction).toEqual({ source: 'defaults' });

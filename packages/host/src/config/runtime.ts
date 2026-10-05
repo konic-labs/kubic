@@ -388,7 +388,8 @@ export interface RuntimeCompaction {
   enabled?: boolean;
   reserveTokens?: number;
   keepRecentTokens?: number;
-  // The layer owning the first set key, or 'defaults' when none is set.
+  // The highest-precedence layer that set a key, or 'defaults' when none
+  // is set.
   source: ConfigValueSource;
 }
 
@@ -1055,6 +1056,31 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   );
   // The config key is `autoCompact`; the runtime projection names the lane
   // option (`enabled`) — one spelling per surface, mapped here.
+  // Provenance (review follow-up): the highest-precedence layer among the
+  // set keys — evaluated per key, not the first-set key's layer in key
+  // order. Each key's layer is already its highest-precedence setter (the
+  // file merge is first-wins in LAYER_ORDER; the programmatic
+  // session/agent fallback trails every file layer), so the minimum rank
+  // wins. 'defaults' ranks below every layer and only survives when no key
+  // is set at all.
+  const rankOf = (source: ConfigValueSource): number => {
+    const index = (LAYER_ORDER as readonly string[]).indexOf(source);
+    return index === -1 ? LAYER_ORDER.length : index;
+  };
+  const compactionSource = (
+    [
+      'session.autoCompact',
+      'session.reserveTokens',
+      'session.keepRecentTokens',
+    ] as const
+  )
+    .map(
+      (key) =>
+        loaded.sources[key] ?? programmaticSourceFor(inputs, key) ?? 'defaults',
+    )
+    .reduce((best, candidate) =>
+      rankOf(candidate) < rankOf(best) ? candidate : best,
+    );
   const compaction: RuntimeCompaction = {
     ...(sessionCompaction.autoCompact === undefined
       ? {}
@@ -1065,14 +1091,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     ...(sessionCompaction.keepRecentTokens === undefined
       ? {}
       : { keepRecentTokens: sessionCompaction.keepRecentTokens }),
-    source:
-      loaded.sources['session.autoCompact'] ??
-      loaded.sources['session.reserveTokens'] ??
-      loaded.sources['session.keepRecentTokens'] ??
-      programmaticSourceFor(inputs, 'session.autoCompact') ??
-      programmaticSourceFor(inputs, 'session.reserveTokens') ??
-      programmaticSourceFor(inputs, 'session.keepRecentTokens') ??
-      'defaults',
+    source: compactionSource,
   };
 
   // §35/§44/§45 orchestrator keys (issue #133): validated here too, because

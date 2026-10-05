@@ -66,7 +66,7 @@ with the hint above (L-D7). Solo mode runs in-process with your user authority: 
 isolation, no containment — approvals plus the journal are the controls.
 Orchestrator mode (`orchestrate`) is opt-in — `run` never delegates.
 
-## `kubic run [-p] <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--model <provider/id>] [--skill <path>]... [--invoke-skill <name>] [--no-skills] [--tools <a,b,...>] [--no-tools] [--debug] [--json] [--dangerously-skip-approvals]`
+## `kubic run [-p] <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--model <provider/id>] [--skill <path>]... [--invoke-skill <name>] [--no-skills] [--tools <a,b,...>] [--no-tools] [--debug] [--autonomous] [--json] [--dangerously-skip-approvals]`
 
 Non-interactive solo run: no alt-screen, no prompt, consumable output.
 
@@ -81,11 +81,12 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). A directory, a `SKILL.md` file, or a bare name (discovery roots first, then the cwd). Relative values resolve against the invoking cwd on both `run` and `tui` (issue #177) — never against the sessions root — and an unresolvable value warns on stderr (`skill skipped (unknown skill '…')`), without needing `--debug`. |
 | `--invoke-skill <name>` | Invoke one booted skill by name (`run` only): its full content runs as the turn prompt — including skills hidden from the model (`disableModelInvocation`, issue #183, §29.4) — followed by `-p`/operand text as further instructions. An unknown name fails the run with `unknown skill '<name>'` (exit 1); a withheld skill (role gate, trust gate) resolves as unknown and fails the same way. |
 | `--no-skills` | Turn layered skill discovery off. |
+| `--autonomous` | Run to completion without stopping for input (§19, issue #278): the §19 mode is recorded on the run's session (`autonomous`, else `interactive` — off by default, never assumed), a `run:start` row naming the mode lands in the §60 audit ledger, and the result and `--json` envelope carry `mode` (the `status` already names the stop condition that ended the run). Combines freely with `--dangerously-skip-approvals` — the combination is legitimate for a batch run on a throwaway checkout, and the session plus the ledger name it. |
 | `--debug` | Emit §49.3 lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same `DEBUG_CLASSES` vocabulary as the interactive TUI debug channel), plus the run's diagnostics on the same channel (as `[session] …` lines when they carry no class of their own): the extension-load receipt, `reconcile:` notices (including the overlap warning below), `skills:` reports and drain failures. A retry backoff and a compaction are named too (issue #150): `[lane] retry attempt <n> after error: <message>` when the harness schedules a retry of a transient model error and `[lane] retry attempt <n> settled` when it lands, `[lane] compaction started (<reason>)` / `[lane] compaction finished (<reason>)` around an automatic or manual compaction — the wait is never silent. Off by default; stdout stays consumable. |
 | `--dangerously-skip-approvals` | Full access for **this run's session only** (§41.4): challenged calls run without an ask. It is recorded in the session's `posture.json` and as one `posture:full-access` row in the audit ledger (session id and command), never in config, and a `warning: full-access approvals skipped for session <id> …` line goes to stderr. Each challenged call the posture waives is recorded under its own capability (`trigger:<capability>`, posture `full-access`), one record per capability; an untriggered call is neither audited nor marked challenged (issue #234). A later `kubic run --session <id>` on that session warns again on stderr. |
 | `--tools <a,b,...>` | §40.1 mechanism 1 (issue #273): narrow the run's tool set to these tools — comma-separated and repeatable (`--tools read,ls --tools grep`). The selection can only **narrow**: it is intersected with the permission classes, any `--role` set and the enterprise tool gate. An unknown name is refused by name; a tool the classes forbid (`--tools write` under `filesystem = "read"`) is refused with the §40.3 reason — both exit 2 before any lane boots. |
 | `--no-tools` | The empty tool set (a chat-only run). Mutually exclusive with `--tools` — both at once exits 2 naming both. |
-| `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs — `usage` also carries the run's `input`, `output`, `cacheRead`, `cacheWrite`, `costUsd` and `toolCalls` once a session exists —, `model` — the `provider/id` the lane actually ran, present once a lane booted —, `approvals.posture` — `approvals` or `full-access` — once the lane is installed, optional `error`, and — on a classified failure — `failure: {code, remedy, strategy}`, the §52 code with its retry remedy and strategy, issue #155) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
+| `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs — `usage` also carries the run's `input`, `output`, `cacheRead`, `cacheWrite`, `costUsd` and `toolCalls` once a session exists —, `model` — the `provider/id` the lane actually ran, present once a lane booted —, `approvals.posture` — `approvals` or `full-access` — once the lane is installed, `mode` — the §19 mode the run resolved (`autonomous` with `--autonomous`, else `interactive`) —, optional `error`, and — on a classified failure — `failure: {code, remedy, strategy}`, the §52 code with its retry remedy and strategy, issue #155) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
 
 **Skill paths the `read` tool may open (§29.3, issue #173).** Every skill
 advertised in the `<skills>` block names its absolute `<filePath>`. Paths
@@ -338,7 +339,7 @@ $ KUBIC_PROVIDER=faux kubic run -p 'faux:tool ls {"path":"."}'
 built binary: a faux `run --json` (echo and a tool call), text mode, the
 unknown-value refusal, and an `orchestrate --yes` across worker processes.
 
-## `kubic orchestrate -p <prompt> [--agents <a,b>] [--concurrency <n>] [--on-failure <stop|continue>] [--session <id>] [--resume] [--yes] [--budget <dims>] [--dangerously-skip-approvals] [--json]`
+## `kubic orchestrate -p <prompt> [--agents <a,b>] [--concurrency <n>] [--on-failure <stop|continue>] [--session <id>] [--resume] [--yes] [--autonomous] [--budget <dims>] [--dangerously-skip-approvals] [--json]`
 
 `kubic orchestrate --help` prints the generated help (every flag below plus
 examples) and exits 0. Unknown flags, a missing flag value, a stray operand,
@@ -606,7 +607,11 @@ is `full-access-grant` (`posture:full-access`, one per grant),
 `worker-terminate` (one pair bracketing each child's process lifetime — the
 terminate reason is `ok` or the failure code), and `undo-restore` (one per
 `kubic undo` that restores, naming the restored paths and the skipped
-count; a dry run records nothing). `kubic audit --json` returns the full
+count; a dry run records nothing). Every run also opens with one `run:start`
+row naming its §19 mode (`autonomous` with `--autonomous`, else
+`interactive`), the command and the posture (issue #278) — a run record,
+not a privileged action, kept at the privileged sink level beside the
+decisions. `kubic audit --json` returns the full
 14-field records; a ledger append that fails surfaces on stderr and never
 fails the action.
 
@@ -645,9 +650,9 @@ verdict is a §60 row (`trigger:spawn-agents`, mode orchestrator): approving
 proceeds under the queueing rule above (the excess waits in the scheduler's
 FIFO queue for a slot), and denying leaves every worker inside the cap to run
 and merge, then fails the excess ones with `code=spawn_agents_denied` and exit
-1, the partial-failure contract. A headless run, and any run passing `--yes`
-(the standing answer makes it autonomous), never asks and keeps the queueing
-rule.
+1, the partial-failure contract. A headless run, and any run passing `--yes` or `--autonomous`
+(the standing answer makes it autonomous, as does the explicit flag),
+never asks and keeps the queueing rule.
 
 Concurrency changes only *when* workers run, never the merge: candidates are
 enqueued in **agent order** after the workers settle, so `kubic orchestrate
@@ -696,12 +701,13 @@ prompt is the pending one), never appended as a duplicate prompt, and the
 | `--session <id>` | Session scope (default `orch-<now>`). Same `[A-Za-z0-9_-]` rule as `run`. A fresh run whose id already has stored state exits 2 (`code=session_exists`) instead of overwriting it — `--resume` or another id. `workers` and `approvals` are reserved (they name the orchestrator's own rows record and ledger dir) and exit 2 (`code=session_reserved`) on fresh runs and resumes alike. State persists at `<repo>/.kubic/orchestrator/<id>.json` — including the plan, so `--resume` replays each worker's own prompt; each worker's session id is `<id>-<agent>`. |
 | `--resume` | Re-attach after a kill: merges only pending workers in the original order, never re-merges, and each retried worker runs the plan step stored for it (a state written before #103 has no plan and re-derives one from the stored objective). The pending set is what the previous attempt left unmerged — a worker that failed under `--on-failure continue` is retried, the workers that already merged are not (issue #169). A worker that settled but never merged is NOT re-run either (issue #160): its branch + hunks persist with the session as soon as it settles, so the resume merges them straight from the record (a completion whose branch no longer matches is dropped and the worker runs again). The budget, the explicit per-agent role/model binding and the `--skill` values the run started with are re-applied from the state; a `--budget` or `--skill` naming a different spec, or a `--agents` naming a different role/model assignment, is refused (exit 2) — while a bare `--agents` with a larger count raises the stored spawn cap instead of refusing (issue #422). The worker-failure policy (`--on-failure`) is stored and re-applied too, so a `continue` run stays `continue`; an explicit `--on-failure` on the resume wins. Needs `--session`. No stored state exits 1 (`code=no_orchestrator_state`); a stopped queue re-reports the conflict and merges nothing (`code=merge_conflict`). |
 | `--yes` | Auto-approve merges (non-interactive). Worker asks are never auto-approved by it. Without it, a TTY is asked per merge under `approvals.maxPendingMs` (an elapse denies closed, exit 4, naming the bound and the candidate); headless without a decider denies closed with exit 4. |
+| `--autonomous` | Run to completion without stopping for input (§19, issue #278): the run's §19 mode, recorded on the manager and worker sessions, in a `run:start` §60 ledger row, and in the envelope (`mode`) and the terminal `session:` line. It makes the spawn-cap ask never fire (same rule as `--yes`); without it, an attached run asks once before spawning past the cap (§41.1). Merges still ask under `--autonomous` alone — only `--yes` auto-approves them. |
 | `--budget <dims>` | **Opt-in** per-spawn budget for every worker (`maxTokens`, `maxCostUsd`, `maxRuntimeMs`, `maxToolCalls` — positive numbers; `maxRuntimeMs` at most `2147483647`; e.g. `--budget maxToolCalls=20`). Per-spawn overrides: `--budget worker-1:maxToolCalls=5;worker-2:maxCostUsd=0.5`; a clause naming an agent that is not in the run (`--agents`, or the stored session on `--resume`) exits 2. Absent means **no limit is applied**. Each worker's own lane counts every tool attempt — including ones a policy guard blocks — plus its usage roll-up; the manager watches `maxRuntimeMs` and kills a worker that outlives it. Either end is `BUDGET_EXHAUSTED` (exit 3) naming the `limit=` that tripped, and a worker cannot raise its own budget. The spec persists with the session. |
 | `--dangerously-skip-approvals` | Session-scoped full-access posture (§41.4): approvals are skipped for **this session only**, indicated, recorded in the audit ledger, and warned on stderr. A fresh session starts enforced again. |
 | `--full-access` | Deprecated alias of `--dangerously-skip-approvals`; prints `hint: --full-access is deprecated — use --dangerously-skip-approvals` on stderr. |
-| `--json` | One JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `workers`, `mergeOrder`, `attribution`, `graph`, `parallel`, `retained`, optional `error` with a machine-readable `code`, optional `reapErrors`). `graph` is the delegation DAG as text lines (`node …`/`edge …`), naming the session and one node per worker — on a `--resume` run it describes the resumed session's agents. `parallel` is `{ running, queued, maxConcurrency }` (the same numbers the text lines print); `retained` is one row per retained worktree with its measured dirtiness. `reapErrors` lists `{ agentId, message }` for every reap that failed on a **failure** path, where the primary terminus wins: every spawned worker is still reaped, and the errors are reported instead of dropped. |
+| `--json` | One JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `mode` — the §19 mode the run resolved (issue #278) —, `workers`, `mergeOrder`, `attribution`, `graph`, `parallel`, `retained`, optional `error` with a machine-readable `code`, optional `reapErrors`). `graph` is the delegation DAG as text lines (`node …`/`edge …`), naming the session and one node per worker — on a `--resume` run it describes the resumed session's agents. `parallel` is `{ running, queued, maxConcurrency }` (the same numbers the text lines print); `retained` is one row per retained worktree with its measured dirtiness. `reapErrors` lists `{ agentId, message }` for every reap that failed on a **failure** path, where the primary terminus wins: every spawned worker is still reaped, and the errors are reported instead of dropped. |
 
-Text output prints `session:`, one `worker: <id> branch=<b> hunks=<n>` line
+Text output prints `session: <id> mode=<autonomous|interactive>` (the §19 mode, issue #278), one `worker: <id> branch=<b> hunks=<n>` line
 per worker, `merge order: a -> b`, `attribution: a=<n> hunk(s), …`, the
 `dag:` lines (`node …`/`edge …`) for the delegation graph, one
 `merged:`/`reaped:` line per worker, then the admission surface and the

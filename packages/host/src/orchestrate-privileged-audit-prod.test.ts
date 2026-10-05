@@ -84,11 +84,19 @@ describe('privileged-action audit rows on the prod path (issue #284)', () => {
     const byWhat = new Map(rows.map((row) => [row.what, row]));
     const branch = 'kubic/paudit284/worker-1';
     expect([...byWhat.keys()]).toEqual([
+      // Issue #278 (§19): the run opens with its §19 mode (`--yes` is
+      // the standing answer, so this run is autonomous).
+      'run:start',
       `worktree-create:${branch}`,
       'worker-spawn:worker-1',
       'worker-terminate:worker-1',
       `merge:${branch}`,
     ]);
+    expect(byWhat.get('run:start')).toMatchObject({
+      mode: 'orchestrator',
+      result: 'ok',
+    });
+    expect(byWhat.get('run:start')?.reason).toContain('autonomous');
 
     const created = byWhat.get(`worktree-create:${branch}`);
     expect(created?.mode).toBe('orchestrator');

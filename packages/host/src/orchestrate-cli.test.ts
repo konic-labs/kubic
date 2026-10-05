@@ -629,7 +629,11 @@ describe('orchestrate report colours (shared CLI theme)', () => {
         text.deps,
       ),
     ).toBe(0);
-    expect(text.lines).toContain(`${theme.accent('session:')} sess-1`);
+    // Issue #278 (§19): the terminal status line names the §19 mode
+    // (`--yes` is the standing answer, so this run is autonomous).
+    expect(text.lines).toContain(
+      `${theme.accent('session:')} sess-1 mode=autonomous`,
+    );
     expect(text.lines).toContain(`${theme.success('merged:')} alpha`);
     expect(
       text.lines.some((line) => line.startsWith(theme.success('result:'))),
@@ -1485,6 +1489,8 @@ describe('orchestrate worker session creation (issue #85)', () => {
         agentId: 'alpha',
         workerSessionId: 'sess-1-alpha',
         worktree: { path: '/repo/.kubic/wt/alpha', branch: 'kubic/alpha' },
+        // Issue #278 (§19): the headless test run resolves autonomous.
+        mode: 'autonomous',
       },
     ]);
   });

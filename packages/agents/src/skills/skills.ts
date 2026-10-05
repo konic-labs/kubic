@@ -593,11 +593,22 @@ function confinedPackageDir(
       reason,
     };
   }
-  let resolved = lexical;
+  let resolved: string;
   try {
     resolved = normalizeSkillPath(bridge.realPath?.(lexical) ?? lexical);
   } catch {
-    resolved = lexical;
+    // Review on #423: a transient realPath failure must fail closed —
+    // falling back to the lexical path would load a skill whose target
+    // was never verified. Reported as an error, like an unreadable file.
+    const reason = `package skill '${declared}' unresolvable under trusted root '${ancestor}' (realPath failed)`;
+    log?.(`skill skipped (${reason})`);
+    return {
+      name: basenameOf(lexical),
+      filePath: joinPosix(lexical, 'SKILL.md'),
+      source: 'package',
+      status: 'error',
+      reason,
+    };
   }
   if (!isWithinDir(resolved, ancestor)) {
     const reason = `package skill '${declared}' resolves outside trusted root '${ancestor}'`;

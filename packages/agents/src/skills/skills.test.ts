@@ -573,6 +573,48 @@ describe('package-declared skill confinement (issue #423)', () => {
     expect(lines.some((line) => /outside trusted root/.test(line))).toBe(true);
   });
 
+  it('fails closed when realPath throws (a transient failure must not load)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/repo/pkg/package.json',
+      JSON.stringify({ skills: ['./maybe-link'] }),
+    );
+    // Readable at the lexical path — without fail-closed this loads.
+    env.fs.writeFile(
+      '/repo/pkg/maybe-link/SKILL.md',
+      skillMd('name: maybe\ndescription: Maybe'),
+    );
+    const throwing: FileBridge = {
+      ...bridge,
+      realPath: () => {
+        throw new Error('EIO');
+      },
+    };
+    const lines: string[] = [];
+    const result = discoverSkills({
+      bridge: throwing,
+      homeDir: HOME,
+      cwd: '/repo/pkg',
+      trusted: true,
+      log: (line) => {
+        lines.push(line);
+      },
+    });
+    expect(result.skills).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        name: 'maybe-link',
+        filePath: '/repo/pkg/maybe-link/SKILL.md',
+        source: 'package',
+        status: 'error',
+        reason:
+          "package skill '/repo/pkg/maybe-link' unresolvable under trusted root '/repo/pkg' (realPath failed)",
+      },
+    ]);
+    expect(lines.some((line) => /unresolvable/.test(line))).toBe(true);
+  });
+
   it('keeps a package entry whose symlink resolves inside the declaring dir', () => {
     const env = new FakeExecutionEnv({});
     const bridge = bridgeFromEnv(env, {

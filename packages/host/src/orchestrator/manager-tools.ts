@@ -20,7 +20,7 @@ import {
   ToolResultEntry,
   Type,
 } from '../../../worker/src/pi-boundary.js';
-import type { AgentResult } from '../../../worker/src/result.js';
+import type { AgentResult, ResultStatus } from '../../../worker/src/result.js';
 import { buildAgentResult } from '../../../worker/src/result.js';
 import { composeWorkerPrompt } from '../roles/worker-roles.js';
 import { MAX_RUN_TIMEOUT_MS } from '../run-cli.js';
@@ -50,6 +50,20 @@ export interface SpawnRoleSpec {
 export interface PreparedWorker {
   agentId: string;
   worktreePath: string;
+}
+
+/**
+ * The worker row `inspect_agent` reports: identity, placement and current
+ * status — never transcript, prompt or tool content (§14.1, §69). The deps
+ * own the row universe (the run's worker rows); the adapter passes the row
+ * through verbatim, so nothing outside this shape can cross.
+ */
+export interface WorkerRowInfo {
+  agentId: string;
+  branch: string;
+  role: string;
+  status: 'running' | ResultStatus;
+  summary: string;
 }
 
 export interface WorkerSpawnRequest {
@@ -83,6 +97,24 @@ export interface ManagerToolsDeps {
   prepareWorker(agentId: string): Promise<PreparedWorker>;
   /** Create the worker session and run the child to settlement. */
   launchWorker(request: WorkerSpawnRequest): Promise<AgentResult>;
+  /**
+   * The run's worker rows, or undefined for an id this run never spawned.
+   * Covers every worker the lane spawns (step-2 launches register there).
+   */
+  inspectWorker(agentId: string): WorkerRowInfo | undefined;
+  /**
+   * The run's existing cancellation path (`cancelWorker` in
+   * orchestrate-cli: the lifecycle reap kills the detached process group).
+   * Resolves once the child can spend no more tokens; rejects when it
+   * could not be stopped.
+   */
+  cancelWorker(agentId: string): void | Promise<void>;
+  /**
+   * Deliver a follow-up prompt to a settled worker session and run it to a
+   * new settlement. The returned result supersedes the previous one for
+   * `wait_for_agent` / `collect_result`.
+   */
+  runFollowUp(agentId: string, prompt: string): Promise<AgentResult>;
 }
 
 // The `--budget` dimension names a `spawn_agent(budget=…)` map may carry
@@ -152,6 +184,17 @@ class SettleRegistry {
     return this.records.get(agentId)?.result;
   }
 
+  /**
+   * Reopen a settled record for a new cycle (`send_to_agent`): waiters and
+   * collectors observe the follow-up's settlement, never the stale result.
+   */
+  reopen(agentId: string): boolean {
+    const record = this.records.get(agentId);
+    if (record === undefined || record.result === undefined) return false;
+    record.result = undefined;
+    return true;
+  }
+
   waitForSettle(
     agentId: string,
     timeoutMs: number,
@@ -211,14 +254,67 @@ export interface ManagerToolset {
   spawnAgent: ToolRegistration;
   waitForAgent: ToolRegistration;
   collectResult: ToolRegistration;
+  inspectAgent: ToolRegistration;
+  cancelAgent: ToolRegistration;
+  sendToAgent: ToolRegistration;
   settle: {
     resultOf(agentId: string): AgentResult | undefined;
   };
 }
 
-/** Build the three step-2 adapters over the run's seams. */
+/** Build the step-2 (spawn/wait/collect) and step-3 (inspect/cancel/send) adapters over the run's seams. */
 export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
   const settle = new SettleRegistry();
+  const worktrees = new Map<string, string>();
+
+  /**
+   * Track a background worker promise (launch or follow-up): settlement
+   * records the result and frees the scheduler slot; a launch that never
+   * produces one fails closed with a synthesized `failed` result, never a
+   * hang `wait_for_agent` cannot observe.
+   */
+  const trackBackground = (
+    agentId: string,
+    worked: Promise<AgentResult>,
+    what: string,
+  ): void => {
+    void worked.then(
+      (result) => {
+        settle.noteSettled(agentId, result);
+        deps.scheduler.complete(agentId);
+      },
+      (error) => {
+        settle.noteSettled(
+          agentId,
+          buildAgentResult({
+            status: 'failed',
+            summary: `worker '${agentId}' ${what}: ${error instanceof Error ? error.message : String(error)}`,
+            filesChanged: [],
+            provenance: {
+              workerId: agentId,
+              sessionId: deps.sessionId,
+              pid: null,
+              generation: 0,
+              worktree: worktrees.get(agentId) ?? agentId,
+              model: 'unresolved',
+            },
+            metrics: { wallMs: 0, latencyMs: 0 },
+            error: {
+              kind: 'process',
+              message: error instanceof Error ? error.message : String(error),
+              details: {
+                code:
+                  what === 'failed to launch'
+                    ? 'spawn_failed'
+                    : 'follow_up_failed',
+              },
+            },
+          }),
+        );
+        deps.scheduler.complete(agentId);
+      },
+    );
+  };
   // Slots the cap counts: launched workers (via deps) PLUS queued claims
   // below. A queued `spawn_agent` holds its claim until admitted — otherwise
   // a later call would see only launched workers and over-admit past the
@@ -344,49 +440,24 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
       // claim converts to a launched worker here.
       claimed.delete(agentId);
       settle.register(agentId);
+      worktrees.set(agentId, prepared.worktreePath);
       deps.noteSpawned(agentId);
-      const launched = deps.launchWorker({
+      trackBackground(
         agentId,
-        role,
-        prompt: composeWorkerPrompt(spec.promptText, task),
-        tools: [...spec.tools],
-        // The spawn pin outranks the role's pin (issue #202's precedence).
-        ...(model === undefined && spec.modelRef === undefined
-          ? {}
-          : { modelRef: model ?? spec.modelRef }),
-        ...(spec.thinking === undefined ? {} : { thinking: spec.thinking }),
-        ...(dims === undefined ? {} : { budget: dims }),
-        worktreePath: prepared.worktreePath,
-      });
-      void launched.then(
-        (result) => {
-          settle.noteSettled(agentId, result);
-          deps.scheduler.complete(agentId);
-        },
-        (error) => {
-          settle.noteSettled(
-            agentId,
-            buildAgentResult({
-              status: 'failed',
-              summary: `worker '${agentId}' failed to launch: ${error instanceof Error ? error.message : String(error)}`,
-              provenance: {
-                workerId: agentId,
-                sessionId: deps.sessionId,
-                pid: null,
-                generation: 0,
-                worktree: prepared.worktreePath,
-                model: 'unresolved',
-              },
-              metrics: { wallMs: 0, latencyMs: 0 },
-              error: {
-                kind: 'process',
-                message: error instanceof Error ? error.message : String(error),
-                details: { code: 'spawn_failed' },
-              },
-            }),
-          );
-          deps.scheduler.complete(agentId);
-        },
+        deps.launchWorker({
+          agentId,
+          role,
+          prompt: composeWorkerPrompt(spec.promptText, task),
+          tools: [...spec.tools],
+          // The spawn pin outranks the role's pin (issue #202's precedence).
+          ...(model === undefined && spec.modelRef === undefined
+            ? {}
+            : { modelRef: model ?? spec.modelRef }),
+          ...(spec.thinking === undefined ? {} : { thinking: spec.thinking }),
+          ...(dims === undefined ? {} : { budget: dims }),
+          worktreePath: prepared.worktreePath,
+        }),
+        'failed to launch',
       );
       return {
         content: [
@@ -471,10 +542,166 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
     },
   });
 
+  // Control actions (inspect excepted) operate on the lane's own spawned
+  // set: only settle-known workers have the bookkeeping a cancel or a
+  // follow-up cycle needs. Inspection is read-only over the run's rows.
+  const inspectAgent = defineTool({
+    name: 'inspect_agent',
+    description:
+      'Report a worker row (branch, role, status, summary) — never transcript content.',
+    parameters: Type.Object({ agentId: Type.String() }),
+    execute: async (args) => {
+      const { agentId } = args as { agentId?: unknown };
+      if (typeof agentId !== 'string' || agentId === '') {
+        throw new ManagerToolRefusalError(
+          'invalid_args',
+          'inspect_agent needs a spawned agent id',
+        );
+      }
+      const row = deps.inspectWorker(agentId);
+      if (row === undefined) {
+        throw new ManagerToolRefusalError(
+          'unknown_agent',
+          `no worker '${agentId}' was spawned by this run`,
+        );
+      }
+      return {
+        content: [{ type: 'text', text: JSON.stringify(row) }],
+      };
+    },
+  });
+
+  const cancelAgent = defineTool({
+    name: 'cancel_agent',
+    description:
+      'Cancel a running worker through the run cancellation path; the run continues.',
+    parameters: Type.Object({ agentId: Type.String() }),
+    execute: async (args) => {
+      const { agentId } = args as { agentId?: unknown };
+      if (typeof agentId !== 'string' || agentId === '') {
+        throw new ManagerToolRefusalError(
+          'invalid_args',
+          'cancel_agent needs a spawned agent id',
+        );
+      }
+      if (!settle.known(agentId)) {
+        throw new ManagerToolRefusalError(
+          'unknown_agent',
+          `no worker '${agentId}' was spawned by this run`,
+        );
+      }
+      if (settle.resultOf(agentId) !== undefined) {
+        throw new ManagerToolRefusalError(
+          'already_settled',
+          `worker '${agentId}' already settled — nothing to cancel`,
+        );
+      }
+      try {
+        await deps.cancelWorker(agentId);
+      } catch (error) {
+        throw new ManagerToolRefusalError(
+          'cancel_failed',
+          `worker '${agentId}' could not be stopped — ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      // The kill ends the child; the lane records the cancellation so
+      // wait/collect observe it and the scheduler slot frees — the run
+      // continues with its siblings.
+      const cancelled = buildAgentResult({
+        status: 'cancelled',
+        summary: `worker '${agentId}' cancelled by the manager`,
+        filesChanged: [],
+        provenance: {
+          workerId: agentId,
+          sessionId: deps.sessionId,
+          pid: null,
+          generation: 0,
+          worktree: worktrees.get(agentId) ?? agentId,
+          model: 'unresolved',
+        },
+        metrics: { wallMs: 0, latencyMs: 0 },
+        error: {
+          kind: 'process',
+          message: `worker '${agentId}' cancelled by the manager`,
+          details: { code: 'cancelled_by_manager' },
+        },
+      });
+      settle.noteSettled(agentId, cancelled);
+      deps.scheduler.complete(agentId);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ agentId, status: 'cancelled' }),
+          },
+        ],
+      };
+    },
+  });
+
+  const sendToAgent = defineTool({
+    name: 'send_to_agent',
+    description:
+      'Send a follow-up prompt to a settled worker session; it runs to a new settlement.',
+    parameters: Type.Object({
+      agentId: Type.String(),
+      prompt: Type.String(),
+    }),
+    execute: async (args) => {
+      const { agentId, prompt } = args as {
+        agentId?: unknown;
+        prompt?: unknown;
+      };
+      if (
+        typeof agentId !== 'string' ||
+        agentId === '' ||
+        typeof prompt !== 'string' ||
+        prompt.trim() === ''
+      ) {
+        throw new ManagerToolRefusalError(
+          'invalid_args',
+          'send_to_agent needs a spawned agent id and a non-empty prompt',
+        );
+      }
+      if (!settle.known(agentId)) {
+        throw new ManagerToolRefusalError(
+          'unknown_agent',
+          `no worker '${agentId}' was spawned by this run`,
+        );
+      }
+      if (settle.resultOf(agentId) === undefined) {
+        throw new ManagerToolRefusalError(
+          'send_before_settle',
+          `worker '${agentId}' is still running — wait_for_agent first`,
+        );
+      }
+      // A new settle cycle over the same record: the follow-up's result
+      // supersedes the previous one. No scheduler slot: the worker's
+      // process already ended; the follow-up re-enters its session.
+      settle.reopen(agentId);
+      trackBackground(
+        agentId,
+        deps.runFollowUp(agentId, prompt),
+        'follow-up failed',
+      );
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ agentId, status: 'running' }),
+          },
+        ],
+      };
+    },
+  });
+
   return {
     spawnAgent,
     waitForAgent,
     collectResult,
+    inspectAgent,
+    cancelAgent,
+    sendToAgent,
     settle: {
       resultOf: (agentId) => settle.resultOf(agentId),
     },
@@ -482,8 +709,9 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
 }
 
 /**
- * The lane's 13 tools in allowlist order: the three step-2 adapters plus
- * the remaining stubs (steps 3–5 replace them). The lane boots this set.
+ * The lane's 13 tools in allowlist order: the step-2 and step-3 adapters
+ * plus the remaining stubs (steps 4–5 replace them). The lane boots this
+ * set.
  */
 export function managerToolsWithStubs(
   deps: ManagerToolsDeps,
@@ -491,7 +719,10 @@ export function managerToolsWithStubs(
   const tools = buildManagerTools(deps);
   const real = new Map([
     ['spawn_agent', tools.spawnAgent],
+    ['send_to_agent', tools.sendToAgent],
     ['wait_for_agent', tools.waitForAgent],
+    ['cancel_agent', tools.cancelAgent],
+    ['inspect_agent', tools.inspectAgent],
     ['collect_result', tools.collectResult],
   ]);
   const stubs = new Map(managerToolStubs().map((tool) => [tool.name, tool]));

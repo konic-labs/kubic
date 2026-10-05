@@ -79,6 +79,10 @@ interface Rig {
   gates: Map<string, (result: AgentResult) => void>;
   settle(agentId: string, result?: AgentResult): void;
   lanes: ManagerLaneHandle[];
+  cancelled: string[];
+  followUps: Array<{ agentId: string; prompt: string }>;
+  followUpGates: Map<string, (result: AgentResult) => void>;
+  settleFollowUp(agentId: string, result?: AgentResult): void;
 }
 
 function rig(options?: {
@@ -94,6 +98,10 @@ function rig(options?: {
   const prepared: string[] = [];
   const launched: WorkerSpawnRequest[] = [];
   const gates = new Map<string, (result: AgentResult) => void>();
+  const settledResults = new Map<string, AgentResult>();
+  const cancelled: string[] = [];
+  const followUps: Array<{ agentId: string; prompt: string }> = [];
+  const followUpGates = new Map<string, (result: AgentResult) => void>();
   let minted = 0;
   const spawned: string[] = [];
   const deps: ManagerToolsDeps = {
@@ -121,6 +129,37 @@ function rig(options?: {
         launched.push(request);
         gates.set(request.agentId, resolve);
       }),
+    inspectWorker: (agentId) => {
+      const launch = launched.find((entry) => entry.agentId === agentId);
+      if (launch === undefined) return undefined;
+      const result = settledResults.get(agentId);
+      return {
+        agentId,
+        branch: `kubic/run-414/${agentId}`,
+        role: launch.role,
+        status: result?.status ?? 'running',
+        summary: result?.summary ?? '',
+      };
+    },
+    cancelWorker: async (agentId) => {
+      cancelled.push(agentId);
+    },
+    runFollowUp: (agentId, prompt) =>
+      new Promise<AgentResult>((resolve) => {
+        followUps.push({ agentId, prompt });
+        followUpGates.set(agentId, resolve);
+      }),
+  };
+  const settleInto = (
+    store: Map<string, AgentResult>,
+    gate: Map<string, (result: AgentResult) => void>,
+    agentId: string,
+    result?: AgentResult,
+  ): void => {
+    const resolved =
+      result ?? completedResult(`done ${agentId}`, [`${agentId}.txt`]);
+    store.set(agentId, resolved);
+    gate.get(agentId)?.(resolved);
   };
   return {
     deps,
@@ -128,10 +167,13 @@ function rig(options?: {
     launched,
     gates,
     settle: (agentId, result) =>
-      gates.get(agentId)?.(
-        result ?? completedResult(`done ${agentId}`, [`${agentId}.txt`]),
-      ),
+      settleInto(settledResults, gates, agentId, result),
     lanes: [],
+    cancelled,
+    followUps,
+    followUpGates,
+    settleFollowUp: (agentId, result) =>
+      settleInto(settledResults, followUpGates, agentId, result),
   };
 }
 
@@ -206,6 +248,9 @@ describe('manager spawn/wait/collect adapters (issue #414)', () => {
       for (const resolve of test.gates.values()) {
         resolve(completedResult('cleanup', []));
       }
+      for (const resolve of test.followUpGates.values()) {
+        resolve(completedResult('cleanup', []));
+      }
       for (const lane of test.lanes.splice(0)) {
         await lane.close(BACKGROUND_CONTEXT);
       }
@@ -254,7 +299,7 @@ describe('manager spawn/wait/collect adapters (issue #414)', () => {
     ]);
   });
 
-  it('the lane toolset is the allowlist in order: three adapters, ten stubs', async () => {
+  it('the lane toolset is the allowlist in order: six adapters, seven stubs', async () => {
     const test = useRig();
     const lane = await bootLane(test, [fauxAssistantMessage('ok')]);
     const names = lane.registry
@@ -302,7 +347,10 @@ describe('manager spawn/wait/collect adapters (issue #414)', () => {
     await expect(
       call('spawn_agent', { role: 'teleporter', task: 'x' }),
     ).rejects.toThrow(/unknown_role/);
-    await expect(call('cancel_agent', {})).rejects.toThrow(/not wired yet/);
+    await expect(call('inspect_agent', { agentId: 'nobody' })).rejects.toThrow(
+      /unknown_agent/,
+    );
+    await expect(call('ask_user', {})).rejects.toThrow(/not wired yet/);
   });
 
   it('an unknown role is refused with a named reason, spawning nothing', async () => {
@@ -613,5 +661,243 @@ describe('manager spawn/wait/collect adapters (issue #414)', () => {
       }),
     ).rejects.toThrow(/invalid_budget/);
     expect(test.launched).toHaveLength(1);
+  });
+});
+
+describe('manager inspect/cancel/send adapters (issue #415)', () => {
+  const tests: Rig[] = [];
+  afterEach(async () => {
+    for (const test of tests.splice(0)) {
+      for (const resolve of test.gates.values()) {
+        resolve(completedResult('cleanup', []));
+      }
+      for (const resolve of test.followUpGates.values()) {
+        resolve(completedResult('cleanup', []));
+      }
+      for (const lane of test.lanes.splice(0)) {
+        await lane.close(BACKGROUND_CONTEXT);
+      }
+    }
+  });
+  function useRig(options?: Parameters<typeof rig>[0]): Rig {
+    const test = rig(options);
+    tests.push(test);
+    return test;
+  }
+  const callTool = (
+    lane: ManagerLaneHandle,
+    name: string,
+    args: Record<string, unknown>,
+  ) => {
+    const tool = lane.registry
+      .snapshot()
+      .tools()
+      .find(({ tool: candidate }) => candidate.name === name)?.tool;
+    if (tool === undefined) throw new Error(`${name} not registered`);
+    return tool.execute(
+      args,
+      {
+        callId: 'call-1',
+        taskId: 'task-1',
+        conversationId: lane.conversation.id,
+        output: () => undefined,
+        diagnostic: () => undefined,
+        details: async () => undefined,
+        memo: async () => undefined,
+        commit: async () => undefined,
+        env: undefined,
+      } as never,
+      BACKGROUND_CONTEXT,
+    );
+  };
+
+  const toolTexts = async (
+    lane: ManagerLaneHandle,
+    name: string,
+  ): Promise<string[]> => {
+    const out: string[] = [];
+    for (const entry of await laneEntries(lane)) {
+      if (!ToolResultEntry.is(entry)) continue;
+      const message = (
+        entry.model as unknown as
+          | Array<{
+              role?: string;
+              toolName?: string;
+              isError?: boolean;
+              content?: Array<{ text?: string }>;
+            }>
+          | undefined
+      )?.[0];
+      if (message?.role !== 'toolResult' || message.toolName !== name) continue;
+      out.push((message.content ?? []).map((part) => part.text ?? '').join(''));
+    }
+    return out;
+  };
+
+  it('cancel_agent on a running worker marks it cancelled and the run continues', async () => {
+    const test = useRig({ maxConcurrency: 1 });
+    const lane = await bootLane(test, [
+      fauxAssistantMessage(
+        [fauxToolCall('spawn_agent', { role: 'implementer', task: 'one' })],
+        { stopReason: 'toolUse' },
+      ),
+      // Cancel first (frees the cap-1 slot), then spawn the replacement —
+      // sequential rounds run them in call order.
+      fauxAssistantMessage(
+        [
+          fauxToolCall('cancel_agent', { agentId: 'worker-1' }),
+          fauxToolCall('spawn_agent', { role: 'implementer', task: 'two' }),
+        ],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('continued'),
+    ]);
+    // One turn consumes all three scripted responses: the spawn, then the
+    // cancel+spawn round (sequential: cancel frees the cap-1 slot first),
+    // then the closing text.
+    await runTurn(lane, 'go');
+    // The seam killed exactly the running worker; the replacement spawned.
+    expect(test.cancelled).toEqual(['worker-1']);
+    expect(test.launched.map((entry) => entry.agentId)).toEqual([
+      'worker-1',
+      'worker-2',
+    ]);
+    expect(test.launched[1]?.prompt).toBe('IMPLEMENTER-TEXT\n\ntwo');
+    test.settle('worker-2');
+    // The cancelled worker collects as cancelled — the run continued past
+    // it instead of inheriting a failure.
+    const collected = (await callTool(lane, 'collect_result', {
+      agentId: 'worker-1',
+    })) as { content: Array<{ text: string }> };
+    const payload = JSON.parse(collected.content[0]?.text ?? '{}') as Record<
+      string,
+      unknown
+    >;
+    expect(payload.status).toBe('cancelled');
+    expect(typeof payload.summary).toBe('string');
+  });
+
+  it('inspect_agent reports the worker row without transcript content', async () => {
+    const test = useRig();
+    const lane = await bootLane(test, [
+      fauxAssistantMessage(
+        [
+          fauxToolCall('spawn_agent', { role: 'tester', task: 'prove it' }),
+          fauxToolCall('inspect_agent', { agentId: 'worker-1' }),
+        ],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('inspected'),
+    ]);
+    await runTurn(lane, 'go');
+    const inspected = await toolTexts(lane, 'inspect_agent');
+    expect(inspected).toHaveLength(1);
+    expect(JSON.parse(inspected[0] ?? '{}')).toEqual({
+      agentId: 'worker-1',
+      branch: 'kubic/run-414/worker-1',
+      role: 'tester',
+      status: 'running',
+      summary: '',
+    });
+    test.settle('worker-1', completedResult('proved it', ['a.txt']));
+    const settled = await callTool(lane, 'inspect_agent', {
+      agentId: 'worker-1',
+    });
+    expect(settled).toMatchObject({
+      content: [
+        {
+          text: JSON.stringify({
+            agentId: 'worker-1',
+            branch: 'kubic/run-414/worker-1',
+            role: 'tester',
+            status: 'completed',
+            summary: 'proved it',
+          }),
+        },
+      ],
+    });
+    await expect(
+      callTool(lane, 'inspect_agent', { agentId: 'nobody' }),
+    ).rejects.toThrow(/unknown_agent.*nobody/);
+  });
+
+  it('send_to_agent to an unknown or running worker is refused; to a settled worker it relaunches', async () => {
+    const test = useRig();
+    const lane = await bootLane(test, [
+      fauxAssistantMessage(
+        [fauxToolCall('spawn_agent', { role: 'tester', task: 'prove it' })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('spawned'),
+    ]);
+    await runTurn(lane, 'go');
+    await expect(
+      callTool(lane, 'send_to_agent', { agentId: 'nobody', prompt: 'hi' }),
+    ).rejects.toThrow(/unknown_agent.*nobody/);
+    await expect(
+      callTool(lane, 'send_to_agent', {
+        agentId: 'worker-1',
+        prompt: 'too early',
+      }),
+    ).rejects.toThrow(/send_before_settle.*worker-1/);
+    expect(test.followUps).toEqual([]);
+    test.settle('worker-1', completedResult('proved it', ['a.txt']));
+    // Flush through the adapter's own bookkeeping: wait returns only once
+    // the background settlement is recorded (no sleeps).
+    await callTool(lane, 'wait_for_agent', { agentId: 'worker-1' });
+    const sent = (await callTool(lane, 'send_to_agent', {
+      agentId: 'worker-1',
+      prompt: 'now cover the edge case',
+    })) as { content: Array<{ text: string }> };
+    expect(JSON.parse(sent.content[0]?.text ?? '{}')).toEqual({
+      agentId: 'worker-1',
+      status: 'running',
+    });
+    expect(test.followUps).toEqual([
+      { agentId: 'worker-1', prompt: 'now cover the edge case' },
+    ]);
+    // The follow-up is a new settle cycle: wait observes it, collect reads
+    // the latest result.
+    const waiting = callTool(lane, 'wait_for_agent', {
+      agentId: 'worker-1',
+    });
+    test.settleFollowUp(
+      'worker-1',
+      completedResult('covered it', ['a.txt', 'edge.txt']),
+    );
+    const waited = (await waiting) as { content: Array<{ text: string }> };
+    expect(JSON.parse(waited.content[0]?.text ?? '{}')).toEqual({
+      agentId: 'worker-1',
+      status: 'completed',
+    });
+    const collected = (await callTool(lane, 'collect_result', {
+      agentId: 'worker-1',
+    })) as { content: Array<{ text: string }> };
+    expect(JSON.parse(collected.content[0]?.text ?? '{}')).toEqual({
+      summary: 'covered it',
+      filesChanged: ['a.txt', 'edge.txt'],
+      status: 'completed',
+    });
+  });
+
+  it('cancel on a settled or unknown worker is refused and stops nothing', async () => {
+    const test = useRig();
+    const lane = await bootLane(test, [
+      fauxAssistantMessage(
+        [fauxToolCall('spawn_agent', { role: 'tester', task: 'prove it' })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('spawned'),
+    ]);
+    await runTurn(lane, 'go');
+    await expect(
+      callTool(lane, 'cancel_agent', { agentId: 'nobody' }),
+    ).rejects.toThrow(/unknown_agent.*nobody/);
+    test.settle('worker-1');
+    await callTool(lane, 'wait_for_agent', { agentId: 'worker-1' });
+    await expect(
+      callTool(lane, 'cancel_agent', { agentId: 'worker-1' }),
+    ).rejects.toThrow(/already_settled.*worker-1/);
+    expect(test.cancelled).toEqual([]);
   });
 });

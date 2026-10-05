@@ -722,6 +722,11 @@ export interface TuiLaneBoot {
   // changes (tagged with `turn`) and an edit made between prompts is absorbed
   // instead of attributed to the agent. Safe to call when nothing changed.
   rebaseline?: (turn: number) => void;
+  // Issue #436: install the interactive turn supplier — the loop's live
+  // counter, sampled per tool call so tool-journaled entries share the
+  // sweep numbering. Installed post-boot (the counter lives in the loop,
+  // not the boot); unset means turn-less entries, like headless runs.
+  setCurrentTurnSupplier?: (supplier: () => number | undefined) => void;
   // Issue #336: the workspace's files for `@` mentions, workspace-relative —
   // the gitignore-aware, bounded walk the find/grep tools use.
   listFiles?: () => readonly string[];
@@ -1518,6 +1523,10 @@ export async function bootTuiLane(
     // runtime, or the role's default) switches a resumed session whose
     // stored model differs; the default pick keeps the session's own model.
     const modelNotices: string[] = [];
+    // Issue #436: the turn cell the loop's counter fills post-boot via
+    // setCurrentTurnSupplier. Unwired (undefined) reads turn-less, so a
+    // boot without a loop behaves like a headless run.
+    const turnCell: { supplier?: () => number | undefined } = {};
     const booted = await bootSoloLane({
       session,
       models,
@@ -1528,6 +1537,7 @@ export async function bootTuiLane(
       sessionId: id,
       agentId: options.agentId ?? 'root',
       journal,
+      currentTurn: () => turnCell.supplier?.(),
       // Issue #113 (§29.3): skills discovery at boot, same as the headless
       // runner — the <skills> block lands on the interactive lane too. A
       // loader refusal is never fatal (skills are context, never a gate);
@@ -1727,6 +1737,12 @@ export async function bootTuiLane(
       },
       rebaseline: (turn: number) => {
         reconciliation?.rebaseline(turn);
+      },
+      // Issue #436: the lane samples this cell per tool call (through
+      // SoloBootOptions.currentTurn) — installing the loop's counter here
+      // keeps tool entries on the sweep numbering without touching boot.
+      setCurrentTurnSupplier: (supplier: () => number | undefined) => {
+        turnCell.supplier = supplier;
       },
       listFiles: workspaceFileLister(env),
       forkAt: async (at: number) =>
@@ -3508,6 +3524,10 @@ export async function runTuiCommand(
   let boot: TuiLaneBoot;
   try {
     boot = await deps.bootLane(sessionId, surface.seat, flags);
+    // Issue #436: tool-journaled entries share the sweep numbering — the
+    // supplier reads the live counter, so creating it before the `let`
+    // below executes is safe (it is only ever invoked during turns).
+    boot.setCurrentTurnSupplier?.(() => reconcileTurn);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     (deps.err ?? deps.out)(`error: ${message}`);
@@ -4363,6 +4383,9 @@ export async function runTuiCommand(
       // Every lane-bound object and session-scoped surface follows the boot.
       const adoptBoot = async (next: TuiLaneBoot): Promise<void> => {
         boot = next;
+        // Issue #436: every re-boot (session switch, fork) gets the live
+        // counter too — a fresh boot's cell starts unwired.
+        next.setCurrentTurnSupplier?.(() => reconcileTurn);
         activeTurn = undefined;
         inFlightTurns = 0;
         droppedOnCancel = 0;

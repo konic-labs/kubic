@@ -73,6 +73,10 @@ export interface OpContext {
   // recovery record is worse than a failed tool call.
   toolCallId?: string;
   journal?: FileJournalStore;
+  // Interactive turn (issue #436): the lane's `currentTurn` supplier,
+  // sampled per call. write/edit journal it; absent means turn-less
+  // (headless runs, tests, journal-free contexts).
+  turn?: number;
   // Lane abort support (issue #11): the op hands its process kill to the
   // lane's kill registry so requestLaneAbort drains in-flight trees. The
   // return value is the registry's unregister fn (issue #142): the op calls

@@ -55,7 +55,14 @@ are written tmp+rename in the target's own directory, so a crash never
 leaves a half-written file visible under its real name, but their bytes are
 not fsynced before the rename. Directory-entry durability of the *first*
 creation of a file is out of scope — rename durability is what the journal
-claims, and `durable: false` opts out of all of it. Undo is part of the record, not
+claims, and `durable: false` opts out of all of it. Turn attribution (issue #436): every entry may carry the interactive turn
+it belongs to. Reconciliation sweep entries carry the turn they swept;
+tool-journaled entries (write/edit interception) carry the turn in flight
+when the call ran — sampled per call from the TUI's live counter, so both
+share one numbering. Headless runs (`kubic run`) are turn-less by design:
+pi-durable exposes no numeric turn, so their entries carry no `turn`
+field at all — never null, never zero — as do entries written before the
+field existed. Undo is part of the record, not
 an exit from it: every successful `kubic undo` appends its own inverse
 entry (attributed `kubic-undo`, the pre-undo content as its before, the
 restored content as its after), so `diff` and `log` describe the world

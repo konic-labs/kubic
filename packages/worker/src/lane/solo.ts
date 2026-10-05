@@ -215,6 +215,13 @@ export interface SoloBootOptions {
   // Session journal for interception (issue #17): when set, every
   // write/edit through the lane is recorded with its tool call id.
   journal?: FileJournalStore;
+  // Interactive turn supplier (issue #436): sampled per tool call, so
+  // tool-journaled entries carry the same turn as that turn's sweep
+  // entries. Absent on headless runs by design — their entries carry no
+  // `turn` field at all (pi-durable exposes no numeric turn). A supplier
+  // that returns `undefined` (the TUI's cell before its counter is
+  // installed) also writes no field.
+  currentTurn?: () => number | undefined;
   // Appended prompt sections (issue #99; §29.3 skills first): the caller
   // composes context blocks (skill listings, role prompt) and the lane
   // appends them to the assembled system prompt. Ordered, so the
@@ -392,6 +399,11 @@ export async function bootSoloLane(
     agentId: options.agentId,
     kills,
     ...(options.journal === undefined ? {} : { journal: options.journal }),
+    // Issue #436: the interactive turn supplier rides the tool context so
+    // every intercepted write/edit samples the live turn at call time.
+    ...(options.currentTurn === undefined
+      ? {}
+      : { currentTurn: options.currentTurn }),
     // Issue #182: clipped bash output spills into the session directory, so
     // it is pruned with the session and never lands in the workspace.
     spill: createSessionSpillSink(options.session.dir),

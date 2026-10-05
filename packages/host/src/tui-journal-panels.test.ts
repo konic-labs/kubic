@@ -130,6 +130,42 @@ async function submit(
   await new Promise((resolve) => setTimeout(resolve, 60));
 }
 
+describe('tool entries share the sweep turn numbering (issue #436)', () => {
+  it("a TUI turn's write entry carries that turn", async () => {
+    const sessionsRoot = tmpRoot();
+    const workspace = tmpRoot();
+    const { fake, exit } = await openTui(sessionsRoot, workspace, [
+      [fauxToolCall('write', { path: 't.txt', content: 't\n' })],
+      'wrote it',
+    ]);
+    await submit(fake, 'write t', 'wrote it');
+    // The session dir is the one carrying a journal.
+    const id = readdirSync(sessionsRoot).find((name) => {
+      try {
+        return readdirSync(join(sessionsRoot, name)).includes('journal');
+      } catch {
+        return false;
+      }
+    });
+    if (id === undefined) throw new Error('no session journal written');
+    const journal = new FileJournalStore(join(sessionsRoot, id, 'journal'));
+    const toolEntries = journal
+      .entries()
+      .filter((entry) => entry.toolCallId !== null);
+    expect(toolEntries).toHaveLength(1);
+    // First prompt in the process: turn 1, the sweep's numbering.
+    expect(toolEntries[0]?.turn).toBe(1);
+    const sweepEntries = journal
+      .entries()
+      .filter((entry) => entry.toolCallId === null);
+    for (const sweep of sweepEntries) {
+      if (sweep.turn !== undefined) expect(sweep.turn).toBe(1);
+    }
+    fake.feed('\x1b');
+    expect(await exit).toBe(0);
+  });
+});
+
 describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () => {
   it('after a write, Ctrl-O renders a hunk for the written path', async () => {
     const workspace = tmpRoot();

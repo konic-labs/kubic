@@ -429,3 +429,40 @@ describe('diff --stat (issue #335)', () => {
     ]);
   });
 });
+
+describe('multi-store group readers (issue #364 review)', () => {
+  it("resolves the first entry's blobs through its own store", () => {
+    const first = new FileJournalStore(tmpRoot());
+    first.append({
+      path: 'p.txt',
+      op: 'write',
+      before: 'B1\n',
+      after: 'MID\n',
+      bytesDelta: 1,
+      sessionId: 's',
+      agentId: 'a1',
+      toolCallId: 't1',
+      timestamp: 100,
+    });
+    const second = new FileJournalStore(tmpRoot());
+    second.append({
+      path: 'p.txt',
+      op: 'write',
+      before: 'B2\n',
+      after: 'A2\n',
+      bytesDelta: 1,
+      sessionId: 's',
+      agentId: 'a1',
+      toolCallId: 't2',
+      timestamp: 200,
+    });
+    // Same session+path across two stores (the one-store-per-session
+    // invariant broken on purpose): before must come from the first
+    // entry's home store, after from the last entry's.
+    const changes = diffEntriesMany([first, second], {});
+    expect(changes).toHaveLength(1);
+    expect(changes[0]?.before).toBe('B1\n');
+    expect(changes[0]?.after).toBe('A2\n');
+    expect(changes[0]?.corrupt).toBe(false);
+  });
+});

@@ -108,14 +108,19 @@ export function diffEntriesMany(
   stores: FileJournalStore[],
   filter: DiffFilter,
 ): FileChange[] {
+  // Review follow-up: each side keeps its own entry's home-store reader —
+  // the first entry's before-side resolves through the store that created
+  // it, the last entry's after-side through its own. Harmless under
+  // one-store-per-session (both readers are the same store then), exact
+  // when it is not.
   const byKey = new Map<
     string,
     {
       path: string;
       first: JournalEntry;
       last: JournalEntry;
-      readBefore: (e: JournalEntry) => string | null;
-      readAfter: (e: JournalEntry) => string | null;
+      readFirstBefore: (e: JournalEntry) => string | null;
+      readLastAfter: (e: JournalEntry) => string | null;
     }
   >();
   for (const store of stores) {
@@ -132,13 +137,12 @@ export function diffEntriesMany(
           path: e.path,
           first: e,
           last: e,
-          readBefore,
-          readAfter,
+          readFirstBefore: readBefore,
+          readLastAfter: readAfter,
         });
       } else {
         group.last = e;
-        group.readBefore = readBefore;
-        group.readAfter = readAfter;
+        group.readLastAfter = readAfter;
       }
     }
   }
@@ -151,8 +155,8 @@ export function diffEntriesMany(
       group.path,
       group.first,
       group.last,
-      group.readBefore,
-      group.readAfter,
+      group.readFirstBefore,
+      group.readLastAfter,
     );
     if (change !== null) out.push(change);
   }
@@ -163,11 +167,11 @@ function buildChange(
   path: string,
   first: JournalEntry,
   last: JournalEntry,
-  readBefore: (e: JournalEntry) => string | null,
-  readAfter: (e: JournalEntry) => string | null,
+  readBeforeOfFirst: (e: JournalEntry) => string | null,
+  readAfterOfLast: (e: JournalEntry) => string | null,
 ): FileChange | null {
-  const before = readBefore(first);
-  const after = readAfter(last);
+  const before = readBeforeOfFirst(first);
+  const after = readAfterOfLast(last);
   // "Unexpectedly null while hashes exist" (issue #111): unattributed
   // entries legitimately carry a hash-only pre-image (no before-blob by
   // design), so that absence is not corruption; everything else missing

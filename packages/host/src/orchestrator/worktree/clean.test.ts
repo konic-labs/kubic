@@ -557,7 +557,7 @@ describe('kubic clean (issue #45, #92)', () => {
         remover: async () => undefined,
         branchDeleter: async () => undefined,
         pruner: async () => undefined,
-        pruneJournal: () => ({ entries: 0, bytes: 0, overBound: 0 }),
+        pruneJournal: async () => ({ entries: 0, bytes: 0, overBound: 0 }),
       },
     );
     expect(code).toBe(0);
@@ -583,8 +583,11 @@ describe('kubic clean (issue #45, #92)', () => {
       scratch.push(repoRoot);
       const env = new FakeExecutionEnv(
         repoScripts({
-          [`git -C ${repoRoot} merge-base --is-ancestor kubic/agent-1 HEAD`]:
-            { exitCode: 0, stdout: '', stderr: '' },
+          [`git -C ${repoRoot} merge-base --is-ancestor kubic/agent-1 HEAD`]: {
+            exitCode: 0,
+            stdout: '',
+            stderr: '',
+          },
         }),
       );
       const errs: string[] = [];
@@ -608,7 +611,11 @@ describe('kubic clean (issue #45, #92)', () => {
             remover: async () => undefined,
             branchDeleter: async () => undefined,
             pruner: async () => undefined,
-            pruneJournal: () => ({ entries: 0, bytes: 0, overBound: 0 }),
+            pruneJournal: async () => ({
+              entries: 0,
+              bytes: 0,
+              overBound: 0,
+            }),
           },
         );
       } finally {
@@ -759,8 +766,7 @@ describe('kubic clean (issue #45, #92)', () => {
           [`git worktree remove ${wt1}`]: {
             exitCode: 128,
             stdout: '',
-            stderr:
-              'fatal: contains modified or untracked files, use --force',
+            stderr: 'fatal: contains modified or untracked files, use --force',
           },
         }),
         'git worktree list --porcelain': {

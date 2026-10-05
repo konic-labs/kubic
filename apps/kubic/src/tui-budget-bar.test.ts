@@ -10,22 +10,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
 import type { KubicLaneEvent } from '../../../packages/worker/src/lane/events.js';
-import type { TuiLaneLoop } from './tui-run.js';
 import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
 import {
+  createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
 } from '../../../packages/worker/src/pi-boundary.js';
-import { createModels } from '../../../packages/worker/src/pi-boundary.js';
-import {
-  bootTuiLane,
-  TuiTurnRunner,
-} from './tui-run.js';
 import {
   loadExtensionStartup,
   prodExtensionStartupOptions,
 } from './extension-startup.js';
+import type { TuiLaneLoop } from './tui-run.js';
+import { bootTuiLane, TuiTurnRunner } from './tui-run.js';
 
 const made: string[] = [];
 

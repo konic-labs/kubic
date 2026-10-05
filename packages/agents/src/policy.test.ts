@@ -214,7 +214,7 @@ describe('toolsForClasses over every level (issue #220)', () => {
     }
   });
 
-  it('git: false holds no git tools, workspace and full hold all eight', () => {
+  it('git: false holds no git tools, workspace and full hold all eleven', () => {
     const base: PermissionClasses = {
       ...SOLO_DEFAULTS,
       filesystem: 'none',
@@ -230,6 +230,10 @@ describe('toolsForClasses over every level (issue #220)', () => {
       'git_commit',
       'git_branch',
       'git_checkpoint',
+      // Issue #380: merge plus the two read-only list ops.
+      'git_merge',
+      'git_conflict_status',
+      'git_worktree_list',
     ];
     for (const git of ['workspace', 'full'] as const) {
       expect(toolsForClasses({ ...base, git }).sort()).toEqual(all.sort());

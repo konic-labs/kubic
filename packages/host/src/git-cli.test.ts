@@ -55,6 +55,13 @@ function fakeGitCli(statusOut: string): {
       stdout: statusOut,
       stderr: '',
     },
+    // Fakes are strict-by-default: script the status side-queries too.
+    'git rev-parse --show-toplevel': {
+      exitCode: 0,
+      stdout: '/repo\n',
+      stderr: '',
+    },
+    'git submodule status': { exitCode: 0, stdout: '', stderr: '' },
   };
   return {
     lines,

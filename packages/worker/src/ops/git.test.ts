@@ -16,7 +16,17 @@ import type { OpContext, ToolInvocation } from './types.js';
 function ctx(
   scripts: Record<string, { exitCode: number; stdout: string; stderr: string }>,
 ): OpContext {
-  const env = new FakeExecutionEnv(scripts);
+  // Fakes are strict-by-default: every git_status issues its root and
+  // submodule queries, so the defaults script them (explicit entries win).
+  const env = new FakeExecutionEnv({
+    'git rev-parse --show-toplevel': {
+      exitCode: 0,
+      stdout: '/repo\n',
+      stderr: '',
+    },
+    'git submodule status': { exitCode: 0, stdout: '', stderr: '' },
+    ...scripts,
+  });
   return { env, sessionId: 's1', agentId: 'root' };
 }
 
@@ -479,7 +489,15 @@ describe('git output bounds (issue #190)', () => {
       'git_diff',
       {},
       inv(),
-      ctx({ 'git diff': { exitCode: 0, stdout: big, stderr: '' } }),
+      ctx({
+        'git diff': { exitCode: 0, stdout: big, stderr: '' },
+        // Issue #432: a clipped result also queries its --stat twin.
+        'git diff --stat': {
+          exitCode: 0,
+          stdout: ' big.bin | 1 +\n 1 file changed, 1 insertion(+)\n',
+          stderr: '',
+        },
+      }),
     );
     expect(out.ok).toBe(true);
     if (!out.ok) return;
@@ -502,6 +520,12 @@ describe('git output bounds (issue #190)', () => {
           stdout: big,
           stderr: '',
         },
+        // Issue #432: a clipped result also queries its --stat twin.
+        'git show --format= --stat HEAD': {
+          exitCode: 0,
+          stdout: ' big.bin | 1 +\n 1 file changed, 1 insertion(+)\n',
+          stderr: '',
+        },
       }),
       spill: createSessionSpillSink(session),
     };
@@ -520,6 +544,11 @@ describe('git output bounds (issue #190)', () => {
         'git show --format= --patch HEAD': {
           exitCode: 0,
           stdout: big,
+          stderr: '',
+        },
+        'git show --format= --stat HEAD': {
+          exitCode: 0,
+          stdout: ' big.bin | 1 +\n 1 file changed, 1 insertion(+)\n',
           stderr: '',
         },
       }),
@@ -545,6 +574,11 @@ describe('git output bounds (issue #190)', () => {
         'git log --format=%H%x1f%an%x1f%ad%x1f%s --date=short -n 20': {
           exitCode: 0,
           stdout: raw,
+          stderr: '',
+        },
+        'git log --stat --format=%H%x1f%an%x1f%ad%x1f%s --date=short -n 20': {
+          exitCode: 0,
+          stdout: ' a.txt | 1 +\n 1 file changed, 1 insertion(+)\n',
           stderr: '',
         },
       }),

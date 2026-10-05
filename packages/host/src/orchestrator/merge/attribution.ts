@@ -3,12 +3,6 @@
 // `kubic diff --agent <id>` attributes exactly what each worker wrote.
 // Pure — the journal store itself is owned by exec/journal (#17).
 
-export interface JournalEntryRef {
-  path: string;
-  agent: string;
-  hunk: string;
-}
-
 export interface MergedHunk {
   path: string;
   hunk: string;
@@ -16,19 +10,10 @@ export interface MergedHunk {
 
 export type AttributedHunk = MergedHunk & { agent: string };
 
-export function diffArgsForAgent(agentId: string): string[] {
-  return ['diff', '--agent', agentId];
-}
-
-export function filterEntriesByAgent(
-  entries: readonly JournalEntryRef[],
-  agentId: string,
-): JournalEntryRef[] {
-  return entries
-    .filter((entry) => entry.agent === agentId)
-    .map((entry) => ({ ...entry }));
-}
-
+// Issue #213 (L-D33): diffArgsForAgent/filterEntriesByAgent (+ the
+// JournalEntryRef they alone used) are deleted — test-only helpers with
+// no prod path. Live attribution is attributeMergedHunks, called from
+// orchestrate-cli.
 export function attributeMergedHunks(
   hunks: readonly MergedHunk[],
   agentId: string,

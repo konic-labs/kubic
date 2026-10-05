@@ -6,11 +6,7 @@
 // (diff --agent), per-agent merge telemetry (§61), reviewer-before-apply.
 // The manager never authors: zero direct writes by construction.
 import { describe, expect, it } from 'vitest';
-import {
-  attributeMergedHunks,
-  diffArgsForAgent,
-  filterEntriesByAgent,
-} from './attribution.js';
+import { attributeMergedHunks } from './attribution.js';
 import type { ResolverSpecInput } from './conflicts.js';
 import {
   buildResolverSpec,
@@ -383,12 +379,6 @@ describe('filesInDiff hardening (issue #46 fix)', () => {
 
 describe('journal attribution post-merge (issue #46)', () => {
   it('diff --agent attributes merged hunks to the settling agent', () => {
-    expect(diffArgsForAgent('agent-1')).toEqual(['diff', '--agent', 'agent-1']);
-    const entries = [
-      { path: 'shared/types.ts', agent: 'agent-1', hunk: '@@ -1 +1 @@' },
-      { path: 'shared/types.ts', agent: 'agent-2', hunk: '@@ -9 +9 @@' },
-    ];
-    expect(filterEntriesByAgent(entries, 'agent-1')).toEqual([entries[0]]);
     const hunks = attributeMergedHunks(
       [{ path: 'shared/types.ts', hunk: '@@ -1 +1 @@' }],
       'agent-1',

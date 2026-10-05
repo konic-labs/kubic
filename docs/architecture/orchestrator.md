@@ -117,7 +117,14 @@ solo) — and `run` never delegates.
   races the seat with an AbortSignal and aborts it when its bound expires, so
   on the TUI `--orchestrator` path the overlay drops exactly the ask the router
   just denied, the next queued ask takes the screen, and a key pressed after
-  the expiry answers the ask on screen — never the expired one. A planted
+  the expiry answers the ask on screen — never the expired one. Worker
+  questions (issue #154, §14.2) share the mailbox: a worker's `ask_user`
+  publishes a free-text question (`questions/`, retired per run like `asks/`),
+  the run's question seat presents it once, and the manager seals the typed
+  answer to the question's key and nonce; first answer wins, the question's key
+  (session, agent, tool call, text) makes a re-launched worker read its answer
+  back, and an unanswered question ends the tool call with
+  `question_unanswered` on the worker's bound. A planted
   `decisions.json` or full-access record
   is dropped at router construction, audited (one §60 `state:dropped` row per
   drop) and scrubbed rather than honoured. The mailbox is also scoped to the

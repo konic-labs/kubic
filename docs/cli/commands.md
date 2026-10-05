@@ -485,6 +485,20 @@ forwarded like any single-key provider. Pinning a refused provider exits 6
 (`code=credential_unavailable`) naming it before any worktree is created —
 pin a provider authenticated by a single API key variable instead.
 
+**Worker questions (issue #154, §14.2).** A worker child that cannot proceed
+without the user's input calls its `ask_user` tool (registered only in
+orchestrator workers — a solo run has nobody to ask): the free-text question
+travels through the same signed mailbox as an approval ask and is presented
+once — on a terminal as `worker '<id>' (<role>) asks: <question>` followed by a
+`> ` prompt on stderr, in `kubic tui --orchestrator` as a dialog with a text
+field — and the line typed back is the tool's result. The first answer wins
+(a second one for the same question is ignored), and a worker re-launched
+within the run reads the answer back instead of asking again. With no one to
+ask (a headless run), or when the question is declined or not answered within
+the worker's approval bound, the tool returns
+`error question_unanswered: <reason>` — the worker carries on with its best
+assumption; the run never hangs on it.
+
 **Per-worker approvals and opt-in budgets (issue #105, §41.1/§41.2/§71).** A
 worker child is a real `kubic run` process, so its dangerous calls are
 challenged by the installed policy — and on this path the challenge routes to

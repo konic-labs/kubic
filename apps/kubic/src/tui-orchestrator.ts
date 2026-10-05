@@ -29,7 +29,10 @@ import type {
 import { runOrchestrateCommand } from '../../../packages/host/src/orchestrate-cli.js';
 import type { OrchestratorApprovalRequest } from '../../../packages/host/src/orchestrator/approvals/request.js';
 import type { OrchestratorVerdict } from '../../../packages/host/src/orchestrator/approvals/routing.js';
-import type { WorkerAskSeat } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
+import type {
+  WorkerAskSeat,
+  WorkerQuestionSeat,
+} from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
 import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import type { EffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
 import type { WorkerProjectionEvent } from '../../../packages/host/src/presentation/projector.js';
@@ -212,6 +215,8 @@ export function createProdTuiOrchestrator(
   // Issue #342: the orchestrator view's feed — one listener, registered by
   // the TUI loop; every turn's workers report through it.
   let onWorker: ((event: WorkerProjectionEvent) => void) | undefined;
+  // Issue #154: the late-bound question seat (the app's dialog).
+  let questionSeat: WorkerQuestionSeat | undefined;
   const nextSessionId = (): string => {
     lastStamp = Math.max(now(), lastStamp + 1);
     return `${options.sessionId}-o${lastStamp.toString(36)}`;
@@ -219,6 +224,9 @@ export function createProdTuiOrchestrator(
   return {
     watchWorkers(listener) {
       onWorker = listener;
+    },
+    setQuestionSeat(seat) {
+      questionSeat = seat;
     },
     async run(objective, onReport): Promise<TuiTurnOutcome> {
       sink = onReport ?? options.out;
@@ -235,6 +243,12 @@ export function createProdTuiOrchestrator(
           ...(options.seat === undefined
             ? {}
             : { approvalsSeat: options.seat }),
+          // Issue #154: worker questions reach the TUI dialog; with no seat
+          // bound yet they go unanswered (the worker's bound names them).
+          questionSeat: (question, signal) =>
+            questionSeat === undefined
+              ? Promise.resolve(undefined)
+              : questionSeat(question, signal),
           mergeApproval: options.mergeSeat ?? denyMergeClosed,
           // No `--yes` in the TUI: a merge refusal must not name it.
           yesHint: false,

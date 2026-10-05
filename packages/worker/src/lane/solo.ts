@@ -33,6 +33,7 @@ import {
   type ModelThinkingLevel,
   type Registry,
   section,
+  type ToolRegistration,
 } from '../pi-boundary.js';
 import {
   assembleSystemPrompt,
@@ -274,6 +275,11 @@ export interface SoloBootOptions {
   // extensions, and a caller-supplied selection could uninstall the tools,
   // the prompt and every policy hook silently (review #394 low 3).
   settings?: Omit<HarnessSettings, 'compaction' | 'extensions'>;
+  // Issue #154 (§14.2): tools that ask the HUMAN something (an orchestrator
+  // worker's `ask_user`). They are interactions, not capabilities: offered
+  // beside the base tools and outside the role / class / enterprise gates
+  // (which narrow what the agent may DO), but never under `--no-tools`.
+  interactionTools?: readonly ToolRegistration[];
 }
 
 function resolveStoredModel(
@@ -394,7 +400,9 @@ export async function bootSoloLane(
     // it is pruned with the session and never lands in the workspace.
     spill: createSessionSpillSink(options.session.dir),
   };
-  const baseTools = kubicToolsToPiTools(toolContext);
+  const interactionTools =
+    options.noTools === true ? [] : [...(options.interactionTools ?? [])];
+  const baseTools = [...kubicToolsToPiTools(toolContext), ...interactionTools];
   // §12.1/§40/§58 intersection (issues #99, #143, #288): the tools the
   // conversation offers and the tools the prompt advertises are ONE set —
   // base tools, narrowed by the permission classes when declared, by the
@@ -438,6 +446,10 @@ export async function bootSoloLane(
   effectiveToolNames = effectiveToolNames.filter((tool) =>
     registeredNames.has(tool),
   );
+  for (const tool of interactionTools) {
+    if (!effectiveToolNames.includes(tool.name))
+      effectiveToolNames.push(tool.name);
+  }
   // Without a role or enterprise gate, applyToolPolicy already installs the
   // class-derived allowlist; only the two narrowing paths need their own
   // activation (and their set can never exceed the class-derived one).

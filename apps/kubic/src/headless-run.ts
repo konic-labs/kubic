@@ -88,7 +88,9 @@ import {
 import {
   createWorkerMailboxSeat,
   TIMEOUT_REASON_MARKER,
+  workerAskIdentity,
 } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
+import { createAskUserTool } from '../../../packages/host/src/orchestrator/approvals/worker-question-tool.js';
 import {
   type EffectivePolicy,
   hasModelPolicy,
@@ -1697,6 +1699,25 @@ async function runHeadlessPromptImpl(
         sessionId: id,
         agentId: deps.agentId ?? 'root',
         journal,
+        // Issue #154 (§14.2): an orchestrator worker child can ask the USER a
+        // free-text question through its run's mailbox (the same dir and
+        // verify key the approval seat uses); a solo run has nobody to ask.
+        ...(approvalsSeat === undefined ||
+        approvalMailboxDir === undefined ||
+        approvalVerifyKey === undefined
+          ? {}
+          : {
+              interactionTools: [
+                createAskUserTool({
+                  dir: approvalMailboxDir,
+                  verifyKey: approvalVerifyKey,
+                  maxPendingMs: workerBoundMs,
+                  sessionId: workerAskIdentity().sessionId,
+                  agentId: workerAskIdentity().agentId,
+                  role: options.role ?? 'worker',
+                }),
+              ],
+            }),
         ...(skills.block === undefined
           ? {}
           : { promptSections: [skills.block] }),

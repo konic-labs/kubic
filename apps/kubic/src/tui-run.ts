@@ -493,6 +493,14 @@ export interface TuiOrchestratorRun {
   // generation; the final status and spend from the worker's result) for the
   // orchestrator view. The loop registers one listener.
   watchWorkers?: (listener: (event: WorkerProjectionEvent) => void) => void;
+  // Issue #154 (§14.2): the seat that answers a worker's free-text question —
+  // the loop binds the app's dialog once the app exists.
+  setQuestionSeat?: (
+    seat: (
+      question: { question: string; agentId: string; role: string },
+      signal?: AbortSignal,
+    ) => Promise<string | undefined>,
+  ) => void;
 }
 
 // One orchestrator turn: drives the manager-lane run for an objective.
@@ -3517,6 +3525,10 @@ export async function runTuiCommand(
       if (stopped) return;
       turn?.applyWorker(event);
     });
+    // Issue #154: worker questions are answered in the app's dialog.
+    boot.orchestrator?.setQuestionSeat?.((question, signal) =>
+      stopped ? Promise.resolve(undefined) : app.askQuestion(question, signal),
+    );
   };
   const buildOrchestratorTurn = (): TuiOrchestratorTurn | undefined =>
     boot.orchestrator === undefined

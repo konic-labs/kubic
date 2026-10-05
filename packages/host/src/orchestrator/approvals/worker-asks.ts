@@ -76,6 +76,11 @@ import {
   type SessionSkipRecord,
 } from './skip.js';
 import { TIMEOUT_REASON_MARKER } from './timeout-reason.js';
+import {
+  answerWorkerQuestion,
+  QUESTIONS_DIR,
+  readPendingWorkerQuestions,
+} from './worker-questions.js';
 
 // The named status a worker ask resolves to as DATA (the worker branch on
 // it; the run maps it to §78 exit 4). `approval_denied` is a decider's
@@ -273,6 +278,14 @@ export class RouterAuditTrace {
 // The user's seat and the router it answers through
 // ---------------------------------------------------------------------------
 
+// Issue #154 (§14.2): the user's seat for a worker's free-text question —
+// resolves with the answer text, or undefined when nobody answered (the
+// worker then reports QUESTION_UNANSWERED_CODE).
+export type WorkerQuestionSeat = (
+  question: { question: string; agentId: string; role: string },
+  signal?: AbortSignal,
+) => Promise<string | undefined>;
+
 export type WorkerAskSeat = (
   request: OrchestratorApprovalRequest,
   // Issue #409: aborts when the router's bound expires (withdraw the ask).
@@ -339,6 +352,42 @@ export function workerSeatForRun(
   options: { prompt?: (question: string) => Promise<string> } = {},
 ): WorkerAskSeat | undefined {
   return isTTY ? createInteractiveSeat(options) : undefined;
+}
+
+// Issue #154 (§14.2): the TTY seat for a worker's free-text question — one
+// readline prompt on stderr naming the worker; the line typed is the answer
+// (an empty line answers nothing). Headless runs get none, so the worker's
+// bound names the unanswered question instead of hanging.
+export function workerQuestionSeatForRun(
+  isTTY: boolean,
+  options: { prompt?: (question: string) => Promise<string> } = {},
+): WorkerQuestionSeat | undefined {
+  if (!isTTY) return undefined;
+  const ask =
+    options.prompt ??
+    (async (question: string): Promise<string> => {
+      const rl = createInterface({
+        input: process.stdin,
+        output: process.stderr,
+      });
+      try {
+        return await new Promise<string>((resolveAnswer) => {
+          rl.question(question, resolveAnswer);
+        });
+      } finally {
+        rl.close();
+      }
+    });
+  return async (question) => {
+    try {
+      const answer = await ask(
+        `worker '${question.agentId}' (${question.role}) asks: ${question.question}\n> `,
+      );
+      return answer.trim() === '' ? undefined : answer.trim();
+    } catch {
+      return undefined;
+    }
+  };
 }
 
 // The question the user reads, built from the request envelope only. It names
@@ -1136,6 +1185,8 @@ export interface WorkerApprovalsRunOptions {
    * always reaches the real seat or denies closed — never an inferred grant.
    */
   seat?: WorkerAskSeat;
+  /** Issue #154: presents worker questions; absent ⇒ they go unanswered. */
+  questionSeat?: WorkerQuestionSeat;
   /** Opt-in budget, applied to every spawn; undefined enforces nothing. */
   budget?: unknown;
   /**
@@ -1324,6 +1375,10 @@ export function createOrchestratorApprovalsRun(
   // record of what was decided.
   bridge.remove(ASKS_DIR, true, true);
   bridge.createDir(ASKS_DIR, true);
+  // Issue #154: questions are this run's too — an earlier run's question
+  // could never be answered with this run's MAC.
+  bridge.remove(QUESTIONS_DIR, true, true);
+  bridge.createDir(QUESTIONS_DIR, true);
   const debug = options.debug ?? (() => undefined);
   // ONE router trace for the whole run: the router's events, this module's
   // refusals (budget self-raise) and the skip posture all land in it. The
@@ -1572,6 +1627,40 @@ export function createOrchestratorApprovalsRun(
       agentId,
       onRefused: noteRefused,
     });
+  // Issue #154 (§14.2): worker questions. Each pending question of this
+  // worker is presented ONCE (the seat is a human — the pump never waits on
+  // it) and answered with the run's seal when the seat settles; with no seat
+  // the question stays unanswered and the worker's bound names it.
+  const presentedQuestions = new Set<string>();
+  const pumpQuestions = (scope: WorkerApprovalScope): void => {
+    const seat = options.questionSeat;
+    if (seat === undefined) return;
+    for (const question of readPendingWorkerQuestions(dir, signer.verifyKey)) {
+      if (question.agentId !== scope.agentId) continue;
+      if (presentedQuestions.has(question.key)) continue;
+      presentedQuestions.add(question.key);
+      void seat({
+        question: question.question,
+        agentId: question.agentId,
+        role: question.role,
+      })
+        .then((text) => {
+          answerWorkerQuestion(
+            dir,
+            question,
+            text === undefined || text.trim() === ''
+              ? { answered: false, reason: 'the question was not answered' }
+              : { answered: true, text },
+            signer,
+          );
+        })
+        .catch((error: unknown) => {
+          debug(
+            `questions: ${question.key} not answered: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+    }
+  };
   const pump = async (
     scope: WorkerApprovalScope,
   ): Promise<WorkerApprovalTermination | undefined> => {
@@ -1592,6 +1681,7 @@ export function createOrchestratorApprovalsRun(
     }
     // The answered asks are no longer pending: back to RUNNING (§13).
     noteAskState(scope.agentId, pendingFor(scope.agentId).length > 0);
+    pumpQuestions(scope);
     return undefined;
   };
 

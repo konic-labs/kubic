@@ -79,6 +79,7 @@ import {
   sanitizeLaneText,
 } from './lane-cells.js';
 import { buildLayoutRoot, type Viewport } from './layout.js';
+import { QuestionView, type WorkerQuestionLike } from './question-view.js';
 import { SlashCommandAutocomplete } from './slash-commands.js';
 import {
   formatStatusCost,
@@ -451,6 +452,13 @@ export interface TuiApp {
   // Issue #342 (§16.5 AgentInspector): open the capturing inspector for one
   // worker node; false when there is no such worker or no room for it.
   inspectWorker(workerId: string): boolean;
+  // Issue #154 (§14.2): a worker's free-text question as a capturing dialog;
+  // resolves with the typed answer, or undefined (declined, withdrawn, or no
+  // live screen to show it on). One question shows at a time; later ones wait.
+  askQuestion(
+    question: WorkerQuestionLike,
+    signal?: AbortSignal,
+  ): Promise<string | undefined>;
   openPanel(mode: PanelMode): void;
   // Issue #301: the panel's own scroll surface. The panel row is a
   // ScrollView (the wheel and alt+up / alt+down move it), and these expose
@@ -1070,6 +1078,49 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     overlayHost.requestRender?.();
     return true;
   };
+  // Issue #154: the open worker question, and the ones waiting behind it.
+  let questionOpen: { readonly view: QuestionView } | undefined;
+  const questionQueue: Array<() => void> = [];
+  const nextQuestion = (): void => {
+    questionQueue.shift()?.();
+  };
+  const askQuestion = (
+    question: WorkerQuestionLike,
+    signal?: AbortSignal,
+  ): Promise<string | undefined> =>
+    new Promise((resolve) => {
+      const start = (): void => {
+        const host = overlayHost;
+        if (host === undefined || signal?.aborted === true) {
+          resolve(undefined);
+          nextQuestion();
+          return;
+        }
+        const view = new QuestionView(question);
+        const handle = host.showOverlay(view, approvalOverlayOptions());
+        const close = (answer: string | undefined): void => {
+          if (questionOpen?.view !== view) return;
+          questionOpen = undefined;
+          try {
+            handle.unfocus({ target: editor });
+            handle.hide();
+          } catch {
+            // A torn-down overlay is already gone.
+          }
+          resolve(answer);
+          host.requestRender?.();
+          nextQuestion();
+        };
+        view.onSettle = close;
+        questionOpen = { view };
+        signal?.addEventListener('abort', () => close(undefined), {
+          once: true,
+        });
+        host.requestRender?.();
+      };
+      if (questionOpen === undefined && questionQueue.length === 0) start();
+      else questionQueue.push(start);
+    });
   const closeModelPicker = (notifyCancel = false): void => {
     const open = modelPicker;
     modelPicker = undefined;
@@ -1194,6 +1245,12 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // diff panel's files (and page the journal panel); neither key is
       // claimed by pi-tui's editor or alt-screen bindings, so the draft keeps
       // its own keys. A closed panel does not claim them at all.
+      // Issue #154: an open worker question owns the keys (the approval
+      // above outranks it): Enter answers, Esc declines.
+      if (questionOpen !== undefined) {
+        questionOpen.view.handleInput(data);
+        return { quit: false, consumed: true, cancel: false };
+      }
       // Issue #303: every action below is looked up in the registry, so a
       // rebound key acts and the old key falls through to the editor.
       const action = keys.actionFor('global', keyId);
@@ -1623,6 +1680,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     seedPromptHistory: (prompts: readonly string[]): void => {
       editor.seedHistory(prompts);
     },
+    askQuestion,
     inspectWorker: (workerId: string): boolean => {
       const worker = tree
         .getState()

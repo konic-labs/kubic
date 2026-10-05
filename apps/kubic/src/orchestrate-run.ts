@@ -80,6 +80,8 @@ import {
   POSTURE_FULL_ACCESS,
   type WorkerApprovalsRun,
   type WorkerAskSeat,
+  type WorkerQuestionSeat,
+  workerQuestionSeatForRun,
   workerSeatForRun,
 } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
 import type { MergedHunk } from '../../../packages/host/src/orchestrator/merge/attribution.js';
@@ -249,6 +251,9 @@ export interface OrchestrateRunOptions {
    *  Absent means no surface is attached: every ask denies closed on its
    *  bound, which is what a non-interactive run keeps. */
   approvalsSeat?: WorkerAskSeat;
+  // Issue #154: presents worker questions (free text); default: a readline
+  // prompt on a TTY, none headless.
+  questionSeat?: WorkerQuestionSeat;
   /**
    * The merge gate's decider (issue #327). A caller that OWNS the terminal —
    * the TUI, whose alt-screen and raw stdin a readline would corrupt —
@@ -1148,6 +1153,9 @@ export async function orchestrateDepsWithDefaults(
   // (tests do); headless keeps NO seat and denies closed on the bound.
   const optionsSeat =
     options.approvalsSeat ?? workerSeatForRun(process.stdin.isTTY === true);
+  const questionSeat =
+    options.questionSeat ??
+    workerQuestionSeatForRun(process.stdin.isTTY === true);
   let approvalsActive: WorkerApprovalsRun | undefined;
   let approvalsBoundMs = ORCHESTRATE_APPROVAL_BOUND_MS;
   const shellForWorktree = (worktreePath: string): WorkerShell => {
@@ -1818,6 +1826,7 @@ export async function orchestrateDepsWithDefaults(
         dir: join(resolveRepoRuntimeRoot(needRoot()), '.kubic', 'orchestrator'),
         sessionId: approvalOptions.sessionId,
         maxPendingMs: approvalOptions.maxPendingMs,
+        ...(questionSeat === undefined ? {} : { questionSeat }),
         ...(approvalOptions.budget === undefined
           ? {}
           : { budget: approvalOptions.budget }),

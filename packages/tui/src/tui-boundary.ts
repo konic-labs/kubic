@@ -50,11 +50,20 @@ export type {
 //     layer; Kubic owns only the placeholder fallback and the decision to
 //     attach (§16.5 Image, §16.8 Images)
 //   review: issue #338
+// --- #154 additions ---
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-tui Input (the single-line text field)
+//   used by: packages/tui/src/question-view.ts (a worker's free-text
+//     question, §14.2, answered in the TUI's orchestrator mode)
+//   why Pi has no alternative: Input is Pi's own line editor (cursor, kill
+//     ring, bracketed paste, undo); a Kubic copy would fork key handling
+//   review: issue #154
 export {
   CURSOR_MARKER,
   Editor,
   getCapabilities,
   Image,
+  Input,
   isKeyRelease,
   isKeyRepeat,
   Markdown,

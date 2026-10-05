@@ -23,8 +23,8 @@ import {
 } from '../../../apps/kubic/src/config-runtime.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { effectiveConfigView } from './config/runtime.js';
-import { planSessionPrune } from './sessions-prune.js';
 import { runSessionsCommand, type SessionsInvocation } from './sessions-cli.js';
+import { planSessionPrune } from './sessions-prune.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FAKE_PID = 424243;

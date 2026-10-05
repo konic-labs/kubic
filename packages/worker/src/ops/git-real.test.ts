@@ -570,6 +570,19 @@ describe('git_worktree_list over real git (issue #380)', () => {
     expect(listed.worktrees[0]?.head).toMatch(/^[0-9a-f]{40}$/);
   });
 
+  it('a clipped real diff carries a stat summary (issue #432)', async () => {
+    const repo = scratchRepo();
+    commitFile(repo, 'big.txt', 'one\n');
+    writeFileSync(
+      join(repo.path, 'big.txt'),
+      `${'changed line\n'.repeat(2500)}`,
+    );
+    const diff = await ok('git_diff', {}, repo.path, 'diff-clip432');
+    expect(diff.truncated).toBe(true);
+    expect(diff.stat).toContain('big.txt');
+    expect(diff.stat).toContain('changed');
+  });
+
   it('git_status carries the real root and an empty submodule list', async () => {
     const repo = scratchRepo();
     commitFile(repo, 'a.txt', 'one\n');

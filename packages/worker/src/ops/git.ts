@@ -78,10 +78,17 @@ export async function runGit(
     if (ctx.signal.aborted) handle.kill();
     else ctx.signal.addEventListener('abort', onAbort, { once: true });
   }
-  const done = await handle.wait();
-  untrack?.();
-  clearTimeout(timer);
-  ctx.signal?.removeEventListener('abort', onAbort);
+  // Issue #432: the untrack, timer clear and listener removal sit in a
+  // finally — a rejecting wait() must not leak the timer or the registry
+  // entry (bash parity).
+  let done: Awaited<ReturnType<typeof handle.wait>>;
+  try {
+    done = await handle.wait();
+  } finally {
+    untrack?.();
+    clearTimeout(timer);
+    ctx.signal?.removeEventListener('abort', onAbort);
+  }
   // bash parity: a success that won the race against the abort stays a
   // success; anything else the interruption touched is a named failure.
   if (timedOut) {
@@ -99,6 +106,37 @@ export async function runGit(
     stderr: done.stderr,
     timedOut,
   };
+}
+
+// Maximum --stat lines carried inline on a clipped result (issue #432):
+// the file rows that fit plus the `N files changed` summary, so the model
+// knows what the clip dropped without re-inflating to the clipped size.
+const STAT_MAX_LINES = 40;
+
+function capStat(out: string): string {
+  const lines = out.split('\n').filter((line) => line !== '');
+  if (lines.length <= STAT_MAX_LINES) return lines.join('\n');
+  const summary = lines[lines.length - 1] ?? '';
+  const kept = lines.slice(0, STAT_MAX_LINES - 1);
+  return [
+    ...kept,
+    `... (${lines.length - kept.length - 1} more stat lines)`,
+    summary,
+  ].join('\n');
+}
+
+// Best-effort `--stat` twin of a clipped query (issue #432): undefined
+// when the stat query itself fails, so a summary can never fail the op.
+async function gitStatSummary(
+  ctx: OpContext,
+  inv: ToolInvocation,
+  operation: string,
+  statArgs: string[],
+): Promise<string | undefined> {
+  const run = await runGit(ctx, inv, operation, statArgs);
+  if (run.exitCode !== 0) return undefined;
+  const capped = capStat(run.stdout);
+  return capped === '' ? undefined : capped;
 }
 
 export function notARepoError(op: string, stderr: string): OpError {
@@ -347,6 +385,9 @@ export interface GitLogResult {
   truncated: boolean;
   /** Spill path holding the full log, when the lane provided a sink. */
   spillPath?: string;
+  // Issue #432: capped `--stat` summary, present only when truncated —
+  // the shape of what the clip dropped.
+  stat?: string;
 }
 
 const LOG_FORMAT = '%H%x1f%an%x1f%ad%x1f%s';
@@ -422,12 +463,24 @@ export const gitLogOperation: Operation<GitLogArgs, GitLogResult> = {
         continue;
       entries.push({ sha, author, date, message });
     }
+    const stat = clipped.truncated
+      ? await gitStatSummary(ctx, inv, 'git_log', [
+          'log',
+          '--stat',
+          `--format=${LOG_FORMAT}`,
+          '--date=short',
+          '-n',
+          String(max),
+          ...(args.path === undefined ? [] : ['--', args.path]),
+        ])
+      : undefined;
     return {
       entries,
       truncated: clipped.truncated,
       ...(clipped.spillPath === undefined
         ? {}
         : { spillPath: clipped.spillPath }),
+      ...(stat === undefined ? {} : { stat }),
     };
   },
 };
@@ -440,6 +493,8 @@ export interface GitShowResult {
   patch: string;
   /** True when the patch was clipped to the model cap (issue #190). */
   truncated: boolean;
+  // Issue #432: capped `--stat` summary, present only when truncated.
+  stat?: string;
   /** Spill path holding the full patch, when the lane provided a sink. */
   spillPath?: string;
 }
@@ -485,12 +540,21 @@ export const gitShowOperation: Operation<GitShowArgs, GitShowResult> = {
       );
     }
     const clipped = clipStream('stdout', run.stdout, ctx);
+    const stat = clipped.truncated
+      ? await gitStatSummary(ctx, inv, 'git_show', [
+          'show',
+          '--format=',
+          '--stat',
+          args.ref,
+        ])
+      : undefined;
     return {
       patch: clipped.text,
       truncated: clipped.truncated,
       ...(clipped.spillPath === undefined
         ? {}
         : { spillPath: clipped.spillPath }),
+      ...(stat === undefined ? {} : { stat }),
     };
   },
 };
@@ -506,6 +570,8 @@ export interface GitDiffResult {
   truncated: boolean;
   /** Spill path holding the full diff, when the lane provided a sink. */
   spillPath?: string;
+  // Issue #432: capped `--stat` summary, present only when truncated.
+  stat?: string;
 }
 
 export const gitDiffOperation: Operation<GitDiffArgs, GitDiffResult> = {
@@ -570,12 +636,22 @@ export const gitDiffOperation: Operation<GitDiffArgs, GitDiffResult> = {
       );
     }
     const clipped = clipStream('stdout', run.stdout, ctx);
+    const stat = clipped.truncated
+      ? await gitStatSummary(ctx, inv, 'git_diff', [
+          'diff',
+          ...(args.staged === true ? ['--staged'] : []),
+          ...(args.range === undefined ? [] : [args.range]),
+          '--stat',
+          ...(args.path === undefined ? [] : ['--', args.path]),
+        ])
+      : undefined;
     return {
       diff: clipped.text,
       truncated: clipped.truncated,
       ...(clipped.spillPath === undefined
         ? {}
         : { spillPath: clipped.spillPath }),
+      ...(stat === undefined ? {} : { stat }),
     };
   },
 };

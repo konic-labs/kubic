@@ -38,9 +38,9 @@ workspace.
 | `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | `oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused; writes through a symlink like `write`; matching happens on LF-normalized text with the BOM stripped, and the file keeps its own line ending and BOM (see [Line endings and BOM](#line-endings-and-bom)). |
 | `bash` | `command`, `timeout?` (seconds, > 0) | bash, else sh; each stream keeps its last 64 KiB / 2000 lines, and a clipped stream is spilled in full to a session file whose path the header and `spillPath` name. Default timeout 120 s, at most 600 s; see [Bash limits](#bash-limits). |
 | `git_status` | — | Branch (or detached HEAD), ahead/behind, staged/unstaged/untracked/conflicts, renames, the repo root, and one record per submodule. |
-| `git_diff` | `staged?`, `range?`, `path?` | Diff keeps the last 64 KiB / 2000 lines (`truncated`, spilled in full when the lane provides a sink). |
-| `git_log` | `max?` (default 20, cap 100), `path?` | Raw log is clipped to the last 64 KiB / 2000 lines before parsing (`truncated`, spilled in full when the lane provides a sink). |
-| `git_show` | `ref` | Patch keeps the last 64 KiB / 2000 lines (`truncated`, spilled in full when the lane provides a sink). |
+| `git_diff` | `staged?`, `range?`, `path?` | Diff keeps the last 64 KiB / 2000 lines (`truncated`, spilled in full when the lane provides a sink); a clipped diff also carries a capped `--stat` summary (at most 40 lines, summary kept) saying what was cut. |
+| `git_log` | `max?` (default 20, cap 100), `path?` | Raw log is clipped to the last 64 KiB / 2000 lines before parsing (`truncated`, spilled in full when the lane provides a sink); a clipped log also carries a capped `--stat` summary. |
+| `git_show` | `ref` | Patch keeps the last 64 KiB / 2000 lines (`truncated`, spilled in full when the lane provides a sink); a clipped patch also carries a capped `--stat` summary. |
 | `git_stage` | `paths` (non-empty array) | Explicit paths only, never `-A`. |
 | `git_commit` | `message`, `amend?` | Killed after 120 s (a hanging hook fails the call instead of hanging it); an abort mid-flight kills the child and fails the call. |
 | `git_branch` | `create?` | Omit to list; no checkout. |

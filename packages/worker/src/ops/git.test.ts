@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { argvKey, FakeExecutionEnv } from '../../../exec/src/env.js';
 import { createSessionSpillSink } from '../spill.js';
 import { BASH_RESULT_MAX_CHARS } from './bash.js';
+import { runGit } from './git.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
@@ -156,6 +157,190 @@ describe('git status root and submodules (issue #380)', () => {
       expect(out.result.repoRoot).toBe('');
       expect(out.result.submodules).toEqual([]);
       expect(out.result.clean).toBe(true);
+    }
+  });
+});
+
+describe('git wait rejection cleanup (issue #432)', () => {
+  // RED first: untrack and clearTimeout sit after the await, so a
+  // rejecting wait() leaks both the timer and the registry entry.
+  it('clears the timer and untracks the handle when wait() rejects', async () => {
+    let kills = 0;
+    let untracked = 0;
+    let removed = 0;
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const origRemove = signal.removeEventListener.bind(signal);
+    signal.removeEventListener = ((...args: unknown[]) => {
+      removed += 1;
+      return (origRemove as (...a: never[]) => void)(...(args as never[]));
+    }) as typeof signal.removeEventListener;
+    const env = {
+      shell: {
+        spawn: () => ({
+          wait: async () => {
+            throw new Error('wait blew up');
+          },
+          kill: () => {
+            kills += 1;
+          },
+        }),
+      },
+    } as unknown as import('../../../exec/src/env.js').ExecutionEnv;
+    const context: OpContext = {
+      env,
+      sessionId: 's1',
+      agentId: 'root',
+      signal,
+      trackHandle: () => () => {
+        untracked += 1;
+      },
+    };
+    await expect(
+      runGit(context, inv(), 'git_status', ['status'], { timeoutSec: 0.05 }),
+    ).rejects.toThrow('wait blew up');
+    expect(untracked).toBe(1);
+    expect(removed).toBe(1);
+    // The 50 ms timer must be gone: nothing kills after the settle.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(kills).toBe(0);
+  });
+});
+
+describe('git clipped results carry a stat summary (issue #432)', () => {
+  // RED first: a clipped result names truncated + spill but says nothing
+  // about what was cut.
+  function strictCtx(
+    scripts: Record<
+      string,
+      { exitCode: number; stdout: string; stderr: string }
+    >,
+  ): OpContext {
+    return {
+      env: new FakeExecutionEnv(scripts, { strict: true }),
+      sessionId: 's1',
+      agentId: 'root',
+    };
+  }
+
+  const big = `${'line\n'.repeat(2500)}`;
+  const statOut =
+    ' a.txt | 2500 +++++++++++++++++++++++++++++++++++++++++++++++++\n b.txt | 10 +++++-----\n 2 files changed, 2505 insertions(+), 5 deletions(-)\n';
+
+  it('git_diff attaches a stat summary only when clipped', async () => {
+    const clipped = await callOperation(
+      'git_diff',
+      {},
+      inv(),
+      strictCtx({
+        'git diff': { exitCode: 0, stdout: big, stderr: '' },
+        'git diff --stat': { exitCode: 0, stdout: statOut, stderr: '' },
+      }),
+    );
+    expect(clipped.ok).toBe(true);
+    if (clipped.ok) {
+      expect(clipped.result.truncated).toBe(true);
+      expect(clipped.result.stat).toContain('a.txt');
+      expect(clipped.result.stat).toContain('2 files changed');
+    }
+    const small = await callOperation(
+      'git_diff',
+      {},
+      inv(),
+      strictCtx({
+        'git diff': { exitCode: 0, stdout: 'small\n', stderr: '' },
+      }),
+    );
+    expect(small.ok).toBe(true);
+    // Strict fake: a --stat spawn would throw, so passing proves the
+    // unclipped result issues no second query — and carries no stat.
+    if (small.ok) expect(small.result.stat).toBe(undefined);
+  });
+
+  it('git_show attaches a stat summary when clipped', async () => {
+    const out = await callOperation(
+      'git_show',
+      { ref: 'HEAD' },
+      inv(),
+      strictCtx({
+        'git show --format= --patch HEAD': {
+          exitCode: 0,
+          stdout: big,
+          stderr: '',
+        },
+        'git show --format= --stat HEAD': {
+          exitCode: 0,
+          stdout: statOut,
+          stderr: '',
+        },
+      }),
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.result.stat).toContain('2 files changed');
+  });
+
+  it('git_log attaches a stat summary when clipped', async () => {
+    const out = await callOperation(
+      'git_log',
+      {},
+      inv(),
+      strictCtx({
+        'git log --format=%H%x1f%an%x1f%ad%x1f%s --date=short -n 20': {
+          exitCode: 0,
+          stdout: big,
+          stderr: '',
+        },
+        'git log --stat --format=%H%x1f%an%x1f%ad%x1f%s --date=short -n 20': {
+          exitCode: 0,
+          stdout: statOut,
+          stderr: '',
+        },
+      }),
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.result.stat).toContain('a.txt');
+  });
+
+  it('a failing stat query never fails the op', async () => {
+    const out = await callOperation(
+      'git_diff',
+      {},
+      inv(),
+      strictCtx({
+        'git diff': { exitCode: 0, stdout: big, stderr: '' },
+        'git diff --stat': { exitCode: 128, stdout: '', stderr: 'boom' },
+      }),
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.result.truncated).toBe(true);
+      expect(out.result.stat).toBe(undefined);
+    }
+  });
+
+  it('caps a huge stat at forty lines keeping the summary', async () => {
+    const rows = Array.from({ length: 60 }, (_, i) => ` f${i}.txt | 1 +`).join(
+      '\n',
+    );
+    const out = await callOperation(
+      'git_diff',
+      {},
+      inv(),
+      strictCtx({
+        'git diff': { exitCode: 0, stdout: big, stderr: '' },
+        'git diff --stat': {
+          exitCode: 0,
+          stdout: `${rows}\n 60 files changed, 60 insertions(+)\n`,
+          stderr: '',
+        },
+      }),
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      const lines = (out.result.stat ?? '').split('\n');
+      expect(lines.length).toBeLessThanOrEqual(41);
+      expect(out.result.stat).toContain('60 files changed');
+      expect(out.result.stat).toMatch(/more stat lines/);
     }
   });
 });

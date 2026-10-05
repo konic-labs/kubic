@@ -204,6 +204,13 @@ export function failureForTerminus(
   }
 }
 
+// Issue #209 review: the chooser's decision plus the executor's report —
+// whether the retry happened. Retried-then-failed carries retried: true;
+// decided-to-retry-but-compaction-refused and abandoned carry false.
+export interface RetryRecord extends RetryDecision {
+  retried: boolean;
+}
+
 export interface HeadlessRunResult {
   terminus: RunTerminusKind;
   summary: string;
@@ -218,7 +225,7 @@ export interface HeadlessRunResult {
   failure?: ClassifiedFailure;
   // Issue #209: the retry decision when the lane made one (solo overflow
   // recovery) — strategy, reason and notBefore, also on success.
-  retry?: RetryDecision;
+  retry?: RetryRecord;
   // Issue #280: the interrupt that ended the run, present exactly when the
   // terminus is `cancelled`; the exit code is 128+signo from it.
   signal?: string;

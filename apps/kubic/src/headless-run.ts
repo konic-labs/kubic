@@ -116,6 +116,7 @@ import {
   MAX_RUN_TIMEOUT_MS,
   mapCaughtErrorToTerminus,
   mapLaneOutcomeToFailure,
+  type RetryRecord,
   SESSION_ID_PATTERN,
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
@@ -395,6 +396,29 @@ function refs(
   };
 }
 
+// Issue #209 review: the user-facing overflow line must tell the truth.
+// The decision hook fires for every decision (including abandon), but
+// only a retry_with_new_context compacts and retries — anything else
+// stays silent, and the failure terminus already reports the failure.
+export function overflowRecoveryNotice(
+  decision: RetryDecision,
+): string | undefined {
+  if (decision.decision !== 'retry_with_new_context') return undefined;
+  return `context overflow — compacting and retrying once (${decision.reason})`;
+}
+
+// Issue #209 review: the envelope record carries whether the retry
+// happened, so --json distinguishes retried-then-failed (retried: true)
+// from decided-to-retry-but-compaction-refused and abandoned
+// (retried: false). Absent when the lane made no decision.
+export function retryRecord(
+  decision: RetryDecision | undefined,
+  retried: boolean,
+): RetryRecord | undefined {
+  if (decision === undefined) return undefined;
+  return { ...decision, retried };
+}
+
 function finished(
   id: string,
   terminus: HeadlessRunResult['terminus'],
@@ -403,8 +427,9 @@ function finished(
   signal?: string,
   failure?: ClassifiedFailure,
   // Issue #209: the retry decision when the lane made one (solo overflow
-  // recovery) — strategy, reason and notBefore, also on success.
-  retry?: RetryDecision,
+  // recovery) — strategy, reason, notBefore and whether the retry
+  // happened, also on success.
+  retry?: RetryRecord,
 ): HeadlessRunResult {
   return {
     terminus,
@@ -1917,6 +1942,7 @@ async function runHeadlessPromptImpl(
       // Issue #209: the solo overflow-recovery decision, when the lane
       // made one — carried into the envelope on every exit path below.
       let retryDecision: RetryDecision | undefined;
+      let retryRetried = false;
       const driveSpan = spans.startLane('drive');
       try {
         if (resumed !== undefined) {
@@ -1932,13 +1958,14 @@ async function runHeadlessPromptImpl(
             // conversation busy fails by name instead of queueing behind a
             // turn nobody is watching (#334 owns follow-up UX).
             whenBusy: 'reject',
-            onRetryDecision: (decision) =>
-              notice(
-                `context overflow — compacting and retrying once (${decision.reason})`,
-              ),
+            onRetryDecision: (decision) => {
+              const text = overflowRecoveryNotice(decision);
+              if (text !== undefined) notice(text);
+            },
           });
           outcome = recovered.outcome;
           retryDecision = recovered.decision;
+          retryRetried = recovered.retried;
         }
       } finally {
         spans.endLane(driveSpan, guardFailure()?.message);
@@ -1998,7 +2025,7 @@ async function runHeadlessPromptImpl(
           undefined,
           undefined,
           undefined,
-          retryDecision,
+          retryRecord(retryDecision, retryRetried),
         );
       }
       const { terminus, failure } = failedTurnTerminus(outcome);
@@ -2010,7 +2037,7 @@ async function runHeadlessPromptImpl(
         message,
         undefined,
         failure,
-        retryDecision,
+        retryRecord(retryDecision, retryRetried),
       );
     } finally {
       await detachEvents();

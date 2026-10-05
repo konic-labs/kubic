@@ -488,14 +488,14 @@ describe('kubic workers resources (issue #248)', () => {
       },
     );
     const doc = JSON.parse(lines.join('\n')) as Record<string, unknown>[];
-    expect(doc[0]?.['resourceUsage']).toEqual({ rssMb: 8, cpuPct: 0 });
-    expect(doc[0]?.['consumption']).toEqual({
+    expect(doc[0]?.resourceUsage).toEqual({ rssMb: 8, cpuPct: 0 });
+    expect(doc[0]?.consumption).toEqual({
       inputTokens: 100,
       costUsd: 0.001,
     });
     // Everything the old document carried is still there.
-    expect(doc[0]?.['workerId']).toBe('w-1');
-    expect(doc[0]?.['pid']).toBe(4242);
+    expect(doc[0]?.workerId).toBe('w-1');
+    expect(doc[0]?.pid).toBe(4242);
   });
 
   it('labels the --debug exit line as the command exit, not a worker exit', async () => {

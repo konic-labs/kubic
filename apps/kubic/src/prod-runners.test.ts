@@ -672,10 +672,10 @@ describe('kubic workers list resources (prod wiring, issue #248)', () => {
       await json.r.workers({ command: 'list', json: true }, noConfig),
     ).toBe(0);
     const doc = JSON.parse(json.lines.join('\n')) as Record<string, unknown>[];
-    expect(doc[0]?.['resourceUsage']).toMatchObject({
+    expect(doc[0]?.resourceUsage).toMatchObject({
       cpuPct: expect.any(Number),
     });
-    expect(doc[0]?.['consumption']).toMatchObject({ costUsd: 0.012 });
+    expect(doc[0]?.consumption).toMatchObject({ costUsd: 0.012 });
   });
 });
 
@@ -731,9 +731,7 @@ describe('kubic workers refuses owner-derived state paths (issue #437)', () => {
     const { dir } = evilRepo('prod-ownerescape-', 'orchestrate:../decoy');
     writeFileSync(join(dir, '.kubic', 'decoy.json'), metricsFile('w9'));
     const { lines, r } = runners();
-    expect(await r.workers({ command: 'inspect', id: 'w9' }, noConfig)).toBe(
-      0,
-    );
+    expect(await r.workers({ command: 'inspect', id: 'w9' }, noConfig)).toBe(0);
     const text = lines.join('\n');
     expect(text).toContain('usage: accruing');
     expect(text).not.toContain('tok=');

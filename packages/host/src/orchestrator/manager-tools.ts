@@ -406,9 +406,7 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
         // drains the queue) and wakes this loop. The scheduler's own
         // maxPendingMs expiry is the abandonment bound — a queued entry the
         // sweep drops surfaces as a named denial, never a silent hang —
-        // with the run's wait bound as the belt. The claim stays held while
-        // queued; an expiry releases it, a deadline does not (the entry may
-        // still be queued, so the accounting stays conservative).
+        // with the run's wait bound as the belt.
         const deadline = Date.now() + deps.waitTimeoutMs;
         for (;;) {
           if (deps.scheduler.runningIds().includes(agentId)) break;
@@ -420,19 +418,40 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
             );
           }
           if (Date.now() >= deadline) {
+            // Withdraw first: the scheduler must never admit a ghost no
+            // one will launch or complete. Just-admitted (running)
+            // proceeds to launch below instead of throwing.
+            if (deps.scheduler.withdraw(agentId) === 'running') break;
+            claimed.delete(agentId);
             throw new ManagerToolRefusalError(
               'spawn_queue_timeout',
-              `spawn for worker '${agentId}' waited ${deps.waitTimeoutMs}ms for a slot — the claim stays held, settle a worker first`,
+              `spawn for worker '${agentId}' waited ${deps.waitTimeoutMs}ms for a slot — both slots freed, settle a worker and retry`,
             );
           }
           const wait = settle.waitForAnySettle();
           const remaining = deadline - Date.now();
+          let timer: ReturnType<typeof setTimeout> | undefined;
           const timeout = new Promise<void>((resolve) => {
-            setTimeout(resolve, Math.max(0, remaining));
+            timer = setTimeout(resolve, Math.max(0, remaining));
           });
           await Promise.race([wait.promise, timeout]);
           wait.cancel();
+          // A settle win must not leave the bound timer lingering.
+          if (timer !== undefined) clearTimeout(timer);
         }
+      }
+      // A minted id must never overwrite a live record: refuse instead.
+      // Reachable when a minter repeats an id after its worker settled
+      // (the scheduler forgot it, the lane must not). The held scheduler
+      // slot frees through complete, which may fairly admit a queued
+      // sibling — the claim and the worktree record stay untouched.
+      if (settle.known(agentId)) {
+        deps.scheduler.complete(agentId);
+        claimed.delete(agentId);
+        throw new ManagerToolRefusalError(
+          'duplicate_agent',
+          `agent id '${agentId}' is already spent by this run — mint a fresh id and retry`,
+        );
       }
       // The spawn half is synchronous (admission is held); the child runs
       // in the background — the model waits or collects later, so one turn

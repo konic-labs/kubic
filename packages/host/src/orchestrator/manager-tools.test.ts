@@ -89,6 +89,7 @@ function rig(options?: {
   maxConcurrency?: number;
   spawnCap?: number;
   waitTimeoutMs?: number;
+  mintAgentId?: () => string;
 }): Rig {
   const scheduler = new ParallelScheduler(
     options?.maxConcurrency === undefined
@@ -116,10 +117,12 @@ function rig(options?: {
     noteSpawned: (agentId) => {
       spawned.push(agentId);
     },
-    mintAgentId: () => {
-      minted += 1;
-      return `worker-${minted}`;
-    },
+    mintAgentId:
+      options?.mintAgentId ??
+      (() => {
+        minted += 1;
+        return `worker-${minted}`;
+      }),
     prepareWorker: async (agentId) => {
       prepared.push(agentId);
       return { agentId, worktreePath: `/wt/${agentId}` };
@@ -239,6 +242,33 @@ async function laneEntries(lane: ManagerLaneHandle): Promise<EntryRecord[]> {
   );
   return [...page.items].reverse();
 }
+
+const callTool = (
+  lane: ManagerLaneHandle,
+  name: string,
+  args: Record<string, unknown>,
+) => {
+  const tool = lane.registry
+    .snapshot()
+    .tools()
+    .find(({ tool: candidate }) => candidate.name === name)?.tool;
+  if (tool === undefined) throw new Error(`${name} not registered`);
+  return tool.execute(
+    args,
+    {
+      callId: 'call-1',
+      taskId: 'task-1',
+      conversationId: lane.conversation.id,
+      output: () => undefined,
+      diagnostic: () => undefined,
+      details: async () => undefined,
+      memo: async () => undefined,
+      commit: async () => undefined,
+      env: undefined,
+    } as never,
+    BACKGROUND_CONTEXT,
+  );
+};
 
 describe('manager spawn/wait/collect adapters (issue #414)', () => {
   const tests: Rig[] = [];
@@ -684,32 +714,6 @@ describe('manager inspect/cancel/send adapters (issue #415)', () => {
     tests.push(test);
     return test;
   }
-  const callTool = (
-    lane: ManagerLaneHandle,
-    name: string,
-    args: Record<string, unknown>,
-  ) => {
-    const tool = lane.registry
-      .snapshot()
-      .tools()
-      .find(({ tool: candidate }) => candidate.name === name)?.tool;
-    if (tool === undefined) throw new Error(`${name} not registered`);
-    return tool.execute(
-      args,
-      {
-        callId: 'call-1',
-        taskId: 'task-1',
-        conversationId: lane.conversation.id,
-        output: () => undefined,
-        diagnostic: () => undefined,
-        details: async () => undefined,
-        memo: async () => undefined,
-        commit: async () => undefined,
-        env: undefined,
-      } as never,
-      BACKGROUND_CONTEXT,
-    );
-  };
 
   const toolTexts = async (
     lane: ManagerLaneHandle,
@@ -899,5 +903,86 @@ describe('manager inspect/cancel/send adapters (issue #415)', () => {
       callTool(lane, 'cancel_agent', { agentId: 'worker-1' }),
     ).rejects.toThrow(/already_settled.*worker-1/);
     expect(test.cancelled).toEqual([]);
+  });
+});
+
+describe('manager spawn review findings (issue #414 round 1)', () => {
+  const tests: Rig[] = [];
+  afterEach(async () => {
+    for (const test of tests.splice(0)) {
+      for (const resolve of test.gates.values()) {
+        resolve(completedResult('cleanup', []));
+      }
+      for (const resolve of test.followUpGates.values()) {
+        resolve(completedResult('cleanup', []));
+      }
+      for (const lane of test.lanes.splice(0)) {
+        await lane.close(BACKGROUND_CONTEXT);
+      }
+    }
+  });
+  function useRig(options?: Parameters<typeof rig>[0]): Rig {
+    const test = rig(options);
+    tests.push(test);
+    return test;
+  }
+
+  it('a timed-out spawn frees both slots: no scheduler ghost, no held claim', async () => {
+    const test = useRig({ maxConcurrency: 1, spawnCap: 2, waitTimeoutMs: 60 });
+    const lane = await bootLane(test, [
+      fauxAssistantMessage(
+        [
+          fauxToolCall('spawn_agent', { role: 'implementer', task: 'one' }),
+          fauxToolCall('spawn_agent', { role: 'implementer', task: 'two' }),
+        ],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('timed out'),
+      fauxAssistantMessage(
+        [fauxToolCall('spawn_agent', { role: 'implementer', task: 'three' })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('retried'),
+    ]);
+    await runTurn(lane, 'go');
+    expect(test.launched.map((entry) => entry.agentId)).toEqual(['worker-1']);
+    // The withdrawn entry is gone from the scheduler — no ghost for a
+    // later drain to admit.
+    expect(test.deps.scheduler.pendingIds()).toEqual([]);
+    expect(test.deps.scheduler.runningIds()).toEqual(['worker-1']);
+    // Settle the running worker, then retry: the freed claim admits the
+    // retry under the same cap that refused nothing.
+    test.settle('worker-1');
+    await callTool(lane, 'wait_for_agent', { agentId: 'worker-1' });
+    await runTurn(lane, 'retry');
+    expect(test.launched.map((entry) => entry.agentId)).toEqual([
+      'worker-1',
+      'worker-3',
+    ]);
+  });
+
+  it('a repeated agent id is refused and never overwrites the record', async () => {
+    const test = useRig({ mintAgentId: () => 'solo' });
+    const lane = await bootLane(test, [
+      fauxAssistantMessage(
+        [fauxToolCall('spawn_agent', { role: 'tester', task: 'first' })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('spawned'),
+    ]);
+    await runTurn(lane, 'go');
+    test.settle('solo', completedResult('first done', ['a.txt']));
+    await callTool(lane, 'wait_for_agent', { agentId: 'solo' });
+    await expect(
+      callTool(lane, 'spawn_agent', { role: 'tester', task: 'second' }),
+    ).rejects.toThrow(/duplicate_agent.*solo/);
+    expect(test.launched).toHaveLength(1);
+    const collected = (await callTool(lane, 'collect_result', {
+      agentId: 'solo',
+    })) as { content: Array<{ text: string }> };
+    expect(JSON.parse(collected.content[0]?.text ?? '{}')).toMatchObject({
+      summary: 'first done',
+      status: 'completed',
+    });
   });
 });

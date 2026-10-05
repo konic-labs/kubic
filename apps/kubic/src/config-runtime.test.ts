@@ -57,9 +57,11 @@ import {
   runtimePolicy,
   runtimeRunDeps,
   runtimeSkillsDeps,
+  runtimeSystemPromptSection,
   selectModelUnderPolicy,
   sessionRetentionDays,
 } from './config-runtime.js';
+import { composePromptSections } from './headless-run.js';
 import { prodRunDeps } from './prod-runners.js';
 
 const made: string[] = [];
@@ -674,6 +676,48 @@ describe('session compaction projection (issue #239)', () => {
     const probe = doctorConfigProbe(loadCliConfig({ cwd, home, env: {} }));
     expect(probe.ok).toBe(true);
     expect(probe.detail).toContain('reserve=4000 token(s)');
+  });
+});
+
+describe('system prompt file section (issue #240)', () => {
+  it('projects the file contents as the lane section', () => {
+    const { home, cwd } = globalHome('[agent]\nsystemPromptFile = "~/.kubic/SYSTEM.md"\n');
+    writeFileSync(join(home, '.kubic', 'SYSTEM.md'), 'Be terse.\n');
+    const result = loadCliConfig({ cwd, home, env: {} });
+    expect(result.error).toBeUndefined();
+    expect(runtimeSystemPromptSection(result)).toBe('Be terse.\n');
+  });
+
+  it('is undefined when nothing is configured', () => {
+    const result = loadCliConfig({
+      cwd: tmpDir('kubic-sysprompt-absent-cwd-'),
+      home: tmpDir('kubic-sysprompt-absent-home-'),
+      env: {},
+    });
+    expect(result.error).toBeUndefined();
+    expect(runtimeSystemPromptSection(result)).toBeUndefined();
+  });
+
+  it('prodRunDeps carries it: run and worker children assemble the same prompt', () => {
+    const { home, cwd } = globalHome('[agent]\nsystemPromptFile = "~/.kubic/SYSTEM.md"\n');
+    writeFileSync(join(home, '.kubic', 'SYSTEM.md'), 'Be terse.\n');
+    const result = loadCliConfig({ cwd, home, env: {} });
+    expect(result.error).toBeUndefined();
+    expect(prodRunDeps(result).systemPromptSection).toBe('Be terse.\n');
+  });
+
+  it('composes the file section ahead of the skills block (run and tui share it)', () => {
+    // The lane appends sections as suffixes after the cache-stable prefix:
+    // the user's own instructions come first, discovered context second.
+    expect(composePromptSections('FILE', '<skills/>')).toEqual([
+      'FILE',
+      '<skills/>',
+    ]);
+    expect(composePromptSections('FILE', undefined)).toEqual(['FILE']);
+    expect(composePromptSections(undefined, '<skills/>')).toEqual([
+      '<skills/>',
+    ]);
+    expect(composePromptSections(undefined, undefined)).toBeUndefined();
   });
 });
 

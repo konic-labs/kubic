@@ -407,6 +407,24 @@ describe('[session] compaction keys (issue #239)', () => {
   });
 });
 
+describe('[agent] systemPromptFile (issue #240)', () => {
+  it('parses the key and refuses malformed values by name', () => {
+    expect(
+      parseTomlConfig('[agent]\nsystemPromptFile = "SYSTEM.md"\n').agent
+        ?.systemPromptFile,
+    ).toBe('SYSTEM.md');
+    expect(() =>
+      parseTomlConfig('[agent]\nsystemPromptFile = 42\n'),
+    ).toThrow(/'agent': 'systemPromptFile' must be a non-empty string/);
+    expect(() =>
+      parseTomlConfig('[agent]\nsystemPromptFile = ""\n'),
+    ).toThrow(/'agent': 'systemPromptFile' must be a non-empty string/);
+    expect(() =>
+      parseTomlConfig('[agent]\nsystem_prompt_file = "x"\n'),
+    ).toThrow(/unknown key/);
+  });
+});
+
 describe('trust-gated project-local config (issue #38)', () => {
   it('refuses untrusted project config pre-trust', () => {
     expect(() =>

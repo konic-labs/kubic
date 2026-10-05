@@ -60,6 +60,19 @@ describe('tuiBootOptions (issue #227)', () => {
     ).toBe(false);
   });
 
+  it('forwards the system prompt file section (issue #240)', () => {
+    const options = tuiBootOptions(
+      { out: () => {}, systemPromptSection: 'Be terse.' },
+      undefined,
+      undefined,
+    );
+    expect(options.systemPromptSection).toBe('Be terse.');
+    expect(
+      'systemPromptSection' in
+        tuiBootOptions({ out: () => {} }, undefined, undefined),
+    ).toBe(false);
+  });
+
   it('omits the model when no pin is configured', () => {
     const options = tuiBootOptions({ out: () => {} }, undefined, undefined);
     expect(options).toEqual({});

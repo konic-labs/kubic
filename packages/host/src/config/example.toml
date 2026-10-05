@@ -9,6 +9,13 @@ skills = ["./skills"]
 
 [agent]
 name = "kubic"
+# Prompt augmentation (design §63 system_prompt_file): the sibling SYSTEM.md
+# is read at load and appended to the assembled lane prompt (ahead of the
+# skills block) for run, tui, replay and worker children. Relative to this
+# file's directory; a leading ~/ expands to home. A project-layer path
+# additionally requires trust and containment in the project root; a missing
+# or unreadable file is a named ConfigError, never a silent skip.
+systemPromptFile = "SYSTEM.md"
 
 [model]
 provider = "local"

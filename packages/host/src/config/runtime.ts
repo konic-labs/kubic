@@ -18,7 +18,7 @@
 // File access arrives as the exec FileBridge (I/O confinement): this module
 // never imports node:fs. Zero network, zero real processes.
 
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import {
   type PermissionClasses,
   validateClasses,
@@ -132,6 +132,10 @@ export function runtimeKeyEffectText(entry: RuntimeKeyEffect): string {
 }
 
 export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
+  'agent.systemPromptFile': {
+    effect:
+      'file whose contents the run, tui and replay lanes append to the assembled system prompt (ahead of the skills block)',
+  },
   'agent.name': {
     effect:
       'agent id on the solo lane + journal attribution (`kubic diff --agent`)',
@@ -364,6 +368,19 @@ export interface RuntimeJournal {
   source: ConfigValueSource;
 }
 
+export interface RuntimeSystemPrompt {
+  // The resolved path (what `kubic config` reports) and the contents the
+  // lane boots append to the assembled system prompt. Read once, at load,
+  // through the file bridge — a missing or unreadable file is a named
+  // ConfigError, never a silent skip.
+  path: string;
+  contents: string;
+  // The layer that declared it (global paths are always allowed; the
+  // project layer additionally requires trust and containment, enforced
+  // at load).
+  source: ConfigValueSource;
+}
+
 export interface RuntimeCompaction {
   // Undefined means "not configured" — the lane defaults apply (automatic
   // compaction, the default reserve, the default recent window), never an
@@ -457,6 +474,9 @@ export interface RuntimeConfig {
   permissions: RuntimePermissions;
   journal: RuntimeJournal;
   compaction: RuntimeCompaction;
+  // Undefined when no layer declares `[agent] systemPromptFile` — the
+  // lane assembles its prompt unchanged.
+  systemPromptFile?: RuntimeSystemPrompt;
   modes: RuntimeModes;
   orchestrator: RuntimeOrchestrator;
   verify: RuntimeVerify;
@@ -815,6 +835,90 @@ function modesFrom(
   };
 }
 
+// [agent] systemPromptFile (issue #240; §63 `system_prompt_file`): resolve
+// the configured path against the declaring layer and read it now, through
+// the bridge — fail-closed. `~` expands to the home directory; an absolute
+// path is taken as typed; a relative path resolves against the declaring
+// config file's directory (programmatic session/agent layers are never
+// files, so a relative path there is refused, never guessed). The project
+// layer additionally requires containment in the project root: a trusted
+// path outside it is refused by name. Global and higher layers are
+// unrestricted. A missing or unreadable file is a named ConfigError.
+// Source attribution for the programmatic session/agent layers (issues
+// #239, #240): first layer in precedence order that sets the leaf. File
+// layers always win over these (they precede them), so this is only the
+// fallback when no file source recorded the key.
+function programmaticSourceFor(
+  inputs: RuntimeConfigInputs,
+  key: string,
+): ConfigLayer | undefined {
+  for (const layer of ['session', 'agent'] as const) {
+    const scoped = inputs[layer];
+    if (scoped !== undefined && flatten(scoped)[key] !== undefined) {
+      return layer;
+    }
+  }
+  return undefined;
+}
+
+export function resolveSystemPromptFile(args: {
+  bridge: Pick<FileBridge, 'exists' | 'readTextFile'>;
+  home: string;
+  projectRoot: string;
+  configured: string | undefined;
+  source: ConfigValueSource | undefined;
+  layerPath: string | undefined;
+}): RuntimeSystemPrompt | undefined {
+  const { configured, source } = args;
+  if (configured === undefined) return undefined;
+  if (typeof configured !== 'string' || configured === '') {
+    throw new ConfigError(
+      `'agent': 'systemPromptFile' must be a non-empty string`,
+    );
+  }
+  if (source === undefined || source === 'defaults') {
+    // The key is set but no layer owns it: attribution would be a guess.
+    throw new ConfigError(
+      `'agent': 'systemPromptFile' is set but no config layer owns it`,
+    );
+  }
+  const layer = source as ConfigLayer;
+  let resolved: string;
+  if (configured.startsWith('~/')) {
+    resolved = join(args.home, configured.slice(2));
+  } else if (isAbsolute(configured)) {
+    resolved = configured;
+  } else if (args.layerPath === undefined) {
+    throw new ConfigError(
+      `'agent': 'systemPromptFile' '${configured}' is a relative path with no declaring config file — use an absolute path`,
+    );
+  } else {
+    resolved = join(dirname(args.layerPath), configured);
+  }
+  if (layer === 'project') {
+    const rel = relative(args.projectRoot, resolved);
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+      throw new ConfigError(
+        `'agent': 'systemPromptFile' '${resolved}' is outside the project root '${args.projectRoot}'`,
+      );
+    }
+  }
+  if (!safeExists(args.bridge, resolved)) {
+    throw new ConfigError(
+      `'agent': 'systemPromptFile' '${resolved}' does not exist`,
+    );
+  }
+  let contents: string;
+  try {
+    contents = args.bridge.readTextFile(resolved);
+  } catch (error) {
+    throw new ConfigError(
+      `'agent': 'systemPromptFile' '${resolved}' cannot be read: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return { path: resolved, contents, source };
+}
+
 export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   const env = inputs.env ?? {};
   const trustEnv = env[RUNTIME_ENV_OVERRIDES.trustProject];
@@ -965,6 +1069,9 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
       loaded.sources['session.autoCompact'] ??
       loaded.sources['session.reserveTokens'] ??
       loaded.sources['session.keepRecentTokens'] ??
+      programmaticSourceFor(inputs, 'session.autoCompact') ??
+      programmaticSourceFor(inputs, 'session.reserveTokens') ??
+      programmaticSourceFor(inputs, 'session.keepRecentTokens') ??
       'defaults',
   };
 
@@ -1026,6 +1133,21 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   if (approvals.source === 'env') loaded.sources['approvals.route'] = 'env';
   if (retentionEnvApplies) loaded.sources['journal.retentionDays'] = 'env';
 
+  // [agent] systemPromptFile (issue #240): the declaring layer's file
+  // resolves a relative path; anything else means no declaring file.
+  // The programmatic session/agent layers merge values without recording
+  // sources (loadLayers records file layers only), so a key set there
+  // attributes to the winning programmatic layer in precedence order —
+  // never to 'defaults', and never refused as ownerless.
+  const systemPromptSource =
+    loaded.sources['agent.systemPromptFile'] ??
+    programmaticSourceFor(inputs, 'agent.systemPromptFile');
+  const systemPromptLayerPath =
+    systemPromptSource !== undefined &&
+    (LAYER_ORDER as readonly string[]).includes(systemPromptSource)
+      ? loaded.paths[systemPromptSource as ConfigLayer]
+      : undefined;
+
   const rawPermissions = config.permissions ?? {};
   const permissions: RuntimePermissions = {
     classes: validateClasses(rawPermissions),
@@ -1044,6 +1166,18 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     permissions,
     journal,
     compaction,
+    // [agent] systemPromptFile (issue #240): resolved + read at load, so
+    // the lane boots and the `kubic config` report share one derivation.
+    systemPromptFile: resolveSystemPromptFile({
+      bridge: inputs.bridge,
+      home: inputs.home,
+      projectRoot:
+        inputs.projectRoot ??
+        findProjectRoot(inputs.bridge, inputs.cwd, inputs.home),
+      configured: config.agent?.systemPromptFile,
+      source: systemPromptSource,
+      layerPath: systemPromptLayerPath,
+    }),
     modes: modesFrom(config, loaded.sources),
     orchestrator: {
       ...(orchestratorRoot === undefined ? {} : { root: orchestratorRoot }),
@@ -1085,6 +1219,16 @@ export function effectiveConfigView(
       layer: runtime.sources[key] ?? 'defaults',
       disposition: runtimeKeyDisposition(keyEffectFor(key)),
     });
+  }
+  // [agent] systemPromptFile (issue #240): the report names the EFFECTIVE
+  // (resolved) path, not the declared spelling — same derivation the lane
+  // boots with. The layer stays the declaring one.
+  if (runtime.systemPromptFile !== undefined) {
+    const row = values.find((entry) => entry.key === 'agent.systemPromptFile');
+    if (row !== undefined) {
+      row.value = formatValue(runtime.systemPromptFile.path);
+      row.layer = runtime.systemPromptFile.source;
+    }
   }
   values.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return {

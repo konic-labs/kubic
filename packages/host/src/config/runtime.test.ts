@@ -669,12 +669,17 @@ describe('effective config view (issue #90)', () => {
       keepRecentTokens: 5000,
       source: 'project',
     });
-    expect(view.values.find((v) => v.key === 'session.reserveTokens'))
-      .toMatchObject({ value: '4000', layer: 'project', disposition: 'consumed' });
-    const lines = renderEffectiveConfig(view);
     expect(
-      lines.some((line) => line.includes('reserve=4000 token(s)')),
-    ).toBe(true);
+      view.values.find((v) => v.key === 'session.reserveTokens'),
+    ).toMatchObject({
+      value: '4000',
+      layer: 'project',
+      disposition: 'consumed',
+    });
+    const lines = renderEffectiveConfig(view);
+    expect(lines.some((line) => line.includes('reserve=4000 token(s)'))).toBe(
+      true,
+    );
   });
 
   it('reports compaction defaults when nothing is configured (issue #239)', () => {
@@ -688,9 +693,9 @@ describe('effective config view (issue #90)', () => {
       source: 'defaults',
     });
     const lines = renderEffectiveConfig(view);
-    expect(
-      lines.some((line) => line.includes('reserve=16384 token(s)')),
-    ).toBe(true);
+    expect(lines.some((line) => line.includes('reserve=16384 token(s)'))).toBe(
+      true,
+    );
   });
 
   it('re-validates session compaction for the programmatic layers (issue #239)', () => {
@@ -712,6 +717,124 @@ describe('effective config view (issue #90)', () => {
         agent: { session: { autoCompact: 'yes' as unknown as boolean } },
       }),
     ).toThrow(/'session': 'autoCompact' must be a boolean/);
+  });
+
+  it('resolves [agent] systemPromptFile against the declaring layer (issue #240)', () => {
+    const runtime = load(
+      {
+        [GLOBAL]: '[agent]\nsystemPromptFile = "SYSTEM.md"\n',
+        [`${HOME}/.kubic/SYSTEM.md`]: 'Be terse.\n',
+      },
+      { projectTrusted: true },
+    );
+    // The contents travel in the runtime; the report names the path.
+    expect(runtime.systemPromptFile).toEqual({
+      path: `${HOME}/.kubic/SYSTEM.md`,
+      contents: 'Be terse.\n',
+      source: 'global',
+    });
+    const view = effectiveConfigView(runtime);
+    expect(
+      view.values.find((v) => v.key === 'agent.systemPromptFile'),
+    ).toMatchObject({
+      // formatValue quotes: the effective (resolved) path, reported.
+      value: `"${HOME}/.kubic/SYSTEM.md"`,
+      layer: 'global',
+      disposition: 'consumed',
+    });
+    const lines = renderEffectiveConfig(view);
+    expect(
+      lines.some((line) =>
+        line.includes(
+          `agent.systemPromptFile = "${HOME}/.kubic/SYSTEM.md" (global, consumed)`,
+        ),
+      ),
+    ).toBe(true);
+    // The path reports; the contents never do.
+    expect(lines.join('\n')).not.toContain('Be terse.');
+    expect(keyEffectFor('agent.systemPromptFile')).toBe(
+      RUNTIME_KEY_EFFECTS['agent.systemPromptFile'],
+    );
+  });
+
+  it('expands a leading ~/ against home (issue #240)', () => {
+    const runtime = load(
+      {
+        [GLOBAL]: '[agent]\nsystemPromptFile = "~/prompts/sys.md"\n',
+        [`${HOME}/prompts/sys.md`]: 'Tilde.\n',
+      },
+      { projectTrusted: true },
+    );
+    expect(runtime.systemPromptFile?.path).toBe(`${HOME}/prompts/sys.md`);
+    expect(runtime.systemPromptFile?.contents).toBe('Tilde.\n');
+  });
+
+  it('contains the project layer to the project root (issue #240)', () => {
+    const inside = load(
+      {
+        [PROJECT]: '[agent]\nsystemPromptFile = "docs/SYSTEM.md"\n',
+        [`${CWD}/.kubic/docs/SYSTEM.md`]: 'Inside.\n',
+      },
+      { projectTrusted: true },
+    );
+    expect(inside.systemPromptFile?.path).toBe(`${CWD}/.kubic/docs/SYSTEM.md`);
+    // A trusted absolute path outside the root is refused by name.
+    expect(() =>
+      load(
+        { [PROJECT]: '[agent]\nsystemPromptFile = "/tmp/evil.md"\n' },
+        { projectTrusted: true },
+      ),
+    ).toThrow(
+      /'agent': 'systemPromptFile' '\/tmp\/evil.md' is outside the project root/,
+    );
+    // So is a relative path that escapes it.
+    expect(() =>
+      load(
+        {
+          [PROJECT]: '[agent]\nsystemPromptFile = "../../evil.md"\n',
+        },
+        { projectTrusted: true },
+      ),
+    ).toThrow(/is outside the project root/);
+  });
+
+  it('refuses an untrusted project file pre-trust and a missing file by name (issue #240)', () => {
+    // The trust gate fires before any project file is read: the refusal
+    // names trust, never the file.
+    expect(() =>
+      load({
+        [PROJECT]: '[agent]\nsystemPromptFile = "SYSTEM.md"\n',
+        [`${CWD}/.kubic/SYSTEM.md`]: 'Untrusted.\n',
+      }),
+    ).toThrow(ProjectUntrustedError);
+    expect(() =>
+      load({
+        [GLOBAL]: '[agent]\nsystemPromptFile = "MISSING.md"\n',
+      }),
+    ).toThrow(
+      /'agent': 'systemPromptFile' '.*MISSING.md' (does not exist|cannot be read)/,
+    );
+  });
+
+  it('re-validates the programmatic layers and refuses relative paths without a declaring file (issue #240)', () => {
+    expect(() =>
+      loadRuntimeConfig({
+        bridge: fakeBridge({}),
+        home: HOME,
+        cwd: CWD,
+        session: { agent: { systemPromptFile: 42 as unknown as string } },
+      }),
+    ).toThrow(/'agent': 'systemPromptFile' must be a non-empty string/);
+    // Session/agent layers are never files: a relative path has no
+    // directory to resolve against, so it is refused, never guessed.
+    expect(() =>
+      loadRuntimeConfig({
+        bridge: fakeBridge({}),
+        home: HOME,
+        cwd: CWD,
+        agent: { agent: { systemPromptFile: 'REL.md' } },
+      }),
+    ).toThrow(/no declaring config file/);
   });
 
   it('renders the same view for humans', () => {

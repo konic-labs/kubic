@@ -725,6 +725,18 @@ export function sessionRetentionDays(
   return result.runtime?.config.session?.retentionDays;
 }
 
+// The `[agent] systemPromptFile` contents `kubic run` boots with (issue
+// #240): the file text the runtime read at load. Undefined when no layer
+// declares the key (or the load was refused) — the lane assembles its
+// prompt unchanged. Worker children are `kubic run` processes loading the
+// same committed config, so they assemble the same prompt with no extra
+// wiring.
+export function runtimeSystemPromptSection(
+  result: CliConfigResult,
+): string | undefined {
+  return result.runtime?.systemPromptFile?.contents;
+}
+
 // The lane compaction options `kubic run` boots with (issue #239): the
 // configured `[session]` compaction keys over the SAME load every other
 // consumer uses. Undefined when config sets none (or the load was refused),

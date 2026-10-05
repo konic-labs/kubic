@@ -163,6 +163,7 @@ import {
   runtimePolicy,
   runtimeRunDeps,
   runtimeSkillsDeps,
+  runtimeSystemPromptSection,
   sessionRetentionDays,
 } from './config-runtime.js';
 import type { DispatchRunners } from './dispatch.js';
@@ -308,9 +309,13 @@ export function prodRunDeps(cliConfig: CliConfigResult): HeadlessRunDeps {
   // below. Worker children are `kubic run` processes loading the same
   // committed config, so this is also their inheritance.
   const compaction = runtimeCompactionDeps(cliConfig);
+  // Issue #240: the system prompt file section, read at load — worker
+  // children assemble the same prompt because they load the same config.
+  const systemPromptSection = runtimeSystemPromptSection(cliConfig);
   return {
     model: runtimeModelPin(cliConfig),
     ...(compaction === undefined ? {} : { compaction }),
+    ...(systemPromptSection === undefined ? {} : { systemPromptSection }),
     // §58 enterprise policy (issue #288): the model gate, the role grant
     // check and the lane tool intersection all read this one resolved
     // object.
@@ -344,6 +349,8 @@ export function prodTuiDeps(
   const enterprisePolicy = runtimePolicy(cliConfig);
   // Issue #239: the session compaction projection, like `kubic run`.
   const compaction = runtimeCompactionDeps(cliConfig);
+  // Issue #240: the system prompt file section, like `kubic run`.
+  const systemPromptSection = runtimeSystemPromptSection(cliConfig);
   return {
     out: io.out,
     // `error:` lines (unknown session, no models) are diagnostics.
@@ -366,6 +373,9 @@ export function prodTuiDeps(
     // threads — the interactive lane compacts under the configured
     // policy, not the lane defaults.
     ...(compaction === undefined ? {} : { compaction }),
+    // Issue #240: the same system prompt file section — the interactive
+    // lane assembles the same prompt.
+    ...(systemPromptSection === undefined ? {} : { systemPromptSection }),
     // Issue #295 with #227 (§38.1): the SAME model projection `kubic run`
     // consumes — the cli `--model` (above `KUBIC_MODEL`/`[model]`) included.
     // Without it the TUI ignored those pins and ran the first registered
@@ -1399,6 +1409,8 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       // Issue #239: the live re-execution tiers boot the real solo lane,
       // so they compact under the configured policy like `kubic run`.
       const compaction = runtimeCompactionDeps(cliConfig);
+      // Issue #240: the same prompt augmentation on the re-executed tiers.
+      const systemPromptSection = runtimeSystemPromptSection(cliConfig);
       // `--session <id>` (issue #383): the session's own trajectory file.
       const resolved = resolveSessionTrajectory(options, defaultSessionsRoot());
       if ('error' in resolved) return usageError(resolved.error);
@@ -1428,6 +1440,9 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
           // paths) — the pinned role merges under them identically.
           ...runtimeLaneDeps(cliConfig),
           ...(compaction === undefined ? {} : { compaction }),
+          ...(systemPromptSection === undefined
+            ? {}
+            : { systemPromptSection }),
         },
       );
     },

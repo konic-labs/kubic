@@ -56,6 +56,12 @@ export class BudgetKeyError extends ConfigError {
 
 export interface AgentConfig {
   name?: string;
+  // System prompt augmentation (issue #240; §63 `system_prompt_file`): a
+  // path whose contents the runtime appends to the assembled lane prompt.
+  // Resolved against the declaring config file's directory (`~` expands to
+  // the home directory); the project layer additionally requires trust
+  // and containment in the project root, enforced at load.
+  systemPromptFile?: string;
 }
 
 export interface ModelConfig {
@@ -266,6 +272,13 @@ skills = ["./skills"]
 
 [agent]
 name = "kubic"
+# Prompt augmentation (design §63 system_prompt_file): the sibling SYSTEM.md
+# is read at load and appended to the assembled lane prompt (ahead of the
+# skills block) for run, tui, replay and worker children. Relative to this
+# file's directory; a leading ~/ expands to home. A project-layer path
+# additionally requires trust and containment in the project root; a missing
+# or unreadable file is a named ConfigError, never a silent skip.
+systemPromptFile = "SYSTEM.md"
 
 [model]
 provider = "local"
@@ -1218,9 +1231,15 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
   const agent = raw.agent;
   if (agent !== undefined) {
     if (!isRecord(agent)) throw new ConfigError("'[agent]' must be a table");
-    checkNoUnknown(agent, new Set(['name']), 'agent');
+    checkNoUnknown(agent, new Set(['name', 'systemPromptFile']), 'agent');
     const name = reqString(agent, 'name', 'agent', true);
-    if (name !== undefined) config.agent = { name };
+    const systemPromptFile = reqString(agent, 'systemPromptFile', 'agent', true);
+    if (name !== undefined || systemPromptFile !== undefined) {
+      config.agent = {
+        ...(name === undefined ? {} : { name }),
+        ...(systemPromptFile === undefined ? {} : { systemPromptFile }),
+      };
+    }
   }
   const model = raw.model;
   if (model !== undefined) {

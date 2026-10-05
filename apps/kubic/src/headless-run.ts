@@ -298,6 +298,10 @@ export interface HeadlessRunDeps {
   // absent means the mechanism's own skips only — `.git/`, `.kubic/` and
   // `.gitignore` hits.
   reconcileOutOfScope?: string[];
+  // [agent] systemPromptFile contents (issue #240), from the same config
+  // load — the boot composes them ahead of the skills block. Absent means
+  // the lane assembles its prompt unchanged.
+  systemPromptSection?: string;
   // §27.1 (issue #239): the `[session]` compaction policy from the same
   // config load — the boot hands it to #399's settings. Absent means the
   // lane defaults (automatic, the default reserve, the default recent
@@ -504,6 +508,23 @@ function storeFailure(
 // never the operator's prompt echoed back as if it were a result.
 export const NO_ASSISTANT_TEXT_SUMMARY =
   '(no assistant text — the run settled without output)';
+
+// The lane's appended prompt sections (issue #240), shared by the headless
+// and interactive boots: the `[agent] systemPromptFile` text first (the
+// user's own instructions), the skills block second (discovered context).
+// Undefined when neither is set, so the lane assembles its prompt
+// unchanged — the cache-stable prefix is never rewritten by an empty
+// composition.
+export function composePromptSections(
+  systemPromptSection: string | undefined,
+  skillsBlock: string | undefined,
+): string[] | undefined {
+  const sections = [
+    ...(systemPromptSection === undefined ? [] : [systemPromptSection]),
+    ...(skillsBlock === undefined ? [] : [skillsBlock]),
+  ];
+  return sections.length === 0 ? undefined : sections;
+}
 
 // Final assistant text of the settled run for the result summary. A run
 // that left no assistant text yields undefined; the caller reports the
@@ -1976,9 +1997,16 @@ async function runHeadlessPromptImpl(
                 }),
               ],
             }),
-        ...(skills.block === undefined
-          ? {}
-          : { promptSections: [skills.block] }),
+        // [agent] systemPromptFile (issue #240): the configured file text
+        // lands ahead of the skills block — the user's own instructions
+        // first, discovered context second. Shared with the TUI boot.
+        ...(() => {
+          const sections = composePromptSections(
+            deps.systemPromptSection,
+            skills.block,
+          );
+          return sections === undefined ? {} : { promptSections: sections };
+        })(),
         // Issue #173: the advertised skills outside the cwd stay readable.
         ...(skills.readRoots.length === 0
           ? {}

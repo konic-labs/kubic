@@ -263,7 +263,11 @@ import {
   type runtimeLaneDeps,
   selectModelUnderPolicy,
 } from './config-runtime.js';
-import { assistantSummary, NO_ASSISTANT_TEXT_SUMMARY } from './headless-run.js';
+import {
+  assistantSummary,
+  composePromptSections,
+  NO_ASSISTANT_TEXT_SUMMARY,
+} from './headless-run.js';
 import {
   hasExplicitModelSelection,
   roleModelSelection,
@@ -1081,6 +1085,10 @@ export interface TuiRunOptions {
     trustProject?: (dir: string) => boolean;
   };
   journalRetention?: JournalRetention;
+  // [agent] systemPromptFile contents (issue #240): the same projection
+  // `kubic run` threads, so the interactive lane assembles the same
+  // prompt. Absent means the lane assembles its prompt unchanged.
+  systemPromptSection?: string;
   // §27.1 (issue #239): the `[session]` compaction policy — the same
   // projection `kubic run` threads, so the interactive lane compacts under
   // config, not the lane defaults. Absent means #399's own defaults.
@@ -1619,9 +1627,15 @@ export async function bootTuiLane(
         bootedSkillList = skills.invocable;
 
         return {
-          ...(skills.block === undefined
-            ? {}
-            : { promptSections: [skills.block] }),
+          // Issue #240: the system prompt file section lands ahead of the
+          // skills block — same composition `kubic run` uses.
+          ...(() => {
+            const sections = composePromptSections(
+              options.systemPromptSection,
+              skills.block,
+            );
+            return sections === undefined ? {} : { promptSections: sections };
+          })(),
           // Issue #173: the advertised skills outside the cwd stay readable.
           ...(skills.readRoots.length === 0
             ? {}
@@ -2225,6 +2239,11 @@ export type TuiConfigProjection = {
   // the configured policy, not the lane defaults. Absent means #399's own
   // defaults.
   compaction?: SoloCompactionOptions;
+  // Issue #240 ([agent] systemPromptFile): the file text the runtime read
+  // at load, from the same projection `kubic run` consumes — the
+  // interactive lane assembles the same prompt. Absent means the lane
+  // assembles its prompt unchanged.
+  systemPromptSection?: string;
   // Issue #327: the config `[modes]` projection (issue #90's runtime load).
   // Consumed by runTuiCommand: `orchestrator = true` starts the session in
   // orchestrator mode; the flag still beats it.
@@ -2280,6 +2299,8 @@ export function tuiBootOptions(
     reconcileOutOfScope: provided.reconcileOutOfScope,
     // Issue #239: the `[session]` compaction policy `kubic run` threads.
     compaction: provided.compaction,
+    // Issue #240: the `[agent] systemPromptFile` text `kubic run` threads.
+    systemPromptSection: provided.systemPromptSection,
     // Issue #294: `[agent].name` (journal and reconciliation attribution)
     // and the `[roles.<name>]` layers `--role` merges under the document.
     agentId: provided.agentId,

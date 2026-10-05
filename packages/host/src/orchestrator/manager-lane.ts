@@ -157,7 +157,17 @@ export async function bootManagerLane(
       // One tool at a time, as on the solo lane: spawn admission must
       // follow call order, so a queued `spawn_agent` never jumps the cap
       // ahead of an earlier call (issue #414).
-      settings: { toolExecution: 'sequential' },
+      settings: {
+        toolExecution: 'sequential',
+        // Fail fast on provider errors (issue #431, L-D34): no durable
+        // generation retries inside the manager lane — a refused
+        // connection or a dead endpoint surfaces on the first attempt
+        // as `unanswered`, which the router refuses by name
+        // (`lane_provider_unreachable`) instead of burning minutes in
+        // hidden backoff. Transient blips fail the run; the operator
+        // retries with `--resume`, which replays the stored transcript.
+        retry: { enabled: false },
+      },
     },
     context,
   );

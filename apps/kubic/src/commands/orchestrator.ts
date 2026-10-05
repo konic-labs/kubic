@@ -127,6 +127,10 @@ export const registerOrchestratorCommands: CommandRegistrar = (
       positiveInt,
     )
     .option(
+      '--manager-lane',
+      'drive this run through the model-driven manager lane instead of the deterministic template plan (needs a resolvable manager model; overrides [orchestrator].manager)',
+    )
+    .option(
       '--on-failure <mode>',
       "what one worker's failure does to the run: 'stop' (default) fails the run, 'continue' merges the survivors and exits 7",
       failureMode,

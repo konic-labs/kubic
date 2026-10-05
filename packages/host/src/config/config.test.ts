@@ -817,6 +817,32 @@ describe('config validation hardening (issue #69)', () => {
   });
 });
 
+describe('[orchestrator] manager key (issue #431, L-D34)', () => {
+  it('parses lane and template, leaving the key absent when unset', () => {
+    expect(
+      parseTomlConfig('[orchestrator]\nmanager = "lane"\n').orchestrator
+        ?.manager,
+    ).toBe('lane');
+    expect(
+      parseTomlConfig('[orchestrator]\nmanager = "template"\n').orchestrator
+        ?.manager,
+    ).toBe('template');
+    expect(
+      parseTomlConfig('[orchestrator]\nroot = ".kubic/wt"\n').orchestrator
+        ?.manager,
+    ).toBeUndefined();
+  });
+
+  it('refuses anything but lane or template by name', () => {
+    expect(() =>
+      parseTomlConfig('[orchestrator]\nmanager = "agentic"\n'),
+    ).toThrow(/'orchestrator': 'manager' must be "lane" or "template"/);
+    expect(() => parseTomlConfig('[orchestrator]\nmanager = 7\n')).toThrow(
+      /'orchestrator': 'manager' must be "lane" or "template"/,
+    );
+  });
+});
+
 describe('orchestrator root hardening (issue #133 review)', () => {
   it('refuses control characters by name, never echoing the value', () => {
     // The root is shipped verbatim as a git exclude entry, so a newline

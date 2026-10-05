@@ -698,6 +698,7 @@ prompt is the pending one), never appended as a duplicate prompt, and the
 | `--concurrency <n>` | How many workers may run at once for **this run** (positive integer). Overrides `[orchestrator].maxWorkers` (and any explicit limits cap) for the run; workers past it wait in the admission layer's FIFO queue and start as slots free. Unset ⇒ the configured cap, else the shipped 4. |
 | `--on-failure <stop\|continue>` | What one worker's failure does to the **run** (issue #169, §9.2). `stop` (the default) is the all-or-nothing terminus: the run ends on the failed worker's own code (1 for a crash/spawn failure, 3 for its budget, 4 for an approval) and nothing merges — after a crash-class death has had its one §81 replacement (below), so a single crash that the replacement survives still completes. `continue` keeps the pending workers running, merges the ones that succeeded, lists every failed worker with its code, and exits **7** (`status: "partial"`, `code: partial_failure`); the failed workers stay pending, so `--resume` retries exactly them (the policy is stored with the session and re-applied — pass `--on-failure stop` to opt out). An approval terminus (exit 4) always stops the run — a denial is your decision, not a worker-local hiccup. |
 | `--skill <path>` | Skill every worker **and** the conflict resolver are granted (repeatable, issue #170). A relative path resolves against the manager's cwd before it travels — the children run in their own worktrees, where the same relative path would name something else — and each value reaches the child as an absolute `--skill <path>` plus the worker's §67 task resources, so `kubic workers` prints `skills=…` for it. |
+| `--manager-lane` | **Opt-in** model-driven manager lane (issue #431, L-D34): the manager conversation plans the run through the 13 §9.2 tools instead of the deterministic template plan. Needs a resolvable manager model (`--model` pin, else the first model of the first deliverable fallback provider) — opt-in without one keeps the template path. Headless `orchestrate` only; the TUI orchestrator always templates. Config twin: `[orchestrator] manager = "lane"` (default `"template"`). |
 | `--session <id>` | Session scope (default `orch-<now>`). Same `[A-Za-z0-9_-]` rule as `run`. A fresh run whose id already has stored state exits 2 (`code=session_exists`) instead of overwriting it — `--resume` or another id. `workers` and `approvals` are reserved (they name the orchestrator's own rows record and ledger dir) and exit 2 (`code=session_reserved`) on fresh runs and resumes alike. State persists at `<repo>/.kubic/orchestrator/<id>.json` — including the plan, so `--resume` replays each worker's own prompt; each worker's session id is `<id>-<agent>`. |
 | `--resume` | Re-attach after a kill: merges only pending workers in the original order, never re-merges, and each retried worker runs the plan step stored for it (a state written before #103 has no plan and re-derives one from the stored objective). The pending set is what the previous attempt left unmerged — a worker that failed under `--on-failure continue` is retried, the workers that already merged are not (issue #169). A worker that settled but never merged is NOT re-run either (issue #160): its branch + hunks persist with the session as soon as it settles, so the resume merges them straight from the record (a completion whose branch no longer matches is dropped and the worker runs again). The budget, the explicit per-agent role/model binding and the `--skill` values the run started with are re-applied from the state; a `--budget` or `--skill` naming a different spec, or a `--agents` naming a different role/model assignment, is refused (exit 2) — while a bare `--agents` with a larger count raises the stored spawn cap instead of refusing (issue #422). The worker-failure policy (`--on-failure`) is stored and re-applied too, so a `continue` run stays `continue`; an explicit `--on-failure` on the resume wins. Needs `--session`. No stored state exits 1 (`code=no_orchestrator_state`); a stopped queue re-reports the conflict and merges nothing (`code=merge_conflict`). |
 | `--yes` | Auto-approve merges (non-interactive). Worker asks are never auto-approved by it. Without it, a TTY is asked per merge under `approvals.maxPendingMs` (an elapse denies closed, exit 4, naming the bound and the candidate); headless without a decider denies closed with exit 4. |
@@ -751,6 +752,44 @@ failure) gets a `spawn_failed` result with `pid: null`, `generation: 0`,
 cacheRead, cacheWrite, costUsd, toolCalls}` beside `usage.ref`, and the
 `model` that answered. Not yet populated: `approvals` (routed asks) and
 parsed `tests` counts.
+
+Failures print `error: <message> code=<code>` **on stderr** and exit 1
+(session creation, spawn, worker, merge, reap and manager-toolset failures),
+2 (usage), 5 (the non-git refusal — orchestrator mode needs a git
+**Model-driven manager lane (issue #431, L-D34).** Opt-in, default off:
+`--manager-lane` (or `[orchestrator] manager = "lane"`) routes the
+submitted prompt through the manager lane instead of the deterministic
+template plan — without the opt-in the run always templates, even when a
+manager model would resolve. The flag needs a resolvable manager model
+(the explicit `--model` pin, else the first model of the first
+deliverable fallback provider): opt-in with no resolvable model keeps the
+template path and says so on the debug channel (`lane_model_unresolved`
+is never raised without the flag). The TUI orchestrator always templates
+(headless-only until #439). The manager conversation (session
+`<id>-manager`, attach-or-created on the run's own session store) calls
+`spawn_agent` with free-text roles and tasks, and the run admits,
+launches, inspects, follows up, diffs, stages and merges through the
+same scheduler, worktrees, merge queue and merge gate as the template
+path. Minted workers are named `worker-<n>` (skipping ids the roster
+takes), recorded with `parentSessionId`/`role`/`agentId` linkage, and merged
+in queue order after the merge gate approves — the gate's approval is the
+review verdict routing the settle apply path (`applySettlementAfterReview`:
+a tainted manager trace refuses before apply runs, and only an accept
+verdict applies). The lane carries 13 tools: the spawn/wait/collect,
+inspect/cancel/send, workspace diff/apply/merge and `ask_user` adapters
+plus read-only `git_status`/`git_diff`/`git_log` (bounded text, `HEAD` or a
+validated ref as the diff base — leading `-` and non-ref shapes refused).
+`ask_user` reaches the run's ask seat (a TTY is asked per question, a
+headless run denies closed); the seat is always raced against the ask
+bound, so an abandoned prompt resolves unanswered instead of hanging the
+turn. The drive itself is bounded (200 tool calls / 10 submissions —
+`manager_turn_bound`, exit 1, settled work saved) with a wall-clock
+deadline (10 minutes — `lane_provider_unreachable`, exit 1); the lane
+boots with generation retries disabled, so a dead endpoint or a refused
+connection surfaces on the first attempt — named, never a hang inside
+durable backoff (transient blips fail the run; `--resume` replays the
+stored transcript). `--resume --session <id>` re-attaches the lane
+without re-running settled workers or re-merging merged ones.
 
 Failures print `error: <message> code=<code>` **on stderr** and exit 1
 (session creation, spawn, worker, merge, reap and manager-toolset failures),

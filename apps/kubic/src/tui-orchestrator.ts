@@ -279,9 +279,18 @@ export function createProdTuiOrchestrator(
                   ? {}
                   : { modelPinFrozen: true }),
               }),
+          // L-D34 (issue #431): the interactive orchestrator stays on the
+          // template plan — headless only until #439. A configured
+          // `[orchestrator] manager = "lane"` must not leak into TUI turns,
+          // so the forwarded projection is pinned back to template.
           ...(options.orchestrator === undefined
             ? {}
-            : { orchestrator: options.orchestrator }),
+            : {
+                orchestrator: {
+                  ...options.orchestrator,
+                  manager: 'template',
+                },
+              }),
           ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
           ...(options.sessionsRoot === undefined
             ? {}

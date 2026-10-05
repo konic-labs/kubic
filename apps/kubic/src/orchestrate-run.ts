@@ -91,6 +91,7 @@ import {
   workerQuestionSeatForRun,
   workerSeatForRun,
 } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
+import { QUESTION_UNANSWERED_CODE } from '../../../packages/host/src/orchestrator/approvals/worker-questions.js';
 import type { MergedHunk } from '../../../packages/host/src/orchestrator/merge/attribution.js';
 import type {
   ApprovalSnapshot,
@@ -144,6 +145,7 @@ import {
   createSession,
   openSessionStore,
   SessionAttachError,
+  SessionLockError,
 } from '../../../packages/worker/src/lane/session-store.js';
 import type { WorkerFailure } from '../../../packages/worker/src/lifecycle/launch.js';
 import { launchWorker } from '../../../packages/worker/src/lifecycle/launch.js';
@@ -168,6 +170,7 @@ import {
 import { allowlistedShell } from '../../../packages/worker/src/lifecycle/shell.js';
 import type { WorkerShell } from '../../../packages/worker/src/lifecycle/spawn.js';
 import { isTerminalAgentStatus } from '../../../packages/worker/src/lifecycle/status.js';
+import { callOperation } from '../../../packages/worker/src/ops/registry.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 import type {
   AgentResult,
@@ -281,6 +284,14 @@ export interface OrchestrateRunOptions {
   // prompt on a TTY, none headless.
   questionSeat?: WorkerQuestionSeat;
   /**
+   * Presents the MANAGER's `ask_user` questions (issue #431). A caller
+   * that OWNS the terminal — the TUI, whose alt-screen and raw stdin a
+   * readline would corrupt — supplies its own seat here, used verbatim
+   * (the #327 merge-seat pattern). Absent keeps the shipped behaviour (a
+   * TTY is asked per question, a headless run denies closed).
+   */
+  askUserSeat?: OrchestrateCommandDeps['askUserSeat'];
+  /**
    * The merge gate's decider (issue #327). A caller that OWNS the terminal —
    * the TUI, whose alt-screen and raw stdin a readline would corrupt —
    * supplies its own seat here, and it is used verbatim: the stdio readline
@@ -326,6 +337,13 @@ export interface OrchestrateRunOptions {
    * model, so it decides which provider's key the worker is granted.
    */
   model?: { provider: string; id: string };
+  /**
+   * The `--manager-lane` flag, forwarded by the headless composition root
+   * (issue #431, L-D34). True opts this run into the model-driven manager
+   * lane; absent/false leaves the opt-in to `[orchestrator] manager`. The
+   * TUI never sets it (headless only until #439).
+   */
+  managerLane?: boolean;
   /**
    * A frozen enterprise `[model]` is the manager's effective pin (issue #295;
    * §35.1): every worker child runs the enterprise model whatever `KUBIC_MODEL`
@@ -1348,6 +1366,9 @@ export async function orchestrateDepsWithDefaults(
   // Issue #164: in-flight manager-session ensures by run id (see
   // createWorkerSession) — concurrent spawns share one attach-or-create.
   const managerSessionEnsured = new Map<string, Promise<void>>();
+  // Issue #431: unique invocation ids for the lane's git inspections, so
+  // the op registry can tell one `git_diff` from the next.
+  let gitInvocationCounter = 0;
   // Worktree creation time per agent, so a launch sample can assert the
   // §61 worktree budget alongside its own spawn/teardown legs.
   // §61 (issue #158): worktree creation duration and session attach duration
@@ -1940,6 +1961,130 @@ export async function orchestrateDepsWithDefaults(
         ...(worktreeRoot === undefined ? {} : { worktreeRoot }),
       });
     },
+    // Step 7 (issue #431): the manager lane's prod seams. The lane drives
+    // only under the L-D34 opt-in (`--manager-lane` or `[orchestrator]
+    // manager = "lane"`) AND a resolved manager model — the explicit
+    // `--model` pin, or the first model of the first deliverable fallback
+    // provider (already auth-filtered, so the lane never boots on a model
+    // it cannot call). Otherwise the run keeps the deterministic template
+    // path, and a debug note says why the lane stayed off.
+    managerLaneOptIn:
+      options.managerLane === true || options.orchestrator?.manager === 'lane',
+    managerModels: assembledModels.models,
+    ...(() => {
+      if (options.model !== undefined) {
+        return {
+          managerModel: {
+            provider: options.model.provider,
+            id: options.model.id,
+          },
+        };
+      }
+      if (fallbackProvider !== undefined) {
+        const first = assembledModels.models.getModels(fallbackProvider).at(0);
+        if (first !== undefined) {
+          return {
+            managerModel: { provider: fallbackProvider, id: first.id },
+          };
+        }
+      }
+      debug(
+        'manager lane off: no manager model resolved (no --model pin and no deliverable fallback provider) — the run keeps the template path',
+      );
+      return {};
+    })(),
+    // The manager conversation's session (issue #431): attach-or-create on
+    // the run's own session store, returned HELD — the router releases it
+    // after the lane closes, so a later `--resume` re-attaches.
+    openManagerSession: async (sessionId: string) => {
+      try {
+        return await attachSession(sessionStore, sessionId, BACKGROUND_CONTEXT);
+      } catch (error) {
+        if (!(error instanceof SessionAttachError)) throw error;
+        return await createSession(
+          sessionStore,
+          { id: sessionId, cwd: root ?? cwd },
+          BACKGROUND_CONTEXT,
+        );
+      }
+    },
+    // The manager's `ask_user` seat (issue #431): an injected seat wins
+    // (tests do), else a TTY run asks on the terminal and a headless run
+    // denies closed. The router races the seat against the ask bound, so
+    // an abandoned prompt resolves unanswered instead of hanging the turn.
+    askUserSeat:
+      options.askUserSeat ??
+      (process.stdin.isTTY === true
+        ? async (question: string) => {
+            const rl = createInterface({
+              input: process.stdin,
+              output: process.stderr,
+            });
+            try {
+              const answer: string = await new Promise((resolveAnswer) => {
+                rl.question(`manager asks: ${question}\n> `, resolveAnswer);
+                rl.on('close', () => resolveAnswer(''));
+              });
+              const text = answer.trim();
+              return text === ''
+                ? {
+                    answered: false as const,
+                    code: QUESTION_UNANSWERED_CODE,
+                    reason: 'no answer was typed (empty line)',
+                  }
+                : { answered: true as const, text };
+            } finally {
+              rl.close();
+            }
+          }
+        : async () => ({
+            answered: false as const,
+            code: QUESTION_UNANSWERED_CODE,
+            reason: 'no ask seat is wired for this run (headless)',
+          })),
+    // Read-only git inspection for the lane (issue #431): the three reader
+    // ops over the op registry, rooted at the repo the run orchestrates.
+    // Bounded at the adapter (32k); failures refuse by name, never raw.
+    inspectGit: async (tool, args) => {
+      const repoRoot = root ?? cwd;
+      const invocationId = `manager-git-${gitInvocationCounter++}`;
+      const outcome = await callOperation(
+        tool,
+        args,
+        {
+          invocationId,
+          operationId: 'manager',
+          turnId: 'manager',
+          keepEffectMemo: false,
+          getMemo: () => Promise.resolve(undefined),
+          setMemo: () => Promise.resolve(undefined),
+          memoOnce: (_name, candidate) => Promise.resolve(candidate),
+        },
+        {
+          env: new NodeExecutionEnv(repoRoot),
+          sessionId: orchestratorSessionId ?? 'orch',
+          agentId: 'manager',
+        },
+      );
+      if (!outcome.ok) {
+        throw new Error(
+          `${tool} failed: ${outcome.error?.message ?? outcome.error?.code ?? 'unknown error'}`,
+        );
+      }
+      const result = (outcome as { result?: unknown }).result as
+        | { status?: unknown; diff?: unknown; log?: unknown }
+        | undefined;
+      const text =
+        tool === 'git_status'
+          ? result?.status
+          : tool === 'git_diff'
+            ? result?.diff
+            : result?.log;
+      if (typeof text !== 'string') {
+        throw new Error(`${tool} returned no text`);
+      }
+      return text;
+    },
     trajectoryEvent:
       options.trajectoryEvent ??
       ((event: ParallelTrajectoryEvent): void => {
@@ -2218,6 +2363,11 @@ export async function orchestrateDepsWithDefaults(
             );
             await manager.release(BACKGROUND_CONTEXT);
           } catch (error) {
+            // A live holder proves the record exists: on the lane path the
+            // manager conversation itself holds the run session (issue
+            // #431), so the ensure is already satisfied — never a spawn
+            // failure.
+            if (error instanceof SessionLockError) return;
             if (!(error instanceof SessionAttachError)) throw error;
             const manager = await createSession(
               sessionStore,

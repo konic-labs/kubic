@@ -149,6 +149,7 @@ file that no longer exists, or when a row's file has become reachable
 | 4 | `packages/exec/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/exec/src/paths.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 225 | `packages/exec/src/test-support/git-sandbox.ts` | #365 | keep: test-only real-git sandbox factory (scrubbed env, activated process.env, `git`/`gitResult` runners) imported exclusively by `*.test.ts` files, which the value-import walk excludes by rule — a test seam can never be `reachable` |
+| 60 | `packages/exec/src/test-support/orchestrate-lane-fixtures.ts` | #431 | keep: test-only lane-worker child script (self-scrubbed git view, pinned commit identity) imported exclusively by the #431 prod acceptance — same test-seam exclusion as the git sandbox |
 | 4 | `packages/exec/src/workspace.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 58 | `packages/extensions/src/cancellation.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
 | 55 | `packages/extensions/src/facets.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
@@ -160,8 +161,6 @@ file that no longer exists, or when a row's file has become reachable
 | 4 | `packages/host/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 18 | `packages/host/src/limits/trust-first.ts` | #100 | wire: docs ordering note consumed by help/docs rendering (#100) |
 | 94 | `packages/exec/src/test-support/orchestrate-conflict-fixtures.ts` | #420 | keep: test-only resolver-child scripts (self-scrubbed git view, committed through scrubbed env) imported exclusively by `packages/host/src/orchestrate-conflict-prod.test.ts`, which the value-import walk excludes by rule — a test seam can never be `reachable` |
-| 182 | `packages/host/src/orchestrator/manager-lane.ts` | #416 | wire: model-driven manager lane boot — steps 1–4 boot it from tests only; the routing step drives live runs through it (routing unscoped — see gap-lane-routing-and-git-tools) |
-| 1048 | `packages/host/src/orchestrator/manager-tools.ts` | #416 | wire: ten adapters (#414–#417) over the run's seams — consumed by the lane boot once live runs route through it (routing unscoped — see gap-lane-routing-and-git-tools) |
 
 | 4 | `packages/host/src/root-agent.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/host/src/worker-manager.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |

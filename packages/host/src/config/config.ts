@@ -139,6 +139,13 @@ export interface RoleConfig {
 export interface OrchestratorConfig {
   root?: string;
   maxWorkers?: number;
+  /**
+   * The delegation driver (issue #431, L-D34): `"lane"` routes
+   * `kubic orchestrate` through the model-driven manager lane (opt-in),
+   * `"template"` keeps the deterministic plan (default). Absent means the
+   * default — never an invented driver.
+   */
+  manager?: 'lane' | 'template';
 }
 
 export interface UiConfig {
@@ -975,6 +982,22 @@ export function checkSessionCompaction(
   };
 }
 
+// The delegation driver (issue #431, L-D34): exactly `"lane"` or
+// `"template"` — anything else is refused by name, never coerced into a
+// driver the operator did not ask for.
+export function checkOrchestratorManager(
+  value: unknown,
+  keyPath: string,
+): 'lane' | 'template' | undefined {
+  if (value === undefined) return undefined;
+  if (value !== 'lane' && value !== 'template') {
+    throw new ConfigError(
+      `'${keyPath}': 'manager' must be "lane" or "template"`,
+    );
+  }
+  return value;
+}
+
 export function checkOrchestratorMaxWorkers(
   value: unknown,
   keyPath: string,
@@ -1490,7 +1513,7 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
     }
     checkNoUnknown(
       orchestrator,
-      new Set(['root', 'maxWorkers']),
+      new Set(['root', 'maxWorkers', 'manager']),
       'orchestrator',
     );
     const root = checkOrchestratorRoot(orchestrator.root, 'orchestrator');
@@ -1498,9 +1521,14 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
       orchestrator.maxWorkers,
       'orchestrator',
     );
+    const manager = checkOrchestratorManager(
+      orchestrator.manager,
+      'orchestrator',
+    );
     config.orchestrator = {
       ...(root === undefined ? {} : { root }),
       ...(maxWorkers === undefined ? {} : { maxWorkers }),
+      ...(manager === undefined ? {} : { manager }),
     };
   }
   const ui = raw.ui;

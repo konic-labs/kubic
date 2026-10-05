@@ -392,6 +392,12 @@ export interface ManagerPlanStep {
   /** Total steps in the plan. */
   total: number;
   prompt: string;
+  /**
+   * The role the lane minted this step for (issue #431): lane-path steps
+   * only — template steps carry their role through the binding. Restored
+   * on resume so follow-ups keep the mint's role narrowing.
+   */
+  role?: string;
 }
 
 function planPrompt(

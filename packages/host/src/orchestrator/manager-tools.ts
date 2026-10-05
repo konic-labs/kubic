@@ -13,6 +13,13 @@
 // (issue #413): the adapter refuses past it with the same
 // `spawn_cap_exceeded` code the template path uses.
 import type { RunMode } from '../../../agents/src/budget.js';
+import type { PermissionClasses } from '../../../agents/src/policy.js';
+import {
+  gitDiffOperation,
+  gitLogOperation,
+  gitStatusOperation,
+} from '../../../worker/src/ops/git.js';
+import { OPERATION_PARAMETERS } from '../../../worker/src/ops/registry.js';
 import {
   defineTool,
   type EntryRecord,
@@ -61,6 +68,11 @@ export interface SpawnRoleSpec {
    * any — the fallback tier under an explicit `spawn_agent(budget=…)`.
    */
   budget?: Record<string, number>;
+  /** Issue #196: the role's classes and obligations, when the registry
+   * resolves them — the mint carries them to the spawn like any plan
+   * assignment. */
+  classes?: PermissionClasses;
+  requires?: string[];
 }
 
 export interface PreparedWorker {
@@ -120,6 +132,15 @@ export interface ManagerToolsDeps {
   spawnedIds(): readonly string[];
   noteSpawned(agentId: string): void;
   mintAgentId(): string;
+  /**
+   * Observe a successful mint (issue #431): the adapter calls this with
+   * the minted id, its role and its task right after minting, before
+   * preparing — one synchronous call, so concurrent spawns cannot
+   * interleave it. The router records the role for its worker rows and
+   * session linkage, and the role-composed task as the worker's plan step
+   * (the lane has no template plan; the step is what the child runs).
+   */
+  onSpawned?(agentId: string, role: string, task: string): void;
   /** Create the worker's worktree (no session, no child yet). */
   prepareWorker(agentId: string): Promise<PreparedWorker>;
   /** Create the worker session and run the child to settlement. */
@@ -172,6 +193,17 @@ export interface ManagerToolsDeps {
    * seat resolves unanswered, so the manager proceeds on assumptions.
    */
   askSeat(question: string): Promise<WorkerQuestionOutcome>;
+  /**
+   * Run one read-only git inspection over the op registry and return its
+   * full text. Throws `ManagerToolRefusalError` with a named code
+   * (`invalid_args`, `not_a_repo`, `git_failed`) — the adapter bounds the
+   * text, so deps returns it whole. Writer ops are unreachable: the lane
+   * toolset offers only the three readers.
+   */
+  inspectGit(
+    tool: 'git_status' | 'git_diff' | 'git_log',
+    args: unknown,
+  ): Promise<string>;
 }
 
 // The `--budget` dimension names a `spawn_agent(budget=…)` map may carry
@@ -237,6 +269,21 @@ class SettleRegistry {
     for (const wake of record.waiters.splice(0)) wake();
   }
 
+  /**
+   * Seed a settlement the lane never launched (issue #431): a resume
+   * restores the prior drive's completions into a fresh registry, so the
+   * continued lane observes them without re-running the workers. A
+   * present record keeps its result (first settlement wins, as ever).
+   */
+  seedSettled(agentId: string, result: AgentResult): void {
+    const record = this.records.get(agentId);
+    if (record === undefined) {
+      this.records.set(agentId, { result, waiters: [] });
+      return;
+    }
+    this.noteSettled(agentId, result);
+  }
+
   resultOf(agentId: string): AgentResult | undefined {
     return this.records.get(agentId)?.result;
   }
@@ -270,20 +317,27 @@ class SettleRegistry {
         );
         return;
       }
-      const timer = setTimeout(() => {
-        const index = record.waiters.indexOf(wake);
-        if (index >= 0) record.waiters.splice(index, 1);
-        reject(
-          new ManagerToolRefusalError(
-            'wait_timeout',
-            `'${what}' for worker '${agentId}' exceeded ${timeoutMs}ms`,
-          ),
-        );
-      }, timeoutMs);
+      // A non-finite timeout waits without a timer: `setTimeout` overflows
+      // past ~24 days to 1ms (issue #431 — a prod `Infinity` wait timed out
+      // instantly), so an unbounded wait simply never arms one. The lane
+      // drive's own wall-clock deadline still bounds the turn.
+      const timer =
+        Number.isFinite(timeoutMs) && timeoutMs >= 0
+          ? setTimeout(() => {
+              const index = record.waiters.indexOf(wake);
+              if (index >= 0) record.waiters.splice(index, 1);
+              reject(
+                new ManagerToolRefusalError(
+                  'wait_timeout',
+                  `'${what}' for worker '${agentId}' exceeded ${timeoutMs}ms`,
+                ),
+              );
+            }, timeoutMs)
+          : undefined;
       const wake = (): void => {
         const result = this.resultOf(agentId);
         if (result === undefined) return;
-        clearTimeout(timer);
+        if (timer !== undefined) clearTimeout(timer);
         resolve(result);
       };
       record.waiters.push(wake);
@@ -318,8 +372,24 @@ export interface ManagerToolset {
   workspaceApply: ToolRegistration;
   workspaceMerge: ToolRegistration;
   askUser: ToolRegistration;
+  gitStatus: ToolRegistration;
+  gitDiff: ToolRegistration;
+  gitLog: ToolRegistration;
   settle: {
     resultOf(agentId: string): AgentResult | undefined;
+    /**
+     * Record a launch's settlement from the outside (issue #431): the
+     * router's settle hook calls this when the run's own worker machinery
+     * finishes, so `wait_for_agent`/`collect_result` observe the same
+     * settlement the run merges. Unknown ids are ignored — only launched
+     * workers settle.
+     */
+    noteSettled(agentId: string, result: AgentResult): void;
+    /**
+     * Seed a settlement the lane never launched (issue #431): the
+     * router's resume path restores the prior drive's completions.
+     */
+    seedSettled(agentId: string, result: AgentResult): void;
   };
 }
 
@@ -464,6 +534,7 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
       }
       const agentId = deps.mintAgentId();
       claimed.add(agentId);
+      deps.onSpawned?.(agentId, role, task);
       const prepared = await deps.prepareWorker(agentId);
       const admission = deps.scheduler.requestSpawn(
         {
@@ -510,9 +581,16 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
           }
           const wait = settle.waitForAnySettle();
           const remaining = deadline - Date.now();
+          // A non-finite wait bound arms no timer (`setTimeout(Infinity)`
+          // overflows to 1ms — issue #431): the loop waits on the next
+          // settlement alone, and `Date.now() >= deadline` above stays
+          // false, so an unbounded admission wait never times out here.
+          // The lane drive's wall-clock deadline still bounds the turn.
           let timer: ReturnType<typeof setTimeout> | undefined;
           const timeout = new Promise<void>((resolve) => {
-            timer = setTimeout(resolve, Math.max(0, remaining));
+            if (Number.isFinite(remaining) && remaining >= 0) {
+              timer = setTimeout(resolve, remaining);
+            }
           });
           await Promise.race([wait.promise, timeout]);
           wait.cancel();
@@ -1009,6 +1087,55 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
     },
   });
 
+  // git_status / git_diff / git_log (issue #431): read-only repo
+  // inspection over the op registry. Schemas and argument validation are
+  // the ops' own (single source — a guessed arg fails here with the real
+  // names in view, never reaching git); the text is bounded at the
+  // adapter so no caller can hand the model an unbounded diff.
+  const gitTool = (
+    name: 'git_status' | 'git_diff' | 'git_log',
+    description: string,
+  ): ToolRegistration => {
+    const op =
+      name === 'git_status'
+        ? gitStatusOperation
+        : name === 'git_diff'
+          ? gitDiffOperation
+          : gitLogOperation;
+    return defineTool({
+      name,
+      description,
+      parameters: OPERATION_PARAMETERS[name],
+      execute: async (args) => {
+        let validated: unknown;
+        try {
+          validated = op.validateArgs(args);
+        } catch (error) {
+          throw new ManagerToolRefusalError(
+            'invalid_args',
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+        let text: string;
+        try {
+          text = await deps.inspectGit(name, validated);
+        } catch (error) {
+          if (error instanceof ManagerToolRefusalError) throw error;
+          throw new ManagerToolRefusalError(
+            'git_failed',
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+        return {
+          content: [{ type: 'text' as const, text: boundGitText(text) }],
+        };
+      },
+    });
+  };
+  const gitStatus = gitTool('git_status', 'Read-only git status of the repo.');
+  const gitDiff = gitTool('git_diff', 'Read-only git diff of the repo.');
+  const gitLog = gitTool('git_log', 'Read-only git log of the repo.');
+
   return {
     spawnAgent,
     waitForAgent,
@@ -1020,21 +1147,42 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
     workspaceApply,
     workspaceMerge,
     askUser,
+    gitStatus,
+    gitDiff,
+    gitLog,
     settle: {
       resultOf: (agentId) => settle.resultOf(agentId),
+      noteSettled: (agentId, result) => {
+        settle.noteSettled(agentId, result);
+      },
+      seedSettled: (agentId, result) => {
+        settle.seedSettled(agentId, result);
+      },
     },
   };
 }
 
+/** The bound on one git inspection's text: a full diff never floods the lane. */
+export const MANAGER_GIT_MAX_CHARS = 32_768;
+
 /**
- * The lane's 13 tools in allowlist order: the step-2, step-3 and step-4
- * adapters plus the remaining stubs (step 5 replaces them). The lane
- * boots this set.
+ * Bound one git result: whole when small, head plus a named marker when
+ * not. The marker names the dropped count so the manager knows it saw a
+ * prefix, never a silently cut diff.
  */
-export function managerToolsWithStubs(
-  deps: ManagerToolsDeps,
+export function boundGitText(text: string): string {
+  if (text.length <= MANAGER_GIT_MAX_CHARS) return text;
+  return `${text.slice(0, MANAGER_GIT_MAX_CHARS)}\n…[truncated ${text.length - MANAGER_GIT_MAX_CHARS} chars of git output]`;
+}
+
+/**
+ * The lane's 13 tools in allowlist order from a built toolset (issue
+ * #431): the router wraps the toolset with the drive bound first, then
+ * resolves the same order — one mapping, two callers.
+ */
+export function managerToolRegistrations(
+  tools: ManagerToolset,
 ): ToolRegistration[] {
-  const tools = buildManagerTools(deps);
   const real = new Map([
     ['spawn_agent', tools.spawnAgent],
     ['send_to_agent', tools.sendToAgent],
@@ -1046,6 +1194,9 @@ export function managerToolsWithStubs(
     ['workspace_apply', tools.workspaceApply],
     ['workspace_merge', tools.workspaceMerge],
     ['ask_user', tools.askUser],
+    ['git_status', tools.gitStatus],
+    ['git_diff', tools.gitDiff],
+    ['git_log', tools.gitLog],
   ]);
   const stubs = new Map(managerToolStubs().map((tool) => [tool.name, tool]));
   return MANAGER_ALLOWLIST.map((name) => {
@@ -1053,6 +1204,16 @@ export function managerToolsWithStubs(
     if (tool === undefined) throw new Error(`no manager tool '${name}'`);
     return tool;
   });
+}
+
+/**
+ * The lane's 13 tools in allowlist order: every §9.2 adapter real
+ * (#414–#417, #431) — no stubs remain. The lane boots this set.
+ */
+export function managerToolsWithStubs(
+  deps: ManagerToolsDeps,
+): ToolRegistration[] {
+  return managerToolRegistrations(buildManagerTools(deps));
 }
 
 /**

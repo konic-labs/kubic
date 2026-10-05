@@ -245,6 +245,19 @@ describe('kubic orchestrate (commander)', () => {
     }
   });
 
+  it('carries --manager-lane to the runner, off when absent (issue #431, L-D34)', async () => {
+    const on = await run(['orchestrate', '-p', 'x', '--manager-lane']);
+    expect(on.code).toBe(0);
+    expect(on.calls[0]?.args).toEqual({
+      prompt: 'x',
+      skills: [],
+      managerLane: true,
+    });
+    const off = await run(['orchestrate', '-p', 'x']);
+    expect(off.code).toBe(0);
+    expect(off.calls[0]?.args).not.toHaveProperty('managerLane');
+  });
+
   it('collects repeatable --skill values and hands them to the runner (issue #170)', async () => {
     const result = await run([
       'orchestrate',

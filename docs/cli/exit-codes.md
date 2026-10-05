@@ -146,7 +146,10 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   (`error: … code=<code>` names it: `spawn_failed`, `worker_failed`,
   `result_invalid` (a worker exited 0 without a valid §68 result report),
   `spawn_denied`, `merge_failed`, `merge_conflict`,
-  `no_orchestrator_state`, `reap_failed`); 2 usage errors; 5 the non-git
+  `no_orchestrator_state`, `reap_failed`, plus the lane codes
+  `manager_turn_bound`, `lane_model_unresolved`, `lane_resume_failed`
+  and `lane_provider_unreachable` (opt-in `--manager-lane` only, issue
+  #431); 2 usage errors; 5 the non-git
   refusal (never silently solo); 4 approval denied **or** approval timeout
   — both map to exit 4, and the envelope's `status`, `error.kind` and
   `error.code` all name which: `approval_denied` when the decider is the

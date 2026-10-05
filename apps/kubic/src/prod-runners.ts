@@ -1244,6 +1244,10 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
           // Issue #237 (§29.2): the manager's own settings skills — every
           // worker's child loads them through the #170 channel.
           ...runtimeSkillsDeps(cliConfig),
+          // L-D34 opt-in (issue #431): `--manager-lane` selects the
+          // model-driven manager lane for this run; the builder ORs it
+          // with `[orchestrator] manager = "lane"`.
+          ...(options.managerLane === true ? { managerLane: true } : {}),
           // Issue #228 (§35.1): the per-ROOT trust check — a store grant is
           // keyed to one exact directory, so the run evaluates it for the
           // models root it loads (never the launch cwd) and only a trusted

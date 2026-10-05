@@ -1191,6 +1191,15 @@ describe('orchestrator config projections (issue #133)', () => {
     );
     expect(bare.orchestrator).toEqual({});
 
+    // Issue #431 (L-D34): the delegation driver projects through, default
+    // template (absent, never invented).
+    const lane = load(
+      { [PROJECT]: '[orchestrator]\nmanager = "lane"\n' },
+      { projectTrusted: true },
+    );
+    expect(lane.orchestrator).toEqual({ manager: 'lane' });
+    expect(lane.sources['orchestrator.manager']).toBe('project');
+
     // An absolute root or a `..` segment is refused at load, by name: the
     // value is a workspace-relative parent, never a path that escapes.
     expect(() =>

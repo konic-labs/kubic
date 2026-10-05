@@ -43,6 +43,7 @@ import {
   ConfigError,
   type ConfigLayer,
   checkGitignoreSplit,
+  checkOrchestratorManager,
   checkOrchestratorMaxWorkers,
   checkOrchestratorRoot,
   checkOutOfScopeEntries,
@@ -226,6 +227,10 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   'orchestrator.maxWorkers': {
     effect: 'default admission cap for the orchestrator scheduler (§45)',
+  },
+  'orchestrator.manager': {
+    effect:
+      'opt-in driver for `kubic orchestrate`: "lane" routes the run through the model-driven manager lane, "template" (the default) keeps the deterministic plan',
   },
   'ui.theme': {
     effect:
@@ -428,6 +433,12 @@ export interface RuntimeOrchestrator {
    * session/argv cap still wins.
    */
   maxWorkers?: number;
+  /**
+   * The delegation driver (issue #431, L-D34): `"lane"` opts the run
+   * into the model-driven manager lane, anything else (including absent)
+   * keeps the deterministic template plan.
+   */
+  manager?: 'lane' | 'template';
 }
 
 export interface RuntimeBudgets {
@@ -1122,6 +1133,10 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     config.orchestrator?.maxWorkers,
     'orchestrator',
   );
+  const orchestratorManager = checkOrchestratorManager(
+    config.orchestrator?.manager,
+    'orchestrator',
+  );
   // §12.1 per-role model pins (issue #133): validated here too, because the
   // programmatic session/agent layers never pass through the TOML parser — a
   // malformed `provider/id` ref is refused by name, never carried to the lane.
@@ -1219,6 +1234,9 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
       ...(orchestratorMaxWorkers === undefined
         ? {}
         : { maxWorkers: orchestratorMaxWorkers }),
+      ...(orchestratorManager === undefined
+        ? {}
+        : { manager: orchestratorManager }),
     },
     verify,
     budgets: {

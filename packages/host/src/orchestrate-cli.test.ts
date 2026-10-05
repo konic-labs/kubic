@@ -8,6 +8,15 @@ import { describe, expect, it } from 'vitest';
 import { SOLO_DEFAULTS } from '../../../packages/agents/src/policy.js';
 import { createCliTheme } from '../../core/src/cli/theme.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
+import type { SessionHandle } from '../../worker/src/lane/session-store.js';
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  MemoryStorage,
+  type MutableModels,
+} from '../../worker/src/pi-boundary.js';
 import type { AgentResult } from '../../worker/src/result.js';
 import { buildAgentResult } from '../../worker/src/result.js';
 import type {
@@ -3402,5 +3411,261 @@ describe('spawn cap raise on resume (issue #422)', () => {
     const last = world.saved[world.saved.length - 1] as OrchestratorRunState;
     expect(last.spawnCap).toBe(2);
     expect(world.errLines.join('\n')).toMatch(/spawn_cap_exceeded/);
+  });
+});
+
+describe('orchestrate manager lane (issue #431)', () => {
+  const lanePatch = [
+    'diff --git a/alpha-0.txt b/alpha-0.txt',
+    'new file mode 100644',
+    'index 0000000..abc1234',
+    '--- /dev/null',
+    '+++ b/alpha-0.txt',
+    '@@ -0,0 +1 @@',
+    '+alpha',
+    '',
+  ].join('\n');
+
+  function laneWorld(
+    responses: Parameters<ReturnType<typeof fauxProvider>['setResponses']>[0],
+    overrides: Partial<OrchestrateCommandDeps> = {},
+  ): FakeWorld & { models: MutableModels; ran: string[] } {
+    const ran: string[] = [];
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const model = faux.getModel();
+    if (model === undefined) throw new Error('faux has no default model');
+    faux.setResponses([...responses]);
+    const sessions = new Map<string, SessionHandle>();
+    const world = makeWorld(
+      {
+        managerModels: models,
+        managerModel: { provider: model.provider, id: model.id },
+        // L-D34 opt-in (issue #431): the lane suite drives opted-in runs.
+        managerLaneOptIn: true,
+        openManagerSession: (sessionId: string) => {
+          let handle = sessions.get(sessionId);
+          if (handle === undefined) {
+            const storage = new MemoryStorage();
+            handle = {
+              id: sessionId,
+              dir: `/memory-sessions/${sessionId}`,
+              storage,
+              meta: { cwd: '/repo', createdAt: new Date(0).toISOString() },
+              adopt: () => storage,
+              release: () => Promise.resolve(),
+            };
+            sessions.set(sessionId, handle);
+          }
+          return Promise.resolve(handle);
+        },
+        inspectGit: () => Promise.resolve(lanePatch),
+        runWorker: (agentId: string, worktree: OrchestrateWorktree) => {
+          ran.push(agentId);
+          return {
+            result: buildAgentResult({
+              status: 'completed',
+              summary: `${agentId} done`,
+              provenance: {
+                workerId: agentId,
+                sessionId: workerSessionFor('lane-run', agentId),
+                pid: null,
+                generation: 0,
+                worktree: worktree.path,
+                model: 'faux/m',
+              },
+              metrics: { wallMs: 1, latencyMs: 1 },
+            }),
+            hunks: [
+              {
+                path: `${agentId}-0.txt`,
+                hunk: `@@ -0,0 +1 @@ +${agentId}`,
+              },
+            ],
+          };
+        },
+        ...overrides,
+      },
+      undefined,
+    );
+    return { ...world, models, ran };
+  }
+
+  const toolTurn = (name: string, args: Record<string, string>) =>
+    fauxAssistantMessage([fauxToolCall(name, args)], { stopReason: 'toolUse' });
+
+  it('drives spawn to merge through the lane and merges the minted worker', async () => {
+    const world = laneWorld([
+      toolTurn('spawn_agent', { role: 'implementer', task: 'do alpha' }),
+      toolTurn('wait_for_agent', { agentId: 'worker-1' }),
+      toolTurn('collect_result', { agentId: 'worker-1' }),
+      toolTurn('workspace_diff', { agentId: 'worker-1' }),
+      toolTurn('workspace_apply', { agentId: 'worker-1' }),
+      toolTurn('workspace_merge', {}),
+      fauxAssistantMessage('merged worker-1'),
+    ]);
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'ship alpha',
+        agents: ['alpha'],
+        json: true,
+        session: 'lane-run',
+      },
+      world.deps,
+    );
+
+    expect(code).toBe(0);
+    expect(world.ran).toEqual(['worker-1']);
+    expect(world.calls.merge).toEqual(['worker-1']);
+    const saved = world.saved[world.saved.length - 1];
+    expect(saved?.laneDriven).toBe(true);
+    expect(saved?.agents).toContain('worker-1');
+    expect(saved?.managerSummary).toBe('merged worker-1');
+    const envelope = lastJsonLine(world.lines) as {
+      workers: Array<{ agentId: string }>;
+      mergeOrder: string[];
+    };
+    expect(envelope.mergeOrder).toEqual(['worker-1']);
+    expect(envelope.workers.map((entry) => entry.agentId)).toContain(
+      'worker-1',
+    );
+  });
+
+  it('a resume re-attaches the lane without re-running or re-merging', async () => {
+    const first = laneWorld([
+      toolTurn('spawn_agent', { role: 'implementer', task: 'do alpha' }),
+      toolTurn('wait_for_agent', { agentId: 'worker-1' }),
+      toolTurn('collect_result', { agentId: 'worker-1' }),
+      toolTurn('workspace_diff', { agentId: 'worker-1' }),
+      toolTurn('workspace_apply', { agentId: 'worker-1' }),
+      toolTurn('workspace_merge', {}),
+      fauxAssistantMessage('merged worker-1'),
+    ]);
+    expect(
+      await runOrchestrateCommand(
+        {
+          prompt: 'ship alpha',
+          agents: ['alpha'],
+          session: 'lane-resume-run',
+        },
+        first.deps,
+      ),
+    ).toBe(0);
+    expect(first.ran).toEqual(['worker-1']);
+    const stored = first.saved[first.saved.length - 1];
+    const second = laneWorld([fauxAssistantMessage('already merged')], {
+      loadState: () => structuredClone(stored),
+    });
+    const code = await runOrchestrateCommand(
+      { resume: true, session: 'lane-resume-run' },
+      second.deps,
+    );
+    expect(code).toBe(0);
+    // Nothing re-ran and nothing re-merged: the restored settlements
+    // completed the drive, and the empty queue left the merge loop idle.
+    expect(second.ran).toEqual([]);
+    expect(second.calls.merge).toEqual([]);
+  });
+
+  it('a minted id never collides with a roster id shaped like a mint', async () => {
+    const world = laneWorld([
+      toolTurn('spawn_agent', { role: 'implementer', task: 'do it' }),
+      toolTurn('wait_for_agent', { agentId: 'worker-2' }),
+      toolTurn('collect_result', { agentId: 'worker-2' }),
+      fauxAssistantMessage('done'),
+    ]);
+    const code = await runOrchestrateCommand(
+      { prompt: 'ship it', agents: ['worker-1'] },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.ran).toEqual(['worker-2']);
+  });
+
+  it('a pin naming nothing in the catalog refuses loudly, never templates', async () => {
+    const world = laneWorld([], {
+      managerModel: { provider: 'faux', id: 'no-such-model' },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'ship alpha', agents: ['alpha'] },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(world.errLines.join('\n')).toMatch(/lane_model_unresolved/);
+    expect(world.calls.run).toEqual([]);
+  });
+
+  it('without the opt-in a resolvable manager model still templates (L-D34 default off)', async () => {
+    const world = laneWorld([], { managerLaneOptIn: false });
+    const code = await runOrchestrateCommand(
+      { prompt: 'ship alpha', agents: ['alpha'] },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    // The template roster ran — the lane never engaged.
+    expect(world.ran).toEqual(['alpha']);
+    expect(world.saved.at(-1)?.laneDriven).toBeUndefined();
+    expect(world.errLines.join('\n')).not.toMatch(/lane_/);
+  });
+
+  it('without the opt-in an unresolvable pin templates silently, never refusing', async () => {
+    const world = laneWorld([], {
+      managerLaneOptIn: false,
+      managerModel: { provider: 'faux', id: 'no-such-model' },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'ship alpha', agents: ['alpha'] },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.ran).toEqual(['alpha']);
+    expect(world.errLines.join('\n')).not.toMatch(/lane_model_unresolved/);
+  });
+
+  it('a hung provider fails fast with lane_provider_unreachable, never hanging the run', async () => {
+    const world = laneWorld(
+      [
+        // The model answers too late: the wait outlives the deadline, so
+        // the drive aborts the submission and refuses by name.
+        (async () => {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          return fauxAssistantMessage('too late');
+        }) as never,
+      ],
+      { managerDriveDeadlineMs: 50 },
+    );
+    const startedAt = Date.now();
+    const code = await runOrchestrateCommand(
+      { prompt: 'ship alpha', agents: ['alpha'] },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(world.errLines.join('\n')).toMatch(/lane_provider_unreachable/);
+    expect(Date.now() - startedAt).toBeLessThan(5000);
+  });
+
+  it('a lane-driven resume without a manager model refuses, never re-plans', async () => {
+    const stored: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'lane-run',
+      prompt: 'ship alpha',
+      agents: ['worker-1'],
+      merged: [],
+      pending: [],
+      stopped: false,
+      records: [],
+      laneDriven: true,
+      managerSessionId: 'lane-run',
+    };
+    const world = makeWorld({
+      loadState: () => stored,
+    });
+    const code = await runOrchestrateCommand(
+      { resume: true, session: 'lane-run' },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(world.errLines.join('\n')).toMatch(/lane_resume_failed/);
   });
 });

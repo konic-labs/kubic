@@ -22,6 +22,7 @@ import {
 } from './approvals/worker-questions.js';
 import { bootManagerLane, type ManagerLaneHandle } from './manager-lane.js';
 import {
+  buildManagerTools,
   type ManagerToolsDeps,
   managerCallsFromLane,
   managerToolsWithStubs,
@@ -92,6 +93,8 @@ interface Rig {
   landed: string[];
   asked: string[];
   seatScript: WorkerQuestionOutcome[];
+  askedGit: Array<{ tool: string; args: unknown }>;
+  gitText: { value: string };
 }
 
 function rig(options?: {
@@ -117,6 +120,8 @@ function rig(options?: {
   const landed: string[] = [];
   const asked: string[] = [];
   const seatScript: WorkerQuestionOutcome[] = [];
+  const askedGit: Array<{ tool: string; args: unknown }> = [];
+  const gitText = { value: '' };
   let minted = 0;
   const spawned: string[] = [];
   const deps: ManagerToolsDeps = {
@@ -195,6 +200,10 @@ function rig(options?: {
         }
       );
     },
+    inspectGit: async (tool, args) => {
+      askedGit.push({ tool, args });
+      return gitText.value;
+    },
   };
   const settleInto = (
     store: Map<string, AgentResult>,
@@ -224,6 +233,8 @@ function rig(options?: {
     landed,
     asked,
     seatScript,
+    askedGit,
+    gitText,
   };
 }
 
@@ -399,7 +410,7 @@ describe('manager spawn/wait/collect adapters (issue #414)', () => {
     ]);
   });
 
-  it('the lane toolset is the allowlist in order: ten adapters, three stubs', async () => {
+  it('the lane toolset is the allowlist in order: thirteen adapters, no stubs', async () => {
     const test = useRig();
     const lane = await bootLane(test, [fauxAssistantMessage('ok')]);
     const names = lane.registry
@@ -450,7 +461,33 @@ describe('manager spawn/wait/collect adapters (issue #414)', () => {
     await expect(call('inspect_agent', { agentId: 'nobody' })).rejects.toThrow(
       /unknown_agent/,
     );
-    await expect(call('git_status', {})).rejects.toThrow(/not wired yet/);
+    // No stubs remain: every allowlist name resolves to a real adapter —
+    // a call answers or refuses with the adapter's own code, never the
+    // stub's "not wired yet".
+    for (const name of [
+      'spawn_agent',
+      'send_to_agent',
+      'wait_for_agent',
+      'cancel_agent',
+      'inspect_agent',
+      'collect_result',
+      'workspace_diff',
+      'workspace_apply',
+      'workspace_merge',
+      'ask_user',
+      'git_status',
+      'git_diff',
+      'git_log',
+    ]) {
+      const pending = call(name, {});
+      if (pending === undefined) throw new Error(`no tool '${name}'`);
+      const outcome = await pending.then(
+        () => 'resolved',
+        (error: unknown) =>
+          error instanceof Error ? error.message : String(error),
+      );
+      expect(outcome).not.toMatch(/not wired yet/);
+    }
   });
 
   it('an unknown role is refused with a named reason, spawning nothing', async () => {
@@ -1397,5 +1434,223 @@ describe('manager ask_user adapter (issue #417)', () => {
     await expect(callTool(lane, 'ask_user', { question: '' })).rejects.toThrow(
       /invalid_args/,
     );
+  });
+});
+
+describe('manager read-only git adapters (issue #431)', () => {
+  const tests: Rig[] = [];
+  afterEach(async () => {
+    for (const test of tests.splice(0)) {
+      for (const resolve of test.gates.values()) {
+        resolve(completedResult('cleanup', []));
+      }
+      for (const resolve of test.followUpGates.values()) {
+        resolve(completedResult('cleanup', []));
+      }
+      for (const lane of test.lanes.splice(0)) {
+        await lane.close(BACKGROUND_CONTEXT);
+      }
+    }
+  });
+  function useRig(options?: Parameters<typeof rig>[0]): Rig {
+    const test = rig(options);
+    tests.push(test);
+    return test;
+  }
+
+  it('a faux manager git round returns the seam text verbatim', async () => {
+    const test = useRig();
+    test.gitText.value = 'on branch main, clean';
+    const lane = await bootLane(test, [
+      fauxAssistantMessage([fauxToolCall('git_status', {})], {
+        stopReason: 'toolUse',
+      }),
+      fauxAssistantMessage('clean tree'),
+    ]);
+    await runTurn(lane, 'go');
+    expect(await toolTexts(lane, 'git_status')).toEqual([
+      'on branch main, clean',
+    ]);
+    expect(test.askedGit).toEqual([{ tool: 'git_status', args: {} }]);
+  });
+
+  it('git_diff and git_log pass validated args to the seam', async () => {
+    const test = useRig();
+    test.gitText.value = 'diff text';
+    const lane = await bootLane(test, [fauxAssistantMessage('nothing to ask')]);
+    await runTurn(lane, 'go');
+    await callTool(lane, 'git_diff', { range: 'HEAD~1' });
+    await callTool(lane, 'git_log', { max: 5 });
+    expect(test.askedGit).toEqual([
+      { tool: 'git_diff', args: { range: 'HEAD~1' } },
+      { tool: 'git_log', args: { max: 5 } },
+    ]);
+  });
+
+  it('a huge git result is bounded with a named marker', async () => {
+    const test = useRig();
+    test.gitText.value = `start-${'x'.repeat(100_000)}`;
+    const lane = await bootLane(test, [fauxAssistantMessage('nothing to ask')]);
+    await runTurn(lane, 'go');
+    const out = (await callTool(lane, 'git_diff', {})) as {
+      content: Array<{ text: string }>;
+    };
+    const text = out.content[0]?.text ?? '';
+    expect(text.length).toBeLessThan(40_000);
+    expect(text).toMatch(/truncated/);
+    expect(text.startsWith('start-')).toBe(true);
+  });
+
+  it('non-ref args never reach the seam', async () => {
+    const test = useRig();
+    const lane = await bootLane(test, [fauxAssistantMessage('nothing to ask')]);
+    await runTurn(lane, 'go');
+    await expect(
+      callTool(lane, 'git_diff', { range: '-evil' }),
+    ).rejects.toThrow(/invalid_args/);
+    await expect(callTool(lane, 'git_log', { bogus: 1 })).rejects.toThrow(
+      /invalid_args/,
+    );
+    expect(test.askedGit).toEqual([]);
+  });
+
+  it('writer git tools are not in the lane toolset', async () => {
+    const test = useRig();
+    const lane = await bootLane(test, [fauxAssistantMessage('ok')]);
+    const names = lane.registry
+      .snapshot()
+      .tools()
+      .map(({ tool }) => tool.name);
+    for (const writer of [
+      'git_stage',
+      'git_commit',
+      'git_branch',
+      'git_checkpoint',
+      'git_show',
+    ]) {
+      expect(names).not.toContain(writer);
+    }
+  });
+});
+
+describe('settle seeding for resumes (issue #431)', () => {
+  const tests: Rig[] = [];
+  afterEach(async () => {
+    for (const test of tests.splice(0)) {
+      for (const resolve of test.gates.values()) {
+        resolve(completedResult('cleanup', []));
+      }
+      for (const resolve of test.followUpGates.values()) {
+        resolve(completedResult('cleanup', []));
+      }
+      for (const lane of test.lanes.splice(0)) {
+        await lane.close(BACKGROUND_CONTEXT);
+      }
+    }
+  });
+
+  it('a seeded settlement reads back without a launch', async () => {
+    const test = rig();
+    tests.push(test);
+    const tools = buildManagerTools(test.deps);
+    const seeded = completedResult('seeded work', ['s.txt']);
+    tools.settle.seedSettled('worker-9', seeded);
+    expect(tools.settle.resultOf('worker-9')).toBe(seeded);
+  });
+
+  it('a seeded settlement never overwrites a launched one', async () => {
+    const test = rig();
+    tests.push(test);
+    const tools = buildManagerTools(test.deps);
+    const first = completedResult('first', ['f.txt']);
+    const second = completedResult('second', ['s.txt']);
+    tools.settle.seedSettled('worker-9', first);
+    tools.settle.seedSettled('worker-9', second);
+    expect(tools.settle.resultOf('worker-9')).toBe(first);
+  });
+});
+
+describe('unbounded settle waits (issue #431)', () => {
+  const tests: Rig[] = [];
+  afterEach(async () => {
+    for (const test of tests.splice(0)) {
+      for (const resolve of test.gates.values()) {
+        resolve(completedResult('cleanup', []));
+      }
+      for (const lane of test.lanes.splice(0)) {
+        await lane.close(BACKGROUND_CONTEXT);
+      }
+    }
+  });
+  function useRig(options?: Parameters<typeof rig>[0]): Rig {
+    const test = rig(options);
+    tests.push(test);
+    return test;
+  }
+  function toolCall(
+    lane: ManagerLaneHandle,
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    const tools = new Map(
+      lane.registry
+        .snapshot()
+        .tools()
+        .map(({ tool }) => [tool.name, tool]),
+    );
+    const found = tools.get(name);
+    if (found === undefined) throw new Error(`no tool '${name}'`);
+    return found.execute(
+      args,
+      {
+        callId: 'call-1',
+        taskId: 'task-1',
+        conversationId: lane.conversation.id,
+        output: () => undefined,
+        diagnostic: () => undefined,
+        details: async () => undefined,
+        memo: async () => undefined,
+        commit: async () => undefined,
+        env: undefined,
+      } as never,
+      BACKGROUND_CONTEXT,
+    );
+  }
+
+  it('an infinite wait holds until the settlement lands (never an instant timeout)', async () => {
+    // `setTimeout(Infinity)` overflows to 1ms: pre-fix this wait rejected
+    // with `wait_timeout` before the worker could settle (the prod #431
+    // transcript showed `exceeded Infinityms`). Post-fix it holds.
+    const test = useRig({ waitTimeoutMs: Number.POSITIVE_INFINITY });
+    const lane = await bootLane(test, [
+      fauxAssistantMessage(
+        [fauxToolCall('spawn_agent', { role: 'tester', task: 'prove it' })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('spawned'),
+    ]);
+    await runTurn(lane, 'go');
+    await vi.waitFor(() => expect(test.prepared).toEqual(['worker-1']));
+    const waited = toolCall(lane, 'wait_for_agent', { agentId: 'worker-1' });
+    // Yield well past the 1ms overflow: the wait must still be pending.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    test.settle('worker-1', completedResult('late work', ['late.txt']));
+    await expect(waited).resolves.toBeDefined();
+  });
+
+  it('a zero wait still times out by name', async () => {
+    const test = useRig({ waitTimeoutMs: 0 });
+    const lane = await bootLane(test, [
+      fauxAssistantMessage(
+        [fauxToolCall('spawn_agent', { role: 'tester', task: 'prove it' })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('spawned'),
+    ]);
+    await runTurn(lane, 'go');
+    await vi.waitFor(() => expect(test.prepared).toEqual(['worker-1']));
+    await expect(
+      toolCall(lane, 'wait_for_agent', { agentId: 'worker-1' }),
+    ).rejects.toThrow(/wait_timeout/);
   });
 });

@@ -100,16 +100,20 @@ function parseLsFiles(
 
 /**
  * Parse `status --porcelain=v1 --untracked-files=no --no-renames -z` into
- * the dirty path set. `--no-renames` keeps one path per record (never
- * `orig -> new`), so every record's tail is a dirty path.
+ * the dirty path set, or null when a record is not git-shaped. `--no-renames`
+ * keeps one path per record (never `orig -> new`), so every record's tail
+ * is a dirty path. A malformed record fails the whole parse (issue #427):
+ * an empty set would read as "nothing dirty" and bless possibly-dirty
+ * OIDs on the strength of the downstream hash verify alone — fail closed
+ * instead, the same as a failed git call.
  */
-function parsePorcelain(stdout: Buffer): Set<string> {
+function parsePorcelain(stdout: Buffer): Set<string> | null {
   const dirty = new Set<string>();
   for (const record of stdout.toString('utf8').split('\0')) {
     if (record === '') continue;
     // `XY <path>`; unmerged rows (`UU`, `AA`, …) are dirty by construction.
     const match = /^.{2} ([\s\S]*)$/.exec(record);
-    if (match?.[1] === undefined) return new Set();
+    if (match?.[1] === undefined) return null;
     dirty.add(match[1]);
   }
   return dirty;
@@ -135,15 +139,18 @@ export function captureGitBaseline(
   const tracked = parseLsFiles(ls.stdout);
   if (tracked.size === 0 && ls.stdout.length > 0) return null;
   const dirty = parsePorcelain(status.stdout);
+  if (dirty === null) return null;
   const out: GitBaseline = {};
   for (const [path, info] of tracked) {
     // Only the baseline-visible files qualify (the walk skips .git/,
     // .kubic/, gitignored and out-of-scope paths — an OID for one of those
     // could never be a sweep candidate), only merged index rows (stage 0),
-    // and never a submodule (mode 160000 names a commit, not a blob).
+    // never a submodule (mode 160000 names a commit, not a blob) and never
+    // a symlink (mode 120000 names its target, not content a restore could
+    // use — skipped explicitly, issue #427, not via the walk's exclusion).
     if (baseline[path] === undefined) continue;
     if (info.stage !== '0') continue;
-    if (info.mode === '160000') continue;
+    if (info.mode === '160000' || info.mode === '120000') continue;
     if (!OID_PATTERN.test(info.oid)) continue;
     // The stat-clean check: anything `status` names differs from the index
     // (worktree edit, staged change, unmerged) and must keep today's

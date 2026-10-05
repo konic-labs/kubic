@@ -324,6 +324,25 @@ describe('git pre-images for sweep entries (issue #371)', () => {
     expect(journal.readBefore(created)).toBe(null);
     expect(created.bytesDelta).toBe(Buffer.byteLength('born\n', 'utf8'));
   });
+
+  // Issue #427: `gitBaseline: null` is the failed-capture shape (non-repo,
+  // failed git call, malformed porcelain) — no OID, no blob reads, and the
+  // entry is unattributed hash-only, never a guessed pre-image.
+  it('marks the entry unrecorded when the capture failed to null', () => {
+    const { root, journal } = trackedRoot();
+    const baseline = captureBaseline(root);
+    writeFileSync(join(root, 'tracked.ts'), 'after\n');
+    const { run, blobReads } = fakeGit({});
+    reconcile(journal, baseline, root, CTX, {
+      gitBaseline: null,
+      gitRun: run,
+    });
+    const entry = journal.entries()[0];
+    if (entry === undefined) throw new Error('missing entry');
+    expect(entry.unattributed).toBe(true);
+    expect(journal.readBefore(entry)).toBe(null);
+    expect(blobReads).toEqual([]);
+  });
 });
 
 describe('HEAD-move markers (issue #378)', () => {

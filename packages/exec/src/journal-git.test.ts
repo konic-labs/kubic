@@ -130,6 +130,30 @@ describe('captureGitBaseline (issue #371)', () => {
     expect(captureGitBaseline(tmpRoot(), { 'a.ts': 'h' })).toBe(null);
   });
 
+  // Issue #427: a status output git did not shape (a record without the
+  // `XY <path>` form) fails the whole capture to null — fail closed —
+  // instead of reading "no dirty paths" and blessing possibly-dirty
+  // OIDs on the strength of the downstream hash verify alone.
+  it('returns null on malformed porcelain output (fail closed)', () => {
+    const { run } = fakeGit({ lsFiles: `${LS}\0`, status: 'broken' });
+    expect(captureGitBaseline('/repo', { 'tracked.ts': 'h1' }, run)).toBe(null);
+  });
+
+  // Issue #427: symlinks (mode 120000) are skipped explicitly, like
+  // submodules — the baseline walk excludes them too, but the capture
+  // must not depend on that: a link's blob names its target, not content
+  // a restore could use.
+  it('skips symlink rows even when the walk baselined the path', () => {
+    const { run } = fakeGit({ lsFiles: `${LS}\0`, status: '' });
+    expect(
+      captureGitBaseline(
+        '/repo',
+        { 'tracked.ts': 'h1', 'link.ts': 'h-link' },
+        run,
+      ),
+    ).toEqual({ 'tracked.ts': OID_A });
+  });
+
   it('treats staged modifications as dirty too', () => {
     const { run } = fakeGit({ lsFiles: `${LS}\0`, status: 'M  dirty.ts\0' });
     expect(

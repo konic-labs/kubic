@@ -27,7 +27,8 @@ gets one before the new entry — so the entry lands on a line of its own
 and is never glued to the fragment and dropped with it — and a failed
 append truncates the partial write back to the pre-append length. Dropped
 fragments are named as `corrupt index lines` in `kubic status` and removed
-by the next retention rewrite. Private state (issue #361): the journal directory and `blobs/` are created
+by the next retention rewrite that drops an entry — a pass under the bound
+takes the fast path and rewrites nothing, so the count can stand for a while. Private state (issue #361): the journal directory and `blobs/` are created
 0700, the index and every blob 0600 — a blob is a copy of file content,
 including 0600 sources like `.env`, and the index names every path of the run.
 An existing group- or world-accessible state directory (the sessions root, a

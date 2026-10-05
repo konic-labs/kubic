@@ -15,6 +15,8 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -177,6 +179,26 @@ describe('journal torn tail (issue #343)', () => {
       'first.txt',
       'third.txt',
     ]);
+  });
+
+  it('never truncates a symlinked index through its link', () => {
+    const dir = tmpRoot();
+    const outside = tmpRoot();
+    const target = join(outside, 'target.jsonl');
+    writeFileSync(target, 'x'.repeat(500));
+    symlinkSync(target, join(dir, 'index.jsonl'));
+    const store = new FileJournalStore(dir);
+    hooks.failAppend = (path) => path === join(dir, 'index.jsonl');
+    expect(() => store.append(entry({ path: 'first.txt' }))).toThrow(/ENOSPC/);
+    // The torn prefix landed on the link's target (the append follows the
+    // link — that part is the append's own doing), but the target keeps its
+    // 500 bytes: `fileInfo` is an lstat, so the link's "size" is the length
+    // of the target STRING, and truncating to it would cut the target down
+    // to a few dozen garbage bytes. Only a regular file yields a truncate
+    // target, so the failed append leaves the length alone.
+    const raw = readFileSync(target, 'utf8');
+    expect(raw.startsWith('x'.repeat(500))).toBe(true);
+    expect(Buffer.byteLength(raw, 'utf8')).toBeGreaterThan(500);
   });
 
   it('starts a fresh index at the first entry, with no repair byte', () => {

@@ -16,6 +16,7 @@ import {
   sep,
 } from 'node:path';
 import {
+  type BridgeFileInfo,
   createNodeFileBridge,
   type FileBridge,
   withFileLocked,
@@ -74,7 +75,10 @@ export interface JournalRetention {
    * written. The retention rewrite is flushed the same way — it replaces
    * the whole history, so a crash right after it must not be able to leave
    * an empty index. Set `false` to trade that durability for throughput (a
-   * crash may then truncate the last line, which `entries()` skips); a
+   * crash may then truncate the last line — since #343 the next append
+   * closes the fragment on a line of its own and `kubic status` reports it
+   * as a corrupt index line, and a failed append truncates its own partial
+   * write back to the pre-append length); a
    * bridge without `appendDurably`/`flushFile`/`flushDir` degrades to the
    * plain write, keeping atomicity without durability.
    */
@@ -702,14 +706,30 @@ export class FileJournalStore {
   // readIndex skips and the next rewrite drops, while a missing one loses
   // the entry this append is writing).
   private readIndexTail(bridge: FileBridge): IndexTail {
-    let size: number;
+    let info: BridgeFileInfo;
     try {
-      size = bridge.exists(this.indexPath)
-        ? bridge.fileInfo(this.indexPath).size
-        : 0;
-    } catch {
+      // Review fix: one lstat per append. `exists()` + `fileInfo()` asked the
+      // same question twice (both are lstats).
+      info = bridge.fileInfo(this.indexPath);
+    } catch (error) {
+      // A fresh index (ENOENT) has nothing to truncate and its first line
+      // must not be preceded by a newline; anything else (EACCES, EIO) is
+      // unreadable, so no length is guessed.
+      return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
+        ? { size: 0, fragment: false }
+        : { size: null, fragment: true };
+    }
+    // Review fix: `fileInfo` is an lstat, so for a symlinked index `size` is
+    // the length of the link's target STRING, while `truncateFile` follows
+    // the link — a failed append would truncate the link's target to that
+    // garbage length. Only a regular file yields a truncate target: a known
+    // link or non-regular file leaves the length unknown, which is the
+    // conservative repair path (`isFile === undefined` still counts as
+    // regular, per the bridge's own convention).
+    if (info.isSymbolicLink === true || info.isFile === false) {
       return { size: null, fragment: true };
     }
+    const size = info.size;
     if (size === 0) return { size, fragment: false };
     try {
       const last = bridge.readFileRange?.(this.indexPath, size - 1, size);

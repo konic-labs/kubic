@@ -28,7 +28,7 @@ every diff touching the boundary for maintainer review.
 | `lane/policy.ts` | `PermissionClasses` (re-export), `PolicyRefusedError` |
 | `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `KubicSessionMeta`, `KubicSessionDoc`, `SessionHandle`, `SessionListEntry`, `createSession`, `attachSession`, `listSessions`, `readSessionMetadata`, `forkSession` / `ForkSessionOptions` / `ForkSessionResult` / `SessionForkError` (issue #265: a new session forked from an existing one), `laneConversationIdOf` (the conversation a session's lane runs — a fork's recorded `KubicSessionMeta.conversation`, else the reserved root; every transcript reader resolves it), `SessionAttachError`, `SessionFormatError`, `SessionIdError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionLockIsLive`, `sessionsTouchingWorkspace` — session storage on pi-durable ([session storage](#session-storage-issue-392)) |
 | `lane/session-fs.ts` | `bridgeToPiFileSystem` — the 1.0 `FileSystem` (19 members, `id`/`truncateFile`/`flushFile` included) over the exec file bridge |
-| `lane/turn.ts` | `TurnOutcome`, `RunTurnOptions`, `runTurn`, `awaitTurn`, `turnAbort`, `turnAbortReasonOf`, `TurnAbort`, `turnLaneRecord`, `TURN_BUSY_REASON` — one turn is `conversation.submit({ type: 'input', … })` → `submission.wait(context)`; no Kubic-side loop, no sleep (§20.5–§20.7, #395) |
+| `lane/turn.ts` | `TurnOutcome`, `RunTurnOptions`, `runTurn`, `awaitTurn`, `turnAbort`, `turnAbortReasonOf`, `TurnAbort`, `turnLaneRecord`, `TURN_BUSY_REASON`, `SoloOverflowRecovery`, `OverflowRecoveryOptions`, `recoverSoloOverflowTurn`, `runTurnWithOverflowRecovery` — one turn is `conversation.submit({ type: 'input', … })` → `submission.wait(context)`; no Kubic-side loop, no sleep (§20.5–§20.7, #395). The recovery wrapper retries exactly one failure — context overflow, compacted first (#399) and retried once (#209) |
 | `lane/settle.ts` | `OperationErrorLike`, `SettledResult`, `LaneTerminalStatus`, `SubmissionFailure`, `classifyHarnessError`, `classifySubmissionFailure`, `classifyThrownError`, `laneStatusOf`, `laneErrorOf`, `settleTerminalStatus`, `settleSubmission` — a settled pi-durable submission → Kubic's `ResultStatus`/`ResultError` and the §52 codes (#395) |
 | `lane/pending.ts` | `PendingPolicy`, `PendingReport`, `PendingSettlementResult`, `SettlePendingOptions`, `PendingLane`, `inspectPending`, `settlePending`, `describePendingSettlement`, `pendingInputText`, `inspectStoredWork` — settle a turn a crashed process left open (#147; #396: `harness.inspect()` decides, `resume` waits under the caller's guard, `abort` is durable) |
 | `lane/abort.ts` | `KillFn`, `OperationKillRegistry`, `AbortableLane`, `LaneAbortResult`, `LaneDriveError`, `abortLane`, `forgetLaneKills` — `conversation.abort(context)` plus the conversation-keyed kill drain (every kill attempted, failures aggregated, #395 D6.2); `track()` returns the unregister fn its owner calls when the handle settles (#142) |
@@ -623,6 +623,22 @@ carrying the committed `entries`, live tools, retry, compactions and
 `retry_with_stronger_model`, `retry_with_different_tool`,
 `retry_with_wider_capability`; decisions add `escalate`/`abandon`, and
 retry spend lands on `RetryBudget`, never the task budget.
+Emitted by `classifyFailure` (#209): `retry_same` (executed by the
+harness's durable generation retry, #395 — Kubic never relaunches it),
+`retry_with_different_tool`, and `retry_with_new_context` (solo
+compact-then-retry). Pollution escalates (the operator picks the fresh
+agent); `budget_exhausted`/`approval_denied` abandon and spend nothing.
+`retry_with_stronger_model` / `retry_with_new_agent` are decided by
+`chooseRetry` but executed by their owners (#210 escalates, #184
+relaunches); `retry_with_wider_capability` only ever arises through an
+explicit approval, never from the chooser. `RetryBudget(maxAttempts,
+maxCostUsd)` binds both arms (attempts AND reported retry spend; task
+spend never counts) and is constructed straight from the orchestrator's
+`RetryBudgetConfig` — same field names, no import. Solo overflow
+recovery (`recoverSoloOverflowTurn` / `runTurnWithOverflowRecovery` in
+`lane/turn.ts`, live on the headless path): compact via
+`runManualCompaction`, then one retry with a fresh request id; a
+compaction that did not cut abandons with the original failure.
 
 ### Usage (`usage.ts`, §39)
 

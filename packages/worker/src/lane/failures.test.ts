@@ -148,3 +148,46 @@ describe('generic model errors keep the detail domain (issue #155)', () => {
     ).toBe('model_failed');
   });
 });
+
+describe('retry budget attempts and cost (issue #209)', () => {
+  it('abandons the third failure with maxAttempts=2, naming the retry budget', () => {
+    const retries = new RetryBudget(2);
+    const failure = classifyFailure('provider', '500 upstream', '');
+    expect(chooseRetry(failure, {}, retries).decision).toBe('retry_same');
+    expect(chooseRetry(failure, {}, retries).decision).toBe('retry_same');
+    const third = chooseRetry(failure, {}, retries);
+    expect(third.decision).toBe('abandon');
+    expect(third.reason).toContain('retry budget');
+  });
+
+  it('abandons when reported retry spend reaches maxCostUsd', () => {
+    const retries = new RetryBudget(10, 1);
+    const failure = classifyFailure('provider', '500 upstream', '');
+    const first = chooseRetry(failure, { costUsd: 0.4 }, retries);
+    expect(first.decision).toBe('retry_same');
+    const second = chooseRetry(failure, { costUsd: 1.0 }, retries);
+    expect(second.decision).toBe('abandon');
+    expect(second.reason).toContain('retry budget');
+  });
+
+  it('never spends budget on abandon or escalate', () => {
+    const retries = new RetryBudget(1);
+    const denied = classifyFailure('approval', 'denied', 'user denied');
+    expect(chooseRetry(denied, {}, retries).decision).toBe('abandon');
+    const polluted = classifyFailure('context', 'polluted', 'polluted context');
+    expect(chooseRetry(polluted, {}, retries).decision).toBe('escalate');
+    // The single attempt is still available: nothing was spent above.
+    const transient = classifyFailure('provider', '500 upstream', '');
+    expect(chooseRetry(transient, {}, retries).decision).toBe('retry_same');
+  });
+
+  it('routes context overflow to compact-then-retry, not escalation', () => {
+    const out = classifyFailure(
+      'context',
+      'context_overflow',
+      'too many tokens',
+    );
+    expect(out.code).toBe('context_overflow');
+    expect(out.strategy).toBe('retry_with_new_context');
+  });
+});

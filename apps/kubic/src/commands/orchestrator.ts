@@ -142,6 +142,10 @@ export const registerOrchestratorCommands: CommandRegistrar = (
     )
     .option('--yes', 'auto-approve every merge (non-interactive)')
     .option(
+      '--autonomous',
+      'run to completion without stopping for input (§19; recorded in the session and audit)',
+    )
+    .option(
       '--skill <path>',
       'skill every worker and the resolver are granted (repeatable); a relative path resolves against this cwd',
       collect,

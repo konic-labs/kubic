@@ -11,6 +11,7 @@
 // File access goes through the exec FileBridge (I/O confinement, §9).
 
 import { basename, dirname, join, resolve } from 'node:path';
+import type { RunMode } from '../../../agents/src/budget.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import type { AuditTableConfig } from '../config/config.js';
 import { matchableSecrets } from '../config/secrets.js';
@@ -489,6 +490,10 @@ export type PrivilegedActionKind = (typeof PRIVILEGED_ACTION_KINDS)[number];
 export function isPrivilegedAuditWhat(what: string): boolean {
   return (
     what.startsWith('tool:') ||
+    // Issue #278: the run-start row is a decision-grade record (it names
+    // the autonomous combination), not a privileged ACTION — the seven
+    // kinds stay closed.
+    what === 'run:start' ||
     what === 'posture:full-access' ||
     what === 'undo-restore' ||
     what.startsWith('merge:') ||
@@ -1024,6 +1029,48 @@ export function fullAccessEnabledAudit(
     posture: 'full-access',
     result: 'ok',
     reason: `full access enabled for session ${input.sessionId || UNKNOWN} by ${input.command}`,
+  };
+}
+
+// §60 record for a run's start (issue #278, §19): the §19 mode the run
+// resolved — explicit `--autonomous` or off by default — so the audit trail
+// names the autonomous combination the session records. A run record, not a
+// privileged action: it is kept at the privileged sink level beside the
+// decisions, while PRIVILEGED_ACTION_KINDS stays the closed action set.
+export interface RunStartInput {
+  sessionId?: string;
+  /** The originating command, e.g. `kubic run`, `kubic orchestrate`. */
+  command: string;
+  mode: 'solo' | 'orchestrator';
+  /** The run's §19 mode (issue #278). */
+  runMode: RunMode;
+  workspace?: string;
+  posture: string;
+  /** Whether `--autonomous` was passed explicitly. */
+  autonomous: boolean;
+}
+
+export function runStartAudit(input: RunStartInput): AuditInput {
+  const role = input.mode === 'solo' ? 'root' : 'manager';
+  return {
+    who: 'user:cli',
+    what: 'run:start',
+    agent: { session: input.sessionId || UNKNOWN, role },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    worker: { pid: process.pid, generation: 0, role },
+    workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
+    permission: {
+      permission: 'run:start',
+      approval: `started by ${input.command}`,
+    },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    mode: input.mode,
+    posture: input.posture,
+    result: 'ok',
+    reason:
+      `run started in ${input.runMode} mode by ${input.command}` +
+      (input.autonomous ? ' (--autonomous)' : ''),
   };
 }
 

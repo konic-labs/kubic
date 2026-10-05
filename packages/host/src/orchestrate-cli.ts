@@ -16,7 +16,11 @@
 // arrive injected (fakes in tests, the exec seam in prod via
 // apps/kubic/src/orchestrate-run.ts).
 
-import { type RunMode, resolveBlockedSpawn } from '../../agents/src/budget.js';
+import {
+  type RunMode,
+  resolveBlockedSpawn,
+  resolveRunMode,
+} from '../../agents/src/budget.js';
 import {
   addEdge,
   addNode,
@@ -162,6 +166,9 @@ export interface OrchestrateCliOptions {
   readonly session?: string;
   readonly resume?: boolean;
   readonly yes?: boolean;
+  // Explicit autonomous mode (issue #278, §19): off by default, recorded
+  // in session metadata and the §60 audit trail, driving RunMode.
+  readonly autonomous?: boolean;
   readonly budget?: ParsedBudgetSpec;
   readonly fullAccess?: boolean;
   readonly json?: boolean;
@@ -704,6 +711,9 @@ export interface WorkerSessionRequest {
   // Issue #164 (§23): the role the worker spawns as, recorded on the
   // worker session beside the parent linkage. Absent means unassigned.
   role?: string;
+  // Issue #278 (§19): the run's mode, recorded on the manager and worker
+  // session records.
+  mode: RunMode;
 }
 
 // The id the child attaches to, handed to runWorker so the create step and
@@ -763,6 +773,19 @@ export function delegationGraphLines(
 export interface ApprovalInput {
   agentId: string;
   branch: string;
+}
+
+// One run's start, as the §60 ledger records it (issue #278, §19): the
+// §19 mode the run resolved, the command that started it and whether
+// `--autonomous` was explicit.
+export interface RunStartRecord {
+  sessionId: string;
+  command: 'orchestrate';
+  mode: 'orchestrator';
+  runMode: RunMode;
+  workspace: string;
+  posture: string;
+  autonomous: boolean;
 }
 
 // One settled merge-gate decision, as the §60 ledger records it (issue
@@ -1058,6 +1081,11 @@ export interface OrchestrateCommandDeps {
   // who answered the prompt, so the ledger never records an inferred
   // approval as a user decision.
   auditMerge?: (record: MergeDecisionRecord) => void;
+  // The run-start §60 audit hook (issue #278, §19). Called once per run,
+  // before any worktree, session or child exists; the composition root
+  // appends the run:start row. Absent means no run-start row (older fakes
+  // keep working).
+  auditRunStart?: (record: RunStartRecord) => void;
   // Whether a merge-gate refusal points the operator at `--yes` (default
   // true). A surface with no such flag — the TUI, whose merge asks go through
   // its own approval overlay — passes false so the message never names a flag
@@ -1158,6 +1186,9 @@ export interface OrchestrateEnvelope {
   exitCode: number;
   sessionId: string;
   status: OrchestrateStatus;
+  // The run's §19 mode (issue #278): explicit `--autonomous` or off by
+  // default. The status already names the stop condition that ended it.
+  mode: RunMode;
   // Issue #185: each worker that produced a §68 result also carries its
   // role, status, summary, usage and provenance (WorkerResultView).
   workers: ({
@@ -1260,6 +1291,9 @@ interface ParsedArgs {
   sessionId?: string;
   resume: boolean;
   autoApprove: boolean;
+  // Explicit autonomous mode (issue #278, §19): drives RunMode with the
+  // shipped --yes/headless rule.
+  autonomous: boolean;
   json: boolean;
   // Opt-in budgets (§71, issue #105): absent means NO budget is applied to a
   // spawn. Per-worker overrides arrive as --budget <agent>=<dims>; the shared
@@ -1477,6 +1511,7 @@ function parsedFrom(options: OrchestrateCliOptions): ParsedArgs {
     binding: parsed.ok ? parsed.binding : { roles: {}, models: {} },
     resume: options.resume === true,
     autoApprove: options.yes === true,
+    autonomous: options.autonomous === true,
     json: options.json === true,
     // §71 opt-in budget, per spawn. Opt-in means exactly that: no flag →
     // nothing configured → no limit applied.
@@ -1532,6 +1567,9 @@ export function refusedOrchestrateEnvelope(
     exitCode: RUN_EXIT_FAILED,
     sessionId: 'unassigned',
     status: 'failed',
+    // Issue #278 (§19): the run never started, so no flag was ever
+    // parsed — the §19 default (off) is the honest mode.
+    mode: 'interactive',
     workers: [],
     mergeOrder: [],
     attribution: [],
@@ -1547,6 +1585,15 @@ export async function runOrchestrateCommand(
   const now = deps.now ?? Date.now;
   const debug = deps.debug ?? (() => undefined);
   const parsed = parsedFrom(options);
+  // The run's §19 mode (issue #278): explicit `--autonomous` wins,
+  // otherwise the shipped rule (`--yes` or headless is autonomous).
+  // It drives the spawn-cap ask below; the admission layer keeps the
+  // queueing rule past the gate (see the requestSpawn call).
+  const runMode: RunMode = resolveRunMode({
+    interactive: deps.interactive === true,
+    autoApprove: parsed.autoApprove,
+    autonomous: parsed.autonomous,
+  });
   // --json keeps every stream colourless; stdout carries one document.
   const theme =
     parsed.json || deps.theme === undefined
@@ -1583,6 +1630,18 @@ export async function runOrchestrateCommand(
     return RUN_EXIT_USAGE;
   }
   const sessionId = parsed.sessionId ?? `orch-${now()}`;
+  // Issue #278 (§19): the run's start names the §19 mode through the
+  // audit hook — the composition root appends the run:start row to the
+  // §60 ledger. Before any worktree, session or child exists.
+  deps.auditRunStart?.({
+    sessionId,
+    command: 'orchestrate',
+    mode: 'orchestrator',
+    runMode,
+    workspace: deps.repoRoot ?? process.cwd(),
+    posture: parsed.fullAccess ? 'full-access' : 'approvals',
+    autonomous: parsed.autonomous,
+  });
 
   // The manager lane registers BEFORE anything spawns (issue #103, §40).
   // Registration validates the requested toolset against the allowlist, so
@@ -1610,6 +1669,9 @@ export async function runOrchestrateCommand(
           exitCode: RUN_EXIT_FAILED,
           sessionId,
           status,
+          // Issue #278: this refusal bypasses emit, so it names the
+          // §19 mode itself.
+          mode: runMode,
           workers: [],
           mergeOrder: [],
           attribution: [],
@@ -1626,11 +1688,18 @@ export async function runOrchestrateCommand(
     return RUN_EXIT_FAILED;
   }
 
-  const emit = (envelope: OrchestrateEnvelope, textLines: string[]): number => {
+  // Issue #278 (§19): every envelope names the run's §19 mode — injected
+  // here so no exit path (usage refusals, pre-loop failures, the success
+  // and partial termini) can emit a modeless envelope.
+  const emit = (
+    envelope: Omit<OrchestrateEnvelope, 'mode'>,
+    textLines: string[],
+  ): number => {
+    const full: OrchestrateEnvelope = { ...envelope, mode: runMode };
     // stdout is data (the envelope, or the report lines); the failure
     // line is a diagnostic on stderr in both modes.
     if (parsed.json) {
-      deps.out(formatJson(envelope));
+      deps.out(formatJson(full));
     } else {
       for (const line of textLines) deps.out(line);
     }
@@ -1685,7 +1754,11 @@ export async function runOrchestrateCommand(
         // never an empty array claiming measurements that did not happen.
         ...(mergeTelemetry.length === 0 ? {} : { mergeTelemetry }),
       },
-      [`${theme.accent('session:')} ${sessionId}`, ...mergeTelemetryLines()],
+      [
+        // Issue #278 (§19): the terminal status line names the §19 mode.
+        `${theme.accent('session:')} ${sessionId} mode=${runMode}`,
+        ...mergeTelemetryLines(),
+      ],
     );
   };
 
@@ -2528,10 +2601,7 @@ export async function runOrchestrateCommand(
   if (excessAgents.length > 0 && approvalsRun !== undefined) {
     // `--yes` is the run's standing answer: it makes the run autonomous, so
     // the cap never asks (issue #323's rule, applied to this ask too).
-    const runMode: RunMode =
-      deps.interactive === true && parsed.autoApprove !== true
-        ? 'interactive'
-        : 'autonomous';
+    // `runMode` is hoisted: the admission layer below shares it.
     const blocked = resolveBlockedSpawn(
       runMode,
       `${state.agents.length} workers requested with a concurrency cap of ${concurrencyCap}`,
@@ -2714,6 +2784,8 @@ export async function runOrchestrateCommand(
         agentId,
         workerSessionId,
         worktree,
+        // Issue #278 (§19): the run's mode travels to the session records.
+        mode: runMode,
         // Issue #164 (§23): the assignment travels to the session record
         // so the worker session names its role beside its parent.
         ...(() => {
@@ -3110,6 +3182,10 @@ export async function runOrchestrateCommand(
         worktree: worktree.path,
         ...(provider === undefined ? {} : { provider }),
       },
+      // Stays 'autonomous' on purpose (issue #278): the spawn-cap ask
+      // above owns the interactive branch — once past it (asked and
+      // approved, or never asked) the excess queues under the queueing
+      // rule. Passing runMode here would deny approved spawns at the cap.
       'autonomous',
     );
     // The admission layer's own numbers, sampled right after the request
@@ -3853,7 +3929,8 @@ export async function runOrchestrateCommand(
             .join(', ')}`,
         };
   const textLines = [
-    `${theme.accent('session:')} ${sessionId}`,
+    // Issue #278 (§19): the terminal status line names the §19 mode.
+    `${theme.accent('session:')} ${sessionId} mode=${runMode}`,
     ...state.records.map(
       (record) =>
         `worker: ${record.agentId} branch=${record.branch} hunks=${record.hunks.length}`,

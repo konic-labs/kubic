@@ -166,6 +166,10 @@ function registerRun(program: Command, ctx: CommandContext): void {
       'invoke one explicit skill first, its content as the turn prompt with -p/positional text as instructions',
     )
     .option('--debug', 'emit lane/tool span lines on stderr')
+    .option(
+      '--autonomous',
+      'run to completion without stopping for input (§19; recorded in the session and audit)',
+    )
     .option('--json', 'print one JSON envelope line instead of text')
     .option(
       '--dangerously-skip-approvals',
@@ -240,6 +244,7 @@ function registerRun(program: Command, ctx: CommandContext): void {
               : { invokeSkill: opts.invokeSkill }),
             ...(opts.skills === false ? { noSkills: true } : {}),
             ...(opts.debug === true ? { debug: true } : {}),
+            ...(opts.autonomous === true ? { autonomous: true } : {}),
             ...(opts.json === true ? { json: true } : {}),
             ...(opts.dangerouslySkipApprovals === true
               ? { dangerouslySkipApprovals: true }

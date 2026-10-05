@@ -192,6 +192,17 @@ describe('pi-durable session storage (issue #392)', () => {
     expect(
       first.writes.some((write) => write.record.kind === 'kubic.session'),
     ).toBe(true);
+    // Issue #278 (§19): the run's mode rides the session metadata when
+    // given, and stays absent otherwise (off by default).
+    const withMode = track(
+      await createSession(
+        store,
+        { cwd: '/work', mode: 'autonomous' },
+        BACKGROUND_CONTEXT,
+      ),
+    );
+    expect(withMode.meta.mode).toBe('autonomous');
+    expect(session.meta.mode).toBeUndefined();
     // The listing header: the projection listSessions reads without opening
     // a live session's storage.
     expect(readHeader(root, session.id)).toEqual({

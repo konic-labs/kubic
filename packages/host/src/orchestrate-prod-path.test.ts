@@ -112,6 +112,8 @@ describe('prod orchestrate path: worker session creation (issue #85)', () => {
       agentId: 'worker-1',
       workerSessionId: 'prodsess-worker-1',
       worktree: { path: added.path, branch: added.branch },
+      // Issue #278 (§19): the simulated run passes no --autonomous.
+      mode: 'interactive',
     });
     expect(created?.sessionId).toBe('prodsess-worker-1');
 
@@ -156,6 +158,8 @@ describe('prod orchestrate path: worker session creation (issue #85)', () => {
       agentId: 'worker-1',
       workerSessionId: 'prodsess-worker-1',
       worktree: { path: added.path, branch: added.branch },
+      // Issue #278 (§19): the simulated run passes no --autonomous.
+      mode: 'interactive' as const,
     };
     const first = await deps.createWorkerSession?.(request);
     expect(first?.sessionId).toBe('prodsess-worker-1');
@@ -219,6 +223,8 @@ describe('prod orchestrate path: worker session creation (issue #85)', () => {
         agentId: 'worker-1',
         workerSessionId: 'prodsess-worker-1',
         worktree: { path: added.path, branch: added.branch },
+        // Issue #278 (§19): the simulated run passes no --autonomous.
+        mode: 'interactive',
       }) ?? undefined,
     ).catch((e: unknown) => e as Error);
     expect(error).toBeInstanceOf(Error);
@@ -478,6 +484,8 @@ describe('prod orchestrate path: the child that cannot attach (issue #85)', () =
       agentId: 'worker-1',
       workerSessionId: 'prodsess-worker-1',
       worktree: { path: added.path, branch: added.branch },
+      // Issue #278 (§19): the simulated run passes no --autonomous.
+      mode: 'interactive',
     });
     // Nothing session-shaped is written into the parent repo's .kubic dir
     // beyond the orchestrator state file the CLI owns.

@@ -8,6 +8,7 @@ import {
   REPLAY_PIN_DIMS,
   REPLAY_PIN_FIELDS,
   resolveBlockedSpawn,
+  resolveRunMode,
   terminateForBudget,
 } from './budget.js';
 
@@ -90,6 +91,43 @@ describe('budget (issue #9, §71)', () => {
       outcome: 'ask',
       reason: 'aggregate tokens exhausted',
     });
+  });
+
+  // Issue #278 (§19): autonomous mode is explicit. `--autonomous` forces
+  // it; otherwise the shipped rule holds (`--yes` or headless is
+  // autonomous, an attached run without either stays interactive).
+  it('resolveRunMode lets the explicit flag win', () => {
+    expect(
+      resolveRunMode({
+        interactive: true,
+        autoApprove: false,
+        autonomous: true,
+      }),
+    ).toBe('autonomous');
+    expect(
+      resolveRunMode({
+        interactive: true,
+        autoApprove: false,
+        autonomous: false,
+      }),
+    ).toBe('interactive');
+  });
+
+  it('resolveRunMode keeps the shipped --yes/headless rule without the flag', () => {
+    expect(
+      resolveRunMode({
+        interactive: true,
+        autoApprove: true,
+        autonomous: false,
+      }),
+    ).toBe('autonomous');
+    expect(
+      resolveRunMode({
+        interactive: false,
+        autoApprove: false,
+        autonomous: false,
+      }),
+    ).toBe('autonomous');
   });
 
   it('terminateForBudget produces exhaustion via implementation output', () => {

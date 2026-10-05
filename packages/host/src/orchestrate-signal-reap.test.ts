@@ -179,6 +179,8 @@ async function startLiveWorker(
     agentId: 'worker-1',
     workerSessionId: 'sigreap-worker-1',
     worktree,
+    // Issue #278 (§19): the simulated run passes no --autonomous.
+    mode: 'interactive',
   });
   const settled = Promise.resolve(
     deps.runWorker('worker-1', worktree, options.prompt ?? 'work', {
@@ -229,6 +231,8 @@ async function startTwoLiveWorkers(signals: OrchestrateSignals): Promise<{
       agentId,
       workerSessionId,
       worktree,
+      // Issue #278 (§19): the simulated run passes no --autonomous.
+      mode: 'interactive',
     });
     // Both launches are started before either is awaited: the two children
     // are genuinely in flight together.

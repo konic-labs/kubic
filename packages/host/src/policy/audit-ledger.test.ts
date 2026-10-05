@@ -30,6 +30,7 @@ import {
   PRIVILEGED_ACTION_KINDS,
   readAuditLedger,
   resolveRunBaseRevision,
+  runStartAudit,
   setAuditSinks,
   soloDecisionAudit,
   undoRestoreAudit,
@@ -478,6 +479,48 @@ describe('§60 audit ledger', () => {
     expect(readAuditLedger(dir)).toEqual([]);
   });
 
+  // Issue #278 (§19): the run's start names the §19 mode, so the audit
+  // trail carries the autonomous combination the session records.
+  describe('run-start audit row (issue #278)', () => {
+    it('records the mode, the command and the explicit flag in the reason', () => {
+      const record = runStartAudit({
+        sessionId: 'sess-1',
+        command: 'kubic run',
+        mode: 'solo',
+        runMode: 'autonomous',
+        workspace: '/repo',
+        posture: 'approvals',
+        autonomous: true,
+      });
+      expect(record.what).toBe('run:start');
+      expect(record.who).toBe('user:cli');
+      expect(record.mode).toBe('solo');
+      expect(record.agent).toEqual({ session: 'sess-1', role: 'root' });
+      expect(record.posture).toBe('approvals');
+      expect(record.result).toBe('ok');
+      expect(record.reason).toContain('autonomous');
+      expect(record.reason).toContain('kubic run');
+      expect(record.reason).toContain('--autonomous');
+    });
+
+    it('names the orchestrator run and omits the flag when not explicit', () => {
+      const record = runStartAudit({
+        sessionId: 'orch-1',
+        command: 'kubic orchestrate',
+        mode: 'orchestrator',
+        runMode: 'interactive',
+        workspace: '/repo',
+        posture: 'approvals',
+        autonomous: false,
+      });
+      expect(record.what).toBe('run:start');
+      expect(record.mode).toBe('orchestrator');
+      expect(record.agent).toEqual({ session: 'orch-1', role: 'manager' });
+      expect(record.reason).toContain('interactive');
+      expect(record.reason).not.toContain('--autonomous');
+    });
+  });
+
   describe('privileged-action audit rows (issue #284)', () => {
     it('defines the closed privileged-action set', () => {
       expect(PRIVILEGED_ACTION_KINDS).toEqual([
@@ -676,9 +719,10 @@ describe('configured sink fan-out (issue #286)', () => {
     });
   }
 
-  it('isPrivilegedAuditWhat keeps decisions and the seven kinds, drops the rest', () => {
+  it('isPrivilegedAuditWhat keeps decisions, run starts and the seven kinds, drops the rest', () => {
     for (const what of [
       'tool:bash',
+      'run:start',
       'posture:full-access',
       'merge:kubic/worker-1',
       'worker-spawn:worker-1',

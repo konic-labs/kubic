@@ -8,6 +8,7 @@
 // flows through the injected persist hook identically for text and
 // --json output.
 
+import type { RunMode } from '../../agents/src/budget.js';
 import {
   EXIT_APPROVAL,
   EXIT_BUDGET,
@@ -237,6 +238,10 @@ export interface HeadlessRunResult {
   // The approval posture the lane ran under (issue #308): 'full-access'
   // when the session skips approvals. Absent when no lane was installed.
   posture?: 'approvals' | 'full-access';
+  // The run's §19 mode (issue #278): explicit `--autonomous` or off by
+  // default. Absent when no session was ever created (same bound as
+  // posture — the mode is read from the session record).
+  mode?: RunMode;
 }
 
 export interface RunUsage {
@@ -260,6 +265,9 @@ export interface RunEnvelope {
   model?: string;
   // Issue #308: scripted callers detect a full-access session here.
   approvals?: { posture: 'approvals' | 'full-access' };
+  // Issue #278 (§19): the §19 mode the run resolved; the status already
+  // names the stop condition that ended it.
+  mode?: RunMode;
   error?: { kind: string; message: string };
   // Issue #155: the §52 failure code, remedy and retry strategy, additive.
   failure?: ClassifiedFailure;
@@ -285,6 +293,7 @@ export function buildRunEnvelope(
     ...(result.posture === undefined
       ? {}
       : { approvals: { posture: result.posture } }),
+    ...(result.mode === undefined ? {} : { mode: result.mode }),
     ...(result.error === undefined ? {} : { error: result.error }),
     ...(failure === undefined ? {} : { failure }),
   };
@@ -314,6 +323,9 @@ export interface RunCommandDeps extends CliIo {
       debug?: boolean;
       // §41.4 (issue #308): forwarded to the runner's one enable path.
       dangerouslySkipApprovals?: boolean;
+      // §19 (issue #278): explicit autonomous mode, recorded in session
+      // metadata and the §60 audit trail, driving RunMode.
+      autonomous?: boolean;
       // §40.1 mechanism 1 (issue #273): the per-invocation tool selection.
       tools?: readonly string[];
       noTools?: boolean;
@@ -357,6 +369,8 @@ export interface RunCommandOptions {
   readonly json?: boolean;
   // §41.4 (issue #308): session-scoped full access for this run's session.
   readonly dangerouslySkipApprovals?: boolean;
+  // §19 (issue #278): explicit autonomous mode (off by default).
+  readonly autonomous?: boolean;
   // §40.1 mechanism 1 (issue #273): `--tools <a,b>` / `--no-tools`.
   readonly tools?: readonly string[];
   readonly noTools?: boolean;

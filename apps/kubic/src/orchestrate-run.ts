@@ -121,6 +121,7 @@ import {
   auditLedgerDirFor,
   mergeDecisionAudit,
   resolveRepoRuntimeRoot,
+  runStartAudit,
   workerSpawnAudit,
   workerTerminateAudit,
   worktreeCreateAudit,
@@ -2220,7 +2221,12 @@ export async function orchestrateDepsWithDefaults(
             if (!(error instanceof SessionAttachError)) throw error;
             const manager = await createSession(
               sessionStore,
-              { id: input.sessionId, cwd: root ?? cwd },
+              {
+                id: input.sessionId,
+                cwd: root ?? cwd,
+                // Issue #278 (§19): the run's mode on the manager record.
+                mode: input.mode,
+              },
               BACKGROUND_CONTEXT,
             );
             await manager.release(BACKGROUND_CONTEXT);
@@ -2295,6 +2301,8 @@ export async function orchestrateDepsWithDefaults(
           parentSessionId: input.sessionId,
           ...(input.role === undefined ? {} : { role: input.role }),
           agentId: input.agentId,
+          // Issue #278 (§19): the run's mode on the worker record.
+          mode: input.mode,
         },
         BACKGROUND_CONTEXT,
       );
@@ -3405,6 +3413,23 @@ export async function orchestrateDepsWithDefaults(
               : POSTURE_FULL_ACCESS,
         }),
         (message) => debug(`audit: merge decision not recorded — ${message}`),
+      );
+    },
+    // The run's start names the §19 mode in the §60 ledger (issue #278).
+    // Best-effort like every other row: a dead ledger never fails the run.
+    auditRunStart: (record): void => {
+      appendToLedger(
+        auditLedgerDirFor(needRoot()),
+        runStartAudit({
+          sessionId: record.sessionId,
+          command: `kubic ${record.command}`,
+          mode: record.mode,
+          runMode: record.runMode,
+          workspace: record.workspace,
+          posture: record.posture,
+          autonomous: record.autonomous,
+        }),
+        (message) => debug(`audit: run start not recorded — ${message}`),
       );
     },
     loadState: (sessionId: string): OrchestratorRunState | undefined => {

@@ -92,6 +92,7 @@ describe('kubic orchestrate (commander)', () => {
         '--session <id>',
         '--resume',
         '--yes',
+        '--autonomous',
         '--budget <dims>',
         '--full-access',
         '--json',
@@ -114,6 +115,7 @@ describe('kubic orchestrate (commander)', () => {
       '--session',
       'sess-1',
       '--yes',
+      '--autonomous',
       '--budget',
       'maxToolCalls=5;beta:maxCostUsd=0.5',
       '--full-access',
@@ -129,6 +131,7 @@ describe('kubic orchestrate (commander)', () => {
           agents: ['alpha', 'beta'],
           session: 'sess-1',
           yes: true,
+          autonomous: true,
           budget: {
             shared: { maxToolCalls: 5 },
             byAgent: { beta: { maxCostUsd: 0.5 } },

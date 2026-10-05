@@ -67,6 +67,21 @@ export function resolveBlockedSpawn(
   return { outcome: 'ask', reason };
 }
 
+// The run's mode (issue #278, §19): autonomous is explicit
+// (`--autonomous`) or standing (`--yes` makes the run autonomous, and a
+// headless run has no one to ask); an attached run without either stays
+// interactive and asks before spawning past the cap.
+export function resolveRunMode(input: {
+  interactive: boolean;
+  autoApprove: boolean;
+  autonomous: boolean;
+}): RunMode {
+  if (input.autonomous || input.autoApprove || !input.interactive) {
+    return 'autonomous';
+  }
+  return 'interactive';
+}
+
 export interface BudgetTermination {
   status: 'budget_exhausted';
   limit: BudgetLimit;

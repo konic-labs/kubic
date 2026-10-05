@@ -10,6 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { RunMode } from '../../../packages/agents/src/budget.js';
 import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import {
   checkAgreement,
@@ -92,7 +93,12 @@ import {
   workerAskIdentity,
 } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
 import { createAskUserTool } from '../../../packages/host/src/orchestrator/approvals/worker-question-tool.js';
-import { resolveRunBaseRevision } from '../../../packages/host/src/policy/audit-ledger.js';
+import {
+  appendToLedger,
+  auditLedgerDirFor,
+  resolveRunBaseRevision,
+  runStartAudit,
+} from '../../../packages/host/src/policy/audit-ledger.js';
 import {
   type EffectivePolicy,
   hasModelPolicy,
@@ -235,6 +241,9 @@ export interface HeadlessRunOptions {
   // lane boots.
   tools?: readonly string[];
   noTools?: boolean;
+  // §19 (issue #278): explicit autonomous mode, recorded on the run's
+  // session. Absent means off (interactive), never assumed.
+  autonomous?: boolean;
 }
 
 export interface HeadlessRunDeps {
@@ -842,6 +851,9 @@ export async function runHeadlessPrompt(
   const report: {
     model?: string;
     posture?: 'approvals' | 'full-access';
+    // Issue #278 (§19): the run's §19 mode, set from the session record
+    // once the session exists and merged onto the result below.
+    mode?: RunMode;
   } = {};
   // The base the run starts from (issue #267): captured before any turn, so
   // an agent that commits mid-run cannot move the baseline it is judged by.
@@ -857,27 +869,31 @@ export async function runHeadlessPrompt(
     report.posture === undefined
       ? result
       : { ...result, posture: report.posture };
+  const settledMode =
+    report.mode === undefined
+      ? withPosture
+      : { ...withPosture, mode: report.mode };
   let settled: HeadlessRunResult;
-  if (withPosture.sessionId === 'unassigned') {
-    settled = withPosture;
+  if (settledMode.sessionId === 'unassigned') {
+    settled = settledMode;
   } else {
     try {
       const measured = await readSessionRunUsage(
         deps.sessionsRoot ?? defaultSessionsRoot(),
-        withPosture.sessionId,
+        settledMode.sessionId,
       );
       settled = {
-        ...withPosture,
+        ...settledMode,
         usage: measured.usage,
         // Issue #148: the live lane model reported by the boot wins over the
         // session's recorded usage model — a pin may have switched models in
         // this run, and the result must name the one that actually ran.
-        ...(withPosture.model !== undefined || measured.model === undefined
+        ...(settledMode.model !== undefined || measured.model === undefined
           ? {}
           : { model: measured.model }),
       };
     } catch {
-      settled = withPosture;
+      settled = settledMode;
     }
   }
   // Issue #359: a provider that echoes the key it rejected puts the value in
@@ -997,6 +1013,8 @@ async function runHeadlessPromptOnce(
   report: {
     model?: string;
     posture?: 'approvals' | 'full-access';
+    // Issue #278 (§19): the run's §19 mode, set from the session record.
+    mode?: RunMode;
   },
   capture: RunCapture,
 ): Promise<HeadlessRunResult> {
@@ -1021,6 +1039,8 @@ async function runHeadlessPromptImpl(
   report: {
     model?: string;
     posture?: 'approvals' | 'full-access';
+    // Issue #278 (§19): the run's §19 mode, set from the session record.
+    mode?: RunMode;
   },
   capture: RunCapture,
 ): Promise<HeadlessRunResult> {
@@ -1169,7 +1189,12 @@ async function runHeadlessPromptImpl(
       options.sessionId === undefined
         ? await createSession(
             store,
-            { cwd: deps.env?.cwd ?? process.cwd() },
+            {
+              cwd: deps.env?.cwd ?? process.cwd(),
+              // Issue #278 (§19): the run's mode is always recorded —
+              // explicit `--autonomous` or off by default.
+              mode: options.autonomous === true ? 'autonomous' : 'interactive',
+            },
             context,
           )
         : await attachSession(store, options.sessionId, context);
@@ -1179,6 +1204,12 @@ async function runHeadlessPromptImpl(
   const id = session.id;
   capture.sessionId = id;
   capture.sessionsRoot = root;
+  // Issue #278 (§19): the result and envelope name the session's recorded
+  // mode — a resumed or attached session keeps the creating run's mode.
+  // A pre-#278 record (no mode) falls back to this invocation's flag.
+  report.mode =
+    session.meta.mode ??
+    (options.autonomous === true ? 'autonomous' : 'interactive');
   // Issue #246: the §50 [session] line names the session and its #164
   // parent. Best-effort (telemetry never fails a run): a fresh or torn
   // session simply has no parent.
@@ -1732,6 +1763,27 @@ async function runHeadlessPromptImpl(
       });
     report.posture = installed.posture.fullAccess ? 'full-access' : 'approvals';
     settlePolicy = installed.settle;
+    // Issue #278 (§19): the run's start names the §19 mode in the §60
+    // ledger — a fresh session only (a resume continues the recorded run,
+    // and a worker child attaches to its manager-created session).
+    // Best-effort: a dead ledger never fails the run.
+    if (options.sessionId === undefined) {
+      const runMode =
+        options.autonomous === true ? 'autonomous' : 'interactive';
+      appendToLedger(
+        auditLedgerDirFor(env.cwd),
+        runStartAudit({
+          sessionId: id,
+          command: 'kubic run',
+          mode: 'solo',
+          runMode,
+          workspace: env.cwd,
+          posture: report.posture,
+          autonomous: options.autonomous === true,
+        }),
+        (message) => debug?.(`audit: run start not recorded: ${message}`),
+      );
+    }
     // A headless run on a full-access session is never silent (issue #308):
     // the grant's own warning when this run enabled it, otherwise the named
     // in-force warning — on stderr, so stdout stays consumable.

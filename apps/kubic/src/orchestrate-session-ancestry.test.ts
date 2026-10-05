@@ -55,17 +55,21 @@ describe('orchestrate session ancestry (issue #164)', () => {
       workerSessionId: 'orch-1-aaa',
       worktree: { path: dir, branch: 'worker-aaa' },
       role: 'implementer',
+      // Issue #278 (§19): the run's mode travels to both records.
+      mode: 'autonomous',
     });
     expect(created).toEqual({ sessionId: 'orch-1-aaa' });
 
     const sessions = await linked(dir);
     // The manager record: the tree root, parent of nothing.
     expect(sessions.get('orch-1')?.parentSessionId).toBeUndefined();
+    expect(sessions.get('orch-1')?.mode).toBe('autonomous');
     // The worker: parented to the run, spawned as implementer/aaa.
     expect(sessions.get('orch-1-aaa')).toMatchObject({
       parentSessionId: 'orch-1',
       role: 'implementer',
       agentId: 'aaa',
+      mode: 'autonomous',
     });
   });
 
@@ -83,6 +87,7 @@ describe('orchestrate session ancestry (issue #164)', () => {
         agentId: agent,
         workerSessionId: `orch-1-${agent}`,
         worktree: { path: dir, branch: `worker-${agent}` },
+        mode: 'interactive',
       });
     }
     const sessions = await linked(dir);
@@ -105,6 +110,7 @@ describe('orchestrate session ancestry (issue #164)', () => {
         agentId: 'aaa',
         workerSessionId: 'orch-1',
         worktree: { path: dir, branch: 'worker-aaa' },
+        mode: 'autonomous',
       }),
     ).rejects.toThrow(/must differ from parentSessionId/);
   });

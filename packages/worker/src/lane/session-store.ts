@@ -36,6 +36,7 @@
 // converter, the repo is unreleased (§21).
 
 import { dirname, join } from 'node:path';
+import type { RunMode } from '../../../agents/src/budget.js';
 import type {
   BridgeFileInfo,
   FileBridge,
@@ -122,6 +123,9 @@ export interface KubicSessionMeta {
   // the root), with where it came from.
   conversation?: number;
   forkedFrom?: { session: string; at: number };
+  // Issue #278 (§19): the run's mode, recorded when the run names it
+  // (absent ⇒ off by default, never assumed).
+  mode?: RunMode;
   [k: string]: JsonValue | undefined;
 }
 
@@ -139,6 +143,7 @@ export const KubicSessionDoc = defineDoc<{
   parentSessionId?: string;
   role?: string;
   agentId?: string;
+  mode?: RunMode;
 }>({
   kind: 'kubic.session',
   version: 1,
@@ -554,6 +559,11 @@ function metaFrom(
     ...(parentSessionId === undefined ? {} : { parentSessionId }),
     ...(role === undefined ? {} : { role }),
     ...(agentId === undefined ? {} : { agentId }),
+    // Issue #278 (§19): only the two RunMode spellings survive the read —
+    // a foreign or hand-edited value is absent, never a third mode.
+    ...(value.mode === 'autonomous' || value.mode === 'interactive'
+      ? { mode: value.mode }
+      : {}),
     ...(typeof conversation === 'number' && Number.isSafeInteger(conversation)
       ? { conversation }
       : {}),
@@ -777,6 +787,7 @@ function writeSessionHeader(
         : { parentSessionId: meta.parentSessionId }),
       ...(meta.role === undefined ? {} : { role: meta.role }),
       ...(meta.agentId === undefined ? {} : { agentId: meta.agentId }),
+      ...(meta.mode === undefined ? {} : { mode: meta.mode }),
     })}\n`,
     { mode: 0o600 },
   );
@@ -870,6 +881,8 @@ export async function createSession(
     parentSessionId?: string;
     role?: string;
     agentId?: string;
+    // Issue #278 (§19): the run's mode, recorded in the creating commit.
+    mode?: RunMode;
   },
   context: Context,
 ): Promise<SessionHandle> {
@@ -908,6 +921,7 @@ export async function createSession(
         : { parentSessionId: opts.parentSessionId }),
       ...(opts.role === undefined ? {} : { role: opts.role }),
       ...(opts.agentId === undefined ? {} : { agentId: opts.agentId }),
+      ...(opts.mode === undefined ? {} : { mode: opts.mode }),
     };
     const storage = await openSessionStorage(store, sessionDir, context);
     // The creating commit: the session's metadata is written with the session
@@ -926,6 +940,7 @@ export async function createSession(
           doc.parentSessionId = meta.parentSessionId;
         if (meta.role !== undefined) doc.role = meta.role;
         if (meta.agentId !== undefined) doc.agentId = meta.agentId;
+        if (meta.mode !== undefined) doc.mode = meta.mode;
       }, context);
     } finally {
       // The kernel owns the storage it was opened over: closing it closes the

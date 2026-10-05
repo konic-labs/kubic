@@ -563,6 +563,82 @@ describe('orchestrate asks before spawning past the cap (issue #277, §41.1)', (
     expect(world.merged).toEqual(['a', 'b', 'c', 'd', 'e']);
   });
 
+  // Issue #278 (§19): the explicit flag makes the run autonomous even
+  // with a user attached — same rule as `--yes`.
+  it('an --autonomous run is autonomous even with a user attached', async () => {
+    const { world, raised } = spawnAskWorld({});
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do it',
+        agents: ['a', 'b', 'c', 'd', 'e'],
+        session: 'sess-1',
+        autonomous: true,
+      },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(raised).toEqual([]);
+    expect(world.merged).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+
+  // Issue #278 (§19): the run's start reports the §19 mode through the
+  // audit hook — explicit `--autonomous` or the shipped default.
+  it.each([true, false])(
+    'reports the run start with the §19 mode (autonomous=%s)',
+    async (autonomous) => {
+      const starts: unknown[] = [];
+      const world = makeWorld({
+        // A user attached for the interactive case; headless otherwise.
+        ...(autonomous ? {} : { interactive: true }),
+        auditRunStart: (record) => {
+          starts.push(record);
+        },
+      });
+      const code = await runOrchestrateCommand(
+        {
+          prompt: 'do it',
+          agents: ['a', 'b'],
+          session: 'sess-1',
+          ...(autonomous ? { autonomous: true } : {}),
+        },
+        world.deps,
+      );
+      expect(code).toBe(0);
+      expect(starts).toHaveLength(1);
+      expect(starts[0]).toMatchObject({
+        sessionId: 'sess-1',
+        command: 'orchestrate',
+        mode: 'orchestrator',
+        runMode: autonomous ? 'autonomous' : 'interactive',
+        autonomous,
+      });
+    },
+  );
+
+  // Issue #278 (§19): the --json envelope names the §19 mode (the
+  // status already names the stop condition).
+  it.each([true, false])(
+    'the --json envelope names the §19 mode (autonomous=%s)',
+    async (autonomous) => {
+      const world = makeWorld({
+        ...(autonomous ? {} : { interactive: true }),
+      });
+      const code = await runOrchestrateCommand(
+        {
+          prompt: 'do it',
+          agents: ['a', 'b'],
+          session: 'sess-1',
+          json: true,
+          ...(autonomous ? { autonomous: true } : {}),
+        },
+        world.deps,
+      );
+      expect(code).toBe(0);
+      const envelope = lastJsonLine(world.lines);
+      expect(envelope.mode).toBe(autonomous ? 'autonomous' : 'interactive');
+    },
+  );
+
   it('an in-cap interactive run asks nothing', async () => {
     const { world, raised } = spawnAskWorld({});
     const code = await runOrchestrateCommand(

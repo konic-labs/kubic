@@ -256,6 +256,17 @@ describe('kubic run', () => {
     expect(result.calls).toEqual([{ key: 'run', input: { prompt: 'hi' } }]);
   });
 
+  // Issue #278 (§19): autonomous mode is explicit — the flag reaches
+  // the runner, and its absence leaves the key out (off by default).
+  it('parses --autonomous into the runner options', async () => {
+    expect((await kubic(['run', '-p', 'hi', '--autonomous'])).calls).toEqual([
+      { key: 'run', input: { prompt: 'hi', autonomous: true } },
+    ]);
+    expect((await kubic(['run', '-p', 'hi'])).calls).toEqual([
+      { key: 'run', input: { prompt: 'hi' } },
+    ]);
+  });
+
   it('returns the runner exit code (the §78 terminus map)', async () => {
     for (const exit of [0, 1, 3, 4, 5, 6]) {
       expect((await kubic(['run', '-p', 'x'], exit)).code).toBe(exit);

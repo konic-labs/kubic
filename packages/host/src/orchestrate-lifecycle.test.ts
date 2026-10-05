@@ -199,6 +199,8 @@ async function sessionFor(
     agentId,
     workerSessionId: `lifecycle-${agentId}`,
     worktree,
+    // Issue #278 (§19): the simulated run passes no --autonomous.
+    mode: 'interactive',
   };
   await h.deps.createWorkerSession?.(request);
   return request;

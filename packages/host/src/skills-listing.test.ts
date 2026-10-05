@@ -56,6 +56,25 @@ function booted(): BootSkills {
       },
     ],
     block: undefined,
+    // Issue #183: admitted + gate-passed, hidden included, withheld
+    // excluded — `quiet` stays (invocation-only), `deploy` does not.
+    invocable: [
+      {
+        name: 'rev',
+        description: 'Package skill',
+        filePath: '/repo/pkg/rev/SKILL.md',
+        source: 'package',
+        content: 'Body.',
+      },
+      {
+        name: 'quiet',
+        description: 'Hidden helper',
+        filePath: '/home/u/.agents/skills/quiet/SKILL.md',
+        source: 'user',
+        disableModelInvocation: true,
+        content: 'Body.',
+      },
+    ],
     hidden: ['quiet'],
     withheld: [{ name: 'deploy', reason: "not visible to role 'reviewer'" }],
     unknownSkills: [],

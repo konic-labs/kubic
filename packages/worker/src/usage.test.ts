@@ -1,5 +1,6 @@
 // Slice C: usage rollups + kubic models CLI (issue #20; §39, §17/§18).
-// RED: summarizeUsage/formatUsageLine do not exist yet.
+// RED: summarizeUsage did not exist yet (formatUsageLine was deleted by
+// issue #216 — cost readers format their own rows).
 import { describe, expect, it } from 'vitest';
 import type {
   ConversationId,

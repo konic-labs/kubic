@@ -49,7 +49,7 @@ broken install whose extension bundle would fail the boot.
 Build first (`npm run build`), then invoke `./bin/kubic.js` (or
 `npm run kubic -- …`); anything else dispatches below; an unknown command
 prints
-`usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>`
+`usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | skills | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>`
 and exits **2** (a usage error, issue #372); a word-shaped unknown token
 also prints `hint: to run it as a prompt: kubic run -p '<word>'`, while the
 bare invocation keeps the POSIX usage-on-no-args posture: the identical

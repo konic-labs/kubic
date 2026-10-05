@@ -121,7 +121,11 @@ import {
   SESSION_ID_PATTERN,
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
-import { bootSkills } from '../../../packages/host/src/skills-boot.js';
+import type { SkippedSkill } from '../../../packages/host/src/skills-boot.js';
+import {
+  bootSkills,
+  describeSkillSkips,
+} from '../../../packages/host/src/skills-boot.js';
 import type { DebugSink } from '../../../packages/host/src/spans.js';
 import { hookErrorLine, modelLine } from '../../../packages/host/src/spans.js';
 import type { RunOutcome } from '../../../packages/host/src/trajectory/run-trajectory.js';
@@ -1501,6 +1505,9 @@ export async function bootTuiLane(
     // hidden included, withheld excluded), so `/skill:` expands and
     // completes against the boot's gated set — never the raw load.
     let bootedSkillList: LoadedSkill[] = [];
+    // Issue #238: the skills the loader met but did not load — the TUI
+    // used to drop these lines; they now ride the boot notices once.
+    let skillSkips: SkippedSkill[] = [];
     // Installed policy (issue #86): `kubic tui` drives the same solo lane as
     // `kubic run`, so it installs the same policy — one derivation
     // (host/approvals.installSoloPolicy), which is also what `doctor`
@@ -1646,6 +1653,7 @@ export async function bootTuiLane(
         });
         skillNames = skills.skills.map((skill) => skill.name);
         bootedSkillList = skills.invocable;
+        skillSkips = skills.skipped;
 
         return {
           // Issue #240: the system prompt file section lands ahead of the
@@ -1845,11 +1853,21 @@ export async function bootTuiLane(
         : { pendingNotice: pendingNotices.join('; ') }),
       fullAccess,
       usageRows,
-      ...(fullAccess
-        ? {
-            notices: [fullAccessGrant?.warning ?? fullAccessInForceWarning(id)],
-          }
-        : {}),
+      // Issue #238: the loader lines the TUI used to drop — skipped
+      // skills as one boot notice (warning on stderr before the
+      // alt-screen opens, via the runner below). A clean boot stays
+      // silent: `describeSkillSkips` is undefined when nothing was
+      // skipped.
+      ...((): { notices?: string[] } => {
+        const skillSkipNotice = describeSkillSkips(skillSkips);
+        const notices = [
+          ...(fullAccess
+            ? [fullAccessGrant?.warning ?? fullAccessInForceWarning(id)]
+            : []),
+          ...(skillSkipNotice === undefined ? [] : [skillSkipNotice]),
+        ];
+        return notices.length === 0 ? {} : { notices };
+      })(),
       approvalsSkipped: installed.approvalsSkipped,
       // Issue #327: the orchestrator lane a Ctrl-G switch submits to — the
       // same manager-lane path `kubic orchestrate` runs, with the TUI's

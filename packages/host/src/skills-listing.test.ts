@@ -10,6 +10,7 @@ import {
   type BootSkills,
   bootSkills,
   describeSkillSkips,
+  skillsDoctorProbe,
   skillsDoctorSummary,
   summarizeSkills,
 } from './skills-boot.js';
@@ -151,6 +152,32 @@ describe('describeSkillSkips (issue #238)', () => {
     expect(describeSkillSkips(booted().skipped)).toBe(
       'skills: 2 skipped (1 error, 1 excluded) — run `kubic skills` for every skill and why it was left out',
     );
+  });
+});
+
+function writeSkill(home: string, cwd: string): void {
+  const dir = join(cwd, '.pi', 'skills', 'gem');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, 'SKILL.md'),
+    '---\nname: gem\ndescription: Left out\n---\n\nBody.\n',
+  );
+  void home;
+}
+
+describe('skillsDoctorProbe carries the counts line first (issue #238)', () => {
+  it('summary first, then the per-skill warns', () => {
+    const home = tmpRoot('kubic-238-home-');
+    const cwd = tmpRoot('kubic-238-cwd-');
+    writeSkill(home, cwd);
+    const checks = skillsDoctorProbe({
+      bridge: createNodeFileBridge(cwd),
+      cwd,
+      homeDir: home,
+      trusted: false,
+    });
+    expect(checks[0]).toMatchObject({ id: 'skills', status: 'pass' });
+    expect(checks[0]?.detail).toContain('loaded');
   });
 });
 

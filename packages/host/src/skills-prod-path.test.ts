@@ -640,6 +640,15 @@ describe('the role/capability gate reaches the live solo prompt (issue #181, §2
       role: 'reviewer',
     });
     expect(checks).toEqual([
+      // Issue #238: the counts line rides first — the per-skill warns
+      // follow unchanged.
+      {
+        id: 'skills',
+        label: 'skills',
+        status: 'pass',
+        reason: 'ok',
+        detail: '1 loaded, 0 hidden, 1 withheld, 0 errors',
+      },
       {
         id: 'skill:impl-only',
         label: 'skill impl-only',

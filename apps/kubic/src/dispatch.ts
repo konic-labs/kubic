@@ -55,7 +55,7 @@ import {
 // (exit 2 — a usage error, issue #372). Every path is pinned by
 // scripts/binary-contract.mjs; they must never drift apart.
 export const ROOT_USAGE =
-  'usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
+  'usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | skills | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
 
 // The supported command names, read off the usage line so the routing
 // table and the listing can never drift apart (dispatch.test.ts also pins

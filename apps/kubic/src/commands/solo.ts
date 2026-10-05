@@ -360,6 +360,29 @@ function registerDoctor(program: Command, ctx: CommandContext): void {
     });
 }
 
+function registerSkills(program: Command, ctx: CommandContext): void {
+  program
+    .command('skills')
+    .description('list discovered skills and why any were left out')
+    .option('--role <name>', 'gate the listing as the lane would for this role')
+    .option('--json', 'print the listing as one JSON array')
+    .addHelpText(
+      'after',
+      examples(['kubic skills', 'kubic skills --role reviewer --json']),
+    )
+    .action(async (opts) => {
+      ctx.setExitCode(
+        await ctx.runners.skills(
+          {
+            ...(opts.role === undefined ? {} : { role: opts.role }),
+            ...(opts.json === true ? { json: true } : {}),
+          },
+          ctx.config,
+        ),
+      );
+    });
+}
+
 function registerModels(program: Command, ctx: CommandContext): void {
   program
     .command('models')
@@ -617,6 +640,7 @@ export const registerSoloCommands: CommandRegistrar = (program, ctx) => {
   registerTui(program, ctx);
   registerReattach(program, ctx);
   registerDoctor(program, ctx);
+  registerSkills(program, ctx);
   registerModels(program, ctx);
   registerConfig(program, ctx);
   registerTrust(program, ctx);

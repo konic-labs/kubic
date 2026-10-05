@@ -18,6 +18,7 @@ type Key =
   | 'run'
   | 'tui'
   | 'doctor'
+  | 'skills'
   | 'models'
   | 'config'
   | 'trust'
@@ -56,6 +57,7 @@ async function kubic(
     run: runner('run'),
     tui: runner('tui'),
     doctor: runner('doctor'),
+    skills: runner('skills'),
     models: runner('models'),
     config: runner('config'),
     trust: runner('trust'),
@@ -89,6 +91,7 @@ const GROUP: readonly (readonly string[])[] = [
   ['run'],
   ['tui'],
   ['doctor'],
+  ['skills'],
   ['models'],
   ['config'],
   ['trust'],
@@ -565,6 +568,27 @@ describe('kubic doctor', () => {
 
   it('refuses --skip without a value', async () => {
     expect(await usageError(['doctor', '--skip'])).toContain(
+      'argument missing',
+    );
+  });
+});
+
+describe('kubic skills', () => {
+  it('parses --role and --json', async () => {
+    expect((await kubic(['skills'])).calls).toEqual([
+      { key: 'skills', input: {} },
+    ]);
+    expect(
+      (await kubic(['skills', '--role', 'reviewer', '--json'])).calls,
+    ).toEqual([{ key: 'skills', input: { role: 'reviewer', json: true } }]);
+  });
+
+  it('passes the skills exit code through', async () => {
+    expect((await kubic(['skills'], 6)).code).toBe(6);
+  });
+
+  it('refuses --role without a value', async () => {
+    expect(await usageError(['skills', '--role'])).toContain(
       'argument missing',
     );
   });

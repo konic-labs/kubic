@@ -47,7 +47,7 @@ import { createProdRunners } from './prod-runners.js';
 type RunnerKey = keyof DispatchRunners;
 
 // The runner roster: one entry per command seam the root wires inline
-// (22 command names, 19 runners — the four journal commands share one).
+// (27 command names, 21 runners — the four journal commands share one).
 const RUNNER_KEYS: readonly RunnerKey[] = [
   'sessions',
   'git',
@@ -56,6 +56,7 @@ const RUNNER_KEYS: readonly RunnerKey[] = [
   'run',
   'tui',
   'doctor',
+  'skills',
   'orchestrate',
   'clean',
   'cost',
@@ -88,6 +89,7 @@ const ROUTES: readonly (readonly [string, readonly string[], RunnerKey])[] = [
   ['attach', ['abc'], 'tui'],
   ['resume', ['abc'], 'tui'],
   ['doctor', [], 'doctor'],
+  ['skills', ['--json'], 'skills'],
   ['orchestrate', [], 'orchestrate'],
   ['clean', ['--dry-run'], 'clean'],
   ['cost', ['--json'], 'cost'],
@@ -118,6 +120,7 @@ const PARSED: Readonly<Record<string, unknown>> = {
   resume: { session: 'abc' },
   commit: { command: 'commit', message: 'msg' },
   doctor: { skip: [] },
+  skills: { json: true },
   config: { json: true },
   trust: {},
   // `--skill` is repeatable: commander's collector yields [] when unused.
@@ -268,9 +271,9 @@ function loadedConfig(): CliConfigResult {
 }
 
 describe('dispatch routing (issue #135)', () => {
-  it('pins the roster: 23 commands, 20 runners, every runner exercised', () => {
-    expect(ROUTES).toHaveLength(26);
-    expect(RUNNER_KEYS).toHaveLength(20);
+  it('pins the roster: 27 commands, 21 runners, every runner exercised', () => {
+    expect(ROUTES).toHaveLength(27);
+    expect(RUNNER_KEYS).toHaveLength(21);
     const routed = new Set(ROUTES.map(([, , key]) => key));
     expect([...routed].sort()).toEqual([...RUNNER_KEYS].sort());
   });
@@ -542,7 +545,7 @@ describe('config refusal (issue #90 policy, moved)', () => {
     'eval',
     'benchmark',
   ];
-  const REPORTING = ['config', 'doctor', 'trust'];
+  const REPORTING = ['config', 'doctor', 'skills', 'trust'];
 
   it('pins gate membership: the gate is exactly the refused commands', () => {
     // A new command whose runner reads cliConfig.runtime must join the
@@ -550,7 +553,7 @@ describe('config refusal (issue #90 policy, moved)', () => {
     // sessions/journal retention fallback. Audit (issue #242): run,
     // orchestrate, tui (+attach/resume aliases), replay, clean
     // (orchestrator.root), policy (installed posture) and eval/benchmark
-    // (lane projections) read runtime; config/doctor/trust report it;
+    // (lane projections) read runtime; config/doctor/skills/trust report it;
     // sessions/journal read only sessionRetentionDays (undefined-safe
     // fallback); models reads only the trust report (present on refusal);
     // git, cost, perf, audit, workers and export read no config at all.

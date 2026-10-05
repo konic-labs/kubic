@@ -339,7 +339,12 @@ export function requireRuntimeConfig(result: CliConfigResult): RuntimeConfig {
 // (issue #228) is the repair path for a refusal: it must run in exactly the
 // repository whose project layer is refused, or the durable grant could
 // never be recorded.
-const CONFIG_REPORTING_COMMANDS = new Set(['config', 'doctor', 'trust']);
+const CONFIG_REPORTING_COMMANDS = new Set([
+  'config',
+  'doctor',
+  'skills',
+  'trust',
+]);
 
 // The modes that execute an agent under the configuration. They may not
 // proceed on defaults once the load was refused: silently running on

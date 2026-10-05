@@ -79,7 +79,7 @@ export const CONFIG_REFUSAL_KEY = 'bogus_key';
 // `kubic` on an interactive terminal opens the TUI instead, §78/§80). Pinned literally so
 // a command-list drift fails here instead of shipping stale help.
 export const ROOT_USAGE_LINE =
-  'usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
+  'usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | skills | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
 
 // The launcher's named Node-requirement line (issue #128), printed to
 // stderr when a runtime below 22.19 runs bin/kubic.js. `runningVersion`

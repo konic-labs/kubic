@@ -568,7 +568,7 @@ describe('runtimeModelPin + requireRuntimeConfig + configRefusalExit (issue #384
     for (const command of ['run', 'orchestrate', 'tui', 'replay']) {
       expect(configRefusalExit(refused, command)).toBe(1);
     }
-    for (const command of ['config', 'doctor', 'trust', undefined]) {
+    for (const command of ['config', 'doctor', 'skills', 'trust', undefined]) {
       expect(configRefusalExit(refused, command)).toBeUndefined();
     }
   });

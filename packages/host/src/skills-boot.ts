@@ -308,15 +308,21 @@ export function describeSkillSkips(
 // not offer warns here with the gate's reason, never green. `kubic run
 // --role` narrows further; that narrowing is named by the run's own
 // debug log, not here.
+// Issue #238: the summary line rides first — counts of what the boot
+// met (loaded, hidden, withheld, errors). Errors warn (a skill the lane
+// silently misses is worth a look); the line never fails.
 export function skillsDoctorProbe(input: BootSkillOptions): DoctorCheck[] {
   const booted = bootSkills(input);
-  return booted.withheld.map((held) => ({
-    id: `skill:${held.name}`,
-    label: `skill ${held.name}`,
-    status: 'warn' as const,
-    reason: 'policy-mismatch' as const,
-    detail: held.reason,
-  }));
+  return [
+    skillsDoctorSummary(booted),
+    ...booted.withheld.map((held) => ({
+      id: `skill:${held.name}`,
+      label: `skill ${held.name}`,
+      status: 'warn' as const,
+      reason: 'policy-mismatch' as const,
+      detail: held.reason,
+    })),
+  ];
 }
 
 // The `kubic doctor` skills line (issue #238): counts of what the boot

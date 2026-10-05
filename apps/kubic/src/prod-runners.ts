@@ -115,7 +115,10 @@ import {
   type ReplayRuntimeDeps,
   runReplayCommand,
 } from '../../../packages/host/src/replay/replay.js';
-import { rolesDoctorProbe } from '../../../packages/host/src/roles/roles-boot.js';
+import {
+  rolesDoctorProbe,
+  selectRole,
+} from '../../../packages/host/src/roles/roles-boot.js';
 import {
   planWorkerRoles,
   thinkingOverrideFromEnv,
@@ -129,6 +132,7 @@ import {
   runSessionsCommand,
 } from '../../../packages/host/src/sessions-cli.js';
 import { skillsDoctorProbe } from '../../../packages/host/src/skills-boot.js';
+import { runSkillsCommand } from '../../../packages/host/src/skills-cli.js';
 import { runTrustCommand } from '../../../packages/host/src/trust-cli.js';
 import {
   parsePsSample,
@@ -768,6 +772,56 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         ...view,
         models: assembled.models,
         providers: assembled.providers,
+      });
+    },
+    skills: (options, cliConfig) => {
+      // Issue #238: the listing over the same discovery the lane boots.
+      // The trust inputs mirror `kubic run`'s (the env opt-in plus the
+      // per-path project check), the classes are the installed ones the
+      // doctor judges, and `--role` resolves through the same `selectRole`
+      // call — a refusal fails the listing closed with its named reason.
+      const view = presentation(out, debug, options.json === true);
+      const cwd = process.cwd();
+      const rolesBridge = createNodeFileBridge(cwd);
+      const enterprisePolicy = runtimePolicy(cliConfig);
+      const layers = runtimeLaneDeps(cliConfig).roles?.layers;
+      return runSkillsCommand(options, {
+        ...view,
+        base: {
+          bridge: createNodeFileBridge(cwd),
+          cwd,
+          homeDir: cliConfig.trust.home,
+          trusted:
+            process.env.KUBIC_TRUST_PROJECT === '1' ||
+            process.env.KUBIC_TRUST_PROJECT === 'true',
+          trustProject: projectTrustFor(cliConfig),
+          ...runtimeSkillsDeps(cliConfig),
+          ...installedPolicyClasses(cliConfig),
+        },
+        resolveRole: (name: string) => {
+          const selected = selectRole({
+            bridge: rolesBridge,
+            cwd,
+            role: name,
+            projectRoot: findProjectRoot(
+              rolesBridge,
+              cwd,
+              cliConfig.trust.home,
+            ),
+            ...(layers === undefined ? {} : { layers }),
+            trustProject: projectTrustFor(cliConfig),
+            ...(enterprisePolicy === undefined
+              ? {}
+              : { toolPolicy: enterprisePolicy }),
+          });
+          return {
+            name: selected.resolved.name,
+            ...(selected.doc.skills === undefined
+              ? {}
+              : { skills: selected.doc.skills }),
+            classes: selected.resolved.classes,
+          };
+        },
       });
     },
     trust: (options, cliConfig) => {

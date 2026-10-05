@@ -160,7 +160,7 @@ file that no longer exists, or when a row's file has become reachable
 | 4 | `packages/host/src/dispatch.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/host/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 18 | `packages/host/src/limits/trust-first.ts` | #100 | wire: docs ordering note consumed by help/docs rendering (#100) |
-| 94 | `packages/exec/src/test-support/orchestrate-conflict-fixtures.ts` | #420 | keep: test-only resolver-child scripts (self-scrubbed git view, committed through scrubbed env) imported exclusively by `packages/host/src/orchestrate-conflict-prod.test.ts`, which the value-import walk excludes by rule — a test seam can never be `reachable` |
+| 94 | `packages/exec/src/test-support/orchestrate-conflict-fixtures.ts` | #420 | keep: test-only resolver-child scripts (self-scrubbed git view, committed through scrubbed env) imported exclusively by `apps/kubic/src/orchestrate-conflict-prod.test.ts` (moved from `packages/host` by #387), which the value-import walk excludes by rule — a test seam can never be `reachable` |
 
 | 4 | `packages/host/src/root-agent.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/host/src/worker-manager.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |

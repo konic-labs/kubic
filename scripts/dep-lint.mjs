@@ -140,18 +140,19 @@ export function checkTree(root) {
     const forbidden = new Set(FORBIDDEN[owner] ?? Object.keys(FORBIDDEN));
     for (const file of tsFiles(srcDir)) {
       const content = readFileSync(file, 'utf8');
-      // Test-scaffolding exemption (issue #369): prod-path tests wire the
-      // real builders, so `*.test.ts` may reach the `extensions` facade
-      // and the `kubic` root. extensions itself keeps its absolute bar on
-      // the app root — a bundle facade test must never boot the whole app.
+      // Test-scaffolding exemption (issues #369, #387): prod-path tests
+      // wire the real builders, so `*.test.ts` may reach the `extensions`
+      // facade. The `kubic` root is NOT exempt: since #387 the composition
+      // root's behaviour tests live under apps/kubic, so a package test
+      // reaching the app root is a dependency inversion. extensions itself
+      // keeps its absolute bar on the app root — a bundle facade test must
+      // never boot the whole app.
       const testExempt =
         file.endsWith('.test.ts') &&
         owner !== 'kubic' &&
         owner !== 'extensions';
       const forbiddenForFile = testExempt
-        ? new Set(
-            [...forbidden].filter((t) => t !== 'extensions' && t !== 'kubic'),
-          )
+        ? new Set([...forbidden].filter((t) => t !== 'extensions'))
         : forbidden;
       for (const m of content.matchAll(IMPORT_RE)) {
         const spec = m[1] ?? m[2];

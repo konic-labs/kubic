@@ -7,7 +7,8 @@
 // the property structural: the glob form stays, no single gate file is
 // named, and the glob provably matches every gate file on disk.
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -15,14 +16,27 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // The exact pattern the `test` script passes to `node --test`: one `*`
-// never crosses `/`, and every gate file sits directly in `scripts/`.
+// never crosses `/`, and every gate file sits directly in `scripts/` — a
+// nested `scripts/sub/x.test.mjs` would run in NEITHER `npm test` nor CI,
+// so the disk scan below descends and the gate fails on it (issue #421).
 const GATE_GLOB = 'scripts/*.test.mjs';
 const GATE_GLOB_RE = /^scripts\/[^/]+\.test\.mjs$/;
 
+// Every gate file on disk, relative to `scripts/`, descending into
+// subdirectories so a nested gate cannot silently skip the suite.
 function gateTestsOnDisk(root = ROOT) {
-  return readdirSync(join(root, 'scripts'))
-    .filter((file) => file.endsWith('.test.mjs'))
-    .sort();
+  const found = [];
+  const walk = (dir, rel) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        walk(join(dir, entry.name), `${rel}${entry.name}/`);
+      } else if (entry.name.endsWith('.test.mjs')) {
+        found.push(`${rel}${entry.name}`);
+      }
+    }
+  };
+  walk(join(root, 'scripts'), '');
+  return found.sort();
 }
 
 function testScript(root = ROOT) {
@@ -85,5 +99,21 @@ describe('npm test runs every gate (issue #376)', () => {
       scopeProblems('node --test "scripts/*.test.mjs"', ['a.test.mjs']),
       [],
     );
+  });
+
+  it('the disk scan descends into subdirectories (issue #421)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'npm-test-scope-'));
+    try {
+      mkdirSync(join(dir, 'scripts', 'sub'), { recursive: true });
+      writeFileSync(join(dir, 'scripts', 'top.test.mjs'), '');
+      writeFileSync(join(dir, 'scripts', 'sub', 'nested.test.mjs'), '');
+      writeFileSync(join(dir, 'scripts', 'sub', 'helper.mjs'), '');
+      assert.deepEqual(gateTestsOnDisk(dir), [
+        'sub/nested.test.mjs',
+        'top.test.mjs',
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

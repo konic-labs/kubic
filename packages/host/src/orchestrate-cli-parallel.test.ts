@@ -366,7 +366,8 @@ describe('orchestrate worker concurrency (issue #206, §9.3/§45)', () => {
     expect(killed.merged).toEqual(['a1']);
     expect(killed.pending).toEqual(['a2', 'a3']);
 
-    // Resume re-runs the unmerged pair only; a1 never re-runs or re-merges.
+    // Resume merges the unmerged pair straight from their completions —
+    // neither re-runs (issue #160); a1 never re-runs or re-merges.
     const resumed: string[] = [];
     const second = makeWorld({
       loadState: () => structuredClone(killed),
@@ -381,7 +382,7 @@ describe('orchestrate worker concurrency (issue #206, §9.3/§45)', () => {
         second.deps,
       ),
     ).toBe(0);
-    expect(resumed).toEqual(['a2', 'a3']);
+    expect(resumed).toEqual([]);
     expect(second.merged).toEqual(['a2', 'a3']);
   });
 });

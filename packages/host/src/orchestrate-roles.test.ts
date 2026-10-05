@@ -219,10 +219,13 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
 
   it('stores the composed prompt per worker and replays it on --resume', async () => {
     const files = rolesFor(plannerDoc(), implementerDoc());
+    // Killed while `beta` runs (not while merging): `beta` keeps no
+    // completion, so the resume really re-runs it — with the stored prompt.
     const first = makeWorld({
       loadWorkerRoles: roleLoaderFor(files),
-      mergeBranch: (agentId: string) => {
+      runWorker: (agentId: string) => {
         if (agentId === 'beta') throw new Error('KILLED');
+        return [{ path: 'alpha.txt', hunk: '@@ +1 @@' }];
       },
     });
     expect(
@@ -237,7 +240,7 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
       ),
     ).toBe(1);
     const killed = first.saved[first.saved.length - 1] as OrchestratorRunState;
-    expect(killed.pending).toEqual(['beta']);
+    expect(killed.pending).toEqual(['alpha', 'beta']);
     // The stored plan carries the COMPOSED prompt (role text + step)…
     const storedBeta = killed.plan?.[1]?.prompt ?? '';
     expect(storedBeta).toContain('You are the implementer.');

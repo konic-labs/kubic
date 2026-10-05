@@ -466,6 +466,36 @@ export interface OrchestratorRunState {
   // so the cap never binds there. A state written before #413 has none,
   // and the resume path adopts the stored agent count.
   spawnCap?: number;
+  // Write-ahead worker completions (issue #160): one entry per worker that
+  // settled successfully but is not merged yet — branch + hunks (+ the §68
+  // result when the worker reported one). Persisted as soon as the worker
+  // settles, BEFORE the merge gate runs, so an approval deny/timeout, a
+  // failed merge or a kill never loses the work: --resume skips re-running
+  // a completed worker whose worktree branch still matches and enqueues it
+  // for merge instead. `records` keeps meaning "merged"; a merge success
+  // moves the entry there. A state written before #160 has none.
+  completed?: OrchestratedWorkerRecord[];
+}
+
+// One stored per-worker record, merged or merely completed (issue #160):
+// agent + branch + hunks (+ an optional validated §68 result). Stored state
+// is untrusted JSON, so anything else fails closed.
+function validStoredWorkerRecord(record: unknown): boolean {
+  if (typeof record !== 'object' || record === null) return false;
+  const entry = record as Record<string, unknown>;
+  if (typeof entry.agentId !== 'string') return false;
+  if (typeof entry.branch !== 'string') return false;
+  if (!Array.isArray(entry.hunks)) return false;
+  if (entry.result !== undefined && !validateAgentResult(entry.result).valid) {
+    return false;
+  }
+  for (const hunk of entry.hunks) {
+    if (typeof hunk !== 'object' || hunk === null) return false;
+    const part = hunk as Record<string, unknown>;
+    if (typeof part.path !== 'string') return false;
+    if (typeof part.hunk !== 'string') return false;
+  }
+  return true;
 }
 
 // Stored resume state is untrusted JSON (a torn write, a hand edit, or
@@ -554,22 +584,14 @@ export function parseOrchestratorRunState(
   }
   if (!Array.isArray(value.records)) return undefined;
   for (const record of value.records) {
-    if (typeof record !== 'object' || record === null) return undefined;
-    const entry = record as Record<string, unknown>;
-    if (typeof entry.agentId !== 'string') return undefined;
-    if (typeof entry.branch !== 'string') return undefined;
-    if (!Array.isArray(entry.hunks)) return undefined;
-    if (
-      entry.result !== undefined &&
-      !validateAgentResult(entry.result).valid
-    ) {
-      return undefined;
-    }
-    for (const hunk of entry.hunks) {
-      if (typeof hunk !== 'object' || hunk === null) return undefined;
-      const part = hunk as Record<string, unknown>;
-      if (typeof part.path !== 'string') return undefined;
-      if (typeof part.hunk !== 'string') return undefined;
+    if (!validStoredWorkerRecord(record)) return undefined;
+  }
+  // Write-ahead completions (issue #160) ride the same shape: anything
+  // that is not exactly a list of per-worker records fails closed here.
+  if (value.completed !== undefined) {
+    if (!Array.isArray(value.completed)) return undefined;
+    for (const record of value.completed) {
+      if (!validStoredWorkerRecord(record)) return undefined;
     }
   }
   // The stored plan (issue #103) is untrusted JSON like everything else: a
@@ -2185,6 +2207,27 @@ export async function runOrchestrateCommand(
     if (at === -1) state.records.push(record);
     else state.records[at] = record;
   };
+  // Write-ahead completion (issue #160): the worker settled successfully
+  // but is not merged yet. An upsert keyed by agent, like the merge record
+  // above — a retried worker replaces its earlier completion.
+  const upsertCompleted = (record: OrchestratedWorkerRecord): void => {
+    const completed = state.completed ?? [];
+    const at = completed.findIndex((entry) => entry.agentId === record.agentId);
+    if (at === -1) completed.push(record);
+    else completed[at] = record;
+    if (state.completed === undefined) state = { ...state, completed };
+  };
+  // A merge success moves the completion to the merge records (issue #160):
+  // `records` keeps meaning "merged", `completed` only the still-pending.
+  const moveCompletedToRecords = (record: OrchestratedWorkerRecord): void => {
+    upsertRecord(record);
+    if (state.completed !== undefined) {
+      const rest = state.completed.filter(
+        (entry) => entry.agentId !== record.agentId,
+      );
+      state = { ...state, completed: rest };
+    }
+  };
   const recordFailure = async (
     agentId: string,
     worktree: OrchestrateWorktree | undefined,
@@ -2322,7 +2365,24 @@ export async function runOrchestrateCommand(
       (existing.result !== undefined && existing.result.status !== 'completed')
     ) {
       resultsByAgent.delete(inFlight);
-      upsertRecord({ agentId: inFlight, branch: worktree.branch, hunks: [] });
+      // The reconciled merge keeps the persisted hunks (issue #160): the
+      // worker settled before the kill, so its completion — not an empty
+      // hunk list — is what attribution reports. Without one (a state
+      // written before #160) the empty record stands, as before.
+      const completedEntry = state.completed?.find(
+        (record) => record.agentId === inFlight,
+      );
+      if (completedEntry?.result !== undefined) {
+        resultsByAgent.set(inFlight, completedEntry.result);
+      }
+      moveCompletedToRecords({
+        agentId: inFlight,
+        branch: worktree.branch,
+        hunks: completedEntry === undefined ? [] : [...completedEntry.hunks],
+        ...(completedEntry?.result === undefined
+          ? {}
+          : { result: completedEntry.result }),
+      });
     }
     state.merged.push(inFlight);
     state.pending = state.pending.filter((entry) => entry !== inFlight);
@@ -2425,6 +2485,9 @@ export async function runOrchestrateCommand(
     }
   }
   const prepared = new Map<string, OrchestrateWorktree>();
+  // Pending workers whose write-ahead completion (issue #160) this resume
+  // reuses: prepared like the rest, but never spawned or run again.
+  const resumedCompleted = new Set<string>();
   // §61 worktree creation duration per agent (issue #158).
   const worktreeMsByAgent = new Map<string, number>();
   for (const agentId of state.pending) {
@@ -2494,6 +2557,38 @@ export async function runOrchestrateCommand(
       worktrees.set(agentId, worktree);
     }
     prepared.set(agentId, worktree);
+    // Write-ahead completion reuse (issue #160): this resume continues a run
+    // whose worker already settled — when the retained worktree is still on
+    // the completion's branch, the recorded hunks (+ result) are restored
+    // and the worker is queued for merge WITHOUT re-running it (a second
+    // run would spend tokens and mix a second commit into the same branch).
+    // A completion on any other branch is stale (recreated out-of-band) and
+    // is dropped, so the worker runs again.
+    const completedEntry = state.completed?.find(
+      (entry) => entry.agentId === agentId,
+    );
+    if (completedEntry !== undefined) {
+      if (completedEntry.branch === worktree.branch) {
+        hunksByAgent.set(agentId, [...completedEntry.hunks]);
+        if (completedEntry.result !== undefined) {
+          resultsByAgent.set(agentId, completedEntry.result);
+        }
+        resumedCompleted.add(agentId);
+        debug(
+          `resume: worker '${agentId}' already completed on ${worktree.branch} — skipping re-run, queued for merge`,
+        );
+      } else {
+        state = {
+          ...state,
+          completed: (state.completed ?? []).filter(
+            (entry) => entry.agentId !== agentId,
+          ),
+        };
+        debug(
+          `resume: worker '${agentId}' completion is stale (recorded on ${completedEntry.branch}, worktree is ${worktree.branch}) — running again`,
+        );
+      }
+    }
   }
 
   const runWorkerOnce = async (
@@ -2609,6 +2704,23 @@ export async function runOrchestrateCommand(
         }
       }
       hunksByAgent.set(agentId, [...hunks]);
+      // Write-ahead completion (issue #160): the worker settled, so its
+      // branch + hunks persist BEFORE the merge gate runs — a deny, a
+      // timeout or a kill must not lose them. Best-effort here (siblings
+      // are still in flight); the merge phase re-saves fail-closed.
+      upsertCompleted({
+        agentId,
+        branch: worktree.branch,
+        hunks: [...hunks],
+        ...(output.result === undefined ? {} : { result: output.result }),
+      });
+      try {
+        await deps.saveState?.(state);
+      } catch (error) {
+        debug(
+          `state: completion record for '${agentId}' not saved — ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       // The lane drove this worker to completion — its spawn → wait →
       // collect is part of the manager's real call record (issue #103).
       recordLaneSequence();
@@ -2855,8 +2967,11 @@ export async function runOrchestrateCommand(
     // worktree — its failure result was recorded when the run reached it — so
     // it is skipped here rather than dereferencing a missing preparation.
     // A worker past the --agents spawn cap (issue #413) is skipped the same
-    // way: refused in the prepare loop above, never spawned here.
+    // way: refused in the prepare loop above, never spawned here. A worker
+    // whose completion this resume reuses (issue #160) is skipped too: it
+    // is already prepared above and goes straight to the merge queue.
     if (deniedSpawns.has(agentId) || cappedSpawns.has(agentId)) continue;
+    if (resumedCompleted.has(agentId)) continue;
     const worktree = prepared.get(agentId) as OrchestrateWorktree;
     // §45 provider caps: the worker's own model pin names the provider its
     // child will call, so the admission layer judges the right one. The pin
@@ -3073,6 +3188,16 @@ export async function runOrchestrateCommand(
     return fail(denied.exitCode, denied.code, denied.message, partial());
   }
 
+  // Every pending worker settled: persist the write-ahead completions
+  // fail-closed (issue #160) — the run never proceeds merge-side without
+  // them saved, so a kill at the gate still resumes without re-running.
+  {
+    const saveFailure = await saveOrFail(state);
+    if (saveFailure !== undefined) {
+      await reapSpawned(spawned);
+      return saveFailure;
+    }
+  }
   // Every pending worker settled: enqueue the candidates in AGENT order, so
   // the merge order is deterministic whatever the settle order was (issue
   // #206) and the write-ahead intent still travels with one candidate at a
@@ -3474,7 +3599,9 @@ export async function runOrchestrateCommand(
     const appliedAtMs = now();
     // An upsert: a resumed retry replaces the failure record kept from the
     // attempt that failed (issue #185) instead of listing the worker twice.
-    upsertRecord({
+    // The write-ahead completion moves to the merge records (issue #160),
+    // so `completed` never names a merged worker.
+    moveCompletedToRecords({
       agentId,
       branch: worktree.branch,
       hunks,

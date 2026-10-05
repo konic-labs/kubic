@@ -318,9 +318,12 @@ describe('per-agent role and model binding (issue #178)', () => {
   });
 
   it('persists the explicit assignment and replays it on --resume (issue #178)', async () => {
+    // Killed while `b` runs (not while merging): `b` keeps no completion,
+    // so the resume really re-runs it — under the stored assignment.
     const first = makeWorld({
-      mergeBranch: (agentId: string) => {
+      runWorker: (agentId: string) => {
         if (agentId === 'b') throw new Error('KILLED');
+        return [{ path: 'a-0.txt', hunk: '@@ a' }];
       },
     });
     const code1 = await runOrchestrateCommand(
@@ -357,9 +360,12 @@ describe('per-agent role and model binding (issue #178)', () => {
   });
 
   it('persists the run’s --skill values and re-applies them on --resume (issue #170)', async () => {
+    // Killed while `beta` runs (not while merging): `beta` keeps no
+    // completion, so the resume really re-runs it — with the stored skills.
     const first = makeWorld({
-      mergeBranch: (agentId: string) => {
+      runWorker: (agentId: string) => {
         if (agentId === 'beta') throw new Error('KILLED');
+        return [{ path: 'alpha-0.txt', hunk: '@@ alpha' }];
       },
     });
     const code1 = await runOrchestrateCommand(
@@ -865,7 +871,9 @@ describe('orchestrate crash-resume (issue #76)', () => {
     expect(killed.merged).toEqual(['alpha']);
     expect(killed.pending).toEqual(['beta']);
 
-    // Resume: the stored state continues beta only; alpha never re-merges.
+    // Resume: the stored state continues beta only; alpha never re-merges —
+    // and beta is NOT re-run either (issue #160): its completion persisted
+    // before the merge, so the resume re-merges it straight from the record.
     const second = makeWorld({
       loadState: () => structuredClone(killed),
     });
@@ -875,7 +883,7 @@ describe('orchestrate crash-resume (issue #76)', () => {
     );
     expect(code2).toBe(0);
     expect(second.calls.ensure).toEqual(['beta']);
-    expect(second.calls.run).toEqual(['beta']);
+    expect(second.calls.run).toEqual([]);
     expect(second.calls.merge).toEqual(['beta']);
     expect(second.lines.join('\n')).toContain('merge order: alpha -> beta');
     const done = second.saved[second.saved.length - 1] as OrchestratorRunState;
@@ -1491,6 +1499,203 @@ describe('orchestrate spawn failures (issue #85)', () => {
   });
 });
 
+describe('orchestrate completed-worker persistence (issue #160)', () => {
+  it('approval timeout on worker-1 of 2, then --resume: runWorker is not called again, merges proceed', async () => {
+    // First run: both workers settle, then the merge gate times out on w1.
+    const first = makeWorld({
+      requestApproval: (input: { agentId: string }) =>
+        input.agentId === 'w1'
+          ? { verdict: 'timeout', maxPendingMs: 25 }
+          : true,
+    });
+    const code1 = await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['w1', 'w2'], session: 'sess-1' },
+      first.deps,
+    );
+    expect(code1).toBe(4);
+    expect(first.calls.run).toEqual(['w1', 'w2']);
+    expect(first.calls.merge).toEqual([]);
+    // Both completions were persisted BEFORE the gate ran.
+    const timedOut = first.saved[
+      first.saved.length - 1
+    ] as OrchestratorRunState;
+    expect(timedOut.pending).toEqual(['w1', 'w2']);
+    expect(timedOut.merged).toEqual([]);
+    expect(timedOut.completed?.map((entry) => entry.agentId)).toEqual([
+      'w1',
+      'w2',
+    ]);
+    expect(timedOut.completed?.[0]?.hunks).toHaveLength(1);
+
+    // Resume: neither worker re-runs; both merge.
+    const second = makeWorld({
+      loadState: () => structuredClone(timedOut),
+    });
+    const code2 = await runOrchestrateCommand(
+      { resume: true, session: 'sess-1' },
+      second.deps,
+    );
+    expect(code2).toBe(0);
+    expect(second.calls.run).toEqual([]);
+    expect(second.calls.merge).toEqual(['w1', 'w2']);
+    const done = second.saved[second.saved.length - 1] as OrchestratorRunState;
+    expect(done.merged).toEqual(['w1', 'w2']);
+    expect(done.pending).toEqual([]);
+    // Merged records carry the persisted hunks; nothing stays completed.
+    expect(done.records.map((entry) => entry.hunks.length)).toEqual([1, 1]);
+    expect(done.completed ?? []).toEqual([]);
+    expect(second.lines.join('\n')).toContain('merge order: w1 -> w2');
+  });
+
+  it('kill after mergeBranch for worker-1, then resume: attribution keeps the original hunks', async () => {
+    // First run: w1 merges on disk, then the process dies before the save.
+    const first = makeWorld(
+      {
+        mergeBranch: (agentId: string) => {
+          if (agentId === 'w1') throw new Error('KILLED');
+        },
+      },
+      { w1: 2, w2: 1 },
+    );
+    const code1 = await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['w1', 'w2'], session: 'sess-1' },
+      first.deps,
+    );
+    expect(code1).toBe(1);
+    const killed = first.saved[first.saved.length - 1] as OrchestratorRunState;
+    expect(killed.merging).toBe('w1');
+    expect(
+      killed.completed?.find((entry) => entry.agentId === 'w1')?.hunks,
+    ).toHaveLength(2);
+
+    // Resume: the branch IS merged, so w1 reconciles with its persisted
+    // hunks (never 0) and w2 reuses its completion instead of re-running.
+    const second = makeWorld({
+      loadState: () => structuredClone(killed),
+      isBranchMerged: (agentId: string) => agentId === 'w1',
+    });
+    const code2 = await runOrchestrateCommand(
+      { resume: true, session: 'sess-1' },
+      second.deps,
+    );
+    expect(code2).toBe(0);
+    expect(second.calls.run).toEqual([]);
+    expect(second.calls.merge).toEqual(['w2']);
+    const done = second.saved[second.saved.length - 1] as OrchestratorRunState;
+    expect(done.merged).toEqual(['w1', 'w2']);
+    expect(
+      done.records.find((entry) => entry.agentId === 'w1')?.hunks,
+    ).toHaveLength(2);
+    expect(second.lines.join('\n')).toContain('w1=2 hunk(s)');
+  });
+
+  it('resume re-runs a completed worker whose branch no longer matches', async () => {
+    // A stale completion (branch recreated out-of-band) must not be trusted:
+    // the worker runs again instead of merging phantom hunks.
+    const stale: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-1',
+      prompt: 'demo',
+      agents: ['w1'],
+      merged: [],
+      pending: ['w1'],
+      stopped: false,
+      records: [],
+      completed: [
+        {
+          agentId: 'w1',
+          branch: 'kubic/stale-branch',
+          hunks: [{ path: 'ghost.txt', hunk: '@@ ghost' }],
+        },
+      ],
+    };
+    const world = makeWorld({ loadState: () => structuredClone(stale) });
+    const code = await runOrchestrateCommand(
+      { resume: true, session: 'sess-1' },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.calls.run).toEqual(['w1']);
+    expect(world.calls.merge).toEqual(['w1']);
+    const done = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    // The stale entry is gone; the fresh run's hunks are what merged.
+    expect(done.records.find((entry) => entry.agentId === 'w1')?.hunks).toEqual(
+      [{ path: 'w1-0.txt', hunk: '@@ -0,0 +1 @@ +w1-0' }],
+    );
+  });
+
+  it('parseOrchestratorRunState validates the completed-record shape', async () => {
+    const validBase: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-1',
+      prompt: 'demo',
+      agents: ['alpha', 'beta'],
+      merged: [],
+      pending: ['alpha', 'beta'],
+      stopped: false,
+      records: [],
+    };
+    const malformed: unknown[] = [
+      { completed: 'alpha' },
+      { completed: [42] },
+      { completed: [{ agentId: 'alpha' }] },
+      {
+        completed: [{ agentId: 'alpha', branch: 'kubic/alpha', hunks: 'x' }],
+      },
+      {
+        completed: [
+          {
+            agentId: 'alpha',
+            branch: 'kubic/alpha',
+            hunks: [{ path: 'a.txt' }],
+          },
+        ],
+      },
+      { completed: [{ agentId: 7, branch: 'kubic/alpha', hunks: [] }] },
+      {
+        completed: [
+          {
+            agentId: 'alpha',
+            branch: 'kubic/alpha',
+            hunks: [],
+            result: { status: 'bogus' },
+          },
+        ],
+      },
+    ];
+    for (const shape of malformed) {
+      expect(
+        parseOrchestratorRunState(
+          { ...validBase, ...(shape as Record<string, unknown>) },
+          'sess-1',
+        ),
+        JSON.stringify(shape),
+      ).toBeUndefined();
+    }
+    // A well-formed completed list round-trips.
+    const ok = parseOrchestratorRunState(
+      {
+        ...validBase,
+        completed: [
+          {
+            agentId: 'alpha',
+            branch: 'kubic/alpha',
+            hunks: [{ path: 'a.txt', hunk: '@@ a' }],
+          },
+        ],
+      },
+      'sess-1',
+    );
+    expect(ok?.completed).toEqual([
+      {
+        agentId: 'alpha',
+        branch: 'kubic/alpha',
+        hunks: [{ path: 'a.txt', hunk: '@@ a' }],
+      },
+    ]);
+  });
+});
+
 describe('orchestrate resume state validation (issue #76 fix)', () => {
   const validBase: OrchestratorRunState = {
     version: 1,
@@ -1658,11 +1863,13 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
   });
 
   it('--resume replays the stored per-worker prompts, not -p', async () => {
-    // First run is killed while merging beta; the saved state carries the
-    // manager's plan.
+    // First run is killed while beta runs (not while merging — a
+    // merge-phase kill leaves a completion the resume would reuse without
+    // re-running); the saved state carries the manager's plan.
     const first = makeWorld({
-      mergeBranch: (agentId: string) => {
+      runWorker: (agentId: string) => {
         if (agentId === 'beta') throw new Error('KILLED');
+        return [{ path: 'alpha-0.txt', hunk: '@@ alpha' }];
       },
     });
     expect(
@@ -1677,7 +1884,7 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
       ),
     ).toBe(1);
     const killed = first.saved[first.saved.length - 1] as OrchestratorRunState;
-    expect(killed.pending).toEqual(['beta']);
+    expect(killed.pending).toEqual(['alpha', 'beta']);
 
     // Resume with NO -p at all: the prompts must come from stored state.
     const second = makeWorld({ loadState: () => structuredClone(killed) });

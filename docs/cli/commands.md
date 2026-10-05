@@ -1951,7 +1951,8 @@ instead of an empty list. The **RESOURCES** cell shows resource consumption
 (issue #248) after the skills/templates grants: a live pid's point-sampled
 `rss=<MB> cpu=<%>` (one `ps` sample, never an average — absent when the pid
 is gone), then the settled `tok=<n>` `cost=$<n>` `calls=<n>` from the run's
-own usage summary when the worker settled (`tok` abbreviates at k/M).
+own usage summary when the worker settled (`tok` totals input+output+cached
+and abbreviates at k/M).
 
 A row that FAILED also names the code it settled on — `failed(<code>)` in the
 **AGENT** cell and a `failure: {code, message}` field in `--json` (issue

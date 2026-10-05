@@ -128,9 +128,14 @@ function trim1(value: number): string {
 function formatTokens(
   input: number | undefined,
   output: number | undefined,
+  cached: number | undefined,
 ): string | undefined {
-  if (input === undefined && output === undefined) return undefined;
-  const total = (input ?? 0) + (output ?? 0);
+  if (input === undefined && output === undefined && cached === undefined) {
+    return undefined;
+  }
+  // Settled cached tokens count toward the total (review #248): they are
+  // model input the run paid context for, not free metadata.
+  const total = (input ?? 0) + (output ?? 0) + (cached ?? 0);
   if (total >= 1_000_000) return `${trim1(total / 1_000_000)}M`;
   if (total >= 1000) return `${trim1(total / 1000)}k`;
   return String(total);
@@ -158,6 +163,7 @@ function formatResources(
   const tokens = formatTokens(
     consumption?.inputTokens,
     consumption?.outputTokens,
+    consumption?.cachedTokens,
   );
   if (tokens !== undefined) parts.push(`tok=${tokens}`);
   if (consumption?.costUsd !== undefined) {

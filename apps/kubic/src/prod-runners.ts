@@ -1266,9 +1266,23 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
           list: async () => {
             const root = resolveRepoRuntimeRoot(process.cwd());
             // The stored row carries no consumption (issue #248): it comes
-            // from the run's own record, read here per listed worker.
-            return workersListFromRepo(root).map((row) => {
+            // from the run's own record — read once per distinct run
+            // session, not once per worker (review #248).
+            const states = new Map<
+              string,
+              { runSession: string; state: unknown } | undefined
+            >();
+            const stateOf = (row: WorkerListRow) => {
+              const cached = states.get(row.owner);
+              if (cached !== undefined || states.has(row.owner)) {
+                return cached;
+              }
               const found = prodReadRunState(root, row);
+              states.set(row.owner, found);
+              return found;
+            };
+            return workersListFromRepo(root).map((row) => {
+              const found = stateOf(row);
               const usage =
                 found === undefined
                   ? undefined

@@ -244,6 +244,11 @@ describe('kubic workers inspect (issue #167)', () => {
     expect(code).toBe(0);
     expect(errs).toEqual([]);
     expect(lines.join('\n')).toContain('w-1');
+    // The 10-cell overflow from the #248 review: the header row must
+    // carry all nine cells — the STARTUP value and the grants cell.
+    expect(lines[0]?.split('\n')).toHaveLength(2);
+    expect(lines[0]?.split('\n')[1]).toContain('40ms');
+    expect(lines[0]?.split('\n')[1]).toContain('skills=review');
     expect(lines.join('\n')).toContain(
       'worktree: /repo/.kubic/wt/run-1/w-1 (kubic/run-1/w-1, dirty: 3 files)',
     );
@@ -453,6 +458,7 @@ describe('kubic workers resources (issue #248)', () => {
             consumption: {
               inputTokens: 1200,
               outputTokens: 300,
+              cachedTokens: 500,
               toolCalls: 5,
               costUsd: 0.012,
             },
@@ -461,7 +467,8 @@ describe('kubic workers resources (issue #248)', () => {
       },
     );
     const text = lines.join('\n');
-    expect(text).toContain('tok=1.5k');
+    // Settled cached tokens count toward the total (review #248).
+    expect(text).toContain('tok=2k');
     expect(text).toContain('cost=$0.012');
     expect(text).toContain('calls=5');
   });

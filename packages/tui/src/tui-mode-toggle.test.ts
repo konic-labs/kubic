@@ -113,3 +113,22 @@ describe('the app owns its own mode and posture (issue #333 review)', () => {
     expect(target.render(100).join('\n')).toContain('approvals OFF');
   });
 });
+
+// Issue #276: the switch is reported so the composition root can persist it
+// with the session (reattach restores it); a no-op set reports nothing.
+describe('session mode change reports (issue #276)', () => {
+  it('reports each real change through onModeChange', () => {
+    const changes: string[] = [];
+    const target = createTuiApp({
+      sessionId: 's',
+      model: 'faux/m',
+      mode: 'solo',
+      approvalsSkipped: false,
+      onModeChange: (mode) => changes.push(mode),
+    });
+    target.handleInput(CTRL_G);
+    target.setMode('orchestrator');
+    target.handleInput(CTRL_G);
+    expect(changes).toEqual(['orchestrator', 'solo']);
+  });
+});

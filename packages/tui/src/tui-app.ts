@@ -166,6 +166,9 @@ export interface TuiAppSeed {
   // Issue #336: the workspace files `@` mentions complete from — the
   // composition root's gitignore-aware walk. Absent: slash commands only.
   readonly listFiles?: () => readonly string[];
+  // Issue #276: told of every real session-mode change (Ctrl-G, /tree…), so
+  // the composition root persists it with the session.
+  readonly onModeChange?: (mode: StatusMode) => void;
 }
 
 // §66 replication: the TUI holds no authority — it reads the replicated
@@ -774,6 +777,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     if (next === sessionMode.current) return;
     sessionMode.current = next;
     status.setMode(next);
+    seed.onModeChange?.(next);
   };
   const editor = new PromptEditor();
   // Issue #305: the editor completes the registry's `/`-commands as they are

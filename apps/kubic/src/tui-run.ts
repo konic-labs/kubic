@@ -77,7 +77,10 @@ import {
 } from '../../../packages/host/src/ops/cost/cost-cli.js';
 import {
   buildOrchestratorRefusal,
+  parseOrchestratorToggle,
   resolveOrchestratorMode,
+  serializeOrchestratorToggle,
+  setOrchestratorToggle,
 } from '../../../packages/host/src/orchestrator/manager.js';
 import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import {
@@ -701,6 +704,11 @@ export interface TuiLaneBoot {
   // new session (the #265 store fork) and return its id. Needs the session's
   // lock free: the loop closes this boot first.
   forkAt?: (at: number) => Promise<string>;
+  // Issue #276 (§9.2): the session-scoped mode toggle, persisted in the
+  // session dir (`mode.json`): the mode this session was last switched to
+  // (absent: never switched) and the writer the loop calls on every switch.
+  savedMode?: 'solo' | 'orchestrator';
+  saveMode?: (mode: 'solo' | 'orchestrator') => void;
   // Issue #307: the installed policy's own full-access predicate (the SAME
   // one its ask auto-approves on), read for the mode indicator at boot and
   // after every turn. Absent (a viewer boot with no policy) means approvals
@@ -1550,6 +1558,24 @@ export async function bootTuiLane(
       listFiles: workspaceFileLister(env),
       forkAt: async (at: number) =>
         (await forkSession(store, id, { at }, context)).id,
+      ...savedModeOf(bridge, join(root, id, 'mode.json')),
+      saveMode: (mode: 'solo' | 'orchestrator') => {
+        try {
+          bridge.writeFile(
+            join(root, id, 'mode.json'),
+            serializeOrchestratorToggle(
+              setOrchestratorToggle(
+                { on: false, scope: 'session', persisted: false },
+                mode === 'orchestrator',
+              ),
+            ),
+            { mode: 0o600 },
+          );
+        } catch {
+          // Best-effort: the live mode stands; a reattach starts from the
+          // config default instead.
+        }
+      },
       ...(modelNotices.length === 0
         ? {}
         : { modelNotice: modelNotices.join('; ') }),
@@ -2853,6 +2879,22 @@ export function resolveTuiTheme(
   return createThemeFromColors(parseThemeJson(text, ref), level);
 }
 
+// Issue #276: the session's persisted mode toggle, or nothing when the
+// session was never switched (or the file is unreadable — then the config
+// default applies, never a guess).
+function savedModeOf(
+  bridge: FileBridge,
+  path: string,
+): { savedMode?: 'solo' | 'orchestrator' } {
+  try {
+    if (!bridge.exists(path)) return {};
+    const toggle = parseOrchestratorToggle(bridge.readTextFile(path));
+    return { savedMode: toggle.on ? 'orchestrator' : 'solo' };
+  } catch {
+    return {};
+  }
+}
+
 // Issue #336: the `@` mention source — every file the find/grep walk would
 // visit (gitignore rules honoured, node_modules/.git skipped, bounded),
 // workspace-relative. Cached for a short window so a burst of keystrokes
@@ -3215,6 +3257,24 @@ export async function runTuiCommand(
   for (const notice of boot.notices ?? []) {
     (deps.err ?? deps.out)(`warning: ${notice}`);
   }
+  // Issue #276 (§9.2): a reattached session restores the mode it was last
+  // switched to (the flag still wins; the config default only seeds a session
+  // that was never switched). A saved orchestrator mode needs a git
+  // repository like the config one — outside one the session starts solo and
+  // says why, never silently.
+  let initialMode: 'solo' | 'orchestrator' =
+    options.orchestrator === true ? 'orchestrator' : (boot.savedMode ?? mode);
+  if (
+    initialMode === 'orchestrator' &&
+    mode !== 'orchestrator' &&
+    deps.isGitRepo !== undefined &&
+    !(await deps.isGitRepo())
+  ) {
+    initialMode = 'solo';
+    (deps.err ?? deps.out)(
+      'warning: this session was saved in orchestrator mode, which needs a git repository — starting solo',
+    );
+  }
   const app = createTuiApp({
     sessionId: boot.sessionId,
     model: boot.model,
@@ -3225,7 +3285,9 @@ export async function runTuiCommand(
     // never a literal, so the indicator and the submit routing cannot
     // disagree with what the entry actually selected. The approvals half
     // still comes from the installed policy.
-    mode,
+    mode: initialMode,
+    // Issue #276: every switch is persisted with the CURRENT boot's session.
+    onModeChange: (next) => boot.saveMode?.(next),
     approvalsSkipped: boot.approvalsSkipped?.() ?? boot.fullAccess === true,
     ...(boot.contextLimits?.contextWindow === undefined
       ? {}
@@ -3284,7 +3346,7 @@ export async function runTuiCommand(
       ? [FAUX_FOOTER, base].filter((part) => part !== '').join(' · ')
       : base;
   };
-  const notice = noticeFor(mode);
+  const notice = noticeFor(initialMode);
   // Issue #311: the Ctrl-O / Ctrl-R panels read the session journal the
   // boot created — loaded once now (a resumed session shows its earlier
   // turns), after each tool call (throttled) and at every settlement.
@@ -4027,6 +4089,9 @@ export async function runTuiCommand(
           model: next.model,
           usage: next.usageRows ?? [],
         });
+        // Issue #276: the session now shown restores its own saved mode, or
+        // the config default when it was never switched.
+        app.setMode(next.savedMode ?? mode);
         syncPosture();
         for (const notice of next.notices ?? []) {
           (deps.err ?? deps.out)(`warning: ${notice}`);

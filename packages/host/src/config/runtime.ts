@@ -221,7 +221,7 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   roles: {
     effect:
-      'per-role model/tool defaults layered under the role document (§12.1)',
+      'per-role model/tool/thinking/request-option defaults, requires and the allowed model set, layered under the role document (§12.1, §38.2)',
   },
   'orchestrator.root': {
     effect: 'parent directory for orchestrator worktrees',
@@ -612,7 +612,22 @@ function formatValue(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((item) => formatValue(item)).join(', ')}]`;
   }
+  // Tables render as JSON (issue #255): the role `models` set is the
+  // first array-of-tables in config, and without this branch it printed
+  // `[object Object]`. Strings redact leaf-wise, never the structure.
+  if (isRecord(value)) return JSON.stringify(redactDeep(value));
   return JSON.stringify(redactSecretShapes(String(value)));
+}
+
+function redactDeep(value: unknown): unknown {
+  if (typeof value === 'string') return redactSecretShapes(value);
+  if (Array.isArray(value)) return value.map(redactDeep);
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, redactDeep(child)]),
+    );
+  }
+  return value;
 }
 
 // §36: a secret reference must never live in config — `$VAR` and

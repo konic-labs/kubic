@@ -26,6 +26,7 @@ import {
   RUNTIME_EXCLUDE_ENTRIES,
 } from '../../../packages/exec/src/runtime-exclude.js';
 import type { SoloApprovalConfig } from '../../../packages/host/src/approvals.js';
+import type { RoleModelEntry } from '../../../packages/host/src/config/config.js';
 import {
   CONFIG_LAYERS,
   ConfigError,
@@ -71,6 +72,10 @@ import type {
   RoleLayerSpec,
 } from '../../../packages/host/src/roles/resolver.js';
 import type { SoloCompactionOptions } from '../../../packages/worker/src/lane/solo.js';
+import {
+  roleModelAllowed,
+  roleModelEntry,
+} from '../../../packages/host/src/roles/resolver.js';
 import {
   ModelSelectError,
   type ModelSelection,
@@ -527,12 +532,72 @@ function modelPolicyRefusal(provider: string, id: string): string {
 // and the implicit fallback pick only considers allowed providers. With no
 // model policy configured this is exactly `selectModel` — the selection
 // behaviour is byte-identical to before.
+// The role's allowed set as a selection gate (issue #255; §38.2): the
+// resolved role's name plus its set. Built once per boot/switch from
+// the resolved role; undefined (or an empty set) means unconstrained.
+export interface RoleModelScope {
+  role: string;
+  models: RoleModelEntry[] | undefined;
+}
+
+export function roleModelScope(
+  resolved: { name: string; models: RoleModelEntry[] | undefined } | undefined,
+): RoleModelScope | undefined {
+  if (
+    resolved === undefined ||
+    resolved.models === undefined ||
+    resolved.models.length === 0
+  ) {
+    return undefined;
+  }
+  return { role: resolved.name, models: resolved.models };
+}
+
+// The out-of-set refusal (issue #255): names the requested model, the
+// role, and the set — the operator pins an allowed model or widens the
+// set, never guesses which boundary fired.
+export function roleModelRefusal(
+  role: string,
+  provider: string,
+  id: string,
+  models: readonly RoleModelEntry[],
+): string {
+  const entries = models.map((entry) => entry.id).join(', ');
+  return `model '${provider}/${id}' refused: role '${role}' allows ${entries} only`;
+}
+
+// The role's thinking default for the SELECTED model (issue #255;
+// §38.2): a matching set entry's thinking wins over the flat role
+// default (specific beats general — otherwise per-entry thinking would
+// be dead config whenever the flat default is set); without a matching
+// entry the flat default stands, and without either there is none.
+export function resolveRoleThinking(
+  resolved:
+    | {
+        thinking: string | undefined;
+        models: readonly RoleModelEntry[] | undefined;
+      }
+    | undefined,
+  provider: string,
+  id: string,
+): string | undefined {
+  if (resolved === undefined) return undefined;
+  return (
+    roleModelEntry(resolved.models, provider, id)?.thinking ?? resolved.thinking
+  );
+}
+
 export function selectModelUnderPolicy(
   models: MutableModels,
   explicit: ModelSelection | undefined,
   configDefault: ModelSelection | undefined,
   fallbackProviders: readonly string[] | undefined,
   policy: EffectivePolicy | undefined,
+  // The role's allowed set (issue #255; §38.2): gates the explicit/role
+  // selection AND the final pick, exactly like the enterprise gate above
+  // — a run that would boot (or switch) outside its role's set refuses
+  // by name instead of silently running out-of-set.
+  roleScope?: RoleModelScope,
 ): ReturnType<typeof selectModel> {
   const gate =
     policy !== undefined && hasModelPolicy(policy) ? policy : undefined;
@@ -544,6 +609,30 @@ export function selectModelUnderPolicy(
       ) {
         throw new ModelSelectError(
           modelPolicyRefusal(selection.provider, selection.id),
+        );
+      }
+    }
+  }
+  const scopeModels = roleScope?.models;
+  const scope =
+    roleScope === undefined ||
+    scopeModels === undefined ||
+    scopeModels.length === 0
+      ? undefined
+      : { role: roleScope.role, models: scopeModels };
+  if (scope !== undefined) {
+    for (const selection of [explicit, configDefault]) {
+      if (
+        selection !== undefined &&
+        !roleModelAllowed(scope.models, selection.provider, selection.id)
+      ) {
+        throw new ModelSelectError(
+          roleModelRefusal(
+            scope.role,
+            selection.provider,
+            selection.id,
+            scope.models,
+          ),
         );
       }
     }
@@ -565,6 +654,14 @@ export function selectModelUnderPolicy(
   }
   if (gate !== undefined && !isModelAllowed(gate, picked.provider, picked.id)) {
     throw new ModelSelectError(modelPolicyRefusal(picked.provider, picked.id));
+  }
+  if (
+    scope !== undefined &&
+    !roleModelAllowed(scope.models, picked.provider, picked.id)
+  ) {
+    throw new ModelSelectError(
+      roleModelRefusal(scope.role, picked.provider, picked.id, scope.models),
+    );
   }
   return picked;
 }
@@ -750,6 +847,15 @@ export function roleLayersFromConfig(runtime: RuntimeConfig): RoleLayerInput[] {
         runtime.sources[`roles.${name}.model`] === layer
       ) {
         spec.model = entry.model;
+      }
+      // The allowed set rides the same provenance (issue #255; §38.2):
+      // the winning list travels on the layer that set it, copied so
+      // the resolver owns its merge input.
+      if (
+        entry.models !== undefined &&
+        runtime.sources[`roles.${name}.models`] === layer
+      ) {
+        spec.models = entry.models.map((modelEntry) => ({ ...modelEntry }));
       }
       if (
         entry.thinking !== undefined &&

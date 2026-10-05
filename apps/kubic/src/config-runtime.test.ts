@@ -58,6 +58,7 @@ import {
   projectTrustFor,
   requireRuntimeConfig,
   resolveInteractiveProjectTrust,
+  resolveRoleThinking,
   roleLayersFromConfig,
   runtimeApprovalDeps,
   runtimeCompactionDeps,
@@ -1089,6 +1090,79 @@ describe('selectModelUnderPolicy gates before the registry (issue #384)', () => 
       ).id,
     ).toBe('approved');
   });
+
+  it('refuses an out-of-set pin by name; in-set selects (issue #255)', () => {
+    const models = catalog([
+      { provider: 'anthropic', models: ['x'] },
+      { provider: 'local', models: ['a'] },
+    ]);
+    const scope = { role: 'reviewer', models: [{ id: 'local/*' }] };
+    // The `--model anthropic/x` path: the explicit selection refuses by
+    // name before any provider call, naming the role and its set.
+    expect(() =>
+      selectModelUnderPolicy(
+        models,
+        { provider: 'anthropic', id: 'x' },
+        undefined,
+        undefined,
+        undefined,
+        scope,
+      ),
+    ).toThrow(
+      /model 'anthropic\/x' refused: role 'reviewer' allows local\/\* only/,
+    );
+    // The implicit pick lands outside the set: refused too, rather than
+    // silently running out-of-set (registration order picks anthropic/x).
+    expect(() =>
+      selectModelUnderPolicy(
+        models,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        scope,
+      ),
+    ).toThrow(/role 'reviewer' allows/);
+    // In-set selects; no scope keeps the old behaviour.
+    expect(
+      selectModelUnderPolicy(
+        models,
+        { provider: 'local', id: 'a' },
+        undefined,
+        undefined,
+        undefined,
+        scope,
+      ).id,
+    ).toBe('a');
+    expect(
+      selectModelUnderPolicy(
+        models,
+        { provider: 'anthropic', id: 'x' },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+      ).id,
+    ).toBe('x');
+  });
+
+  it('resolveRoleThinking prefers the matching entry over flat (issue #255)', () => {
+    const resolved = {
+      thinking: 'medium',
+      models: [
+        { id: 'local/*', thinking: 'low' },
+        { id: 'acme/big', thinking: 'high' },
+      ],
+    };
+    // Entry wins on match (specific beats general).
+    expect(resolveRoleThinking(resolved, 'local', 'a')).toBe('low');
+    expect(resolveRoleThinking(resolved, 'acme', 'big')).toBe('high');
+    // Flat default stands without a match; undefined without either.
+    expect(
+      resolveRoleThinking({ thinking: 'medium', models: [] }, 'x', 'y'),
+    ).toBe('medium');
+    expect(resolveRoleThinking(undefined, 'x', 'y')).toBeUndefined();
+  });
 });
 
 describe('end to end: the project [model] pin reaches the prod run runner (issue #384)', () => {
@@ -1306,6 +1380,20 @@ describe('cli thinking layer (issue #225)', () => {
     expect(result.error).toBeUndefined();
     expect(runtimeLaneDeps(result).roles?.layers).toEqual([
       { layer: 'global', roles: { reviewer: { thinking: 'low' } } },
+    ]);
+  });
+  it('carries the role model sets in the lane layers (issue #255)', () => {
+    const home = tmp('cli-models-roles-home-');
+    const cwd = tmp('cli-models-roles-cwd-');
+    mkdirSync(join(home, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(home, '.kubic', 'config.toml'),
+      '[roles.reviewer]\nmodels = ["local/*"]\n',
+    );
+    const result = loadCliConfig({ cwd, home, env: {} });
+    expect(result.error).toBeUndefined();
+    expect(runtimeLaneDeps(result).roles?.layers).toEqual([
+      { layer: 'global', roles: { reviewer: { models: [{ id: 'local/*' }] } } },
     ]);
   });
 });

@@ -756,6 +756,52 @@ describe('config validation hardening (issue #69)', () => {
     );
   });
 
+  it('parses [roles.<name>] models, refusing bad entries by name (issue #255)', () => {
+    const parsed = parseTomlConfig(
+      '[roles.a]\nmodels = ["local/*", { id = "acme/big", thinking = "high" }]\n',
+    );
+    expect(parsed.roles?.a?.models).toEqual([
+      // String entries normalize to { id } tables: one shape downstream.
+      { id: 'local/*' },
+      { id: 'acme/big', thinking: 'high' },
+    ]);
+    // An empty set parses (it means all models).
+    expect(
+      parseTomlConfig('[roles.a]\nmodels = []\n').roles?.a?.models,
+    ).toEqual([]);
+    expect(() => parseTomlConfig('[roles.a]\nmodels = "local/*"\n')).toThrow(
+      /'roles\.a': 'models' must be an array/,
+    );
+    expect(() => parseTomlConfig('[roles.a]\nmodels = [["x/y"]]\n')).toThrow(
+      /nested arrays are unsupported/,
+    );
+    expect(() => parseTomlConfig('[roles.a]\nmodels = ["noid"]\n')).toThrow(
+      /'roles\.a': 'models\[0\]' must be 'provider\/id' or 'provider\/\*'/,
+    );
+    expect(() => parseTomlConfig('[roles.a]\nmodels = [42]\n')).toThrow(
+      /'roles\.a': 'models\[0\]' must be 'provider\/id' or 'provider\/\*'/,
+    );
+    // Tables land in the string-array validators nowhere else: a table in
+    // `tools` is still refused by its own checker, not the parser.
+    expect(() =>
+      parseTomlConfig('[roles.a]\ntools = ["read", { x = 1 }]\n'),
+    ).toThrow(/'roles\.a': 'tools' must be a string array/);
+    expect(() =>
+      parseTomlConfig('[roles.a]\nmodels = [{ id = "x/y" }]\n'),
+    ).not.toThrow();
+    expect(() =>
+      parseTomlConfig(
+        '[roles.a]\nmodels = [{ id = "x/y", thinking = "ultra" }]\n',
+      ),
+    ).toThrow(/'models\[0\]\.thinking' must be one of/);
+    expect(() =>
+      parseTomlConfig('[roles.a]\nmodels = [{ thinking = "low" }]\n'),
+    ).toThrow(/'roles\.a\.models\[0\]': 'id' must be a non-empty string/);
+    expect(() =>
+      parseTomlConfig('[roles.a]\nmodels = [{ id = "x/y", bogus = 1 }]\n'),
+    ).toThrow(/'roles\.a\.models\[0\]': unknown key 'bogus'/);
+  });
+
   it('rejects negative numbers and non-string role tools', () => {
     expect(() => parseTomlConfig('[journal]\nretentionDays = -1\n')).toThrow(
       /non-negative number/,

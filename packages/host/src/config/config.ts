@@ -138,6 +138,10 @@ export interface RoleConfig {
   // THINKING_LEVELS, below the session-persisted level and above
   // `[model].thinking` in the lane's resolution.
   thinking?: string;
+  // The per-role allowed model set (issue #255; §38.2): normalized
+  // entries (`provider/id` or `provider/*`, optional per-entry
+  // thinking). Absent or empty means all models.
+  models?: RoleModelEntry[];
 }
 
 export interface OrchestratorConfig {
@@ -334,6 +338,7 @@ retentionDays = 30
 [roles.reviewer]
 model = "local/llama3"
 tools = ["read", "grep", "diff"]
+models = ["local/*", { id = "acme/big", thinking = "high" }]
 
 [roles.implementer]
 model = "local/llama3"
@@ -526,11 +531,11 @@ function parseScalar(text: string, lineNo: number): unknown {
     if (inner === '') return [];
     return splitTopLevel(inner, lineNo).map((item) => {
       const value = parseScalar(item, lineNo);
-      if (
-        typeof value !== 'string' &&
-        typeof value !== 'number' &&
-        typeof value !== 'boolean'
-      ) {
+      // Inline-table elements are the per-entry shape some array keys
+      // validate themselves (issue #255 `[roles.*].models`); nested
+      // arrays stay unsupported, and every other array key still
+      // refuses tables through its own typed checker.
+      if (Array.isArray(value)) {
         throw new ConfigError(`line ${lineNo}: nested arrays are unsupported`);
       }
       return value;
@@ -1096,6 +1101,76 @@ export function checkRoleModelRef(
   return value;
 }
 
+// One scoped-model entry (issue #255; §38.2): the allowed-set member a
+// `[roles.*].models` array holds. String entries normalize to this shape
+// at parse, so every layer downstream matches one shape.
+export interface RoleModelEntry {
+  /** `provider/id` or `provider/*` — the `*` form matches the provider. */
+  id: string;
+  /** The thinking default when the lane selects this entry (optional). */
+  thinking?: string;
+}
+
+// The per-role allowed set (issue #255; §38.2): an array of `provider/id`
+// or `provider/*` refs, each optionally carrying per-entry thinking as a
+// table (`{ id, thinking? }`). An empty array parses (it means all
+// models). Refused by name per entry so a malformed set never reaches
+// selection; the runtime projection re-checks for programmatic layers.
+export function checkRoleModels(
+  value: unknown,
+  roleName: string,
+): RoleModelEntry[] | undefined {
+  if (value === undefined) return undefined;
+  const keyPath = `roles.${roleName}`;
+  if (!Array.isArray(value)) {
+    throw new ConfigError(
+      `'${keyPath}': 'models' must be an array of 'provider/id' or 'provider/*' entries`,
+    );
+  }
+  return value.map((entry, index) => {
+    const label = `'${keyPath}': 'models[${index}]'`;
+    if (typeof entry === 'string') {
+      return { id: checkRoleModelPattern(entry, label) };
+    }
+    if (!isRecord(entry)) {
+      throw new ConfigError(
+        `${label} must be 'provider/id' or 'provider/*' (got ${JSON.stringify(entry)})`,
+      );
+    }
+    checkNoUnknown(
+      entry,
+      new Set(['id', 'thinking']),
+      `${keyPath}.models[${index}]`,
+    );
+    const id = checkRoleModelPattern(
+      reqString(entry, 'id', `${keyPath}.models[${index}]`, false),
+      label,
+    );
+    const thinking = checkThinkingLevel(
+      reqString(entry, 'thinking', `${keyPath}.models[${index}]`, true),
+      `'${keyPath}': 'models[${index}].thinking'`,
+    );
+    return { id, ...(thinking === undefined ? {} : { thinking }) };
+  });
+}
+
+// One allowed-set member: `provider/id` exact, or `provider/*` for the
+// whole provider. The `*` is only meaningful as the whole id — anywhere
+// else it is a typo refused by name.
+function checkRoleModelPattern(value: string, label: string): string {
+  const slash = value.indexOf('/');
+  const star = value.indexOf('*');
+  if (
+    slash <= 0 ||
+    slash === value.length - 1 ||
+    (star >= 0 && (star !== value.length - 1 || !value.endsWith('/*')))
+  ) {
+    throw new ConfigError(
+      `${label} must be 'provider/id' or 'provider/*' (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
 // One thinking-level rule for every spelling of it (issue #225): the
 // `[model]` and `[roles.*]` keys, KUBIC_MODEL_THINKING and --thinking all
 // refuse a value outside THINKING_LEVELS by the name the operator used.
@@ -1503,6 +1578,7 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
           'tools',
           'requires',
           'thinking',
+          'models',
           'timeoutMs',
           'maxRetries',
           'maxRetryDelayMs',
@@ -1517,11 +1593,13 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
         reqString(spec, 'thinking', `roles.${name}`, true),
         `'roles.${name}': 'thinking'`,
       );
+      const models = checkRoleModels(spec.models, name);
       parsed[name] = {
         ...(modelRef === undefined ? {} : { model: modelRef }),
         ...(tools === undefined ? {} : { tools }),
         ...(requires === undefined ? {} : { requires }),
         ...(thinking === undefined ? {} : { thinking }),
+        ...(models === undefined ? {} : { models }),
         ...checkModelStreamTuning(spec, `roles.${name}`),
       };
     }
@@ -1649,7 +1727,7 @@ export function parseTomlConfig(text: string): KubicConfig {
   return toKubicConfig(parseTomlDocument(text));
 }
 
-function formatValue(value: unknown): string {
+function formatValue(value: unknown, inlineTables = false): string {
   if (typeof value === 'string') {
     return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\t/g, '\\t')}"`;
   }
@@ -1657,7 +1735,21 @@ function formatValue(value: unknown): string {
     return String(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map((item) => formatValue(item)).join(', ')}]`;
+    return `[${value.map((item) => formatValue(item, true)).join(', ')}]`;
+  }
+  // Inline tables (issue #255): the role `models` set carries `{ id,
+  // thinking? }` entries, and the canonical example pins them — they
+  // emit back in the same inline form so the example round-trips. Only
+  // array items take this branch: a bare nested table as a direct value
+  // stays refused (issue #69), exactly as before.
+  if (isRecord(value)) {
+    if (!inlineTables) {
+      throw new ConfigError('cannot serialize nested tables as values');
+    }
+    const pairs = Object.entries(value).map(
+      ([key, child]) => `${key} = ${formatValue(child, true)}`,
+    );
+    return `{ ${pairs.join(', ')} }`;
   }
   throw new ConfigError('cannot serialize nested tables as values');
 }

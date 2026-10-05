@@ -140,6 +140,13 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     command: 'model.select',
   },
   {
+    // No §66 command (issue #255): the allowed set is a local read like
+    // `/session` — the loop reports the resolved set, nothing is sent.
+    name: 'scoped-models',
+    summary: 'show the role’s allowed model set',
+    usage: '/scoped-models',
+  },
+  {
     name: 'thinking',
     summary: 'set the live lane’s thinking level',
     usage: '/thinking [level]',

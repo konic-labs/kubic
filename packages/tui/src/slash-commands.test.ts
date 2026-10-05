@@ -35,6 +35,7 @@ describe('slash-command registry (issue #305)', () => {
       'undo',
       'quit',
       'model',
+      'scoped-models',
       'thinking',
       'compact',
     ]) {

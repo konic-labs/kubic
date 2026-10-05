@@ -14,6 +14,7 @@ import {
   resolveRole,
   roleDebugLine,
   roleDoctorChecks,
+  roleModelAllowed,
   validateResolvedRole,
 } from './resolver.js';
 
@@ -172,6 +173,50 @@ describe('mergeRoleLayers', () => {
       ]).thinking,
     ).toBe('medium');
   });
+
+  it('models merge first-wins whole-list; attempts are reported (issue #255)', () => {
+    const doc = parseRoleDocument(PLANNER_MD);
+    const merged = mergeRoleLayers(doc, [
+      {
+        layer: 'project',
+        roles: { planner: { models: [{ id: 'acme/*' }] } },
+      },
+      {
+        layer: 'enterprise',
+        roles: { planner: { models: [{ id: 'local/*' }] } },
+      },
+    ]);
+    expect(merged.models).toEqual([{ id: 'local/*' }]);
+    expect(merged.overriddenAttempts).toEqual(['roles.planner.models']);
+    const resolved = resolveRole(doc, [
+      {
+        layer: 'project',
+        roles: {
+          planner: {
+            models: [{ id: 'local/*' }, { id: 'acme/big', thinking: 'high' }],
+          },
+        },
+      },
+    ]);
+    expect(resolved.models).toEqual([
+      { id: 'local/*' },
+      { id: 'acme/big', thinking: 'high' },
+    ]);
+    // No layer sets a list: undefined (allow-all), never [].
+    expect(resolveRole(doc, []).models).toBeUndefined();
+  });
+
+  it('roleModelAllowed matches exact and provider/*, boundary-safe (issue #255)', () => {
+    const set = [{ id: 'local/*' }, { id: 'acme/big' }];
+    expect(roleModelAllowed(undefined, 'acme', 'x')).toBe(true);
+    expect(roleModelAllowed([], 'acme', 'x')).toBe(true);
+    expect(roleModelAllowed(set, 'local', 'anything')).toBe(true);
+    expect(roleModelAllowed(set, 'acme', 'big')).toBe(true);
+    expect(roleModelAllowed(set, 'acme', 'small')).toBe(false);
+    expect(roleModelAllowed(set, 'localfoo', 'x')).toBe(false);
+    expect(roleModelAllowed(set, 'other', 'x')).toBe(false);
+  });
+
 });
 
 describe('resolveRole', () => {

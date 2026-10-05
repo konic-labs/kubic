@@ -89,6 +89,22 @@ describe('kubic config (issue #90)', () => {
     expect(text).toContain('budgets: none');
   });
 
+  it("renders a role's allowed set with its layer (issue #255)", () => {
+    const { lines, out } = collect();
+    const base = runtime();
+    base.config.roles = {
+      reviewer: {
+        models: [{ id: 'local/*' }, { id: 'acme/big', thinking: 'high' }],
+      },
+    };
+    base.sources['roles.reviewer.models'] = 'project';
+    const code = runConfigCommand({}, { load: () => base, out });
+    expect(code).toBe(CONFIG_EXIT_OK);
+    expect(lines.join('\n')).toContain(
+      'roles.reviewer.models = [{"id":"local/*"}, {"id":"acme/big","thinking":"high"}] (project, consumed)',
+    );
+  });
+
   it('emits one machine-readable object covering every projection', () => {
     const { lines, out } = collect();
     expect(runConfigCommand({ json: true }, { load: runtime, out })).toBe(

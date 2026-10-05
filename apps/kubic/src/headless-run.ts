@@ -220,7 +220,11 @@ import {
   resolveStreamOptions,
   type StreamTuningTables,
 } from '../../../packages/worker/src/stream-options.js';
-import { selectModelUnderPolicy } from './config-runtime.js';
+import {
+  resolveRoleThinking,
+  roleModelScope,
+  selectModelUnderPolicy,
+} from './config-runtime.js';
 import {
   loadExtensionStartup,
   prodExtensionStartupOptions,
@@ -1708,6 +1712,9 @@ async function runHeadlessPromptImpl(
         roleSelection,
         fallbackProviders,
         enterprisePolicy,
+        // The role's allowed set (issue #255; §38.2) gates the
+        // explicit/role selection and the implicit pick alike.
+        roleModelScope(role?.resolved),
       );
     } catch (error) {
       if (error instanceof ModelSelectError) {
@@ -2115,7 +2122,13 @@ async function runHeadlessPromptImpl(
     // to the effective model — the notice channel stays the model's (a
     // clamp names the model, the request, and the level applied).
     const requestThinking = deps.thinking;
-    const roleThinking = role?.resolved.thinking;
+    // A matching set entry's thinking wins over the flat role default
+    // (issue #255; §38.2) — resolved against the SELECTED model.
+    const roleThinking = resolveRoleThinking(
+      role?.resolved,
+      model.provider,
+      model.id,
+    );
     const laneThinking =
       requestThinking === undefined && roleThinking === undefined
         ? undefined

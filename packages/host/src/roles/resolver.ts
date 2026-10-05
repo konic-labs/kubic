@@ -19,7 +19,7 @@ import {
   validateClasses,
 } from '../../../agents/src/policy.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
-import type { ConfigLayer } from '../config/config.js';
+import type { ConfigLayer, RoleModelEntry } from '../config/config.js';
 import { CONFIG_LAYERS } from '../config/config.js';
 import type { DoctorCheck } from '../doctor.js';
 import {
@@ -307,6 +307,9 @@ export interface RoleLayerSpec {
   model?: string;
   // The layer's per-role thinking default (issue #225; §12.1/§63).
   thinking?: string;
+  // The layer's per-role allowed model set (issue #255; §38.2):
+  // normalized entries, whole-list first-wins like `tools`.
+  models?: RoleModelEntry[];
 }
 
 export interface RoleLayerInput {
@@ -330,6 +333,9 @@ export interface MergedRole {
   // any — no layer tier exists, so this passes through untouched.
   budget?: Record<string, number>;
   thinking: string | undefined;
+  // The winning allowed set (issue #255; §38.2), or undefined when no
+  // layer set one — the role then allows all models.
+  models: RoleModelEntry[] | undefined;
   overriddenAttempts: string[];
 }
 
@@ -361,6 +367,10 @@ export function mergeRoleLayers(
   // deterministic grant. A layer can add obligations, never remove them.
   const required = new Set<string>(doc.requires ?? []);
   let thinking: string | undefined;
+  // Whole-list first-wins (issue #255): the highest layer that sets a
+  // set wins it outright (tools precedent) — a lower layer's list never
+  // unions in, so the winning layer's boundary stays exact.
+  let models: RoleModelEntry[] | undefined;
   const classLeaves = new Map<string, unknown>();
   for (const input of ordered) {
     const spec = input.roles[doc.name];
@@ -389,6 +399,12 @@ export function mergeRoleLayers(
         overriddenAttempts.push(`roles.${doc.name}.thinking`);
       }
     }
+    if (spec.models !== undefined) {
+      if (models === undefined) {
+        models = spec.models.map((entry) => ({ ...entry }));
+      } else if (JSON.stringify(models) !== JSON.stringify(spec.models)) {
+        overriddenAttempts.push(`roles.${doc.name}.models`);
+      }
     }
     if (spec.classes !== undefined) {
       for (const key of CLASS_ORDER) {
@@ -423,6 +439,7 @@ export function mergeRoleLayers(
     model,
     ...(doc.budget === undefined ? {} : { budget: { ...doc.budget } }),
     thinking,
+    models,
     overriddenAttempts,
   };
 }
@@ -469,7 +486,42 @@ export interface ResolvedRole {
   budget?: Record<string, number>;
   // The layer-supplied thinking default (issue #225), or undefined.
   thinking: string | undefined;
+  // The layer-supplied allowed model set (issue #255; §38.2), or
+  // undefined when no layer set one — the role then allows all models.
+  models: RoleModelEntry[] | undefined;
   overriddenAttempts: string[];
+}
+
+// The allowed set's matcher (issue #255; §38.2): an absent or empty set
+// allows all; otherwise the `provider/id` must match an entry exactly or
+// sit under a `provider/*` entry. The wildcard keeps its slash, so
+// `local/*` never matches `localfoo/x`.
+export function roleModelAllowed(
+  models: readonly RoleModelEntry[] | undefined,
+  provider: string,
+  id: string,
+): boolean {
+  // Absent or empty allows all (issue #255): only a non-empty set
+  // constrains, so `models = []` and an unset key behave identically.
+  if (models === undefined || models.length === 0) return true;
+  return roleModelEntry(models, provider, id) !== undefined;
+}
+
+// The first entry covering `provider/id` (issue #255): exact entries
+// before wildcard ones is the caller's order, not this function's — the
+// first match wins, so overlapping entries resolve deterministically.
+export function roleModelEntry(
+  models: readonly RoleModelEntry[] | undefined,
+  provider: string,
+  id: string,
+): RoleModelEntry | undefined {
+  if (models === undefined || models.length === 0) return undefined;
+  const ref = `${provider}/${id}`;
+  return models.find(
+    (entry) =>
+      entry.id === ref ||
+      (entry.id.endsWith('/*') && ref.startsWith(entry.id.slice(0, -1))),
+  );
 }
 
 export interface ResolveOptions {
@@ -504,6 +556,11 @@ export function resolveRole(
     model: merged.model,
     ...(merged.budget === undefined ? {} : { budget: merged.budget }),
     thinking: merged.thinking,
+    // Copied, never shared: the caller owns the resolved set.
+    models:
+      merged.models === undefined
+        ? undefined
+        : merged.models.map((entry) => ({ ...entry })),
     overriddenAttempts: merged.overriddenAttempts,
   };
   const toolPolicy = options.toolPolicy;

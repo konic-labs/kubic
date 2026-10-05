@@ -61,6 +61,7 @@ import {
   type SessionFullAccessGrant,
   type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
+import type { RoleModelEntry } from '../../../packages/host/src/config/config.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
 import type {
   RuntimeOrchestrator,
@@ -275,6 +276,8 @@ import {
   type StreamTuningTables,
 } from '../../../packages/worker/src/stream-options.js';
 import {
+  resolveRoleThinking,
+  roleModelScope,
   type runtimeLaneDeps,
   selectModelUnderPolicy,
 } from './config-runtime.js';
@@ -288,6 +291,7 @@ import {
   roleModelSelection,
 } from './model-projection.js';
 import { persistRunTrajectory } from './run-trajectory.js';
+import { formatScopedModels } from './scoped-models.js';
 import {
   createProdTuiOrchestrator,
   mergeSeatFromAnswer,
@@ -797,6 +801,10 @@ export interface TuiLaneBoot {
   // actually runs (never the seed default). Absent (injected boots) means
   // the seed default.
   thinking?: string;
+  // Issue #255 (§38.2): the role's resolved allowed set for
+  // `/scoped-models` — the loop reports it as a local read. Absent (no
+  // role, or an injected boot) means unconstrained.
+  scopedModels?: { role: string; models: RoleModelEntry[] | undefined };
   // Issue #308 (§41.4): the approval posture the lane was installed with —
   // true seeds the status bar's OFF indicator from the first frame.
   fullAccess?: boolean;
@@ -1497,6 +1505,9 @@ export async function bootTuiLane(
         roleSelection,
         assembled?.fallbackProviders,
         enterprisePolicy,
+        // The role's allowed set (issue #255; §38.2): the same gate
+        // `kubic run` applies, so a scoped role boots in-set on both.
+        roleModelScope(selectedRole?.resolved),
       );
     })();
     const explicitModel = hasExplicitModelSelection({
@@ -1618,7 +1629,13 @@ export async function bootTuiLane(
     // A clamp joins the model notices: it names the model, the request
     // and the level applied, and the footer line says the same thing.
     const requestThinking = options.thinking;
-    const roleThinking = selectedRole?.resolved.thinking;
+    // A matching set entry's thinking wins over the flat role default
+    // (issue #255; §38.2) — resolved against the SELECTED model.
+    const roleThinking = resolveRoleThinking(
+      selectedRole?.resolved,
+      model.provider,
+      model.id,
+    );
     const booted = await bootSoloLane({
       session,
       models,
@@ -1848,6 +1865,18 @@ export async function bootTuiLane(
         },
       },
       thinking: runningThinking,
+      // Issue #255 (§38.2): the resolved set travels on the boot so the
+      // `/scoped-models` case (a different closure) can report it.
+      scopedModels:
+        selectedRole === undefined
+          ? undefined
+          : {
+              role: selectedRole.resolved.name,
+              models:
+                selectedRole.resolved.models === undefined
+                  ? undefined
+                  : [...selectedRole.resolved.models],
+            },
       // Issue #347: the gauge needs the running model's window; a catalog
       // that does not know it yields none and the gauge stays off.
       contextLimits: contextLimitsOf(
@@ -2057,6 +2086,9 @@ export async function bootTuiLane(
             undefined,
             undefined,
             enterprisePolicy,
+            // Escalation outside the role's set is refused (issue #255;
+            // §38.2): the live model stays put, like the enterprise gate.
+            roleModelScope(selectedRole?.resolved),
           );
           // Issue #328 review: a switch re-clamps the thinking level to the
           // NEW model's ladder and commits both in one change, so the stored
@@ -4954,6 +4986,20 @@ export async function runTuiCommand(
           }
           case 'session': {
             const report = app.sessionReport(boot.cwd);
+            app.appendNotice([report]);
+            app.setEditorFooter(report);
+            if (!stopped) screen?.render();
+            return 'accepted';
+          }
+          case 'scoped-models': {
+            // The role's resolved allowed set (issue #255; §38.2): a
+            // local read like `/session` — the loop reports, nothing is
+            // sent, and a bare inspection never mutates the transcript
+            // beyond the report row.
+            const report = formatScopedModels(
+              boot.scopedModels?.role,
+              boot.scopedModels?.models,
+            );
             app.appendNotice([report]);
             app.setEditorFooter(report);
             if (!stopped) screen?.render();

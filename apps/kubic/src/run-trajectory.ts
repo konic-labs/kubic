@@ -27,6 +27,7 @@ import {
   TRAJECTORY_FILE,
   writeRunTrajectory,
 } from '../../../packages/host/src/trajectory/run-trajectory.js';
+import type { TrajectoryBudget } from '../../../packages/trajectory/src/schema.js';
 
 // Recorded when the workspace is not a git checkout: the journal, not git,
 // is Kubic's change record (§42), so there is no revision to pin — named,
@@ -62,6 +63,9 @@ export interface PersistRunTrajectoryInput {
   base?: { revision: string; branch: string | null } | null;
   // The run verifier's `signal:*` labels (issue #267).
   evalLabels?: Record<string, string>;
+  // The §71 budget block (issue #285): limits, measured spend, breach.
+  // Absent means the run was unbounded — never an empty object.
+  budget?: TrajectoryBudget;
 }
 
 function gitBase(
@@ -170,6 +174,7 @@ export function persistRunTrajectory(input: PersistRunTrajectoryInput): string {
     endedAt: input.endedAt,
     outcome: input.outcome,
     evalLabels: input.evalLabels ?? {},
+    ...(input.budget === undefined ? {} : { budget: input.budget }),
   });
   return writeRunTrajectory(
     createNodeFileBridge(input.sessionsRoot),

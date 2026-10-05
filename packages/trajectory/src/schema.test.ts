@@ -87,8 +87,8 @@ function parseError(input: unknown): TrajectorySchemaError {
 }
 
 describe('trajectory schema version (issue #51)', () => {
-  it('publishes schema_version 1.1', () => {
-    expect(SCHEMA_VERSION).toBe('1.1');
+  it('publishes schema_version 1.2', () => {
+    expect(SCHEMA_VERSION).toBe('1.2');
     expect(SCHEMA_MAJOR).toBe(1);
   });
 
@@ -104,6 +104,35 @@ describe('trajectory schema version (issue #51)', () => {
     expect(TRAJECTORY_STABILITY).toBe('stable');
     expect(TRAJECTORY_CHANGELOG.length).toBeGreaterThan(0);
     expect(TRAJECTORY_CHANGELOG[0]?.version).toBe(SCHEMA_VERSION);
+  });
+
+  // Issue #285 (§71): the optional budget block — limits, measured
+  // usage, and the breach that ended a budget_exhausted run. Absent on
+  // older records (still parses: every budget leaf is optional on read).
+  it('round-trips the budget block when the run was budgeted', () => {
+    const exported = buildTrajectoryExport({
+      ...validInput(),
+      budget: {
+        limits: { maxToolCalls: 1, maxCostUsd: 0.5 },
+        usage: { toolCalls: 2, costUsd: 0.6 },
+        exhausted: { limit: 'toolCalls', used: 2, max: 1 },
+      },
+    });
+    expect(exported.budget).toEqual({
+      limits: { maxToolCalls: 1, maxCostUsd: 0.5 },
+      usage: { toolCalls: 2, costUsd: 0.6 },
+      exhausted: { limit: 'toolCalls', used: 2, max: 1 },
+    });
+    const parsed = parseTrajectoryExport(JSON.parse(JSON.stringify(exported)));
+    expect(parsed.budget?.exhausted?.limit).toBe('toolCalls');
+  });
+
+  it('omits the budget block when the run was unbounded', () => {
+    const exported = buildTrajectoryExport(validInput());
+    expect(exported.budget).toBeUndefined();
+    expect(() =>
+      parseTrajectoryExport(JSON.parse(JSON.stringify(exported))),
+    ).not.toThrow();
   });
 
   it('accepts a newer minor of the same major (tolerant, no shim)', () => {

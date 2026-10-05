@@ -41,6 +41,7 @@ import {
   type RunReconciliation,
 } from '../../../packages/exec/src/journal-reconcile.js';
 import {
+  budgetLimitsOf,
   budgetToolGate,
   ExtensionBudgetError,
   firstBreachedLimit,
@@ -602,7 +603,18 @@ function stoppedResult(
   if (error instanceof WallClockError) {
     return finished(id, 'timeout', error.message, error.message);
   }
-  return finished(id, 'budget_exhausted', error.message, error.message);
+  const stopped = finished(
+    id,
+    'budget_exhausted',
+    error.message,
+    error.message,
+  );
+  // Issue #285 (§71 observability): a tripped §71 gate names its limit
+  // on the result, so the trajectory can record the breach without
+  // parsing the message. Other guards (e.g. --max-turns) carry no limit.
+  return error instanceof ExtensionBudgetError
+    ? { ...stopped, budgetBreach: { limit: error.limit } }
+    : stopped;
 }
 
 // §46 capture of the run's transcript (#400's readers): the live conversation
@@ -985,10 +997,45 @@ export async function runHeadlessPrompt(
       );
     }
   }
+  // Issue #285 (§71 observability): the trajectory names the §71
+  // budget the run started with, the measured spend and — on a tripped
+  // run — the breach. Unbounded runs carry no block at all.
+  const trajectoryBudget =
+    options.budget === undefined
+      ? undefined
+      : {
+          limits: {
+            ...(options.budget.maxTokens === undefined
+              ? {}
+              : { maxTokens: options.budget.maxTokens }),
+            ...(options.budget.maxCostUsd === undefined
+              ? {}
+              : { maxCostUsd: options.budget.maxCostUsd }),
+            ...(options.budget.maxRuntimeMs === undefined
+              ? {}
+              : { maxRuntimeMs: options.budget.maxRuntimeMs }),
+            ...(options.budget.maxToolCalls === undefined
+              ? {}
+              : { maxToolCalls: options.budget.maxToolCalls }),
+          },
+          ...(settled.usage === undefined
+            ? {}
+            : {
+                usage: {
+                  tokens: settled.usage.input + settled.usage.output,
+                  costUsd: settled.usage.costUsd,
+                  toolCalls: settled.usage.toolCalls,
+                },
+              }),
+          ...(settled.budgetBreach === undefined
+            ? {}
+            : { exhausted: { ...settled.budgetBreach } }),
+        };
   try {
     const path = persistRunTrajectory({
       sessionsRoot: capture.sessionsRoot,
       sessionId: capture.sessionId,
+      ...(trajectoryBudget === undefined ? {} : { budget: trajectoryBudget }),
       agentId: resolveRunAgentId(deps.agentId),
       role: capture.role ?? 'solo',
       prompt: scrub(prompt),
@@ -2340,7 +2387,24 @@ async function runHeadlessPromptImpl(
           });
           if (breached !== undefined) {
             const message = `extension budget exhausted: ${breached} limit breached (opt-in --budget)`;
-            return finished(id, 'budget_exhausted', message, message);
+            // Issue #285 (§71 observability): the post-turn ledger
+            // breach knows the spend and the bound — record both.
+            const spent =
+              breached === 'cost'
+                ? totals.costUsd
+                : totals.input + totals.output;
+            const bound =
+              breached === 'cost'
+                ? budgetLimitsOf(extensions).maxCostUsd
+                : budgetLimitsOf(extensions).maxTokens;
+            return {
+              ...finished(id, 'budget_exhausted', message, message),
+              budgetBreach: {
+                limit: breached,
+                used: spent,
+                ...(bound === undefined ? {} : { max: bound }),
+              },
+            };
           }
         }
         const items = entriesToTranscript(

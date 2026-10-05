@@ -105,6 +105,25 @@ export function formatStatusCost(total: number): string {
 
 export type StatusMode = 'solo' | 'orchestrator';
 
+// Issue #285 (§71): the opt-in solo budget the boot started with — a
+// structural mirror of the max* dims (dep-lint forbids tui → extensions,
+// the same reason StatusUsageRow mirrors KubicUsageRow). `toolCalls` is
+// the attempt count the boot feeds in (the gate's own counter — usage
+// rows undercount tools that report no usage); tokens/cost burn-down
+// reads from the usage summary the bar already holds. Absent (or an
+// empty `limits`) means the run is unbounded and the bar stays silent.
+export interface StatusBudgetLimits {
+  readonly maxTokens?: number;
+  readonly maxCostUsd?: number;
+  readonly maxToolCalls?: number;
+  readonly maxRuntimeMs?: number;
+}
+
+export interface StatusBudget {
+  readonly limits: StatusBudgetLimits;
+  readonly toolCalls: number;
+}
+
 export interface StatusBarState {
   readonly model: string;
   readonly thinking: string;
@@ -112,6 +131,7 @@ export interface StatusBarState {
   readonly mode: StatusMode;
   readonly approvalsSkipped: boolean;
   readonly sessionId: string;
+  readonly budget?: StatusBudget;
   // Issue #347 (§18): the model's context window and the token level at
   // which the solo lane compacts (window − reserve, #399's policy; #239 will
   // make the reserve configurable). Both absent means the gauge stays off —
@@ -183,9 +203,50 @@ function contextSegment(
     : text;
 }
 
-// Row 1 segments, highest truncation priority last: the context gauge drops
-// first, then thinking, then the model shrinks; tokens + session cost never
-// go.
+// The §71 budget segment: one burn-down per set dimension (`tools 3/10`,
+// `$0.12/$0.50`, `tokens 1200/4096`) plus the wall-clock bound as static
+// limit text (the bar holds no elapsed source — `wall≤60s`). Undefined
+// when no dimension is set: an unbounded run shows nothing budget-shaped.
+// A breached dimension takes the warning colour: the next tool call may
+// not run.
+function budgetSegment(
+  budget: StatusBudget | undefined,
+  summary: StatusSummary,
+  theme: StatusBarTheme,
+): string | undefined {
+  if (budget === undefined) return undefined;
+  const { limits, toolCalls } = budget;
+  const segs: string[] = [];
+  let breached = false;
+  if (limits.maxToolCalls !== undefined) {
+    segs.push(`tools ${toolCalls}/${limits.maxToolCalls}`);
+    breached = breached || toolCalls > limits.maxToolCalls;
+  }
+  if (limits.maxCostUsd !== undefined) {
+    segs.push(
+      `${formatStatusCost(summary.costTotal)}/$${limits.maxCostUsd.toFixed(2)}`,
+    );
+    breached = breached || summary.costTotal > limits.maxCostUsd;
+  }
+  if (limits.maxTokens !== undefined) {
+    const tokens = summary.input + summary.output;
+    segs.push(`tokens ${tokens}/${limits.maxTokens}`);
+    breached = breached || tokens > limits.maxTokens;
+  }
+  if (limits.maxRuntimeMs !== undefined) {
+    const ms = limits.maxRuntimeMs;
+    segs.push(
+      `wall≤${ms >= 1000 && ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`}`,
+    );
+  }
+  if (segs.length === 0) return undefined;
+  const text = `budget ${segs.join(' · ')}`;
+  return breached ? theme.warning(text) : text;
+}
+
+// Row 1 segments, highest truncation priority last: the context gauge
+// drops first, then the budget burn-down, then thinking, then the model
+// shrinks; tokens + session cost never go.
 function renderRow1(
   state: StatusBarState,
   summary: StatusSummary,
@@ -197,7 +258,11 @@ function renderRow1(
   const base = `${state.model} • thinking ${state.thinking} • ${tokens} • ${cost}`;
   const ctx = contextSegment(state, summary, theme);
   const full = ctx === undefined ? base : `${base} • ${ctx}`;
-  if (statusVisibleWidth(full) <= width) return full;
+  const seg = budgetSegment(state.budget, summary, theme);
+  const fullB = seg === undefined ? full : `${full} • ${seg}`;
+  if (statusVisibleWidth(fullB) <= width) return fullB;
+  const baseB = seg === undefined ? base : `${base} • ${seg}`;
+  if (statusVisibleWidth(baseB) <= width) return baseB;
   if (statusVisibleWidth(base) <= width) return base;
   const bare = `${shortModel(state.model, width, ` • ${tokens} • ${cost}`)} • ${tokens} • ${cost}`;
   if (statusVisibleWidth(bare) <= width) return bare;

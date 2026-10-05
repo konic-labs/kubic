@@ -143,6 +143,42 @@ function priced(over: Partial<StatusUsageRow> = {}): StatusUsageRow {
   };
 }
 
+describe('budget burn-down (issue #285; §71)', () => {
+  // The bar names the §71 limits with live burn-down — tools from the
+  // attempt count the boot feeds in, tokens/cost from the usage rows —
+  // and stays silent when no limit is set.
+  it("renders 'budget tools 3/10' when a limit is set", () => {
+    const [row1] = renderStatusLines(
+      state({
+        rows: [
+          priced({
+            usage: {
+              ...priced().usage,
+              cost: { ...priced().usage.cost, total: 0.12 },
+            },
+          }),
+        ],
+        budget: { limits: { maxToolCalls: 10, maxCostUsd: 0.5 }, toolCalls: 3 },
+      }),
+      120,
+    );
+    expect(row1).toContain('budget tools 3/10 · $0.12/$0.50');
+  });
+
+  it('renders nothing budget-shaped when no limit is set', () => {
+    const [row1] = renderStatusLines(state({ rows: [priced()] }), 120);
+    expect(row1).not.toContain('budget');
+  });
+
+  it('renders the limit text when only wall-clock is bounded', () => {
+    const [row1] = renderStatusLines(
+      state({ budget: { limits: { maxRuntimeMs: 60000 }, toolCalls: 0 } }),
+      120,
+    );
+    expect(row1).toContain('budget wall≤60s');
+  });
+});
+
 describe('context-window gauge (issue #347; §18)', () => {
   // A committed request whose prompt was 420 tokens (300 new + 120 cached)
   // against a 1000-token window: `ctx 42%`.

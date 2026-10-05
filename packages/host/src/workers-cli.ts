@@ -47,6 +47,9 @@ export interface WorkerListRow {
   resources?: TaskResources;
   /** Settled token/cost/call counts from the run's own usage summary. */
   consumption?: WorkerConsumption;
+  /** The §71 budget bound, when the run stored one (issue #285). Absent
+   *  means the worker runs unbounded — never an empty object. */
+  budget?: WorkerBudgetView;
   pid?: number;
   startupMs?: number;
 }
@@ -58,6 +61,15 @@ export interface WorkerConsumption {
   cachedTokens?: number;
   toolCalls?: number;
   costUsd?: number;
+}
+
+// The §71 budget bound a worker runs under (issue #285): the shared
+// task spec plus the worker's own override, the same shape the inspect
+// facet already served (WorkerRunView.budget). Merged worker-wins for
+// display: the operator sees the effective bound, not the layering.
+export interface WorkerBudgetView {
+  shared?: Record<string, number>;
+  worker?: Record<string, number>;
 }
 
 /** One RSS/CPU point sample for a live pid (issue #248). */
@@ -210,7 +222,107 @@ const COLUMNS: readonly TableColumn[] = [
   { header: 'PID', align: 'right' },
   { header: 'STARTUP', align: 'right' },
   { header: 'RESOURCES' },
+  { header: 'BUDGET' },
 ];
+
+// The effective §71 limits: the worker's own override wins over the
+// shared task spec. Undefined when the worker runs unbounded.
+export function effectiveBudgetLimits(
+  budget: WorkerBudgetView | undefined,
+): Record<string, number> | undefined {
+  if (budget === undefined) return undefined;
+  const limits = { ...budget.shared, ...budget.worker };
+  return Object.keys(limits).length === 0 ? undefined : limits;
+}
+
+function formatMoney(value: number): string {
+  return `$${String(Number(value.toFixed(4)))}`;
+}
+
+// The `--json` budget block (issue #285): the effective limits plus the
+// settled usage in trajectory shape (`tokens`, not input/output halves).
+// Undefined for unbounded rows; usage rides only when a consumption exists
+// and names at least one dimension.
+function workerBudgetJson(
+  row: WorkerListRow,
+):
+  | { limits: Record<string, number>; usage?: Record<string, number> }
+  | undefined {
+  const limits = effectiveBudgetLimits(row.budget);
+  if (limits === undefined) return undefined;
+  const consumption = row.consumption;
+  if (consumption === undefined) return { limits };
+  const usage: Record<string, number> = {
+    ...(consumption.inputTokens === undefined &&
+    consumption.outputTokens === undefined
+      ? {}
+      : {
+          tokens:
+            (consumption.inputTokens ?? 0) + (consumption.outputTokens ?? 0),
+        }),
+    ...(consumption.costUsd === undefined
+      ? {}
+      : { costUsd: consumption.costUsd }),
+    ...(consumption.toolCalls === undefined
+      ? {}
+      : { toolCalls: consumption.toolCalls }),
+  };
+  return Object.keys(usage).length === 0 ? { limits } : { limits, usage };
+}
+
+// One burn-down per set dimension (`tools 3/10`, `$0.12/$0.50`) from the
+// settled consumption; limits alone (`maxToolCalls=4`) while the worker
+// is still live — a live spend is unknown, never zero. Undefined for
+// unbounded rows: no invented budget.
+export function formatWorkerBudget(
+  budget: WorkerBudgetView | undefined,
+  consumption: WorkerConsumption | undefined,
+): string | undefined {
+  const limits = effectiveBudgetLimits(budget);
+  if (limits === undefined) return undefined;
+  const segs: string[] = [];
+  if (limits.maxToolCalls !== undefined) {
+    segs.push(
+      consumption?.toolCalls === undefined
+        ? `maxToolCalls=${limits.maxToolCalls}`
+        : `tools ${consumption.toolCalls}/${limits.maxToolCalls}`,
+    );
+  }
+  if (limits.maxCostUsd !== undefined) {
+    segs.push(
+      consumption?.costUsd === undefined
+        ? `maxCostUsd=${limits.maxCostUsd}`
+        : `${formatMoney(consumption.costUsd)}/$${limits.maxCostUsd.toFixed(2)}`,
+    );
+  }
+  if (limits.maxTokens !== undefined) {
+    const tokens =
+      (consumption?.inputTokens ?? 0) + (consumption?.outputTokens ?? 0);
+    segs.push(
+      consumption?.inputTokens === undefined &&
+        consumption?.outputTokens === undefined
+        ? `maxTokens=${limits.maxTokens}`
+        : `tokens ${tokens}/${limits.maxTokens}`,
+    );
+  }
+  if (limits.maxRuntimeMs !== undefined) {
+    const ms = limits.maxRuntimeMs;
+    segs.push(
+      `wall≤${ms >= 1000 && ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`}`,
+    );
+  }
+  for (const [key, value] of Object.entries(limits)) {
+    if (
+      key !== 'maxToolCalls' &&
+      key !== 'maxCostUsd' &&
+      key !== 'maxTokens' &&
+      key !== 'maxRuntimeMs'
+    ) {
+      segs.push(`${key}=${value}`);
+    }
+  }
+  return segs.length === 0 ? undefined : segs.join(' · ');
+}
 
 export async function runWorkersCommand(
   options: WorkersCliOptions,
@@ -231,6 +343,7 @@ export async function runWorkersCommand(
       formatJson(
         rows.map((row, at) => {
           const sample = samples[at];
+          const budget = workerBudgetJson(row);
           return {
             workerId: row.workerId,
             sessionId: row.sessionId,
@@ -254,6 +367,7 @@ export async function runWorkersCommand(
             ...(row.consumption === undefined
               ? {}
               : { consumption: row.consumption }),
+            ...(budget === undefined ? {} : { budget }),
             pid: row.pid,
             startupMs: row.startupMs,
           };
@@ -284,6 +398,7 @@ export async function runWorkersCommand(
           row.pid === undefined ? '-' : String(row.pid),
           row.startupMs === undefined ? '-' : `${row.startupMs}ms`,
           formatResources(row.resources, samples[at], row.consumption),
+          formatWorkerBudget(row.budget, row.consumption) ?? '-',
         ]),
         COLUMNS,
         { fancy: deps.fancy === true, theme },
@@ -325,7 +440,7 @@ export interface WorkerWorktreeView {
 
 export interface WorkerRunView {
   /** The worker-specific budget bound, when the run stored one. */
-  budget?: { shared?: Record<string, number>; worker?: Record<string, number> };
+  budget?: WorkerBudgetView;
   /** The settled usage rollup from the run's own record, when settled. */
   usage?: {
     inputTokens?: number;

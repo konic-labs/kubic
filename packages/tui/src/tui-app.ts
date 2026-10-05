@@ -89,6 +89,7 @@ import {
   formatStatusCost,
   StatusBar,
   type StatusBarState,
+  type StatusBudgetLimits,
   type StatusMode,
   type StatusUsageRow,
   summarizeStatusRows,
@@ -169,6 +170,11 @@ export interface TuiAppSeed {
   // window — the context gauge then stays off.
   readonly contextWindow?: number;
   readonly compactionThreshold?: number;
+  // Issue #285 (§71): the opt-in solo budget limits the boot started
+  // with. Static for the boot — the burn-down arrives via setBudgetSpend —
+  // so the limits (never the spend) are on the bar from the first frame.
+  // Absent means the run is unbounded and the bar stays silent.
+  readonly budgetLimits?: StatusBudgetLimits;
   // Issue #303 (§16.6/§16.9): the keybinding registry — defaults plus the
   // user's ~/.kubic/keybindings.json overrides, resolved by the composition
   // root. Every key the app claims ahead of the editor is looked up here.
@@ -376,6 +382,11 @@ export interface TuiApp {
     contextWindow?: number;
     compactionThreshold?: number;
   }): void;
+  // Issue #285 (§71): the attempt count the boot feeds in — the §71
+  // gate's own counter, which a tool-start names even when the gate
+  // refuses the call. A no-op without seeded limits: an unbounded run
+  // never grows a budget segment.
+  setBudgetSpend(toolCalls: number): void;
   // Issue #327: orchestrator report lines (the manager-lane run's own
   // output) rendered as transcript text. Presentation only: the report
   // never drives state, and a solo lane snapshot replaces it.
@@ -807,6 +818,11 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     ...(seed.compactionThreshold === undefined
       ? {}
       : { compactionThreshold: seed.compactionThreshold }),
+    // Issue #285 (§71): limits on the bar from the first frame; the
+    // spend half starts at zero and setBudgetSpend moves it.
+    ...(seed.budgetLimits === undefined
+      ? {}
+      : { budget: { limits: seed.budgetLimits, toolCalls: 0 } }),
   };
   const status = new StatusBar(barState);
   // The live model label the header, welcome block and status bar show; one
@@ -1508,6 +1524,14 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         ...status.getState(),
         contextWindow: limits.contextWindow,
         compactionThreshold: limits.compactionThreshold,
+      });
+    },
+    setBudgetSpend: (toolCalls: number): void => {
+      const current = status.getState();
+      if (current.budget === undefined) return;
+      status.setState({
+        ...current,
+        budget: { ...current.budget, toolCalls },
       });
     },
     appendReport: (lines: ReadonlyArray<string>): void => {

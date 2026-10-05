@@ -27,6 +27,7 @@ import type {
   JsonValue,
   TrajectoryAction,
   TrajectoryApproval,
+  TrajectoryBudget,
   TrajectoryExport,
   TrajectoryFailureCode,
   TrajectoryModelUsage,
@@ -94,6 +95,10 @@ export interface RunTrajectoryInput {
   // The run verifier's `signal:*` labels (issue #267); absent means none —
   // every gate stays unknown.
   evalLabels?: Record<string, string>;
+  // The §71 budget block (issue #285): the limits the run started with,
+  // the measured spend and the breach. Absent means the run was
+  // unbounded — never an empty object.
+  budget?: TrajectoryBudget;
 }
 
 // Two runs of one prompt answer the same task, so they can form a §74
@@ -416,6 +421,7 @@ export function assembleRunTrajectory(
       endedAt: new Date(input.endedAt).toISOString(),
     },
     usage: usageOf(items),
+    ...(input.budget === undefined ? {} : { budget: input.budget }),
     result,
     eval: {
       suite: null,

@@ -139,6 +139,7 @@ import {
   runWorkerInspectCommand,
   runWorkersCommand,
   runWorkerTerminateCommand,
+  type WorkerBudgetView,
   type WorkerConsumption,
   type WorkerListRow,
   type WorkerRunView,
@@ -577,6 +578,28 @@ function prodReadRunState(
 }
 
 // Settled usage: the run's own record carries the §68 metrics rollup.
+// The §71 budget bound a worker runs under (issue #285): the shared
+// task spec plus the worker's own override. Undefined when the run stored
+// no bound for the worker — the row stays silent, never unbounded-claimed.
+function prodBudgetOf(
+  state: unknown,
+  workerId: string,
+): WorkerBudgetView | undefined {
+  const budget = (state as { budget?: unknown }).budget;
+  if (typeof budget !== 'object' || budget === null) return undefined;
+  const shared = numericRecord((budget as { shared?: unknown }).shared);
+  const byAgent = (budget as { byAgent?: unknown }).byAgent;
+  const worker =
+    typeof byAgent === 'object' && byAgent !== null
+      ? numericRecord((byAgent as Record<string, unknown>)[workerId])
+      : undefined;
+  if (shared === undefined && worker === undefined) return undefined;
+  return {
+    ...(shared === undefined ? {} : { shared }),
+    ...(worker === undefined ? {} : { worker }),
+  };
+}
+
 function prodUsageOf(
   state: unknown,
   workerId: string,
@@ -660,21 +683,10 @@ function prodInspectRun(repoRoot: string, row: WorkerListRow): WorkerRunView {
   const found = prodReadRunState(repoRoot, row);
   if (found === undefined) return view;
   const { state } = found;
-  const budget = (state as { budget?: unknown }).budget;
-  if (typeof budget === 'object' && budget !== null) {
-    const shared = numericRecord((budget as { shared?: unknown }).shared);
-    const byAgent = (budget as { byAgent?: unknown }).byAgent;
-    const worker =
-      typeof byAgent === 'object' && byAgent !== null
-        ? numericRecord((byAgent as Record<string, unknown>)[row.workerId])
-        : undefined;
-    if (shared !== undefined || worker !== undefined) {
-      view.budget = {
-        ...(shared === undefined ? {} : { shared }),
-        ...(worker === undefined ? {} : { worker }),
-      };
-    }
-  }
+  // Issue #285 (§71): the list rows carry the same bound (zero extra
+  // reads — the run state is already in hand for the consumption).
+  const budget = prodBudgetOf(state, row.workerId);
+  if (budget !== undefined) view.budget = budget;
   const usage = prodUsageOf(state, row.workerId);
   if (usage !== undefined) {
     view.usage = usage;
@@ -1453,11 +1465,16 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
             };
             return workersListFromRepo(root).map((row) => {
               const found = stateOf(row);
-              const usage =
-                found === undefined
-                  ? undefined
-                  : prodUsageOf(found.state, row.workerId);
-              return usage === undefined ? row : { ...row, consumption: usage };
+              if (found === undefined) return row;
+              const usage = prodUsageOf(found.state, row.workerId);
+              const budget = prodBudgetOf(found.state, row.workerId);
+              return usage === undefined && budget === undefined
+                ? row
+                : {
+                    ...row,
+                    ...(usage === undefined ? {} : { consumption: usage }),
+                    ...(budget === undefined ? {} : { budget }),
+                  };
             });
           },
           sample: (pid) => prodSampleResources(pid),

@@ -635,6 +635,9 @@ describe('kubic workers list resources (prod wiring, issue #248)', () => {
     writeFileSync(
       join(dir, '.kubic', 'orchestrator', 'run-7.json'),
       JSON.stringify({
+        // Issue #285 (§71): the run's stored §71 bound rides the same
+        // record the consumption comes from — no extra reads.
+        budget: { shared: { maxToolCalls: 10, maxCostUsd: 0.5 } },
         records: [
           {
             agentId: 'w7',
@@ -675,6 +678,10 @@ describe('kubic workers list resources (prod wiring, issue #248)', () => {
     expect(text).toMatch(/cpu=\d+(\.\d+)?%/);
     expect(text).toContain('tok=1.5k');
     expect(text).toContain('cost=$0.012');
+    // Issue #285: the BUDGET column burns the settled spend down from
+    // the stored bound.
+    expect(text).toContain('tools 5/10');
+    expect(text).toContain('$0.012/$0.50');
     const json = runners();
     expect(
       await json.r.workers({ command: 'list', json: true }, noConfig),
@@ -684,6 +691,10 @@ describe('kubic workers list resources (prod wiring, issue #248)', () => {
       cpuPct: expect.any(Number),
     });
     expect(doc[0]?.consumption).toMatchObject({ costUsd: 0.012 });
+    expect(doc[0]?.budget).toEqual({
+      limits: { maxToolCalls: 10, maxCostUsd: 0.5 },
+      usage: { tokens: 1500, costUsd: 0.012, toolCalls: 5 },
+    });
   });
 });
 

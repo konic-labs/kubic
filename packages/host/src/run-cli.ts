@@ -242,6 +242,13 @@ export interface HeadlessRunResult {
   // default. Absent when no session was ever created (same bound as
   // posture — the mode is read from the session record).
   mode?: RunMode;
+  // The §71 budget breach that ended the run (issue #285): the
+  // worker-facet limit name (`tokens` | `cost` | `toolCalls` |
+  // `wallClock`), with the measured spend and the bound when the breach
+  // site knew them (a post-turn ledger breach does; a mid-turn gate trip
+  // names the limit only). Present exactly on `budget_exhausted` runs
+  // that tripped a configured solo budget.
+  budgetBreach?: { limit: string; used?: number; max?: number };
 }
 
 export interface RunUsage {

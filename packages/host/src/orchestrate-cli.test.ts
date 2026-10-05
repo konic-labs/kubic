@@ -32,10 +32,12 @@ import {
   createMergeHeadCursor,
   MergeConflictError,
   managerCallsForMerge,
+  parseBudgetSpec,
   parseOrchestratorRunState,
   runOrchestrateCommand,
   workerSessionFor,
 } from './orchestrate-cli.js';
+import { createOrchestratorApprovalsRun } from './orchestrator/approvals/worker-asks.js';
 import {
   MANAGER_ALLOWLIST,
   registerManagerLane,
@@ -682,6 +684,53 @@ describe('orchestrate report colours (shared CLI theme)', () => {
     );
     // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting no ANSI escapes
     expect(json.lines.join('\n')).not.toMatch(/\u001b\[/);
+  });
+});
+
+describe('orchestrate per-worker budget line (issue #285; §71)', () => {
+  it('names the §71 bound on the worker line — no --debug needed', async () => {
+    // A per-agent bound needs the approvals layer wired (the run refuses
+    // an unenforceable spec): the real run over a temp dir,asks never
+    // raised on a quiet single-worker run.
+    const dir = mkdtempSync(join(tmpdir(), 'budget-line-'));
+    try {
+      const world = makeWorld({}, { alpha: 1 });
+      const code = await runOrchestrateCommand(
+        {
+          prompt: 'demo',
+          agents: ['alpha'],
+          session: 'sess-budget-line',
+          yes: true,
+          budget: parseBudgetSpec('alpha:maxToolCalls=5'),
+        },
+        {
+          ...world.deps,
+          approvals: (approvalOptions) =>
+            createOrchestratorApprovalsRun({
+              dir,
+              sessionId: approvalOptions.sessionId,
+              maxPendingMs: approvalOptions.maxPendingMs,
+              pollMs: 5,
+              seat: async () => ({ approved: true, by: 'user' }),
+            }),
+        },
+      );
+      expect(code).toBe(0);
+      const text = world.lines.join('\n');
+      expect(text).toContain('worker: alpha');
+      expect(text).toContain('budget=maxToolCalls=5');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves the worker line alone when no budget is set', async () => {
+    const world = makeWorld({}, { alpha: 1 });
+    await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-nobudget-line' },
+      world.deps,
+    );
+    expect(world.lines.some((line) => line.includes('budget='))).toBe(false);
   });
 });
 

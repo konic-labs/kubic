@@ -201,7 +201,9 @@ describe('assembleRunTrajectory (issue #383)', () => {
     expect(() =>
       parseTrajectoryExport(JSON.parse(JSON.stringify(exported))),
     ).not.toThrow();
-    expect(exported.schema_version).toBe('1.1');
+    // Issue #285: the optional §71 budget block ships as schema v1.2
+    // (wholly optional on read — older records and readers unaffected).
+    expect(exported.schema_version).toBe('1.2');
   });
 
   it('records the run provenance: session, agent, pid, generation, worktree, model', () => {

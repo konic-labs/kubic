@@ -54,8 +54,8 @@ describe('kubic workers (issue #42)', () => {
     expect(code).toBe(0);
     expect(lines).toHaveLength(1);
     expect(lines[0]?.split('\n')).toEqual([
-      'WORKER  AGENT    PROCESS  GEN  AGE  OWNER            PID  STARTUP  RESOURCES',
-      'w-1     running  ready      2  10s  parent-session  4242     40ms  skills=review',
+      'WORKER  AGENT    PROCESS  GEN  AGE  OWNER            PID  STARTUP  RESOURCES      BUDGET',
+      'w-1     running  ready      2  10s  parent-session  4242     40ms  skills=review  -',
     ]);
   });
 
@@ -73,7 +73,7 @@ describe('kubic workers (issue #42)', () => {
     };
     await runWorkersCommand({}, deps(lines, [bare]));
     expect(lines[0]?.split('\n')[1]).toBe(
-      'w-2     failed  exiting(SIGKILL)    1  3h   o        -        -  -',
+      'w-2     failed  exiting(SIGKILL)    1  3h   o        -        -  -          -',
     );
     // A row that only knows its process phase (an embedder) still renders.
     await runWorkersCommand(
@@ -90,6 +90,60 @@ describe('kubic workers (issue #42)', () => {
     const text = lines.join('\n');
     expect(text).toContain('┌');
     expect(text).toContain(theme.success('running'));
+  });
+
+  // Issue #285 (§71): a budgeted worker's row names its effective limits
+  // with burn-down from the settled consumption; --json carries the same
+  // block. Unbounded rows stay silent (no invented budget).
+  it('shows budget burn-down in a BUDGET column when limits are stored', async () => {
+    const lines: string[] = [];
+    const row: WorkerListRow = {
+      ...ROW,
+      budget: { shared: { maxToolCalls: 10, maxCostUsd: 0.5 } },
+      consumption: {
+        inputTokens: 100,
+        outputTokens: 50,
+        costUsd: 0.12,
+        toolCalls: 3,
+      },
+    };
+    await runWorkersCommand({}, deps(lines, [row]));
+    expect(lines[0]?.split('\n')[0]).toContain('BUDGET');
+    expect(lines[0]).toContain('tools 3/10');
+    expect(lines[0]).toContain('$0.12/$0.50');
+  });
+
+  it('shows limits without burn-down while the worker is still live', async () => {
+    const lines: string[] = [];
+    const row: WorkerListRow = {
+      ...ROW,
+      budget: { worker: { maxToolCalls: 4 } },
+      consumption: undefined,
+    };
+    await runWorkersCommand({}, deps(lines, [row]));
+    expect(lines[0]).toContain('maxToolCalls=4');
+    expect(lines[0]).not.toContain('tools 0/4');
+  });
+
+  it('carries budget:{limits,usage} in --json only when bounded', async () => {
+    const lines: string[] = [];
+    const bounded: WorkerListRow = {
+      ...ROW,
+      budget: { shared: { maxToolCalls: 10 }, worker: { maxCostUsd: 0.5 } },
+      consumption: {
+        inputTokens: 100,
+        outputTokens: 50,
+        costUsd: 0.12,
+        toolCalls: 3,
+      },
+    };
+    await runWorkersCommand({ json: true }, deps(lines, [bounded, ROW]));
+    const doc = JSON.parse(lines[0] ?? '');
+    expect(doc[0]?.budget).toEqual({
+      limits: { maxToolCalls: 10, maxCostUsd: 0.5 },
+      usage: { tokens: 150, costUsd: 0.12, toolCalls: 3 },
+    });
+    expect(doc[1]?.budget).toBeUndefined();
   });
 
   it('prints --json rows carrying the §13 status and startup span ms', async () => {

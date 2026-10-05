@@ -3,12 +3,13 @@
 // tool-call overrun trips the gate mid-turn, a billed cost overrun trips
 // the after-turn usage check. Both end budget_exhausted (exit 3) naming
 // the limit. Temp dirs cleaned in afterEach; zero network, zero tokens.
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { mapTerminusToExitCode } from '../../../packages/host/src/run-cli.js';
+import { parseTrajectoryExportJSON } from '../../../packages/trajectory/src/schema.js';
 import {
   bootFauxLane,
   runPrompt,
@@ -114,6 +115,15 @@ describe('solo --budget end to end (issue #283)', () => {
     expect(result.terminus).toBe('budget_exhausted');
     expect(mapTerminusToExitCode(result.terminus, undefined)).toBe(3);
     expect(result.summary).toContain('toolCalls');
+    // Issue #285 (§71 observability): the trajectory names the budget
+    // the run started with and the tripped limit (a mid-turn gate trip
+    // names the limit; the spend/bound come from the post-turn ledger).
+    const exported = parseTrajectoryExportJSON(
+      readFileSync(result.trajectoryRef, 'utf8'),
+    );
+    expect(exported.budget?.limits).toEqual({ maxToolCalls: 1 });
+    expect(exported.budget?.exhausted?.limit).toBe('toolCalls');
+    expect(exported.budget?.usage?.tokens).toBeGreaterThan(0);
   });
 
   it('a billed cost past maxCostUsd ends budget_exhausted naming cost', async () => {
@@ -154,6 +164,14 @@ describe('solo --budget end to end (issue #283)', () => {
       expect(result.terminus).toBe('budget_exhausted');
       expect(mapTerminusToExitCode(result.terminus, undefined)).toBe(3);
       expect(result.summary).toContain('cost');
+      // Issue #285: the post-turn ledger breach records spend + bound.
+      const exported = parseTrajectoryExportJSON(
+        readFileSync(result.trajectoryRef, 'utf8'),
+      );
+      expect(exported.budget?.limits).toEqual({ maxCostUsd: 0.5 });
+      expect(exported.budget?.exhausted?.limit).toBe('cost');
+      expect(exported.budget?.exhausted?.max).toBe(0.5);
+      expect(exported.budget?.exhausted?.used ?? 0).toBeGreaterThan(0.5);
     } finally {
       await lane.cleanup().catch(() => undefined);
     }
@@ -190,5 +208,14 @@ describe('solo --budget end to end (issue #283)', () => {
       { maxToolCalls: 1, maxCostUsd: 0.5 },
     );
     expect(result.terminus).toBe('completed');
+    // Issue #285: limits ride the trajectory; no breach, no exhausted.
+    const exported = parseTrajectoryExportJSON(
+      readFileSync(result.trajectoryRef, 'utf8'),
+    );
+    expect(exported.budget?.limits).toEqual({
+      maxToolCalls: 1,
+      maxCostUsd: 0.5,
+    });
+    expect(exported.budget?.exhausted).toBeUndefined();
   });
 });

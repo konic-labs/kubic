@@ -2611,6 +2611,12 @@ export class TuiTurnRunner {
   // except the fault notice which always renders).
   private readonly debug: DebugSink | undefined;
 
+  // Issue #285 (§71): the attempt count feeding the bar's budget
+  // segment. Every `tool-start` names an attempt — the slot goes running
+  // before the tool wrappers (including the §71 gate) execute — so a
+  // gate-refused call counts exactly like the gate counted it.
+  private budgetToolCalls = 0;
+
   constructor(
     app: TuiApp,
     loop: TuiLaneLoop,
@@ -2849,6 +2855,10 @@ export class TuiTurnRunner {
     if (event.type === 'tool-start') {
       // Issue #290: the turn's tool span opens with the call.
       this.spans?.turns.startTool(event.toolCallId, event.toolName);
+      // Issue #285 (§71): the bar's burn-down follows the gate's own
+      // counter (a no-op here when the run is unbounded).
+      this.budgetToolCalls += 1;
+      this.app.setBudgetSpend(this.budgetToolCalls);
     }
     if (event.type === 'fault') {
       // Issue #246: a faulted harness task (pi-durable `task_failed` —
@@ -3759,6 +3769,10 @@ export async function runTuiCommand(
     ...(boot.contextLimits?.compactionThreshold === undefined
       ? {}
       : { compactionThreshold: boot.contextLimits.compactionThreshold }),
+    // Issue #285 (§71): the opt-in budget limits ride the bar from the
+    // first frame; the attempt half arrives via setBudgetSpend as
+    // tool-start events land. Absent means unbounded (silent bar).
+    ...(options.budget === undefined ? {} : { budgetLimits: options.budget }),
   });
   // Issue #346: the resumed session's committed spend is on the bar from the
   // first frame, not only after the next turn's usage event.

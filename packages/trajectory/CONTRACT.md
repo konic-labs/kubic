@@ -1,4 +1,4 @@
-# Trajectory export contract — v1.1 (`stable`)
+# Trajectory export contract — v1.2 (`stable`)
 
 Published contract for issue #51 (design §46). Every autonomous run may
 emit one versioned JSON record sufficient for replay/bench/SFT/RL/debug —
@@ -27,6 +27,13 @@ The 1.1 additions are optional on read (a 1.0 record still parses, no
 shim) and written by the exporter: an absent parent is `null`, an absent
 role falls back to `task.role`, absent leaves/memos/evidence are `[]`,
 and absent approval details are `null` — never an invented value.
+
+The 1.2 `budget` block is the first optional top-level section: absent
+on unbounded runs (never an empty object), present as `budget:
+{ limits, usage?, exhausted? }` when the run started with §71 limits.
+`exhausted` names the breaching limit (`limit`, with `used`/`max` when
+the producer knew them) on a `budget_exhausted` run. A 1.1 record still
+parses with no shim.
 
 ## Non-negotiables (fail-closed, never silent drop)
 
@@ -69,6 +76,10 @@ and absent approval details are `null` — never an invented value.
 
 ## Changelog
 
+- 1.2 (2026-10-05): optional §71 budget block — `budget: { limits,
+  usage?, exhausted? }`, absent on unbounded runs. Optional on read:
+  1.1 records still parse with no shim. (Machine-readable mirror:
+  `TRAJECTORY_CHANGELOG` in `src/schema.ts`.)
 - 1.1 (2026-10-04): additive §46 fields — identity ancestry
   (`parentSessionId`, `role`), escalation attribution
   (`fromModel`/`toModel`/`thinking`), approval audit (`requested`,

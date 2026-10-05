@@ -13,6 +13,9 @@ import {
   SCHEMA_VERSION,
   type TrajectoryAction,
   type TrajectoryApproval,
+  type TrajectoryBudget,
+  type TrajectoryBudgetExhausted,
+  type TrajectoryBudgetUsage,
   type TrajectoryDiff,
   type TrajectoryDurableState,
   type TrajectoryEnvironment,
@@ -47,7 +50,8 @@ export type TrajectoryExportErrorCode =
   | 'contradictory-result'
   | 'invalid-timestamps'
   | 'invalid-usage'
-  | 'invalid-escalation';
+  | 'invalid-escalation'
+  | 'invalid-budget';
 
 export class TrajectoryExportError extends Error {
   readonly code: TrajectoryExportErrorCode;
@@ -95,6 +99,9 @@ export interface BuildTrajectoryInput {
   usage: TrajectoryUsage;
   result: TrajectoryResult;
   eval?: TrajectoryEvalSlot | null;
+  // 1.2 (§71, issue #285): the budget block the export carries. Absent
+  // means the run was unbounded — never an empty object.
+  budget?: TrajectoryBudget | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -275,6 +282,87 @@ function checkUsage(input: BuildTrajectoryInput): TrajectoryUsage {
 
 // §52 on failures: every non-completed result carries its failure
 // category; a completed result carrying an error is contradictory.
+// 1.2 (issue #285): fail-closed budget block — a malformed block never
+// ships inside a valid export. Limits/usage leaves must be finite
+// numbers; exhausted names its limit (used/max optional, known when the
+// producer read them from the ledger).
+function checkBudget(input: BuildTrajectoryInput): TrajectoryBudget | null {
+  const budget = input.budget;
+  if (budget === undefined || budget === null) return null;
+  if (!isRecord(budget)) {
+    throw new TrajectoryExportError(
+      'invalid-budget',
+      'trajectory export blocked: budget must be an object',
+    );
+  }
+  const b = budget as unknown as Record<string, unknown>;
+  const limits = b.limits;
+  if (!isRecord(limits)) {
+    throw new TrajectoryExportError(
+      'invalid-budget',
+      'trajectory export blocked: budget.limits is required',
+    );
+  }
+  const out: TrajectoryBudget = { limits: {} };
+  for (const [dim, max] of Object.entries(limits)) {
+    if (typeof max !== 'number' || !Number.isFinite(max)) {
+      throw new TrajectoryExportError(
+        'invalid-budget',
+        `trajectory export blocked: budget.limits.${dim} must be a finite number`,
+      );
+    }
+    (out.limits as Record<string, number>)[dim] = max;
+  }
+  if (b.usage !== undefined) {
+    if (!isRecord(b.usage)) {
+      throw new TrajectoryExportError(
+        'invalid-budget',
+        'trajectory export blocked: budget.usage must be an object',
+      );
+    }
+    const usage: TrajectoryBudgetUsage = {};
+    for (const [leaf, value] of Object.entries(b.usage)) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        throw new TrajectoryExportError(
+          'invalid-budget',
+          `trajectory export blocked: budget.usage.${leaf} must be a finite number`,
+        );
+      }
+      (usage as Record<string, number>)[leaf] = value;
+    }
+    out.usage = usage;
+  }
+  if (b.exhausted !== undefined) {
+    if (!isRecord(b.exhausted)) {
+      throw new TrajectoryExportError(
+        'invalid-budget',
+        'trajectory export blocked: budget.exhausted must be an object',
+      );
+    }
+    const e = b.exhausted as Record<string, unknown>;
+    if (typeof e.limit !== 'string' || e.limit === '') {
+      throw new TrajectoryExportError(
+        'invalid-budget',
+        'trajectory export blocked: budget.exhausted.limit is required',
+      );
+    }
+    const exhausted: TrajectoryBudgetExhausted = { limit: e.limit };
+    for (const leaf of ['used', 'max'] as const) {
+      const value = e[leaf];
+      if (value === undefined) continue;
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        throw new TrajectoryExportError(
+          'invalid-budget',
+          `trajectory export blocked: budget.exhausted.${leaf} must be a finite number`,
+        );
+      }
+      exhausted[leaf] = value;
+    }
+    out.exhausted = exhausted;
+  }
+  return out;
+}
+
 function checkResult(input: BuildTrajectoryInput): TrajectoryResult {
   const result = input.result;
   if (!isRecord(result)) {
@@ -401,6 +489,7 @@ export function buildTrajectoryExport(
   const timestamps = checkTimestamps(input);
   const usage = checkUsage(input);
   const result = checkResult(input);
+  const budget = checkBudget(input);
   const error: TrajectoryResultError | null =
     result.error === undefined ? null : result.error;
   return {
@@ -449,6 +538,9 @@ export function buildTrajectoryExport(
       artifacts: result.artifacts ?? [],
     },
     eval: input.eval ?? { suite: null, caseId: null, labels: {} },
+    // 1.2 (issue #285): absent on unbounded runs — never an empty
+    // object claiming a budget that was never configured.
+    ...(budget === null ? {} : { budget }),
   };
 }
 

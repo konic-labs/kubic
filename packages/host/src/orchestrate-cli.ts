@@ -1652,6 +1652,22 @@ export function parseStoredBudgetSpec(
   };
 }
 
+// The worker line's §71 suffix (issue #285): the agent's effective bound
+// — its own override over the shared spec — as `k=v` pairs, the same
+// discipline as the stored-budget inspect facet. Undefined when the worker
+// runs unbounded (or under an aggregate-only `total:`, which binds the
+// task, never the worker line).
+export function workerBudgetLine(
+  spec: ParsedBudgetSpec | undefined,
+  agentId: string,
+): string | undefined {
+  if (spec === undefined) return undefined;
+  const dims = { ...spec.shared, ...spec.byAgent[agentId] };
+  const keys = Object.keys(dims);
+  if (keys.length === 0) return undefined;
+  return keys.map((key) => `${key}=${dims[key]}`).join(' ');
+}
+
 // Canonical equality for two parsed specs (issue #208): resume re-applies the
 // STORED budget, so a flag that differs in any dimension — or names a
 // different agent — is refused rather than silently mixed in.
@@ -5185,10 +5201,16 @@ export async function runOrchestrateCommand(
   const textLines = [
     // Issue #278 (§19): the terminal status line names the §19 mode.
     `${theme.accent('session:')} ${sessionId} mode=${runMode}`,
-    ...state.records.map(
-      (record) =>
-        `worker: ${record.agentId} branch=${record.branch} hunks=${record.hunks.length}`,
-    ),
+    ...state.records.map((record) => {
+      // Issue #285 (§71): the worker's effective bound rides the worker
+      // line itself — the operator sees it on stdout, never --debug.
+      // Unbounded workers keep the shipped line untouched.
+      const bound = workerBudgetLine(state.budget, record.agentId);
+      return (
+        `worker: ${record.agentId} branch=${record.branch} hunks=${record.hunks.length}` +
+        (bound === undefined ? '' : ` budget=${bound}`)
+      );
+    }),
     // Issue #185: what each worker did, in its own words (§68 summary).
     ...state.records.flatMap((record) =>
       record.result === undefined

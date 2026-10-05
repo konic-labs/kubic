@@ -45,8 +45,41 @@ export interface WorkerListRow {
   startedAtMs: number;
   owner: string;
   resources?: TaskResources;
+  /** Settled token/cost/call counts from the run's own usage summary. */
+  consumption?: WorkerConsumption;
   pid?: number;
   startupMs?: number;
+}
+
+/** Token/cost/tool-call counts from the usage summary (§49.2, issue #248). */
+export interface WorkerConsumption {
+  inputTokens?: number;
+  outputTokens?: number;
+  cachedTokens?: number;
+  toolCalls?: number;
+  costUsd?: number;
+}
+
+/** One RSS/CPU point sample for a live pid (issue #248). */
+export interface WorkerSample {
+  /** Resident set in KiB, as `ps -o rss=` reports it. */
+  rssKb: number;
+  /** Percent of one CPU, as `ps -o pcpu=` reports it. */
+  cpuPct: number;
+}
+
+// Parse `ps -o rss=,pcpu= -p <pid>` output (`"<rssKb> <cpuPct>\n"`):
+// a point sample, never an average, and undefined for anything else — a
+// dead pid prints nothing, a foreign ps dialect prints unparseable text,
+// and both read as "no sample" rather than a crash.
+export function parsePsSample(output: string): WorkerSample | undefined {
+  const parts = output.trim().split(/\s+/);
+  if (parts.length !== 2) return undefined;
+  const rssKb = Number(parts[0]);
+  const cpuPct = Number(parts[1]);
+  if (!Number.isFinite(rssKb) || rssKb < 0) return undefined;
+  if (!Number.isFinite(cpuPct) || cpuPct < 0) return undefined;
+  return { rssKb, cpuPct };
 }
 
 // The parsed `kubic workers` options (commander owns the argv:
@@ -59,6 +92,10 @@ export interface WorkersCliOptions {
 export interface WorkersCommandDeps {
   list: () => WorkerListRow[] | Promise<WorkerListRow[]>;
   now?: () => number;
+  /** A live pid's RSS/CPU point sample; absent or failing reads as none. */
+  sample?: (
+    pid: number,
+  ) => WorkerSample | undefined | Promise<WorkerSample | undefined>;
   // stdout: the table or the `--json` document.
   out: (line: string) => void;
   // stderr: logger diagnostics (`info: …`).
@@ -83,17 +120,52 @@ function formatAge(ageMs: number): string {
   return `${Math.floor(minutes / 60)}h`;
 }
 
-function formatResources(resources: TaskResources | undefined): string {
-  if (resources === undefined) return '-';
+// One decimal, trailing `.0` stripped: `12.5`, `8` — never `8.0`.
+function trim1(value: number): string {
+  return String(Number(value.toFixed(1)));
+}
+
+function formatTokens(
+  input: number | undefined,
+  output: number | undefined,
+): string | undefined {
+  if (input === undefined && output === undefined) return undefined;
+  const total = (input ?? 0) + (output ?? 0);
+  if (total >= 1_000_000) return `${trim1(total / 1_000_000)}M`;
+  if (total >= 1000) return `${trim1(total / 1000)}k`;
+  return String(total);
+}
+
+function formatResources(
+  resources: TaskResources | undefined,
+  sample: WorkerSample | undefined,
+  consumption: WorkerConsumption | undefined,
+): string {
   const parts: string[] = [];
-  if (resources.skills !== undefined && resources.skills.length > 0) {
+  if (resources?.skills !== undefined && resources.skills.length > 0) {
     parts.push(`skills=${resources.skills.join(',')}`);
   }
   if (
-    resources.promptTemplates !== undefined &&
+    resources?.promptTemplates !== undefined &&
     resources.promptTemplates.length > 0
   ) {
     parts.push(`templates=${resources.promptTemplates.join(',')}`);
+  }
+  if (sample !== undefined) {
+    parts.push(`rss=${trim1(sample.rssKb / 1024)}MB`);
+    parts.push(`cpu=${trim1(sample.cpuPct)}%`);
+  }
+  const tokens = formatTokens(
+    consumption?.inputTokens,
+    consumption?.outputTokens,
+  );
+  if (tokens !== undefined) parts.push(`tok=${tokens}`);
+  if (consumption?.costUsd !== undefined) {
+    // Cents need more than one decimal: up to four, trailing zeros cut.
+    parts.push(`cost=$${String(Number(consumption.costUsd.toFixed(4)))}`);
+  }
+  if (consumption?.toolCalls !== undefined) {
+    parts.push(`calls=${consumption.toolCalls}`);
   }
   return parts.length > 0 ? parts.join(' ') : '-';
 }
@@ -141,24 +213,45 @@ export async function runWorkersCommand(
   const theme = deps.theme ?? createCliTheme('none');
   const now = deps.now?.() ?? Date.now();
   const rows = await deps.list();
+  // One RSS/CPU point sample per live pid (issue #248); a missing sampler
+  // or a dead pid reads as no sample, never an error.
+  const samples = await Promise.all(
+    rows.map((row) =>
+      row.pid === undefined ? undefined : deps.sample?.(row.pid),
+    ),
+  );
   if (options.json === true) {
     deps.out(
       formatJson(
-        rows.map((row) => ({
-          workerId: row.workerId,
-          sessionId: row.sessionId,
-          generation: row.generation,
-          status: row.status,
-          agentStatus: row.agentStatus,
-          ...(row.signal === undefined ? {} : { signal: row.signal }),
-          ...(row.cancel === undefined ? {} : { cancel: row.cancel }),
-          ...(row.failure === undefined ? {} : { failure: row.failure }),
-          ageMs: now - row.startedAtMs,
-          owner: row.owner,
-          resources: row.resources,
-          pid: row.pid,
-          startupMs: row.startupMs,
-        })),
+        rows.map((row, at) => {
+          const sample = samples[at];
+          return {
+            workerId: row.workerId,
+            sessionId: row.sessionId,
+            generation: row.generation,
+            status: row.status,
+            agentStatus: row.agentStatus,
+            ...(row.signal === undefined ? {} : { signal: row.signal }),
+            ...(row.cancel === undefined ? {} : { cancel: row.cancel }),
+            ...(row.failure === undefined ? {} : { failure: row.failure }),
+            ageMs: now - row.startedAtMs,
+            owner: row.owner,
+            resources: row.resources,
+            ...(sample === undefined
+              ? {}
+              : {
+                  resourceUsage: {
+                    rssMb: Number((sample.rssKb / 1024).toFixed(1)),
+                    cpuPct: sample.cpuPct,
+                  },
+                }),
+            ...(row.consumption === undefined
+              ? {}
+              : { consumption: row.consumption }),
+            pid: row.pid,
+            startupMs: row.startupMs,
+          };
+        }),
       ),
     );
   } else if (rows.length === 0) {
@@ -169,7 +262,7 @@ export async function runWorkersCommand(
   } else {
     deps.out(
       renderTable(
-        rows.map((row) => [
+        rows.map((row, at) => [
           row.workerId,
           row.agentStatus === undefined
             ? '-'
@@ -184,7 +277,7 @@ export async function runWorkersCommand(
           row.owner,
           row.pid === undefined ? '-' : String(row.pid),
           row.startupMs === undefined ? '-' : `${row.startupMs}ms`,
-          formatResources(row.resources),
+          formatResources(row.resources, samples[at], row.consumption),
         ]),
         COLUMNS,
         { fancy: deps.fancy === true, theme },
@@ -198,7 +291,10 @@ export async function runWorkersCommand(
         `[worker] spawn id=${row.workerId} session=${row.sessionId} gen=${row.generation} pid=${row.pid ?? '-'} startup=${startup}`,
       );
     }
-    deps.debug('[exit] code=0 exited cleanly');
+    // The single exit line is the `kubic workers` command's own exit —
+    // never any worker's (issue #248): a worker's real signal already
+    // reads next to its PROCESS cell, and exit codes are not stored.
+    deps.debug('[exit] code=0 (kubic workers command exit)');
   }
   return 0;
 }
@@ -368,7 +464,9 @@ export async function runWorkerInspectCommand(
           row.owner,
           row.pid === undefined ? '-' : String(row.pid),
           row.startupMs === undefined ? '-' : `${row.startupMs}ms`,
-          formatResources(row.resources),
+          // The header keeps the stored grants only (issue #167's surface):
+          // the live sample and settled consumption read in the facets below.
+          formatResources(row.resources, undefined, undefined),
         ],
       ],
       COLUMNS,

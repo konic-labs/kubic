@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import { createCliTheme } from '../../core/src/cli/theme.js';
 import {
+  parsePsSample,
   runWorkerInspectCommand,
   runWorkersCommand,
   runWorkerTerminateCommand,
@@ -187,7 +188,7 @@ describe('kubic workers (issue #42)', () => {
     expect(code).toBe(0);
     expect(debug).toEqual([
       '[worker] spawn id=w-1 session=s-1 gen=2 pid=4242 startup=40ms',
-      '[exit] code=0 exited cleanly',
+      '[exit] code=0 (kubic workers command exit)',
     ]);
   });
 
@@ -415,5 +416,99 @@ describe('kubic workers terminate (issue #167)', () => {
     expect(await runWorkerTerminateCommand('w-1', {}, deps)).toBe(1);
     expect(deps.signalled).toEqual([]);
     expect(errs.join('\n')).toMatch(/code=worker_not_running/);
+  });
+});
+
+describe('kubic workers resources (issue #248)', () => {
+  it('shows sampled rss/cpu in RESOURCES for a live pid', async () => {
+    const lines: string[] = [];
+    const code = await runWorkersCommand(
+      {},
+      {
+        ...deps(lines),
+        sample: (pid) =>
+          pid === 4242 ? { rssKb: 12_800, cpuPct: 3.5 } : undefined,
+      },
+    );
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toContain('rss=12.5MB');
+    expect(lines.join('\n')).toContain('cpu=3.5%');
+  });
+
+  it('omits rss/cpu when the sample fails', async () => {
+    const lines: string[] = [];
+    await runWorkersCommand({}, { ...deps(lines), sample: () => undefined });
+    expect(lines.join('\n')).not.toContain('rss=');
+    expect(lines.join('\n')).not.toContain('cpu=');
+  });
+
+  it('shows tok/cost/calls from the usage summary', async () => {
+    const lines: string[] = [];
+    await runWorkersCommand(
+      {},
+      {
+        ...deps(lines, [
+          {
+            ...ROW,
+            consumption: {
+              inputTokens: 1200,
+              outputTokens: 300,
+              toolCalls: 5,
+              costUsd: 0.012,
+            },
+          },
+        ]),
+      },
+    );
+    const text = lines.join('\n');
+    expect(text).toContain('tok=1.5k');
+    expect(text).toContain('cost=$0.012');
+    expect(text).toContain('calls=5');
+  });
+
+  it('--json gains resourceUsage and consumption (additive)', async () => {
+    const lines: string[] = [];
+    await runWorkersCommand(
+      { json: true },
+      {
+        ...deps(lines, [
+          {
+            ...ROW,
+            consumption: { inputTokens: 100, costUsd: 0.001 },
+          },
+        ]),
+        sample: () => ({ rssKb: 8192, cpuPct: 0 }),
+      },
+    );
+    const doc = JSON.parse(lines.join('\n')) as Record<string, unknown>[];
+    expect(doc[0]?.['resourceUsage']).toEqual({ rssMb: 8, cpuPct: 0 });
+    expect(doc[0]?.['consumption']).toEqual({
+      inputTokens: 100,
+      costUsd: 0.001,
+    });
+    // Everything the old document carried is still there.
+    expect(doc[0]?.['workerId']).toBe('w-1');
+    expect(doc[0]?.['pid']).toBe(4242);
+  });
+
+  it('labels the --debug exit line as the command exit, not a worker exit', async () => {
+    const lines: string[] = [];
+    const debug: string[] = [];
+    await runWorkersCommand(
+      { debug: true },
+      { ...deps(lines), debug: (line: string) => debug.push(line) },
+    );
+    expect(debug.at(-1)).toContain('(kubic workers command exit)');
+    expect(debug.join('\n')).not.toContain('exited cleanly');
+  });
+
+  it('parsePsSample reads `ps -o rss=,pcpu=` output and refuses garbage', () => {
+    expect(parsePsSample(' 12800  3.5\n')).toEqual({
+      rssKb: 12_800,
+      cpuPct: 3.5,
+    });
+    expect(parsePsSample('')).toBeUndefined();
+    expect(parsePsSample('nope\n')).toBeUndefined();
+    expect(parsePsSample('12800\n')).toBeUndefined();
   });
 });

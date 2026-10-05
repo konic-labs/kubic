@@ -1947,7 +1947,11 @@ fresh empty registry): one line per worker with the two §13 states, age,
 owner, pid, startup span ms, and resources (`skills=… templates=…`, `-` when
 none). The record is read at the repo runtime root — the same resolver
 `kubic audit` uses — so a run from any subdirectory lists the run's rows
-instead of an empty list.
+instead of an empty list. The **RESOURCES** cell shows resource consumption
+(issue #248) after the skills/templates grants: a live pid's point-sampled
+`rss=<MB> cpu=<%>` (one `ps` sample, never an average — absent when the pid
+is gone), then the settled `tok=<n>` `cost=$<n>` `calls=<n>` from the run's
+own usage summary when the worker settled (`tok` abbreviates at k/M).
 
 A row that FAILED also names the code it settled on — `failed(<code>)` in the
 **AGENT** cell and a `failure: {code, message}` field in `--json` (issue
@@ -1971,8 +1975,8 @@ an orchestrator has no record — nothing on stdout (`--json` prints `[]`), an
 | Flag | Meaning |
 | --- | --- |
 | (none) | A table with one row per worker: `WORKER  AGENT  PROCESS  GEN  AGE  OWNER  PID  STARTUP  RESOURCES` (`-` for an unknown pid/startup). Plain space-aligned columns off a TTY (pipes, CI, `NO_COLOR`); box-drawn, with both states coloured, on an interactive colour terminal. |
-| `--json` | The same rows as JSON (`workerId`, `sessionId`, `generation`, `status`, `agentStatus`, `signal`, `cancel`, `ageMs`, `owner`, `resources`, `pid`, `startupMs`) — field-for-field with the text view (`status` is the process phase, `agentStatus` the agent state). `cancel` appears only for a worker that was actually cancelled: `settled` when its own cooperative shutdown finished inside the worker grace, `forced` when the group SIGKILL escalation beat it (issue #249). |
-| `--debug` | `[worker] spawn …` per row plus `[exit] code=0 exited cleanly` on stderr (`KUBIC_DEBUG=1` does the same). Spawn env values are always redacted (`KUBIC_ROLE_*` never prints). |
+| `--json` | The same rows as JSON (`workerId`, `sessionId`, `generation`, `status`, `agentStatus`, `signal`, `cancel`, `ageMs`, `owner`, `resources`, `pid`, `startupMs`) — field-for-field with the text view (`status` is the process phase, `agentStatus` the agent state). `cancel` appears only for a worker that was actually cancelled: `settled` when its own cooperative shutdown finished inside its grace, `forced` when the group SIGKILL escalation beat it (issue #249). `resourceUsage` (`rssMb`, `cpuPct`) appears for a live pid, `consumption` (the settled token/cost/call counts) for a settled worker — both additive (issue #248). |
+| `--debug` | `[worker] spawn …` per row plus the command's own `[exit] code=0 (kubic workers command exit)` on stderr (`KUBIC_DEBUG=1` does the same) — the exit line is the list command's, never any worker's; a worker's real signal reads next to its PROCESS cell. Spawn env values are always redacted (`KUBIC_ROLE_*` never prints). |
 
 `kubic workers --help` prints the generated help and exits 0. An unknown
 flag, an unknown subcommand (`error: unknown command '<name>'`), or a value

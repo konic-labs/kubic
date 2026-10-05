@@ -121,11 +121,14 @@ import {
 import { skillsDoctorProbe } from '../../../packages/host/src/skills-boot.js';
 import { runTrustCommand } from '../../../packages/host/src/trust-cli.js';
 import {
+  parsePsSample,
   runWorkerInspectCommand,
   runWorkersCommand,
   runWorkerTerminateCommand,
+  type WorkerConsumption,
   type WorkerListRow,
   type WorkerRunView,
+  type WorkerSample,
   type WorkerWorktreeView,
 } from '../../../packages/host/src/workers-cli.js';
 import {
@@ -367,22 +370,24 @@ export function prodTuiDeps(
   };
 }
 
-// Worker inspect/terminate prod providers (issue #167): the durable rows
-// plus two local process probes (ps for the pid-reuse guard, git for the
-// worktree facet) and two more durable reads (the run state for budget and
-// settled usage, the §60 ledger for the last decision). No model, no
-// network; every read is defensive — a missing file reads as an absent
-// facet, never a crash.
+// Worker inspect/terminate/list prod providers (issues #167, #248): the
+// durable rows plus local process probes (ps for the pid-reuse guard and
+// the RSS/CPU sample, git for the worktree facet) and two more durable
+// reads (the run state for budget and settled usage, the §60 ledger for
+// the last decision). No model, no network; every read is defensive — a
+// missing file reads as an absent facet, never a crash.
 function prodSpawnOutput(
+  command: string,
   args: string[],
   cwd: string,
+  toolCallId: string,
 ): Promise<string | undefined> {
   try {
-    const handle = new NodeExecutionEnv(cwd).shell.spawn('git', args, {
+    const handle = new NodeExecutionEnv(cwd).shell.spawn(command, args, {
       provenance: {
         sessionId: 'cli',
         agentId: 'manager',
-        toolCallId: 'workers-inspect-git',
+        toolCallId,
         turnId: 0,
         operation: 'inspect',
       },
@@ -433,8 +438,10 @@ async function prodInspectWorktree(
   const runSession = prodRunSessionOf(row);
   if (runSession === undefined) return undefined;
   const listed = await prodSpawnOutput(
+    'git',
     ['worktree', 'list', '--porcelain'],
     repoRoot,
+    'workers-inspect-git',
   );
   if (listed === undefined) return undefined;
   const wanted = branchForAgent(row.workerId, runSession);
@@ -443,8 +450,10 @@ async function prodInspectWorktree(
   );
   if (entry === undefined) return undefined;
   const status = await prodSpawnOutput(
+    'git',
     ['status', '--porcelain=v1'],
     entry.path,
+    'workers-inspect-git',
   );
   if (status === undefined) {
     return { path: entry.path, branch: wanted, clean: true, changed: 0 };
@@ -465,6 +474,91 @@ function numericRecord(value: unknown): Record<string, number> | undefined {
   return out;
 }
 
+// The run state behind an owner (`orchestrate:<run>`), or undefined for a
+// legacy row or an unreadable file — the list and inspect share it so the
+// settled usage never comes from two readers (issue #248).
+function prodReadRunState(
+  repoRoot: string,
+  row: WorkerListRow,
+): { runSession: string; state: unknown } | undefined {
+  const runSession = prodRunSessionOf(row);
+  if (runSession === undefined) return undefined;
+  try {
+    const raw = createNodeFileBridge(
+      join(repoRoot, '.kubic', 'orchestrator'),
+    ).readTextFile(`${runSession}.json`);
+    const state = JSON.parse(raw) as unknown;
+    if (typeof state !== 'object' || state === null) return undefined;
+    return { runSession, state };
+  } catch {
+    return undefined;
+  }
+}
+
+// Settled usage: the run's own record carries the §68 metrics rollup.
+function prodUsageOf(
+  state: unknown,
+  workerId: string,
+): WorkerConsumption | undefined {
+  const records = state as { records?: unknown; completed?: unknown };
+  const candidates = [
+    ...(Array.isArray(records.records) ? records.records : []),
+    ...(Array.isArray(records.completed) ? records.completed : []),
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'object' || candidate === null) continue;
+    const entry = candidate as { agentId?: unknown; result?: unknown };
+    if (entry.agentId !== workerId) continue;
+    const metrics =
+      typeof entry.result === 'object' && entry.result !== null
+        ? (entry.result as { metrics?: unknown }).metrics
+        : undefined;
+    const numbers =
+      typeof metrics === 'object' && metrics !== null
+        ? (metrics as Record<string, unknown>)
+        : undefined;
+    if (numbers === undefined) continue;
+    const pick = (key: string): number | undefined =>
+      typeof numbers[key] === 'number' && Number.isFinite(numbers[key])
+        ? (numbers[key] as number)
+        : undefined;
+    const usage: WorkerConsumption = {
+      ...(pick('inputTokens') === undefined
+        ? {}
+        : { inputTokens: pick('inputTokens') as number }),
+      ...(pick('outputTokens') === undefined
+        ? {}
+        : { outputTokens: pick('outputTokens') as number }),
+      ...(pick('cachedTokens') === undefined
+        ? {}
+        : { cachedTokens: pick('cachedTokens') as number }),
+      ...(pick('toolCalls') === undefined
+        ? {}
+        : { toolCalls: pick('toolCalls') as number }),
+      ...(pick('costUsd') === undefined
+        ? {}
+        : { costUsd: pick('costUsd') as number }),
+    };
+    if (Object.keys(usage).length > 0) return usage;
+  }
+  return undefined;
+}
+
+async function prodSampleResources(
+  pid: number,
+): Promise<WorkerSample | undefined> {
+  // `ps -o rss=,pcpu=` reads on BSD and GNU ps alike; the header-suppressing
+  // `=` keeps the output to one `"<rssKb> <cpuPct>"` line the pure
+  // parsePsSample turns into a point sample (issue #248).
+  const output = await prodSpawnOutput(
+    'ps',
+    ['-o', 'rss=,pcpu=', '-p', String(pid)],
+    process.cwd(),
+    'workers-list-sample',
+  );
+  return output === undefined ? undefined : parsePsSample(output);
+}
+
 function prodInspectRun(repoRoot: string, row: WorkerListRow): WorkerRunView {
   const view: WorkerRunView = {
     usageHint: `kubic cost --session ${row.sessionId}`,
@@ -482,18 +576,9 @@ function prodInspectRun(repoRoot: string, row: WorkerListRow): WorkerRunView {
   } catch {
     // No ledger: no decision.
   }
-  const runSession = prodRunSessionOf(row);
-  if (runSession === undefined) return view;
-  let state: unknown;
-  try {
-    const raw = createNodeFileBridge(
-      join(repoRoot, '.kubic', 'orchestrator'),
-    ).readTextFile(`${runSession}.json`);
-    state = JSON.parse(raw) as unknown;
-  } catch {
-    return view;
-  }
-  if (typeof state !== 'object' || state === null) return view;
+  const found = prodReadRunState(repoRoot, row);
+  if (found === undefined) return view;
+  const { state } = found;
   const budget = (state as { budget?: unknown }).budget;
   if (typeof budget === 'object' && budget !== null) {
     const shared = numericRecord((budget as { shared?: unknown }).shared);
@@ -509,51 +594,10 @@ function prodInspectRun(repoRoot: string, row: WorkerListRow): WorkerRunView {
       };
     }
   }
-  // Settled usage: the run's own record carries the §68 metrics rollup.
-  const records = state as { records?: unknown; completed?: unknown };
-  const candidates = [
-    ...(Array.isArray(records.records) ? records.records : []),
-    ...(Array.isArray(records.completed) ? records.completed : []),
-  ];
-  for (const candidate of candidates) {
-    if (typeof candidate !== 'object' || candidate === null) continue;
-    const entry = candidate as { agentId?: unknown; result?: unknown };
-    if (entry.agentId !== row.workerId) continue;
-    const metrics =
-      typeof entry.result === 'object' && entry.result !== null
-        ? (entry.result as { metrics?: unknown }).metrics
-        : undefined;
-    const numbers =
-      typeof metrics === 'object' && metrics !== null
-        ? (metrics as Record<string, unknown>)
-        : undefined;
-    if (numbers === undefined) continue;
-    const pick = (key: string): number | undefined =>
-      typeof numbers[key] === 'number' && Number.isFinite(numbers[key])
-        ? (numbers[key] as number)
-        : undefined;
-    const usage = {
-      ...(pick('inputTokens') === undefined
-        ? {}
-        : { inputTokens: pick('inputTokens') as number }),
-      ...(pick('outputTokens') === undefined
-        ? {}
-        : { outputTokens: pick('outputTokens') as number }),
-      ...(pick('cachedTokens') === undefined
-        ? {}
-        : { cachedTokens: pick('cachedTokens') as number }),
-      ...(pick('toolCalls') === undefined
-        ? {}
-        : { toolCalls: pick('toolCalls') as number }),
-      ...(pick('costUsd') === undefined
-        ? {}
-        : { costUsd: pick('costUsd') as number }),
-    };
-    if (Object.keys(usage).length > 0) {
-      view.usage = usage;
-      view.usageHint = undefined;
-      return view;
-    }
+  const usage = prodUsageOf(state, row.workerId);
+  if (usage !== undefined) {
+    view.usage = usage;
+    view.usageHint = undefined;
   }
   return view;
 }
@@ -1216,8 +1260,23 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
           // same resolver `kubic audit` uses (issue #279) — so a run
           // from a subdirectory lists what orchestrate wrote at the
           // root. Outside git the resolver returns the cwd itself.
-          list: () =>
-            workersListFromRepo(resolveRepoRuntimeRoot(process.cwd())),
+          // Each row also carries its settled consumption from the
+          // run's own record when any (issue #248); live RSS/CPU comes
+          // from the `sample` probe below, never the stored row.
+          list: async () => {
+            const root = resolveRepoRuntimeRoot(process.cwd());
+            // The stored row carries no consumption (issue #248): it comes
+            // from the run's own record, read here per listed worker.
+            return workersListFromRepo(root).map((row) => {
+              const found = prodReadRunState(root, row);
+              const usage =
+                found === undefined
+                  ? undefined
+                  : prodUsageOf(found.state, row.workerId);
+              return usage === undefined ? row : { ...row, consumption: usage };
+            });
+          },
+          sample: (pid) => prodSampleResources(pid),
           out,
           err: debug,
           debug,

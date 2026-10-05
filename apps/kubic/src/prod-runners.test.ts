@@ -591,3 +591,84 @@ describe('kubic doctor --session (prod wiring, issue #310)', () => {
     expect(errs.join('\n')).toContain('invalid --session id');
   });
 });
+
+describe('kubic workers list resources (prod wiring, issue #248)', () => {
+  let child: ChildProcess | undefined;
+  afterEach(() => {
+    try {
+      child?.kill('SIGKILL');
+    } catch {
+      // Already gone.
+    }
+    child = undefined;
+  });
+
+  it('shows live rss/cpu for a sleeping fixture child plus settled consumption', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prod-resources-'));
+    roots.push(dir);
+    mkdirSync(join(dir, '.kubic', 'orchestrator'), { recursive: true });
+    writeFileSync(join(dir, 'sleeper.js'), 'setInterval(() => {}, 500);\n');
+    child = spawn(
+      process.execPath,
+      [join(dir, 'sleeper.js'), '--session', 'run-7-w7'],
+      { detached: true, stdio: 'ignore' },
+    );
+    child.unref();
+    const pid = child.pid ?? 0;
+    expect(pid).toBeGreaterThan(1);
+    // The run's own record carries the settled usage rollup (§68): a
+    // hand-written durable state file, no mocks.
+    writeFileSync(
+      join(dir, '.kubic', 'orchestrator', 'run-7.json'),
+      JSON.stringify({
+        records: [
+          {
+            agentId: 'w7',
+            result: {
+              metrics: {
+                inputTokens: 1200,
+                outputTokens: 300,
+                toolCalls: 5,
+                costUsd: 0.012,
+              },
+            },
+          },
+        ],
+      }),
+    );
+    writeWorkerRows(
+      createNodeFileBridge(join(dir, '.kubic', 'orchestrator')),
+      'workers.json',
+      [
+        {
+          workerId: 'w7',
+          sessionId: 'run-7-w7',
+          generation: 1,
+          status: 'ready',
+          agentStatus: 'running',
+          startedAtMs: Date.now(),
+          ageMs: 0,
+          owner: 'orchestrate:run-7',
+          pid,
+        },
+      ],
+    );
+    vi.spyOn(process, 'cwd').mockReturnValue(dir);
+    const { lines, r } = runners();
+    expect(await r.workers({ command: 'list' }, noConfig)).toBe(0);
+    const text = lines.join('\n');
+    expect(text).toMatch(/rss=\d+(\.\d+)?MB/);
+    expect(text).toMatch(/cpu=\d+(\.\d+)?%/);
+    expect(text).toContain('tok=1.5k');
+    expect(text).toContain('cost=$0.012');
+    const json = runners();
+    expect(
+      await json.r.workers({ command: 'list', json: true }, noConfig),
+    ).toBe(0);
+    const doc = JSON.parse(json.lines.join('\n')) as Record<string, unknown>[];
+    expect(doc[0]?.['resourceUsage']).toMatchObject({
+      cpuPct: expect.any(Number),
+    });
+    expect(doc[0]?.['consumption']).toMatchObject({ costUsd: 0.012 });
+  });
+});

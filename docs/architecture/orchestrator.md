@@ -21,7 +21,7 @@ solo) — and `run` never delegates.
 - **The CLI registers the manager lane, then plans and merges.** The
   `kubic orchestrate` process registers its toolset through the §40
   allowlist before anything spawns — the lane runs with exactly those
-  thirteen tools, and a lane that would carry an exec tool refuses to
+  fourteen tools, and a lane that would carry an exec tool refuses to
   start rather than running with one. It then reads `--agents`, authors a plan (one step
   per worker, in agent order), creates one worktree per agent, spawns one
   child `kubic run` per agent, and settles them through the merge queue.
@@ -269,7 +269,7 @@ it refuses to start with the named `ManagerToolsetError` (exit 1,
 `code=manager_toolset_refused`). Opt-in model-driven management
 (`kubic orchestrate --manager-lane`, or `[orchestrator] manager = "lane"` —
 the default `"template"` keeps the plan above) hands the planning to the
-manager conversation instead: it calls the same thirteen tools through the
+manager conversation instead: it calls the same fourteen tools through the
 same scheduler (concurrency, §71 budget gate and queueing rule), worktrees,
 merge queue and merge gate, and the run envelope reports its final message
 (`managerSummary` in `--json`, the text `result:` line) instead of the

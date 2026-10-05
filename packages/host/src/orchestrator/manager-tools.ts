@@ -48,6 +48,7 @@ import {
 } from './manager.js';
 import { managerToolStubs } from './manager-lane.js';
 import { QueueStoppedError } from './merge/queue.js';
+import type { ReviewVerdict } from './merge/review.js';
 import type { UsageTally } from './parallel/limits.js';
 import type { ParallelScheduler } from './parallel/scheduler.js';
 
@@ -146,6 +147,13 @@ export interface ManagerToolsDeps {
    * (the lane has no template plan; the step is what the child runs).
    */
   onSpawned?(agentId: string, role: string, task: string): void;
+  /**
+   * Record the reviewer verdict for a settled worker (issue #188, §70):
+   * the merge call executes it (accept merges, request-changes discards,
+   * escalate routes the debugger loop). Last call wins — the manager may
+   * deliberate before it merges.
+   */
+  recordVerdict(agentId: string, verdict: ReviewVerdict): void;
   /** Create the worker's worktree (no session, no child yet). */
   prepareWorker(agentId: string): Promise<PreparedWorker>;
   /** Create the worker session and run the child to settlement. */
@@ -350,6 +358,7 @@ export interface ManagerToolset {
   workspaceDiff: ToolRegistration;
   workspaceApply: ToolRegistration;
   workspaceMerge: ToolRegistration;
+  reviewVerdict: ToolRegistration;
   askUser: ToolRegistration;
   gitStatus: ToolRegistration;
   gitDiff: ToolRegistration;
@@ -1059,6 +1068,57 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
     },
   });
 
+  // review_verdict (issue #188, §70): the reviewer verdict for a settled
+  // worker. The verdict executes at the merge call — accept merges,
+  // request-changes discards the diff without merging, escalate routes
+  // the debugger loop. A verdict alone merges nothing.
+  const reviewVerdict = defineTool({
+    name: 'review_verdict',
+    description:
+      'Record the reviewer verdict for a settled worker: accept merges it when merged, request-changes discards its diff without merging, escalate routes the debugger loop. Call workspace_merge afterwards to execute the verdict.',
+    parameters: Type.Object({
+      agentId: Type.String(),
+      verdict: Type.String(),
+    }),
+    execute: async (args) => {
+      const { agentId, verdict } = args as {
+        agentId?: unknown;
+        verdict?: unknown;
+      };
+      if (typeof agentId !== 'string' || agentId.trim() === '') {
+        throw new ManagerToolRefusalError(
+          'invalid_args',
+          'review_verdict needs a non-empty agentId',
+        );
+      }
+      if (
+        verdict !== 'accept' &&
+        verdict !== 'request-changes' &&
+        verdict !== 'escalate'
+      ) {
+        throw new ManagerToolRefusalError(
+          'invalid_args',
+          `review_verdict verdict must be accept, request-changes or escalate (got ${JSON.stringify(verdict)})`,
+        );
+      }
+      if (deps.inspectWorker(agentId) === undefined) {
+        throw new ManagerToolRefusalError(
+          'unknown_agent',
+          `no worker '${agentId}' was spawned by this run`,
+        );
+      }
+      deps.recordVerdict(agentId, verdict);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ agentId, verdict }),
+          },
+        ],
+      };
+    },
+  });
+
   // ask_user (issue #417): the manager's free-text question to the run's
   // seat. Same outcome vocabulary as the worker-side tool
   // (createAskUserTool): an answered seat returns its text, an unanswered
@@ -1153,6 +1213,7 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
     workspaceDiff,
     workspaceApply,
     workspaceMerge,
+    reviewVerdict,
     askUser,
     gitStatus,
     gitDiff,
@@ -1183,7 +1244,7 @@ export function boundGitText(text: string): string {
 }
 
 /**
- * The lane's 13 tools in allowlist order from a built toolset (issue
+ * The lane's 14 tools in allowlist order from a built toolset (issue
  * #431): the router wraps the toolset with the drive bound first, then
  * resolves the same order — one mapping, two callers.
  */
@@ -1200,6 +1261,7 @@ export function managerToolRegistrations(
     ['workspace_diff', tools.workspaceDiff],
     ['workspace_apply', tools.workspaceApply],
     ['workspace_merge', tools.workspaceMerge],
+    ['review_verdict', tools.reviewVerdict],
     ['ask_user', tools.askUser],
     ['git_status', tools.gitStatus],
     ['git_diff', tools.gitDiff],
@@ -1214,8 +1276,8 @@ export function managerToolRegistrations(
 }
 
 /**
- * The lane's 13 tools in allowlist order: every §9.2 adapter real
- * (#414–#417, #431) — no stubs remain. The lane boots this set.
+ * The lane's 14 tools in allowlist order: every §9.2 adapter real
+ * (#414–#417, #431, #188) — no stubs remain. The lane boots this set.
  */
 export function managerToolsWithStubs(
   deps: ManagerToolsDeps,

@@ -41,6 +41,8 @@ describe('manager allowlist (issue #40)', () => {
         'workspace_diff',
         'workspace_apply',
         'workspace_merge',
+        // §70 (issue #188): the reviewer verdict routes the merge call.
+        'review_verdict',
         'ask_user',
         // §43.1: read-only git inspection for the manager, separate from its
         // merge capability (issue #205).
@@ -49,7 +51,7 @@ describe('manager allowlist (issue #40)', () => {
         'git_log',
       ].sort(),
     );
-    expect(MANAGER_ALLOWLIST).toHaveLength(13);
+    expect(MANAGER_ALLOWLIST).toHaveLength(14);
   });
 
   it('accepts the three read-only git tools and refuses every mutating one (issue #205)', () => {

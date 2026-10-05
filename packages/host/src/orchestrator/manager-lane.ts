@@ -55,6 +55,7 @@ const MANAGER_STUB_DESCRIPTIONS: Record<ManagerToolName, string> = {
   workspace_diff: 'Show a worker-produced diff for review.',
   workspace_apply: 'Apply a reviewed worker-produced diff.',
   workspace_merge: 'Merge a reviewed worker-produced diff.',
+  review_verdict: 'Record the reviewer verdict a merge executes.',
   ask_user: 'Ask the operator through the approval seat.',
   git_status: 'Read-only git status of the repo.',
   git_diff: 'Read-only git diff of the repo.',
@@ -72,7 +73,7 @@ function stubManagerTool(name: ManagerToolName): ToolRegistration {
   });
 }
 
-/** The 13 allowlist tools in allowlist order — stubs until steps 2–5. */
+/** The 14 allowlist tools in allowlist order — stubs until steps 2–5. */
 export function managerToolStubs(): ToolRegistration[] {
   return MANAGER_ALLOWLIST.map((name) => stubManagerTool(name));
 }

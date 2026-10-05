@@ -1,5 +1,5 @@
 // Manager lane slice 1 (issue #40; §5.2, §9.2, §81).
-// Pure host-side contracts: the 13-tool allowlist, exec fail-closed policy,
+// Pure host-side contracts: the 14-tool allowlist, exec fail-closed policy,
 // mode resolution, and the non-git --orchestrator refusal (exit 5 → solo).
 // No CLI wiring here (flag parsing lands separately); no worker imports.
 
@@ -13,6 +13,7 @@ export const MANAGER_ALLOWLIST = [
   'workspace_diff',
   'workspace_apply',
   'workspace_merge',
+  'review_verdict',
   'ask_user',
   // §43.1 (issue #205): read-only git inspection for the manager — how it
   // reads the repo without being able to author. The WRITER git tools

@@ -824,10 +824,16 @@ takes), recorded with `parentSessionId`/`role`/`agentId` linkage, and merged
 in queue order after the merge gate approves — the gate's approval is the
 review verdict routing the settle apply path (`applySettlementAfterReview`:
 a tainted manager trace refuses before apply runs, and only an accept
-verdict applies). The lane carries 13 tools: the spawn/wait/collect,
-inspect/cancel/send, workspace diff/apply/merge and `ask_user` adapters
-plus read-only `git_status`/`git_diff`/`git_log` (bounded text, `HEAD` or a
-validated ref as the diff base — leading `-` and non-ref shapes refused).
+verdict applies). The lane carries 14 tools: the spawn/wait/collect,
+inspect/cancel/send, workspace diff/apply/merge, `review_verdict` and
+`ask_user` adapters plus read-only `git_status`/`git_diff`/`git_log`
+(bounded text, `HEAD` or a validated ref as the diff base — leading `-`
+and non-ref shapes refused). `review_verdict` records the reviewer
+verdict per settled worker (`accept`, `request-changes`, `escalate`);
+the next `workspace_merge` executes it — `request-changes` records the
+diff under `discarded` (branch kept for inspection, `--resume` never
+retries it, `mergeOrder` never names it, the run continues) instead of
+merging. A worker with no verdict merges (the shipped default).
 `workspace_apply` stages any settled worker's change — completed,
 cancelled or failed alike; only a still-running worker is refused
 (`apply_before_settle`). The staged bytes are always re-read from the

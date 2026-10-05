@@ -3915,6 +3915,49 @@ describe('orchestrate manager lane (issue #431)', () => {
     expect(second?.prompt).toContain('worker-1: the seam is threaded');
   });
 
+  it('a reviewer request-changes verdict discards the diff without merging (issue #188)', async () => {
+    // S1b: the `review_verdict` tool routes the merge call —
+    // request-changes records the discard and skips the merge while the
+    // run itself succeeds. Pre-fix there is no such tool, so the drive
+    // trips on the unknown name.
+    const world = laneWorld([
+      toolTurn('spawn_agent', { role: 'implementer', task: 'do alpha' }),
+      toolTurn('wait_for_agent', { agentId: 'worker-1' }),
+      toolTurn('collect_result', { agentId: 'worker-1' }),
+      toolTurn('review_verdict', {
+        agentId: 'worker-1',
+        verdict: 'request-changes',
+      }),
+      toolTurn('workspace_diff', { agentId: 'worker-1' }),
+      toolTurn('workspace_apply', { agentId: 'worker-1' }),
+      toolTurn('workspace_merge', {}),
+      fauxAssistantMessage('reviewed and refused'),
+    ]);
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'ship alpha',
+        agents: ['alpha'],
+        json: true,
+        session: 'lane-verdict',
+      },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.calls.merge).toEqual([]);
+    const saved = world.saved[world.saved.length - 1];
+    expect(saved?.reviewVerdicts).toEqual({ 'worker-1': 'request-changes' });
+    expect(saved?.discarded?.map((entry) => entry.agentId)).toEqual([
+      'worker-1',
+    ]);
+    expect(saved?.merged).toEqual([]);
+    const envelope = lastJsonLine(world.lines) as {
+      discarded?: string[];
+      mergeOrder?: string[];
+    };
+    expect(envelope.discarded).toEqual(['worker-1']);
+    expect(envelope.mergeOrder).toEqual([]);
+  });
+
   it('drives spawn to merge through the lane and merges the minted worker', async () => {
     const world = laneWorld([
       toolTurn('spawn_agent', { role: 'implementer', task: 'do alpha' }),

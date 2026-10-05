@@ -81,6 +81,7 @@ function completedResult(
 
 interface Rig {
   deps: ManagerToolsDeps;
+  verdicts: Array<[string, string]>;
   prepared: string[];
   launched: WorkerSpawnRequest[];
   gates: Map<string, (result: AgentResult) => void>;
@@ -137,6 +138,7 @@ function rig(options?: {
   const gitText = { value: '' };
   let minted = 0;
   const spawned: string[] = [];
+  const verdicts: Array<[string, string]> = [];
   const deps: ManagerToolsDeps = {
     sessionId: 'run-414',
     runMode: 'autonomous',
@@ -148,6 +150,9 @@ function rig(options?: {
     spawnedIds: () => [...spawned],
     noteSpawned: (agentId) => {
       spawned.push(agentId);
+    },
+    recordVerdict: (agentId, verdict) => {
+      verdicts.push([agentId, verdict]);
     },
     mintAgentId:
       options?.mintAgentId ??
@@ -231,6 +236,7 @@ function rig(options?: {
   };
   return {
     deps,
+    verdicts,
     prepared,
     launched,
     gates,
@@ -423,7 +429,7 @@ describe('manager spawn/wait/collect adapters (issue #414)', () => {
     ]);
   });
 
-  it('the lane toolset is the allowlist in order: thirteen adapters, no stubs', async () => {
+  it('the lane toolset is the allowlist in order: fourteen adapters, no stubs', async () => {
     const test = useRig();
     const lane = await bootLane(test, [fauxAssistantMessage('ok')]);
     const names = lane.registry
@@ -440,6 +446,7 @@ describe('manager spawn/wait/collect adapters (issue #414)', () => {
       'workspace_diff',
       'workspace_apply',
       'workspace_merge',
+      'review_verdict',
       'ask_user',
       'git_status',
       'git_diff',
@@ -487,6 +494,7 @@ describe('manager spawn/wait/collect adapters (issue #414)', () => {
       'workspace_diff',
       'workspace_apply',
       'workspace_merge',
+      'review_verdict',
       'ask_user',
       'git_status',
       'git_diff',
@@ -705,6 +713,51 @@ describe('manager spawn/wait/collect adapters (issue #414)', () => {
       );
     }
     expect(texts.join('\n')).toMatch(/spawn_queue_timeout/);
+  });
+
+  it('review_verdict records the verdict; garbage and strangers refuse (issue #188)', async () => {
+    const test = useRig();
+    const lane = await bootLane(test, [
+      fauxAssistantMessage(
+        [fauxToolCall('spawn_agent', { role: 'tester', task: 'prove it' })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('spawned'),
+    ]);
+    await runTurn(lane, 'go');
+    const tools = new Map(
+      lane.registry
+        .snapshot()
+        .tools()
+        .map(({ tool }) => [tool.name, tool]),
+    );
+    const call = (name: string, args: Record<string, unknown>) =>
+      tools.get(name)?.execute(
+        args,
+        {
+          callId: 'call-1',
+          taskId: 'task-1',
+          conversationId: lane.conversation.id,
+          output: () => undefined,
+          diagnostic: () => undefined,
+          details: async () => undefined,
+          memo: async () => undefined,
+          commit: async () => undefined,
+          env: undefined,
+        } as never,
+        BACKGROUND_CONTEXT,
+      );
+    await expect(
+      call('review_verdict', { agentId: 'worker-1', verdict: 'maybe' }),
+    ).rejects.toThrow(/invalid_args.*verdict/);
+    await expect(
+      call('review_verdict', { agentId: 'nobody', verdict: 'accept' }),
+    ).rejects.toThrow(/unknown_agent.*nobody/);
+    await call('review_verdict', {
+      agentId: 'worker-1',
+      verdict: 'request-changes',
+    });
+    expect(test.verdicts).toEqual([['worker-1', 'request-changes']]);
   });
 
   it('wait/collect on unknown or unsettled workers refuse by name', async () => {

@@ -1474,6 +1474,10 @@ export interface OrchestrateEnvelope {
     // The §25.2 artifact (issue #184): the structured result, present
     // when the worker reported a result that passed the §69 gate.
     artifact?: TaskArtifact;
+    // The reviewer verdict (issue #188, §70): present when the lane
+    // recorded one — the row tells whether the diff merged or was
+    // refused without joining mergeOrder to find out.
+    reviewVerdict?: ReviewVerdict;
   } & Partial<WorkerResultView>)[];
   mergeOrder: string[];
   // Discarded diffs (issue #188, §70): agent ids the review verdict
@@ -2578,6 +2582,15 @@ export async function runOrchestrateCommand(
       return base;
     }
   };
+  // Review verdicts by agent (issue #188, §70): the run's own record of
+  // what the lane decided per settled worker. The `review_verdict` tool
+  // writes through `recordVerdict` below; the merge call executes.
+  // Restored from state on resume alongside the mint roles, so a resumed
+  // merge re-executes the same verdict instead of re-merging a refusal.
+  const reviewVerdicts = new Map<string, ReviewVerdict>();
+  for (const [agentId, verdict] of Object.entries(state.reviewVerdicts ?? {})) {
+    reviewVerdicts.set(agentId, verdict);
+  }
   // The lane's minted roles (issue #431): `onSpawned` records each mint's
   // role here, so `spawnRoleInfo` (session linkage, worker rows) and the
   // role registry resolve a minted id exactly like a planned one. Declared
@@ -2900,6 +2913,7 @@ export async function runOrchestrateCommand(
       // to settle has no later launch to build it, but --json still
       // surfaces it.
       const artifact = ensureArtifact(agentId);
+      const verdict = reviewVerdicts.get(agentId);
       return {
         agentId,
         branch:
@@ -2909,6 +2923,7 @@ export async function runOrchestrateCommand(
         hunks: hunks.length,
         ...(result === undefined ? {} : workerResultView(result)),
         ...(artifact === undefined ? {} : { artifact }),
+        ...(verdict === undefined ? {} : { reviewVerdict: verdict }),
       };
     });
 
@@ -4268,6 +4283,16 @@ export async function runOrchestrateCommand(
       },
       spawnedIds: () => [...spawned],
       noteSpawned: () => undefined,
+      // Issue #188 (§70): the verdict lands in the run's map and the
+      // persisted record together, so mid-drive saves already carry it.
+      recordVerdict: (agentId, verdict) => {
+        reviewVerdicts.set(agentId, verdict);
+        state = {
+          ...state,
+          reviewVerdicts: Object.fromEntries(reviewVerdicts),
+        };
+        debug(`review verdict for '${agentId}': ${verdict}`);
+      },
       mintAgentId: () => {
         let candidate = '';
         do {
@@ -5148,38 +5173,92 @@ export async function runOrchestrateCommand(
     // candidate — a second conflict on the re-merge is the terminus, never a
     // retry loop. Both merge legs run the same guard → trace → merge sequence
     // as the pre-#106 path, so the merge plumbing itself is unchanged.
-    const mergeAttempt = async (): Promise<void> => {
+    // 'discarded' (issue #188, §70): the reviewer refused the diff —
+    // recorded and saved inside; the caller skips the merge-success
+    // bookkeeping and dequeues the next candidate.
+    const mergeAttempt = async (): Promise<'discarded' | undefined> => {
       await deps.prepareMerge?.(agentId, worktree);
       assertWrites(managerCallsForMerge(laneCalls));
       // L-D33 (issue #431): the lane's settle handoff runs through the
       // settle apply path — the recorded trace is proven write-free a
       // second time (the shipped guard, which no injected seam can stub
-      // out) and the merge gate's approval above is the review verdict
-      // routing to apply (deny/timeout already returned; a reviewer role
-      // under #188 will supply its own verdict here). The registry's
-      // `apply` is sync while the branch merge is async — and must stay
-      // inside this try/catch so a conflict routes to the resolver — so
-      // the decision gates the merge below instead of performing it.
+      // out) and the merge gate's approval above is the human verdict
+      // routing to apply (deny/timeout already returned). The review
+      // verdict (issue #188, §70) routes here: absent means accept (the
+      // shipped default). The registry's `apply` is sync while the
+      // branch merge is async — and must stay inside this try/catch so
+      // a conflict routes to the resolver — so the decision gates the
+      // merge below instead of performing it.
+      const verdict = reviewVerdicts.get(agentId) ?? 'accept';
+      if (verdict === 'escalate') {
+        // Routed by the debugger loop (issue #188 slice S2) — failing
+        // loud until it lands, so an escalate never silently merges or
+        // silently drops.
+        throw new Error(
+          `merge for worker '${agentId}' escalated by review — the debugger loop is not wired yet (issue #188)`,
+        );
+      }
       const decision = applySettlementAfterReview(
         managerCallsForMerge(laneCalls),
-        { verdict: 'accept' },
+        { verdict },
         () => undefined,
       );
       if (decision !== 'apply') {
-        // Unreachable today: the verdict above is literally accept. A
-        // reviewer that can refuse (#188) will handle discard here —
-        // skipping the merge while recording the candidate as merged
-        // would be a silent loss, so this fails loud instead.
-        throw new Error(
-          `merge for worker '${agentId}' discarded by review — no discard path yet (issue #188)`,
+        // The reviewer refused the diff (issue #188, §70): record the
+        // discard and skip the merge — the run continues with the other
+        // workers. Terminal: pending drops the worker (resume never
+        // retries a refusal) while the branch stays for inspection, and
+        // any write-ahead completion moves to `discarded` with it.
+        const completed = state.completed ?? [];
+        const prior = completed.find((entry) => entry.agentId === agentId);
+        const result = resultsByAgent.get(agentId);
+        const entry = prior ?? {
+          agentId,
+          branch: worktree.branch,
+          hunks: hunksByAgent.get(agentId) ?? [],
+          ...(result === undefined ? {} : { result }),
+        };
+        const discarded = state.discarded ?? [];
+        const at = discarded.findIndex((entry) => entry.agentId === agentId);
+        if (at === -1) discarded.push(entry);
+        else discarded[at] = entry;
+        state = {
+          ...state,
+          discarded,
+          completed: completed.filter((entry) => entry.agentId !== agentId),
+          pending: state.pending.filter((entry) => entry !== agentId),
+          merging: undefined,
+        };
+        const saveFailure = await saveOrFail(state);
+        if (saveFailure !== undefined) {
+          throw new Error(
+            `discard save failed for worker '${agentId}' (exit ${saveFailure})`,
+          );
+        }
+        mergeTelemetry.push(
+          recordMergeTelemetry({
+            agentId,
+            queueMs,
+            diffMs,
+            mergeMs: 0,
+            resolveMs: 0,
+            applyMs: 0,
+            outcome: 'review-discarded',
+          }),
         );
+        debug(
+          `discarded: ${agentId} (verdict ${verdict}, branch ${worktree.branch})`,
+        );
+        return 'discarded';
       }
       await deps.mergeBranch(agentId, worktree);
+      return undefined;
     };
     let conflict: MergeConflictError | undefined;
     let mergeFailure: unknown;
+    let discardedWorker = false;
     try {
-      await mergeAttempt();
+      discardedWorker = (await mergeAttempt()) === 'discarded';
     } catch (error) {
       if (error instanceof MergeConflictError) {
         conflict = error;
@@ -5205,7 +5284,7 @@ export async function runOrchestrateCommand(
         // rather than trusted from the resolver's own report.
         conflict = undefined;
         try {
-          await mergeAttempt();
+          if ((await mergeAttempt()) === 'discarded') discardedWorker = true;
         } catch (error) {
           if (error instanceof MergeConflictError) {
             conflict = error;
@@ -5300,6 +5379,12 @@ export async function runOrchestrateCommand(
         `merge failed for worker '${agentId}': ${message}`,
         partial(),
       );
+    }
+    // A refused diff (issue #188) skips the merge-success bookkeeping
+    // below — already recorded, saved and telemetered inside the attempt.
+    if (discardedWorker) {
+      candidate = queue.dequeue();
+      continue;
     }
     const hunks = hunksByAgent.get(agentId) ?? [];
     const result = resultsByAgent.get(agentId);

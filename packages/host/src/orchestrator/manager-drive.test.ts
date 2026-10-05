@@ -55,6 +55,7 @@ function fakeToolset(calls: string[]): ManagerToolset {
     workspaceDiff: fake('workspace_diff'),
     workspaceApply: fake('workspace_apply'),
     workspaceMerge: fake('workspace_merge'),
+    reviewVerdict: fake('review_verdict'),
     askUser: fake('ask_user'),
     gitStatus: fake('git_status'),
     gitDiff: fake('git_diff'),

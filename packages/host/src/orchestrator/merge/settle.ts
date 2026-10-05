@@ -45,6 +45,9 @@ export const MANAGER_MERGE_ALLOWLIST: readonly string[] = [
   'cancel_agent',
   'inspect_agent',
   'collect_result',
+  // §70 (issue #188): the verdict routes the merge but authors no
+  // workspace bytes — metadata, like a collected result.
+  'review_verdict',
   'ask_user',
   'read',
   'ls',

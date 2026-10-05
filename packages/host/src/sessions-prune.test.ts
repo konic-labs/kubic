@@ -21,7 +21,9 @@ import {
   loadCliConfig,
   sessionRetentionDays,
 } from '../../../apps/kubic/src/config-runtime.js';
+import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { effectiveConfigView } from './config/runtime.js';
+import { planSessionPrune } from './sessions-prune.js';
 import { runSessionsCommand, type SessionsInvocation } from './sessions-cli.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -301,6 +303,35 @@ describe('sessions prune, age window (issue #119)', () => {
     expect(code).toBe(1);
     expect(o.lines.join('\n')).toContain(notADir);
     expect(o.lines.join('\n')).toContain('error:');
+  });
+});
+
+describe('sessions prune, one bucket per session (issue #419)', () => {
+  it('a locked session whose header cannot be statted is locked, not unreadable', async () => {
+    const root = tmpRoot();
+    sessionDir(root, 'locked-dark', 90 * DAY_MS);
+    lockFile(root, 'locked-dark', FAKE_PID, 90 * DAY_MS);
+    const kill = stubKill(true);
+    try {
+      // The lock reads fine (live holder); only the stat fails.
+      const real = createNodeFileBridge(root);
+      const plan = planSessionPrune({
+        root,
+        bridge: {
+          ...real,
+          fileInfo: (path: string) => {
+            if (path === 'locked-dark') throw new Error('EACCES');
+            return real.fileInfo(path);
+          },
+        },
+        keepDays: 30,
+        keep: [],
+      });
+      expect(plan.locked.map((entry) => entry.id)).toEqual(['locked-dark']);
+      expect(plan.unreadable).toEqual([]);
+    } finally {
+      kill.mockRestore();
+    }
   });
 });
 

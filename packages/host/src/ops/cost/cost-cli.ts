@@ -324,6 +324,20 @@ export async function loadSessionCostRows(
       ? undefined
       : all.find((entry) => entry.id === sessionId);
   if (sessionId !== undefined && named === undefined) {
+    // Issue #419: an unknown named parent with recorded children names
+    // the orphans instead of exiting bare — the operator's next step is
+    // a child id, and the bare `unknown session` hid that it exists.
+    // (The id passed the SESSION_ID_PATTERN gate in runCostCommand, but
+    // this loader is exported — redact on principle, like cost does.)
+    const orphans = all
+      .filter((entry) => entry.meta?.parentSessionId === sessionId)
+      .map((entry) => entry.id)
+      .sort();
+    if (orphans.length > 0) {
+      throw new Error(
+        `unknown session ${redactSecretShapes(sessionId)} (orphaned children: ${orphans.join(', ')})`,
+      );
+    }
     throw new SessionAttachError(sessionId);
   }
   if (named?.format === 'legacy') {

@@ -680,6 +680,29 @@ describe('kubic cost durable usage (issue #400)', () => {
     });
   });
 
+  it('an unknown --session with orphaned children names the orphans (#419)', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    // Children naming a parent that was never recorded (pruned manager
+    // record, or a hand-made linkage): the loaders see them, the named
+    // attach does not.
+    for (const agent of ['aaa', 'bbb']) {
+      const worker = await createSession(
+        store,
+        {
+          id: `gone-${agent}`,
+          cwd: '/repo',
+          parentSessionId: 'gone',
+        },
+        BACKGROUND_CONTEXT,
+      );
+      await worker.release(BACKGROUND_CONTEXT);
+    }
+    await expect(loadSessionCostRows(root, 'gone')).rejects.toThrow(
+      /orphaned children: gone-aaa, gone-bbb/,
+    );
+  });
+
   it('refuses an explicit --session held live, instead of a zero (locked) row', async () => {
     const root = tmpRoot();
     const store = openSessionStore(root, createNodeFileBridge(root));

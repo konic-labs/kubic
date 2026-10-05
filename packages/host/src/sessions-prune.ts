@@ -173,7 +173,10 @@ export function planSessionPrune(args: SessionPrunePlanArgs): SessionPrunePlan {
     try {
       info = args.bridge.fileInfo(entry.name);
     } catch {
-      plan.unreadable.push(entry.name);
+      // Issue #419: a locked session whose header cannot be statted is
+      // already reported in exactly one bucket (locked) — the live lock
+      // read succeeded, only the stat failed.
+      if (!lockedIds.has(entry.name)) plan.unreadable.push(entry.name);
       continue;
     }
     mtimes.set(entry.name, info.mtimeMs);

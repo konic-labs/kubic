@@ -29,6 +29,7 @@ import {
 import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import { enableSessionFullAccess, FileApprovalStore } from './approvals.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
+import { redactSecretShapes } from './policy/secret-shapes.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
 import {
   deleteSessionPruneCandidates,
@@ -278,14 +279,31 @@ export async function runSessionsCommand(
   }
   if (invocation.command === 'list') {
     const listed = await listSessions(store, BACKGROUND_CONTEXT);
+    // Issue #419: the direct API is not commander-validated, so a
+    // `--parent` outside the id class is refused like `cost --session`
+    // (fail-closed echo — the value is caller-controlled and may carry
+    // secret-shaped material), never echoed raw.
+    if (
+      invocation.parent !== undefined &&
+      !SESSION_ID_PATTERN.test(invocation.parent)
+    ) {
+      log.error(
+        `invalid --parent id ${redactSecretShapes(JSON.stringify(invocation.parent))} (use [A-Za-z0-9_-])`,
+      );
+      return 2;
+    }
     // Review #164: a `--parent` naming no recorded session is a named
     // refusal (exit 1), not an empty listing — a run id with zero
     // children still lists (empty) when the run itself is recorded.
+    // SESSION_ID_PATTERN admits sk-shaped strings, so even the
+    // valid-shaped echo is redacted.
     if (
       invocation.parent !== undefined &&
       !listed.some((entry) => entry.id === invocation.parent)
     ) {
-      log.error(`unknown parent session: ${invocation.parent}`);
+      log.error(
+        `unknown parent session: ${redactSecretShapes(invocation.parent)}`,
+      );
       return 1;
     }
     // Issue #164 (§23): `--parent <id>` groups one run's children.

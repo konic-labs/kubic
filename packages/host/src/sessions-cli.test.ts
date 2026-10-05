@@ -227,6 +227,59 @@ describe('sessions CLI (issue #14, slice F)', () => {
     expect(listing.lines).toEqual(['[]']);
   });
 
+  it('list --parent refuses an invalid id without echoing it raw (#419)', async () => {
+    const root = tmpRoot();
+    // Secret-shaped material is scrubbed; the remainder echoes quoted +
+    // structured (the cost --session fail-closed shape), never raw.
+    const nasty = 'sk-live-abc ../../etc/passwd';
+    const o = out();
+    const e = out();
+    const code = await runSessionsCommand(
+      { command: 'list', parent: nasty },
+      {
+        sessionsRoot: root,
+        out: o.write,
+        logger: createLineLogger(e.write),
+      },
+    );
+    expect(code).toBe(2);
+    const diagnostics = e.lines.join('\n');
+    expect(diagnostics).not.toContain(nasty);
+    expect(diagnostics).not.toContain('sk-live-abc');
+    expect(diagnostics).toContain('invalid --parent id');
+    // A plain path traversal: refused, quoted, no secret to scrub.
+    const o2 = out();
+    const e2 = out();
+    expect(
+      await runSessionsCommand(
+        { command: 'list', parent: '../../etc' },
+        {
+          sessionsRoot: root,
+          out: o2.write,
+          logger: createLineLogger(e2.write),
+        },
+      ),
+    ).toBe(2);
+    expect(e2.lines.join('\n')).toContain('"../../etc"');
+  });
+
+  it('list --parent redacts even a valid-shaped unknown id (#419)', async () => {
+    const root = tmpRoot();
+    const keyShaped = 'sk-live-abcdefghij1234';
+    const o = out();
+    const e = out();
+    const code = await runSessionsCommand(
+      { command: 'list', parent: keyShaped },
+      {
+        sessionsRoot: root,
+        out: o.write,
+        logger: createLineLogger(e.write),
+      },
+    );
+    expect(code).toBe(1);
+    expect(e.lines.join('\n')).not.toContain(keyShaped);
+  });
+
   it('list --json prints [] when there are no sessions', async () => {
     const o = out();
     const code = await runSessionsCommand(

@@ -850,7 +850,13 @@ re-settlements of the same worker are continuations, not new turns) and
 travels with the session, so `--resume` continues the count. The envelope
 names refused ids under `discarded`, each worker row carries its
 `reviewVerdict`, and the text report lists `discarded: <id> (<verdict>)`
-beside the merges.
+beside the merges. Once the loop turns, the text report adds a
+`review loop: <settlements> debugger settlement(s), bound <n>[, escalated
+once[ to <model>]]` line and the envelope carries the same `reviewLoop`
+object (both gated on activity — template runs stay byte-clean). The
+manager staffs no planner or reviewer for trivial or read-only objectives
+(issue #188): implementer and tester suffice, and nothing is staffed when
+no diff will be authored or reviewed.
 `workspace_apply` stages any settled worker's change — completed,
 cancelled or failed alike; only a still-running worker is refused
 (`apply_before_settle`). The staged bytes are always re-read from the

@@ -4179,9 +4179,50 @@ describe('orchestrate manager lane (issue #431)', () => {
     const saved = world.saved[world.saved.length - 1];
     expect(saved?.reviewLoop?.debuggerSettlements).toBe(2);
     expect(saved?.reviewLoop?.escalated).toBe(true);
+    // The envelope carries the loop under the same activity gate.
+    const envelope = JSON.parse(
+      world.lines[world.lines.length - 1] as string,
+    ) as { reviewLoop?: unknown };
+    expect(envelope.reviewLoop).toEqual({
+      maxAttempts: 1,
+      escalationModel: 'faux/strong',
+      debuggerSettlements: 2,
+      escalated: true,
+    });
     expect(world.debugLines.join('\n')).toMatch(
       /escalating once.*faux\/strong/,
     );
+  });
+
+  it('the text report and envelope name the loop once it turns (issue #188)', async () => {
+    // S3a: loop state surfaces on the run's own surfaces — the activity
+    // gate keeps template runs byte-clean. Pre-fix the line is absent.
+    const world = laneWorld(
+      [
+        toolTurn('spawn_agent', { role: 'debugger', task: 'look at alpha' }),
+        toolTurn('wait_for_agent', { agentId: 'worker-1' }),
+        toolTurn('collect_result', { agentId: 'worker-1' }),
+        toolTurn('workspace_diff', { agentId: 'worker-1' }),
+        toolTurn('workspace_apply', { agentId: 'worker-1' }),
+        toolTurn('workspace_merge', {}),
+        fauxAssistantMessage('done'),
+      ],
+      {},
+    );
+    // Text mode: the human report carries the loop line (json mode
+    // emits only the envelope — the envelope half rides the bound test
+    // above, which runs json).
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'look at alpha',
+        agents: ['alpha'],
+        session: 'lane-loop-surface',
+      },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    const text = world.lines.join('\n');
+    expect(text).toContain('review loop: 1 debugger settlement(s), bound 3');
   });
 
   it('drives spawn to merge through the lane and merges the minted worker', async () => {

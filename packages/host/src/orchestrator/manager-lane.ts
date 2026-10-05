@@ -97,6 +97,11 @@ export function assembleManagerPrompt(toolNames: readonly string[]): string {
     // worker's verdict with review_verdict, then workspace_merge
     // executes it: accept merges, request-changes discards the diff.
     'review loop: a tester whose tests fail routes debugger (with the failing tests and the diff ref), then the tester re-runs — bounded, one escalation, then the run fails; review_verdict each settled worker, workspace_merge executes the verdict.',
+    // The staffing skip (issue #188): the planner and the reviewer earn
+    // their keep on multi-worker or risky work — a trivial or read-only
+    // objective ships with implementer and tester alone, and nothing is
+    // staffed when no diff will be authored or reviewed.
+    'staffing: skip planner and reviewer for trivial or read-only objectives — implementer and tester suffice, and staff nothing no diff will touch.',
     `tools: ${[...toolNames].join(', ')}`,
   ].join('\n');
 }

@@ -282,6 +282,33 @@ allowlist, so a lane carrying one refuses to start and `checkManagerCall`
 refuses the name. The root is still the CLI process rather than a
 model-driven agent; what the lane adds is the toolset gate and the plan.
 
+## The §70 review loop: verdicts, discards and the debugger bound
+
+Every settled worker gets a reviewer verdict through `review_verdict`
+(`accept`, `request-changes`, `escalate`), and the next `workspace_merge`
+executes it: `accept` (or no verdict, the shipped default) merges through
+the existing merge gate, `request-changes` records the diff under
+discarded work — branch kept for inspection, never retried by `--resume`,
+never named in `mergeOrder`, the run continuing with the survivors — and
+`escalate` routes the tester→debugger→tester loop. The loop covers failing
+*tests* (a tester completed with failing rows, which it inherits through
+the handoff with the diff ref and worktree); a crashed worker takes the
+`--on-failure` path instead and never enters the loop. The run absorbs
+`--max-attempts` debugger settlements (default 3, persisted with the
+session and re-applied on `--resume`, explicit flags winning), then the
+next debugger spawn escalates once — the `--escalation-model` rung
+overrides the spawn pin, the debugger's own model when unconfigured — and
+past bound plus escalation debugger spawns refuse (`review_loop_bound`)
+and the run fails exit 1 (`code=loop_bound_exceeded`) with the bound
+named. The manager prompt carries both sequencing rules: the review loop
+above, and the staffing skip (no planner or reviewer for trivial or
+read-only objectives). Loop state surfaces on the run's own surfaces — a
+`review loop:` text line, the envelope's `reviewLoop`, each worker row's
+`reviewVerdict` and the `discarded:` lines — while the §54 DAG keeps its
+shape (verdicts annotate the report, never the graph) and the §49.1
+trajectory stays admission-scoped (parallel conc/queue/wakeups only): the
+envelope is the loop's record, not a new trajectory kind.
+
 ## Worker lifecycle: crash and replacement
 
 A worker that dies crash-class (signal-killed, or an unclassified non-zero

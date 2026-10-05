@@ -1546,6 +1546,15 @@ export interface OrchestrateEnvelope {
   // Present on every envelope (empty when nothing was refused) so the
   // shape is stable for consumers.
   discarded: string[];
+  // The §70 loop on the envelope (issue #188): present only once the
+  // loop turns (debugger settlements or a spent escalation) — template
+  // envelopes stay byte-clean.
+  reviewLoop?: {
+    maxAttempts: number;
+    escalationModel?: string;
+    debuggerSettlements: number;
+    escalated: boolean;
+  };
   attribution: AttributedHunk[];
   // The manager's final message (issue #418): present only on
   // lane-driven runs whose drive produced one — the text `result:` line
@@ -2131,7 +2140,7 @@ export async function runOrchestrateCommand(
     message: string,
     partial?: Pick<
       OrchestrateEnvelope,
-      'workers' | 'mergeOrder' | 'discarded' | 'attribution'
+      'workers' | 'mergeOrder' | 'discarded' | 'attribution' | 'reviewLoop'
     >,
     // The agents the envelope should describe. Defaults to the parsed list,
     // which is right for the pre-state failures (usage/non-git refusals) —
@@ -2151,6 +2160,11 @@ export async function runOrchestrateCommand(
         mergeOrder: partial?.mergeOrder ?? [],
         discarded: partial?.discarded ?? [],
         attribution: partial?.attribution ?? [],
+        // The §70 loop (issue #188): a bound trip fails WITH its
+        // counters — the failure envelope is the trip's record.
+        ...(partial?.reviewLoop === undefined
+          ? {}
+          : { reviewLoop: partial.reviewLoop }),
         graph: delegationGraphLines(sessionId, graphAgents ?? parsed.agents),
         error: { kind: status, message, code },
         ...(reapErrors.length === 0 ? {} : { reapErrors: [...reapErrors] }),
@@ -3027,13 +3041,28 @@ export async function runOrchestrateCommand(
       };
     });
 
+  // The §70 loop on the envelope (issue #188): the same activity gate
+  // as the text line — absent until the loop turns, so template
+  // envelopes stay byte-clean. Shared by the success and failure
+  // envelopes, so the bound trip reports its own counters.
+  const reviewLoopEnvelope = (): Pick<OrchestrateEnvelope, 'reviewLoop'> => {
+    const loop = state.reviewLoop;
+    if (
+      loop === undefined ||
+      (loop.debuggerSettlements === 0 && !loop.escalated)
+    ) {
+      return {};
+    }
+    return { reviewLoop: { ...loop } };
+  };
   const partial = (): Pick<
     OrchestrateEnvelope,
-    'workers' | 'mergeOrder' | 'discarded' | 'attribution'
+    'workers' | 'mergeOrder' | 'discarded' | 'attribution' | 'reviewLoop'
   > => ({
     workers: workerRows(),
     mergeOrder: [...state.merged],
     discarded: (state.discarded ?? []).map((entry) => entry.agentId),
+    ...reviewLoopEnvelope(),
     attribution: state.records.flatMap((record) =>
       attributeMergedHunks(record.hunks, record.agentId),
     ),
@@ -5730,6 +5759,22 @@ export async function runOrchestrateCommand(
       (entry) =>
         `${theme.warning('discarded:')} ${entry.agentId} (${state.reviewVerdicts?.[entry.agentId] ?? 'unknown'})`,
     ),
+    // The §70 loop state (issue #188): shown only once the loop turns —
+    // a template run never settles a debugger, so its report stays
+    // byte-clean while a looped run names settlements, bound and the
+    // single escalation.
+    ...(() => {
+      const loop = state.reviewLoop;
+      if (
+        loop === undefined ||
+        (loop.debuggerSettlements === 0 && !loop.escalated)
+      ) {
+        return [];
+      }
+      return [
+        `${theme.muted('review loop:')} ${loop.debuggerSettlements} debugger settlement(s), bound ${loop.maxAttempts}${loop.escalated ? `, escalated once${loop.escalationModel === undefined ? '' : ` to ${loop.escalationModel}`}` : ''}`,
+      ];
+    })(),
     // §61 (issue #158): the measured merge phases, one line per candidate.
     ...mergeTelemetryLines(),
     ...failedWorkers.map(
@@ -5780,6 +5825,7 @@ export async function runOrchestrateCommand(
       workers: workerRows(),
       mergeOrder: [...state.merged],
       discarded: (state.discarded ?? []).map((entry) => entry.agentId),
+      ...reviewLoopEnvelope(),
       attribution,
       ...(state.managerSummary === undefined
         ? {}

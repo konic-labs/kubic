@@ -17,7 +17,12 @@ import {
   createTranscriptView,
   TOOL_OUTPUT_PREVIEW_LINES,
 } from './transcript.js';
-import { applyLaneEvent, createTreeState, renderTreeLines } from './tree.js';
+import {
+  applyTreeSnapshot,
+  createTreeState,
+  renderTreeLines,
+  type TreeToolSnapshot,
+} from './tree.js';
 import {
   createTuiApp,
   renderHeader,
@@ -300,13 +305,16 @@ describe('app chrome', () => {
 describe('compact tree', () => {
   it('folds older calls so the row never exceeds its cap', () => {
     const state = createTreeState();
+    const tools: TreeToolSnapshot[] = [];
     for (let i = 0; i < 9; i += 1) {
-      applyLaneEvent(
-        state,
-        { type: 'tool-start', toolCallId: `t${i}`, toolName: `tool${i}` },
-        () => 0,
-      );
+      tools.push({
+        toolCallId: `t${i}`,
+        toolName: `tool${i}`,
+        status: 'running',
+        isError: false,
+      });
     }
+    applyTreeSnapshot(state, { status: 'running', tools });
     const lines = renderTreeLines(state, 80);
     expect(lines).toHaveLength(TREE_MAX_ROWS);
     expect(lines[1]).toBe('  … 5 earlier calls');

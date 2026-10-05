@@ -51,7 +51,6 @@ export interface TreeToolCall {
   argsSummary?: string;
   outcome?: string;
   durationMs?: number;
-  startedAt?: number;
 }
 
 // The conversation's own spend, summed from usage events (#345; §49.1): the
@@ -100,205 +99,6 @@ export function toggleTree(state: AgentTreeState): void {
   state.collapsed = !state.collapsed;
 }
 
-// Structural lane input: handled members mirror KubicLaneEvent
-// (run-start/run-end/tool-start/tool-end/usage); anything else is ignored.
-// The index signature keeps fresh literals with lane/runId/etc
-// assignable without importing the worker package.
-export interface LaneEventLike {
-  readonly type: string;
-  readonly status?: string;
-  readonly toolCallId?: string;
-  readonly toolName?: string;
-  readonly isError?: boolean;
-  readonly args?: unknown;
-  readonly entry?: unknown;
-  readonly row?: unknown;
-  readonly usage?: unknown;
-  readonly [key: string]: unknown;
-}
-
-// The usage row's counters, read structurally (KubicUsageRow without the
-// worker import); anything malformed contributes nothing.
-function usageTotalsOf(
-  row: unknown,
-): { cost: number; input: number; output: number } | undefined {
-  if (typeof row !== 'object' || row === null) return undefined;
-  const usage = (row as { usage?: unknown }).usage;
-  if (typeof usage !== 'object' || usage === null) return undefined;
-  const counters = usage as {
-    input?: unknown;
-    output?: unknown;
-    cost?: unknown;
-  };
-  const cost = counters.cost;
-  const total =
-    typeof cost === 'object' && cost !== null
-      ? (cost as { total?: unknown }).total
-      : undefined;
-  const input = typeof counters.input === 'number' ? counters.input : undefined;
-  const output =
-    typeof counters.output === 'number' ? counters.output : undefined;
-  const costTotal = typeof total === 'number' ? total : undefined;
-  // A row with no counter at all is not usage: keep the segment off the row
-  // instead of printing a `$0.00 0/0` the session never earned.
-  if (input === undefined && output === undefined && costTotal === undefined) {
-    return undefined;
-  }
-  return {
-    input: input ?? 0,
-    output: output ?? 0,
-    cost: costTotal ?? 0,
-  };
-}
-
-// The snapshot's `UsageState` ledger: `models` and `tools`, each keyed by
-// provider/model or tool name, every bucket a counter set. Untrusted JSON —
-// a malformed bucket contributes nothing.
-function usageLedgerTotals(
-  usage: unknown,
-): { cost: number; input: number; output: number } | undefined {
-  if (typeof usage !== 'object' || usage === null) return undefined;
-  const ledger = usage as { models?: unknown; tools?: unknown };
-  let cost = 0;
-  let input = 0;
-  let output = 0;
-  let seen = false;
-  for (const buckets of [ledger.models, ledger.tools]) {
-    if (typeof buckets !== 'object' || buckets === null) continue;
-    for (const bucket of Object.values(buckets as Record<string, unknown>)) {
-      const counters = usageTotalsOf({ usage: bucket });
-      if (counters === undefined) continue;
-      seen = true;
-      cost += counters.cost;
-      input += counters.input;
-      output += counters.output;
-    }
-  }
-  return seen ? { cost, input, output } : undefined;
-}
-
-export function applyLaneEvent(
-  state: AgentTreeState,
-  event: LaneEventLike,
-  now: () => number = Date.now,
-): void {
-  switch (event.type) {
-    case 'run-start': {
-      state.rootStatus = 'running';
-      // Issue #345: a new turn opens a new group. The finished turn's calls
-      // roll into their summary (the fold line counts them) instead of
-      // accumulating into the live turn's list, where they would read as one
-      // long '… N earlier calls' run.
-      if (state.tools.length > 0) {
-        state.previousTurns.push({
-          calls: state.tools.length,
-          durationMs: state.tools.reduce(
-            (sum, call) => sum + (call.durationMs ?? 0),
-            0,
-          ),
-        });
-        state.tools = [];
-      }
-      return;
-    }
-    case 'run-end': {
-      state.rootStatus = 'done';
-      return;
-    }
-    case 'snapshot': {
-      // The attach snapshot carries the conversation's cumulative usage
-      // ledger (`UsageState`, per model and per tool), so a late join or a
-      // resumed session shows the spend it already has instead of starting at
-      // zero. The snapshot is REPLACE semantics: it sets the totals, never
-      // adds them (review finding, #345).
-      const totals = usageLedgerTotals(event.usage);
-      if (totals === undefined) return;
-      state.usage = {
-        seen: true,
-        costTotal: totals.cost,
-        inputTokens: totals.input,
-        outputTokens: totals.output,
-      };
-      return;
-    }
-    case 'usage': {
-      const totals = usageTotalsOf(event.row);
-      if (totals === undefined) return;
-      state.usage.seen = true;
-      state.usage.costTotal += totals.cost;
-      state.usage.inputTokens += totals.input;
-      state.usage.outputTokens += totals.output;
-      return;
-    }
-    case 'tool-start': {
-      if (typeof event.toolCallId !== 'string') return;
-      if (typeof event.toolName !== 'string') return;
-      // Issue #88, third-pass review finding: the name is model-supplied
-      // (pi-agent-core copies it straight off the assistant's tool call), so
-      // it carries the same control sequences as any other lane content and
-      // must not reach the frame raw. Sanitized HERE, at the tree's ingress,
-      // so every render path downstream is covered by one choke point.
-      const toolName = sanitizeLaneText(event.toolName);
-      // #345: the args are the same class of untrusted model output;
-      // summarizeToolArguments sanitizes and newline-collapses them.
-      const argsSummary = summarizeToolArguments(event.args);
-      const at = now();
-      const existing = state.tools.find((t) => t.id === event.toolCallId);
-      if (existing === undefined) {
-        state.tools.push({
-          id: event.toolCallId,
-          name: toolName,
-          done: false,
-          error: false,
-          argsSummary,
-          durationMs: undefined,
-          startedAt: at,
-        });
-      } else {
-        existing.name = toolName;
-        existing.done = false;
-        existing.error = false;
-        existing.argsSummary = argsSummary;
-        existing.outcome = undefined;
-        existing.durationMs = undefined;
-        existing.startedAt = at;
-      }
-      return;
-    }
-    case 'tool-end': {
-      if (typeof event.toolCallId !== 'string') return;
-      if (typeof event.toolName !== 'string') return;
-      const toolName = sanitizeLaneText(event.toolName);
-      const outcome = summarizeToolOutcome(event.entry, toolName);
-      const at = now();
-      const existing = state.tools.find((t) => t.id === event.toolCallId);
-      if (existing === undefined) {
-        state.tools.push({
-          id: event.toolCallId,
-          name: toolName,
-          done: true,
-          error: event.isError === true,
-          outcome,
-          durationMs: undefined,
-          startedAt: undefined,
-        });
-      } else {
-        existing.done = true;
-        existing.error = event.isError === true;
-        existing.outcome = outcome;
-        existing.durationMs =
-          existing.startedAt === undefined
-            ? undefined
-            : Math.max(0, at - existing.startedAt);
-      }
-      return;
-    }
-    default: {
-      return;
-    }
-  }
-}
-
 function previousCalls(state: AgentTreeState): number {
   return state.previousTurns.reduce((sum, turn) => sum + turn.calls, 0);
 }
@@ -307,9 +107,10 @@ function previousDurationMs(state: AgentTreeState): number {
   return state.previousTurns.reduce((sum, turn) => sum + turn.durationMs, 0);
 }
 
-// Issue #333 (§66): the tree renders from replicated presentation state. The
-// snapshot carries the live turn's calls (the projector folds the events);
-// the summarizers stay here, so the state never carries a display string.
+// Issue #333 (§66): the tree renders the replicated presentation state the
+// host projector folds — there is ONE lane input (the snapshot below), not a
+// second event-driven path beside it. The summarizers stay here, so the state
+// never carries a display string.
 export interface TreeToolSnapshot {
   readonly toolCallId: string;
   readonly toolName: string;
@@ -494,7 +295,6 @@ export interface TreeViewOptions {
   label?: string;
   collapsed?: boolean;
   onFocusEditor?: () => void;
-  clock?: () => number;
 }
 
 export const TOGGLE_KEYS: ReadonlySet<string> = new Set([
@@ -527,7 +327,6 @@ export class AgentTreeView implements Component {
   private region: MouseRegion;
   private treeState: AgentTreeState;
   private focusEditor: () => void;
-  private clock: () => number;
 
   constructor(state?: AgentTreeState, options?: TreeViewOptions) {
     this.treeState = state ?? createTreeState(options?.label);
@@ -535,7 +334,6 @@ export class AgentTreeView implements Component {
       this.treeState.collapsed = options.collapsed;
     }
     this.focusEditor = options?.onFocusEditor ?? (() => {});
-    this.clock = options?.clock ?? Date.now;
     this.body = new TreeBody(this.treeState);
     this.region = new MouseRegion(this.body, (event) => this.onMouse(event));
   }
@@ -558,10 +356,6 @@ export class AgentTreeView implements Component {
 
   toggle(): void {
     toggleTree(this.treeState);
-  }
-
-  update(event: LaneEventLike): void {
-    applyLaneEvent(this.treeState, event, this.clock);
   }
 
   handleInput(data: string): void {

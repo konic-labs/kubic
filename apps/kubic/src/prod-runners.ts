@@ -179,6 +179,7 @@ import { createProdRunSuite } from './eval-prod.js';
 import {
   extensionPostureForDoctor,
   loadExtensionStartup,
+  prodExtensionStartupOptions,
 } from './extension-startup.js';
 import { type HeadlessRunDeps, runHeadlessPrompt } from './headless-run.js';
 import { orchestrateDepsWithDefaults } from './orchestrate-run.js';
@@ -864,12 +865,27 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       // bundle set at dispatch, through the same gates — a degraded load
       // throws here (named ExtensionStartupError) instead of opening the
       // alt-screen on a run whose extensions never loaded.
-      await loadExtensionStartup('tui', process.cwd(), {
+      // Issue #283 (§71): the loaded bundle travels into the boot's
+      // budget gate — the load is kept, not discarded.
+      const extensions = await loadExtensionStartup('tui', process.cwd(), {
         receipt: debug,
+        // The opt-in budget rides into the bundle build; absence keeps
+        // the historical bare call.
+        ...(options.budget === undefined
+          ? {}
+          : {
+              options: prodExtensionStartupOptions(
+                process.cwd(),
+                options.budget,
+              ),
+            }),
       });
       return runTuiCommand(
         options,
-        tuiDepsWithDefaults(prodTuiDeps({ out, debug }, cliConfig)),
+        tuiDepsWithDefaults({
+          ...prodTuiDeps({ out, debug }, cliConfig),
+          extensions,
+        }),
       );
     },
     doctor: async (options, cliConfig) => {

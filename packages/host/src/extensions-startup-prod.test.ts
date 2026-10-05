@@ -147,9 +147,11 @@ describe('prod extension startup, solo lane (issue #93)', () => {
   });
 
   it('applies the loaded worker-facet limits to the live tool stack', async () => {
-    // maxToolCalls: 1 through the real startup loader: the second tool call is
-    // refused. Remove the budgetToolGate contribution from headless-run.ts and
-    // both calls run instead — the transcript carries no refusal.
+    // maxToolCalls: 1 through the real startup loader: the second tool call
+    // trips the run guard — the run ends budget_exhausted (exit 3) with the
+    // limit named (issue #283), instead of settling completed with the
+    // refusal as tool content. Remove the budgetToolGate contribution from
+    // headless-run.ts and both calls run instead.
     const extensions = await startFirstPartyExtensions({
       ...prodExtensionStartupOptions(process.cwd()),
       limits: { maxToolCalls: 1 },
@@ -165,17 +167,11 @@ describe('prod extension startup, solo lane (issue #93)', () => {
         extensions,
       },
     );
-    // The lane settles: a refused tool is model-readable content, not a lane
-    // fault. The proof is the transcript, where the run actually happened.
+    expect(result.terminus).toBe('budget_exhausted');
+    expect(result.summary).toContain('toolCalls');
+    // Exactly one ls really executed: the budget admitted one call, the
+    // guard tripped on the next.
     const transcript = await transcriptOf(root, result.sessionId);
-    expect(transcript).toContain(
-      'extension budget exhausted: toolCalls limit breached',
-    );
-    expect(transcript).toContain(
-      'worker facet of the loaded first-party bundle',
-    );
-    // Exactly one ls really executed: the budget admitted one call, refused
-    // the next.
     expect(transcript.match(/"path":"\.","entries":\[\]/g) ?? []).toHaveLength(
       1,
     );

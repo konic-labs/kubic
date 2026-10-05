@@ -9,9 +9,9 @@
 // (packages/host) receive typed options and own the run itself.
 
 import { InvalidArgumentError, Option } from '@commander-js/extra-typings';
+import { BUDGET_DIMENSIONS } from '../../../../packages/agents/src/budget.js';
 import { CliUsageError } from '../../../../packages/core/src/cli/exit-codes.js';
 import {
-  BUDGET_DIMENSIONS,
   type ParsedBudgetSpec,
   parseAgentBindings,
   parseBudgetSpec,

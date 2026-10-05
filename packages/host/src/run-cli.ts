@@ -8,7 +8,7 @@
 // flows through the injected persist hook identically for text and
 // --json output.
 
-import type { RunMode } from '../../agents/src/budget.js';
+import { BUDGET_DIMENSIONS, type RunMode } from '../../agents/src/budget.js';
 import {
   EXIT_APPROVAL,
   EXIT_BUDGET,
@@ -326,6 +326,10 @@ export interface RunCommandDeps extends CliIo {
       // §19 (issue #278): explicit autonomous mode, recorded in session
       // metadata and the §60 audit trail, driving RunMode.
       autonomous?: boolean;
+      // §71 (issue #283): the opt-in solo budget, parsed by the
+      // registrar — forwarded to the runner, which builds the bundle
+      // with it. Absent means no limits, never defaults.
+      budget?: SoloBudgetLimits;
       // §40.1 mechanism 1 (issue #273): the per-invocation tool selection.
       tools?: readonly string[];
       noTools?: boolean;
@@ -371,6 +375,8 @@ export interface RunCommandOptions {
   readonly dangerouslySkipApprovals?: boolean;
   // §19 (issue #278): explicit autonomous mode (off by default).
   readonly autonomous?: boolean;
+  // §71 (issue #283): the opt-in solo budget (never defaulted).
+  readonly budget?: SoloBudgetLimits;
   // §40.1 mechanism 1 (issue #273): `--tools <a,b>` / `--no-tools`.
   readonly tools?: readonly string[];
   readonly noTools?: boolean;
@@ -404,6 +410,69 @@ export function parseRunTimeout(value: string): number {
 // `--max-turns <n>`: a positive integer.
 export function parseRunMaxTurns(value: string): number {
   return positiveInt(value);
+}
+
+// `--budget <dims>` (issue #283; §71): the opt-in solo budget, reusing
+// orchestrate's dimension grammar (`toolCalls=10,maxCostUsd=0.5`) but
+// WITHOUT agent scoping — a solo run has one lane, so an `agent:` clause
+// is a usage error naming the flag. No defaults: absence leaves the key
+// out upstream. Host never imports the extensions package (structural
+// boundary, like doctor's posture), so this returns the structural shape
+// and the composition root maps it onto the bundle's `BudgetLimits`.
+export interface SoloBudgetLimits {
+  maxTokens?: number;
+  maxCostUsd?: number;
+  maxRuntimeMs?: number;
+  maxToolCalls?: number;
+}
+
+export function parseSoloBudget(value: string): SoloBudgetLimits {
+  // Bare dims only — no `agent:` clauses, no `;` separators: a solo run
+  // has one lane, so anything agent-shaped is refused naming the flag.
+  // Same dimension/positivity/ceiling rules as orchestrate's grammar.
+  const dims: Record<string, number> = {};
+  for (const part of value.split(',')) {
+    const trimmed = part.trim();
+    if (trimmed.length === 0) {
+      throw new RunArgumentError(
+        `--budget ${JSON.stringify(value)}: need dims like toolCalls=10,maxCostUsd=0.5`,
+      );
+    }
+    const equals = trimmed.indexOf('=');
+    if (equals <= 0) {
+      throw new RunArgumentError(
+        `--budget ${JSON.stringify(value)}: need dims like toolCalls=10,maxCostUsd=0.5`,
+      );
+    }
+    const name = trimmed.slice(0, equals).trim();
+    const amount = Number(trimmed.slice(equals + 1));
+    if (
+      !BUDGET_DIMENSIONS.includes(name) ||
+      !Number.isFinite(amount) ||
+      !(amount > 0) ||
+      (name === 'maxRuntimeMs' && amount > MAX_RUN_TIMEOUT_MS)
+    ) {
+      throw new RunArgumentError(
+        `--budget ${JSON.stringify(value)}: need dims like toolCalls=10,maxCostUsd=0.5`,
+      );
+    }
+    dims[name] = amount;
+  }
+  if (Object.keys(dims).length === 0) {
+    throw new RunArgumentError(
+      `--budget ${JSON.stringify(value)}: need dims like toolCalls=10,maxCostUsd=0.5`,
+    );
+  }
+  return {
+    ...(dims.maxTokens === undefined ? {} : { maxTokens: dims.maxTokens }),
+    ...(dims.maxCostUsd === undefined ? {} : { maxCostUsd: dims.maxCostUsd }),
+    ...(dims.maxRuntimeMs === undefined
+      ? {}
+      : { maxRuntimeMs: dims.maxRuntimeMs }),
+    ...(dims.maxToolCalls === undefined
+      ? {}
+      : { maxToolCalls: dims.maxToolCalls }),
+  };
 }
 
 // `--session <id>` (and every other session-id argument): a path segment
@@ -558,6 +627,7 @@ export async function runRunCommand(
       ...(options.dangerouslySkipApprovals === true
         ? { dangerouslySkipApprovals: true }
         : {}),
+      ...(options.budget === undefined ? {} : { budget: options.budget }),
       ...(options.tools === undefined || options.tools.length === 0
         ? {}
         : { tools: [...options.tools] }),

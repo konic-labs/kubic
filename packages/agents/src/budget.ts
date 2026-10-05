@@ -51,6 +51,16 @@ export const BUDGET_OWNERSHIP: Record<BudgetLimit, BudgetEnforcer> = {
 
 export type RunMode = 'autonomous' | 'interactive';
 
+// The `--budget` dimension vocabulary (issue #283; §71): the flag dims
+// both `kubic orchestrate --budget` and the solo `run`/`tui` `--budget`
+// parse. Shared here so the two parsers cannot drift apart.
+export const BUDGET_DIMENSIONS: readonly string[] = [
+  'maxTokens',
+  'maxCostUsd',
+  'maxRuntimeMs',
+  'maxToolCalls',
+];
+
 export type BlockedSpawnOutcome =
   | { outcome: 'queued' }
   // Issue #277 (§41.1): an interactive run asks the USER before going past the

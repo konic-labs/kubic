@@ -48,6 +48,8 @@ import {
   applyUndo,
   planUndo,
 } from '../../../packages/exec/src/journal-undo.js';
+import { budgetToolGate } from '../../../packages/extensions/src/runtime.js';
+import type { BundleLoad } from '../../../packages/extensions/src/startup.js';
 import {
   type ApprovalRequest,
   type ApprovalVerdict,
@@ -119,6 +121,7 @@ import {
   RUN_EXIT_WORKSPACE_UNAVAILABLE,
   type RunTerminusKind,
   SESSION_ID_PATTERN,
+  type SoloBudgetLimits,
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import type { SkippedSkill } from '../../../packages/host/src/skills-boot.js';
@@ -1037,6 +1040,11 @@ export interface TuiRunOptions {
   // intersected with the classes/role/enterprise sets, never widening.
   toolSelection?: string[];
   noTools?: boolean;
+  // §71 (issue #283): the loaded first-party bundle (limits ride from
+  // the opt-in `--budget` at dispatch). Present means the lane composes
+  // the extension budget gate — an over-budget call is refused as a
+  // tool error, never a silent pass. Absent means no gate (historical).
+  extensions?: BundleLoad;
   // Issue #86: the config layer's own record of where the classes came from
   // ('default' when nothing configured them). Absent means 'default'.
   policySource?: 'config' | 'default';
@@ -1687,9 +1695,21 @@ export async function bootTuiLane(
       policy: {
         classes: installed.classes,
         interceptors: installed.interceptors,
-        ...(installed.contributions.length === 0
+        ...(installed.contributions.length === 0 &&
+        options.extensions === undefined
           ? {}
-          : { contributions: installed.contributions }),
+          : {
+              contributions: [
+                ...installed.contributions,
+                // Issue #283 (§71): the opt-in budget binds the
+                // interactive lane too — refusal, not terminus: the
+                // model sees the refusal as a tool error and the
+                // operator watches it happen.
+                ...(options.extensions === undefined
+                  ? []
+                  : [budgetToolGate(options.extensions)]),
+              ],
+            }),
         // §58 enterprise tool gate (issue #288): the same active-tools /
         // prompt-tools intersection the headless lane installs.
         ...(toolGate === undefined ? {} : { toolAllowed: toolGate }),
@@ -2232,6 +2252,10 @@ function normalizeMessageContent(content: unknown): unknown[] | undefined {
 export type TuiDepsInput = {
   out: (line: string) => void;
   err?: (line: string) => void;
+  // Issue #283 (§71): the loaded first-party bundle for the boot's
+  // budget gate. Per-invocation, NOT config (outside TuiConfigProjection
+  // on purpose — the #294 by-name rule governs config keys only).
+  extensions?: BundleLoad;
 } & TuiConfigProjection;
 
 // The config projections `kubic tui` consumes (issues #86, #90, #113, #115,
@@ -2361,9 +2385,14 @@ export function tuiBootOptions(
     skills: provided.skills,
     trustProject: provided.trustProject,
   } satisfies Record<keyof TuiConfigProjection, unknown>;
+  // Issue #283 (§71): per-invocation, not config — forwarded outside
+  // the TuiConfigProjection table above on purpose, so the #294 by-name
+  // rule keeps governing config keys only.
+  const invocation = definedOnly({ extensions: provided.extensions });
   const projection = definedOnly(forwarded);
   return {
     ...projection,
+    ...invocation,
     // Issue #177: the err channel for unresolvable explicit --skill
     // values, with the boot's `warning: ` prefix. Outside `forwarded`
     // (issue #294's table): warn is a channel, not a config projection.
@@ -3549,6 +3578,8 @@ export interface TuiCommandOptions {
   // lane's tool set; `--no-tools` is the empty set. Mutually exclusive.
   readonly tools?: readonly string[];
   readonly noTools?: boolean;
+  // §71 (issue #283): the opt-in solo budget (never defaulted).
+  readonly budget?: SoloBudgetLimits;
 }
 
 export async function runTuiCommand(

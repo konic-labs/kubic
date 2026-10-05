@@ -44,11 +44,17 @@ export interface ExtensionStartupCall {
 // layout finds it in 3 levels, the dist layout in 4 — the bound startup.ts
 // documents). File access goes through the exec FileBridge (I/O confinement,
 // §9): the composition root never imports node:fs directly.
-export function prodExtensionStartupOptions(cwd: string): PostureOptions {
+// Issue #283 (§71): the opt-in solo `--budget` limits ride along — absent
+// means no key (never defaulted), so the bundle builds empty limits.
+export function prodExtensionStartupOptions(
+  cwd: string,
+  limits?: PostureOptions['limits'],
+): PostureOptions {
   return {
     anchorDir: dirname(fileURLToPath(import.meta.url)),
     files: createNodeFileBridge('/'),
     trust: { homeDir: homedir(), cwd, allowlist: [] },
+    ...(limits === undefined ? {} : { limits }),
   };
 }
 

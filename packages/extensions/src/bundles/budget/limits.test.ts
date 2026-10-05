@@ -53,6 +53,26 @@ describe('checkBudgetExhausted boundaries (issue #368)', () => {
       limits: { maxCostUsd: 0.5 },
       want: 'cost',
     },
+    // Wall clock (issue #283): same boundary shape — `runtimeMs` past
+    // `maxRuntimeMs` exhausts as 'wallClock'.
+    {
+      name: 'runtime below max passes',
+      usage: { runtimeMs: 9 },
+      limits: { maxRuntimeMs: 10 },
+      want: undefined,
+    },
+    {
+      name: 'runtime equal to max passes',
+      usage: { runtimeMs: 10 },
+      limits: { maxRuntimeMs: 10 },
+      want: undefined,
+    },
+    {
+      name: 'runtime above max exhausts',
+      usage: { runtimeMs: 11 },
+      limits: { maxRuntimeMs: 10 },
+      want: 'wallClock',
+    },
     // Tool calls: same boundary shape.
     {
       name: 'calls below max pass',

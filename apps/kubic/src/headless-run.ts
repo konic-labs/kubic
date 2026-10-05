@@ -40,7 +40,11 @@ import {
   beginReconciliation,
   type RunReconciliation,
 } from '../../../packages/exec/src/journal-reconcile.js';
-import { budgetToolGate } from '../../../packages/extensions/src/runtime.js';
+import {
+  budgetToolGate,
+  ExtensionBudgetError,
+  firstBreachedLimit,
+} from '../../../packages/extensions/src/runtime.js';
 import type {
   BundleLoad,
   PostureOptions,
@@ -73,7 +77,11 @@ import {
   shouldEmitSoloNotice,
 } from '../../../packages/host/src/limits/solo-warning.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
-import { readSessionRunUsage } from '../../../packages/host/src/ops/cost/cost-cli.js';
+import {
+  readSessionRunUsage,
+  readSessionUsage,
+  totalSessionUsage,
+} from '../../../packages/host/src/ops/cost/cost-cli.js';
 import {
   RunSpans,
   runSpanHooks,
@@ -126,6 +134,7 @@ import {
   mapLaneOutcomeToFailure,
   type RetryRecord,
   SESSION_ID_PATTERN,
+  type SoloBudgetLimits,
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import { bootSkills } from '../../../packages/host/src/skills-boot.js';
@@ -207,7 +216,10 @@ import {
   type StreamTuningTables,
 } from '../../../packages/worker/src/stream-options.js';
 import { selectModelUnderPolicy } from './config-runtime.js';
-import { loadExtensionStartup } from './extension-startup.js';
+import {
+  loadExtensionStartup,
+  prodExtensionStartupOptions,
+} from './extension-startup.js';
 import {
   hasExplicitModelSelection,
   roleModelSelection,
@@ -249,6 +261,9 @@ export interface HeadlessRunOptions {
   // §19 (issue #278): explicit autonomous mode, recorded on the run's
   // session. Absent means off (interactive), never assumed.
   autonomous?: boolean;
+  // §71 (issue #283): the opt-in solo budget — the bundle builds with
+  // these limits. Absent means empty limits, never defaults.
+  budget?: SoloBudgetLimits;
 }
 
 export interface HeadlessRunDeps {
@@ -1197,8 +1212,18 @@ async function runHeadlessPromptImpl(
       deps.extensions ??
       (await loadExtensionStartup('run', process.cwd(), {
         receipt: (line) => debug?.(line),
+        // Issue #283 (§71): an explicit test double wins; otherwise the
+        // opt-in budget rides into the prod startup options — absence
+        // keeps the historical bare call (empty limits, never defaulted).
         ...(deps.extensionOptions === undefined
-          ? {}
+          ? options.budget === undefined
+            ? {}
+            : {
+                options: prodExtensionStartupOptions(
+                  process.cwd(),
+                  options.budget,
+                ),
+              }
           : { options: deps.extensionOptions }),
       }));
   } catch (error) {
@@ -1289,6 +1314,7 @@ async function runHeadlessPromptImpl(
   // Counted from the committed usage events (#398): one per assistant
   // response, the turn unit `--max-turns` bounds.
   let turns = 0;
+
   // The run's guard timer (issue #84): armed with the wall-clock bound once
   // the session exists, cleared on every exit path.
   let deadline: ReturnType<typeof setTimeout> | undefined;
@@ -1885,7 +1911,16 @@ async function runHeadlessPromptImpl(
     // (issue #98).
     const contributions = [
       ...installed.contributions,
-      ...(extensions === undefined ? [] : [budgetToolGate(extensions)]),
+      // Issue #283 (§71): a refused call trips the run guard — the
+      // model cannot talk past the budget, the run ends budget_exhausted
+      // (exit 3) with the limit named instead of settling completed.
+      ...(extensions === undefined
+        ? []
+        : [
+            budgetToolGate(extensions, (limit) =>
+              tripGuard(new ExtensionBudgetError(limit)),
+            ),
+          ]),
     ];
     // §29.3 skills on the live path (issue #99): discovery runs at boot
     // through the real FileBridge, the project roots stay gated behind the
@@ -2276,6 +2311,27 @@ async function runHeadlessPromptImpl(
         return finished(id, terminus, message, message);
       }
       if (outcome.kind === 'completed') {
+        // Issue #283 (§71): the opt-in budget's billed dimensions are
+        // enforced from the session ledger once the turn settles — read
+        // through the run's own open storage (never the lock-guarded
+        // reader), so fixture rows and the just-settled turn both count.
+        // The gate above owns toolCalls mid-turn, this owns tokens/cost
+        // after it. A breach outranks the settled turn: the spend is
+        // real, so the run reports budget_exhausted (exit 3) with the
+        // limit named.
+        if (extensions !== undefined) {
+          const totals = totalSessionUsage(
+            await readSessionUsage(session.storage, context),
+          );
+          const breached = firstBreachedLimit(extensions, {
+            tokens: totals.input + totals.output,
+            costUsd: totals.costUsd,
+          });
+          if (breached !== undefined) {
+            const message = `extension budget exhausted: ${breached} limit breached (opt-in --budget)`;
+            return finished(id, 'budget_exhausted', message, message);
+          }
+        }
         const items = entriesToTranscript(
           await readConversationEntries(solo.conversation, context),
         );

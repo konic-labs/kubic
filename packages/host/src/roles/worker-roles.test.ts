@@ -437,6 +437,39 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     expect(plan.assignments[1]?.promptText).toContain('You are the planner.');
   });
 
+  it('takes the worker prompt from the file that declared the role (issue #293)', () => {
+    // review.md declares `role: reviewer`: the worker bound to reviewer
+    // gets review.md's prompt body — never a re-read of reviewer.md
+    // (roleDocPath is gone; the prompt travels on the selection).
+    const plan = planWorkerRoles({
+      bridge: memBridge({
+        [`${CWD}/.kubic/roles/review.md`]: [
+          '---',
+          'role: reviewer',
+          'tools: [read, ls, find, grep]',
+          'filesystem: read',
+          'shell: false',
+          'network: none',
+          'git: false',
+          'credentials: none',
+          '---',
+          '',
+          '## Prompt',
+          '',
+          'Review from review.md.',
+          '',
+        ].join('\n'),
+      }),
+      cwd: CWD,
+      trusted: true,
+      agents: ['alpha'],
+      roles: { alpha: 'reviewer' },
+    });
+    expect(plan.refused).toEqual([]);
+    expect(plan.assignments).toHaveLength(1);
+    expect(plan.assignments[0]?.promptText).toContain('Review from review.md.');
+  });
+
   it('withholds write/edit/bash for a read-only role by absence, never approval', () => {
     // §40: the role's resolved tool set is what the lane registers, so a
     // withheld tool is uncallable by construction — the guard's reason

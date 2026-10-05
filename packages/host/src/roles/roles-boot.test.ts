@@ -248,6 +248,44 @@ describe('one malformed document never blocks the other roles (issue #236)', () 
   });
 });
 
+describe('the prompt comes from the file that declared the role (issue #293)', () => {
+  // roleDocPath is gone: selectRole carries the listed file's own text as
+  // `markdown`, so the prompt can never be re-read from `<name>.md`.
+  const reviewMd = `---\nrole: reviewer\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n## Prompt\n\nReview from review.md.\n`;
+  const input = {
+    bridge: memBridge({ '/repo/.kubic/roles/review.md': reviewMd }),
+    cwd: '/repo',
+    projectRoot: '/repo',
+    trusted: true,
+  };
+
+  it('boots review.md declaring role: reviewer with review.md prompt body', () => {
+    const selected = selectRole({ ...input, role: 'reviewer' });
+    expect(selected.doc.name).toBe('reviewer');
+    expect(selected.markdown).toContain('Review from review.md.');
+  });
+
+  it('never cross-wires the prompt when another file owns <name>.md', () => {
+    // reviewer.md declares a DIFFERENT role: selecting `reviewer` must
+    // still read review.md's prompt, never reviewer.md's body.
+    const crossed = memBridge({
+      '/repo/.kubic/roles/review.md': reviewMd,
+      '/repo/.kubic/roles/reviewer.md': reviewMd
+        .replace('role: reviewer', 'role: other')
+        .replace('Review from review.md.', 'WRONG PROMPT from reviewer.md.'),
+    });
+    const selected = selectRole({
+      bridge: crossed,
+      cwd: '/repo',
+      projectRoot: '/repo',
+      trusted: true,
+      role: 'reviewer',
+    });
+    expect(selected.markdown).toContain('Review from review.md.');
+    expect(selected.markdown).not.toContain('WRONG PROMPT');
+  });
+});
+
 describe('duplicate role names are refused by name (issue #236)', () => {
   const files = {
     '/repo/.kubic/roles/first.md': roleDoc('x'),

@@ -30,16 +30,16 @@ import {
 } from '../../../worker/src/pi-boundary.js';
 import type { AgentResult, ResultStatus } from '../../../worker/src/result.js';
 import { buildAgentResult } from '../../../worker/src/result.js';
-import {
-  BUDGET_DIMENSIONS,
-  isModelRef,
-  storedBudgetDims,
-} from '../orchestrate-cli.js';
 import { composeWorkerPrompt } from '../roles/worker-roles.js';
 import {
   QUESTION_UNANSWERED_CODE,
   type WorkerQuestionOutcome,
 } from './approvals/worker-questions.js';
+import {
+  BUDGET_DIMENSIONS,
+  isModelRef,
+  storedBudgetDims,
+} from './budget-spec.js';
 import {
   MANAGER_ALLOWLIST,
   rejectAuthoring,

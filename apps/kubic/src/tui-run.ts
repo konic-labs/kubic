@@ -679,6 +679,11 @@ export interface TuiLaneBoot {
   // repeat (a path's expected state is its last journaled entry, so an
   // unchanged tree appends nothing); a failure never reaches the loop.
   reconcile?: () => void;
+  // Issue #374 (§42.1): start a new reconciliation turn — the workspace as it
+  // is now becomes the baseline, so the next sweep journals only that turn's
+  // changes (tagged with `turn`) and an edit made between prompts is absorbed
+  // instead of attributed to the agent. Safe to call when nothing changed.
+  rebaseline?: (turn: number) => void;
   // Issue #307: the installed policy's own full-access predicate (the SAME
   // one its ask auto-approves on), read for the mode indicator at boot and
   // after every turn. Absent (a viewer boot with no policy) means approvals
@@ -1521,6 +1526,9 @@ export async function bootTuiLane(
       },
       reconcile: () => {
         reconciliation?.sweep();
+      },
+      rebaseline: (turn: number) => {
+        reconciliation?.rebaseline(turn);
       },
       ...(modelNotices.length === 0
         ? {}
@@ -3245,6 +3253,32 @@ export async function runTuiCommand(
   // needs the reconcile sweep (which walks and hashes the whole workspace:
   // not free, so file-tool and read-only turns skip it).
   let shellRanThisTurn = false;
+  // Issue #374 (§42.1): the reconciliation turn — one per placed run in this
+  // process. A run start re-baselines (sweeping a shell turn first if its
+  // settlement has not yet), a settlement with no other run in flight
+  // re-baselines again, and so does an idle quit: the sweep only ever
+  // journals what changed while a turn was running.
+  let reconcileTurn = 0;
+  // Open from a run start until that turn's settlement re-baselines: a quit
+  // while a turn is open (even one already drained) leaves the baseline
+  // alone so the close's sweep journals that turn's late writes (#312).
+  let reconcileTurnOpen = false;
+  const sweepPendingShell = (): void => {
+    if (!shellRanThisTurn) return;
+    shellRanThisTurn = false;
+    try {
+      boot.reconcile?.();
+    } catch {
+      // Reconciliation observes, it never gates the loop.
+    }
+  };
+  const rebaseline = (): void => {
+    try {
+      boot.rebaseline?.(reconcileTurn);
+    } catch {
+      // A failed capture leaves the previous baseline; the loop stands.
+    }
+  };
   // Issue #334: the conversation's inbox as the lane reports it (`pi.inbox`
   // via `inbox_update`), plus the prompt text of every submission the loop
   // queued — the inbox carries ids, not content. The `queued: …` rows are
@@ -3293,6 +3327,10 @@ export async function runTuiCommand(
           queuedInbox = event.items;
         }
         if (event.type === 'run-start') {
+          sweepPendingShell();
+          reconcileTurn += 1;
+          reconcileTurnOpen = true;
+          rebaseline();
           for (const input of event.inputs) {
             const id = String(input);
             const text = queuedText.get(id);
@@ -3531,6 +3569,10 @@ export async function runTuiCommand(
           resolve,
         );
       });
+      // Issue #374: an idle quit re-baselines first, so the close's sweep
+      // (which still catches a turn the quit interrupted) never journals an
+      // edit the operator made after the last turn settled.
+      if (!reconcileTurnOpen) rebaseline();
       try {
         await Promise.race([boot.close?.(), closeBound]);
       } catch {
@@ -3907,6 +3949,8 @@ export async function runTuiCommand(
         queuedInbox = [];
         queuedText.clear();
         shellRanThisTurn = false;
+        reconcileTurn = 0;
+        reconcileTurnOpen = false;
         turn = buildTurn();
         orchestratorTurn = buildOrchestratorTurn();
         app.resetSession({
@@ -4551,12 +4595,14 @@ export async function runTuiCommand(
             // on screen at settlement, not just at quit. A quit in progress
             // owns its own final sweep (close), and a failed sweep leaves
             // the panels on the rows they have.
-            if (shellRanThisTurn && !stopped) {
-              shellRanThisTurn = false;
-              try {
-                boot.reconcile?.();
-              } catch {
-                // Reconciliation observes, it never gates the loop.
+            if (!stopped) {
+              sweepPendingShell();
+              // Issue #374: between turns the workspace is the operator's —
+              // unless a queued follow-up is already running, whose changes
+              // the next sweep still owes.
+              if (turn?.isRunning() !== true) {
+                reconcileTurnOpen = false;
+                rebaseline();
               }
             }
             journalFeed?.now();

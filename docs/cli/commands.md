@@ -1683,6 +1683,18 @@ composition paths therefore capture a **baseline** when the lane boots and
   EACCES/EPERM/EIO is carried forward from the previous baseline the same way;
   one whose listing fails with ENOENT really went away, so its files are
   recorded as deletes like any other disappearance.
+- **In `kubic tui` every prompt is a run** (issue #374; §42.1). The baseline
+  is re-captured when each turn starts, a turn that used `bash` is swept when
+  it settles (so `Ctrl-O` / `Ctrl-R` and `kubic diff` from another terminal
+  show the shell's change at once), and the baseline is re-captured again
+  once no turn is running and before an idle quit. An edit you make in your
+  own editor **between prompts** is therefore absorbed, never journaled as
+  the agent's change — so plain `kubic undo` does not revert it — while the
+  sweep still journals whatever changed during a turn, your concurrent edits
+  included (there is no way to tell them apart from the agent's). Each sweep
+  entry carries `turn` (1 for the first prompt in this process); the
+  quit-time sweep still catches a turn the quit interrupted and appends
+  nothing for one that already settled.
 - The baseline is a metadata walk — sha256 per file, **no content copied** — of
   the lane's workspace root (`§42.5`), persisted as
   `<sessions-root>/<id>/journal/baseline-<id>.json` beside that run's journal.

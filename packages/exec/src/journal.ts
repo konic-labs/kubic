@@ -115,6 +115,13 @@ export interface JournalEntryInput {
   toolCallId: string | null;
   timestamp: number;
   unattributed?: boolean;
+  /**
+   * Issue #374 (§42.1): the interactive turn a reconciliation sweep entry
+   * belongs to — 1 for the session's first prompt in this process. Absent on
+   * tool-journaled entries (their toolCallId already attributes them) and on
+   * every entry written before the field existed.
+   */
+  turn?: number;
 }
 
 export interface JournalIndexRead {
@@ -159,6 +166,8 @@ export interface JournalEntry {
   toolCallId: string | null;
   timestamp: number;
   unattributed?: boolean;
+  /** Issue #374: see JournalEntryInput.turn. */
+  turn?: number;
   /** True when the delta was encoded against '' (reconciliation entries with
    *  no before-blob). Absent on pre-schema entries — see readAfter fallback. */
   deltaBaseEmpty?: boolean;
@@ -601,6 +610,7 @@ export class FileJournalStore {
       toolCallId: input.toolCallId,
       timestamp: input.timestamp,
       ...(input.unattributed === true ? { unattributed: true } : {}),
+      ...(input.turn === undefined ? {} : { turn: input.turn }),
       // Issue #111: record the base the delta was actually encoded against
       // (append computed it as `input.before ?? ''`), so readAfter never has
       // to guess. Exactly the reconcile/create shape: no before-content.
@@ -1508,6 +1518,8 @@ export interface ReconcileContext {
    * expected state; absent ⇒ the whole store is treated as this run.
    */
   runStart?: JournalRunStart;
+  /** Issue #374: the interactive turn the sweep's entries belong to. */
+  turn?: number;
 }
 
 /**
@@ -1943,6 +1955,7 @@ export function reconcile(
       toolCallId: null,
       timestamp: ctx.timestamp,
       unattributed: true,
+      ...(ctx.turn === undefined ? {} : { turn: ctx.turn }),
     });
     added++;
   };

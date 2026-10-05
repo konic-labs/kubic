@@ -98,6 +98,7 @@ import {
   isModelAllowed,
   isToolAllowedByEnterprise,
 } from '../../../packages/host/src/policy/enterprise.js';
+import { findProjectRoot } from '../../../packages/host/src/project-root.js';
 import type {
   ResolvedRole,
   RoleLayerInput,
@@ -1277,12 +1278,16 @@ async function runHeadlessPromptImpl(
         deps.roles?.cwd ?? process.cwd(),
       );
       const rolesCwd = deps.roles?.cwd ?? process.cwd();
+      // Issue #229: role documents resolve at the project root, so
+      // `--role` from a subdirectory finds `<root>/.kubic/roles/*.md`.
+      const rolesRoot = findProjectRoot(rolesBridge, rolesCwd, homedir());
       let selected: SelectedRole;
       try {
         selected = selectRole({
           bridge: rolesBridge,
           cwd: rolesCwd,
           role: options.role,
+          projectRoot: rolesRoot,
           ...(deps.roles?.layers === undefined
             ? {}
             : { layers: deps.roles.layers }),

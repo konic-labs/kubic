@@ -31,6 +31,7 @@ import {
   resolveEffectivePolicy,
 } from '../policy/enterprise.js';
 import { redactSecretShapes } from '../policy/secret-shapes.js';
+import { findProjectRoot } from '../project-root.js';
 import {
   type ApprovalsConfig,
   ConfigError,
@@ -375,6 +376,12 @@ export interface RuntimeConfigInputs {
   bridge: Pick<FileBridge, 'exists' | 'readTextFile'>;
   home: string;
   cwd: string;
+  // Issue #229 (§35.1): the project root the project layer resolves at —
+  // the nearest ancestor holding `.kubic/` (or the git top level). Absent
+  // means the load resolves it from the cwd itself (findProjectRoot), so
+  // a run from a subdirectory reads the same committed config as one from
+  // the root instead of silently dropping to defaults.
+  projectRoot?: string;
   workspaceRoot?: string;
   enterprisePath?: string;
   productPath?: string;
@@ -584,7 +591,9 @@ function loadLayers(
 ): LoadedLayers {
   const paths = defaultLayerPaths({
     home: inputs.home,
-    projectRoot: inputs.cwd,
+    projectRoot:
+      inputs.projectRoot ??
+      findProjectRoot(inputs.bridge, inputs.cwd, inputs.home),
     ...(inputs.workspaceRoot === undefined
       ? {}
       : { workspaceRoot: inputs.workspaceRoot }),

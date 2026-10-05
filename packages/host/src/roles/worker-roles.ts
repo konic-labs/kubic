@@ -85,6 +85,9 @@ export const DEFAULT_WORKER_ROLE: BuiltinRoleName = 'implementer';
 export interface WorkerRolesInput {
   bridge: Pick<FileBridge, 'listDir' | 'readTextFile'>;
   cwd: string;
+  // Issue #229 (§35.1): the project root the repo documents resolve at.
+  // Forwarded to the live loader; absent means the cwd itself.
+  projectRoot?: string;
   agents: readonly string[];
   layers?: RoleLayerInput[];
   // §38.1 model levels (issue #202): the manager's own effective model pin
@@ -164,6 +167,9 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
     loaded = loadRoles({
       bridge: input.bridge,
       cwd: input.cwd,
+      ...(input.projectRoot === undefined
+        ? {}
+        : { projectRoot: input.projectRoot }),
       ...(input.layers === undefined ? {} : { layers: input.layers }),
     });
   } catch (error) {
@@ -203,6 +209,9 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
         bridge: input.bridge,
         cwd: input.cwd,
         role,
+        ...(input.projectRoot === undefined
+          ? {}
+          : { projectRoot: input.projectRoot }),
         ...(input.layers === undefined ? {} : { layers: input.layers }),
         ...(input.toolPolicy === undefined
           ? {}

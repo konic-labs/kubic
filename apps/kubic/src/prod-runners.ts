@@ -92,6 +92,7 @@ import {
   policyWithInstalledAllowlist,
   runPolicyCommand,
 } from '../../../packages/host/src/policy/policy-cli.js';
+import { findProjectRoot } from '../../../packages/host/src/project-root.js';
 import { runReplayCommand } from '../../../packages/host/src/replay/replay.js';
 import { rolesDoctorProbe } from '../../../packages/host/src/roles/roles-boot.js';
 import {
@@ -409,14 +410,32 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         providers: assembled.providers,
       });
     },
-    trust: (options, cliConfig) =>
-      runTrustCommand(options, {
-        ...presentation(out, debug, false),
-        store: new ProjectTrustStore(
-          projectTrustStorePath(cliConfig.trust.home),
-        ),
-        cwd: process.cwd(),
-      }),
+    trust: (options, cliConfig) => {
+      // Issue #229: grants are recorded at the project root — the same
+      // root the config load keys its trust report to — so `kubic trust`
+      // from a subdirectory records a grant the loader honours. An
+      // explicit path resolves to its own root; the bare form reuses the
+      // load's root (it was resolved from this same cwd).
+      const target = options.path ?? process.cwd();
+      const root =
+        options.path === undefined
+          ? cliConfig.projectRoot
+          : findProjectRoot(
+              createNodeFileBridge(target),
+              target,
+              cliConfig.trust.home,
+            );
+      return runTrustCommand(
+        root === target ? options : { ...options, path: root },
+        {
+          ...presentation(out, debug, false),
+          store: new ProjectTrustStore(
+            projectTrustStorePath(cliConfig.trust.home),
+          ),
+          cwd: process.cwd(),
+        },
+      );
+    },
     run: (options, cliConfig) => {
       noteOverriddenModelPins(cliConfig);
       return runRunCommand(options, {
@@ -508,6 +527,9 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         const plan = planWorkerRoles({
           bridge: createNodeFileBridge(cwd),
           cwd,
+          // Issue #229: the same project root the config load resolves,
+          // so the posture describes the roles the run would actually use.
+          projectRoot: cliConfig.projectRoot,
           agents: ORCHESTRATE_DEFAULT_AGENTS,
           // §38.1 (#202): the same model levels the run resolves — the
           // manager's own pin under each role's `[roles.<r>].model`, and the
@@ -645,6 +667,9 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           rolesDoctorProbe({
             cwd: process.cwd(),
             bridge: createNodeFileBridge(process.cwd()),
+            // Issue #229: judge the roles the run would resolve — the
+            // project root's documents, not the subdir's (absent) ones.
+            projectRoot: cliConfig.projectRoot,
             // §58 (issue #288): a role declaring an enterprise-denied tool is
             // refused by `kubic run --role`, so it is red here too.
             ...(enterprisePolicy === undefined

@@ -20,10 +20,10 @@ against every override attempt, the environment and the CLI included.
 | 1 | `enterprise` | `/etc/kubic/config.toml` (or an explicit `enterprisePath` override) | Highest. Never overridden — by a file, the environment, or a flag. |
 | 2 | `product` | `/etc/kubic/product.toml` (or an explicit `productPath` override) | The distribution/vertical profile, below enterprise and above the user's own files. |
 | 3 | `global` | `~/.kubic/config.toml` | Your machine-wide defaults. |
-| 4 | `project` | `<projectRoot>/.kubic/config.toml` | **Trust-gated**: refused by path before it is read (`ProjectUntrustedError`) until the project is trusted (`kubic trust`, the `kubic tui` prompt, or `KUBIC_TRUST_PROJECT=1` for one invocation); absent file counts as an empty layer. |
-| 5 | `workspace` | `<workspaceRoot>/.kubic/config.toml` | Only when a workspace root is set — otherwise the layer does not exist. |
-| 6 | `session` | Supplied programmatically | Never a file. |
-| 7 | `agent` | Supplied programmatically | Never a file. Lowest. |
+| 4 | `project` | `<projectRoot>/.kubic/config.toml` | Resolved as the nearest ancestor holding `.kubic/` (or the git top level), the cwd itself outside a repository — so `kubic config` and `kubic run --role` from a subdirectory read the same committed project as from the root (issue #229). **Trust-gated**: refused by path before it is read (`ProjectUntrustedError`) until the project is trusted (`kubic trust`, the `kubic tui` prompt, or `KUBIC_TRUST_PROJECT=1` for one invocation) — the grant is recorded at, and checked against, that same root, so trusting the root covers runs from its subdirectories; absent file counts as an empty layer. |
+| 5 | `workspace` | `<workspaceRoot>/.kubic/config.toml` | Only when a workspace root is set — otherwise the layer does not exist. **Not yet populated (issue #229)**: no shipped caller sets a workspace root (orchestrator worktree roots are not wired in), so this layer never exists today; recorded in [design drift](../design-drift.md). |
+| 6 | `session` | Supplied programmatically | Never a file. **Not yet populated (issue #229)**: no shipped caller supplies a session layer (attaching a session does not feed its recorded settings back), so this layer is always empty; recorded in [design drift](../design-drift.md). |
+| 7 | `agent` | Supplied programmatically | Never a file. Lowest. **Not yet populated (issue #229)**: no shipped caller supplies an agent layer, so this layer is always empty; recorded in [design drift](../design-drift.md). |
 | — | `env` | The `KUBIC_*` overrides below | Above every file layer, below `enterprise`, below the CLI. |
 | — | `cli` | e.g. `--model` | Highest, except against a frozen `enterprise` key. |
 

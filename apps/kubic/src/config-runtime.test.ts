@@ -155,6 +155,60 @@ describe('project trust store wiring (issue #228)', () => {
   });
 });
 
+describe('project root resolution (issue #229)', () => {
+  function repoWithConfig(): { root: string; sub: string } {
+    const root = tmpDir('kubic-root-repo-');
+    mkdirSync(join(root, '.git'), { recursive: true });
+    mkdirSync(join(root, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(root, '.kubic', 'config.toml'),
+      '[journal]\nretentionDays = 5\n',
+    );
+    const sub = join(root, 'a', 'b');
+    mkdirSync(sub, { recursive: true });
+    return { root, sub };
+  }
+
+  it('loads the project layer from a subdirectory, reporting the root path', () => {
+    const home = tmpDir('kubic-root-home-');
+    const { root, sub } = repoWithConfig();
+    storeFor(home).set(root, true);
+    const result = loadCliConfig({ cwd: sub, home, env: {} });
+    expect(result.error).toBeUndefined();
+    expect(result.runtime?.journal.retentionDays).toBe(5);
+    expect(result.projectRoot).toBe(root);
+    const runtime = result.runtime;
+    expect(runtime).toBeDefined();
+    if (runtime === undefined) throw new Error('project layer did not load');
+    const view = effectiveConfigView(runtime);
+    const project = view.layers.find((layer) => layer.layer === 'project');
+    expect(project?.path).toBe(join(root, '.kubic', 'config.toml'));
+    expect(project?.present).toBe(true);
+  });
+
+  it('names the root path in the pre-trust refusal from a subdirectory', () => {
+    const home = tmpDir('kubic-root-home-');
+    const { root, sub } = repoWithConfig();
+    const refused = loadCliConfig({ cwd: sub, home, env: {} });
+    expect(refused.runtime).toBeUndefined();
+    expect(refused.error).toContain(join(root, '.kubic', 'config.toml'));
+    expect(refused.error).not.toContain(join(sub, '.kubic', 'config.toml'));
+  });
+
+  it('a root grant covers a subdirectory run; a subdir grant never reaches the root', () => {
+    const home = tmpDir('kubic-root-home-');
+    const { root, sub } = repoWithConfig();
+    const store = storeFor(home);
+    store.set(root, true);
+    expect(loadCliConfig({ cwd: sub, home, env: {} }).error).toBeUndefined();
+    store.set(root, null);
+    store.set(sub, true);
+    const refused = loadCliConfig({ cwd: sub, home, env: {} });
+    expect(refused.runtime).toBeUndefined();
+    expect(refused.error).toContain('refused pre-trust');
+  });
+});
+
 describe('interactive trust prompt (issue #228)', () => {
   it('accepting records the decision and the lane boots on it', async () => {
     const home = tmpDir('kubic-trust-home-');
@@ -176,6 +230,37 @@ describe('interactive trust prompt (issue #228)', () => {
     expect(
       loadCliConfig({ cwd: project, home, env: {} }).error,
     ).toBeUndefined();
+  });
+
+  // Issue #229: asked from a subdirectory, the grant is recorded at the
+  // project root — the same root the config load keys its trust report
+  // to — so the loader honours it from any cwd under the root.
+  it('records the grant at the project root when asked from a subdirectory', async () => {
+    const home = tmpDir('kubic-trust-home-');
+    const root = tmpDir('kubic-trust-ask-root-');
+    mkdirSync(join(root, '.git'), { recursive: true });
+    mkdirSync(join(root, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(root, '.kubic', 'config.toml'),
+      '[journal]\nretentionDays = 5\n',
+    );
+    const sub = join(root, 'a', 'b');
+    mkdirSync(sub, { recursive: true });
+    const asked: string[] = [];
+    const answer = await resolveInteractiveProjectTrust({
+      home,
+      cwd: sub,
+      env: {},
+      confirm: async (message) => {
+        asked.push(message);
+        return true;
+      },
+    });
+    expect(answer).toBe(true);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toContain(realpathSync(root));
+    expect(storeFor(home).get(root)).toBe(true);
+    expect(loadCliConfig({ cwd: sub, home, env: {} }).error).toBeUndefined();
   });
 
   // The grant is one decision for the whole project tree: it also unlocks

@@ -116,6 +116,7 @@ import {
   resolveRepoRuntimeRoot,
 } from '../../../packages/host/src/policy/audit-ledger.js';
 import type { EffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
+import { findProjectRoot } from '../../../packages/host/src/project-root.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
 import {
   planWorkerRoles,
@@ -1731,6 +1732,9 @@ export async function orchestrateDepsWithDefaults(
       return planWorkerRoles({
         bridge: createNodeFileBridge(cwd),
         cwd,
+        // Issue #229: worker roles resolve at the manager's project
+        // root, not wherever the manager was launched from.
+        projectRoot: findProjectRoot(createNodeFileBridge(cwd), cwd, homedir()),
         agents,
         // §38.1 (#202): the manager's own effective model is the fallback
         // level under each role's `[roles.<r>].model`, and the run's explicit

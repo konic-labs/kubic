@@ -94,6 +94,7 @@ import {
   PresentationProjector,
   type WorkerProjectionEvent,
 } from '../../../packages/host/src/presentation/projector.js';
+import { findProjectRoot } from '../../../packages/host/src/project-root.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
 import {
   rolePromptFor,
@@ -1302,10 +1303,13 @@ export async function bootTuiLane(
       if (options.role === undefined) return undefined;
       const rolesCwd = options.roles?.cwd ?? process.cwd();
       const rolesBridge = createNodeFileBridge(rolesCwd);
+      // Issue #229: role documents resolve at the project root, so
+      // `--role` from a subdirectory finds `<root>/.kubic/roles/*.md`.
       const selected = selectRole({
         bridge: rolesBridge,
         cwd: rolesCwd,
         role: options.role,
+        projectRoot: findProjectRoot(rolesBridge, rolesCwd, homedir()),
         ...(options.roles?.layers === undefined
           ? {}
           : { layers: options.roles.layers }),

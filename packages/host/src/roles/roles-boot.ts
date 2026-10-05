@@ -60,6 +60,11 @@ export interface RolesDirInput {
   // an in-memory fixture with the same two methods.
   bridge: Pick<FileBridge, 'listDir' | 'readTextFile'>;
   cwd: string;
+  // Issue #229 (§35.1): the project root the repo documents resolve at —
+  // the nearest ancestor holding `.kubic/` (or the git top level). Absent
+  // means the cwd itself, so a `kubic run --role` from a subdirectory finds
+  // the same `<root>/.kubic/roles/*.md` as one from the root.
+  projectRoot?: string;
   // §58 enterprise policy (issue #288): when the effective policy gates
   // tools, a role declaring a denied tool is REFUSED at resolution — the same
   // check `kubic run --role` makes at boot (`resolveRole`'s grant gate). The
@@ -125,7 +130,7 @@ function withBuiltins(
 // — the set is reported so doctor can fail it; the lane boot is where a
 // refused role stops a run.
 export function loadRoles(input: RolesDirInput): LoadedRoles {
-  const dir = `${input.cwd}/${ROLES_DIR}`;
+  const dir = `${input.projectRoot ?? input.cwd}/${ROLES_DIR}`;
   // Each entry is read and parsed as ITSELF — the text always comes from the
   // path that was listed, never re-derived from the parsed role name (a
   // document whose file stem differs from its `role:` line is legal: it

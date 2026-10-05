@@ -61,6 +61,7 @@ import {
   isModelAllowed,
   isProviderAllowed,
 } from '../../../packages/host/src/policy/enterprise.js';
+import { findProjectRoot } from '../../../packages/host/src/project-root.js';
 import type {
   RoleLayerInput,
   RoleLayerSpec,
@@ -84,9 +85,22 @@ export interface CliConfigResult {
   // `kubic config` and by doctor: the five runtime prefixes must be ignored
   // and config.toml + roles/*.md must stay committable.
   ignoreSplit: { missing: string[]; checked: string[]; applicable: boolean };
+  // Issue #229 (§35.1): the project root every consumer resolves from —
+  // the nearest ancestor holding `.kubic/` (or the git top level), the cwd
+  // itself outside a repository. The trust report, the project layer and
+  // the ignore-split check below are all keyed to it, so a run from a
+  // subdirectory honours the same committed project as one from the root.
+  // Falls back to the cwd when the home cannot hold the store (the load is
+  // refused there anyway).
+  // Optional so hand-built fixtures (tests pinning a runtime without a
+  // load) keep compiling: `loadCliConfig` always sets it, and consumers
+  // fall back to their own cwd when it is absent.
+  projectRoot?: string;
   // Issue #228: the project trust state the load above was gated on — the
   // same report `kubic doctor` renders, `kubic config` counts and the TUI
   // prompt resolves, so they can never disagree about who accepted what.
+  // Keyed to the project root (issue #229): a grant for the root covers
+  // runs from its subdirectories, exactly like the models and skills roots.
   trust: ProjectTrustReport;
 }
 
@@ -187,10 +201,14 @@ export function loadCliConfig(options: CliConfigOptions = {}): CliConfigResult {
   const home = options.home ?? homedir();
   const env = options.env ?? process.env;
   const bridge = createNodeFileBridge(cwd);
-  const ignoreSplit = checkWorkspaceIgnoreSplit(bridge, cwd);
+  // Issue #229: resolve the project root before anything is keyed — the
+  // trust report, the project layer and the ignore-split check all read
+  // the same root, so a subdirectory run honours the committed project.
+  const projectRoot = findProjectRoot(bridge, cwd, home);
+  const ignoreSplit = checkWorkspaceIgnoreSplit(bridge, projectRoot);
   let stored: ProjectTrustReport;
   try {
-    stored = projectTrustReport({ home, cwd, env });
+    stored = projectTrustReport({ home, cwd: projectRoot, env });
   } catch (error) {
     // A home that cannot hold the store (empty or relative) is a named
     // refusal, not a crash: the trust boundary cannot be established, so no
@@ -199,6 +217,7 @@ export function loadCliConfig(options: CliConfigOptions = {}): CliConfigResult {
       runtime: undefined,
       error: message(error),
       ignoreSplit,
+      projectRoot: cwd,
       trust: NO_PROJECT_TRUST,
     };
   }
@@ -209,13 +228,20 @@ export function loadCliConfig(options: CliConfigOptions = {}): CliConfigResult {
       bridge,
       home,
       cwd,
+      projectRoot,
       env,
       ...(options.model === undefined ? {} : { cli: { model: options.model } }),
       projectTrusted: trusted,
     });
-    return { runtime, error: undefined, ignoreSplit, trust };
+    return { runtime, error: undefined, ignoreSplit, projectRoot, trust };
   } catch (error) {
-    return { runtime: undefined, error: message(error), ignoreSplit, trust };
+    return {
+      runtime: undefined,
+      error: message(error),
+      ignoreSplit,
+      projectRoot,
+      trust,
+    };
   }
 }
 
@@ -256,9 +282,13 @@ export async function resolveInteractiveProjectTrust(
   const cwd = deps.cwd ?? process.cwd();
   const store =
     deps.store ?? new ProjectTrustStore(projectTrustStorePath(home));
+  // Issue #229: ask about (and record) the project root, not the
+  // subdirectory — the config load keys its trust report there, so a grant
+  // recorded here is one the loader honours from any cwd under the root.
+  const root = findProjectRoot(createNodeFileBridge(cwd), cwd, home);
   const report = projectTrustReport({
     home,
-    cwd,
+    cwd: root,
     env: deps.env ?? process.env,
     store,
   });
@@ -277,7 +307,7 @@ export async function resolveInteractiveProjectTrust(
     `Trust project ${report.key}? This lets the project's own files take effect for runs here: ${report.configPath} (sets the model, approvals, permissions and journal retention), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills (instructions the model follows).`,
   );
   if (answer === null) return false;
-  store.set(cwd, answer);
+  store.set(root, answer);
   return answer;
 }
 

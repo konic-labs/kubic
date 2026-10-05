@@ -214,6 +214,10 @@ describe('lane fail-fast (issue #431, L-D34)', () => {
       }),
       new Error('fetch failed'),
       new Error('socket hang up'),
+      // Anchored TLS shapes only (review #431): bare 'certificate'
+      // matched any message containing the word.
+      new Error('request failed: certificate verify failed'),
+      new Error('self-signed certificate in certificate chain'),
       // Undici wraps the syscall in `cause`.
       new Error('fetch failed', {
         cause: Object.assign(new Error('connect ECONNREFUSED'), {
@@ -224,11 +228,15 @@ describe('lane fail-fast (issue #431, L-D34)', () => {
       expect(isLaneTransportError(error), String(error)).toBe(true);
       expect(describeLaneTransportError(error)).toMatch(/unreachable|refused/i);
     }
-    // Model answers, usage errors and aborts are not transports.
+    // Model answers, usage errors and aborts are not transports — and
+    // neither is a config error that merely mentions certificates.
     for (const error of [
       new Error('question_unanswered: the seat timed out'),
       new Error('spawn_denied: the scheduler is full'),
       new TypeError('cannot read properties of undefined'),
+      new Error(
+        "credential-config: 'certificate' key missing from provider profile",
+      ),
     ]) {
       expect(isLaneTransportError(error), String(error)).toBe(false);
       expect(describeLaneTransportError(error)).toBeUndefined();

@@ -255,7 +255,12 @@ const LANE_TRANSPORT_MESSAGE = new RegExp(
     'connection timed out',
     'getaddrinfo',
     'tls handshake',
-    'certificate',
+    // Anchored TLS shapes (review #431): bare 'certificate' matched any
+    // message containing the word (e.g. a credential-config error).
+    'certificate verify failed',
+    'self-signed certificate',
+    'unable to verify the first certificate',
+    'certificate has expired',
   ].join('|'),
   'i',
 );

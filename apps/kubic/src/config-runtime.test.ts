@@ -949,11 +949,11 @@ describe('roleLayersFromConfig (issue #384)', () => {
     const runtime = requireRuntimeConfig(result);
     const layers = roleLayersFromConfig(runtime);
     expect(layers).toHaveLength(1);
-    expect(layers[0]?.roles['implementer']).toEqual({
+    expect(layers[0]?.roles.implementer).toEqual({
       escalate: ['local/a', 'acme/big'],
     });
-    expect(layers[0]?.roles['implementer']?.escalate).not.toBe(
-      runtime.config.roles?.['implementer']?.escalate,
+    expect(layers[0]?.roles.implementer?.escalate).not.toBe(
+      runtime.config.roles?.implementer?.escalate,
     );
   });
 

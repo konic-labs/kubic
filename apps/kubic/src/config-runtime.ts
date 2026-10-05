@@ -27,7 +27,6 @@ import {
 } from '../../../packages/exec/src/runtime-exclude.js';
 import type { SoloApprovalConfig } from '../../../packages/host/src/approvals.js';
 import type { RoleModelEntry } from '../../../packages/host/src/config/config.js';
-import type { RuntimeEscalation } from '../../../packages/host/src/config/runtime.js';
 import {
   CONFIG_LAYERS,
   ConfigError,
@@ -40,6 +39,7 @@ import {
   buildConfigDoctorInput,
   configDoctorProbe,
 } from '../../../packages/host/src/config/config-doctor.js';
+import type { RuntimeEscalation } from '../../../packages/host/src/config/runtime.js';
 import {
   checkWorkspaceIgnoreSplit,
   compactionSummaryLine,
@@ -72,11 +72,11 @@ import type {
   RoleLayerInput,
   RoleLayerSpec,
 } from '../../../packages/host/src/roles/resolver.js';
-import type { SoloCompactionOptions } from '../../../packages/worker/src/lane/solo.js';
 import {
   roleModelAllowed,
   roleModelEntry,
 } from '../../../packages/host/src/roles/resolver.js';
+import type { SoloCompactionOptions } from '../../../packages/worker/src/lane/solo.js';
 import {
   ModelSelectError,
   type ModelSelection,

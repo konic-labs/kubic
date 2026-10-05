@@ -59,9 +59,9 @@ import {
   orchestratedWorkerFromEnv,
   type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
-import type { RuntimeEscalation } from '../../../packages/host/src/config/runtime.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
 import type {
+  RuntimeEscalation,
   RuntimeThinking,
   RuntimeVerify,
 } from '../../../packages/host/src/config/runtime.js';

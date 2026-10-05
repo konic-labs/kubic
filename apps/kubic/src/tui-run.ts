@@ -62,9 +62,9 @@ import {
   type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import type { RoleModelEntry } from '../../../packages/host/src/config/config.js';
-import type { RuntimeEscalation } from '../../../packages/host/src/config/runtime.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
 import type {
+  RuntimeEscalation,
   RuntimeOrchestrator,
   RuntimeThinking,
 } from '../../../packages/host/src/config/runtime.js';
@@ -235,12 +235,10 @@ import {
 } from '../../../packages/worker/src/lane/session-store.js';
 import {
   bootSoloLane,
-  type SoloCompactionOptions,
   escalateSoloModel,
+  type SoloCompactionOptions,
   type SoloLane,
 } from '../../../packages/worker/src/lane/solo.js';
-import type { EscalationLadder } from '../../../packages/worker/src/model-select.js';
-import type { ModelEscalationEvent } from '../../../packages/worker/src/prompts.js';
 import {
   entriesToTranscript,
   readConversationEntries,
@@ -252,6 +250,7 @@ import {
   type TurnOutcome,
   turnLaneRecord,
 } from '../../../packages/worker/src/lane/turn.js';
+import type { EscalationLadder } from '../../../packages/worker/src/model-select.js';
 import {
   type AnyModel,
   clampThinking,
@@ -275,6 +274,7 @@ import {
   type MutableModels,
   type SubmissionId,
 } from '../../../packages/worker/src/pi-boundary.js';
+import type { ModelEscalationEvent } from '../../../packages/worker/src/prompts.js';
 import {
   resolveStreamOptions,
   type StreamTuningTables,

@@ -31,7 +31,7 @@ workspace.
 | Tool | Arguments (`?` = optional) | Notes |
 | --- | --- | --- |
 | `read` | `path`, `offset?` (≥ 1, default 1), `limit?` (≥ 1, default and cap 2000) | At most 8 MiB scanned; at most 51200 bytes returned. |
-| `ls` | `path?` (default `.`) | One directory, not recursive. |
+| `ls` | `path?` (default `.`) | One directory, not recursive. Entries sorted by name, at most 500 (`truncated` + a `notice` naming the total when the cap stopped the listing, issue #187). |
 | `find` | `root?`, `nameContains?`, `type?` (`"file"` \| `"dir"`), `maxResults?` (default 100) | Recursive; see [Search walk](#search-walk-find-and-grep). |
 | `grep` | `pattern` (JavaScript regex), `root?`, `include?`, `maxMatches?` (default 100) | `include` is a path **substring**, not a glob; same [walk](#search-walk-find-and-grep) as `find`; matching lines are clipped at 500 chars and files that are binary or over 8 MiB are skipped and counted (see [Grep bounds](#grep-bounds)). |
 | `write` | `path`, `content` | Whole-file, atomic (tmp + rename); a symlinked `path` is written through to its target, so the link survives (see [Symlinked writes](#symlinked-writes)); an existing file above 8 MiB is journaled hash-only, so `undo` reports that step non-reversible. |

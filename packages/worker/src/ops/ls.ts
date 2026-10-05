@@ -18,7 +18,17 @@ export interface LsEntry {
 export interface LsResult {
   path: string;
   entries: LsEntry[];
+  /** The entry cap stopped the listing (issue #187; §27.5). */
+  truncated: boolean;
+  /** Names the total when `truncated` (issue #187). */
+  notice?: string;
 }
+
+// §27.5 bounded tool output (issue #187): at most this many entries per
+// listing — a 2000-file directory must not flood the worker's context.
+// The cap applies to the sorted names BEFORE statting, so the entries past
+// it cost no stat calls either.
+export const LS_MAX_ENTRIES = 500;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -47,7 +57,7 @@ export function validateLsArgs(raw: unknown): LsArgs {
 export const lsOperation: Operation<LsArgs, LsResult> = {
   name: 'ls',
   description:
-    'List one directory (not recursive): every entry with its kind and size. path defaults to the workspace root.',
+    'List one directory (not recursive): every entry with its kind and size, sorted by name, at most 500 entries (`truncated` says when more exist). path defaults to the workspace root.',
   replay: 'safe',
   validateArgs: validateLsArgs,
   execute: async (_inv: ToolInvocation, args: LsArgs, ctx: OpContext) => {
@@ -58,8 +68,11 @@ export const lsOperation: Operation<LsArgs, LsResult> = {
     } catch {
       throw new OpError('not_found', `ls: no such directory: ${path}`);
     }
+    // Code-unit order: deterministic across locales, unlike localeCompare.
+    names.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const truncated = names.length > LS_MAX_ENTRIES;
     const entries: LsEntry[] = [];
-    for (const name of names) {
+    for (const name of names.slice(0, LS_MAX_ENTRIES)) {
       let st: { isFile: boolean; isDirectory: boolean; size: number };
       try {
         st = ctx.env.fs.stat(path === '.' ? name : `${path}/${name}`);
@@ -73,6 +86,15 @@ export const lsOperation: Operation<LsArgs, LsResult> = {
         size: st.size,
       });
     }
-    return { path, entries };
+    return {
+      path,
+      entries,
+      truncated,
+      ...(truncated
+        ? {
+            notice: `truncated to ${LS_MAX_ENTRIES} of ${names.length} entries (sorted by name)`,
+          }
+        : {}),
+    };
   },
 };

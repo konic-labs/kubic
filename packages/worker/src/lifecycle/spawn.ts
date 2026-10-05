@@ -220,6 +220,25 @@ export function spawnWorker(
     timeoutMs,
   );
 
+  // Readiness scans only the NEW tail of each stream (issue #187): the
+  // shell delivers cumulative snapshots, so re-scanning the whole buffer on
+  // every chunk is quadratic over a chatty boot. Each stream keeps its own
+  // scanned length plus a marker-sized carry, so a marker split across two
+  // chunks — or across a trimmed accumulator tail, which reads as a
+  // shorter snapshot — is still detected. Past 'spawning' nothing is
+  // touched at all: the snapshot text is never even read.
+  let seenOut = 0;
+  let seenIn = 0;
+  let carryOut = '';
+  let carryIn = '';
+  // Undefined means the marker was found; otherwise the carry for the
+  // next chunk (at most marker.length - 1 chars — any marker overlapping
+  // the new tail starts inside it).
+  const scanTail = (tail: string, carry: string): string | undefined => {
+    const text = carry + tail;
+    if (text.includes(marker)) return undefined;
+    return text.slice(-(marker.length - 1));
+  };
   let handle: ProcessHandle;
   try {
     handle = shell.spawn(request.cmd, request.args, {
@@ -229,11 +248,32 @@ export function spawnWorker(
         ? {}
         : { killGraceMs: request.killGraceMs }),
       onUpdate: (snapshot) => {
-        const text = `${snapshot.stdout}\n${snapshot.stderr}`;
-        if (text.includes(marker)) {
+        if (worker.status !== 'spawning') return;
+        // A trimmed accumulator tail reads shorter than what was scanned:
+        // rescan it whole (bounded by the stream cap) rather than slicing
+        // past the new start.
+        if (snapshot.stdout.length < seenOut) seenOut = 0;
+        if (snapshot.stderr.length < seenIn) seenIn = 0;
+        const tailOut = snapshot.stdout.slice(seenOut);
+        const tailIn = snapshot.stderr.slice(seenIn);
+        seenOut = snapshot.stdout.length;
+        seenIn = snapshot.stderr.length;
+        // A readiness marker never spans the two streams (they are
+        // different pipes), so each is scanned with its own carry.
+        const nextOut = scanTail(tailOut, carryOut);
+        if (nextOut === undefined) {
           clearTimeout(timer);
           finishReady();
+          return;
         }
+        carryOut = nextOut;
+        const nextIn = scanTail(tailIn, carryIn);
+        if (nextIn === undefined) {
+          clearTimeout(timer);
+          finishReady();
+          return;
+        }
+        carryIn = nextIn;
       },
     });
   } catch (error) {

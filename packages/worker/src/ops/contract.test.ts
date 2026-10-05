@@ -21,7 +21,7 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
   },
   ls: {
     description:
-      'List one directory (not recursive): every entry with its kind and size. path defaults to the workspace root.',
+      'List one directory (not recursive): every entry with its kind and size, sorted by name, at most 500 entries (`truncated` says when more exist). path defaults to the workspace root.',
     replay: 'safe',
   },
   find: {

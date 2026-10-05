@@ -182,7 +182,10 @@ describe('configuration docs parse against the implementation (issue #90)', () =
       'store',
       'thinking',
     ];
-    const drift = readFileSync(join(REPO_ROOT, 'docs', 'design-drift.md'), 'utf8');
+    const drift = readFileSync(
+      join(REPO_ROOT, 'docs', 'design-drift.md'),
+      'utf8',
+    );
     for (const key of inventory) {
       expect(drift, key).toContain(key);
     }

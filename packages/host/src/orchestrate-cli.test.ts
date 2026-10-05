@@ -2173,6 +2173,39 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
       expect(last.artifacts?.alpha?.summary).toBe('alpha done');
     });
 
+    it('--json workers rows surface the §25.2 artifact', async () => {
+      const world = makeWorld({
+        runWorker: (agentId: string) => ({
+          hunks: [{ path: `${agentId}-0.txt`, hunk: `@@ ${agentId}` }],
+          result: transferResult(
+            agentId,
+            `${agentId} done`,
+            agentId === 'alpha' ? ['the seam is threaded'] : [],
+          ),
+        }),
+      });
+      const code = await runOrchestrateCommand(
+        {
+          prompt: 'ship the seam work',
+          agents: ['alpha', 'beta'],
+          session: 'sess-xfer-json',
+          yes: true,
+          concurrency: 1,
+          json: true,
+        },
+        world.deps,
+      );
+      expect(code).toBe(0);
+      const envelope = lastJsonLine(world.lines);
+      const rows = envelope.workers as Record<string, unknown>[];
+      const alpha = rows.find((row) => row.agentId === 'alpha');
+      expect(alpha?.artifact).toMatchObject({
+        summary: 'alpha done',
+        fileRefs: ['alpha-0.txt'],
+        findings: ['the seam is threaded'],
+      });
+    });
+
     it('a history-shaped finding is rejected fail-closed: the run survives, the prompt stays clean', async () => {
       const seen: { agentId: string; prompt: string }[] = [];
       const world = makeWorld({

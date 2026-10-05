@@ -764,7 +764,13 @@ guess `process_crashed`; the exit-code mapping is only the fallback for a
 child that printed no report, issue #155). A completed
 worker's result also names its change set as a reference
 (`diff.diffId` = `<base>...<branch>`), never the diff text; no result ever
-carries a transcript or messages (§69). The result is persisted with the run
+carries a transcript or messages (§69). Each entry also surfaces `artifact`
+(issue #184, §25.2) — the structured result (`summary`, `fileRefs`,
+`findings`, `testResults`, `decisions`, optional `diffRef`, `worktree`)
+that hands findings down the agent order into later workers' prompts.
+Present only when the worker reported a result that passed the §69 gate:
+a result smuggling message-history-shaped content surfaces no artifact
+(fail-closed) and hands nothing down. The result is persisted with the run
 in `<repo>/.kubic/orchestrator/<session>.json` (`records[].result`) — a
 failure's result too: a worker that failed leaves its failure record there
 (still `pending`, so `--resume` retries it and the retry replaces the record),

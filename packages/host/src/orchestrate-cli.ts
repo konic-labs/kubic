@@ -1410,6 +1410,9 @@ export interface OrchestrateEnvelope {
     agentId: string;
     branch: string;
     hunks: number;
+    // The §25.2 artifact (issue #184): the structured result, present
+    // when the worker reported a result that passed the §69 gate.
+    artifact?: TaskArtifact;
   } & Partial<WorkerResultView>)[];
   mergeOrder: string[];
   attribution: AttributedHunk[];
@@ -2104,6 +2107,12 @@ export async function runOrchestrateCommand(
             ...(record.result === undefined
               ? {}
               : workerResultView(record.result)),
+            // The §25.2 artifact rides the stored records too (issue
+            // #184): this early return runs before any launch rebuilds
+            // them, so the validated stored copy surfaces instead.
+            ...(resumed.artifacts?.[record.agentId] === undefined
+              ? {}
+              : { artifact: resumed.artifacts[record.agentId] }),
           })),
           mergeOrder: resumed.merged,
           attribution: resumed.records.flatMap((record) =>
@@ -2786,6 +2795,10 @@ export async function runOrchestrateCommand(
       const record = state.records.find((entry) => entry.agentId === agentId);
       const hunks = hunksByAgent.get(agentId) ?? [];
       const result = resultsByAgent.get(agentId);
+      // The artifact materializes here too (issue #184): the last worker
+      // to settle has no later launch to build it, but --json still
+      // surfaces it.
+      const artifact = ensureArtifact(agentId);
       return {
         agentId,
         branch:
@@ -2794,6 +2807,7 @@ export async function runOrchestrateCommand(
           `kubic/${sessionId}/${agentId}`,
         hunks: hunks.length,
         ...(result === undefined ? {} : workerResultView(result)),
+        ...(artifact === undefined ? {} : { artifact }),
       };
     });
 

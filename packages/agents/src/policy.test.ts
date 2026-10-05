@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { PermissionClasses } from './policy.js';
 import {
   checkAgreement,
   checkExpressible,
@@ -102,9 +103,6 @@ describe('permission policy model (issue #15, slice A)', () => {
   it('merges partial input over solo defaults', () => {
     expect(validateClasses({})).toEqual(SOLO_DEFAULTS);
     expect(validateClasses({ filesystem: 'read' }).shell).toBe(true);
-    expect(() => validateClasses({ filesystem: 'sometimes' })).toThrow(
-      /invalid filesystem: "sometimes"/,
-    );
   });
 
   it('rejects unknown class literals', () => {
@@ -124,6 +122,128 @@ describe('permission policy model (issue #15, slice A)', () => {
       expect(err).toBeInstanceOf(PolicyValidationError);
       expect((err as Error).name).toBe('PolicyValidationError');
     }
+  });
+});
+
+describe('checkAgreement every refuse branch (issue #220)', () => {
+  it("refuses fs 'none' with a read tool, naming the tool", () => {
+    const result = checkAgreement({ ...SOLO_DEFAULTS, filesystem: 'none' }, [
+      'read',
+    ]);
+    expect(result).toEqual({
+      agree: false,
+      reason: "filesystem is 'none' but tool 'read' is registered",
+    });
+  });
+
+  it("refuses fs 'read' with a write tool, naming the tool", () => {
+    const result = checkAgreement({ ...SOLO_DEFAULTS, filesystem: 'read' }, [
+      'read',
+      'write',
+    ]);
+    expect(result).toEqual({
+      agree: false,
+      reason: "filesystem is 'read' but write tool 'write' is registered",
+    });
+  });
+
+  it('refuses shell false with bash', () => {
+    expect(
+      checkAgreement({ ...SOLO_DEFAULTS, shell: false }, ['bash']),
+    ).toEqual({
+      agree: false,
+      reason: "shell is disabled but tool 'bash' is registered",
+    });
+  });
+
+  it('refuses git false with git_commit, naming the tool', () => {
+    const result = checkAgreement({ ...SOLO_DEFAULTS, git: false }, [
+      'read',
+      'git_commit',
+    ]);
+    expect(result).toEqual({
+      agree: false,
+      reason: "git is disabled but tool 'git_commit' is registered",
+    });
+  });
+
+  it('agrees when no refused tool is registered', () => {
+    expect(
+      checkAgreement(
+        { ...SOLO_DEFAULTS, filesystem: 'none', shell: false, git: false },
+        [],
+      ).agree,
+    ).toBe(true);
+    expect(
+      checkAgreement(SOLO_DEFAULTS, toolsForClasses(SOLO_DEFAULTS)).agree,
+    ).toBe(true);
+  });
+});
+
+describe('toolsForClasses over every level (issue #220)', () => {
+  it('filesystem: none holds no fs tools, read holds reads, writes need workspace-write/full', () => {
+    const base: PermissionClasses = { ...SOLO_DEFAULTS, shell: false, git: false };
+    expect(toolsForClasses({ ...base, filesystem: 'none' })).toEqual([]);
+    expect(toolsForClasses({ ...base, filesystem: 'read' }).sort()).toEqual(
+      ['find', 'grep', 'ls', 'read'].sort(),
+    );
+    for (const filesystem of ['workspace-write', 'full'] as const) {
+      const tools = toolsForClasses({ ...base, filesystem });
+      expect(tools.sort()).toEqual(
+        ['edit', 'find', 'grep', 'ls', 'read', 'write'].sort(),
+      );
+    }
+  });
+
+  it('shell: false holds no bash, the allowlist and full shell do', () => {
+    const base: PermissionClasses = { ...SOLO_DEFAULTS, filesystem: 'none', git: false };
+    expect(toolsForClasses({ ...base, shell: false })).toEqual([]);
+    for (const shell of ['read-only-allowlist', true] as const) {
+      expect(toolsForClasses({ ...base, shell })).toEqual(['bash']);
+    }
+  });
+
+  it('git: false holds no git tools, workspace and full hold all eight', () => {
+    const base: PermissionClasses = { ...SOLO_DEFAULTS, filesystem: 'none', shell: false };
+    expect(toolsForClasses({ ...base, git: false })).toEqual([]);
+    const all = [
+      'git_status',
+      'git_diff',
+      'git_log',
+      'git_show',
+      'git_stage',
+      'git_commit',
+      'git_branch',
+      'git_checkpoint',
+    ];
+    for (const git of ['workspace', 'full'] as const) {
+      expect(toolsForClasses({ ...base, git }).sort()).toEqual(all.sort());
+    }
+  });
+
+  it('network and credentials levels add no tools', () => {
+    const base = toolsForClasses(SOLO_DEFAULTS);
+    for (const network of ['none', 'allowlist', 'full'] as const) {
+      for (const credentials of ['none', 'allowlist'] as const) {
+        expect(
+          toolsForClasses({ ...SOLO_DEFAULTS, network, credentials }),
+        ).toEqual(base);
+      }
+    }
+  });
+});
+
+describe('validateClasses invalid literal per key (issue #220)', () => {
+  it.each([
+    ['filesystem', 'sometimes'],
+    ['shell', 'sometimes'],
+    ['network', 'sometimes'],
+    ['git', 'sometimes'],
+    ['credentials', 'sometimes'],
+  ])('rejects an invalid %s literal by name', (key, literal) => {
+    expect(() => validateClasses({ [key]: literal })).toThrow(
+      `invalid ${key}: "${literal}"`,
+    );
   });
 });
 

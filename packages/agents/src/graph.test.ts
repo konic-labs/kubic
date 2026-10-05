@@ -150,3 +150,143 @@ describe('graph (issue #49, §54)', () => {
     });
   });
 });
+
+describe('attachGraph error paths (issue #220)', () => {
+  it("rejects 'not json' as invalid JSON", () => {
+    expect(() => attachGraph('not json')).toThrow(
+      'graph snapshot is not valid JSON',
+    );
+  });
+
+  it("rejects '{}' without nodes[]/edges[]", () => {
+    expect(() => attachGraph('{}')).toThrow(
+      'graph snapshot must hold nodes[] and edges[]',
+    );
+    expect(() => attachGraph('[]')).toThrow(
+      'graph snapshot must hold nodes[] and edges[]',
+    );
+  });
+
+  it('rejects a non-object edge', () => {
+    expect(() =>
+      attachGraph(JSON.stringify({ nodes: ['a'], edges: [1] })),
+    ).toThrow('graph edge must be an object');
+  });
+
+  it('rejects a cyclic payload instead of smuggling history', () => {
+    const snapshot = JSON.stringify({
+      nodes: ['a', 'b'],
+      edges: [
+        { from: 'a', to: 'b', kind: 'handoff' },
+        { from: 'b', to: 'a', kind: 'handoff' },
+      ],
+    });
+    expect(() => attachGraph(snapshot)).toThrow(/would close a cycle/);
+  });
+
+  it('rejects a duplicate edge in the payload', () => {
+    const snapshot = JSON.stringify({
+      nodes: ['a', 'b'],
+      edges: [
+        { from: 'a', to: 'b', kind: 'handoff' },
+        { from: 'a', to: 'b', kind: 'handoff' },
+      ],
+    });
+    expect(() => attachGraph(snapshot)).toThrow('duplicate edge a -> b');
+  });
+
+  it('rejects an unknown endpoint in the payload', () => {
+    const snapshot = JSON.stringify({
+      nodes: ['a'],
+      edges: [{ from: 'a', to: 'ghost', kind: 'handoff' }],
+    });
+    expect(() => attachGraph(snapshot)).toThrow(
+      "unknown session endpoint: 'ghost'",
+    );
+  });
+
+  it('rejects a bad node id in the payload', () => {
+    const snapshot = JSON.stringify({ nodes: [''], edges: [] });
+    expect(() => attachGraph(snapshot)).toThrow(
+      'session id must be 1-128 chars of [A-Za-z0-9._-] (no path separators)',
+    );
+  });
+
+  it("drops an extra 'transcript' field instead of storing it", () => {
+    const snapshot = JSON.stringify({
+      nodes: ['a', 'b'],
+      edges: [{ from: 'a', to: 'b', kind: 'handoff', transcript: 'smuggled' }],
+    });
+    const revived = attachGraph(snapshot);
+    expect('transcript' in revived.edges[0]).toBe(false);
+    expect(consumers(revived, 'a')).toEqual(['b']);
+  });
+});
+
+describe('addEdge refusals (issue #220)', () => {
+  function linked(): ReturnType<typeof createGraph> {
+    const store = createGraph();
+    addNode(store, 'a');
+    addNode(store, 'b');
+    return store;
+  }
+
+  it("rejects diffRef '' and blank diffRefs", () => {
+    for (const diffRef of ['', '   ']) {
+      expect(() =>
+        addEdge(linked(), { from: 'a', to: 'b', kind: 'handoff', diffRef }),
+      ).toThrow('diffRef must be a non-empty string when present');
+    }
+  });
+
+  it('rejects bad artifactRefs', () => {
+    for (const artifactRefs of [['ok', ''], 'nope', [1]]) {
+      expect(() =>
+        addEdge(linked(), {
+          from: 'a',
+          to: 'b',
+          kind: 'handoff',
+          artifactRefs: artifactRefs as unknown as string[],
+        }),
+      ).toThrow('artifactRefs must be an array of non-empty strings');
+    }
+  });
+
+  it('rejects a duplicate edge', () => {
+    const store = linked();
+    addEdge(store, { from: 'a', to: 'b', kind: 'handoff' });
+    expect(() =>
+      addEdge(store, { from: 'a', to: 'b', kind: 'reviewed_by' }),
+    ).toThrow('duplicate edge a -> b');
+  });
+
+  it('rejects malformed session ids', () => {
+    expect(() => addNode(createGraph(), 'has space')).toThrow(
+      'session id must be 1-128 chars of [A-Za-z0-9._-] (no path separators)',
+    );
+    expect(() =>
+      addEdge(linked(), { from: 'a/b', to: 'b', kind: 'handoff' }),
+    ).toThrow(
+      'edge from must be 1-128 chars of [A-Za-z0-9._-] (no path separators)',
+    );
+  });
+
+  it('topoOrder fails closed on a hand-built cycle', () => {
+    expect(() =>
+      topoOrder({
+        nodes: ['a', 'b'],
+        edges: [
+          { from: 'a', to: 'b', kind: 'handoff' },
+          { from: 'b', to: 'a', kind: 'handoff' },
+        ],
+      }),
+    ).toThrow('graph contains a cycle (§54)');
+  });
+
+  it('rollupCost refuses negative costs by name', () => {
+    const store = linked();
+    expect(() => rollupCost(store, { a: -1, b: 0 })).toThrow(
+      "cost for 'a' must be a non-negative number",
+    );
+  });
+});

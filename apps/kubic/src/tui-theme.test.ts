@@ -21,6 +21,7 @@ import {
   bootTuiLane,
   resolveTuiTheme,
   runTuiCommand,
+  THEME_MAX_BYTES,
   type TuiRunDeps,
 } from './tui-run.js';
 
@@ -146,6 +147,52 @@ describe('resolveTuiTheme (issue #304)', () => {
     );
     expect(() => resolveTuiTheme('nope.json', 'truecolor', files)).toThrow(
       /theme 'nope\.json': cannot read/,
+    );
+  });
+
+  // Issue #304 review: `readTextFile` is an unbounded `readFileSync`, so a
+  // config `[ui] theme` naming a FIFO would wedge the process before the
+  // alt-screen opens and `/dev/zero` would read forever. The regular-file
+  // check must come first, and a huge file is refused unread.
+  it('refuses a non-regular file without reading it', () => {
+    const files = {
+      absolutePath: (path: string) => path,
+      fileInfo: () => ({
+        name: 'fifo',
+        path: '/tmp/fifo',
+        isDirectory: false,
+        isSymbolicLink: false,
+        isFile: false,
+        size: 0,
+        mtimeMs: 0,
+      }),
+      readTextFile: () => {
+        throw new Error('a FIFO must never be read');
+      },
+    } as unknown as Parameters<typeof resolveTuiTheme>[2];
+    expect(() => resolveTuiTheme('/tmp/fifo', 'truecolor', files)).toThrow(
+      "theme '/tmp/fifo': not a regular file",
+    );
+  });
+
+  it('refuses a theme file over the size cap without reading it', () => {
+    const files = {
+      absolutePath: (path: string) => path,
+      fileInfo: () => ({
+        name: 'huge.json',
+        path: '/tmp/huge.json',
+        isDirectory: false,
+        isSymbolicLink: false,
+        isFile: true,
+        size: THEME_MAX_BYTES + 1,
+        mtimeMs: 0,
+      }),
+      readTextFile: () => {
+        throw new Error('an oversize theme must never be read');
+      },
+    } as unknown as Parameters<typeof resolveTuiTheme>[2];
+    expect(() => resolveTuiTheme('/tmp/huge.json', 'truecolor', files)).toThrow(
+      "theme '/tmp/huge.json': too large (> 64 KB)",
     );
   });
 

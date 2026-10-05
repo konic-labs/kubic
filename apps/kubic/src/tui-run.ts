@@ -1002,6 +1002,11 @@ export interface TuiRunOptions {
   // approval snapshot a delegated conflict resolver runs under.
   orchestratorRuntime?: RuntimeOrchestrator;
   approvalPolicy?: ApprovalSnapshot;
+  // Issue #304 (§16.9): the `[ui] theme` reference. Not a lane option — it
+  // travels on the boot options object because that is the one projection
+  // `tuiBootOptions` builds, and `runTuiCommand` reads it from the deps
+  // before the alt-screen opens.
+  theme?: string;
 }
 
 // The durable loop surface over one booted solo lane — exactly what
@@ -2788,8 +2793,23 @@ export function resolveTuiTheme(
   }
   let text: string;
   try {
+    // The regular-file check comes FIRST (issue #304 review): `readTextFile`
+    // is an unbounded `readFileSync`, so a config `[ui] theme` naming a FIFO
+    // would block the event loop before the alt-screen ever opens (no Ctrl-C
+    // handler exists yet), `/dev/zero` would read forever, and a huge file
+    // would be read whole. Same rule `readImageFile` follows.
+    const info = files.fileInfo(ref);
+    if (info.isFile === false) {
+      throw new ThemeError(`theme '${ref}': not a regular file`);
+    }
+    if (info.size > THEME_MAX_BYTES) {
+      throw new ThemeError(
+        `theme '${ref}': too large (> ${Math.round(THEME_MAX_BYTES / 1024)} KB)`,
+      );
+    }
     text = files.readTextFile(ref);
   } catch (error) {
+    if (error instanceof ThemeError) throw error;
     const detail = error instanceof Error ? error.message : String(error);
     throw new ThemeError(`theme '${ref}': cannot read (${detail})`);
   }
@@ -2813,6 +2833,11 @@ export const IMAGE_COMMAND_USAGE =
 // StdinBuffer flushes a partial OSC after 50 ms), short enough that a stray
 // escape never swallows the operator's typing.
 export const PASTE_IDLE_MS = 150;
+
+// The largest theme file Kubic reads (issue #304 review): a theme is a few
+// hundred bytes of JSON, so this is generous by orders of magnitude while
+// still refusing a path that would be read whole for no reason.
+export const THEME_MAX_BYTES = 64 * 1024;
 
 export function parseImageCommand(prompt: string): TuiImageCommand | undefined {
   const trimmed = prompt.trim();

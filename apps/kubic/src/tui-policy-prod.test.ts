@@ -186,7 +186,7 @@ describe('prodTuiDeps hands bootTuiLane every config seam (issues #230, #288, #2
       [ENTERPRISE]:
         '[policy]\nallowed_models = ["corp/approved"]\ndenied_tools = ["bash"]\n',
       [PROJECT]:
-        '[model]\nprovider = "corp"\nid = "approved"\n[approvals]\nroute = "deny"\nmaxPendingMs = 1234\n[journal]\nretentionDays = 2\noutOfScope = ["dist"]\n',
+        '[model]\nprovider = "corp"\nid = "approved"\n[approvals]\nroute = "deny"\nmaxPendingMs = 1234\n[journal]\nretentionDays = 2\noutOfScope = ["dist"]\n[ui]\ntheme = "light"\n',
     });
     let seen: TuiRunOptions | undefined;
     const deps = tuiDepsWithDefaults(
@@ -208,6 +208,9 @@ describe('prodTuiDeps hands bootTuiLane every config seam (issues #230, #288, #2
     expect(seen?.approvals?.maxPendingMs).toBe(1234);
     expect(seen?.journalRetention).toEqual({ maxAgeMs: 2 * 86_400_000 });
     expect(seen?.reconcileOutOfScope).toEqual(['dist']);
+    // Issue #304: the `[ui] theme` reference reaches the deps the runner
+    // reads (dropping the prod spread must not stay green).
+    expect(seen?.theme).toBe('light');
   });
 
   it('forwards the empty policy and no pin when the config declares none (control)', async () => {

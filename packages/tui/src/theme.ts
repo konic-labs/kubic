@@ -118,8 +118,20 @@ export function parseThemeJson(text: string, source: string): ThemeColors {
   try {
     parsed = JSON.parse(text);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new ThemeError(`theme '${source}': invalid JSON (${detail})`);
+    // V8's message quotes a window of the INPUT, so the parser's own text
+    // never reaches the error (issue #304 review): a theme path pointed at a
+    // credentials file would otherwise print part of it into the boot error,
+    // and the config layer keeps secrets out of output everywhere else. The
+    // position is enough to find the typo.
+    const detail = error instanceof Error ? error.message : '';
+    // The line/column form is preferred when V8 gives one (it also prints a
+    // bare `position N`, which is the same place in another notation).
+    const position =
+      /line \d+ column \d+/.exec(detail)?.[0] ??
+      /position \d+/.exec(detail)?.[0];
+    throw new ThemeError(
+      `theme '${source}': invalid JSON${position === undefined ? '' : ` (${position})`}`,
+    );
   }
   if (!isRecord(parsed)) {
     throw new ThemeError(`theme '${source}': must be a JSON object`);

@@ -177,6 +177,33 @@ describe('a light theme on the status bar (issue #304)', () => {
   });
 });
 
+// Issue #304 review: V8's JSON.parse message quotes the input, so a theme
+// path pointed at a non-theme file (a credentials file, say) must not print
+// that file's content into the boot error.
+describe('a parse failure never quotes the file (issue #304 review)', () => {
+  it('reports the position, not the input window', () => {
+    const secret = 'sk-live-abcdef1234567890';
+    const broken = `{ "name": "${secret}", "colors": }`;
+    let message = '';
+    try {
+      parseThemeJson(broken, 'theme.json');
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain("theme 'theme.json': invalid JSON");
+    expect(message).not.toContain(secret);
+    expect(message).not.toContain('sk-live');
+  });
+
+  // V8 gives a position for some malformed inputs and only a quoted window
+  // for others; when it does, the operator gets the pointer.
+  it('still names the position when V8 gives one', () => {
+    expect(() => parseThemeJson('{ bad', 'theme.json')).toThrow(
+      /theme 'theme\.json': invalid JSON \(line 1 column 3\)/,
+    );
+  });
+});
+
 function validColors(): Record<string, string> {
   return {
     accent: '#268bd2',

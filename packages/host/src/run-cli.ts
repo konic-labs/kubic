@@ -21,6 +21,7 @@ import {
 import {
   type ClassifiedFailure,
   classifyFailure,
+  type RetryDecision,
 } from '../../worker/src/lane/failures.js';
 import type { OperationErrorLike } from '../../worker/src/lane/settle.js';
 import {
@@ -215,6 +216,9 @@ export interface HeadlessRunResult {
   // strategy) — the precise half the terminus cannot carry. Absent on
   // termini with no §52 code (`timeout`, `cancelled`, `usage`).
   failure?: ClassifiedFailure;
+  // Issue #209: the retry decision when the lane made one (solo overflow
+  // recovery) — strategy, reason and notBefore, also on success.
+  retry?: RetryDecision;
   // Issue #280: the interrupt that ended the run, present exactly when the
   // terminus is `cancelled`; the exit code is 128+signo from it.
   signal?: string;

@@ -287,6 +287,31 @@ both generations). A launch that never became ready, and every budget /
 approval / workspace / provider terminus, is **not** replaceable — a fresh
 child cannot fix a decision or a setup failure.
 
+## Retry strategies (§20.6/§53, issue #209)
+
+A classified failure picks its remedy through `chooseRetry` against a
+`RetryBudget` (attempts AND cost caps, spent separately from any task
+budget), and each decision (`strategy`, `reason`, `notBefore`) is recorded.
+Who executes what:
+
+| Strategy | Executor | Status |
+|---|---|---|
+| `retry_same` (transients) | the harness's durable generation retry (#395) | shipped — Kubic never relaunches it |
+| `retry_with_new_context` (context overflow) | solo recovery: compact (#399) then one retry, live on the headless path | shipped (#209) |
+| `retry_with_different_tool` | the model, on the next turn | shipped (classifier emits it; no executor needed) |
+| `retry_with_stronger_model` | escalation (#210) | decided by `chooseRetry`, execution pending |
+| `retry_with_new_agent` | orchestrator relaunch with a handoff (#184) | decided by `chooseRetry`, execution pending |
+| `retry_with_wider_capability` | explicit approval only | never emitted by the chooser |
+| `escalate` (refusals, pollution, workspace) / `abandon` (budget, denied approvals, exhausted retry budget) | operator / nobody | shipped — neither spends retry budget |
+
+Replacement (§81, above) is NOT a retry: it replays a crashed worker's
+mandate in a fresh generation, while a retry re-attempts a classified
+failure under policy. Open follow-ups: recording the per-worker strategy
+on the orchestrate `--json` worker record + trajectory events (routed to
+the manager-lane / result-persistence owners), and the `usage.retries`
+increment the relaunch must perform before the retry-budget maxAttempts
+arm can bind.
+
 ## Concurrency
 
 The shipped default is **two** agents (`worker-1,worker-2`, D12) and they run

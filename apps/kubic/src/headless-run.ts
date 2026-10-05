@@ -138,6 +138,7 @@ import {
 import {
   type ClassifiedFailure,
   classifyFailure,
+  type RetryDecision,
 } from '../../../packages/worker/src/lane/failures.js';
 import {
   describePendingSettlement,
@@ -165,7 +166,7 @@ import {
 } from '../../../packages/worker/src/lane/transcript.js';
 import {
   awaitTurn,
-  runTurn,
+  runTurnWithOverflowRecovery,
   type TurnOutcome,
   turnAbort,
   turnLaneRecord,
@@ -401,6 +402,9 @@ function finished(
   errorMessage?: string,
   signal?: string,
   failure?: ClassifiedFailure,
+  // Issue #209: the retry decision when the lane made one (solo overflow
+  // recovery) — strategy, reason and notBefore, also on success.
+  retry?: RetryDecision,
 ): HeadlessRunResult {
   return {
     terminus,
@@ -409,6 +413,7 @@ function finished(
     ...refs(id),
     ...(signal === undefined ? {} : { signal }),
     ...(failure === undefined ? {} : { failure }),
+    ...(retry === undefined ? {} : { retry }),
     ...(errorMessage === undefined
       ? {}
       : { error: { kind: terminus, message: errorMessage } }),
@@ -1909,19 +1914,31 @@ async function runHeadlessPromptImpl(
       // prompting twice, while a fresh invocation is a fresh prompt.
       const requestId = `kubic-run:${randomUUID()}`;
       let outcome: TurnOutcome;
+      // Issue #209: the solo overflow-recovery decision, when the lane
+      // made one — carried into the envelope on every exit path below.
+      let retryDecision: RetryDecision | undefined;
       const driveSpan = spans.startLane('drive');
       try {
         if (resumed !== undefined) {
           outcome = await awaitTurn(resumed, guard.context);
         } else {
-          outcome = await runTurn(solo, prompt, {
+          // Issue #209: a context overflow compacts (#399) and retries
+          // once on the fresh context; every other outcome passes through
+          // exactly as runTurn reports it.
+          const recovered = await runTurnWithOverflowRecovery(solo, prompt, {
             requestId,
             context: guard.context,
             // Headless keeps today's refusal: a run that somehow finds the
             // conversation busy fails by name instead of queueing behind a
             // turn nobody is watching (#334 owns follow-up UX).
             whenBusy: 'reject',
+            onRetryDecision: (decision) =>
+              notice(
+                `context overflow — compacting and retrying once (${decision.reason})`,
+              ),
           });
+          outcome = recovered.outcome;
+          retryDecision = recovered.decision;
         }
       } finally {
         spans.endLane(driveSpan, guardFailure()?.message);
@@ -1978,6 +1995,10 @@ async function runHeadlessPromptImpl(
           id,
           'completed',
           assistantSummary(items) ?? NO_ASSISTANT_TEXT_SUMMARY,
+          undefined,
+          undefined,
+          undefined,
+          retryDecision,
         );
       }
       const { terminus, failure } = failedTurnTerminus(outcome);
@@ -1989,6 +2010,7 @@ async function runHeadlessPromptImpl(
         message,
         undefined,
         failure,
+        retryDecision,
       );
     } finally {
       await detachEvents();

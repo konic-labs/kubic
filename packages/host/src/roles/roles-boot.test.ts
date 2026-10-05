@@ -3,6 +3,7 @@
 // `<root>/.kubic/roles/*.md` as one from the root. In-memory bridge only:
 // zero network, zero paid tokens.
 import { describe, expect, it } from 'vitest';
+import type { RoleLayerInput } from './resolver.js';
 import {
   loadRoles,
   RoleBootError,
@@ -259,10 +260,12 @@ describe('doctor judges roles under the same config layers as the run (issue #23
   };
 
   it('a layer contradicting the document fails doctor with the run refusal, word for word', () => {
-    const layers = [
+    // Typed as the loader's own input: `as const` would freeze the tool
+    // lists readonly, which RoleLayerSpec does not accept.
+    const layers: RoleLayerInput[] = [
       { layer: 'project', roles: { x: { tools: ['read', 'write'] } } },
-    ] as const;
-    const input = { ...base, layers: [...layers] };
+    ];
+    const input = { ...base, layers };
     // The run refusal: selectRole resolves under the same layers.
     let runReason = '';
     try {
@@ -298,7 +301,9 @@ describe('doctor judges roles under the same config layers as the run (issue #23
     // The layer narrows the tool away: run and doctor agree it is fine.
     const fixed = {
       ...broken,
-      layers: [{ layer: 'project', roles: { y: { tools: ['read'] } } }],
+      layers: [
+        { layer: 'project', roles: { y: { tools: ['read'] } } },
+      ] as RoleLayerInput[],
     };
     expect(selectRole({ ...fixed, role: 'y' }).doc.name).toBe('y');
     expect(

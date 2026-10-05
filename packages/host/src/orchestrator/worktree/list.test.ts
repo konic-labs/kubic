@@ -1,8 +1,18 @@
 // Worktree list: `git worktree list` shows every spawn (issue #45, slice 3).
 // RED first: porcelain parse + 3 parallel spawns visible as 3 entries.
 import { describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../../../exec/src/env.js';
+import {
+  FakeExecutionEnv,
+  type FakeSpawnCall,
+} from '../../../../exec/src/env.js';
 import { listWorktrees, parseWorktreePorcelain } from './list.js';
+
+// Exact argv issued, in order (issue #212).
+function argvOf(env: FakeExecutionEnv): string[] {
+  return env.calls.map(
+    (call: FakeSpawnCall) => `${call.cmd} ${call.args.join(' ')}`,
+  );
+}
 
 const THREE_WT_PORCELAIN = `worktree /repo
 HEAD abcdef0123456789
@@ -32,13 +42,16 @@ describe('listWorktrees (issue #45)', () => {
   });
 
   it('shows 3 parallel spawns as 3 kubic/* worktrees (§85 mirror)', async () => {
-    const env = new FakeExecutionEnv({
-      'git worktree list --porcelain': {
-        exitCode: 0,
-        stdout: THREE_WT_PORCELAIN,
-        stderr: '',
+    const env = new FakeExecutionEnv(
+      {
+        'git worktree list --porcelain': {
+          exitCode: 0,
+          stdout: THREE_WT_PORCELAIN,
+          stderr: '',
+        },
       },
-    });
+      { strict: true },
+    );
     const entries = await listWorktrees(env);
     const spawned = entries.filter((e) =>
       e.path.startsWith('/repo/.kubic/wt/'),
@@ -49,17 +62,22 @@ describe('listWorktrees (issue #45)', () => {
       'kubic/agent-2',
       'kubic/agent-3',
     ]);
+    expect(argvOf(env)).toEqual(['git worktree list --porcelain']);
   });
 
   it('refuses list outside a repo with exit 5', async () => {
-    const env = new FakeExecutionEnv({
-      'git worktree list --porcelain': {
-        exitCode: 128,
-        stdout: '',
-        stderr: 'fatal: not a git repository',
+    const env = new FakeExecutionEnv(
+      {
+        'git worktree list --porcelain': {
+          exitCode: 128,
+          stdout: '',
+          stderr: 'fatal: not a git repository',
+        },
       },
-    });
+      { strict: true },
+    );
     const error = await listWorktrees(env).catch((e: unknown) => e);
     expect((error as { exitCode?: number }).exitCode).toBe(5);
+    expect(argvOf(env)).toEqual(['git worktree list --porcelain']);
   });
 });

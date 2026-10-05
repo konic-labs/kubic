@@ -139,6 +139,68 @@ describe('execution env (issue #12, slice A)', () => {
   });
 });
 
+describe('FakeExecutionEnv calls log + strict mode (issue #212)', () => {
+  it('logs every spawn with cmd, args and provenance', async () => {
+    const env = new FakeExecutionEnv({
+      'git rev-parse --show-toplevel': {
+        exitCode: 0,
+        stdout: '/repo\n',
+        stderr: '',
+      },
+    });
+    await env.shell
+      .spawn('git', ['rev-parse', '--show-toplevel'], { provenance: PROV })
+      .wait();
+    // Unscripted argv still exits 0 outside strict mode — but is logged.
+    await env.shell.spawn('git', ['status'], { provenance: PROV }).wait();
+    expect(env.calls).toEqual([
+      {
+        cmd: 'git',
+        args: ['rev-parse', '--show-toplevel'],
+        provenance: PROV,
+      },
+      { cmd: 'git', args: ['status'], provenance: PROV },
+    ]);
+  });
+
+  it('strict mode throws on unscripted argv, naming it', async () => {
+    const env = new FakeExecutionEnv(
+      { 'git status': { exitCode: 0, stdout: '', stderr: '' } },
+      { strict: true },
+    );
+    await env.shell.spawn('git', ['status'], { provenance: PROV }).wait();
+    expect(() =>
+      env.shell.spawn('git', ['branch', '-D', 'kubic/agent-1'], {
+        provenance: PROV,
+      }),
+    ).toThrow(/no script for argv: git branch -D kubic\/agent-1/);
+    // The refused call is still logged.
+    expect(env.calls).toHaveLength(2);
+  });
+
+  it('strict mode survives withProvenance', () => {
+    const env = new FakeExecutionEnv(
+      { 'git status': { exitCode: 0, stdout: '', stderr: '' } },
+      { strict: true },
+    );
+    const scoped = env.withProvenance({ ...PROV, agentId: 'a2' });
+    expect(() =>
+      scoped.shell.spawn('git', ['fetch'], { provenance: PROV }),
+    ).toThrow(/no script for argv/);
+  });
+
+  it('lenient default still exits 0 on unscripted argv', async () => {
+    const env = new FakeExecutionEnv({});
+    const result = await env.shell
+      .spawn('anything', ['at', 'all'], { provenance: PROV })
+      .wait();
+    expect(result.exitCode).toBe(0);
+    expect(env.calls).toEqual([
+      { cmd: 'anything', args: ['at', 'all'], provenance: PROV },
+    ]);
+  });
+});
+
 describe('streaming + checkpoints + kill tree (issue #12, slice B)', () => {
   it('node shell streams updates while running', async () => {
     const { env } = makeNodeEnv();

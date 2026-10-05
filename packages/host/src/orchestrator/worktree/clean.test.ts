@@ -32,8 +32,16 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
+import type { FakeSpawnCall } from '../../../../exec/src/env.js';
 import type { WorktreeEntry } from './list.js';
 import { parseWorktreePorcelain } from './list.js';
+
+// Exact argv issued, in order (issue #212).
+function argvOf(env: FakeExecutionEnv): string[] {
+  return env.calls.map(
+    (call: FakeSpawnCall) => `${call.cmd} ${call.args.join(' ')}`,
+  );
+}
 
 // Kept local, not imported from list.test.ts: importing a test file
 // re-registers its suites here, so they ran twice.
@@ -103,7 +111,7 @@ function repoScripts(
 
 describe('kubic clean (issue #45, #92)', () => {
   it('dry-run plans prunes but removes nothing', async () => {
-    const env = new FakeExecutionEnv(repoScripts());
+    const env = new FakeExecutionEnv(repoScripts(), { strict: true });
     const lines: string[] = [];
     const errs: string[] = [];
     const removed: string[] = [];
@@ -131,10 +139,17 @@ describe('kubic clean (issue #45, #92)', () => {
     expect(text).toMatch(/would remove worktree \/repo\/\.kubic\/wt\/agent-3/);
     expect(text).toMatch(/would delete branch kubic\/agent-1/);
     expect(text).toContain('nothing changed');
+    // A dry run plans only: resolve, list, branch list — no remover,
+    // no branch delete, no prune.
+    expect(argvOf(env)).toEqual([
+      'git rev-parse --show-toplevel',
+      'git worktree list --porcelain',
+      'git branch --list kubic/* --format=%(refname:short)',
+    ]);
   });
 
   it('real clean prunes worktrees and branches and applies journal retention', async () => {
-    const env = new FakeExecutionEnv(repoScripts());
+    const env = new FakeExecutionEnv(repoScripts(), { strict: true });
     const lines: string[] = [];
     const errs: string[] = [];
     const policies: unknown[] = [];
@@ -170,10 +185,24 @@ describe('kubic clean (issue #45, #92)', () => {
       'kubic/agent-3',
     ]);
     expect(parsed.journal.entries).toBe(4);
+    // Full disposal order, pinned: each worktree is removed before its
+    // branch is deleted (never half-disposed), prune runs last.
+    expect(argvOf(env)).toEqual([
+      'git rev-parse --show-toplevel',
+      'git worktree list --porcelain',
+      'git branch --list kubic/* --format=%(refname:short)',
+      'git worktree remove /repo/.kubic/wt/agent-1',
+      'git branch -D kubic/agent-1',
+      'git worktree remove /repo/.kubic/wt/agent-2',
+      'git branch -D kubic/agent-2',
+      'git worktree remove /repo/.kubic/wt/agent-3',
+      'git branch -D kubic/agent-3',
+      'git worktree prune',
+    ]);
   });
 
   it('--journal alone prunes to the store default byte bound', async () => {
-    const env = new FakeExecutionEnv(repoScripts());
+    const env = new FakeExecutionEnv(repoScripts(), { strict: true });
     const lines: string[] = [];
     const errs: string[] = [];
     const policies: { maxBytes?: number; maxAgeMs?: number }[] = [];
@@ -200,20 +229,23 @@ describe('kubic clean (issue #45, #92)', () => {
   });
 
   it('reports a journal-only prune honestly on an otherwise clean repo', async () => {
-    const env = new FakeExecutionEnv({
-      'git rev-parse --show-toplevel': TOPLEVEL,
-      'git worktree list --porcelain': {
-        exitCode: 0,
-        stdout: 'worktree /repo\nHEAD abc\nbranch refs/heads/main\n',
-        stderr: '',
+    const env = new FakeExecutionEnv(
+      {
+        'git rev-parse --show-toplevel': TOPLEVEL,
+        'git worktree list --porcelain': {
+          exitCode: 0,
+          stdout: 'worktree /repo\nHEAD abc\nbranch refs/heads/main\n',
+          stderr: '',
+        },
+        'git branch --list kubic/* --format=%(refname:short)': {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+        'git worktree prune': { exitCode: 0, stdout: '', stderr: '' },
       },
-      'git branch --list kubic/* --format=%(refname:short)': {
-        exitCode: 0,
-        stdout: '',
-        stderr: '',
-      },
-      'git worktree prune': { exitCode: 0, stdout: '', stderr: '' },
-    });
+      { strict: true },
+    );
     const lines: string[] = [];
     const errs: string[] = [];
     const code = await runCleanCommand(
@@ -234,7 +266,7 @@ describe('kubic clean (issue #45, #92)', () => {
   // Issue #348: the newest entry is never dropped, so a bound it alone
   // exceeds is reported rather than silently ignored.
   it('reports an over-bound journal whose newest entry was kept', async () => {
-    const env = new FakeExecutionEnv(repoScripts());
+    const env = new FakeExecutionEnv(repoScripts(), { strict: true });
     const lines: string[] = [];
     const errs: string[] = [];
     const code = await runCleanCommand(
@@ -327,7 +359,7 @@ describe('kubic clean (issue #45, #92)', () => {
   });
 
   it('plans a custom-root worktree from the deps root, not the argv (issue #133)', async () => {
-    const env = new FakeExecutionEnv(repoScripts());
+    const env = new FakeExecutionEnv(repoScripts(), { strict: true });
     const lines: string[] = [];
     const errs: string[] = [];
     const removed: string[] = [];
@@ -393,7 +425,7 @@ describe('kubic clean (issue #45, #92)', () => {
   it('refuses an unsafe session id from a library caller before touching the store', async () => {
     // The id names <repo>/.kubic/orchestrator/<id>.json: the CLI refuses it
     // at parse time, and the handler re-checks so no caller can bypass it.
-    const env = new FakeExecutionEnv(repoScripts());
+    const env = new FakeExecutionEnv(repoScripts(), { strict: true });
     const lines: string[] = [];
     const errs: string[] = [];
     let looked = 0;
@@ -418,13 +450,16 @@ describe('kubic clean (issue #45, #92)', () => {
   });
 
   it('refuses outside a git repo with exit 5 and mutates nothing', async () => {
-    const env = new FakeExecutionEnv({
-      'git rev-parse --show-toplevel': {
-        exitCode: 128,
-        stdout: '',
-        stderr: 'fatal: not a git repository',
+    const env = new FakeExecutionEnv(
+      {
+        'git rev-parse --show-toplevel': {
+          exitCode: 128,
+          stdout: '',
+          stderr: 'fatal: not a git repository',
+        },
       },
-    });
+      { strict: true },
+    );
     const lines: string[] = [];
     const errs: string[] = [];
     let removals = 0;
@@ -486,6 +521,7 @@ describe('kubic clean (issue #45, #92)', () => {
           stderr: 'fatal: contains modified or untracked files, use --force',
         },
       }),
+      { strict: true },
     );
     const lines: string[] = [];
     const errs: string[] = [];
@@ -515,7 +551,7 @@ describe('kubic clean never disposes a live worker (§51 crash recovery)', () =>
       options: CleanOptions,
       command = 'node kubic.js run --session s-agent-2',
     ) => {
-      const env = new FakeExecutionEnv(repoScripts());
+      const env = new FakeExecutionEnv(repoScripts(), { strict: true });
       const lines: string[] = [];
       const errs: string[] = [];
       const removed: string[] = [];
@@ -566,7 +602,7 @@ describe('kubic clean --session is scoped to its own session (issue #144)', () =
     const code = await runCleanCommand(
       { sessionId: 'sa', force: true },
       {
-        env: new FakeExecutionEnv(repoScripts()),
+        env: new FakeExecutionEnv(repoScripts(), { strict: true }),
         out: () => undefined,
         err: (line: string) => errs.push(line),
         repoRoot: '/repo',
@@ -611,7 +647,7 @@ describe('kubic clean --session is scoped to its own session (issue #144)', () =
       const code = await runCleanCommand(
         { sessionId: 'sa', force: true },
         {
-          env: new FakeExecutionEnv(repoScripts()),
+          env: new FakeExecutionEnv(repoScripts(), { strict: true }),
           out: (line: string) => out.push(line),
           err: (line: string) => errs.push(line),
           repoRoot: '/repo',
@@ -702,24 +738,27 @@ describe('kubic clean steps aside for a live journal writer (issue #337)', () =>
   }
 
   function envFor(repoRoot: string): FakeExecutionEnv {
-    return new FakeExecutionEnv({
-      'git rev-parse --show-toplevel': {
-        exitCode: 0,
-        stdout: `${repoRoot}\n`,
-        stderr: '',
+    return new FakeExecutionEnv(
+      {
+        'git rev-parse --show-toplevel': {
+          exitCode: 0,
+          stdout: `${repoRoot}\n`,
+          stderr: '',
+        },
+        'git worktree list --porcelain': {
+          exitCode: 0,
+          stdout: `worktree ${repoRoot}\nHEAD abc\nbranch refs/heads/main\n`,
+          stderr: '',
+        },
+        'git branch --list kubic/* --format=%(refname:short)': {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+        'git worktree prune': { exitCode: 0, stdout: '', stderr: '' },
       },
-      'git worktree list --porcelain': {
-        exitCode: 0,
-        stdout: `worktree ${repoRoot}\nHEAD abc\nbranch refs/heads/main\n`,
-        stderr: '',
-      },
-      'git branch --list kubic/* --format=%(refname:short)': {
-        exitCode: 0,
-        stdout: '',
-        stderr: '',
-      },
-      'git worktree prune': { exitCode: 0, stdout: '', stderr: '' },
-    });
+      { strict: true },
+    );
   }
 
   it('skips the prune and names the holder', async () => {

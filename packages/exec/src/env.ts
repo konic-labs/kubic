@@ -897,6 +897,21 @@ export interface FakeScript {
   stderr: string;
 }
 
+// One shell.spawn call, recorded for exact-argv assertions (issue #212).
+export interface FakeSpawnCall {
+  cmd: string;
+  args: string[];
+  provenance: Provenance;
+}
+
+export interface FakeOptions {
+  // Strict mode: an argv with no scripted answer throws instead of
+  // exiting 0, so a test that must not see an argv fails loudly instead
+  // of passing silently. Off by default — suites that script only the
+  // answers they read keep working unchanged.
+  strict?: boolean;
+}
+
 // The fake's missing-path error carries Node's `ENOENT` code, so ops that
 // map errno codes (read, issue #199) see the same shape as the real seam.
 function fakeNoSuchFile(path: string): Error {
@@ -910,6 +925,10 @@ export class FakeExecutionEnv implements ExecutionEnv {
   readonly provenance: Provenance;
   private readonly files = new Map<string, string>();
   private readonly scriptMap: Map<string, FakeScript>;
+  private readonly strict: boolean;
+  // Every spawn, scripted or not, in call order. Tests asserting exact
+  // argv read this instead of scripting forbidden argv to fail.
+  readonly calls: FakeSpawnCall[] = [];
 
   readonly fs: FileSystem = {
     readFile: (path: string) => {
@@ -965,14 +984,25 @@ export class FakeExecutionEnv implements ExecutionEnv {
       options: SpawnOptions,
     ): ProcessHandle => {
       const key = `${cmd} ${args.join(' ')}`;
-      const script = this.scriptMap.get(key) ?? {
+      this.calls.push({
+        cmd,
+        args: [...args],
+        provenance: options.provenance,
+      });
+      const script = this.scriptMap.get(key);
+      if (script === undefined && this.strict) {
+        throw new Error(
+          `fake shell: no script for argv: ${key} (strict mode — script it or drop strict)`,
+        );
+      }
+      const resolved = script ?? {
         exitCode: 0,
         stdout: '',
         stderr: '',
       };
       const snapshot: ProcessSnapshot = {
-        stdout: script.stdout,
-        stderr: script.stderr,
+        stdout: resolved.stdout,
+        stderr: resolved.stderr,
         exitCode: null,
       };
       return {
@@ -982,13 +1012,13 @@ export class FakeExecutionEnv implements ExecutionEnv {
           if (options.checkpointKey && options.checkpointStore) {
             options.checkpointStore.recordFinal(options.checkpointKey, {
               ...snapshot,
-              exitCode: script.exitCode,
+              exitCode: resolved.exitCode,
             });
           }
           return Promise.resolve({
-            exitCode: script.exitCode,
-            stdout: script.stdout,
-            stderr: script.stderr,
+            exitCode: resolved.exitCode,
+            stdout: resolved.stdout,
+            stderr: resolved.stderr,
             provenance: options.provenance,
           });
         },
@@ -999,15 +1029,28 @@ export class FakeExecutionEnv implements ExecutionEnv {
 
   constructor(
     scripts: Map<string, FakeScript> | Record<string, FakeScript>,
-    provenance: Provenance = ROOT_PROVENANCE,
+    provenance?: Provenance | FakeOptions,
+    options: FakeOptions = {},
   ) {
     this.scriptMap =
       scripts instanceof Map ? scripts : new Map(Object.entries(scripts));
-    this.provenance = provenance;
+    // Options ride second so strict tests read cleanly
+    // (`new FakeExecutionEnv(scripts, { strict: true })`); a Provenance
+    // second keeps the old positional shape.
+    if (provenance !== undefined && 'sessionId' in provenance) {
+      this.provenance = provenance;
+      this.strict = options.strict === true;
+    } else {
+      this.provenance = ROOT_PROVENANCE;
+      this.strict = (provenance?.strict ?? options.strict) === true;
+    }
   }
 
   withProvenance(next: Provenance): ExecutionEnv {
-    const scoped = new FakeExecutionEnv(this.scriptMap, next);
+    const scoped = new FakeExecutionEnv(this.scriptMap, next, {
+      strict: this.strict,
+    });
+    scoped.calls.push(...this.calls);
     for (const [k, v] of this.files) scoped.files.set(k, v);
     return scoped;
   }

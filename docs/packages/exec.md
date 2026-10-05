@@ -17,7 +17,7 @@ escapes, not a sandbox boundary.
 
 | Module | Exports |
 | --- | --- |
-| `env.ts` | `ExecutionEnv`, `Provenance`, `ROOT_PROVENANCE`, `FileSystem`, `StatInfo`, `Shell`, `ShellResult`, `SpawnOptions`, `ProcessHandle`, `ProcessSnapshot`, `UpdateCallback`, `CheckpointStore`, `NodeExecutionEnv`, `FakeExecutionEnv`, `FakeScript`, `FakeSpawnCall`, `FakeOptions`, `MemoryCheckpointStore`, `CHECKPOINT_INTERVAL_MS`, `MAX_CHILD_OUTPUT_BYTES`, `KILL_GRACE_MS`, `TOOL_ENV_ALLOWLIST`, `toolSpawnEnv` (§3.8: every spawned child gets the allowlisted env, secrets dropped) |
+| `env.ts` | `ExecutionEnv`, `Provenance`, `ROOT_PROVENANCE`, `FileSystem`, `StatInfo`, `Shell`, `ShellResult`, `SpawnOptions`, `ProcessHandle`, `ProcessSnapshot`, `UpdateCallback`, `CheckpointStore`, `NodeExecutionEnv`, `FakeExecutionEnv`, `FakeScript`, `FakeSpawnCall`, `FakeOptions`, `argvKey`, `MemoryCheckpointStore`, `CHECKPOINT_INTERVAL_MS`, `MAX_CHILD_OUTPUT_BYTES`, `KILL_GRACE_MS`, `TOOL_ENV_ALLOWLIST`, `toolSpawnEnv` (§3.8: every spawned child gets the allowlisted env, secrets dropped) |
 | `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `JournalEntryTooLargeError`, `Baseline`, `BaselineOptions`, `UNREADABLE_HASH`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `MAX_SWEEP_CONTENT_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `sha256HexOfBytes`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `removeCreatedEntry`, `isUndoableCreate`, `reconcile`, `journalMutationLockPath` |
 | `journal-diff.ts` | `FileChange`, `DiffFilter`, `diffEntries`, `unifiedHunks`, `renderDiff` |
 | `journal-status.ts` | `JournalStatus`, `RepoState`, `journalStatus`, `renderLog` |
@@ -60,9 +60,17 @@ Supporting shapes, field-for-field:
 turnId: 0, operation: 'init' }`. `NodeExecutionEnv` is the cwd-scoped
 live binding; `FakeExecutionEnv` (+ `FakeScript`) is the hermetic test
 double. It records every spawn on `calls` (`FakeSpawnCall`: cmd, args,
-provenance), and `new FakeExecutionEnv(scripts, { strict: true })` throws
-on any unscripted argv instead of exiting 0 — the worktree suites assert
-exact argv through it (issue #212). `confine()` is lexical only (`resolve()` defeats `..`/absolute
+provenance). Strict is the default (issue #356): an argv with no scripted
+answer throws instead of exiting 0 — suites that are not asserting exact
+argv opt out per test with `{ allowUnscripted: true }` (an explicit
+`strict: false` also opts out). Script maps match on the exact argv array
+via `argvKey(cmd, ...args)` (JSON-serialized, so a single message element
+never conflates with a split one); plain joined `"cmd args..."` strings
+keep resolving as a legacy fallback. The fake fs implements `readFileRange`
+with node-seam byte semantics (tests needing the whole-file fallback set
+`env.fs.readFileRange = undefined`), and `stat` reports UTF-8 byte sizes
+with conventional modes (files `0o644`, directories `0o755`). The worktree
+and worker git-op suites assert exact argv through it (issues #212, #356). `confine()` is lexical only (`resolve()` defeats `..`/absolute
 escapes but not symlinks) — acceptable because solo has no isolation. It
 also accepts a path spelled through the workspace root's own `realpath`
 (`/tmp` and `/var` resolve to `/private/...` on macOS), so the write path

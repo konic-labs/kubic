@@ -33,7 +33,9 @@ function tmpRoot(prefix: string): string {
 
 describe('measureSamples: spawn source (issue #98)', () => {
   it('measures N spawns through the exec shell seam and returns raw ms samples', async () => {
-    const env = new FakeExecutionEnv({});
+    // Unscripted spawn answers are irrelevant here (fake clock pins the
+    // samples); opt out of strict mode explicitly (issue #356).
+    const env = new FakeExecutionEnv({}, { allowUnscripted: true });
     const request: MeasureRequest = {
       kind: 'spawn',
       samples: 5,
@@ -178,7 +180,8 @@ describe('measureSamples: spawn argv plumbing (issue #98 follow-up)', () => {
   // `command.args` with `[]` kept every existing test green.
   class RecordingEnv extends FakeExecutionEnv {
     readonly seen: string[][] = [];
-    private readonly base = new FakeExecutionEnv({});
+    // The inner fake only records argv; answers never matter.
+    private readonly base = new FakeExecutionEnv({}, { allowUnscripted: true });
     override readonly shell = {
       spawn: (
         cmd: string,
@@ -217,7 +220,8 @@ describe('measureSamples: spawn argv plumbing (issue #98 follow-up)', () => {
 
 describe('measureSamples: hermetic spawn source', () => {
   it('writes nothing through the injected env filesystem', async () => {
-    const env = new FakeExecutionEnv({});
+    // The spawn answers never matter; only filesystem silence is pinned.
+    const env = new FakeExecutionEnv({}, { allowUnscripted: true });
     await measureSamples({ kind: 'spawn', samples: 2, env });
     expect(env.fs.listDir('')).toEqual([]);
   });

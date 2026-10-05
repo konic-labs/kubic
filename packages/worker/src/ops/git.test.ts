@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
+import { argvKey, FakeExecutionEnv } from '../../../exec/src/env.js';
 import { createSessionSpillSink } from '../spill.js';
 import { BASH_RESULT_MAX_CHARS } from './bash.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
@@ -17,6 +17,11 @@ function ctx(
 ): OpContext {
   const env = new FakeExecutionEnv(scripts);
   return { env, sessionId: 's1', agentId: 'root' };
+}
+
+// Human form of the recorded argv, for exact-argv pins (issue #356).
+function argvOf(env: FakeExecutionEnv): string[] {
+  return env.calls.map((c) => `${c.cmd} ${c.args.join(' ')}`);
 }
 
 function inv(): ToolInvocation {
@@ -59,7 +64,7 @@ describe('git ops (issue #19, slice A)', () => {
       {},
       inv(),
       ctx({
-        'git status --porcelain=v2 -z -b': {
+        [argvKey('git', 'status', '--porcelain=v2', '-z', '-b')]: {
           exitCode: 0,
           stdout: STATUS_OUT,
           stderr: '',
@@ -96,7 +101,7 @@ describe('git ops (issue #19, slice A)', () => {
       {},
       inv(),
       ctx({
-        'git status --porcelain=v2 -z -b': {
+        [argvKey('git', 'status', '--porcelain=v2', '-z', '-b')]: {
           exitCode: 0,
           stdout: '# branch.oid abc1234\0# branch.head (detached)\0',
           stderr: '',
@@ -110,7 +115,7 @@ describe('git ops (issue #19, slice A)', () => {
       {},
       inv(),
       ctx({
-        'git status --porcelain=v2 -z -b': {
+        [argvKey('git', 'status', '--porcelain=v2', '-z', '-b')]: {
           exitCode: 0,
           stdout: '# branch.oid (initial)\0# branch.head main\0',
           stderr: '',
@@ -123,29 +128,33 @@ describe('git ops (issue #19, slice A)', () => {
 
   it('git_diff scopes staged, range, and path', async () => {
     const scripts = {
-      'git diff --staged -- a.txt': {
+      [argvKey('git', 'diff', '--staged', '--', 'a.txt')]: {
         exitCode: 0,
         stdout: 'diff --git a/a.txt b/a.txt\n',
         stderr: '',
       },
     };
+    const env = new FakeExecutionEnv(scripts);
+    const c: OpContext = { env, sessionId: 's1', agentId: 'root' };
     const out = await callOperation(
       'git_diff',
       { staged: true, path: 'a.txt' },
       inv(),
-      ctx(scripts),
+      c,
     );
     expect(out.ok).toBe(true);
     if (out.ok) expect(out.result.diff).toBe('diff --git a/a.txt b/a.txt\n');
+    expect(argvOf(env)).toEqual(['git diff --staged -- a.txt']);
     // Range scoping: the revision range is its own argv element before
-    // the `--` path separator. (An unscripted fake spawn yields '', so a
-    // wrong argv cannot produce this diff.)
+    // the `--` path separator. The strict fake answers only the exact
+    // argv, so a range merged into the path (or vice versa) throws
+    // instead of returning this diff.
     const ranged = await callOperation(
       'git_diff',
       { range: 'main..HEAD', path: 'a.txt' },
       inv(),
       ctx({
-        'git diff main..HEAD -- a.txt': {
+        [argvKey('git', 'diff', 'main..HEAD', '--', 'a.txt')]: {
           exitCode: 0,
           stdout: 'diff --git a/a.txt b/a.txt\n+ranged\n',
           stderr: '',
@@ -160,7 +169,7 @@ describe('git ops (issue #19, slice A)', () => {
 
   it('reports unavailable-with-reason outside a repo, and never inits', async () => {
     const scripts = {
-      'git status --porcelain=v2 -z -b': {
+      [argvKey('git', 'status', '--porcelain=v2', '-z', '-b')]: {
         exitCode: 128,
         stdout: '',
         stderr: 'fatal: not a git repository',

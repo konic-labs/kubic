@@ -260,7 +260,9 @@ describe('runTurn on pi-durable (issue #395)', () => {
   });
 
   it('places a busy steer on the running operation, never as a queued turn (#334)', async () => {
-    const base = new FakeExecutionEnv({});
+    // The shell answers never matter (the round stays gated); opt out of
+    // strict mode explicitly (issue #356).
+    const base = new FakeExecutionEnv({}, { allowUnscripted: true });
     base.fs.writeFile('a.txt', 'steer me\n');
     let toolStarted: () => void = () => {};
     const started = new Promise<void>((resolve) => {

@@ -189,6 +189,9 @@ describe('binary refusal (issue #176)', () => {
 
   it('refuses binary on a seam without ranged reads, where U+FFFD is the surviving signal', async () => {
     const env = new FakeExecutionEnv({});
+    // Seam without ranged reads (issue #356): the fallback path only
+    // runs when the seam lacks readFileRange, so drop the fake's.
+    env.fs.readFileRange = undefined;
     env.fs.writeFile('logo.png', '\uFFFDPNG\r\n\u001a\n');
     const out = await readOperation.execute(
       inv(),
@@ -202,6 +205,9 @@ describe('binary refusal (issue #176)', () => {
 
   it('refuses NUL-bearing content on a seam without ranged reads', async () => {
     const env = new FakeExecutionEnv({});
+    // Seam without ranged reads (issue #356): keep this on the fallback
+    // path the test name promises.
+    env.fs.readFileRange = undefined;
     env.fs.writeFile('utf16.txt', 'a\0b\0');
     const out = await readOperation.execute(
       inv(),
@@ -214,6 +220,9 @@ describe('binary refusal (issue #176)', () => {
 
   it('refuses binary without a size when the file cannot be statted after the read', async () => {
     const env = new FakeExecutionEnv({});
+    // Seam without ranged reads (issue #356): the U+FFFD signal only
+    // survives on the fallback path.
+    env.fs.readFileRange = undefined;
     env.fs.writeFile('logo.png', '\uFFFDPNG');
     vi.spyOn(env.fs, 'stat').mockImplementation(() => {
       throw new Error('boom');

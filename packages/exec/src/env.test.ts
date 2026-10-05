@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ExecutionEnv, ProcessSnapshot, Provenance } from './env.js';
 import {
+  argvKey,
   FakeExecutionEnv,
   MAX_CHILD_OUTPUT_BYTES,
   MemoryCheckpointStore,
@@ -141,13 +142,16 @@ describe('execution env (issue #12, slice A)', () => {
 
 describe('FakeExecutionEnv calls log + strict mode (issue #212)', () => {
   it('logs every spawn with cmd, args and provenance', async () => {
-    const env = new FakeExecutionEnv({
-      'git rev-parse --show-toplevel': {
-        exitCode: 0,
-        stdout: '/repo\n',
-        stderr: '',
+    const env = new FakeExecutionEnv(
+      {
+        'git rev-parse --show-toplevel': {
+          exitCode: 0,
+          stdout: '/repo\n',
+          stderr: '',
+        },
       },
-    });
+      { allowUnscripted: true },
+    );
     await env.shell
       .spawn('git', ['rev-parse', '--show-toplevel'], { provenance: PROV })
       .wait();
@@ -189,8 +193,8 @@ describe('FakeExecutionEnv calls log + strict mode (issue #212)', () => {
     ).toThrow(/no script for argv/);
   });
 
-  it('lenient default still exits 0 on unscripted argv', async () => {
-    const env = new FakeExecutionEnv({});
+  it('lenient exit 0 on unscripted argv needs an explicit opt-out', async () => {
+    const env = new FakeExecutionEnv({}, { allowUnscripted: true });
     const result = await env.shell
       .spawn('anything', ['at', 'all'], { provenance: PROV })
       .wait();
@@ -198,6 +202,94 @@ describe('FakeExecutionEnv calls log + strict mode (issue #212)', () => {
     expect(env.calls).toEqual([
       { cmd: 'anything', args: ['at', 'all'], provenance: PROV },
     ]);
+  });
+});
+
+describe('FakeExecutionEnv argv keys + strict default + byte fs (issue #356)', () => {
+  it('argvKey distinguishes a single message element from a split one', () => {
+    expect(argvKey('git', 'commit', '-m', 'work in progress')).not.toBe(
+      argvKey('git', 'commit', '-m', 'work', 'in', 'progress'),
+    );
+  });
+
+  it('matches scripts on the argv array, not the joined string', async () => {
+    const env = new FakeExecutionEnv({
+      [argvKey('git', 'commit', '-m', 'work in progress')]: {
+        exitCode: 0,
+        stdout: 'ok',
+        stderr: '',
+      },
+    });
+    const single = await env.shell
+      .spawn('git', ['commit', '-m', 'work in progress'], {
+        provenance: PROV,
+      })
+      .wait();
+    expect(single.stdout).toBe('ok');
+    // The split argv serializes to a different key: strict-by-default
+    // throws instead of answering from the single-message script.
+    expect(() =>
+      env.shell.spawn('git', ['commit', '-m', 'work', 'in', 'progress'], {
+        provenance: PROV,
+      }),
+    ).toThrow(/no script for argv/);
+  });
+
+  it('is strict by default: unscripted spawns throw', () => {
+    const env = new FakeExecutionEnv({});
+    expect(() =>
+      env.shell.spawn('git', ['status'], { provenance: PROV }),
+    ).toThrow(/no script for argv: git status/);
+  });
+
+  it('explicit strict:false opts out', async () => {
+    const env = new FakeExecutionEnv({}, { strict: false });
+    const result = await env.shell
+      .spawn('git', ['status'], { provenance: PROV })
+      .wait();
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('legacy joined keys still resolve', async () => {
+    const env = new FakeExecutionEnv(
+      { 'git status': { exitCode: 0, stdout: 's', stderr: '' } },
+      { allowUnscripted: true },
+    );
+    const out = await env.shell
+      .spawn('git', ['status'], { provenance: PROV })
+      .wait();
+    expect(out.stdout).toBe('s');
+  });
+
+  it('stat sizes are bytes and carry modes', () => {
+    const env = new FakeExecutionEnv({}, { allowUnscripted: true });
+    env.fs.writeFile('uni.txt', 'h\u00e9llo\n');
+    env.fs.writeFile('sub/b.txt', 'x');
+    const file = env.fs.stat('uni.txt');
+    expect(file.isFile).toBe(true);
+    expect(file.size).toBe(7);
+    expect(file.mode).toBe(0o644);
+    const dir = env.fs.stat('sub');
+    expect(dir.isDirectory).toBe(true);
+    expect(dir.size).toBe(1);
+    expect(dir.mode).toBe(0o755);
+  });
+
+  it('readFileRange returns byte windows', () => {
+    const env = new FakeExecutionEnv({}, { allowUnscripted: true });
+    env.fs.writeFile('a.txt', 'h\u00e9llo\nworld\n');
+    const range = env.fs.readFileRange;
+    expect(range).toBeDefined();
+    // 'h' (1 byte) + 'é' (2 bytes in UTF-8).
+    expect(Buffer.from(range?.('a.txt', 0, 3) ?? []).toString('utf8')).toBe(
+      'h\u00e9',
+    );
+    // Past-EOF clamps instead of throwing.
+    expect(Buffer.from(range?.('a.txt', 7, 999) ?? []).toString('utf8')).toBe(
+      'world\n',
+    );
+    expect(range?.('a.txt', 5, 5)).toHaveLength(0);
+    expect(() => range?.('missing.txt', 0, 3)).toThrow(/no such file/);
   });
 });
 

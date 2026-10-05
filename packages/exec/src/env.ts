@@ -904,12 +904,27 @@ export interface FakeSpawnCall {
   provenance: Provenance;
 }
 
+// Script key for an exact argv array (issue #356): JSON serialization
+// distinguishes `['commit', '-m', 'work in progress']` (one message
+// element) from `['commit', '-m', 'work', 'in', 'progress']` (split),
+// which the legacy `${cmd} ${args.join(' ')}` keys conflate. Tests
+// asserting exact argv build their script maps with this; plain joined
+// strings keep resolving as a legacy fallback.
+export function argvKey(cmd: string, ...args: string[]): string {
+  return JSON.stringify([cmd, ...args]);
+}
+
 export interface FakeOptions {
   // Strict mode: an argv with no scripted answer throws instead of
   // exiting 0, so a test that must not see an argv fails loudly instead
-  // of passing silently. Off by default — suites that script only the
-  // answers they read keep working unchanged.
+  // of passing silently. ON by default (issue #356) — suites that
+  // script only the answers they read opt out explicitly per test with
+  // `allowUnscripted: true`.
   strict?: boolean;
+  // Explicit opt-out of strict mode for suites that are not asserting
+  // exact argv. Prefer scripting the argv; use this only outside the
+  // strict-migrated suites.
+  allowUnscripted?: boolean;
 }
 
 // The fake's missing-path error carries Node's `ENOENT` code, so ops that
@@ -961,19 +976,37 @@ export class FakeExecutionEnv implements ExecutionEnv {
     },
     stat: (path: string) => {
       const hit = this.files.get(path);
+      // Byte sizes (issue #356): string length counts UTF-16 code units,
+      // so multibyte content reports fewer "bytes" than git/du would.
       if (hit !== undefined)
-        return { isFile: true, isDirectory: false, size: hit.length };
+        return {
+          isFile: true,
+          isDirectory: false,
+          size: Buffer.byteLength(hit, 'utf8'),
+          mode: 0o644,
+        };
       const prefix = `${path.replace(/\/*$/, '')}/`;
       let size = 0;
       let count = 0;
       for (const [k, v] of this.files) {
         if (k.startsWith(prefix)) {
-          size += v.length;
+          size += Buffer.byteLength(v, 'utf8');
           count += 1;
         }
       }
       if (count === 0) throw fakeNoSuchFile(path);
-      return { isFile: false, isDirectory: true, size };
+      return { isFile: false, isDirectory: true, size, mode: 0o755 };
+    },
+    // Byte-window read (issue #356): same [start, end) byte semantics as
+    // the node seam (clamped at EOF), so fake-based read tests exercise
+    // the ranged path instead of the whole-file fallback.
+    readFileRange: (path: string, start: number, end: number): Uint8Array => {
+      const hit = this.files.get(path);
+      if (hit === undefined) throw fakeNoSuchFile(path);
+      const bytes = Buffer.from(hit, 'utf8');
+      const from = Math.min(Math.max(0, start), bytes.length);
+      const to = Math.min(Math.max(0, end), bytes.length);
+      return bytes.subarray(from, Math.max(from, to));
     },
   };
 
@@ -983,16 +1016,20 @@ export class FakeExecutionEnv implements ExecutionEnv {
       args: string[],
       options: SpawnOptions,
     ): ProcessHandle => {
-      const key = `${cmd} ${args.join(' ')}`;
+      const key = JSON.stringify([cmd, ...args]);
       this.calls.push({
         cmd,
         args: [...args],
         provenance: options.provenance,
       });
-      const script = this.scriptMap.get(key);
+      // Exact argv-array keys first (issue #356), legacy joined strings
+      // second: existing script maps keep resolving unchanged.
+      const script =
+        this.scriptMap.get(key) ??
+        this.scriptMap.get(`${cmd} ${args.join(' ')}`);
       if (script === undefined && this.strict) {
         throw new Error(
-          `fake shell: no script for argv: ${key} (strict mode — script it or drop strict)`,
+          `fake shell: no script for argv: ${cmd} ${args.join(' ')} (strict mode — script it or pass allowUnscripted)`,
         );
       }
       const resolved = script ?? {
@@ -1039,10 +1076,14 @@ export class FakeExecutionEnv implements ExecutionEnv {
     // second keeps the old positional shape.
     if (provenance !== undefined && 'sessionId' in provenance) {
       this.provenance = provenance;
-      this.strict = options.strict === true;
+      this.strict = options.strict ?? !(options.allowUnscripted ?? false);
     } else {
       this.provenance = ROOT_PROVENANCE;
-      this.strict = (provenance?.strict ?? options.strict) === true;
+      // Strict by default (issue #356): an explicit `strict` wins,
+      // otherwise `allowUnscripted: true` opts out. The options may ride
+      // second or third.
+      const opts = provenance ?? options;
+      this.strict = opts.strict ?? !(opts.allowUnscripted ?? false);
     }
   }
 

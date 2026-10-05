@@ -348,11 +348,16 @@ describe('kubicToolsToPiTools (issue #168)', () => {
 
   it('read refuses binary content with size and type, never replacement chars', async () => {
     const env = new FakeExecutionEnv({});
-    const bytes = '\uFFFDPNG\r\n\u001a\n';
-    env.fs.writeFile('logo.png', bytes);
+    // Seam without ranged reads (issue #356): the literal-U+FFFD fixture
+    // only refuses on the fallback path, which treats a surviving U+FFFD
+    // as evidence the decode replaced bytes (fail-closed by design).
+    env.fs.readFileRange = undefined;
+    env.fs.writeFile('logo.png', '\uFFFDPNG\r\n\u001a\n');
     const out = await text('read', { path: 'logo.png' }, toolContext({ env }));
+    // BYTE size (issue #356): U+FFFD is 3 bytes in UTF-8, so the 8-char
+    // fixture stats as 10 bytes.
     expect(out).toBe(
-      `[read logo.png: binary file (${bytes.length}B, invalid UTF-8) — read serves text only; use bash for byte-level inspection]\n`,
+      `[read logo.png: binary file (10B, invalid UTF-8) — read serves text only; use bash for byte-level inspection]\n`,
     );
     expect(out).not.toContain('\uFFFD');
   });

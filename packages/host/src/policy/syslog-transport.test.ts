@@ -63,8 +63,9 @@ describe('syslog transports (issue #286)', () => {
       transport.send('<134>1 line');
       const onError = listeners.get('error');
       expect(onError).toBeDefined();
-      expect(() => onError?.(new Error('socket vanished') as never)).not
-        .toThrow();
+      expect(() =>
+        onError?.(new Error('socket vanished') as never),
+      ).not.toThrow();
     },
   );
 

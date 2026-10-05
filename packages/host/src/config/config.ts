@@ -1129,7 +1129,7 @@ function parseAuditTables(raw: unknown): AuditTableConfig[] {
     // Review finding (issue #286): docs promise a name or a number
     // 0–23, so a TOML number rides through as-is; a fractional or
     // out-of-range number is refused here, by name.
-    const facilityRaw = entry['facility'];
+    const facilityRaw = entry.facility;
     if (
       facilityRaw !== undefined &&
       typeof facilityRaw === 'number' &&

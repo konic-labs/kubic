@@ -491,7 +491,15 @@ function validStoredWorkerRecord(record: unknown): boolean {
   if (typeof entry.agentId !== 'string') return false;
   if (typeof entry.branch !== 'string') return false;
   if (!Array.isArray(entry.hunks)) return false;
-  if (entry.tipSha !== undefined && typeof entry.tipSha !== 'string') {
+  // Review #429: the tip rides a debug line on resume, so anything but
+  // lowercase hex fails the state closed — a hand-crafted rows file cannot
+  // smuggle newlines/control chars into the log. Real tips are always hex
+  // (`rev-parse HEAD`); a non-hex tip means a crafted state, never a
+  // legacy one (pre-#429 states simply omit the field).
+  if (
+    entry.tipSha !== undefined &&
+    (typeof entry.tipSha !== 'string' || !/^[0-9a-f]+$/.test(entry.tipSha))
+  ) {
     return false;
   }
   if (entry.result !== undefined && !validateAgentResult(entry.result).valid) {

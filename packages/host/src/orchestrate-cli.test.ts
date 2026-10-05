@@ -3277,11 +3277,11 @@ describe('orchestrate completion tip check (issue #429)', () => {
   }
 
   it('records the branch tip with the completion and reuses it when the tip matches', async () => {
-    const { saved } = await settledRun('sha-settle');
-    expect(saved.completed?.[0]?.tipSha).toBe('sha-settle');
+    const { saved } = await settledRun('aa11bb22cc33');
+    expect(saved.completed?.[0]?.tipSha).toBe('aa11bb22cc33');
     const second = makeWorld({
       loadState: () => structuredClone(saved),
-      readBranchTip: () => 'sha-settle',
+      readBranchTip: () => 'aa11bb22cc33',
     });
     const code = await runOrchestrateCommand(
       { resume: true, session: 'sess-1' },
@@ -3293,13 +3293,13 @@ describe('orchestrate completion tip check (issue #429)', () => {
   });
 
   it('resume refuses a completion whose branch tip was rewritten', async () => {
-    const { saved } = await settledRun('sha-settle');
+    const { saved } = await settledRun('aa11bb22cc33');
     const tipCalls: string[] = [];
     const second = makeWorld({
       loadState: () => structuredClone(saved),
       readBranchTip: () => {
         tipCalls.push('probe');
-        return 'sha-rewritten';
+        return 'dd44ee55ff66';
       },
     });
     const code = await runOrchestrateCommand(
@@ -3317,5 +3317,41 @@ describe('orchestrate completion tip check (issue #429)', () => {
     );
     const done = second.saved[second.saved.length - 1] as OrchestratorRunState;
     expect(done.completed ?? []).toEqual([]);
+  });
+});
+
+describe('orchestrate completion tip validation (review #429)', () => {
+  it('refuses a stored completion whose tip is not hex, without logging it', async () => {
+    const crafted: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-1',
+      prompt: 'demo',
+      agents: ['w1'],
+      merged: [],
+      pending: ['w1'],
+      stopped: false,
+      records: [],
+      completed: [
+        {
+          agentId: 'w1',
+          branch: 'kubic/w1',
+          hunks: [{ path: 'a.txt', hunk: '@@ a' }],
+          tipSha: 'aa11bb22\nINJECTED',
+        },
+      ],
+    };
+    const world = makeWorld({
+      loadState: () => structuredClone(crafted),
+      readBranchTip: () => 'aa11bb22',
+    });
+    const code = await runOrchestrateCommand(
+      { resume: true, session: 'sess-1' },
+      world.deps,
+    );
+    // The whole state fails closed (like any malformed stored field), so
+    // the crafted tip never reaches the resume debug line.
+    expect(code).toBe(1);
+    expect(world.debugLines.join('\n')).not.toContain('INJECTED');
+    expect(world.calls.run).toEqual([]);
   });
 });

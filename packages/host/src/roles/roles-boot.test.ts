@@ -108,7 +108,7 @@ describe('role documents resolve at the project root (issue #229)', () => {
       projectRoot: '/repo',
     });
     expect(loaded.docs.length).toBeGreaterThan(0);
-    expect(loaded.sources['implementer']).toBe('builtin');
+    expect(loaded.sources.implementer).toBe('builtin');
   });
 });
 
@@ -272,9 +272,7 @@ describe('doctor judges roles under the same config layers as the run (issue #23
     }
     expect(runReason).toMatch(/filesystem.*read.*write/i);
     // Doctor fails the same role with the identical reason.
-    const fail = rolesDoctorProbe(input).find(
-      (check) => check.id === 'role:x',
-    );
+    const fail = rolesDoctorProbe(input).find((check) => check.id === 'role:x');
     expect(fail?.status).toBe('fail');
     expect(fail?.detail).toBe(runReason);
   });

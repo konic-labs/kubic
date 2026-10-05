@@ -584,8 +584,22 @@ export function buildManagerTools(deps: ManagerToolsDeps): ManagerToolset {
           `no worker '${agentId}' was spawned by this run`,
         );
       }
+      // §14.1 by construction: exactly the five contract keys cross, so a
+      // richer prod row (spread/cast with transcript, prompt, tools) can
+      // never serialize into model context — as collect_result already does.
       return {
-        content: [{ type: 'text', text: JSON.stringify(row) }],
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              agentId: row.agentId,
+              branch: row.branch,
+              role: row.role,
+              status: row.status,
+              summary: row.summary,
+            }),
+          },
+        ],
       };
     },
   });

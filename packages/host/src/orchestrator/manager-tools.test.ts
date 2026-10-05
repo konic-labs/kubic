@@ -90,6 +90,7 @@ function rig(options?: {
   spawnCap?: number;
   waitTimeoutMs?: number;
   mintAgentId?: () => string;
+  rowExtra?: Record<string, unknown>;
 }): Rig {
   const scheduler = new ParallelScheduler(
     options?.maxConcurrency === undefined
@@ -142,6 +143,9 @@ function rig(options?: {
         role: launch.role,
         status: result?.status ?? 'running',
         summary: result?.summary ?? '',
+        // A richer-than-contract prod row: the adapter must strip these
+        // before they cross the §14.1 boundary (issue #415 review).
+        ...(options?.rowExtra ?? {}),
       };
     },
     cancelWorker: async (agentId) => {
@@ -823,6 +827,36 @@ describe('manager inspect/cancel/send adapters (issue #415)', () => {
     await expect(
       callTool(lane, 'inspect_agent', { agentId: 'nobody' }),
     ).rejects.toThrow(/unknown_agent.*nobody/);
+  });
+
+  it('inspect_agent strips non-contract keys a richer prod row may carry', async () => {
+    const test = useRig({
+      rowExtra: {
+        transcript: ['s3cr3t'],
+        prompt: 'role instructions',
+        tools: ['bash'],
+        findings: ['deep'],
+      },
+    });
+    const lane = await bootLane(test, [
+      fauxAssistantMessage(
+        [fauxToolCall('spawn_agent', { role: 'tester', task: 'prove it' })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('spawned'),
+    ]);
+    await runTurn(lane, 'go');
+    const inspected = (await callTool(lane, 'inspect_agent', {
+      agentId: 'worker-1',
+    })) as { content: Array<{ text: string }> };
+    // Exactly the five contract keys — the seam's extras never cross.
+    expect(JSON.parse(inspected.content[0]?.text ?? '{}')).toEqual({
+      agentId: 'worker-1',
+      branch: 'kubic/run-414/worker-1',
+      role: 'tester',
+      status: 'running',
+      summary: '',
+    });
   });
 
   it('send_to_agent to an unknown or running worker is refused; to a settled worker it relaunches', async () => {

@@ -197,10 +197,7 @@ export function claimLockLink(lockPath: string, payload: string): boolean {
     } catch (error) {
       // Our own temp name is taken: retry under a fresh one. Anything
       // else is a real I/O failure and still throws.
-      if (
-        (error as { code?: string } | null)?.code === 'EEXIST' &&
-        attempt < 2
-      )
+      if ((error as { code?: string } | null)?.code === 'EEXIST' && attempt < 2)
         continue;
       throw error;
     }

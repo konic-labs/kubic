@@ -3550,16 +3550,38 @@ export async function runTuiCommand(
     // A partial sequence that never completes must not swallow the operator's
     // typing for the rest of the session (issue #338 review, cycle 2): after
     // a short idle window the held bytes are dropped and the footer says so.
+    // The discard state needs the same valve (review, cycle 3): a paste whose
+    // terminator never arrives — a >5 MB one the pty truncated, the very
+    // condition that gets you into that state — would otherwise swallow every
+    // later keystroke, Ctrl-C included, until stdin closed. The window is
+    // re-armed by each chunk of a live paste, so the state survives a paste
+    // that is still arriving and ends once the stream stops.
     const armPasteIdle = (): void => {
       if (pasteIdle !== undefined) clearTimeout(pasteIdle);
       pasteIdle = setTimeout(() => {
         pasteIdle = undefined;
-        if (stopped || pasteBuffer === '') return;
-        pasteBuffer = '';
-        setImagesFooter('pasted image incomplete — ignored');
+        if (stopped) return;
+        const wasDropping = droppingPaste;
+        if (pasteBuffer !== '') pasteBuffer = '';
+        else if (wasDropping) {
+          droppingPaste = false;
+          dropCarry = '';
+        } else return;
+        // The discard state keeps its own, more useful message: the paste
+        // really was over the cap, and the operator needs to know input is
+        // live again.
+        setImagesFooter(
+          wasDropping ? tooLargeFooter : 'pasted image incomplete — ignored',
+        );
       }, PASTE_IDLE_MS);
       pasteIdle.unref?.();
     };
+    const clearPasteIdle = (): void => {
+      if (pasteIdle === undefined) return;
+      clearTimeout(pasteIdle);
+      pasteIdle = undefined;
+    };
+    const tooLargeFooter = `pasted image is too large (> ${formatImageBytes(IMAGE_MAX_BYTES)})`;
     const setImagesFooter = (text: string): void => {
       app.setEditorFooter(text);
       if (!stopped) screen?.render();
@@ -3651,10 +3673,12 @@ export async function runTuiCommand(
         const end = inlineImageTerminatorEnd(text);
         if (end === undefined) {
           dropCarry = data.endsWith('\u001b') ? '\u001b' : '';
+          armPasteIdle();
           return { consume: true };
         }
         droppingPaste = false;
         dropCarry = '';
+        clearPasteIdle();
         const rest = text.slice(end);
         if (rest === '') return { consume: true };
         return routeInput(rest);
@@ -3667,6 +3691,7 @@ export async function runTuiCommand(
       const scan = scanInlineImageChunk(pasteBuffer, data);
       if (scan.kind === 'image') {
         pasteBuffer = '';
+        clearPasteIdle();
         void attachPasted(scan.image.base64, scan.image.filename);
         return { consume: true };
       }
@@ -3674,12 +3699,12 @@ export async function runTuiCommand(
         pasteBuffer = '';
         droppingPaste = true;
         dropCarry = '';
-        setImagesFooter(
-          `pasted image is too large (> ${formatImageBytes(IMAGE_MAX_BYTES)})`,
-        );
+        armPasteIdle();
+        setImagesFooter(tooLargeFooter);
       } else {
         pasteBuffer = scan.kind === 'pending' ? scan.buffer : '';
         if (pasteBuffer !== '') armPasteIdle();
+        else clearPasteIdle();
       }
       const routedData =
         scan.kind === 'pending' || scan.kind === 'too-large' ? scan.head : data;

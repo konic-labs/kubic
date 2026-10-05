@@ -17,6 +17,7 @@ import {
 } from '../../../packages/worker/src/pi-boundary.js';
 import {
   bootTuiLane,
+  PASTE_IDLE_MS,
   readImageFile,
   runTuiCommand,
   type TuiLaneBoot,
@@ -573,6 +574,36 @@ describe('kubic tui /image (issue #338)', () => {
     for (const ch of 'typed') fake.feed(ch);
     await waitFor(() => fake.writes.join('').includes('typed'));
     expect(fake.writes.join('')).not.toContain('AAAA');
+
+    fake.feed('\x03');
+    fake.feed('\x03');
+    expect(await exit).toBe(0);
+  });
+
+  // Issue #338 review, cycle 3: the discard state needs the same valve as the
+  // pending one — a paste whose terminator never arrives (the pty truncation
+  // that gets you into this state) would otherwise swallow every later
+  // keystroke, Ctrl-C included, until stdin closed.
+  it('gives input back when an oversize paste never terminates', async () => {
+    const { fake, exit } = startStubSession('solo');
+    await waitFor(() => fake.counts.started === 1);
+
+    // One call: the sequence is already past the cap when it arrives, so no
+    // earlier partial buffer exists to inherit a timer from — the discard
+    // state is armed on its own.
+    fake.feed(
+      `\x1b]1337;File=name=big.png;inline=1:${'A'.repeat(7 * 1024 * 1024)}`,
+    );
+    await waitFor(() =>
+      fake.writes.join('').includes('is too large (> 5.0 MB)'),
+    );
+    // The footer deliberately stays the same when this valve fires (the paste
+    // really was over the cap), so the bound itself is the wait: PASTE_IDLE_MS
+    // with a wide margin, after which typing must land in the draft again.
+    await new Promise((resolve) => setTimeout(resolve, PASTE_IDLE_MS * 4));
+    for (const ch of 'typed') fake.feed(ch);
+    await waitFor(() => fake.writes.join('').includes('typed'));
+    expect(fake.writes.join('')).not.toContain('AAAAAAAA');
 
     fake.feed('\x03');
     fake.feed('\x03');

@@ -118,7 +118,10 @@ import {
   type KeyRegistry,
   parseKeybindingsJson,
 } from '../../../packages/tui/src/keybindings.js';
-import type { LaneEntryLike } from '../../../packages/tui/src/lane-cells.js';
+import {
+  type LaneEntryLike,
+  userPromptsOf,
+} from '../../../packages/tui/src/lane-cells.js';
 import type { Screen } from '../../../packages/tui/src/screen.js';
 import { bootScreen } from '../../../packages/tui/src/screen.js';
 import {
@@ -3189,6 +3192,23 @@ export async function runTuiCommand(
   // Issue #346: the resumed session's committed spend is on the bar from the
   // first frame, not only after the next turn's usage event.
   app.setUsage(boot.usageRows ?? []);
+  // Issue #340 (§16.5): a resumed session's committed prompts seed the
+  // editor's Up history before the screen opens. Best-effort: a read that
+  // fails leaves the history empty, never the boot.
+  if (sessionId !== undefined && boot.loop !== undefined) {
+    try {
+      const entries = await boot.loop.entries(boot.loop.context);
+      app.seedPromptHistory(
+        userPromptsOf(
+          entries
+            .map(laneEntryFor)
+            .filter((entry): entry is LaneEntryLike => entry !== undefined),
+        ),
+      );
+    } catch {
+      // Recall is a convenience; the resumed session stands without it.
+    }
+  }
   // Re-read after each turn (and each mid-turn refresh): a posture change
   // lands on the indicator in the same frame the loop paints next.
   const syncPosture = (): void => {

@@ -431,6 +431,8 @@ export interface TuiApp {
   setJournalFilter(filter: JournalFilterLike): void;
   setDiffToolCall(toolCallId: string | null): void;
   panelMode(): PanelMode;
+  // Issue #340: seed the editor's Up history (prompts oldest first).
+  seedPromptHistory(prompts: readonly string[]): void;
   openPanel(mode: PanelMode): void;
   // Issue #301: the panel's own scroll surface. The panel row is a
   // ScrollView (the wheel and alt+up / alt+down move it), and these expose
@@ -1555,6 +1557,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       diffPanel.setToolCall(toolCallId);
     },
     panelMode: (): PanelMode => mode,
+    seedPromptHistory: (prompts: readonly string[]): void => {
+      editor.seedHistory(prompts);
+    },
     openPanel: setPanel,
     panelScrollBy: (lines: number): void => {
       panelScroll.scrollBy(Math.trunc(lines));

@@ -15,6 +15,7 @@ import {
   TOOL_DETAIL_MAX_CHARS,
   TOOL_OUTCOME_MAX_CHARS,
   TOOL_RESULT_MAX_CHARS,
+  userPromptsOf,
 } from './lane-cells.js';
 import { visibleWidth } from './tui-boundary.js';
 
@@ -362,5 +363,41 @@ describe('compaction cells (issue #317)', () => {
     ]);
     expect(cells.map((cell) => cell.markdown)).toEqual(['handoff text']);
     expect(cells[0]?.kind).toBe('text');
+  });
+});
+
+// Issue #340: the committed user prompts of a lane, newest last, for seeding
+// the editor history on resume. Compaction summaries (role user inside a
+// `compaction` entry) and image-only prompts are not prompts to recall.
+describe('userPromptsOf (issue #340)', () => {
+  it('returns the user messages text in order and skips everything else', () => {
+    const user = (id: string, text: string) => ({
+      id,
+      type: 'message',
+      message: { role: 'user', content: [{ type: 'text', text }] },
+    });
+    expect(
+      userPromptsOf([
+        user('1', 'first'),
+        {
+          id: '2',
+          type: 'message',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'hi' }],
+          },
+        },
+        { id: '3', type: 'compaction', message: { role: 'user', content: [] } },
+        {
+          id: '4',
+          type: 'message',
+          message: {
+            role: 'user',
+            content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }],
+          },
+        },
+        user('5', 'second\nline two'),
+      ]),
+    ).toEqual(['first', 'second\nline two']);
   });
 });

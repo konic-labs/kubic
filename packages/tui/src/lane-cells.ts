@@ -455,6 +455,26 @@ function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
   return cells;
 }
 
+// Issue #340: the committed user prompts of a lane's entries, newest last —
+// the text a resumed session's editor history is seeded with. A compaction
+// summary (role user inside a `compaction` entry) and an image-only prompt
+// are not prompts to recall.
+export function userPromptsOf(entries: ReadonlyArray<LaneEntryLike>): string[] {
+  const prompts: string[] = [];
+  for (const entry of entries) {
+    if (entry.type !== 'message' || !isRecord(entry.message)) continue;
+    if (entry.message.role !== ROLE_USER) continue;
+    if (!Array.isArray(entry.message.content)) continue;
+    const text = (entry.message.content as unknown[])
+      .map(textOf)
+      .filter((t) => t !== undefined)
+      .join('\n')
+      .trim();
+    if (text !== '') prompts.push(text);
+  }
+  return prompts;
+}
+
 export function entriesToCells(
   entries: ReadonlyArray<LaneEntryLike>,
 ): TranscriptEntry[] {

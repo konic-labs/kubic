@@ -47,6 +47,11 @@ class TuiDelegate {
 
 export const EDITOR_FALLBACK_ROWS = 24;
 
+// Issue #340: how many prompts Up can recall — Pi's editor keeps the newest
+// 100 itself, so seeding more would only be dropped; the bound keeps a long
+// resumed session cheap to seed.
+export const PROMPT_HISTORY_MAX = 100;
+
 export function editorTheme(): EditorTheme {
   const identity = (text: string): string => text;
   return {
@@ -98,7 +103,20 @@ export class PromptEditor implements Component, Focusable {
   private recordHistory(prompt: string): void {
     if (this.history[0] === prompt) return;
     this.history.unshift(prompt);
+    if (this.history.length > PROMPT_HISTORY_MAX) this.history.pop();
     this.inner.addToHistory(prompt);
+  }
+
+  // Issue #340 (§16.5): seed the history from a resumed session's committed
+  // prompts, oldest first (newest last), so Up recalls what the previous
+  // process sent. Only the newest PROMPT_HISTORY_MAX are replayed, through
+  // the same consecutive-dedup rule a live submit follows.
+  seedHistory(prompts: readonly string[]): void {
+    const recent = prompts
+      .map((prompt) => prompt.trim())
+      .filter((prompt) => prompt !== '')
+      .slice(-PROMPT_HISTORY_MAX);
+    for (const prompt of recent) this.recordHistory(prompt);
   }
 
   // Focus is the inner editor's own flag (it decides whether to emit the

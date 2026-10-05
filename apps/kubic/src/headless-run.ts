@@ -1900,6 +1900,10 @@ async function runHeadlessPromptImpl(
           workspace: env.cwd,
           posture: report.posture,
           autonomous: options.autonomous === true,
+          // Review #278 (low): the resolved base was in scope
+          // (`runBase`, passed to installSoloPolicy above) while the row
+          // hardcoded `unknown`.
+          base: runBase,
         }),
         (message) => debug?.(`audit: run start not recorded: ${message}`),
       );

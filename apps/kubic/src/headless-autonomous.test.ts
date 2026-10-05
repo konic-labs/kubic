@@ -133,4 +133,17 @@ describe('kubic run --autonomous records the §19 mode (issue #278)', () => {
     },
     60_000,
   );
+
+  // Review #278 (low): the solo row records the resolved worktree base —
+  // the scratch cwd is outside git, so the honest value is `none`, never
+  // the hardcoded `unknown` the builder used to write unconditionally.
+  it('writes the resolved run base on the solo run:start row', async () => {
+    const run = await runModeOf(false);
+    const rows = readAuditLedger(auditLedgerDirFor(run.cwd));
+    const start = rows.find((row) => row.what === 'run:start');
+    expect(start?.workspace).toMatchObject({
+      path: run.cwd,
+      base: 'none',
+    });
+  }, 60_000);
 });

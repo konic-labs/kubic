@@ -1052,6 +1052,10 @@ export interface RunStartInput {
   posture: string;
   /** Whether `--autonomous` was passed explicitly. */
   autonomous: boolean;
+  /** The resolved worktree base revision (review #278): the solo caller
+   *  passes its `runBase`; the sync orchestrate hook leaves it absent and
+   *  the row stays honestly `unknown`. */
+  base?: string;
 }
 
 export function runStartAudit(input: RunStartInput): AuditInput {
@@ -1062,7 +1066,10 @@ export function runStartAudit(input: RunStartInput): AuditInput {
     agent: { session: input.sessionId || UNKNOWN, role },
     model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
     worker: { pid: process.pid, generation: 0, role },
-    workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
+    workspace: {
+      path: input.workspace || UNKNOWN,
+      base: input.base || UNKNOWN,
+    },
     permission: {
       permission: 'run:start',
       approval: `started by ${input.command}`,

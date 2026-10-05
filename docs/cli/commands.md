@@ -429,7 +429,10 @@ generations. The bound is one replacement per worker.
 manager: it registers the manager lane's toolset through the §40 allowlist
 before anything spawns, derives a plan from `-p` (one step per worker), creates
 one worktree per agent, spawns one child `kubic run` per agent and merges what
-they commit. **Each worker runs its own plan step under an assigned role**: the
+they commit. A child is launched through the same bin wrapper that started the
+manager (resolved from the manager's own module, never the cwd), so `kubic`
+reached through a bin symlink — `node_modules/.bin`, `npm link`, a global
+install — still spawns working children. **Each worker runs its own plan step under an assigned role**: the
 prompt a child receives cites that worker's step (`Plan step 2 of 2 for agent
 'beta': …`), carries the objective, and opens with the `## Prompt` text of the
 role that worker was assigned — `-p` is the objective the plan is derived from,

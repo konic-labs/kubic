@@ -13,8 +13,9 @@
 
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 // §67 (issue #191): the task and the capability grant travel together — the
 // manager builds and validates the task it hands a worker child.
 import {
@@ -601,10 +602,50 @@ async function runGit(
     .wait();
 }
 
+// Worker entry resolution (issue #179): the child `kubic run` is spawned
+// through the SAME bin wrapper that launched this manager. The wrapper is
+// located from this module's own import.meta.url — node's default ESM
+// resolution already follows symlinks to the real file, so argv[1] and the
+// cwd are never consulted: through a bin symlink named `kubic`
+// (node_modules/.bin, npm link, a global install) argv[1] has no .js
+// suffix and the cwd is the user's project, where the old fallback spawned
+// a nonexistent <cwd>/bin/kubic.js. Both shipped layouts carry
+// bin/kubic.js above this module (the repo root, in source and in dist).
+// The existence probe is injectable so unit tests pin the resolution
+// without touching the filesystem, argv, or cwd.
+export function resolveWorkerEntryScript(
+  moduleFilePath: string,
+  wrapperExists: (dir: string) => boolean = binWrapperExists,
+): string | undefined {
+  let dir = dirname(moduleFilePath);
+  for (let level = 0; level < 6; level++) {
+    if (wrapperExists(dir)) return join(dir, 'bin', 'kubic.js');
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return undefined;
+}
+
+// Existence probe through the exec FileBridge (I/O confinement, §9) —
+// the composition root never imports node:fs directly.
+function binWrapperExists(dir: string): boolean {
+  try {
+    createNodeFileBridge(dir).readTextFile(join('bin', 'kubic.js'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+let cachedEntryScript: string | undefined;
 function entryScript(): string {
-  const argv1 = process.argv[1];
-  if (typeof argv1 === 'string' && argv1.endsWith('.js')) return argv1;
-  return resolve(process.cwd(), 'bin', 'kubic.js');
+  // Last-resort fallback for an exotic layout with no bin wrapper above
+  // the module: the old cwd guess. Unreachable in both shipped layouts.
+  cachedEntryScript ??=
+    resolveWorkerEntryScript(fileURLToPath(import.meta.url)) ??
+    resolve(process.cwd(), 'bin', 'kubic.js');
+  return cachedEntryScript;
 }
 
 // Wall-clock bound handed to each child `kubic run` (issue #94). A worker

@@ -333,6 +333,8 @@ function contractWith(overrides = {}, options = {}) {
     nonRepoCwd: options.nonRepoCwd ?? '/non-repo',
     modelsCwd: options.modelsCwd ?? '/models',
     refusedCwd: options.refusedCwd ?? '/refused',
+    orchRepoCwd: options.orchRepoCwd,
+    runSymlinked: options.runSymlinked,
     run: fakeRun(overrides),
   });
 }
@@ -1169,5 +1171,75 @@ describe('binary contract command help probes (issue #245)', () => {
       result.problems.some((p) => /did not print its usage line/.test(p)),
       JSON.stringify(result.problems),
     );
+  });
+});
+
+describe('binary contract symlinked-bin probe (issue #179)', () => {
+  const envelope = { ok: true, exitCode: 0, status: 'completed' };
+  // --json stdout is exactly one (pretty-printed) envelope document.
+  function symlinkedOut(doc = envelope) {
+    return {
+      code: 0,
+      stdout: `${JSON.stringify(doc, null, 2)}\n`,
+      stderr: '',
+      error: null,
+    };
+  }
+  function withSymlink(runSymlinked) {
+    return { orchRepoCwd: '/repo', runSymlinked };
+  }
+
+  it('passes when orchestrate through the symlink completes', () => {
+    const result = contractWith(
+      {},
+      withSymlink(() => symlinkedOut()),
+    );
+    assert.deepEqual(result.problems, []);
+  });
+
+  it('is skipped when the symlinked inputs are absent', () => {
+    const result = contractWith();
+    assert.deepEqual(result.problems, []);
+  });
+
+  it('fails when the symlinked run exits nonzero', () => {
+    const result = contractWith(
+      {},
+      withSymlink(() => ({
+        code: 1,
+        stdout: '',
+        stderr: 'error: worker w1 failed: spawn failed code=spawn_failed',
+        error: null,
+      })),
+    );
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /symlinked bin/);
+  });
+
+  it('fails when the symlinked run prints no completed envelope', () => {
+    const result = contractWith(
+      {},
+      withSymlink(() =>
+        symlinkedOut({ ok: false, exitCode: 1, status: 'failed' }),
+      ),
+    );
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /no completed envelope/);
+  });
+
+  it('drives orchestrate on faux in the repo cwd through the symlink runner', () => {
+    let seen = null;
+    const result = contractWith(
+      {},
+      withSymlink((args, opts) => {
+        seen = { args, opts };
+        return symlinkedOut();
+      }),
+    );
+    assert.deepEqual(result.problems, []);
+    assert.equal(seen.args[0], 'orchestrate');
+    assert.ok(seen.args.includes('--json'));
+    assert.equal(seen.opts.cwd, '/repo');
+    assert.equal(seen.opts.env.KUBIC_PROVIDER, 'faux');
   });
 });

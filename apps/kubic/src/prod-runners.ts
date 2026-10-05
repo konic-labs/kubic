@@ -72,6 +72,7 @@ import {
 import { runPerfCommand } from '../../../packages/host/src/ops/perf/perf-cli.js';
 import {
   ORCHESTRATE_DEFAULT_AGENTS,
+  type OrchestrateCliOptions,
   runOrchestrateCommand,
 } from '../../../packages/host/src/orchestrate-cli.js';
 import {
@@ -151,6 +152,24 @@ import {
 export interface ProdRunnerIo {
   readonly out: (line: string) => void;
   readonly debug: (line: string) => void;
+}
+
+// Test-only overrides for the orchestrate runner (issue #179): prod-path
+// tests that reach worker spawn inject the child entry the deps accept, so
+// the child on the path under test is a REAL process running a fixture
+// argv — never a network-hitting real lane. Absent in prod (dispatch
+// passes two arguments). The extra OPTIONAL parameter keeps
+// assignability to CommandRunner (and ProdRunners to DispatchRunners).
+export interface OrchestrateRunnerOverrides {
+  readonly workerEntry?: { cmd: string; args: string[] };
+}
+
+export interface ProdRunners extends DispatchRunners {
+  readonly orchestrate: (
+    options: OrchestrateCliOptions,
+    config: CliConfigResult,
+    overrides?: OrchestrateRunnerOverrides,
+  ) => number | Promise<number>;
 }
 
 // The presentation seams of one solo-command invocation, derived once from
@@ -318,7 +337,7 @@ export function prodTuiDeps(
   };
 }
 
-export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
+export function createProdRunners(io: ProdRunnerIo): ProdRunners {
   const { out, debug } = io;
   // The analysis handlers' channels: the report on stdout, diagnostics on
   // stderr (the `debug` channel), report colour and box drawing from the
@@ -690,7 +709,11 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         probeStatePermissions: statePermissionProbe,
       });
     },
-    orchestrate: async (options, cliConfig) => {
+    orchestrate: async (
+      options,
+      cliConfig,
+      overrides?: OrchestrateRunnerOverrides,
+    ) => {
       // Opt-in orchestrator mode (issue #76): the EPIC E stack (manager
       // lane, worker lifecycle, merge queue, approvals, worktrees) executes
       // for real. Solo stays the default — `run` never enters this path.
@@ -740,6 +763,12 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           ...(cliConfig.runtime === undefined
             ? {}
             : { orchestrator: cliConfig.runtime.orchestrator }),
+          // Issue #179: prod-path tests that reach worker spawn inject the
+          // child entry the same way the deps accept it — the manager,
+          // preflight and merge queue stay the real builders.
+          ...(overrides?.workerEntry === undefined
+            ? {}
+            : { workerEntry: overrides.workerEntry }),
         }),
       );
     },

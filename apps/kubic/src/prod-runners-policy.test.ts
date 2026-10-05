@@ -813,6 +813,25 @@ describe('role documents under the enterprise tool policy on the doctor and orch
 describe('the worker credential preflight follows a frozen enterprise model (issue #295)', () => {
   const FROZEN = '[model]\nprovider = "gw"\nid = "m1"\n';
 
+  // The child contract as a real process (issue #179 fixture): announce
+  // readiness, report the §68 result shape, write one file so the branch
+  // has a hunk to merge, exit 0 — a REAL process, zero network.
+  const FIXTURE = `
+import { writeFileSync } from 'node:fs';
+const id = process.env.KUBIC_WORKER_ID ?? 'worker';
+process.stdout.write('KUBIC_WORKER_READY ' + id + '\\n');
+writeFileSync(id + '.txt', 'work by ' + id + '\\n');
+const a = process.argv;
+process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10));
+process.exit(0);
+`;
+  function fixtureEntry(): { cmd: string; args: string[] } {
+    const dir = tmpRoot('kubic-prod-policy-child-');
+    const fixture = join(dir, 'worker-child.mjs');
+    writeFileSync(fixture, FIXTURE);
+    return { cmd: process.execPath, args: [fixture] };
+  }
+
   function workspaceWithProviders(): string {
     const workspace = tmpRoot();
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
@@ -863,9 +882,14 @@ describe('the worker credential preflight follows a frozen enterprise model (iss
     const workspace = workspaceWithProviders();
     execFileSync('git', ['init', '-q'], { cwd: workspace });
     const { r, lines, errs } = runners(workspace);
+    // The worker child is a fixture process (issue #179): the providers
+    // above are unreachable by design, so a real child would burn the
+    // test's clock on network attempts — and the assertions below are
+    // about the manager's preflight, which runs before any spawn.
     await r.orchestrate(
       { prompt: 'do the thing', agents: ['alpha'], json: true },
       frozenConfig(),
+      { workerEntry: fixtureEntry() },
     );
     const text = [...lines, ...errs].join('\n');
     expect(text).not.toContain('credential_unavailable');

@@ -74,6 +74,13 @@ export interface BootSkillOptions {
 
 export interface BootSkills {
   skills: LoadedSkill[];
+  // Issue #183 (§29.4): the invocable set for explicit invocation —
+  // admitted + gate-passed, hidden included, withheld excluded. This is
+  // `gated.visible`: the role `skills` list and the role/capability gate
+  // have already removed what the lane must not offer, while
+  // `disableModelInvocation` skills stay (they are unreachable except
+  // through invocation). Expand/complete against this, never `skills`.
+  invocable: LoadedSkill[];
   // The `<skills>` block for the system prompt, or undefined when no skill
   // is model-visible. Undefined — not an empty block — so a skill-less
   // boot assembles byte-identical prompt bytes (issue #33: the prompt
@@ -181,6 +188,7 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
     .map((skill) => skill.name);
   return {
     skills,
+    invocable: gated.visible,
     block:
       visible.length === 0 ? undefined : formatSkillsForSystemPrompt(visible),
     hidden,

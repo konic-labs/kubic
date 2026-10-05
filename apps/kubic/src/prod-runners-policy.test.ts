@@ -268,11 +268,24 @@ describe('explicit skill invocation reaches hidden skills (issue #183)', () => {
     expect(code).not.toBe(0);
     expect(lines.join('\n')).toContain("unknown skill 'ghost'");
   });
+
+  it('a role-withheld skill resolves as unknown on the invoke path', async () => {
+    const { workspace, marker } = hiddenSkillWorkspace();
+    mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(workspace, '.kubic', 'roles', 'narrow.md'),
+      '---\nrole: narrow\ntools: [read, ls]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\nskills: [open]\n---\n# Narrow\n\n## Prompt\n\nBe narrow.\n',
+    );
+    const { r, lines } = runners(workspace);
+    const code = await r.run(
+      { prompt: 'do x', invokeSkill: 'secret', role: 'narrow', json: true },
+      cliConfig({}, { trust: TRUSTED }),
+    );
+    expect(code).not.toBe(0);
+    expect(lines.join('\n')).toContain("unknown skill 'secret'");
+    expect(existsSync(marker)).toBe(false);
+  });
 });
-// of the config classes and the role's, and the role's approval obligations
-// challenge on the installed triggers — for `kubic run`, and for worker
-// children through the task resources (covered in
-// orchestrate-agent-task-prod.test.ts).
 // Issue #196 (§40.2/§41.1): the lane installs the most restrictive merge
 // of the config classes and the role's, and the role's approval obligations
 // challenge on the installed triggers — for `kubic run`, and for worker

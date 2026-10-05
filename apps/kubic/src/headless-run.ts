@@ -1836,17 +1836,17 @@ async function runHeadlessPromptImpl(
       log: (line) => debug?.(`skills: ${line}`),
     });
     capture.skills = skills.skills.map((skill) => skill.name);
-    // Issue #183 (§29.4): `--invoke-skill` expands against the booted
-    // (gated-visible, hidden included) skills — the skill content runs as
-    // the turn prompt with the operator's prompt as instructions. An
-    // unknown name fails the run with the named error (exit 1, like a
-    // refused --role): the invocation IS the run, so fail-open would run
-    // the raw prompt as if the skill existed.
+    // Issue #183 (§29.4): `--invoke-skill` expands against the invocable
+    // set (admitted + gate-passed, hidden included, withheld excluded) —
+    // the skill content runs as the turn prompt with the operator's prompt
+    // as instructions. An unknown name fails the run with the named error
+    // (exit 1, like a refused --role): the invocation IS the run, so
+    // fail-open would run the raw prompt as if the skill existed.
     let invokedPrompt = prompt;
     if (options.invokeSkill !== undefined) {
       try {
         invokedPrompt = expandSkillInvocation(
-          skills.skills,
+          skills.invocable,
           options.invokeSkill,
           prompt,
         );
@@ -2046,7 +2046,10 @@ async function runHeadlessPromptImpl(
           );
           if (
             pendingPrompt !== undefined &&
-            pendingPrompt === prompt &&
+            // Issue #183: an `--invoke-skill` retry coalesces with its
+            // own pending expanded prompt (identical to `prompt` for
+            // non-invoke runs).
+            pendingPrompt === effectivePrompt &&
             placed !== undefined
           ) {
             resumed = await solo.harness.submission(placed.id, context);

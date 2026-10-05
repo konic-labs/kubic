@@ -322,3 +322,47 @@ describe('kubic tui /skill: over the real lane (issue #183)', () => {
     expect(await exit).toBe(0);
   });
 });
+
+describe('withheld skills are not invocable or completed (issue #183 review)', () => {
+  it('excludes a role-withheld skill from completion names and invocation', async () => {
+    const workspace = tmpRoot('kubic-tui-skill-gate-');
+    mkdirSync(join(workspace, '.git'), { recursive: true });
+    const skillsDir = join(workspace, '.agents', 'skills');
+    writeSkill(
+      join(skillsDir, 'secret'),
+      'name: secret\ndescription: Hidden helper\ndisableModelInvocation: true',
+      'Hidden content.',
+    );
+    writeSkill(
+      join(skillsDir, 'open'),
+      'name: open\ndescription: Visible helper',
+      'Open content.',
+    );
+    mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(workspace, '.kubic', 'roles', 'narrow.md'),
+      '---\nrole: narrow\ntools: [read, ls]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\nskills: [open]\n---\n# Narrow\n\n## Prompt\n\nBe narrow.\n',
+    );
+    const boot = await bootTuiLane(undefined, {
+      sessionsRoot: tmpRoot(),
+      models: textModels(() => fauxAssistantMessage('seen')),
+      env: new FakeExecutionEnv({}),
+      model: { provider: 'faux', id: 'text' },
+      noSkills: true,
+      skillsList: [
+        join(skillsDir, 'secret', 'SKILL.md'),
+        join(skillsDir, 'open', 'SKILL.md'),
+      ],
+      role: 'narrow',
+      roles: { cwd: workspace, trusted: true },
+    });
+    try {
+      expect(boot.skillInvocation?.names).toEqual(['open']);
+      expect(() => boot.skillInvocation?.invoke('secret', 'do x')).toThrow(
+        "unknown skill 'secret'",
+      );
+    } finally {
+      await boot.close?.();
+    }
+  });
+});

@@ -650,3 +650,61 @@ describe('the role/capability gate reaches the live solo prompt (issue #181, §2
     ]);
   });
 });
+
+// The invocable set for explicit invocation (issue #183 review):
+// admitted + gate-passed, hidden included, withheld excluded — so a
+// role/capability-withheld skill resolves as unknown on the invoke path.
+describe('the invocable set gates explicit invocation (issue #183)', () => {
+  function writeRawSkill(
+    dir: string,
+    name: string,
+    frontmatter: string,
+  ): void {
+    mkdirSync(join(dir, name), { recursive: true });
+    writeFileSync(
+      join(dir, name, 'SKILL.md'),
+      `---\nname: ${name}\ndescription: ${name}\n${frontmatter}\n---\n\nBody.\n`,
+    );
+  }
+
+  it('excludes role-withheld skills but keeps an admitted hidden one', () => {
+    const cwd = tmpRoot('skills-invocable-cwd-');
+    const skillsDir = join(cwd, '.agents', 'skills');
+    writeRawSkill(skillsDir, 'kept-hidden', 'disableModelInvocation: true');
+    writeRawSkill(skillsDir, 'dropped-visible', '');
+    const boot = bootSkills({
+      bridge: createNodeFileBridge(cwd),
+      homeDir: cwd,
+      cwd,
+      trusted: true,
+      roleSkills: ['kept-hidden'],
+    });
+    expect(boot.invocable.map((skill) => skill.name)).toEqual([
+      'kept-hidden',
+    ]);
+    expect(boot.withheld.map((held) => held.name)).toEqual([
+      'dropped-visible',
+    ]);
+  });
+
+  it('excludes capability-withheld skills', () => {
+    const cwd = tmpRoot('skills-invocable-cap-');
+    const skillsDir = join(cwd, '.agents', 'skills');
+    writeRawSkill(skillsDir, 'shell-thing', 'tools: [bash]');
+    const boot = bootSkills({
+      bridge: createNodeFileBridge(cwd),
+      homeDir: cwd,
+      cwd,
+      trusted: true,
+      classes: {
+        filesystem: 'workspace-write',
+        shell: false,
+        network: 'none',
+        git: 'workspace',
+        credentials: 'none',
+      },
+    });
+    expect(boot.invocable).toEqual([]);
+    expect(boot.withheld.map((held) => held.name)).toEqual(['shell-thing']);
+  });
+});

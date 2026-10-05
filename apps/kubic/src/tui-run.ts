@@ -1475,8 +1475,9 @@ export async function bootTuiLane(
     let liveThinkingRef: string | undefined;
     // The loaded skill names, for the §46 trajectory's resources (#383).
     let skillNames: string[] = [];
-    // Issue #183 (§29.4): the loaded (gated-visible, hidden included)
-    // skills themselves, so `/skill:` expands against the boot's own set.
+    // Issue #183 (§29.4): the invocable skills (admitted + gate-passed,
+    // hidden included, withheld excluded), so `/skill:` expands and
+    // completes against the boot's gated set — never the raw load.
     let bootedSkillList: LoadedSkill[] = [];
     // Installed policy (issue #86): `kubic tui` drives the same solo lane as
     // `kubic run`, so it installs the same policy — one derivation
@@ -1605,7 +1606,7 @@ export async function bootTuiLane(
           },
         });
         skillNames = skills.skills.map((skill) => skill.name);
-        bootedSkillList = skills.skills;
+        bootedSkillList = skills.invocable;
 
         return {
           ...(skills.block === undefined
@@ -1763,11 +1764,11 @@ export async function bootTuiLane(
         turnCell.supplier = supplier;
       },
       listFiles: workspaceFileLister(env),
-      // Issue #183 (§29.4): explicit skill invocation over the same
-      // gated-visible skills the prompt was built from — hidden skills
-      // included, withheld skills excluded (their names resolve unknown).
+      // Issue #183 (§29.4): explicit skill invocation over the invocable
+      // set — hidden skills included, withheld skills excluded (their
+      // names resolve unknown, and completion never lists them).
       skillInvocation: {
-        names: skillNames,
+        names: bootedSkillList.map((skill) => skill.name),
         invoke: (name: string, instructions?: string) =>
           expandSkillInvocation(bootedSkillList, name, instructions),
       },

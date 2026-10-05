@@ -57,6 +57,10 @@ afterEach(() => {
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
+  // The default sessions root lives under the temp HOME: runs and
+  // retention tests seed it, so sweep it too (nothing in this file
+  // carries a session across tests).
+  rmSync(defaultSessionsRoot(), { recursive: true, force: true });
 });
 
 const noConfig: CliConfigResult = {

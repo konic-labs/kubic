@@ -1040,6 +1040,9 @@ export interface TuiRunOptions {
     cwd?: string;
     trusted?: boolean;
     trustProject?: (dir: string) => boolean;
+    // Issue #237 (§29.2): the config `skills` projection — resolved at
+    // load, loaded with source 'settings'. Absent means none configured.
+    settingsSkills?: string[];
   };
   noSkills?: boolean;
   skillsList?: string[];
@@ -1525,6 +1528,11 @@ export async function bootTuiLane(
           ...(options.skillsList === undefined
             ? {}
             : { cliSkills: options.skillsList }),
+          // Issue #237 (§29.2): the config `skills` projection loads
+          // with source 'settings'.
+          ...(options.skills?.settingsSkills === undefined
+            ? {}
+            : { settingsSkills: options.skills.settingsSkills }),
           // Issue #177: an unresolvable explicit --skill warns on the
           // boot's warn channel — never only on this debug sink the TUI
           // drops — so a typo cannot read as a loaded skill.
@@ -2133,6 +2141,8 @@ export type TuiConfigProjection = {
     cwd?: string;
     trusted?: boolean;
     trustProject?: (dir: string) => boolean;
+    // Issue #237 (§29.2): the config `skills` projection.
+    settingsSkills?: string[];
   };
   // Issue #228 (§35.1): the same check gates the project models.json on
   // this lane's assembled catalog.

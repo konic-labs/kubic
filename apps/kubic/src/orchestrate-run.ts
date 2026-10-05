@@ -255,6 +255,15 @@ export interface OrchestrateRunOptions {
    */
   roleLayers?: RoleLayerInput[];
   /**
+   * The config `skills` projection (issue #237, §29.2) — files or
+   * directories, already resolved against their declaring file at load.
+   * Every worker's child gets them the #170 way (task `resources.skills`
+   * + `--skill <abs>` argv), merged ahead of the run's `--skill` values
+   * so an explicit flag still wins a same-name conflict. Absent means the
+   * workers load only what the run was launched with.
+   */
+  settingsSkills?: string[];
+  /**
    * Where the §49.1 parallel trajectory records go (issue #106). Absent
    * defaults to `<repo>/.kubic/orchestrator/<session>.trajectory.jsonl`
    * (appended, best-effort — telemetry never fails a run).
@@ -2239,8 +2248,13 @@ export async function orchestrateDepsWithDefaults(
         info?.modelRef,
       );
       // §67 task resources (issue #170): the run's `--skill` values, resolved
-      // against the manager's cwd.
-      const skills = resolveSkillPaths(info?.skills, cwd);
+      // against the manager's cwd. Issue #237: the manager's own settings
+      // skills ride the same channel (already absolute from the config
+      // load), ahead of the run flags so explicit intent wins conflicts.
+      const skills = resolveSkillPaths(
+        [...(options.settingsSkills ?? []), ...(info?.skills ?? [])],
+        cwd,
+      );
       // §67 (issue #191): the task and the capability grant travel together.
       // The manager builds and VALIDATES the worker's task before the child
       // exists — a task whose worktree is not absolute or whose tool set is

@@ -550,9 +550,14 @@ export function discoverSkills(
 
   if (!noSkills) {
     // Low precedence first: user roots, then project ancestors far-to-near.
+    // Issue #237 (§35 tree): `~/.kubic/skills` joins the Pi-compatible
+    // roots LAST, so a Kubic-native skill wins a same-name conflict with
+    // a Pi-carried one — the tool-specific directory overrides the
+    // portable fallback.
     const userRoots = [
       joinPosix(homeDir, '.pi/agent/skills'),
       joinPosix(homeDir, '.agents/skills'),
+      joinPosix(homeDir, '.kubic/skills'),
     ];
     // Issue #189: a user root is never relabelled 'project'. When the
     // repo root is $HOME itself (or $HOME is otherwise on the chain),

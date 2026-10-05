@@ -299,6 +299,9 @@ export interface HeadlessRunDeps {
     cwd?: string;
     trusted?: boolean;
     trustProject?: (dir: string) => boolean;
+    // Issue #237 (§29.2): the config `skills` projection — resolved at
+    // load, loaded with source 'settings'. Absent means none configured.
+    settingsSkills?: string[];
   };
   // Issue #228 (§35.1): the per-path trust check (the store's resolved-root
   // decision plus the env opt-in), threaded from the composition root's
@@ -1777,6 +1780,11 @@ async function runHeadlessPromptImpl(
       ...(trustProject === undefined ? {} : { trustProject }),
       ...(options.noSkills === undefined ? {} : { noSkills: options.noSkills }),
       ...(options.skills === undefined ? {} : { cliSkills: options.skills }),
+      // Issue #237 (§29.2): the config `skills` projection loads with
+      // source 'settings'.
+      ...(deps.skills?.settingsSkills === undefined
+        ? {}
+        : { settingsSkills: deps.skills.settingsSkills }),
       // Issue #177: an unresolvable explicit --skill warns on stderr —
       // never only on the debug channel — so a typo cannot read as loaded.
       warn: warnLine,

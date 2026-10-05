@@ -149,6 +149,7 @@ import {
   runtimeModelPinNotes,
   runtimePolicy,
   runtimeRunDeps,
+  runtimeSkillsDeps,
   sessionRetentionDays,
 } from './config-runtime.js';
 import type { DispatchRunners } from './dispatch.js';
@@ -286,6 +287,10 @@ export function prodRunDeps(cliConfig: CliConfigResult): HeadlessRunDeps {
     // (journal attribution, `kubic diff --agent`) and the config-sourced
     // role layers `--role` merges under the document.
     ...runtimeLaneDeps(cliConfig),
+    // Issue #237 (§29.2): the config `skills` projection — resolved at
+    // load, loaded with source 'settings'. The lane falls back to the
+    // prod home/cwd/trust around it (only this key is set).
+    skills: { ...runtimeSkillsDeps(cliConfig) },
   };
 }
 
@@ -354,6 +359,9 @@ export function prodTuiDeps(
     // Issue #133: the SAME lane projections `kubic run` consumes — the
     // interactive lane names itself and layers `--role` identically.
     ...runtimeLaneDeps(cliConfig),
+    // Issue #237 (§29.2): the same settings-skills projection `kubic run`
+    // threads — the interactive lane loads the config skills too.
+    skills: { ...runtimeSkillsDeps(cliConfig) },
   };
 }
 
@@ -1017,6 +1025,9 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
           // The config `[roles.<name>]` layers: the manager judges each
           // assigned role as the worker's own `kubic run --role` resolves it.
           ...(roleLayers === undefined ? {} : { roleLayers }),
+          // Issue #237 (§29.2): the manager's own settings skills — every
+          // worker's child loads them through the #170 channel.
+          ...runtimeSkillsDeps(cliConfig),
           // Issue #228 (§35.1): the per-ROOT trust check — a store grant is
           // keyed to one exact directory, so the run evaluates it for the
           // models root it loads (never the launch cwd) and only a trusted

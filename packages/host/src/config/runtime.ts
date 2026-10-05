@@ -18,6 +18,7 @@
 // File access arrives as the exec FileBridge (I/O confinement): this module
 // never imports node:fs. Zero network, zero real processes.
 
+import { join } from 'node:path';
 import {
   type PermissionClasses,
   validateClasses,
@@ -48,6 +49,7 @@ import {
   mergeLayered,
   ProjectUntrustedError,
   parseLayerConfig,
+  resolveConfigSkills,
   VERIFY_COMMAND_KEYS,
 } from './config.js';
 import { parseSecretRef } from './secrets.js';
@@ -235,6 +237,14 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   'verify.timeoutMs': {
     effect: 'per-command bound for the [verify] gates (a timeout is a fail)',
+  },
+  // §29.2 (issue #237): the top-level `skills` array — NOT a `[skills]`
+  // section. Entries resolve against their declaring file at load and
+  // reach `run`, `tui` and orchestrator workers with source 'settings';
+  // project-layer entries apply only for a trusted project.
+  skills: {
+    effect:
+      'settings skills for `kubic run`, `kubic tui` and orchestrator workers (loaded with source `settings`)',
   },
   // §58 enterprise [policy] (issue #288). The allow/deny and model keys reach
   // the live path (lane tool intersection, model selection gate, `kubic
@@ -619,8 +629,14 @@ function loadLayers(
         trusted: true,
       });
       if (programmatic !== undefined) {
-        layerInputs.push({ layer, config: programmatic });
-        perLayer.push({ layer, config: programmatic });
+        // Issue #237: programmatic layers declare no file, so their
+        // relative `skills` entries anchor at the invoking cwd.
+        const resolved = resolveConfigSkills(
+          programmatic,
+          join(inputs.cwd, 'config.toml'),
+        );
+        layerInputs.push({ layer, config: resolved });
+        perLayer.push({ layer, config: resolved });
       }
       continue;
     }
@@ -645,12 +661,16 @@ function loadLayers(
     }
     if (!present || path === undefined) continue;
     const parsed = parseLayerConfig(layer, inputs.bridge.readTextFile(path));
+    // Issue #237 (§29.2): relative `skills` entries anchor at the config
+    // file that declared them — a project config's `../shared/skills`
+    // names the project's sibling, wherever the run was invoked from.
+    const resolved = resolveConfigSkills(parsed, path);
     layerInputs.push({
       layer,
-      config: parsed,
+      config: resolved,
       ...(layer === 'project' ? { trusted: true as const } : {}),
     });
-    perLayer.push({ layer, config: parsed });
+    perLayer.push({ layer, config: resolved });
     for (const leaf of Object.keys(flatten(parsed))) {
       if (!(leaf in sources)) sources[leaf] = layer;
     }

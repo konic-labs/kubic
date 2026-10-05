@@ -649,6 +649,29 @@ export function runtimeLaneDeps(result: CliConfigResult): {
   };
 }
 
+// The settings `skills` projection (issue #237, §29.2): the merged
+// top-level `skills` array, entries already resolved against their
+// declaring file's directory at load. Project-layer entries apply only
+// when the project root is trusted — the load refuses an untrusted
+// project file before reading, so a project-sourced list reaching here
+// is trusted by construction; the check is re-applied all the same, so a
+// hand-built runtime (tests, embeddings) never sneaks one past. Always
+// returns the key (possibly empty) so callers spread unconditionally.
+export function runtimeSkillsDeps(result: CliConfigResult): {
+  settingsSkills: string[];
+} {
+  const runtime = result.runtime;
+  const skills = runtime?.config.skills ?? [];
+  if (skills.length === 0) return { settingsSkills: [] };
+  if (runtime?.sources.skills === 'project') {
+    const root = result.projectRoot;
+    if (root === undefined || !projectTrustFor(result)(root)) {
+      return { settingsSkills: [] };
+    }
+  }
+  return { settingsSkills: [...skills] };
+}
+
 // The config `[roles.<name>]` table as resolver layer inputs (issue #133):
 // one input per config layer that actually set a leaf, so the resolver's
 // first-layer-wins merge sees exactly the provenance the config load

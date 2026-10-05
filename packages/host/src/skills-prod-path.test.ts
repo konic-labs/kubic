@@ -461,3 +461,38 @@ describe('hidden skills stay out of the live prompt (issue #186)', () => {
     expect(boot.block).toBeUndefined();
   });
 });
+
+describe('settings skills from config (issue #237, §29.2)', () => {
+  it('kubic run loads a settings skill dir with source settings', async () => {
+    const home = tmpRoot('skills-settings-home-');
+    // Outside every discovery root: only the settings projection loads it.
+    const settingsDir = tmpRoot('skills-settings-dir-');
+    const skillFile = writeSkill(
+      settingsDir,
+      'team-helper',
+      'Shared team helper',
+    );
+    const root = tmpRoot('skills-settings-sessions-');
+    const debug: string[] = [];
+    const result = await runHeadlessPrompt(
+      'hello',
+      {},
+      {
+        sessionsRoot: root,
+        models: fauxModels(['done']),
+        env: new FakeExecutionEnv({}),
+        debug: (line: string) => debug.push(line),
+        skills: {
+          homeDir: home,
+          trusted: false,
+          settingsSkills: [join(settingsDir, 'team-helper')],
+        },
+      },
+    );
+    expect(result.terminus).toBe('completed');
+    const prompt = await committedPrompt(root, result.sessionId);
+    expect(prompt).toContain('<name>team-helper</name>');
+    expect(prompt).toContain(`<filePath>${skillFile}</filePath>`);
+    expect(debug.join('\n')).toContain('team-helper@settings');
+  });
+});

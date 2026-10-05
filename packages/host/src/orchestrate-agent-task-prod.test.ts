@@ -132,7 +132,13 @@ interface Dump {
 
 async function runOne(
   root: string,
-  options: { session?: string; agents?: string[]; skills?: string[] } = {},
+  options: {
+    session?: string;
+    agents?: string[];
+    skills?: string[];
+    // Issue #237: the manager's settings-skills projection.
+    settingsSkills?: string[];
+  } = {},
 ): Promise<{ dump: Dump; dumpDir: string; code: number; lines: string[] }> {
   const fixture = join(scratchRoot('kubic-orch-191-child-'), 'child.mjs');
   writeFileSync(fixture, FIXTURE);
@@ -147,6 +153,9 @@ async function runOne(
     workerEntry: { cmd: process.execPath, args: [fixture] },
     // Issue #430: the scratch repo stands in for a trusted project.
     projectTrust: () => true,
+    ...(options.settingsSkills === undefined
+      ? {}
+      : { settingsSkills: options.settingsSkills }),
   });
   const code = await runOrchestrateCommand(
     {
@@ -339,6 +348,36 @@ describe('prod orchestrate path: --skill reaches every worker (issue #170)', () 
     expect(task.resources).toEqual({ skills: [absolute] });
     // …and the registry row is what `kubic workers` reads (the run persists
     // it to <repo>/.kubic/orchestrator/workers.json).
+    const rows = workersListFromRepo(root);
+    expect(rows[0]?.resources).toEqual({ skills: [absolute] });
+  });
+});
+
+describe('prod orchestrate path: settings skills reach every worker (issue #237)', () => {
+  it('puts the manager’s settings skills in the child argv, the task and the registry row', async () => {
+    const root = await initRepo(['read', 'ls']);
+    mkdirSync(join(root, 'skills', 'house'), { recursive: true });
+    writeFileSync(
+      join(root, 'skills', 'house', 'SKILL.md'),
+      '---\nname: house\ndescription: House skill\n---\n\nBody.\n',
+    );
+    // Committed: an untracked file would trip the pre-merge clean-tree guard.
+    execFileSync('git', ['add', '-A'], { cwd: root });
+    execFileSync('git', ['commit', '-m', 'add the skill'], { cwd: root });
+    const absolute = join(root, 'skills', 'house');
+    // Already absolute (the config load resolves): the manager passes it
+    // through, ahead of the run's own --skill values.
+    const { dump, code, lines } = await runOne(root, {
+      settingsSkills: [absolute],
+    });
+    expect(code, lines.join('\n')).toBe(0);
+    const at = dump.argv.indexOf('--skill');
+    expect(at).toBeGreaterThan(-1);
+    expect(dump.argv[at + 1]).toBe(absolute);
+    const task = JSON.parse(readFileSync(dump.taskFile as string, 'utf8')) as {
+      resources?: { skills?: string[] };
+    };
+    expect(task.resources).toEqual({ skills: [absolute] });
     const rows = workersListFromRepo(root);
     expect(rows[0]?.resources).toEqual({ skills: [absolute] });
   });

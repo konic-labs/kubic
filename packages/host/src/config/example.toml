@@ -2,6 +2,11 @@
 # Committed to the repo: .kubic/config.toml + .kubic/roles/*.md
 # Never committed: sessions/ journal/ artifacts/ wt/ orchestrator/
 
+# Settings skills (issue #237; design §29.2): files or directories, resolved
+# against this file's directory — `./skills` names `<root>/.kubic/skills`
+# (`../skills` would name `<root>/skills`).
+skills = ["./skills"]
+
 [agent]
 name = "kubic"
 

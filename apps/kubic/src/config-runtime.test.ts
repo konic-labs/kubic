@@ -55,6 +55,7 @@ import {
   runtimeModelPinNotes,
   runtimePolicy,
   runtimeRunDeps,
+  runtimeSkillsDeps,
   selectModelUnderPolicy,
   sessionRetentionDays,
 } from './config-runtime.js';
@@ -843,5 +844,71 @@ describe('end to end: the project [model] pin reaches the prod run runner (issue
     expect(result.error).toBeUndefined();
     expect(runtimeModelPin(result)).toEqual({ provider: 'g', id: 'file' });
     expect(prodRunDeps(result).model).toEqual({ provider: 'g', id: 'file' });
+describe('settings skills from config (issue #237, §29.2)', () => {
+  it('resolves a relative project entry against the config file directory', () => {
+    const home = tmpDir('kubic-skills-home-');
+    const project = tmpDir('kubic-skills-project-');
+    mkdirSync(join(project, '.kubic'), { recursive: true });
+    mkdirSync(join(project, 'shared', 'team'), { recursive: true });
+    writeFileSync(
+      join(project, '.kubic', 'config.toml'),
+      'skills = ["../shared/team"]\n',
+    );
+    storeFor(home).set(project, true);
+    // Launched from a subdirectory: the entry still anchors at the
+    // project config, never the invoking cwd.
+    const sub = join(project, 'pkg');
+    mkdirSync(sub, { recursive: true });
+    const result = loadCliConfig({ cwd: sub, home, env: {} });
+    expect(result.error).toBeUndefined();
+    expect(runtimeSkillsDeps(result)).toEqual({
+      settingsSkills: [join(project, 'shared', 'team')],
+    });
+    expect(result.runtime?.sources.skills).toBe('project');
+  });
+
+  it('keeps an absolute global entry as written', () => {
+    const home = tmpDir('kubic-skills-home-');
+    mkdirSync(join(home, '.kubic'), { recursive: true });
+    const shared = tmpDir('kubic-skills-shared-');
+    writeFileSync(
+      join(home, '.kubic', 'config.toml'),
+      `skills = ["${shared}"]\n`,
+    );
+    const project = tmpDir('kubic-skills-project-');
+    const result = loadCliConfig({ cwd: project, home, env: {} });
+    expect(result.error).toBeUndefined();
+    expect(runtimeSkillsDeps(result)).toEqual({ settingsSkills: [shared] });
+    expect(result.runtime?.sources.skills).toBe('global');
+  });
+
+  it('refuses the project skills with the project file when untrusted', () => {
+    const home = tmpDir('kubic-skills-home-');
+    const project = tmpDir('kubic-skills-project-');
+    mkdirSync(join(project, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(project, '.kubic', 'config.toml'),
+      'skills = ["./team"]\n',
+    );
+    const refused = loadCliConfig({ cwd: project, home, env: {} });
+    expect(refused.runtime).toBeUndefined();
+    expect(refused.error).toContain('refused pre-trust');
+  });
+
+  it('reports the effective list in `kubic config`', () => {
+    const home = tmpDir('kubic-skills-home-');
+    mkdirSync(join(home, '.kubic'), { recursive: true });
+    const shared = tmpDir('kubic-skills-shared-');
+    writeFileSync(
+      join(home, '.kubic', 'config.toml'),
+      `skills = ["${shared}"]\n`,
+    );
+    const project = tmpDir('kubic-skills-project-');
+    const result = loadCliConfig({ cwd: project, home, env: {} });
+    const view = effectiveConfigView(requireRuntimeConfig(result));
+    const row = view.values.find((value) => value.key === 'skills');
+    expect(row?.layer).toBe('global');
+    expect(row?.value).toContain(shared);
+    expect(row?.disposition).toBe('consumed');
   });
 });

@@ -12,7 +12,7 @@
 // File access arrives as a FileBridge (exec-owned I/O confinement) — this
 // module never touches node:fs directly. Never imports worker impl.
 
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import {
   hasGitignoreMetacharacters,
@@ -197,6 +197,12 @@ export interface KubicConfig {
   permissions?: PermissionsConfig;
   journal?: JournalConfig;
   roles?: Record<string, RoleConfig>;
+  // Issue #237 (§29.2): a top-level `skills` array of files or
+  // directories — NOT a `[skills]` section. Entries are stored as written
+  // (relative stays relative); the config LOAD resolves each layer's
+  // entries against that layer's file directory, so a project config's
+  // relative entry anchors at the project, never the invoking cwd.
+  skills?: string[];
   orchestrator?: OrchestratorConfig;
   ui?: UiConfig;
   session?: SessionConfig;
@@ -241,6 +247,11 @@ export const KNOWN_CONFIG_SECTIONS: readonly string[] = [...KNOWN_SECTIONS];
 export const EXAMPLE_TOML = `# Kubic canonical config example (issue #38; design §35.2/§63).
 # Committed to the repo: .kubic/config.toml + .kubic/roles/*.md
 # Never committed: sessions/ journal/ artifacts/ wt/ orchestrator/
+
+# Settings skills (issue #237; design §29.2): files or directories, resolved
+# against this file's directory — "./skills" names "<root>/.kubic/skills"
+# ("../skills" would name "<root>/skills").
+skills = ["./skills"]
 
 [agent]
 name = "kubic"
@@ -1125,7 +1136,8 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
   assertNoMcpConfig(raw);
   assertNoBudgetKeys(raw);
   for (const key of Object.keys(raw)) {
-    if (!KNOWN_SECTIONS.has(key)) {
+    // Issue #237: `skills` is a top-level array key, not a section.
+    if (key !== 'skills' && !KNOWN_SECTIONS.has(key)) {
       throw new ConfigError(`unknown section '[${key}]'`);
     }
   }
@@ -1338,7 +1350,43 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
   if (audit !== undefined) {
     config.audit = parseAuditTables(audit);
   }
+  // Issue #237 (§29.2): `skills = [...]` — files or directories. Kept
+  // as written here; the load resolves relative entries against the
+  // declaring file's directory. A non-string entry names the layer.
+  const skills = raw.skills;
+  if (skills !== undefined) {
+    if (!Array.isArray(skills)) {
+      throw new ConfigError("'skills' must be an array of paths");
+    }
+    for (const entry of skills) {
+      if (typeof entry !== 'string') {
+        throw new ConfigError("'skills' entries must be strings");
+      }
+      if (entry.trim() === '') {
+        throw new ConfigError("'skills' entries must not be blank");
+      }
+    }
+    config.skills = [...skills];
+  }
   return config;
+}
+
+// Issue #237 (§29.2): resolve one layer's `skills` entries against the
+// directory of the config FILE that declared them — never the invoking
+// cwd. Absolute entries pass through; `~` and env vars are NOT expanded
+// (a config file is not a shell). Returns a copy; the input is untouched.
+export function resolveConfigSkills(
+  config: KubicConfig,
+  filePath: string,
+): KubicConfig {
+  if (config.skills === undefined) return config;
+  const dir = dirname(filePath);
+  return {
+    ...config,
+    skills: config.skills.map((entry) =>
+      isAbsolute(entry) ? entry : resolve(dir, entry),
+    ),
+  };
 }
 
 export function parseTomlConfig(text: string): KubicConfig {
@@ -1391,6 +1439,14 @@ const POLICY_TOML_KEYS: ReadonlyArray<[PolicyFlatField, string]> = [
 
 export function serializeTomlConfig(config: KubicConfig): string {
   const lines: string[] = [];
+  // Issue #237: the top-level `skills` array serializes before the first
+  // table (TOML keys precede tables).
+  if (config.skills !== undefined) {
+    lines.push(
+      `skills = [${config.skills.map((entry) => JSON.stringify(entry)).join(', ')}]`,
+      '',
+    );
+  }
   if (config.agent !== undefined) {
     emitTable(lines, 'agent', config.agent as Record<string, unknown>);
   }
@@ -1658,7 +1714,11 @@ export function loadLayered(
     try {
       inputs.push({
         layer,
-        config: parseTomlConfig(bridge.readTextFile(path)),
+        // Issue #237: relative `skills` entries anchor at this file.
+        config: resolveConfigSkills(
+          parseTomlConfig(bridge.readTextFile(path)),
+          path,
+        ),
         ...(layer === 'project' ? { trusted: true as const } : {}),
       });
     } catch (error) {

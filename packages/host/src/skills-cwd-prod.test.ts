@@ -187,3 +187,31 @@ describe('explicit --skill paths anchor at the invoking cwd (issue #177)', () =>
     expect(silent.warn).toBeUndefined();
   });
 });
+
+describe('settings skills from config on the tui lane (issue #237, §29.2)', () => {
+  it('kubic tui loads a settings skill dir with source settings', async () => {
+    const home = tmpRoot('skills-settings-tui-home-');
+    const cwd = tmpRoot('skills-settings-tui-work-');
+    // Outside every discovery root: only the settings projection loads it.
+    const settingsDir = tmpRoot('skills-settings-tui-dir-');
+    writeSkill(settingsDir, 'team-helper', 'team-helper');
+    const captured: string[] = [];
+    const boot = await bootTuiLane(undefined, {
+      sessionsRoot: tmpRoot('skills-settings-tui-sessions-'),
+      models: fauxModels(['done'], captured),
+      env: new FakeExecutionEnv({}),
+      skills: {
+        homeDir: home,
+        cwd,
+        trusted: false,
+        settingsSkills: [join(settingsDir, 'team-helper')],
+      },
+    });
+    const prompt = await promptOf(boot, captured);
+    await boot.close?.();
+    expect(prompt).toContain('<name>team-helper</name>');
+    expect(prompt).toContain(
+      `<filePath>${join(settingsDir, 'team-helper', 'SKILL.md')}</filePath>`,
+    );
+  });
+});

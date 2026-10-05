@@ -255,6 +255,11 @@ below) · `[[audit]]` (sink/level, below). The canonical example is
 `packages/host/src/config/example.toml` (pinned by test — copy it to
 start). Unknown sections or keys are rejected (`ConfigError`).
 
+Plus one top-level key (issue #237, §29.2): `skills = ["...", ...]` —
+files or directories of skills, loaded with source `settings` (see
+[Settings skills](#settings-skills-skills-292) below). It is a key, not a
+`[skills]` section: a `[skills]` table is rejected like any unknown section.
+
 Every one of those keys is in the key-effect table below: **consumed** keys
 name the code path that reads them, **kept** keys are reserved with the
 reason they are not consumed, and a key with no row at all fails `kubic
@@ -274,6 +279,7 @@ quietly stop configuring anything.
 | `journal.maxBytes` | Journal byte bound, enforced on every append: the store — `index.jsonl` plus the blobs it references — is pruned to stay under it, and a pass that has to prune frees a tenth of the bound (the headroom the next appends need). Content addressing dedupes blobs, so a file toggling between two contents (a formatter fighting the agent, repeated `undo --step`) grows the journal through its lines alone; this key is what keeps that bounded. A positive integer (0 is refused by name: it is not "retention off" — unset is — it is a bound nothing fits). Unset ⇒ 100 MiB (`DEFAULT_JOURNAL_MAX_BYTES`). An entry whose own content cannot fit is refused before anything is written, so the tool call fails as `journal_failed` with the file untouched, and a pass that has to prune never drops the newest entry — it reports `over bound by N byte(s)` instead (`kubic clean --journal`). |
 | `journal.outOfScope` | Paths excluded from the §42.5 baseline and the end-of-run sweep (self + children): `outOfScope = ["dist"]` ⇒ `dist/`, `dist/**`. Path-boundary aware (`dist` never matches `dist-x`), plain paths only, empty entries refused by name. |
 | `agent.name` | The solo lane's agent id: journal entries are attributed to it and `kubic diff --agent <name>` filters by it. Unset ⇒ `root`, unchanged. |
+| `skills` | Settings skills (§29.2, issue #237): files or directories loaded with source `settings` on `kubic run`, `kubic tui` and every orchestrator worker's child (see [Settings skills](#settings-skills-skills-292)). Project-layer entries apply only for a trusted project; a non-string or blank entry is refused by name at load. |
 | `roles.<name>.model`, `roles.<name>.tools` | Per-role defaults layered under the role document for `kubic run --role <name>` (§12.1): `model` is a `provider/id` pin the run selects unless an explicit `--model`/`[model]` pin wins, `tools` replaces the document's own list. Each leaf is attributed to the layer that set it (enterprise > product > global > project > workspace > session > agent). A malformed model ref is refused by name at load. Scope: `kubic run --role` and `kubic tui --role` both apply the whole layer (model pin + tools); the TUI also takes the `[agent].name` agent id. `kubic orchestrate` resolves each worker over the same layers (§38.1, issue #202): `[roles.<name>].model` outranks the manager's effective model for that worker (which is otherwise inherited), the child is told the winning `provider/id` on `KUBIC_MODEL`, `tools` narrows the orchestrated worker's plan and its `kubic run --role` lane, and the role's thinking default travels on `KUBIC_MODEL_THINKING` unless the run's own `KUBIC_MODEL_THINKING` is set (which outranks it). No role, model or provider is invented when none of those levels sets one. |
 | `orchestrator.root` | Parent directory for orchestrator worktrees: the spawned set is `<repo>/<root>/<session>/<agent>`, `kubic clean` plans the same set, and the §35 runtime exclude entries cover it (the derived entry is `/<root>/`, anchored to the repo root, so only that directory matches — a bare `worktrees` never hides `deep/worktrees/…`). Workspace-relative only — refused by name at load: an absolute path, a `..` segment, a trailing `/`, an empty value, a `.` segment (`.`, `./x`, `foo/.` — the entry would match nothing and the worktree set would stay unignored), a control character, a gitignore metacharacter (`*`, `?`, `[`, `]`, a leading `#`, a backslash), and the committed half (`.kubic`, `.kubic/roles` — case-insensitively, since git folds ignore patterns on a case-insensitive filesystem). Unset ⇒ `.kubic/wt`. || `orchestrator.maxWorkers` | Default admission cap for the orchestrator scheduler (§45): the concurrency a run starts with when nothing else caps it. `kubic orchestrate --concurrency <n>` overrides it for that run, and an explicit limits cap still wins over this key; a value that is not a positive integer is refused by name. Unset ⇒ 4. |
 | `ui.theme` | TUI theme (§16.9, issue #304). A built-in name — `default` or `dark` (the shipped Konic brand palette) or `light` — or a path to a JSON theme file, read relative to the current directory (an absolute path is taken as typed). Resolved and validated **before the alt-screen opens**: a missing file, malformed JSON, an unknown or missing colour, or a value that is not `#rrggbb` is one `error: theme '<ref>': …` line on stderr and exit 2. A custom theme names the seven colours Kubic styles with (the structure — bold accent, dim, italic, … — stays Kubic's); each is downgraded to the terminal's colour level exactly like the built-in palette (truecolor RGB, else the nearest xterm-256 entry, else the nearest ANSI colour, and the identity under `NO_COLOR`). Schema: `{ "name": "solarized", "colors": { "accent": "#268bd2", "warm": "#b58900", "success": "#859900", "error": "#dc322f", "warning": "#cb4b16", "muted": "#93a1a1", "prompt": "#fdf6e3" } }` — `colors` and all seven keys are required, unknown keys are refused by name. Unset ⇒ `default`. |
@@ -292,6 +298,31 @@ quietly stop configuring anything.
 | `policy.data_policy`, `policy.logging_policy` | Parsed and carried (for example `no-external-training`, `full-audit`); no local mechanism can promise a provider-side policy, so they are reported, never claimed as enforced. |
 | `policy.agent_policy` | `{ max_agents, max_cost_usd }`, parsed into the effective policy's `agent` bounds; the orchestrator does not consume them yet, so they are **not enforced**; `kubic config` lists them (`kept`), `kubic doctor` does not report them (issue #289). |
 | `audit` (`[[audit]]`) | Sink tables (`sink` = `syslog` \| `file` \| `memory`, `level` = `privileged` \| `all`, optional `target`/`facility`). Parsed and validated fail-closed (an unknown kind, level or key is named); sink construction is a named follow-up, so the CLI cannot write to them yet. |
+
+### Settings skills (`skills`, §29.2)
+
+```toml
+skills = ["./team", "/opt/shared/skills"]
+```
+
+A top-level array of skill files or directories (issue #237). Each entry
+loads with source `settings` — like an explicit `--skill`, it applies even
+under `--no-skills` — on `kubic run`, `kubic tui` and every orchestrator
+worker's child (the manager forwards its own settings skills through the
+`--skill` channel, ahead of the run's flags, so explicit intent still wins
+a same-name conflict). Relative entries resolve against the directory of
+the config file that declared them — a project config's `"../shared"`
+names the project's sibling wherever the run was invoked from — never the
+cwd; absolute entries pass through as written. `~` and env vars are not
+expanded. The first layer that sets the key wins the whole array
+(enterprise > product > global > project), and project-layer entries apply
+only for a trusted project: an untrusted project file is refused before it
+is read, exactly like every other project key. `kubic config` reports the
+resolved (absolute) list with its layer.
+
+The user discovery roots are `~/.pi/agent/skills` and `~/.agents/skills`
+(Pi-compatible) plus `~/.kubic/skills` (issue #237): the Kubic-native root
+is read last, so it wins a same-name conflict with a Pi-carried skill.
 
 ### Gate verification (`[verify]`)
 

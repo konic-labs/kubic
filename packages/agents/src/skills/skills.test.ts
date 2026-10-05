@@ -134,6 +134,42 @@ describe('skill discovery (issue #36)', () => {
     ]);
   });
 
+  it('discovers ~/.kubic/skills as a third user root (issue #237)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${HOME}/.kubic/skills/gamma/SKILL.md`,
+      skillMd('name: gamma\ndescription: Kubic-native skill'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['gamma']);
+    expect(result.skills[0]?.source).toBe('user');
+  });
+
+  it('prefers ~/.kubic/skills over the Pi-compatible roots on name conflict (issue #237)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/lint/SKILL.md`,
+      skillMd('name: lint\ndescription: Pi-carried lint'),
+    );
+    env.fs.writeFile(
+      `${HOME}/.kubic/skills/lint/SKILL.md`,
+      skillMd('name: lint\ndescription: Kubic-native lint'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['lint']);
+    expect(result.skills[0]?.description).toBe('Kubic-native lint');
+  });
+
   it('applies precedence: project shadows user on name conflict (trusted)', () => {
     const { env, bridge } = setup();
     env.fs.writeFile(

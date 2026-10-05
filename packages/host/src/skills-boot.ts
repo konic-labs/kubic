@@ -39,6 +39,12 @@ export interface BootSkillOptions {
   // (the loader's own contract: explicit intent always applies).
   noSkills?: boolean;
   cliSkills?: string[];
+  // Issue #237 (§29.2): the config `skills` projection — files or
+  // directories, already resolved against their declaring file at load.
+  // Loads with source 'settings', same as explicit intent: it applies
+  // even under --no-skills or distrust (the config layer was trusted
+  // when read, or refused before reading).
+  settingsSkills?: string[];
   // Issue #177: an explicit --skill that resolves to nothing warns here,
   // on stderr — never on the debug log sink the TUI drops and --debug
   // gates. The message is the loader's own skip text, so run and tui name
@@ -104,6 +110,9 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
     ...(options.cliSkills === undefined
       ? {}
       : { cliSkills: options.cliSkills }),
+    ...(options.settingsSkills === undefined
+      ? {}
+      : { settingsSkills: options.settingsSkills }),
     ...(options.log === undefined ? {} : { log: options.log }),
   };
   const { skills, unknownSkills } = discoverSkills(load);

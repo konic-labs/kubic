@@ -158,6 +158,10 @@ export interface ProdTuiOrchestratorOptions {
   // The config `[roles.<name>]` layers, so a role is judged as the worker's
   // own `kubic run --role` resolves it.
   roleLayers?: RoleLayerInput[];
+  // The config `skills` projection (issue #237, §29.2): forwarded to the
+  // manager options so every worker's child loads it. Absent means the
+  // workers load only what the run was launched with.
+  settingsSkills?: string[];
   // A frozen enterprise `[model]` is the effective pin (issue #295; §35.1):
   // every worker runs it whatever KUBIC_MODEL says. It outranks
   // `currentModel`.
@@ -264,6 +268,9 @@ export function createProdTuiOrchestrator(
           ...(options.roleLayers === undefined
             ? {}
             : { roleLayers: options.roleLayers }),
+          ...(options.settingsSkills === undefined
+            ? {}
+            : { settingsSkills: options.settingsSkills }),
           ...(currentModel === undefined
             ? {}
             : {

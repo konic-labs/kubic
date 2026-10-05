@@ -248,6 +248,67 @@ describe('one malformed document never blocks the other roles (issue #236)', () 
   });
 });
 
+describe('doctor judges roles under the same config layers as the run (issue #235)', () => {
+  const docX =
+    '---\nrole: x\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n## Prompt\n\nDo x things.\n';
+  const base = {
+    bridge: memBridge({ '/repo/.kubic/roles/x.md': docX }),
+    cwd: '/repo',
+    projectRoot: '/repo',
+    trusted: true,
+  };
+
+  it('a layer contradicting the document fails doctor with the run refusal, word for word', () => {
+    const layers = [
+      { layer: 'project', roles: { x: { tools: ['read', 'write'] } } },
+    ] as const;
+    const input = { ...base, layers: [...layers] };
+    // The run refusal: selectRole resolves under the same layers.
+    let runReason = '';
+    try {
+      selectRole({ ...input, role: 'x' });
+    } catch (error) {
+      runReason = (error as Error).message;
+    }
+    expect(runReason).toMatch(/filesystem.*read.*write/i);
+    // Doctor fails the same role with the identical reason.
+    const fail = rolesDoctorProbe(input).find(
+      (check) => check.id === 'role:x',
+    );
+    expect(fail?.status).toBe('fail');
+    expect(fail?.detail).toBe(runReason);
+  });
+
+  it('a layer fixing an otherwise-invalid document makes doctor pass it', () => {
+    const broken = {
+      bridge: memBridge({
+        '/repo/.kubic/roles/y.md': docX
+          .replace('role: x', 'role: y')
+          .replace('tools: [read, ls, find, grep]', 'tools: [write]'),
+      }),
+      cwd: '/repo',
+      projectRoot: '/repo',
+      trusted: true,
+    };
+    // Alone the document contradicts its own classes: refused both ways.
+    expect(() => selectRole({ ...broken, role: 'y' })).toThrow(
+      /filesystem.*read.*write/i,
+    );
+    expect(
+      rolesDoctorProbe(broken).find((check) => check.id === 'role:y')?.status,
+    ).toBe('fail');
+    // The layer narrows the tool away: run and doctor agree it is fine.
+    const fixed = {
+      ...broken,
+      layers: [{ layer: 'project', roles: { y: { tools: ['read'] } } }],
+    };
+    expect(selectRole({ ...fixed, role: 'y' }).doc.name).toBe('y');
+    expect(
+      rolesDoctorProbe(fixed).find((check) => check.id === 'role:y')?.status,
+    ).toBe('pass');
+  });
+});
+
 describe('the prompt comes from the file that declared the role (issue #293)', () => {
   // roleDocPath is gone: selectRole carries the listed file's own text as
   // `markdown`, so the prompt can never be re-read from `<name>.md`.

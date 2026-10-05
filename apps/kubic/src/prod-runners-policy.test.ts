@@ -989,6 +989,37 @@ describe('role documents under the enterprise tool policy on the doctor and orch
     expect(failed).toEqual(['role:debugger', 'role:reviewer', 'role:tester']);
   });
 
+  // Issue #235: the doctor runner judges roles AFTER the config
+  // `[roles.<name>]` layers `kubic run --role` merges — a layer that
+  // contradicts the document fails the role here with the run's refusal,
+  // and with no `[roles]` section the document alone decides.
+  it('kubic doctor fails a role its config [roles.<name>] layer contradicts, and passes it without the layer', async () => {
+    const contradict = cliConfig(
+      { [PROJECT]: '[roles.planner]\ntools = ["read", "write"]\n' },
+      { trust: TRUSTED },
+    );
+    const layered = runners(workspaceWithRoles());
+    await layered.r.doctor({ json: true }, contradict);
+    const layeredReport = JSON.parse(layered.lines.join('\n')) as {
+      checks: { id: string; status: string; detail: string }[];
+    };
+    const refused = layeredReport.checks.find(
+      (c) => c.id === 'role:planner',
+    );
+    expect(refused?.status).toBe('fail');
+    expect(refused?.detail).toMatch(/filesystem.*read.*write/i);
+    // Control: the same workspace with no `[roles]` section judges the
+    // document alone — the planner passes, so no phantom layers leak in.
+    const plain = runners(workspaceWithRoles());
+    await plain.r.doctor({ json: true }, cliConfig({}, { trust: TRUSTED }));
+    const plainReport = JSON.parse(plain.lines.join('\n')) as {
+      checks: { id: string; status: string }[];
+    };
+    expect(
+      plainReport.checks.find((c) => c.id === 'role:planner')?.status,
+    ).toBe('pass');
+  });
+
   it('kubic orchestrate does not refuse a role a config layer narrowed below the deny', async () => {
     const workspace = workspaceWithRoles();
     git(workspace, ['init', '-q']);

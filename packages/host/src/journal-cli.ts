@@ -145,7 +145,9 @@ function hasJournalIndex(dir: string): boolean {
 // Issue #362: the session store's recorded cwd per session id. An
 // unlistable store (no sessions root yet, a torn transcript) is "nothing
 // recorded" — never a throw, never a guess.
-async function defaultSessionWorkspaces(
+// Exported for `kubic clean --journal` (issue #367): the same workspace
+// association decides which session journals a clean prunes.
+export async function defaultSessionWorkspaces(
   sessionsRoot: string,
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
@@ -175,7 +177,8 @@ async function defaultSessionWorkspaces(
 // Canonical form for the workspace comparison (symlinks resolved, e.g.
 // macOS /var → /private/var). A path that no longer exists keeps its
 // lexical form — it can then only match itself.
-function canonical(path: string): string {
+// Exported for `kubic clean --journal` (issue #367).
+export function canonical(path: string): string {
   try {
     return createNodeFileBridge('/').realPath?.(path) ?? path;
   } catch {
@@ -185,7 +188,9 @@ function canonical(path: string): string {
 
 // True when `root` is the recorded workspace or inside it: `kubic diff`
 // from a project's subdirectory still belongs to that project.
-function workspaceContains(recorded: string, root: string): boolean {
+// Exported for `kubic clean --journal` (issue #367): a session created in
+// a subdirectory associates with its repo the same way.
+export function workspaceContains(recorded: string, root: string): boolean {
   const r = canonical(recorded);
   const c = canonical(root);
   return c === r || c.startsWith(r.endsWith(sep) ? r : `${r}${sep}`);

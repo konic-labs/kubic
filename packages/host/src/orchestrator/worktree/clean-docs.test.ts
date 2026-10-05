@@ -51,6 +51,7 @@ const SHIPPED_FLAGS = [
   '--journal',
   '--max-age-ms',
   '--max-bytes',
+  '--all-sessions',
   '--json',
 ];
 
@@ -90,6 +91,22 @@ describe('clean is documented and dispatched (issue #92)', () => {
     // and the non-repo refusal.
     expect(body).toContain('exit 2');
     expect(body).toContain('nothing was removed');
+  });
+
+  // Issue #367: the clean section documents the session-journal prune —
+  // which stores are visited, the per-session report, and the opt-in for
+  // other workspaces.
+  it('documents the session-journal prune behaviour', () => {
+    const page = readFileSync(COMMANDS_PAGE, 'utf8');
+    const start = page.indexOf('## `kubic clean');
+    expect(start, 'missing the `kubic clean` section').toBeGreaterThan(-1);
+    const section = page.slice(start);
+    const body = section.slice(0, section.indexOf('\n## ', 1));
+    expect(body).toContain('for session <id>');
+    expect(body).toContain('sessions` array');
+    expect(body).toContain('session <id> journal is in use');
+    expect(body).toContain('other workspaces');
+    expect(body).toContain('would prune journal for session <id>');
   });
 
   // A source-text scan: under Stryker every literal is instrumented, so the

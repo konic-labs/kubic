@@ -213,6 +213,10 @@ export const registerOrchestratorCommands: CommandRegistrar = (
       'journal retention: keep at most n bytes',
       positiveInt,
     )
+    .option(
+      '--all-sessions',
+      'with --journal, prune session journals of every workspace, not just this one',
+    )
     .option('--json', 'print one JSON envelope on stdout')
     .addHelpText('after', CLEAN_EXAMPLES)
     .action(async ({ session, ...rest }) => {

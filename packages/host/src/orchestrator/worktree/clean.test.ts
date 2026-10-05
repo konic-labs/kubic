@@ -15,7 +15,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../../exec/src/env.js';
+import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../../exec/src/journal.js';
+import {
+  createSession,
+  openSessionStore,
+} from '../../../../worker/src/lane/session-store.js';
+import { BACKGROUND_CONTEXT } from '../../../../worker/src/pi-boundary.js';
 import {
   type CleanOptions,
   cleanDepsWithDefaults,
@@ -145,7 +151,7 @@ describe('kubic clean (issue #45, #92)', () => {
         remover: async (_e: unknown, path: string) => {
           removed.push(path);
         },
-        pruneJournal: () => {
+        pruneJournal: async () => {
           journalCalls += 1;
           return { entries: 0, bytes: 0, overBound: 0 };
         },
@@ -183,7 +189,7 @@ describe('kubic clean (issue #45, #92)', () => {
         env,
         out: (line: string) => lines.push(line),
         err: (line: string) => errs.push(line),
-        pruneJournal: (policy: unknown) => {
+        pruneJournal: async (policy: unknown) => {
           policies.push(policy);
           return { entries: 4, bytes: 1024, overBound: 0 };
         },
@@ -241,7 +247,10 @@ describe('kubic clean (issue #45, #92)', () => {
         env,
         out: (line: string) => lines.push(line),
         err: (line: string) => errs.push(line),
-        pruneJournal: (policy: { maxBytes?: number; maxAgeMs?: number }) => {
+        pruneJournal: async (policy: {
+          maxBytes?: number;
+          maxAgeMs?: number;
+        }) => {
           policies.push(policy);
           return { entries: 2, bytes: 64, overBound: 0 };
         },
@@ -283,7 +292,7 @@ describe('kubic clean (issue #45, #92)', () => {
         env,
         out: (line: string) => lines.push(line),
         err: (line: string) => errs.push(line),
-        pruneJournal: () => ({ entries: 3, bytes: 99, overBound: 0 }),
+        pruneJournal: async () => ({ entries: 3, bytes: 99, overBound: 0 }),
       },
     );
     expect(code).toBe(0);
@@ -304,7 +313,7 @@ describe('kubic clean (issue #45, #92)', () => {
         env,
         out: (line: string) => lines.push(line),
         err: (line: string) => errs.push(line),
-        pruneJournal: () => ({ entries: 4, bytes: 1024, overBound: 7 }),
+        pruneJournal: async () => ({ entries: 4, bytes: 1024, overBound: 7 }),
       },
     );
     expect(code).toBe(0);
@@ -743,7 +752,7 @@ describe('kubic clean never disposes a live worker (§51 crash recovery)', () =>
         remover: async (_e: unknown, path: string) => {
           removed.push(path);
         },
-        pruneJournal: () => ({ entries: 0, bytes: 0, overBound: 0 }),
+        pruneJournal: async () => ({ entries: 0, bytes: 0, overBound: 0 }),
         liveWorkers: () =>
           new Map([['agent-2', { pid: 4242, sessionId: 's-agent-2' }]]),
         workerCommand: async () => command,
@@ -805,7 +814,7 @@ describe('kubic clean --session is scoped to its own session (issue #144)', () =
           deleted.push(branch);
         },
         pruner: async () => undefined,
-        pruneJournal: () => ({ entries: 0, bytes: 0, overBound: 0 }),
+        pruneJournal: async () => ({ entries: 0, bytes: 0, overBound: 0 }),
         liveWorkers: () =>
           new Map([['worker-1', { pid: 4242, sessionId: liveSession }]]),
         workerCommand: async () => `node kubic.js run --session ${liveSession}`,
@@ -844,7 +853,7 @@ describe('kubic clean --session is scoped to its own session (issue #144)', () =
           remover: async () => undefined,
           branchDeleter: async () => undefined,
           pruner: async () => undefined,
-          pruneJournal: () => ({ entries: 0, bytes: 0, overBound: 0 }),
+          pruneJournal: async () => ({ entries: 0, bytes: 0, overBound: 0 }),
           liveWorkers: () => new Map(),
           retireSessionState: (session: string, repo: string) => {
             retired.push([session, repo]);
@@ -980,5 +989,303 @@ describe('kubic clean steps aside for a live journal writer (issue #337)', () =>
     expect(after.join('\n')).toMatch(/journal: pruned 1 entr\(ies\)/);
     expect(readFileSync(indexPath, 'utf8')).not.toBe(before);
     expect(readdirSync(join(journalDir, 'blobs'))).toHaveLength(0);
+  });
+});
+
+// `kubic clean --journal` prunes session journals (issue #367): the legacy
+// workspace store is one no run writes to, so the bounds must reach the
+// session journals under the sessions root whose recorded cwd is this
+// workspace (plus the legacy store), reported per session.
+// RED first: the default pruner opens only the dead store, so every
+// session assertion below fails until the session walk lands.
+describe('kubic clean --journal prunes session journals (issue #367)', () => {
+  async function makeSession(
+    sessionsRoot: string,
+    id: string,
+    cwd: string,
+  ): Promise<void> {
+    const store = openSessionStore(
+      sessionsRoot,
+      createNodeFileBridge(sessionsRoot),
+    );
+    const handle = await createSession(store, { id, cwd }, BACKGROUND_CONTEXT);
+    await handle.release(BACKGROUND_CONTEXT);
+  }
+
+  function appendJournal(
+    sessionsRoot: string,
+    id: string,
+    timestamp: number,
+    body: string,
+  ): void {
+    new FileJournalStore(join(sessionsRoot, id, 'journal')).append({
+      path: 'a.txt',
+      op: 'write',
+      before: null,
+      after: body,
+      bytesDelta: body.length,
+      sessionId: id,
+      agentId: 'root',
+      toolCallId: null,
+      timestamp,
+    });
+  }
+
+  function fakeRepo(repoRoot: string): FakeExecutionEnv {
+    return new FakeExecutionEnv(
+      {
+        'git rev-parse --show-toplevel': {
+          exitCode: 0,
+          stdout: `${repoRoot}\n`,
+          stderr: '',
+        },
+        'git worktree list --porcelain': {
+          exitCode: 0,
+          stdout: `worktree ${repoRoot}\nHEAD abc\nbranch refs/heads/main\n`,
+          stderr: '',
+        },
+        'git branch --list kubic/* --format=%(refname:short)': {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+        'git worktree prune': { exitCode: 0, stdout: '', stderr: '' },
+      },
+      { strict: true },
+    );
+  }
+
+  interface SessionRow {
+    sessionId: string;
+    entries: number;
+    bytes: number;
+  }
+
+  function sessionRows(lines: string[]): SessionRow[] {
+    const doc = JSON.parse(lines.join('')) as {
+      journal: { sessions?: SessionRow[] };
+    };
+    return doc.journal.sessions ?? [];
+  }
+
+  it('prunes this workspace session journal with --max-bytes 1', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'clean367-repo-'));
+    scratch.push(repoRoot);
+    const sessionsRoot = mkdtempSync(join(tmpdir(), 'clean367-sess-'));
+    scratch.push(sessionsRoot);
+    await makeSession(sessionsRoot, 'ws-one', repoRoot);
+    appendJournal(sessionsRoot, 'ws-one', 100, `${'x'.repeat(100)}\n`);
+    appendJournal(sessionsRoot, 'ws-one', 200, `${'y'.repeat(100)}\n`);
+    appendJournal(sessionsRoot, 'ws-one', 300, `${'z'.repeat(100)}\n`);
+
+    const lines: string[] = [];
+    const code = await runCleanCommand(
+      { journal: true, maxBytes: 1, json: true },
+      cleanDepsWithDefaults({
+        env: fakeRepo(repoRoot),
+        out: (l) => lines.push(l),
+        err: () => undefined,
+        sessionsRoot,
+      }),
+    );
+    expect(code).toBe(0);
+    const rows = sessionRows(lines);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.sessionId).toBe('ws-one');
+    expect(rows[0]?.entries ?? 0).toBeGreaterThan(0);
+    expect(rows[0]?.bytes ?? 0).toBeGreaterThan(0);
+  });
+
+  it('prunes two aged sessions and reports each', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'clean367-repo-'));
+    scratch.push(repoRoot);
+    const sessionsRoot = mkdtempSync(join(tmpdir(), 'clean367-sess-'));
+    scratch.push(sessionsRoot);
+    await makeSession(sessionsRoot, 'ws-one', repoRoot);
+    await makeSession(sessionsRoot, 'ws-two', repoRoot);
+    appendJournal(sessionsRoot, 'ws-one', 100, 'old one\n');
+    appendJournal(sessionsRoot, 'ws-two', 100, 'old two\n');
+
+    const lines: string[] = [];
+    const text: string[] = [];
+    const code = await runCleanCommand(
+      { journal: true, maxAgeMs: 1 },
+      cleanDepsWithDefaults({
+        env: fakeRepo(repoRoot),
+        out: (l) => text.push(l),
+        err: () => undefined,
+        sessionsRoot,
+      }),
+    );
+    expect(code).toBe(0);
+    const joined = text.join('\n');
+    expect(joined).toContain('for session ws-one');
+    expect(joined).toContain('for session ws-two');
+    const code2 = await runCleanCommand(
+      { journal: true, maxAgeMs: 1, json: true },
+      cleanDepsWithDefaults({
+        env: fakeRepo(repoRoot),
+        out: (l) => lines.push(l),
+        err: () => undefined,
+        sessionsRoot,
+      }),
+    );
+    expect(code2).toBe(0);
+    const ids = sessionRows(lines)
+      .map((row) => row.sessionId)
+      .sort();
+    expect(ids).toEqual(['ws-one', 'ws-two']);
+  });
+
+  it('leaves other workspaces alone unless --all-sessions', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'clean367-repo-'));
+    scratch.push(repoRoot);
+    const otherRoot = mkdtempSync(join(tmpdir(), 'clean367-other-'));
+    scratch.push(otherRoot);
+    const sessionsRoot = mkdtempSync(join(tmpdir(), 'clean367-sess-'));
+    scratch.push(sessionsRoot);
+    await makeSession(sessionsRoot, 'ws-one', repoRoot);
+    await makeSession(sessionsRoot, 'other-one', otherRoot);
+    appendJournal(sessionsRoot, 'ws-one', 100, 'mine\n');
+    appendJournal(sessionsRoot, 'other-one', 100, 'theirs\n');
+    const indexPath = join(sessionsRoot, 'other-one', 'journal', 'index.jsonl');
+    const before = readFileSync(indexPath, 'utf8');
+
+    const lines: string[] = [];
+    const code = await runCleanCommand(
+      { journal: true, maxAgeMs: 1, json: true },
+      cleanDepsWithDefaults({
+        env: fakeRepo(repoRoot),
+        out: (l) => lines.push(l),
+        err: () => undefined,
+        sessionsRoot,
+      }),
+    );
+    expect(code).toBe(0);
+    expect(sessionRows(lines).map((row) => row.sessionId)).toEqual(['ws-one']);
+    expect(readFileSync(indexPath, 'utf8')).toBe(before);
+
+    const allLines: string[] = [];
+    const code2 = await runCleanCommand(
+      { journal: true, maxAgeMs: 1, json: true, allSessions: true },
+      cleanDepsWithDefaults({
+        env: fakeRepo(repoRoot),
+        out: (l) => allLines.push(l),
+        err: () => undefined,
+        sessionsRoot,
+      }),
+    );
+    expect(code2).toBe(0);
+    expect(
+      sessionRows(allLines)
+        .map((row) => row.sessionId)
+        .sort(),
+    ).toEqual(['other-one', 'ws-one']);
+  });
+
+  it('--session limits pruning to that journal', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'clean367-repo-'));
+    scratch.push(repoRoot);
+    const sessionsRoot = mkdtempSync(join(tmpdir(), 'clean367-sess-'));
+    scratch.push(sessionsRoot);
+    await makeSession(sessionsRoot, 'ws-one', repoRoot);
+    await makeSession(sessionsRoot, 'ws-two', repoRoot);
+    appendJournal(sessionsRoot, 'ws-one', 100, 'one\n');
+    appendJournal(sessionsRoot, 'ws-two', 100, 'two\n');
+    const otherIndex = join(sessionsRoot, 'ws-two', 'journal', 'index.jsonl');
+    const before = readFileSync(otherIndex, 'utf8');
+
+    const lines: string[] = [];
+    const code = await runCleanCommand(
+      { journal: true, maxAgeMs: 1, json: true, sessionId: 'ws-one' },
+      {
+        ...cleanDepsWithDefaults({
+          env: fakeRepo(repoRoot),
+          out: (l) => lines.push(l),
+          err: () => undefined,
+          sessionsRoot,
+        }),
+        sessionAgents: () => ['worker-1'],
+      },
+    );
+    expect(code).toBe(0);
+    expect(sessionRows(lines).map((row) => row.sessionId)).toEqual(['ws-one']);
+    expect(readFileSync(otherIndex, 'utf8')).toBe(before);
+  });
+
+  it('refuses a session id outside the pattern before pruning anything', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'clean367-repo-'));
+    scratch.push(repoRoot);
+    const sessionsRoot = mkdtempSync(join(tmpdir(), 'clean367-sess-'));
+    scratch.push(sessionsRoot);
+    await makeSession(sessionsRoot, 'ws-one', repoRoot);
+    appendJournal(sessionsRoot, 'ws-one', 100, 'one\n');
+    const indexPath = join(sessionsRoot, 'ws-one', 'journal', 'index.jsonl');
+    const before = readFileSync(indexPath, 'utf8');
+
+    const code = await runCleanCommand(
+      { journal: true, maxAgeMs: 1, sessionId: '../evil' },
+      cleanDepsWithDefaults({
+        env: fakeRepo(repoRoot),
+        out: () => undefined,
+        err: () => undefined,
+        sessionsRoot,
+      }),
+    );
+    expect(code).toBe(2);
+    expect(readFileSync(indexPath, 'utf8')).toBe(before);
+  });
+
+  it('skips a live-locked session journal and says so', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'clean367-repo-'));
+    scratch.push(repoRoot);
+    const sessionsRoot = mkdtempSync(join(tmpdir(), 'clean367-sess-'));
+    scratch.push(sessionsRoot);
+    await makeSession(sessionsRoot, 'ws-one', repoRoot);
+    appendJournal(sessionsRoot, 'ws-one', 100, 'one\n');
+    const indexPath = join(sessionsRoot, 'ws-one', 'journal', 'index.jsonl');
+    const before = readFileSync(indexPath, 'utf8');
+    writeFileSync(`${indexPath}.lock`, String(process.pid));
+
+    const text: string[] = [];
+    const code = await runCleanCommand(
+      { journal: true, maxAgeMs: 1 },
+      cleanDepsWithDefaults({
+        env: fakeRepo(repoRoot),
+        out: (l) => text.push(l),
+        err: () => undefined,
+        sessionsRoot,
+      }),
+    );
+    expect(code).toBe(0);
+    expect(text.join('\n')).toContain(
+      `journal: prune skipped — session ws-one journal is in use (pid ${process.pid})`,
+    );
+    expect(readFileSync(indexPath, 'utf8')).toBe(before);
+  });
+
+  it('dry-run names prunable sessions and changes nothing', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'clean367-repo-'));
+    scratch.push(repoRoot);
+    const sessionsRoot = mkdtempSync(join(tmpdir(), 'clean367-sess-'));
+    scratch.push(sessionsRoot);
+    await makeSession(sessionsRoot, 'ws-one', repoRoot);
+    appendJournal(sessionsRoot, 'ws-one', 100, 'one\n');
+    const indexPath = join(sessionsRoot, 'ws-one', 'journal', 'index.jsonl');
+    const before = readFileSync(indexPath, 'utf8');
+
+    const text: string[] = [];
+    const code = await runCleanCommand(
+      { journal: true, maxAgeMs: 1, dryRun: true },
+      cleanDepsWithDefaults({
+        env: fakeRepo(repoRoot),
+        out: (l) => text.push(l),
+        err: () => undefined,
+        sessionsRoot,
+      }),
+    );
+    expect(code).toBe(0);
+    expect(text.join('\n')).toContain('would prune journal for session ws-one');
+    expect(readFileSync(indexPath, 'utf8')).toBe(before);
   });
 });

@@ -1216,3 +1216,108 @@ describe('journal CLI default session workspaces over the durable store (issue #
     expect(lines.join('\n')).toContain('durable.txt');
   });
 });
+
+describe('journal CLI HEAD moves (issue #378)', () => {
+  const MOVE_A = { head: 'a'.repeat(40), branch: 'main', stash: 0 };
+  const MOVE_B = { head: 'b'.repeat(40), branch: 'feature', stash: 0 };
+
+  function movedSetup(): {
+    journalDir: string;
+    root: string;
+    lines: string[];
+  } {
+    const journalDir = mkTmp('j-');
+    const root = mkTmp('ws-');
+    writeFileSync(join(root, 'a.txt'), 'v2\n');
+    const store = new FileJournalStore(journalDir);
+    store.append({
+      path: 'a.txt',
+      op: 'write',
+      before: 'v1\n',
+      after: 'v2\n',
+      bytesDelta: 0,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      timestamp: 1700000000000,
+    });
+    store.append({
+      path: '',
+      op: 'marker',
+      before: null,
+      after: null,
+      bytesDelta: 0,
+      headFrom: MOVE_A,
+      headTo: MOVE_B,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 1700000001000,
+      unattributed: true,
+    });
+    return { journalDir, root, lines: [] as string[] };
+  }
+
+  it('undo refuses without --force and names the HEAD move', async () => {
+    const { journalDir, root, lines } = movedSetup();
+    const deps = {
+      journalDir,
+      root,
+      out: (l: string) => lines.push(l),
+    };
+    expect(await runJournalCommand({ command: 'undo' }, deps)).toBe(1);
+    const text = lines.join('\n');
+    expect(text).toContain('head-moved (skipped):');
+    expect(text).toContain('a.txt');
+    expect(text).toContain('feature@');
+    // Nothing was written for the step.
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v2\n');
+  });
+
+  it('undo proceeds across the marker with --force', async () => {
+    const { journalDir, root, lines } = movedSetup();
+    const deps = {
+      journalDir,
+      root,
+      out: (l: string) => lines.push(l),
+    };
+    expect(
+      await runJournalCommand({ command: 'undo', force: true }, deps),
+    ).toBe(0);
+    expect(lines.join('\n')).toContain('restored a.txt');
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v1\n');
+  });
+
+  it('status prints the warning; --json carries headMoves', async () => {
+    const { journalDir, root, lines } = movedSetup();
+    const deps = {
+      journalDir,
+      root,
+      out: (l: string) => lines.push(l),
+    };
+    expect(await runJournalCommand({ command: 'status' }, deps)).toBe(0);
+    expect(lines.join('\n')).toContain('head-moved:');
+    const json: string[] = [];
+    expect(
+      await runJournalCommand(
+        { command: 'status', json: true },
+        { ...deps, out: (l: string) => json.push(l) },
+      ),
+    ).toBe(0);
+    const parsed = JSON.parse(json.join('\n')) as {
+      headMoves: Array<{ from: unknown; to: unknown }>;
+    };
+    expect(parsed.headMoves).toEqual([{ from: MOVE_A, to: MOVE_B }]);
+  });
+
+  it('log renders the marker as a head-moved line', async () => {
+    const { journalDir, root, lines } = movedSetup();
+    expect(
+      await runJournalCommand(
+        { command: 'log' },
+        { journalDir, root, out: (l: string) => lines.push(l) },
+      ),
+    ).toBe(0);
+    expect(lines.join('\n')).toContain('head-moved');
+  });
+});

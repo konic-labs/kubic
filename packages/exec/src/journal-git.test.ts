@@ -11,11 +11,14 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   captureGitBaseline,
+  captureHeadState,
   type GitCommand,
   type GitCommandResult,
   loadGitBaseline,
+  loadHeadState,
   readGitBlob,
   saveGitBaseline,
+  saveHeadState,
 } from './journal-git.js';
 
 const roots: string[] = [];
@@ -201,5 +204,74 @@ describe('git baseline persistence (issue #371)', () => {
   it('never writes through an unsafe run id', () => {
     const dir = tmpRoot();
     expect(() => saveGitBaseline(dir, '../evil', { 'a.ts': OID_A })).toThrow();
+  });
+});
+
+describe('captureHeadState (issue #378)', () => {
+  function fakeHead(outputs: {
+    revParse: string;
+    symbolicRef?: { status: number; stdout: string };
+    stash?: string;
+  }): { run: GitCommand; calls: string[][] } {
+    const calls: string[][] = [];
+    const run: GitCommand = (args: string[]): GitCommandResult => {
+      calls.push(args);
+      if (args[0] === 'rev-parse')
+        return { status: 0, stdout: Buffer.from(outputs.revParse, 'utf8') };
+      if (args[0] === 'symbolic-ref') {
+        const s = outputs.symbolicRef ?? { status: 0, stdout: 'main\n' };
+        return { status: s.status, stdout: Buffer.from(s.stdout, 'utf8') };
+      }
+      if (args[0] === 'stash')
+        return {
+          status: 0,
+          stdout: Buffer.from(outputs.stash ?? '', 'utf8'),
+        };
+      return { status: 1, stdout: Buffer.alloc(0) };
+    };
+    return { run, calls };
+  }
+
+  it('records HEAD sha, branch and stash count', () => {
+    const sha = 'd'.repeat(40);
+    const { run } = fakeHead({
+      revParse: `${sha}\n`,
+      stash: `${'e'.repeat(40)}\n${'f'.repeat(40)}\n`,
+    });
+    expect(captureHeadState('/repo', run)).toEqual({
+      head: sha,
+      branch: 'main',
+      stash: 2,
+    });
+  });
+
+  it('reads detached HEAD as (detached)', () => {
+    const sha = 'd'.repeat(40);
+    const { run } = fakeHead({
+      revParse: `${sha}\n`,
+      symbolicRef: { status: 1, stdout: '' },
+    });
+    expect(captureHeadState('/repo', run)?.branch).toBe('(detached)');
+  });
+
+  it('returns null when HEAD does not resolve (unborn repo, fail-open)', () => {
+    const failing: GitCommand = () => ({
+      status: 128,
+      stdout: Buffer.alloc(0),
+    });
+    expect(captureHeadState('/repo', failing)).toBe(null);
+  });
+
+  it('returns null outside a git repo with the production runner', () => {
+    const root = tmpRoot();
+    expect(captureHeadState(root)).toBe(null);
+  });
+
+  it('round-trips the head sidecar and loads null when absent', () => {
+    const dir = tmpRoot();
+    expect(loadHeadState(dir, 'run-1')).toBe(null);
+    const state = { head: 'd'.repeat(40), branch: 'main', stash: 0 };
+    saveHeadState(dir, 'run-1', state);
+    expect(loadHeadState(dir, 'run-1')).toEqual(state);
   });
 });

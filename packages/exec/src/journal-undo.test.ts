@@ -155,6 +155,8 @@ describe('journal undo core (issue #18, slice B)', () => {
         nonReversible: [],
         stale: 0,
         stalePaths: [],
+        // Issue #378: no marker in this store — nothing blocks the step.
+        headMoves: [],
       },
       root,
       {},
@@ -810,5 +812,92 @@ describe('undo refuses to record a lossy pre-undo copy (issue #352)', () => {
     expect(redo.skippedDetails[0]?.reason).toMatch(/no before-content/);
     expect(readFileSync(join(root, 'bin.dat'), 'utf8')).toBe('v1\n');
     expect(readFileSync(join(root, 'bin.dat'), 'utf8')).not.toContain('\ufffd');
+  });
+});
+
+describe('HEAD-move barrier (issue #378)', () => {
+  const MOVE_A = { head: 'a'.repeat(40), branch: 'main', stash: 0 };
+  const MOVE_B = { head: 'b'.repeat(40), branch: 'feature', stash: 0 };
+
+  function roots2(): { root: string; store: FileJournalStore } {
+    const root = tmpRoot('ws-head-undo-');
+    writeFileSync(join(root, 'a.txt'), 'v2\n');
+    const store = new FileJournalStore(tmpRoot('j-head-undo-'));
+    // An entry older than the move: restoring it crosses the marker.
+    store.append({
+      path: 'a.txt',
+      op: 'write',
+      before: 'v1\n',
+      after: 'v2\n',
+      bytesDelta: 0,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 't1',
+      timestamp: 1,
+    });
+    store.append({
+      path: '',
+      op: 'marker',
+      before: null,
+      after: null,
+      bytesDelta: 0,
+      headFrom: MOVE_A,
+      headTo: MOVE_B,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 2,
+      unattributed: true,
+    });
+    return { root, store };
+  }
+
+  it('refuses to cross the marker without --force and names the move', () => {
+    const { root, store } = roots2();
+    const plan = planUndo(store, {}, root);
+    expect(plan.steps.map((s) => s.path)).toEqual(['a.txt']);
+    expect(plan.headMoves).toEqual([{ from: MOVE_A, to: MOVE_B }]);
+    const result = applyUndo(store, plan, root, {});
+    expect(result.restored).toEqual([]);
+    expect(result.skipped).toEqual(['a.txt']);
+    expect(result.skippedDetails[0]?.reason).toMatch(/^head-moved: /);
+    expect(result.skippedDetails[0]?.reason).toContain('feature@');
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v2\n');
+  });
+
+  it('proceeds across the marker with --force', () => {
+    const { root, store } = roots2();
+    const result = applyUndo(store, planUndo(store, {}, root), root, {
+      force: true,
+    });
+    expect(result.restored).toEqual(['a.txt']);
+    expect(result.skipped).toEqual([]);
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v1\n');
+  });
+
+  it('lets entries newer than the marker through without --force', () => {
+    const { root, store } = roots2();
+    writeFileSync(join(root, 'b.txt'), 'post-move\n');
+    store.append({
+      path: 'b.txt',
+      op: 'create',
+      before: null,
+      after: 'post-move\n',
+      bytesDelta: 10,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 't2',
+      timestamp: 3,
+    });
+    const plan = planUndo(store, { path: 'b.txt' }, root);
+    expect(plan.headMoves).toEqual([]);
+    const result = applyUndo(store, plan, root, {});
+    expect(result.restored).toEqual(['b.txt']);
+  });
+
+  it('--step skips the marker and lands on the newest file entry', () => {
+    const { store } = roots2();
+    const plan = planUndo(store, { step: true });
+    expect(plan.steps.map((s) => s.path)).toEqual(['a.txt']);
   });
 });

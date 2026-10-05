@@ -10,9 +10,17 @@ import {
   type JournalOp,
 } from './journal.js';
 
+/**
+ * Issue #378: the file ops — every `JournalOp` except the sweep's HEAD-move
+ * `marker`. `diffEntries` skips markers, so a `FileChange` can never carry
+ * one; the narrower type keeps the TUI's file-op views (`DiffOp`) assignable
+ * without teaching them about journal bookkeeping.
+ */
+export type FileOp = Exclude<JournalOp, 'marker'>;
+
 export interface FileChange {
   path: string;
-  op: JournalOp;
+  op: FileOp;
   agentId: string;
   toolCallId: string | null;
   sessionId: string;
@@ -52,6 +60,9 @@ export function diffEntries(
 ): FileChange[] {
   const byPath = new Map<string, JournalEntry[]>();
   for (const e of store.entries()) {
+    // Issue #378: markers are journal bookkeeping, not file changes —
+    // never a diff hunk (status/log surface them instead).
+    if (e.op === 'marker') continue;
     if (filter.path !== undefined && e.path !== filter.path) continue;
     if (filter.agent !== undefined && e.agentId !== filter.agent) continue;
     const list = byPath.get(e.path) ?? [];
@@ -78,6 +89,10 @@ export function diffEntries(
     // entry records the walk hash but deliberately no content.
     const afterLost =
       last.afterHash !== null && after === null && last.afterOmitted !== true;
+    // Unreachable (markers never reach the map), but the guard is what
+    // narrows `op` to `FileOp` — the grouping above erases the filter's
+    // narrowing, and a cast would hide a future leak.
+    if (last.op === 'marker') continue;
     out.push({
       path,
       op: last.op,

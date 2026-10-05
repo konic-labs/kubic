@@ -23,13 +23,31 @@ import {
 } from './file-bridge.js';
 import { type IgnoreRule, isIgnored, parseIgnoreFile } from './ignore.js';
 import {
+  captureHeadState,
   type GitBaseline,
   type GitCommand,
+  type HeadState,
   readGitBlob,
+  sameHeadState,
 } from './journal-git.js';
+
+// Issue #378: undo/status display the marker's from→to through this hub.
+export type { HeadState } from './journal-git.js';
+
 import { tightenStateDir } from './lock-file.js';
 
-export type JournalOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
+export type JournalOp =
+  | 'write'
+  | 'edit'
+  | 'create'
+  | 'delete'
+  | 'rename'
+  // Issue #378: not a file change — a HEAD-move marker the sweep appends
+  // when the run moved git HEAD (`checkout`, `reset`, `stash`). Carries
+  // `headFrom`/`headTo`, never content; every file-content consumer
+  // (diff, restore, staleness) skips it, while undo treats it as a barrier
+  // (`--force` to cross) and status/log surface it.
+  | 'marker';
 
 // Above this many bytes of new content, the after-side is stored as a
 // line delta instead of a full blob. The before-blob is always kept whole:
@@ -127,6 +145,12 @@ export interface JournalEntryInput {
    * every entry written before the field existed.
    */
   turn?: number;
+  /**
+   * Issue #378: set only on `op: 'marker'` entries — the HEAD state before
+   * and after the move the sweep observed. Absent on every file entry.
+   */
+  headFrom?: HeadState;
+  headTo?: HeadState;
 }
 
 export interface JournalIndexRead {
@@ -184,6 +208,9 @@ export interface JournalEntry {
   beforeOmitted?: boolean;
   /** The observed size in bytes of an afterOmitted entry's file. */
   afterBytes?: number;
+  /** Issue #378: see JournalEntryInput.headFrom/headTo. */
+  headFrom?: HeadState;
+  headTo?: HeadState;
 }
 
 export interface RetentionPolicy {
@@ -616,6 +643,9 @@ export class FileJournalStore {
       timestamp: input.timestamp,
       ...(input.unattributed === true ? { unattributed: true } : {}),
       ...(input.turn === undefined ? {} : { turn: input.turn }),
+      // Issue #378: the marker's from→to — data only, no blobs.
+      ...(input.headFrom === undefined ? {} : { headFrom: input.headFrom }),
+      ...(input.headTo === undefined ? {} : { headTo: input.headTo }),
       // Issue #111: record the base the delta was actually encoded against
       // (append computed it as `input.before ?? ''`), so readAfter never has
       // to guess. Exactly the reconcile/create shape: no before-content.
@@ -1372,9 +1402,17 @@ export interface BaselineOptions {
   gitBaseline?: GitBaseline | null;
   /**
    * Issue #371: seam for the object-store reads (tests script it;
-   * production spawns `git cat-file`).
+   * production spawns `git cat-file`). Issue #378 reuses it for the
+   * sweep's HEAD-state comparison.
    */
   gitRun?: GitCommand;
+  /**
+   * Issue #378: HEAD state at boot (`captureHeadState`). When present, the
+   * sweep compares it against the current state and appends one `marker`
+   * entry per observed move. Absent or null outside git repositories
+   * (fail-open) — no marker, no error.
+   */
+  headBaseline?: HeadState | null;
 }
 
 // §35 out-of-scope paths (issue #115): an entry excludes the path itself and
@@ -1956,6 +1994,9 @@ export function reconcile(
   // `null` = expected absent.
   const sinceStart = new Map<string, string | null>();
   for (const e of entriesSinceRunStart(store.entries(), ctx.runStart)) {
+    // Issue #378: markers are not file state — they never define a path's
+    // expected content (their empty path must not become a lookup key).
+    if (e.op === 'marker') continue;
     // Tools journal `args.path` verbatim (absolute or './'-prefixed), while
     // the walk keys are root-relative: normalize before keying, and drop a
     // path outside the root — it is never a sweep candidate.
@@ -2113,6 +2154,42 @@ export function reconcile(
       beforeHash: expected,
       after: null,
     });
+  }
+  // Issue #378: the HEAD-move marker. Compared after the file loops so the
+  // marker is the sweep's newest entry — `undo --step` (which never targets
+  // markers) still lands on the latest file entry. One marker per observed
+  // move: a repeat sweep of an unchanged HEAD appends nothing.
+  const headBaseline = options.headBaseline;
+  if (headBaseline !== undefined && headBaseline !== null) {
+    const currentHead = captureHeadState(root, options.gitRun);
+    if (currentHead !== null && !sameHeadState(headBaseline, currentHead)) {
+      const known = entriesSinceRunStart(store.entries(), ctx.runStart).some(
+        (e) =>
+          e.op === 'marker' &&
+          e.headFrom !== undefined &&
+          e.headTo !== undefined &&
+          sameHeadState(e.headFrom, headBaseline) &&
+          sameHeadState(e.headTo, currentHead),
+      );
+      if (!known) {
+        store.append({
+          path: '',
+          op: 'marker',
+          before: null,
+          after: null,
+          bytesDelta: 0,
+          headFrom: headBaseline,
+          headTo: currentHead,
+          sessionId: ctx.sessionId,
+          agentId: ctx.agentId,
+          toolCallId: null,
+          timestamp: ctx.timestamp,
+          unattributed: true,
+          ...(ctx.turn === undefined ? {} : { turn: ctx.turn }),
+        });
+        added++;
+      }
+    }
   }
   return added;
 }

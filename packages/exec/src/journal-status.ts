@@ -10,10 +10,43 @@ import {
   createNodeFileBridge,
   type FileBridge,
 } from './file-bridge.js';
-import { type FileJournalStore, isUndoableCreate } from './journal.js';
+import {
+  type FileJournalStore,
+  type HeadState,
+  isUndoableCreate,
+} from './journal.js';
+
+/** Issue #378: one side of a head-moved marker, human-readable. */
+export function formatHeadState(state: HeadState): string {
+  const stash = state.stash > 0 ? ` (stash ${state.stash})` : '';
+  return `${state.branch}@${state.head.slice(0, 12)}${stash}`;
+}
+
+/** Issue #378: `from -> to` for a marker, a status warning, an undo refusal. */
+export function formatHeadMove(from: HeadState, to: HeadState): string {
+  return `${formatHeadState(from)} -> ${formatHeadState(to)}`;
+}
 
 export function renderLog(store: FileJournalStore): string[] {
   return store.entries().map((e) => {
+    // Issue #378: markers are not file rows — one greppable line naming
+    // the move, in the same column shape as every other line.
+    if (
+      e.op === 'marker' &&
+      e.headFrom !== undefined &&
+      e.headTo !== undefined
+    ) {
+      return [
+        new Date(e.timestamp).toISOString(),
+        e.agentId,
+        e.toolCallId ?? 'none',
+        e.op,
+        '(HEAD)',
+        '+0B',
+        'reconciled',
+        `head-moved ${formatHeadMove(e.headFrom, e.headTo)}`,
+      ].join(' ');
+    }
     const parts = [
       new Date(e.timestamp).toISOString(),
       e.agentId,
@@ -57,6 +90,9 @@ export interface JournalStatus {
   // (that counts missing content); a dropped line has no entry at all, so
   // nothing else in this object would show it.
   corruptLines: number;
+  // Issue #378: every HEAD move the sweeps observed, oldest first. `undo`
+  // refuses to restore entries from before a move without `--force`.
+  headMoves: { from: HeadState; to: HeadState }[];
   repo: RepoState | null;
 }
 
@@ -141,7 +177,20 @@ export function journalStatus(
   let reversible = 0;
   let unattributed = 0;
   let corrupt = 0;
+  const headMoves: { from: HeadState; to: HeadState }[] = [];
   for (const e of entries) {
+    // Issue #378: the marker counts as journaled work (unattributed and,
+    // with nothing to restore, non-reversible) and its move is collected
+    // for the warning — never a corruption count.
+    if (
+      e.op === 'marker' &&
+      e.headFrom !== undefined &&
+      e.headTo !== undefined
+    ) {
+      unattributed++;
+      headMoves.push({ from: e.headFrom, to: e.headTo });
+      continue;
+    }
     const before = store.readBefore(e);
     // An agent create reverts by removal: its pre-state is "absent".
     if (before !== null || isUndoableCreate(e)) reversible++;
@@ -168,6 +217,7 @@ export function journalStatus(
     unattributed,
     corrupt,
     corruptLines,
+    headMoves,
     repo: readRepo(root),
   };
 }

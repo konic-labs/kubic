@@ -474,3 +474,92 @@ describe('git pre-images end to end (issue #371)', () => {
     expect(plan.nonReversible).toEqual(['tracked.ts']);
   });
 });
+
+describe('HEAD-move markers end to end (issue #378)', () => {
+  function twoCommitRepo(): GitSandbox {
+    const repo = createGitSandbox({
+      prefix: 'journal-head-',
+      injectProcessEnv: true,
+    });
+    writeFileSync(join(repo.path, 'tracked.ts'), 'v1\n');
+    repo.git(['add', 'tracked.ts']);
+    repo.git(['commit', '--no-verify', '-m', 'one']);
+    writeFileSync(join(repo.path, 'tracked.ts'), 'v2\n');
+    repo.git(['add', 'tracked.ts']);
+    repo.git(['commit', '--no-verify', '-m', 'two']);
+    return repo;
+  }
+
+  function journalStore(): FileJournalStore {
+    return new FileJournalStore(tmpRoot('j-head-'));
+  }
+
+  it('a bash checkout -b plus reset --hard produces one head-moved marker', () => {
+    const repo = twoCommitRepo();
+    const store = journalStore();
+    const run = beginReconciliation({
+      store,
+      root: repo.path,
+      runId: 'sess-head',
+      sessionId: 'sess-head',
+      agentId: 'root',
+      now: () => NOW,
+    });
+    expect(run.headBaseline?.branch).toBe('main');
+    repo.git(['checkout', '-q', '-b', 'x']);
+    repo.git(['reset', '--hard', 'HEAD~1']);
+    const added = run.sweep();
+    const entries = store.entries();
+    const markers = entries.filter((e) => e.op === 'marker');
+    // Exactly one marker — the mass file change from the reset is ordinary
+    // unattributed entries beside it, never a second marker.
+    expect(markers).toHaveLength(1);
+    expect(added).toBe(entries.length);
+    const marker = markers[0];
+    expect(marker?.unattributed).toBe(true);
+    expect(marker?.headFrom?.branch).toBe('main');
+    expect(marker?.headTo?.branch).toBe('x');
+    expect(marker?.headFrom?.head).not.toBe(marker?.headTo?.head);
+    // The reset's file fallout is still journaled file by file.
+    expect(entries.some((e) => e.path === 'tracked.ts')).toBe(true);
+  });
+
+  it('a stash push during the run moves the marker too', () => {
+    const repo = twoCommitRepo();
+    const store = journalStore();
+    const run = beginReconciliation({
+      store,
+      root: repo.path,
+      runId: 'sess-stash',
+      sessionId: 'sess-stash',
+      agentId: 'root',
+      now: () => NOW,
+    });
+    expect(run.headBaseline?.stash).toBe(0);
+    writeFileSync(join(repo.path, 'tracked.ts'), 'uncommitted\n');
+    repo.git(['stash', 'push', '-m', 'w1']);
+    run.sweep();
+    const markers = store.entries().filter((e) => e.op === 'marker');
+    expect(markers).toHaveLength(1);
+    expect(markers[0]?.headFrom?.stash).toBe(0);
+    expect(markers[0]?.headTo?.stash).toBe(1);
+  });
+
+  it('no marker and no error outside a repo', () => {
+    const root = workspace();
+    const store = journalStore();
+    const run = beginReconciliation({
+      store,
+      root,
+      runId: 'sess-norepo',
+      sessionId: 'sess-norepo',
+      agentId: 'root',
+      now: () => NOW,
+    });
+    expect(run.headBaseline).toBe(null);
+    expect(run.gitBaseline).toBe(null);
+    writeFileSync(join(root, 'keep.txt'), 'v2-external\n');
+    expect(run.sweep()).toBe(1);
+    expect(store.entries().some((e) => e.op === 'marker')).toBe(false);
+  });
+});

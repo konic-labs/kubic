@@ -319,3 +319,32 @@ describe('corrupt journal content (issue #111)', () => {
     expect(changes[0]?.corrupt).toBe(true);
   });
 });
+
+describe('HEAD-move markers (issue #378)', () => {
+  it('never surfaces a marker as a diff hunk', () => {
+    const store = seed();
+    store.append({
+      path: '',
+      op: 'marker',
+      before: null,
+      after: null,
+      bytesDelta: 0,
+      headFrom: { head: 'a'.repeat(40), branch: 'main', stash: 0 },
+      headTo: { head: 'b'.repeat(40), branch: 'x', stash: 0 },
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 1700000002000,
+      unattributed: true,
+    });
+    const changes = diffEntries(store, {});
+    // Markers carry the empty path and `op: 'marker'` (a `FileOp` can never
+    // hold it) — either sighting would be a leaked hunk.
+    expect(changes.some((c) => c.path === '')).toBe(false);
+    expect(changes.map((c) => c.path).sort()).toEqual([
+      'a.txt',
+      'b.txt',
+      'c.txt',
+    ]);
+  });
+});

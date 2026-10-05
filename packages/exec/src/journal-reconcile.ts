@@ -37,8 +37,11 @@ import {
 } from './journal.js';
 import {
   captureGitBaseline,
+  captureHeadState,
   type GitBaseline,
+  type HeadState,
   saveGitBaseline,
+  saveHeadState,
 } from './journal-git.js';
 
 export interface RunReconciliationOptions {
@@ -76,6 +79,13 @@ export interface RunReconciliation {
    * are the workspace as it is now, never a stale index.
    */
   readonly gitBaseline: GitBaseline | null;
+  /**
+   * Issue #378: HEAD state at boot (null outside git repos or when HEAD
+   * does not resolve — the sweep then emits no marker). Re-captured with
+   * every rebaseline, so a new turn absorbs an operator's checkout instead
+   * of attributing it to the agent.
+   */
+  readonly headBaseline: HeadState | null;
   /** Absolute path of the persisted baseline (beside the journal index). */
   baselinePath: string;
   /** End-of-run sweep; returns the number of entries appended. */
@@ -123,18 +133,26 @@ export function beginReconciliation(
   // sweep could restore.
   let gitBaseline = captureGitBaseline(options.root, baseline);
   if (gitBaseline !== null) saveGitBaseline(dir, options.runId, gitBaseline);
+  // Issue #378: HEAD at boot — the sweep's comparison point for the
+  // head-moved marker. Fail-open like the OID capture.
+  let headBaseline = captureHeadState(options.root);
+  if (headBaseline !== null) saveHeadState(dir, options.runId, headBaseline);
   let turn: number | undefined;
   const now = options.now ?? Date.now;
-  const sweepOptions = (): BaselineOptions =>
-    gitBaseline === null
-      ? baselineOptions
-      : { ...baselineOptions, gitBaseline };
+  const sweepOptions = (): BaselineOptions => ({
+    ...baselineOptions,
+    ...(gitBaseline === null ? {} : { gitBaseline }),
+    ...(headBaseline === null ? {} : { headBaseline }),
+  });
   return {
     get baseline() {
       return baseline;
     },
     get gitBaseline() {
       return gitBaseline;
+    },
+    get headBaseline() {
+      return headBaseline;
     },
     baselinePath: join(dir, `baseline-${options.runId}.json`),
     sweep: () =>
@@ -161,6 +179,9 @@ export function beginReconciliation(
       gitBaseline = captureGitBaseline(options.root, baseline);
       if (gitBaseline !== null)
         saveGitBaseline(dir, options.runId, gitBaseline);
+      headBaseline = captureHeadState(options.root);
+      if (headBaseline !== null)
+        saveHeadState(dir, options.runId, headBaseline);
       turn = next;
     },
   };

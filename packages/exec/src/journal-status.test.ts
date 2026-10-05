@@ -174,6 +174,9 @@ describe('unattributed count (issue #87)', () => {
       unattributed: 0,
       corrupt: 0,
       corruptLines: 0,
+      // Issue #378: no moves in an empty journal — the field is always
+      // present so `--json` keeps a stable shape.
+      headMoves: [],
       repo: null,
     });
     expect(reconciliationSummary(empty)).toBe(
@@ -243,5 +246,51 @@ describe('corrupt count (issue #111)', () => {
     // before-blob exists by design, and that is not corruption.
     const status = journalStatus(seed(), tmpRoot('ws-'));
     expect(status.corrupt).toBe(0);
+  });
+});
+
+describe('HEAD-move markers in log + status (issue #378)', () => {
+  const MOVE_A = { head: 'a'.repeat(40), branch: 'main', stash: 0 };
+  const MOVE_B = { head: 'b'.repeat(40), branch: 'feature', stash: 0 };
+
+  function withMarker(): FileJournalStore {
+    const store = seed();
+    store.append({
+      path: '',
+      op: 'marker',
+      before: null,
+      after: null,
+      bytesDelta: 0,
+      headFrom: MOVE_A,
+      headTo: MOVE_B,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 1700000002000,
+      unattributed: true,
+    });
+    return store;
+  }
+
+  it('renders the marker as one greppable log line, never a diff hunk', () => {
+    const lines = renderLog(withMarker());
+    expect(lines).toHaveLength(3);
+    const marker = lines[2] ?? '';
+    expect(marker).toContain('marker');
+    expect(marker).toContain('head-moved');
+    expect(marker).toContain(`main@${'a'.repeat(12)}`);
+    expect(marker).toContain(`feature@${'b'.repeat(12)}`);
+  });
+
+  it('counts the marker as unattributed work and reports the move', () => {
+    const root = tmpRoot('ws-head-status-');
+    const status = journalStatus(withMarker(), root);
+    expect(status.entries).toBe(3);
+    expect(status.unattributed).toBe(2);
+    // The marker has nothing to restore: non-reversible, never corrupt.
+    expect(status.reversible + status.nonReversible).toBe(status.entries);
+    expect(status.corrupt).toBe(0);
+    expect(status.headMoves).toEqual([{ from: MOVE_A, to: MOVE_B }]);
+    expect(status.repo).toBe(null);
   });
 });

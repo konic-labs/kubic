@@ -175,6 +175,46 @@ export function readGitBlob(
   return content.stdout;
 }
 
+/**
+ * Issue #378: where a run's HEAD was at baseline — the commit, the branch
+ * (or `(detached)`), and how many stashes existed. Compared at sweep: any
+ * difference means the agent moved HEAD (`checkout`, `reset`, `stash`), and
+ * the sweep appends a marker entry instead of letting hundreds of
+ * unattributed file entries pretend nothing happened.
+ */
+export interface HeadState {
+  head: string;
+  branch: string;
+  stash: number;
+}
+
+/**
+ * Read the current HEAD state, or null when git cannot answer (non-repo,
+ * unborn HEAD, missing binary — fail-open, the sweep then emits no
+ * marker). Three metadata calls, no content reads.
+ */
+export function captureHeadState(
+  root: string,
+  runGit: GitCommand = defaultGitCommand,
+): HeadState | null {
+  const headOut = runGit(['rev-parse', 'HEAD'], root);
+  if (headOut.status !== 0) return null;
+  const head = headOut.stdout.toString('utf8').trim();
+  if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(head)) return null;
+  const branchOut = runGit(['symbolic-ref', '--short', '-q', 'HEAD'], root);
+  const branch =
+    branchOut.status === 0 && branchOut.stdout.toString('utf8').trim() !== ''
+      ? branchOut.stdout.toString('utf8').trim()
+      : '(detached)';
+  const stashOut = runGit(['stash', 'list', '--format=%H'], root);
+  if (stashOut.status !== 0) return null;
+  const stash = stashOut.stdout
+    .toString('utf8')
+    .split('\n')
+    .filter((line) => line.trim() !== '').length;
+  return { head, branch, stash };
+}
+
 const RUN_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 function gitBaselinePath(dir: string, runId: string): string {
@@ -211,6 +251,54 @@ export function loadGitBaseline(
   if (!bridge.exists(path)) return null;
   try {
     return JSON.parse(bridge.readTextFile(path)) as GitBaseline;
+  } catch {
+    return null;
+  }
+}
+
+function headStatePath(dir: string, runId: string): string {
+  if (!RUN_ID_PATTERN.test(runId)) {
+    throw new Error(
+      `invalid run id ${JSON.stringify(runId)} (use [A-Za-z0-9_-])`,
+    );
+  }
+  return `${dir}/baseline-${runId}.head.json`;
+}
+
+export function sameHeadState(a: HeadState, b: HeadState): boolean {
+  return a.head === b.head && a.branch === b.branch && a.stash === b.stash;
+}
+
+export function saveHeadState(
+  dir: string,
+  runId: string,
+  head: HeadState,
+): void {
+  createNodeFileBridge('/').writeFile(
+    headStatePath(dir, runId),
+    JSON.stringify(head),
+  );
+}
+
+export function loadHeadState(dir: string, runId: string): HeadState | null {
+  const bridge = createNodeFileBridge('/');
+  let path: string;
+  try {
+    path = headStatePath(dir, runId);
+  } catch {
+    return null;
+  }
+  if (!bridge.exists(path)) return null;
+  try {
+    const parsed = JSON.parse(bridge.readTextFile(path)) as Partial<HeadState>;
+    if (
+      typeof parsed.head !== 'string' ||
+      typeof parsed.branch !== 'string' ||
+      typeof parsed.stash !== 'number'
+    ) {
+      return null;
+    }
+    return { head: parsed.head, branch: parsed.branch, stash: parsed.stash };
   } catch {
     return null;
   }

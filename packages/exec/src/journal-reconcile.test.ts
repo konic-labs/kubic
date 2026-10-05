@@ -10,7 +10,11 @@ import {
   MAX_SWEEP_CONTENT_BYTES,
   reconcile,
 } from './journal.js';
-import type { GitBaseline, GitCommand } from './journal-git.js';
+import {
+  captureHeadState,
+  type GitBaseline,
+  type GitCommand,
+} from './journal-git.js';
 
 const roots: string[] = [];
 
@@ -319,5 +323,111 @@ describe('git pre-images for sweep entries (issue #371)', () => {
     if (created === undefined) throw new Error('missing create entry');
     expect(journal.readBefore(created)).toBe(null);
     expect(created.bytesDelta).toBe(Buffer.byteLength('born\n', 'utf8'));
+  });
+});
+
+describe('HEAD-move markers (issue #378)', () => {
+  const CTX = { sessionId: 's1', agentId: 'root', timestamp: 3 };
+  const SHA_A = 'a'.repeat(40);
+  const SHA_B = 'b'.repeat(40);
+
+  // Mutable script: the repo's HEAD as the fake git reports it, so a test
+  // can move HEAD between baseline and sweep.
+  function headRepo(state: { head: string; branch: string; stash: number }): {
+    run: GitCommand;
+  } {
+    const run: GitCommand = (args: string[]) => {
+      if (args[0] === 'rev-parse')
+        return { status: 0, stdout: Buffer.from(`${state.head}\n`, 'utf8') };
+      if (args[0] === 'symbolic-ref')
+        return { status: 0, stdout: Buffer.from(`${state.branch}\n`, 'utf8') };
+      if (args[0] === 'stash')
+        return {
+          status: 0,
+          stdout: Buffer.from(
+            Array.from({ length: state.stash }, (_, i) => `${i}\n`).join(''),
+            'utf8',
+          ),
+        };
+      return { status: 1, stdout: Buffer.alloc(0) };
+    };
+    return { run };
+  }
+
+  function ws(): { root: string; journal: FileJournalStore } {
+    const root = tmpRoot('ws-head-');
+    writeFileSync(join(root, 'f.txt'), 'v1\n');
+    return { root, journal: new FileJournalStore(tmpRoot('j-head-')) };
+  }
+
+  it('appends one marker when the run moved HEAD', () => {
+    const { root, journal } = ws();
+    const baseline = captureBaseline(root);
+    const state = { head: SHA_A, branch: 'main', stash: 0 };
+    const { run } = headRepo(state);
+    const boot = captureHeadState(root, run);
+    state.head = SHA_B;
+    state.branch = 'feature';
+    expect(
+      reconcile(journal, baseline, root, CTX, {
+        headBaseline: boot,
+        gitRun: run,
+      }),
+    ).toBe(1);
+    const entries = journal.entries();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      op: 'marker',
+      unattributed: true,
+      headFrom: { head: SHA_A, branch: 'main', stash: 0 },
+      headTo: { head: SHA_B, branch: 'feature', stash: 0 },
+    });
+  });
+
+  it('appends nothing when HEAD did not move, and never twice for one move', () => {
+    const { root, journal } = ws();
+    const baseline = captureBaseline(root);
+    const state = { head: SHA_A, branch: 'main', stash: 0 };
+    const { run } = headRepo(state);
+    const boot = captureHeadState(root, run);
+    expect(
+      reconcile(journal, baseline, root, CTX, {
+        headBaseline: boot,
+        gitRun: run,
+      }),
+    ).toBe(0);
+    state.stash = 1;
+    expect(
+      reconcile(journal, baseline, root, CTX, {
+        headBaseline: boot,
+        gitRun: run,
+      }),
+    ).toBe(1);
+    // The repeat sweep sees the same move and appends nothing.
+    expect(
+      reconcile(journal, baseline, root, CTX, {
+        headBaseline: boot,
+        gitRun: run,
+      }),
+    ).toBe(0);
+    expect(journal.entries()).toHaveLength(1);
+  });
+
+  it('emits no marker without a boot snapshot or when HEAD is unresolvable', () => {
+    const { root, journal } = ws();
+    const baseline = captureBaseline(root);
+    const { run } = headRepo({ head: SHA_A, branch: 'main', stash: 0 });
+    expect(reconcile(journal, baseline, root, CTX, { gitRun: run })).toBe(0);
+    const failing: GitCommand = () => ({
+      status: 128,
+      stdout: Buffer.alloc(0),
+    });
+    expect(
+      reconcile(journal, baseline, root, CTX, {
+        headBaseline: { head: SHA_A, branch: 'main', stash: 0 },
+        gitRun: failing,
+      }),
+    ).toBe(0);
+    expect(journal.entries()).toHaveLength(0);
   });
 });

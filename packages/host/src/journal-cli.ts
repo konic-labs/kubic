@@ -35,6 +35,7 @@ import {
   renderDiff,
 } from '../../exec/src/journal-diff.js';
 import {
+  formatHeadMove,
   journalStatus,
   reconciliationSummary,
 } from '../../exec/src/journal-status.js';
@@ -470,11 +471,12 @@ function journalDiff(run: JournalRun, request: JournalDiffOptions): number {
   return EXIT_OK;
 }
 
-type SkipKind = 'stale' | 'already-undone' | 'non-reversible';
+type SkipKind = 'stale' | 'already-undone' | 'non-reversible' | 'head-moved';
 
 function skipKindOf(reason: string): SkipKind {
   if (reason.startsWith('stale:')) return 'stale';
   if (reason.startsWith('already undone:')) return 'already-undone';
+  if (reason.startsWith('head-moved:')) return 'head-moved';
   return 'non-reversible';
 }
 
@@ -545,9 +547,12 @@ function journalUndo(run: JournalRun, request: JournalUndoOptions): number {
   }
   const staleCount = kinds.filter((k) => k === 'stale').length;
   const undoneCount = kinds.filter((k) => k === 'already-undone').length;
-  const classified = staleCount > 0 || undoneCount > 0;
+  // Issue #378: HEAD-move refusals are their own class — neither
+  // unrecoverable (force proceeds) nor a content mismatch.
+  const movedCount = kinds.filter((k) => k === 'head-moved').length;
+  const classified = staleCount > 0 || undoneCount > 0 || movedCount > 0;
   const skipLabel = classified
-    ? ` (${[staleCount > 0 ? `${staleCount} stale` : null, undoneCount > 0 ? `${undoneCount} already undone` : null].filter((s) => s !== null).join(', ')})`
+    ? ` (${[staleCount > 0 ? `${staleCount} stale` : null, undoneCount > 0 ? `${undoneCount} already undone` : null, movedCount > 0 ? `${movedCount} head-moved` : null].filter((s) => s !== null).join(', ')})`
     : ' non-reversible';
   if (dryRun) {
     deps.out(
@@ -569,7 +574,9 @@ function journalUndo(run: JournalRun, request: JournalUndoOptions): number {
         ? `${theme.warning('stale (skipped):')} ${detail.path} — ${detail.reason}`
         : kind === 'already-undone'
           ? `${theme.muted('already undone (skipped):')} ${detail.path}`
-          : `${theme.warning('non-reversible (skipped):')} ${detail.path}`,
+          : kind === 'head-moved'
+            ? `${theme.warning('head-moved (skipped):')} ${detail.path} — ${detail.reason}`
+            : `${theme.warning('non-reversible (skipped):')} ${detail.path}`,
     );
   });
   deps.out(
@@ -628,14 +635,20 @@ function journalLog(run: JournalRun, request: JournalSelection): number {
   if (entries.length === 0) {
     deps.out('journal is empty');
   } else {
+    // Issue #378: markers are not file rows — the PATH column names HEAD
+    // and the NOTE column names the move.
     const rows = entries.map((e) => [
       new Date(e.timestamp).toISOString(),
       e.agentId,
       e.toolCallId ?? 'none',
       e.op,
-      e.path,
+      e.op === 'marker' ? '(HEAD)' : e.path,
       `${e.bytesDelta >= 0 ? '+' : ''}${e.bytesDelta}B`,
-      e.unattributed === true ? 'reconciled' : '',
+      e.op === 'marker' && e.headFrom !== undefined && e.headTo !== undefined
+        ? `reconciled head-moved ${formatHeadMove(e.headFrom, e.headTo)}`
+        : e.unattributed === true
+          ? 'reconciled'
+          : '',
     ]);
     const table = renderTable(rows, LOG_COLUMNS, {
       fancy: deps.fancy === true,
@@ -680,6 +693,15 @@ function journalStatusCommand(
   // cannot infer one from the other.
   const corruptLines = `corrupt index lines: ${status.corruptLines}`;
   deps.out(status.corruptLines > 0 ? theme.error(corruptLines) : corruptLines);
+  // Issue #378: a HEAD move mid-run changes what every earlier entry
+  // means — one warning line per move, never folded into the counts above.
+  for (const move of status.headMoves) {
+    deps.out(
+      theme.warning(
+        `head-moved: ${formatHeadMove(move.from, move.to)} — undo needs --force to restore entries from before the move`,
+      ),
+    );
+  }
   if (status.repo === null) {
     deps.out('repo: non-repo directory (journal works without git)');
   } else {

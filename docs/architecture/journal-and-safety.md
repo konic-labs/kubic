@@ -80,7 +80,15 @@ shape. Untracked files and non-repositories are unchanged. Changes the sweep
 captures are bounded the same way: a changed file above 4 MiB — or one whose
 utf-8 decode would be lossy (binary content) — is recorded hash-only
 (`changed, N bytes`; `diff` shows a size-only line), never as a mangled or
-unbounded blob. Retention
+unbounded blob. A HEAD move mid-run is marked, not silently absorbed
+(issue #378): the baseline also records HEAD sha, branch and stash count
+(three metadata calls), and a sweep that finds them changed appends one
+`marker` entry (`head-moved <branch>@<sha> -> <branch>@<sha>`) instead of
+letting a `checkout`/`reset`/`stash` read as hundreds of ordinary file
+changes. `kubic status` warns per move, `kubic log` lists the marker, and
+`kubic undo` refuses to restore entries from before the move without
+`--force` — their pre-move content does not belong on the moved HEAD —
+while entries journaled after the move restore normally. Retention
 bounds keep growth finite: a size cap — the whole store, index plus blobs,
 configurable as `[journal] maxBytes` — is enforced on every append, with
 opt-in age pruning. An entry whose own content cannot fit the cap is

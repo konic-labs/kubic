@@ -67,8 +67,10 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   normal rule);
   `stale (skipped)` — the file changed after the entry was journaled, so
   restoring would destroy unjournaled changes (issue #108; `--force`
-  overrides per-invocation); and `already undone (skipped)` — a previous
-  undo already unwound the step, nothing is rewritten. In every skipped
+  overrides per-invocation); `already undone (skipped)` — a previous
+  undo already unwound the step, nothing is rewritten; and
+  `head-moved (skipped)` — the entry predates a HEAD move the run observed
+  (issue #378; `--force` overrides per-invocation). In every skipped
   class the exit is 1 and nothing is written for that step. A live session
   lock (issue #337) refuses the whole invocation with exit 1 and one `error:`
   line naming the holder pid — `--force` overrides it, and nothing is

@@ -38,10 +38,15 @@ const SCOPED_DIRS = [
 ];
 
 // A direct `git` spawn: `execFileSync('git', …)`, `spawnSync("git", …)` and
-// the async/spawn variants. A bare `'git'` string elsewhere (a matcher
-// vocabulary, a FakeExecutionEnv script) is not a spawn and must not match.
+// the async/spawn variants, called as bare functions (the `child_process`
+// shape). A bare `'git'` string elsewhere (a matcher vocabulary, a
+// FakeExecutionEnv script) is not a spawn and must not match — and neither
+// is a `.shell.spawn('git', …)` method call: that goes through the
+// ExecutionEnv seam, not `child_process` directly (issue #212: the fake's
+// own unit tests drive the seam with git argv and stay hermetic). The
+// lookbehind keeps longer identifiers (`myspawnSync(`) out as well.
 const DIRECT_GIT_SPAWN_RE =
-  /(?:execFileSync|spawnSync|execSync|spawn)\s*\(\s*['"]git['"]/;
+  /(?<![.\w])(?:execFileSync|spawnSync|execSync|spawn)\s*\(\s*['"]git['"]/;
 const SANDBOX_IMPORT_RE = /test-support\/git-sandbox\.js['"]/;
 
 function testFiles(root = ROOT) {
@@ -121,11 +126,15 @@ describe('real-git tests use the shared helper (issue #365)', () => {
         'packages/exec/src/ok.test.ts',
         "import { createGitSandbox } from './test-support/git-sandbox.js';\nspawnSync('git', ['x']);\n",
       );
-      // A matcher vocabulary mentioning git, and a fake-env script: not a
-      // spawn, must stay clean.
+      // A matcher vocabulary mentioning git, a fake-env script, and a
+      // shell-seam call: not direct spawns, must stay clean.
       write(
         'packages/worker/src/lane/words.test.ts',
         "const words = [\n'git',\n'push',\n];\n/\\bgit\\b/.test('x');\n",
+      );
+      write(
+        'packages/exec/src/fake-seam.test.ts',
+        "env.shell.spawn('git', ['status']);\nmySpawnSync('git', []);\n",
       );
       write(
         'packages/host/src/outside.test.ts',

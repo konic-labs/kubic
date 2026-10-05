@@ -28,6 +28,7 @@ import {
   type MutableModels,
   SystemEntry,
 } from '../../worker/src/pi-boundary.js';
+import { projectTrustCheck } from './config/trust-store.js';
 import { runDoctorCommand } from './doctor.js';
 import { rolesDoctorProbe } from './roles/roles-boot.js';
 import { runRunCommand } from './run-cli.js';
@@ -123,7 +124,7 @@ describe('role documents drive a live solo lane (issue #99, §12.1)', () => {
         sessionsRoot: root,
         models: fauxModels(['done']),
         env: new FakeExecutionEnv({}),
-        roles: { cwd },
+        roles: { cwd, trusted: true },
       },
     );
     expect(result.terminus).toBe('completed');
@@ -155,7 +156,7 @@ describe('role documents drive a live solo lane (issue #99, §12.1)', () => {
         sessionsRoot: root,
         models: fauxModels(['done']),
         env: new FakeExecutionEnv({}),
-        roles: { cwd },
+        roles: { cwd, trusted: true },
       },
     );
     const prompt = await committedPrompt(root, result.sessionId);
@@ -190,7 +191,7 @@ describe('role documents drive a live solo lane (issue #99, §12.1)', () => {
         sessionsRoot: root,
         models: fauxModels(['done']),
         env: new FakeExecutionEnv({}),
-        roles: { cwd },
+        roles: { cwd, trusted: true },
       },
     );
     // Fail closed, with the resolver's named reason — never a silent
@@ -218,7 +219,7 @@ describe('role documents drive a live solo lane (issue #99, §12.1)', () => {
         sessionsRoot: root,
         models: fauxModels(['done']),
         env: new FakeExecutionEnv({}),
-        roles: { cwd },
+        roles: { cwd, trusted: true },
       },
     );
     expect(result.terminus).toBe('failed');
@@ -268,6 +269,7 @@ describe('kubic doctor reports every role document (issue #99, §41.4)', () => {
     const probe = rolesDoctorProbe({
       cwd,
       bridge: createNodeFileBridge(cwd),
+      trusted: true,
     });
     const lines: string[] = [];
     return runDoctorCommand(
@@ -302,6 +304,110 @@ describe('kubic doctor reports every role document (issue #99, §41.4)', () => {
       // A failing role flips the doctor exit code (exit 1).
       expect(code).toBe(1);
       expect(report.ok).toBe(false);
+    });
+  });
+});
+
+describe('project roles are trust-gated on the live path (issue #430, §33)', () => {
+  const FRONTMATTER =
+    'tools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n';
+
+  it('refuses --role naming an untrusted project role with the trust message', async () => {
+    const cwd = tmpRoot('roles-untrusted-');
+    writeRole(cwd, 'scout', FRONTMATTER, 'Scout it.');
+    const root = tmpRoot('roles-untrusted-sessions-');
+    const result = await runHeadlessPrompt(
+      'go',
+      { role: 'scout' },
+      {
+        sessionsRoot: root,
+        models: fauxModels(['done']),
+        env: new FakeExecutionEnv({}),
+        roles: { cwd },
+      },
+    );
+    expect(result.terminus).toBe('failed');
+    expect(result.summary).toContain('scout');
+    expect(result.summary).toMatch(/withheld: untrusted project root/);
+  });
+
+  it('loads the same role once trusted, or under KUBIC_TRUST_PROJECT=1', async () => {
+    const home = tmpRoot('roles-trusted-home-');
+    const cwd = tmpRoot('roles-trusted-');
+    writeRole(cwd, 'scout', FRONTMATTER, 'Scout it.');
+    const root = tmpRoot('roles-trusted-sessions-');
+    const trusted = await runHeadlessPrompt(
+      'go',
+      { role: 'scout' },
+      {
+        sessionsRoot: root,
+        models: fauxModels(['done']),
+        env: new FakeExecutionEnv({}),
+        roles: { cwd, trusted: true },
+      },
+    );
+    expect(trusted.terminus).toBe('completed');
+    const prompt = await committedPrompt(root, trusted.sessionId);
+    expect(prompt).toContain('Scout it.');
+
+    // Same tree, no flag: the env opt-in through the SAME per-path check
+    // the config load threads (`projectTrustFor`) — this is the mechanism
+    // `KUBIC_TRUST_PROJECT=1` takes in production.
+    const viaEnv = await runHeadlessPrompt(
+      'go',
+      { role: 'scout' },
+      {
+        sessionsRoot: root,
+        models: fauxModels(['done']),
+        env: new FakeExecutionEnv({}),
+        roles: {
+          cwd,
+          trustProject: projectTrustCheck({
+            home,
+            env: { KUBIC_TRUST_PROJECT: '1' },
+          }),
+        },
+      },
+    );
+    expect(viaEnv.terminus).toBe('completed');
+  });
+
+  it('reports withheld project roles in doctor without failing it', () => {
+    const cwd = tmpRoot('roles-withheld-');
+    writeRole(cwd, 'scout', FRONTMATTER, 'Scout it.');
+    const probe = rolesDoctorProbe({
+      cwd,
+      bridge: createNodeFileBridge(cwd),
+    });
+    const lines: string[] = [];
+    return runDoctorCommand(
+      { json: true },
+      {
+        out: (line) => lines.push(line),
+        probeProviders: () => [
+          { id: 'faux', reachable: true, dialled: true, models: ['faux-1'] },
+        ],
+        checkDeps: () => [{ id: 'node', ok: true }],
+        loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
+        probeRoles: () => probe,
+      },
+    ).then((code) => {
+      const report = JSON.parse(lines.join('\n')) as {
+        ok: boolean;
+        checks: Array<{
+          id: string;
+          status: string;
+          reason: string;
+          detail: string;
+        }>;
+      };
+      const scout = report.checks.find((check) => check.id === 'role:scout');
+      expect(scout?.status).toBe('warn');
+      expect(scout?.detail).toMatch(/withheld: untrusted project root/);
+      // A warning never flips the doctor exit: trust is a state, not a
+      // breakage.
+      expect(code).toBe(0);
+      expect(report.ok).toBe(true);
     });
   });
 });

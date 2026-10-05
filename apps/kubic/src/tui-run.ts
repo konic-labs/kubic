@@ -1024,7 +1024,14 @@ export interface TuiRunOptions {
   // tests pass a collector. Absent means silent.
   warn?: (line: string) => void;
   role?: string;
-  roles?: { cwd?: string; layers?: RoleLayerInput[] };
+  roles?: {
+    cwd?: string;
+    layers?: RoleLayerInput[];
+    // Issue #430 (§33, L-D27): project trust for the repo documents —
+    // same projection as `kubic run`. Absent both means untrusted.
+    trusted?: boolean;
+    trustProject?: (dir: string) => boolean;
+  };
   journalRetention?: JournalRetention;
   // §35 out-of-scope paths (issue #115): the same projection `kubic run`
   // threads, so a declared directory is excluded from this lane's §42.5
@@ -1318,6 +1325,14 @@ export async function bootTuiLane(
         ...(options.roles?.layers === undefined
           ? {}
           : { layers: options.roles.layers }),
+        // Issue #430 (§33, L-D27): trust-gated like `kubic run` — the
+        // `roles` projection already carries the config load's check.
+        ...(options.roles?.trusted === undefined
+          ? {}
+          : { trusted: options.roles.trusted }),
+        ...(options.roles?.trustProject === undefined
+          ? {}
+          : { trustProject: options.roles.trustProject }),
         ...(enterprisePolicy === undefined
           ? {}
           : { toolPolicy: enterprisePolicy }),

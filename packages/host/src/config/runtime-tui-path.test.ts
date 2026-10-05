@@ -144,8 +144,9 @@ describe('tuiDepsWithDefaults forwards the lane projection (issue #294)', () => 
       },
     ];
     let seen: TuiRunOptions | undefined;
+    const trustProject = () => true;
     const deps = tuiDepsWithDefaults(
-      { out: () => {}, agentId: 'alice', roles: { layers } },
+      { out: () => {}, agentId: 'alice', roles: { layers, trustProject } },
       async (_id, options) => {
         seen = options;
         return { sessionId: 's', model: 'faux/m' };
@@ -153,7 +154,9 @@ describe('tuiDepsWithDefaults forwards the lane projection (issue #294)', () => 
     );
     await deps.bootLane(undefined, undefined, { role: 'implementer' });
     expect(seen?.agentId).toBe('alice');
-    expect(seen?.roles).toEqual({ layers });
+    // Issue #430: the trust check travels on the same `roles` projection.
+    expect(seen?.roles?.layers).toEqual(layers);
+    expect(seen?.roles?.trustProject).toBe(trustProject);
     expect(seen?.role).toBe('implementer');
   });
 

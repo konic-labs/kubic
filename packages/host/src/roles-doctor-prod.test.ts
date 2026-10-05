@@ -64,6 +64,7 @@ function doctorDeps(
       rolesDoctorProbe({
         cwd,
         bridge: createNodeFileBridge(cwd),
+        trusted: true,
         ...(toolPolicy === undefined ? {} : { toolPolicy }),
         ...(layers === undefined ? {} : { layers }),
       }),

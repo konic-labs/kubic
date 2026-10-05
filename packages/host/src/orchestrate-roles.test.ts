@@ -160,6 +160,7 @@ function roleLoaderFor(files: Record<string, string>) {
     planWorkerRoles({
       bridge: memBridge(files),
       cwd: REPO,
+      trusted: true,
       agents,
       // The explicit per-agent binding the run resolved (issue #178).
       ...(binding === undefined

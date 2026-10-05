@@ -62,7 +62,7 @@ describe('run --role resolves at the project root (issue #229)', () => {
         models,
         env: new NodeExecutionEnv(sub),
         debug: (line: string) => debug.push(line),
-        roles: { cwd: sub },
+        roles: { cwd: sub, trusted: true },
         skills: { homeDir: home, cwd: sub, trusted: false },
       },
     );

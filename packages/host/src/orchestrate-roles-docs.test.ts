@@ -202,7 +202,11 @@ describe('kubic doctor prints the role refusal the run fails closed with (#104)'
         checkDeps: () => [{ id: 'node', ok: true }],
         loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
         probeRoles: () =>
-          rolesDoctorProbe({ cwd, bridge: createNodeFileBridge(cwd) }),
+          rolesDoctorProbe({
+            cwd,
+            bridge: createNodeFileBridge(cwd),
+            trusted: true,
+          }),
       },
     );
     const report = JSON.parse(lines.join('\n')) as {
@@ -225,6 +229,7 @@ describe('kubic doctor prints the role refusal the run fails closed with (#104)'
     const plan = planWorkerRoles({
       bridge: createNodeFileBridge(cwd),
       cwd,
+      trusted: true,
       agents: ['alpha', 'beta'],
     });
     expect(plan.refused[0]?.reason).toBe(detail);

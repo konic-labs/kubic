@@ -609,15 +609,22 @@ export function runtimeRunDeps(result: CliConfigResult): {
 // layers.
 export function runtimeLaneDeps(result: CliConfigResult): {
   agentId?: string;
-  roles?: { layers: RoleLayerInput[] };
+  roles?: { layers: RoleLayerInput[]; trustProject: ProjectTrustCheck };
 } {
   const runtime = result.runtime;
   if (runtime === undefined) return {};
   const agentId = runtime.config.agent?.name;
   const layers = roleLayersFromConfig(runtime);
+  // Issue #430 (§33, L-D27): the repo role documents resolve under the
+  // same per-path trust check as the project models.json and skills — so
+  // `kubic run --role` and `kubic tui --role` load an untrusted root's
+  // documents never. The check folds the KUBIC_TRUST_PROJECT opt-in in.
+  const trustProject = projectTrustFor(result);
   return {
     ...(agentId === undefined ? {} : { agentId }),
-    ...(layers.length === 0 ? {} : { roles: { layers } }),
+    // Always present (even with no layers): the trust check travels on
+    // `roles` so callers never default to an untrusted load.
+    roles: { layers, trustProject },
   };
 }
 

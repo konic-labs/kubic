@@ -1876,6 +1876,14 @@ export async function orchestrateDepsWithDefaults(
         ...(options.roleLayers === undefined
           ? {}
           : { layers: options.roleLayers }),
+        // Issue #430 (§33, L-D27): worker roles resolve under the same
+        // per-path trust check as the run — the manager refuses an
+        // untrusted root's overrides before any worktree exists. The
+        // KUBIC_TRUST_PROJECT opt-in travels to the children as env
+        // (issue #228), so a trusted manager keeps trusted workers.
+        ...(options.projectTrust === undefined
+          ? {}
+          : { trustProject: options.projectTrust }),
       });
     },
     // §36.3 credential preflight (issue #200): the same memoized lookup the

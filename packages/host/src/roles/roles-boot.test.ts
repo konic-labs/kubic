@@ -3,7 +3,7 @@
 // `<root>/.kubic/roles/*.md` as one from the root. In-memory bridge only:
 // zero network, zero paid tokens.
 import { describe, expect, it } from 'vitest';
-import { loadRoles, selectRole } from './roles-boot.js';
+import { loadRoles, rolesDoctorProbe, selectRole } from './roles-boot.js';
 
 // An in-memory FileBridge slice: listDir + readTextFile over a path→text
 // map, so the loader is driven without touching the filesystem.
@@ -64,6 +64,7 @@ describe('role documents resolve at the project root (issue #229)', () => {
       bridge,
       cwd: '/repo/sub/dir',
       projectRoot: '/repo',
+      trusted: true,
       role: 'scout',
     });
     expect(selected.doc.name).toBe('scout');
@@ -87,6 +88,7 @@ describe('role documents resolve at the project root (issue #229)', () => {
       bridge,
       cwd: '/repo/sub',
       projectRoot: '/repo',
+      trusted: true,
     });
     expect(loaded.sources['scout']).toBe('repo');
     expect(loaded.texts['scout']).toContain('Do scout things.');
@@ -101,5 +103,84 @@ describe('role documents resolve at the project root (issue #229)', () => {
     });
     expect(loaded.docs.length).toBeGreaterThan(0);
     expect(loaded.sources['implementer']).toBe('builtin');
+  });
+});
+
+describe('project role documents are trust-gated (issue #430, §33)', () => {
+  const files = {
+    '/repo/.kubic/roles/scout.md':
+      '---\nrole: scout\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# scout\n\n## Prompt\n\nDo scout things.\n',
+  };
+
+  it('withholds repo documents from an untrusted root, naming them', () => {
+    const loaded = loadRoles({
+      bridge: memBridge(files),
+      cwd: '/repo/sub',
+      projectRoot: '/repo',
+    });
+    expect(loaded.docs.map((doc) => doc.name)).not.toContain('scout');
+    expect(loaded.sources['scout']).toBeUndefined();
+    expect(loaded.withheld).toEqual([
+      {
+        name: 'scout',
+        reason: expect.stringContaining('withheld: untrusted project root'),
+      },
+    ]);
+  });
+
+  it('refuses --role naming a withheld document with the trust message', () => {
+    expect(() =>
+      selectRole({
+        bridge: memBridge(files),
+        cwd: '/repo/sub',
+        projectRoot: '/repo',
+        role: 'scout',
+      }),
+    ).toThrow(/withheld: untrusted project root/);
+  });
+
+  it('still resolves the builtins from an untrusted root', () => {
+    const selected = selectRole({
+      bridge: memBridge(files),
+      cwd: '/repo/sub',
+      projectRoot: '/repo',
+      role: 'implementer',
+    });
+    expect(selected.source).toBe('builtin');
+  });
+
+  it('loads repo documents when trusted, by flag or per-path check', () => {
+    for (const trust of [
+      { trusted: true },
+      { trustProject: () => true },
+    ] as const) {
+      const selected = selectRole({
+        bridge: memBridge(files),
+        cwd: '/repo/sub',
+        projectRoot: '/repo',
+        ...trust,
+        role: 'scout',
+      });
+      expect(selected.source).toBe('repo');
+    }
+    const loaded = loadRoles({
+      bridge: memBridge(files),
+      cwd: '/repo/sub',
+      projectRoot: '/repo',
+      trustProject: () => false,
+    });
+    expect(loaded.withheld.map((entry) => entry.name)).toEqual(['scout']);
+  });
+
+  it('names withheld roles in the doctor probe as warnings', () => {
+    const checks = rolesDoctorProbe({
+      bridge: memBridge(files),
+      cwd: '/repo/sub',
+      projectRoot: '/repo',
+    });
+    const held = checks.filter((check) => check.id === 'role:scout');
+    expect(held).toHaveLength(1);
+    expect(held[0]?.status).toBe('warn');
+    expect(held[0]?.detail).toContain('withheld: untrusted project root');
   });
 });

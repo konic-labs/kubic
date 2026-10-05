@@ -194,6 +194,9 @@ async function harness(options: HarnessOptions = {}): Promise<{
     sessionsRoot,
     registry: new WorkerRegistry(),
     workerEntry: { cmd: process.execPath, args: [fixture] },
+    // Issue #430: the harness trusts the repo it just created, so worker
+    // role planning reads its `.kubic/roles/*.md` like a trusted run.
+    projectTrust: () => true,
     ...(model === undefined ? {} : { model }),
     ...(roleLayers === undefined ? {} : { roleLayers }),
   });
@@ -488,6 +491,8 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
       sessionsRoot,
       registry: new WorkerRegistry(),
       workerEntry: { cmd: process.execPath, args: [fixture] },
+      // Issue #430: the scratch repo stands in for a trusted project.
+      projectTrust: () => true,
     });
     const code = await runOrchestrateCommand(
       {
@@ -539,6 +544,8 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
       sessionsRoot,
       registry: new WorkerRegistry(),
       workerEntry: { cmd: process.execPath, args: [fixture] },
+      // Issue #430: the scratch repo stands in for a trusted project.
+      projectTrust: () => true,
     });
     const code = await runOrchestrateCommand(
       {

@@ -139,6 +139,7 @@ describe('a delegated worker lane runs its assigned role (issue #104)', () => {
     const plan = planWorkerRoles({
       bridge: createNodeFileBridge(cwd),
       cwd,
+      trusted: true,
       agents: ['alpha'],
       roles: { alpha: 'planner' },
     });
@@ -158,7 +159,7 @@ describe('a delegated worker lane runs its assigned role (issue #104)', () => {
         sessionsRoot: root,
         models: fauxModels(['done']),
         env: new FakeExecutionEnv({}),
-        roles: { cwd },
+        roles: { cwd, trusted: true },
       },
     );
     expect(result.terminus).toBe('completed');
@@ -202,7 +203,7 @@ describe('a delegated worker lane runs its assigned role (issue #104)', () => {
         sessionsRoot: root,
         models: fauxModels(['done']),
         env: new FakeExecutionEnv({}),
-        roles: { cwd },
+        roles: { cwd, trusted: true },
       },
     );
     expect(result.terminus).toBe('completed');
@@ -234,6 +235,7 @@ describe('a delegated worker lane runs its assigned role (issue #104)', () => {
     const plan = planWorkerRoles({
       bridge: createNodeFileBridge(cwd),
       cwd,
+      trusted: true,
       agents: ['alpha'],
       roles: { alpha: 'planner' },
       layers: [
@@ -265,7 +267,7 @@ describe('a delegated worker lane runs its assigned role (issue #104)', () => {
         models,
         model: { provider: 'acme', id: 'planner-1' },
         env: new FakeExecutionEnv({}),
-        roles: { cwd },
+        roles: { cwd, trusted: true },
       },
     );
     expect(result.terminus).toBe('completed');

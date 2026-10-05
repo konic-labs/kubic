@@ -203,7 +203,7 @@ describe('role documents drive the TUI lane (issue #113, §12.1)', () => {
       models: fauxModels(['done'], captured),
       env: new FakeExecutionEnv({}),
       role: 'reviewer',
-      roles: { cwd },
+      roles: { cwd, trusted: true },
     });
     const prompt = await promptOf(boot, captured);
     await boot.close?.();
@@ -225,7 +225,7 @@ describe('role documents drive the TUI lane (issue #113, §12.1)', () => {
         models: fauxModels(['done']),
         env: new FakeExecutionEnv({}),
         role: 'no-such-role',
-        roles: { cwd },
+        roles: { cwd, trusted: true },
       }),
     ).rejects.toThrow(/no role document for 'no-such-role'/);
   });
@@ -282,6 +282,7 @@ describe('solo-lane projections reach the TUI lane (issue #133)', () => {
       role: 'reviewer',
       roles: {
         cwd,
+        trusted: true,
         layers: [
           { layer: 'project', roles: { reviewer: { model: 'alt/m1' } } },
         ],
@@ -312,6 +313,7 @@ describe('solo-lane projections reach the TUI lane (issue #133)', () => {
       role: 'reviewer',
       roles: {
         cwd,
+        trusted: true,
         layers: [
           { layer: 'project', roles: { reviewer: { tools: ['read'] } } },
         ],

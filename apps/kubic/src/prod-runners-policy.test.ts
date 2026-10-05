@@ -62,11 +62,23 @@ afterEach(() => {
 const ENTERPRISE = '/etc/kubic-test/enterprise.toml';
 const PROJECT = '/nonexistent-cwd/.kubic/config.toml';
 
+// Issue #430: the tests below load workspace role documents, so they run
+// under the trusted report — the `KUBIC_TRUST_PROJECT=1` equivalent. Trust
+// behavior itself stays pinned by the trust-store and skills suites.
+const TRUSTED = {
+  ...NO_PROJECT_TRUST,
+  envTrust: true,
+  trusted: true,
+} as CliConfigResult['trust'];
+
 function cliConfig(
   files: Record<string, string>,
   options: {
     env?: Record<string, string>;
     cliModel?: { provider: string; id: string };
+    // Issue #430: role documents resolve under project trust — tests that
+    // load workspace role docs opt into the trusted report.
+    trust?: CliConfigResult['trust'];
   } = {},
 ): CliConfigResult {
   const runtime = loadRuntimeConfig({
@@ -88,7 +100,7 @@ function cliConfig(
     runtime,
     error: undefined,
     ignoreSplit: { missing: [], checked: [], applicable: false },
-    trust: NO_PROJECT_TRUST,
+    trust: options.trust ?? NO_PROJECT_TRUST,
   };
 }
 
@@ -385,9 +397,12 @@ describe('a model refusal names the real source of the pin (issues #227, #295)',
       join(workspace, '.kubic', 'roles', 'implementer.md'),
       '---\nrole: implementer\ntools: [read]\n---\n## Prompt\n\nImplement the step.\n',
     );
-    const cfg = cliConfig({
-      [PROJECT]: '[roles.implementer]\nmodel = "anthropic/zzz-1"\n',
-    });
+    const cfg = cliConfig(
+      {
+        [PROJECT]: '[roles.implementer]\nmodel = "anthropic/zzz-1"\n',
+      },
+      { trust: TRUSTED },
+    );
     const result = await runHeadlessPrompt(
       'hello',
       { role: 'implementer' },
@@ -534,9 +549,12 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy (is
     const { r, lines, errs } = runners(workspace);
     const code = await r.replay(
       { trajectory, tier: 'live', roleConfig, json: true },
-      cliConfig({
-        [ENTERPRISE]: '[policy]\nallowed_models = ["corp/approved"]\n',
-      }),
+      cliConfig(
+        {
+          [ENTERPRISE]: '[policy]\nallowed_models = ["corp/approved"]\n',
+        },
+        { trust: TRUSTED },
+      ),
     );
     expect([...lines, ...errs].join('\n')).toContain(
       "model 'faux/echo' refused by enterprise policy (allowed_models/allowed_providers): no provider call was made",
@@ -571,7 +589,7 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy (is
       const { r } = runners(workspace);
       await r.replay(
         { trajectory, tier: 'live', roleConfig, json: true },
-        cliConfig({}),
+        cliConfig({}, { trust: TRUSTED }),
       );
       expect(
         existsSync(marker(workspace)),
@@ -599,7 +617,7 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy (is
     const { r } = runners(workspace);
     await r.replay(
       { trajectory, tier: 'live', roleConfig, worktree, json: true },
-      cliConfig({}),
+      cliConfig({}, { trust: TRUSTED }),
     );
     expect(existsSync(join(worktree, 'marker'))).toBe(true);
     expect(existsSync(join(workspace, 'marker'))).toBe(false);
@@ -670,7 +688,7 @@ describe('role documents under the enterprise tool policy on the doctor and orch
     const { r, lines } = runners(workspace);
     const code = await r.doctor(
       { json: true },
-      cliConfig({ [ENTERPRISE]: DENY_BASH }),
+      cliConfig({ [ENTERPRISE]: DENY_BASH }, { trust: TRUSTED }),
     );
     const report = JSON.parse(lines.join('\n')) as {
       checks: { id: string; status: string; detail: string }[];
@@ -757,7 +775,7 @@ describe('role documents under the enterprise tool policy on the doctor and orch
 
   it('kubic doctor judges a role after the config [roles.<name>] layers (a layer narrowing the denied tool away is green)', async () => {
     const { r, lines } = runners(workspaceWithRoles());
-    await r.doctor({ json: true }, cliConfig(NARROWED));
+    await r.doctor({ json: true }, cliConfig(NARROWED, { trust: TRUSTED }));
     const report = JSON.parse(lines.join('\n')) as {
       checks: { id: string; status: string }[];
     };

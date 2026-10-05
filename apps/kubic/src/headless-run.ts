@@ -309,6 +309,11 @@ export interface HeadlessRunDeps {
   roles?: {
     cwd?: string;
     layers?: RoleLayerInput[];
+    // Issue #430 (§33, L-D27): project trust for the repo documents.
+    // The composition root threads the config load's per-path check here
+    // (`runtimeLaneDeps`); absent both means the root is untrusted.
+    trusted?: boolean;
+    trustProject?: (dir: string) => boolean;
   };
   // Interrupt source (Ctrl-C, a supervisor SIGTERM, a closed terminal SIGHUP). Absent means the
   // real process. Tool children run in detached process groups, so a
@@ -1322,6 +1327,14 @@ async function runHeadlessPromptImpl(
           ...(deps.roles?.layers === undefined
             ? {}
             : { layers: deps.roles.layers }),
+          // Issue #430 (§33, L-D27): an untrusted root's documents are
+          // withheld — `--role` naming one refuses with the trust message.
+          ...(deps.roles?.trusted === undefined
+            ? {}
+            : { trusted: deps.roles.trusted }),
+          ...(deps.roles?.trustProject === undefined
+            ? {}
+            : { trustProject: deps.roles.trustProject }),
           // §58 enterprise policy (issue #288): a role document declaring a
           // denied tool is refused here, by name, before the lane boots.
           ...(enterprisePolicy === undefined

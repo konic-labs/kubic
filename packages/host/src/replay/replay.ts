@@ -125,7 +125,10 @@ export interface ReplayRuntimeDeps {
   // Absent means the documented run defaults ('root', no layers, the
   // mechanism's own skips).
   agentId?: string;
-  roles?: { layers: RoleLayerInput[] };
+  // Issue #430 (§33, L-D27): the per-path trust check `kubic run`
+  // threads on the same projection — the pinned worktree's role document
+  // loads only for a trusted root. Absent means untrusted.
+  roles?: { layers: RoleLayerInput[]; trustProject?: (dir: string) => boolean };
   reconcileOutOfScope?: string[];
 }
 

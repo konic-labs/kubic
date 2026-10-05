@@ -88,6 +88,10 @@ export interface WorkerRolesInput {
   // Issue #229 (§35.1): the project root the repo documents resolve at.
   // Forwarded to the live loader; absent means the cwd itself.
   projectRoot?: string;
+  // Issue #430 (§33, L-D27): project trust for the repo documents —
+  // forwarded to the live loader; absent both means untrusted.
+  trusted?: boolean;
+  trustProject?: (dir: string) => boolean;
   agents: readonly string[];
   layers?: RoleLayerInput[];
   // §38.1 model levels (issue #202): the manager's own effective model pin
@@ -171,6 +175,10 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
         ? {}
         : { projectRoot: input.projectRoot }),
       ...(input.layers === undefined ? {} : { layers: input.layers }),
+      ...(input.trusted === undefined ? {} : { trusted: input.trusted }),
+      ...(input.trustProject === undefined
+        ? {}
+        : { trustProject: input.trustProject }),
     });
   } catch (error) {
     return {
@@ -213,6 +221,10 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
           ? {}
           : { projectRoot: input.projectRoot }),
         ...(input.layers === undefined ? {} : { layers: input.layers }),
+        ...(input.trusted === undefined ? {} : { trusted: input.trusted }),
+        ...(input.trustProject === undefined
+          ? {}
+          : { trustProject: input.trustProject }),
         ...(input.toolPolicy === undefined
           ? {}
           : { toolPolicy: input.toolPolicy }),

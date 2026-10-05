@@ -95,6 +95,7 @@ function planFor(
   return planWorkerRoles({
     bridge: memBridge(twoRoleCwd()),
     cwd: CWD,
+    trusted: true,
     agents,
     ...(binding.roles === undefined ? {} : { roles: binding.roles }),
     ...(binding.models === undefined ? {} : { models: binding.models }),
@@ -173,6 +174,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     const plan = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       layers: [{ layer: 'project', roles: { planner: { model: 'acme/cfg' } } }],
       parentModel: 'acme/manager',
@@ -237,6 +239,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     const plan = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: { alpha: 'planner' },
       layers: [{ layer: 'project', roles: { planner: { model: 'acme/p1' } } }],
@@ -253,6 +256,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     const overridden = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       thinkingOverride: 'xhigh',
     });
@@ -271,6 +275,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     const bare = planWorkerRoles({
       bridge: memBridge(files),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta', 'gamma'],
       roles: { alpha: 'planner', beta: 'implementer', gamma: 'tester' },
     });
@@ -296,6 +301,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     const plan = planWorkerRoles({
       bridge: memBridge(files),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: TWO_ROLES.roles,
     });
@@ -316,6 +322,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     const plan = planWorkerRoles({
       bridge: memBridge(files),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha'],
       roles: { alpha: 'planner' },
     });
@@ -334,6 +341,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     const plan = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta', 'gamma'],
       roles: { alpha: 'planner', beta: 'implementer', gamma: 'archaeologist' },
     });
@@ -354,6 +362,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     const plan = planWorkerRoles({
       bridge: memBridge({}),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha'],
     });
     expect(plan.refused).toEqual([]);
@@ -386,6 +395,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
         ].join('\n'),
       }),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: { alpha: 'implementer', beta: 'planner' },
     });
@@ -445,6 +455,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const plan = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: TWO_ROLES.roles,
       toolPolicy: denyBash,
@@ -463,6 +474,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const plan = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: TWO_ROLES.roles,
       toolPolicy: resolveEffectivePolicy([
@@ -480,6 +492,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const outside = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: TWO_ROLES.roles,
       toolPolicy: resolveEffectivePolicy([
@@ -494,6 +507,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const ungated = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: TWO_ROLES.roles,
       toolPolicy: resolveEffectivePolicy([
@@ -517,6 +531,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const layered = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: TWO_ROLES.roles,
       toolPolicy: denyBash,
@@ -532,6 +547,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const bare = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: TWO_ROLES.roles,
       toolPolicy: denyBash,
@@ -556,6 +572,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const layered = planWorkerRoles({
       bridge: memBridge(files),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha'],
       roles: { alpha: 'planner' },
       layers,
@@ -566,6 +583,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const bare = planWorkerRoles({
       bridge: memBridge(files),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha'],
       roles: { alpha: 'planner' },
     });
@@ -580,6 +598,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const plan = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha'],
       roles: { alpha: 'planner' },
       toolPolicy: denyBash,

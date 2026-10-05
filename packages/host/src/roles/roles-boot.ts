@@ -65,6 +65,14 @@ export interface RolesDirInput {
   // means the cwd itself, so a `kubic run --role` from a subdirectory finds
   // the same `<root>/.kubic/roles/*.md` as one from the root.
   projectRoot?: string;
+  // Issue #430 (§33, L-D27): project trust for the repo documents —
+  // exactly like project skills. The check runs against the project root
+  // (one path, not per ancestor). Absent both inputs means untrusted:
+  // repo documents are withheld, builtins still load. `KUBIC_TRUST_PROJECT`
+  // arrives through `trustProject` (the config load's per-path check folds
+  // the env opt-in in), never as a separate flag here.
+  trusted?: boolean;
+  trustProject?: (dir: string) => boolean;
   // §58 enterprise policy (issue #288): when the effective policy gates
   // tools, a role declaring a denied tool is REFUSED at resolution — the same
   // check `kubic run --role` makes at boot (`resolveRole`'s grant gate). The
@@ -96,6 +104,11 @@ export interface LoadedRoles {
   // silently dropped: a contradictory role is exactly what doctor must
   // show. Keyed by role name.
   refused: Array<{ name: string; reason: string }>;
+  // Repo documents withheld by project trust (issue #430, §33, L-D27) —
+  // named, never silently dropped: an untrusted root's roles are not
+  // offered and `--role` naming one refuses with the trust message.
+  // Empty when the root is trusted or holds no `.kubic/roles/`.
+  withheld: Array<{ name: string; reason: string }>;
 }
 
 // The embedded presets are the lowest layer (issue #203): a workspace with no
@@ -130,7 +143,15 @@ function withBuiltins(
 // — the set is reported so doctor can fail it; the lane boot is where a
 // refused role stops a run.
 export function loadRoles(input: RolesDirInput): LoadedRoles {
-  const dir = `${input.projectRoot ?? input.cwd}/${ROLES_DIR}`;
+  const root = input.projectRoot ?? input.cwd;
+  const dir = `${root}/${ROLES_DIR}`;
+  // Issue #430 (§33, L-D27): the repo documents load only for a trusted
+  // root — exactly like project skills. Builtins are unaffected.
+  const repoTrusted =
+    input.trustProject !== undefined
+      ? input.trustProject(root)
+      : (input.trusted ?? false);
+  const withheld: Array<{ name: string; reason: string }> = [];
   // Each entry is read and parsed as ITSELF — the text always comes from the
   // path that was listed, never re-derived from the parsed role name (a
   // document whose file stem differs from its `role:` line is legal: it
@@ -139,21 +160,44 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
   // roles configured".
   const repoDocs: Array<{ doc: ParsedRoleDoc; text: string }> = [];
   let entries: Array<{ name: string; path: string }>;
-  try {
-    entries = input.bridge
-      .listDir(dir)
-      .filter((entry) => !entry.isDirectory && entry.name.endsWith('.md'))
-      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-      .map((entry) => ({ name: entry.name, path: entry.path }));
-  } catch (error) {
-    // An absent `.kubic/roles/` is the NORMAL case, not a failure: most
-    // workspaces have no role documents and the solo default is unaffected.
-    // Letting the raw ENOENT escape made every `kubic doctor` red once the
-    // probe was wired to the binary (measured). An unreadable directory that
-    // DOES exist still throws — the distinction is between "nothing there"
-    // and "there but broken", and only the former is silent.
-    if (!isAbsentDir(error, dir)) throw error;
+  if (!repoTrusted) {
+    // Untrusted: name what is withheld (stems only — contents are never
+    // read) so doctor and `--role` can say what trust would unlock. An
+    // unlistable or absent dir withholds nothing by name (the trust
+    // refusal in selectRole still applies to anything actually there).
+    // Nothing is read below: entries stays empty.
     entries = [];
+    try {
+      for (const entry of input.bridge.listDir(dir)) {
+        if (!entry.isDirectory && entry.name.endsWith('.md')) {
+          const name = entry.name.slice(0, -'.md'.length);
+          withheld.push({
+            name,
+            reason: `project role '${name}' withheld: untrusted project root ${root} (trust it with 'kubic trust' or set KUBIC_TRUST_PROJECT=1)`,
+          });
+        }
+      }
+      withheld.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    } catch {
+      // Absent or unreadable dir: nothing to name.
+    }
+  } else {
+    try {
+      entries = input.bridge
+        .listDir(dir)
+        .filter((entry) => !entry.isDirectory && entry.name.endsWith('.md'))
+        .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+        .map((entry) => ({ name: entry.name, path: entry.path }));
+    } catch (error) {
+      // An absent `.kubic/roles/` is the NORMAL case, not a failure: most
+      // workspaces have no role documents and the solo default is unaffected.
+      // Letting the raw ENOENT escape made every `kubic doctor` red once the
+      // probe was wired to the binary (measured). An unreadable directory that
+      // DOES exist still throws — the distinction is between "nothing there"
+      // and "there but broken", and only the former is silent.
+      if (!isAbsentDir(error, dir)) throw error;
+      entries = [];
+    }
   }
   for (const entry of entries) {
     let text: string;
@@ -197,7 +241,7 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
       throw error;
     }
   }
-  return { docs, texts, sources, resolved, refused };
+  return { docs, texts, sources, resolved, refused, withheld };
 }
 
 // The role a lane boot runs as. `--role` names it; an absent flag means no
@@ -227,6 +271,11 @@ export function selectRole(input: RoleSelectionInput): SelectedRole {
   const loaded = loadRoles(input);
   const doc = loaded.docs.find((entry) => entry.name === input.role);
   if (doc === undefined) {
+    // Issue #430 (§33, L-D27): a name the untrusted root withholds refuses
+    // with the trust message, not the unknown-role message — the user must
+    // learn it is trust, not a typo, that blocks them.
+    const held = loaded.withheld.find((entry) => entry.name === input.role);
+    if (held !== undefined) throw new RoleBootError(held.reason);
     const known = loaded.docs.map((entry) => entry.name).join(', ');
     throw new RoleBootError(
       `no role document for '${input.role}' under ${ROLES_DIR}${known === '' ? ' (no role documents found)' : ` (loaded: ${known})`}`,
@@ -299,6 +348,17 @@ export function rolesDoctorProbe(input: RolesDirInput): DoctorCheck[] {
       status: 'fail',
       reason: 'policy-mismatch',
       detail: refusal.reason,
+    });
+  }
+  // Issue #430 (§33, L-D27): withheld project roles are a trust state,
+  // not a breakage — warn (informational, never exit-flipping), never fail.
+  for (const held of loaded.withheld) {
+    checks.push({
+      id: `role:${held.name}`,
+      label: `role ${held.name}`,
+      status: 'warn',
+      reason: 'policy-mismatch',
+      detail: held.reason,
     });
   }
   return checks;

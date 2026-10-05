@@ -105,6 +105,12 @@ export async function runProdReplay(
               ...(runRuntime.roles?.layers === undefined
                 ? {}
                 : { layers: runRuntime.roles.layers }),
+              // Issue #430 (§33, L-D27): the pinned worktree's role
+              // document loads under the same trust as the run — an
+              // untrusted pin withholds it exactly like `kubic run`.
+              ...(runRuntime.roles?.trustProject === undefined
+                ? {}
+                : { trustProject: runRuntime.roles.trustProject }),
             },
           },
         );

@@ -145,6 +145,8 @@ async function runOne(
     sessionsRoot: scratchRoot('kubic-orch-191-sessions-'),
     registry: new WorkerRegistry(),
     workerEntry: { cmd: process.execPath, args: [fixture] },
+    // Issue #430: the scratch repo stands in for a trusted project.
+    projectTrust: () => true,
   });
   const code = await runOrchestrateCommand(
     {
@@ -298,6 +300,8 @@ describe('prod orchestrate path: the worker gets its §67 task (issue #191)', ()
       sessionsRoot: scratchRoot('kubic-orch-191-sessions-'),
       registry: new WorkerRegistry(),
       workerEntry: { cmd: process.execPath, args: [fixture] },
+      // Issue #430: the scratch repo stands in for a trusted project.
+      projectTrust: () => true,
       roleLayers: roleLayersFromConfig(loaded.runtime as never),
     });
     const code = await runOrchestrateCommand(

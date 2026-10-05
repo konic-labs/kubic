@@ -698,6 +698,9 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
             // The config `[roles.<name>]` layers `kubic run --role` merges
             // under each document: a role is judged as it would run.
             ...(roleLayers === undefined ? {} : { layers: roleLayers }),
+            // Issue #430 (§33, L-D27): judge the trust the run would see —
+            // an untrusted root's withheld roles warn here, never green.
+            trustProject: projectTrustFor(cliConfig),
           }),
         // Repo-level session overlap (issue #118): warning only — the check
         // reports warn (never exit-flipping) when 2+ sessions are recorded

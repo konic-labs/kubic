@@ -3652,9 +3652,9 @@ describe('orchestrate manager lane (issue #431)', () => {
       world.deps,
     );
     expect(code).toBe(0);
-    expect(
-      world.lines.find((line) => line.includes('result:')),
-    ).toBe('result: merged worker-1');
+    expect(world.lines.find((line) => line.includes('result:'))).toBe(
+      'result: merged worker-1',
+    );
   });
 
   it('consecutive workspace_merge calls name successive heads, never the same one twice', () => {

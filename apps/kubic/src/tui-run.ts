@@ -790,6 +790,12 @@ export interface TuiLaneBoot {
   // stored model differs from the selection (kept or switched). Shown in
   // the footer from the first render alongside any pending-op notice.
   modelNotice?: string;
+  // Issue #225 (§38.3, review): the lane's committed thinking level, read
+  // back from the agent document after boot — `runTuiCommand` seeds the
+  // status bar from this, so the first frame shows the level the lane
+  // actually runs (never the seed default). Absent (injected boots) means
+  // the seed default.
+  thinking?: string;
   // Issue #308 (§41.4): the approval posture the lane was installed with —
   // true seeds the status bar's OFF indicator from the first frame.
   fullAccess?: boolean;
@@ -1809,6 +1815,13 @@ export async function bootTuiLane(
     // usage rows the turn runner records and the #347 context gauge all
     // read this.
     const runningModel = await liveModelOf(solo, context);
+    // Issue #225 (§38.3, review): the thinking level the lane actually
+    // runs — read back from the committed agent document, exactly the
+    // value whose clamp (or keep) the boot notices already reported. The
+    // seed below shows this from the first frame; a stale seed would
+    // disagree with the lane until the first turn's refresh.
+    const runningThinking =
+      (await solo.conversation.agent(context)).thinkingLevel ?? 'off';
     return {
       sessionId: id,
       model: `${runningModel.provider}/${runningModel.id}`,
@@ -1828,6 +1841,7 @@ export async function bootTuiLane(
           }
         },
       },
+      thinking: runningThinking,
       // Issue #347: the gauge needs the running model's window; a catalog
       // that does not know it yields none and the gauge stays off.
       contextLimits: contextLimitsOf(
@@ -3792,6 +3806,11 @@ export async function runTuiCommand(
   const app = createTuiApp({
     sessionId: boot.sessionId,
     model: boot.model,
+    // Issue #225 (§38.3, review): the bar shows the lane's committed level
+    // from the first frame — never the seed default the lane already moved
+    // past (a clamped resume would otherwise read 'off' until Alt+T or a
+    // turn refreshed it). Absent on injected boots means that default.
+    thinking: boot.thinking ?? 'off',
     approvalSurface: surface,
     keys,
     ...(boot.listFiles === undefined ? {} : { listFiles: boot.listFiles }),

@@ -1,7 +1,7 @@
 // Prod runner wiring for the analysis surfaces: the runners must read the
 // user's working directory and the SAME installed policy `kubic run` and
 // `kubic doctor` use — not a filesystem root, not an empty policy.
-import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import {
   mkdirSync,
   mkdtempSync,
@@ -14,6 +14,11 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { makeExport } from '../../../packages/eval/src/rl/fixtures.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../../packages/exec/src/test-support/git-sandbox.js';
 import { installedPolicyPosture } from '../../../packages/host/src/approvals.js';
 import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
 import {
@@ -30,7 +35,10 @@ import { loadCliConfig } from './config-runtime.js';
 import { createProdRunners } from './prod-runners.js';
 
 const roots: string[] = [];
+let driver: GitSandbox | undefined;
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   for (const root of roots.splice(0)) {
@@ -221,10 +229,10 @@ describe('kubic workers inspect/terminate (prod wiring, issue #167)', () => {
   });
 
   function git(cwd: string, args: string[]): void {
-    const done = spawnSync('git', args, { cwd, encoding: 'utf8' });
-    if (done.status !== 0) {
-      throw new Error(`git ${args.join(' ')} failed: ${done.stderr}`);
-    }
+    // Shared sandbox driver (issue #420): the workers path reads git
+    // state, so setup and production share one injected scrubbed view.
+    driver ??= createGitSandbox({ injectProcessEnv: true });
+    driver.git(args, { cwd });
   }
 
   it('inspect finds the worktree by branch and reports honest facets', async () => {

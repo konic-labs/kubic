@@ -8,7 +8,7 @@
 // subdirectory would load an UNTRUSTED repo-root models.json (a provider with
 // an attacker's baseUrl and the operator's real `apiKeyEnv`) and hand it the
 // key. Real git, real child processes, no provider.
-import { execFileSync } from 'node:child_process';
+
 import {
   mkdirSync,
   mkdtempSync,
@@ -21,6 +21,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../../packages/exec/src/test-support/git-sandbox.js';
 import {
   ProjectTrustStore,
   projectTrustCheck,
@@ -70,18 +75,22 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   vi.unstubAllEnvs();
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
+// The test's git driver (issue #420): one injected sandbox per test, so
+// the setup spawns and the production git the run shells share the
+// scrubbed view. Repos keep their own scratch dirs; only the env is shared.
+let driver: GitSandbox | undefined;
+
 function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, {
-    cwd,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  driver ??= createGitSandbox({ injectProcessEnv: true });
+  return driver.git(args, { cwd });
 }
 
 // `/repo` (git toplevel, holding an UNTRACKED models.json that declares a

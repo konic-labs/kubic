@@ -10,7 +10,7 @@
 //   3. `kubic doctor`, over a REAL `.kubic/roles/` tree on the composition
 //      root's own path, prints a contradictory role's named reason — the
 //      same refusal the orchestrate run fails closed with.
-import { execFileSync } from 'node:child_process';
+
 import {
   mkdirSync,
   mkdtempSync,
@@ -24,6 +24,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+import { createGitSandbox } from '../../exec/src/test-support/git-sandbox.js';
 import { runDoctorCommand } from './doctor.js';
 import { rolesDoctorProbe } from './roles/roles-boot.js';
 import { planWorkerRoles } from './roles/worker-roles.js';
@@ -78,11 +79,16 @@ function markdownOnDisk(dir = ''): string[] {
 function trackedDocs(): string[] {
   let listed = '';
   try {
-    listed = execFileSync('git', ['ls-files', 'docs', 'README.md', '*.md'], {
-      cwd: ROOT,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
+    // The listing still scans the real checkout, but through the shared
+    // sandbox's scrubbed env (issue #420) — no developer config shapes it.
+    const sandbox = createGitSandbox();
+    try {
+      listed = sandbox.git(['ls-files', 'docs', 'README.md', '*.md'], {
+        cwd: ROOT,
+      });
+    } finally {
+      sandbox.cleanup();
+    }
   } catch {
     // Not a git checkout at all: fall through to the walk.
   }

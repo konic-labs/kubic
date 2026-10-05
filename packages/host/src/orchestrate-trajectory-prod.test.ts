@@ -12,7 +12,7 @@
 //
 // No network and no paid tokens: the worker entry is this test process's own
 // node running a fixture that prints its readiness marker and exits.
-import { execFileSync } from 'node:child_process';
+
 import {
   existsSync,
   mkdtempSync,
@@ -24,6 +24,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+} from '../../exec/src/test-support/git-sandbox.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
 
 const WORKER = `
@@ -43,6 +47,7 @@ function scratch(prefix: string): string {
 }
 
 afterEach(() => {
+  disposeAllGitSandboxes();
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -50,13 +55,11 @@ afterEach(() => {
 
 describe('prod orchestrate path: the trajectory event lands (issue #106, §49.1)', () => {
   it('the composition root default sink writes the parallel event to disk', async () => {
-    const root = scratch('kubic-orch-106-traj-');
-    const git = (args: string[]) =>
-      execFileSync('git', args, { cwd: root, encoding: 'utf8' });
-    git(['init', '-b', 'main', '.']);
-    git(['config', 'user.email', 'a@b.c']);
-    git(['config', 'user.name', 't']);
-    git(['config', 'commit.gpgsign', 'false']);
+    // Injected sandbox repo (issue #420): the run under test manages
+    // worktrees and commits through production git.
+    const sandbox = createGitSandbox({ injectProcessEnv: true });
+    const root = sandbox.path;
+    const git = (args: string[]) => sandbox.git(args, { cwd: root });
     writeFileSync(join(root, 'file.txt'), 'base\n');
     git(['add', '-A']);
     git(['commit', '-m', 'base']);

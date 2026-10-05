@@ -6,7 +6,6 @@
 // captured child env through the real `kubic run` boot in-process, so the
 // full chain (manager plan → grant → child env → child auth → wire) is
 // covered without a build and without network.
-import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -25,6 +24,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../exec/src/test-support/git-sandbox.js';
 import { WorkerRegistry } from '../../worker/src/lifecycle/registry.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
 import { assertNoSecretMaterial } from './policy/enterprise.js';
@@ -48,6 +52,8 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   vi.unstubAllEnvs();
   for (const server of servers.splice(0)) {
     await new Promise<void>((done) => server.close(() => done()));
@@ -124,6 +130,16 @@ function roleText(name: string, frontmatter: string, prompt: string): string {
   return `---\nrole: ${name}\n${frontmatter}---\n\n# ${name}\n\n## Prompt\n\n${prompt}\n`;
 }
 
+// The test's git driver (issue #420): one injected sandbox per test, so
+// the setup commits and the production git the run shells share the
+// scrubbed view. Repos keep their own scratch dirs; only the env is shared.
+let driver: GitSandbox | undefined;
+
+function git(cwd: string, args: string[]): void {
+  driver ??= createGitSandbox({ injectProcessEnv: true });
+  driver.git(args, { cwd });
+}
+
 // A repo whose committed role document is what the worker's worktree checks
 // out, plus an UNTRACKED, excluded models.json naming the loopback provider
 // (the child reaches it through the manager's KUBIC_MODELS_ROOT, exactly as
@@ -131,12 +147,10 @@ function roleText(name: string, frontmatter: string, prompt: string): string {
 // check green; nothing is ever written outside the scratch tree.
 async function initRepo(providerUrl: string): Promise<string> {
   const root = scratchRoot('kubic-orch-200-');
-  execFileSync('git', ['init', '-b', 'main'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'creds@kubic.dev'], {
-    cwd: root,
-  });
-  execFileSync('git', ['config', 'user.name', 'kubic creds'], { cwd: root });
-  execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: root });
+  git(root, ['init', '-b', 'main']);
+  git(root, ['config', 'user.email', 'creds@kubic.dev']);
+  git(root, ['config', 'user.name', 'kubic creds']);
+  git(root, ['config', 'commit.gpgsign', 'false']);
   writeFileSync(join(root, 'base.txt'), 'base\n');
   const rolesDir = join(root, '.kubic', 'roles');
   mkdirSync(rolesDir, { recursive: true });
@@ -159,10 +173,8 @@ async function initRepo(providerUrl: string): Promise<string> {
     }),
   );
   writeFileSync(join(root, '.git', 'info', 'exclude'), 'models.json\n');
-  execFileSync('git', ['add', 'base.txt', '.kubic/roles/planner.md'], {
-    cwd: root,
-  });
-  execFileSync('git', ['commit', '-m', 'base + roles'], { cwd: root });
+  git(root, ['add', 'base.txt', '.kubic/roles/planner.md']);
+  git(root, ['commit', '-m', 'base + roles']);
   return root;
 }
 

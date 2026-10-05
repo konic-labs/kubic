@@ -12,7 +12,6 @@
 // the REAL child boot in-process with that env against a worktree whose
 // committed role document differs from the manager's working tree — the
 // registered tool set must be the task's, not the document's.
-import { execFileSync } from 'node:child_process';
 import {
   mkdirSync,
   mkdtempSync,
@@ -29,6 +28,11 @@ import { SOLO_DEFAULTS } from '../../../packages/agents/src/policy.js';
 import { buildAgentTask } from '../../agents/src/task.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../exec/src/test-support/git-sandbox.js';
 import {
   attachSession,
   openSessionStore,
@@ -56,11 +60,23 @@ function scratchRoot(prefix: string): string {
 }
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   vi.unstubAllEnvs();
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// The test's git driver (issue #420): one injected sandbox per test, so
+// the setup commits and the production git the run shells share the
+// scrubbed view. Repos keep their own scratch dirs; only the env is shared.
+let driver: GitSandbox | undefined;
+
+function git(cwd: string, args: string[]): void {
+  driver ??= createGitSandbox({ injectProcessEnv: true });
+  driver.git(args, { cwd });
+}
 
 const FIXTURE = `
 import { writeFileSync } from 'node:fs';
@@ -107,12 +123,10 @@ function roleText(name: string, tools: string[], prompt: string): string {
 // the parent-composes-from-the-working-tree case #191 describes.
 async function initRepo(committedTools: string[] | null): Promise<string> {
   const root = scratchRoot('kubic-orch-191-');
-  execFileSync('git', ['init', '-b', 'main'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'task@kubic.dev'], {
-    cwd: root,
-  });
-  execFileSync('git', ['config', 'user.name', 'kubic task'], { cwd: root });
-  execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: root });
+  git(root, ['init', '-b', 'main']);
+  git(root, ['config', 'user.email', 'task@kubic.dev']);
+  git(root, ['config', 'user.name', 'kubic task']);
+  git(root, ['config', 'commit.gpgsign', 'false']);
   writeFileSync(join(root, 'base.txt'), 'base\n');
   if (committedTools !== null) {
     mkdirSync(join(root, '.kubic', 'roles'), { recursive: true });
@@ -121,8 +135,8 @@ async function initRepo(committedTools: string[] | null): Promise<string> {
       roleText('implementer', committedTools, 'You are the implementer.'),
     );
   }
-  execFileSync('git', ['add', '-A'], { cwd: root });
-  execFileSync('git', ['commit', '-m', 'base + implementer'], { cwd: root });
+  git(root, ['add', '-A']);
+  git(root, ['commit', '-m', 'base + implementer']);
   return root;
 }
 
@@ -231,11 +245,11 @@ describe('prod orchestrate path: the worker gets its §67 task (issue #191)', ()
     // tree); assume-unchanged is the fixture's way of holding that difference
     // without tripping the pre-merge clean-tree guard, which refuses a dirty
     // tree by design.
-    execFileSync(
-      'git',
-      ['update-index', '--assume-unchanged', '.kubic/roles/implementer.md'],
-      { cwd: root },
-    );
+    git(root, [
+      'update-index',
+      '--assume-unchanged',
+      '.kubic/roles/implementer.md',
+    ]);
     const { dump, code, lines } = await runOne(root);
     expect(code, lines.join('\n')).toBe(0);
     expect(dump.taskFile).not.toBeNull();
@@ -376,8 +390,8 @@ describe('prod orchestrate path: --skill reaches every worker (issue #170)', () 
     mkdirSync(join(root, 'skills'), { recursive: true });
     writeFileSync(join(root, 'skills', 'house.md'), '# house\n');
     // Committed: an untracked file would trip the pre-merge clean-tree guard.
-    execFileSync('git', ['add', '-A'], { cwd: root });
-    execFileSync('git', ['commit', '-m', 'add the skill'], { cwd: root });
+    git(root, ['add', '-A']);
+    git(root, ['commit', '-m', 'add the skill']);
     const absolute = join(root, 'skills', 'house.md');
     const { dump, code, lines } = await runOne(root, {
       // Relative on purpose: the child runs in its own worktree, so the

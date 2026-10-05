@@ -20,11 +20,12 @@
 //     still be owned by an executed issue — manager.ts is WIRED by #103, so
 //     it may not come back as a row;
 //   - the deleted orchestrator leftovers stay deleted.
-import { execFileSync } from 'node:child_process';
+
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { createGitSandbox } from '../../../exec/src/test-support/git-sandbox.js';
 import type { SessionHandle } from '../../../worker/src/lane/session-store.js';
 import {
   BACKGROUND_CONTEXT,
@@ -159,11 +160,16 @@ function markdownOnDisk(dir: string): string[] {
 function trackedDocs(): string[] {
   let listed = '';
   try {
-    listed = execFileSync('git', ['ls-files', 'docs', 'README.md'], {
-      cwd: ROOT,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
+    // The listing still scans the real checkout, but through the shared
+    // sandbox's scrubbed env (issue #420) — no developer config shapes it.
+    const sandbox = createGitSandbox();
+    try {
+      listed = sandbox.git(['ls-files', 'docs', 'README.md'], {
+        cwd: ROOT,
+      });
+    } finally {
+      sandbox.cleanup();
+    }
   } catch {
     // Not a git checkout at all: fall through to the walk.
   }

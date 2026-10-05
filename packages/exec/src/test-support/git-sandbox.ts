@@ -67,7 +67,10 @@ export interface GitSandbox {
   /** Scrubbed env object to pass to `execFileSync`/`spawnSync`. */
   readonly env: NodeJS.ProcessEnv;
   /** Run git in the repo with the scrubbed env; throws on non-zero exit. */
-  git(args: readonly string[], opts?: { readonly cwd?: string }): string;
+  git(
+    args: readonly string[],
+    opts?: { readonly cwd?: string; readonly maxBuffer?: number },
+  ): string;
   /** Run git, capturing the exit status instead of throwing. */
   gitResult(
     args: readonly string[],
@@ -137,12 +140,16 @@ class GitSandboxImpl implements GitSandbox {
     mkdirSync(join(this.parent, 'hooks-empty'), { recursive: true });
   }
 
-  git(args: readonly string[], opts?: { readonly cwd?: string }): string {
+  git(
+    args: readonly string[],
+    opts?: { readonly cwd?: string; readonly maxBuffer?: number },
+  ): string {
     try {
       return execFileSync('git', [...args], {
         cwd: opts?.cwd ?? this.path,
         encoding: 'utf8',
         env: this.env,
+        ...(opts?.maxBuffer === undefined ? {} : { maxBuffer: opts.maxBuffer }),
       });
     } catch (error) {
       const failure = error as {

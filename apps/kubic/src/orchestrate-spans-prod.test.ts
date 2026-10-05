@@ -3,7 +3,7 @@
 // whose duration equals the registry startupMs, written to
 // <root>/.kubic/orchestrator/<session>.spans.jsonl. Real git, a real child
 // process, no provider.
-import { execFileSync } from 'node:child_process';
+
 import {
   mkdtempSync,
   readFileSync,
@@ -14,6 +14,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../../packages/exec/src/test-support/git-sandbox.js';
 import { runOrchestrateCommand } from '../../../packages/host/src/orchestrate-cli.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
 import { orchestrateDepsWithDefaults } from './orchestrate-run.js';
@@ -45,18 +50,22 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   vi.unstubAllEnvs();
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
+// The test's git driver (issue #420): one injected sandbox per test, so
+// the setup spawns and the production git the run shells share the
+// scrubbed view. Repos keep their own scratch dirs; only the env is shared.
+let driver: GitSandbox | undefined;
+
 function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, {
-    cwd,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  driver ??= createGitSandbox({ injectProcessEnv: true });
+  return driver.git(args, { cwd });
 }
 
 function initRepo(): string {

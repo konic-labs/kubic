@@ -10,10 +10,10 @@
 // doc, and the two behavioural facts the docs now assert are pinned by tests in
 // orchestrate-cli.test.ts.
 
-import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { createGitSandbox } from '../../../exec/src/test-support/git-sandbox.js';
 
 const repoRoot = join(import.meta.dirname, '..', '..', '..', '..');
 
@@ -59,11 +59,16 @@ function markdownOnDisk(dir = ''): string[] {
 function trackedDocs(): string[] {
   let listed = '';
   try {
-    listed = execFileSync('git', ['ls-files', 'docs', 'README.md', '*.md'], {
-      cwd: repoRoot,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
+    // The listing still scans the real checkout, but through the shared
+    // sandbox's scrubbed env (issue #420) — no developer config shapes it.
+    const sandbox = createGitSandbox();
+    try {
+      listed = sandbox.git(['ls-files', 'docs', 'README.md', '*.md'], {
+        cwd: repoRoot,
+      });
+    } finally {
+      sandbox.cleanup();
+    }
   } catch {
     // Not a git checkout at all: fall through to the walk.
   }

@@ -5,7 +5,7 @@
 // preference builder work on run-produced files without hand-set labels.
 // Faux provider only (scripted replies, a real bash tool call); a fixture
 // git repo in a temp dir; zero network.
-import { spawnSync } from 'node:child_process';
+
 import {
   existsSync,
   mkdtempSync,
@@ -25,6 +25,11 @@ import { buildPreferencePair } from '../../eval/src/rl/preference.js';
 import { referenceVerifier } from '../../eval/src/rl/verifier.js';
 import { computeSignals } from '../../eval/src/signals.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../exec/src/test-support/git-sandbox.js';
 import {
   parseTrajectoryExportJSON,
   type TrajectoryExport,
@@ -55,21 +60,28 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   vi.unstubAllEnvs();
   for (const dir of made.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
+// The test's git driver (issue #420): one injected sandbox per test, so
+// the fixture setup and the baseline worktree git the verify path shells
+// share the scrubbed view. The fixture keeps its own tmp dir.
+let driver: GitSandbox | undefined;
+
+function ensureDriver(): GitSandbox {
+  driver ??= createGitSandbox({ injectProcessEnv: true });
+  return driver;
+}
+
 // A one-commit repo whose "test suite" passes while ok.txt exists.
 function fixtureRepo(): string {
   const dir = tmp('verify-repo-');
-  const git = (args: string[]) => {
-    const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
-    if (result.status !== 0) {
-      throw new Error(`git ${args.join(' ')}: ${result.stderr}`);
-    }
-  };
+  const git = (args: string[]) => ensureDriver().git(args, { cwd: dir });
   git(['init', '-q']);
   git(['config', 'user.email', 'verify@example.com']);
   git(['config', 'user.name', 'verify']);
@@ -162,10 +174,9 @@ describe('the run verifier writes §48 gate signals (issue #267)', () => {
     expect(signals.tests).toBe('fail');
     expect(signals.regressionFree).toBe(false);
     // The baseline checkout is gone: only the fixture's own worktree left.
-    const list = spawnSync('git', ['worktree', 'list', '--porcelain'], {
+    const list = ensureDriver().git(['worktree', 'list', '--porcelain'], {
       cwd: repo,
-      encoding: 'utf8',
-    }).stdout;
+    });
     expect(
       list.split('\n').filter((line) => line.startsWith('worktree ')),
     ).toHaveLength(1);

@@ -3,7 +3,6 @@
 // help request must print usage and exit 0 without writing the runtime
 // exclude rules, building lane deps (the `extensions:` receipt) or touching
 // the repo — the missing-bundle boot failure cannot be reached by help.
-import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdtempSync,
@@ -18,6 +17,10 @@ import { loadCliConfig } from '../../../apps/kubic/src/config-runtime.js';
 import { dispatchCommand } from '../../../apps/kubic/src/dispatch.js';
 import { createProdRunners } from '../../../apps/kubic/src/prod-runners.js';
 import { ensureRuntimeExcludeRules } from '../../exec/src/runtime-exclude.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+} from '../../exec/src/test-support/git-sandbox.js';
 
 const made: string[] = [];
 
@@ -28,25 +31,30 @@ function tmpRoot(prefix: string): string {
 }
 
 afterEach(() => {
+  disposeAllGitSandboxes();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   for (const dir of made.splice(0))
     rmSync(dir, { recursive: true, force: true });
 });
 
-function git(cwd: string, args: string[]): void {
-  execFileSync('git', args, { cwd, stdio: 'ignore' });
-}
-
 function repo(): string {
+  // Real repo from the shared sandbox (issue #420): setup spawns run under
+  // its scrubbed env, and it is injected into process.env so any git the
+  // dispatch shells inherits the same scrubbed view (the per-run HOME stub
+  // in kubic() only narrows further).
+  const sandbox = createGitSandbox({ injectProcessEnv: true });
   const root = tmpRoot('kubic-help-');
-  git(root, ['init', '-b', 'main']);
-  git(root, ['config', 'user.email', 'help@kubic.dev']);
-  git(root, ['config', 'user.name', 'kubic help']);
-  git(root, ['config', 'commit.gpgsign', 'false']);
+  const git = (args: string[]): void => {
+    sandbox.git(args, { cwd: root });
+  };
+  git(['init', '-b', 'main']);
+  git(['config', 'user.email', 'help@kubic.dev']);
+  git(['config', 'user.name', 'kubic help']);
+  git(['config', 'commit.gpgsign', 'false']);
   writeFileSync(join(root, 'base.txt'), 'base\n');
-  git(root, ['add', 'base.txt']);
-  git(root, ['commit', '-m', 'base']);
+  git(['add', 'base.txt']);
+  git(['commit', '-m', 'base']);
   return root;
 }
 

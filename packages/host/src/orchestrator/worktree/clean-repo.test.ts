@@ -1,10 +1,10 @@
 // `kubic clean` on a real scratch repository (issue #92; §42.4, §44.1, §78).
 // RED first: every disposer acceptance checkbox is proven against real git
-// state in a throwaway repo (mkdtempSync + git init — never this repo).
+// state in a throwaway repo (the shared git sandbox, issue #420 — never
+// this repo).
 // `--dry-run` mutates nothing, the real run removes retained worktrees +
 // branches through the library path (idempotent, one line per removal), and
 // git state Kubic did not name is never touched.
-import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -17,50 +17,45 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { NodeExecutionEnv } from '../../../../exec/src/env.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../../../exec/src/test-support/git-sandbox.js';
 import { approvalsSessionDir } from '../approvals/worker-asks.js';
 import { type CleanOptions, runCleanCommand } from './clean.js';
 
 const scratchDirs: string[] = [];
+let driver: GitSandbox | undefined;
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-// stderr is piped, not inherited: `git worktree add` narrates "Preparing
-// worktree ..." on stderr, which would otherwise leak into the test output.
-// A failing call still throws with that stderr attached.
+// The test's git driver: every setup spawn runs through the scratch repo's
+// sandbox (issue #420), whose scrubbed env the repo was built with. Set by
+// scratchRepo, which every git-driving test calls first.
 function git(dir: string, args: string[]): string {
-  return execFileSync('git', args, {
-    cwd: dir,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  if (driver === undefined) throw new Error('git() needs scratchRepo() first');
+  return driver.git(args, { cwd: dir });
 }
 
-// realpath: macOS tmpdir is a symlink (/var → /private/var) and git reports
-// the resolved toplevel, so the test's root must be the resolved form too.
-// Identity and signing are passed per-commit, so the operator's global git
-// config (e.g. commit.gpgsign) cannot break or stall the fixture.
+// Identity, signing and hooks are pinned by the sandbox constructor, so the
+// operator's global git config (e.g. commit.gpgsign) cannot break or stall
+// the fixture. sandbox.path is realpath-resolved (macOS /var → /private/var),
+// which git's reported toplevel needs. Injected into process.env because
+// runCleanCommand shells git on the inherited environment.
 function scratchRepo(): string {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'kubic-clean-')));
-  scratchDirs.push(dir);
-  git(dir, ['init', '-q']);
+  const sandbox = createGitSandbox({ injectProcessEnv: true });
+  driver = sandbox;
+  const dir = sandbox.path;
   writeFileSync(join(dir, 'README.md'), '# scratch\n');
-  git(dir, ['add', 'README.md']);
-  git(dir, [
-    '-c',
-    'user.email=kubic-test@local',
-    '-c',
-    'user.name=kubic test',
-    '-c',
-    'commit.gpgsign=false',
-    'commit',
-    '-q',
-    '-m',
-    'init',
-  ]);
+  sandbox.git(['add', 'README.md']);
+  sandbox.git(['commit', '-q', '-m', 'init']);
   return dir;
 }
 

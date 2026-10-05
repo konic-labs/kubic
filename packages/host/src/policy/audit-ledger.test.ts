@@ -12,6 +12,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../../exec/src/test-support/git-sandbox.js';
 import { createWorkerAskRouter } from '../orchestrator/approvals/worker-asks.js';
 import type { AuditInput } from './audit.js';
 import { runAuditCommand } from './audit-cli.js';
@@ -43,11 +48,21 @@ import {
 import { REDACTED_SECRET } from './secret-shapes.js';
 
 const roots: string[] = [];
+let driver: GitSandbox | undefined;
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// The test's git driver (issue #420): plain, never injected — production
+// reaches git only through the injected spawn seam below.
+function git(cwd: string, args: string[]): string {
+  driver ??= createGitSandbox();
+  return driver.git(args, { cwd });
+}
 
 function repo(): string {
   const root = mkdtempSync(join(tmpdir(), 'audit-ledger-'));
@@ -386,26 +401,14 @@ describe('§60 audit ledger', () => {
       roots.push(workspace);
       const elsewhere = mkdtempSync(join(tmpdir(), 'kubic-base-cwd-'));
       roots.push(elsewhere);
-      execFileSync('git', ['init', '-b', 'main'], {
-        cwd: workspace,
-        encoding: 'utf8',
-      });
-      execFileSync('git', ['config', 'user.email', 'base@kubic.dev'], {
-        cwd: workspace,
-      });
-      execFileSync('git', ['config', 'user.name', 'kubic base'], {
-        cwd: workspace,
-      });
-      execFileSync('git', ['config', 'commit.gpgsign', 'false'], {
-        cwd: workspace,
-      });
+      git(workspace, ['init', '-b', 'main']);
+      git(workspace, ['config', 'user.email', 'base@kubic.dev']);
+      git(workspace, ['config', 'user.name', 'kubic base']);
+      git(workspace, ['config', 'commit.gpgsign', 'false']);
       writeFileSync(join(workspace, 'base.txt'), 'base\n');
-      execFileSync('git', ['add', 'base.txt'], { cwd: workspace });
-      execFileSync('git', ['commit', '-m', 'base'], { cwd: workspace });
-      const expected = execFileSync('git', ['rev-parse', 'HEAD'], {
-        cwd: workspace,
-        encoding: 'utf8',
-      }).trim();
+      git(workspace, ['add', 'base.txt']);
+      git(workspace, ['commit', '-m', 'base']);
+      const expected = git(workspace, ['rev-parse', 'HEAD']).trim();
       // The runner spawns from `elsewhere` the way an env shell pinned to
       // another dir would — the `-C` in argv is what reaches the workspace.
       const seen: string[][] = [];

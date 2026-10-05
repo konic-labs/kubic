@@ -7,7 +7,7 @@
 // a token window, so trailing contrasts still fail. Every non-test
 // source plus markdown docs are scanned; violation SAMPLES live in
 // this *.test.ts file, which the scan skips.
-import { execFileSync } from 'node:child_process';
+
 import {
   existsSync,
   mkdirSync,
@@ -21,6 +21,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../../exec/src/test-support/git-sandbox.js';
 
 interface ClaimRule {
   label: string;
@@ -193,6 +198,8 @@ const sourceFileCache = new Map<string, string[]>();
 const tempRoots: string[] = [];
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   vi.unstubAllEnvs();
   for (const dir of tempRoots.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -202,43 +209,24 @@ afterEach(() => {
 // A line that violates the isolation-guarantee rule, for scope fixtures.
 const VIOLATING_LINE = 'solo runs in an isolated sandbox for safety';
 
-// Empty global/system config for deterministic git (no device files:
-// the #365 helper uses a real empty file, and so does this gate).
-// Memoized; the directory joins tempRoots for afterEach cleanup.
-let emptyGitConfigPath: string | undefined;
-function emptyGitConfig(): string {
-  if (emptyGitConfigPath === undefined || !existsSync(emptyGitConfigPath)) {
-    const dir = mkdtempSync(join(tmpdir(), 'honest-claims-gitconfig-'));
-    tempRoots.push(dir);
-    emptyGitConfigPath = join(dir, 'empty-config');
-    writeFileSync(emptyGitConfigPath, '');
-  }
-  return emptyGitConfigPath;
-}
+// The shared git sandbox (issue #420) replaces this file's former
+// hand-rolled deterministic-git env: one scrubbed-env helper for every
+// real-git test. The driver is lazy (plain, never injected — no production
+// code here shells git) and disposed after each test.
+let driver: GitSandbox | undefined;
 
-// Deterministic git env for fixture repos and the listing: no developer
-// config leaks in, and no ambient GIT_DIR repoints the tree (a hook-run
-// suite would scan the wrong tree).
-function deterministicGitEnv(): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...process.env };
-  for (const key of Object.keys(env)) {
-    if (key.startsWith('GIT_')) {
-      delete env[key];
-    }
-  }
-  env.GIT_CONFIG_NOSYSTEM = '1';
-  env.GIT_CONFIG_GLOBAL = emptyGitConfig();
-  env.GIT_CONFIG_SYSTEM = emptyGitConfig();
-  return env;
+function git(
+  args: string[],
+  opts?: { readonly cwd?: string; readonly maxBuffer?: number },
+): string {
+  driver ??= createGitSandbox();
+  return driver.git(args, opts);
 }
 
 function initFixtureRepo(): string {
   const root = mkdtempSync(join(tmpdir(), 'honest-claims-'));
   tempRoots.push(root);
-  execFileSync('git', ['init', '-q', '-b', 'main'], {
-    cwd: root,
-    env: deterministicGitEnv(),
-  });
+  git(['init', '-q', '-b', 'main'], { cwd: root });
   return root;
 }
 
@@ -257,10 +245,7 @@ function trackedSourceFiles(root: string): string[] | null {
     return null;
   }
   try {
-    const out = execFileSync('git', ['-C', root, 'ls-files', '-z'], {
-      encoding: 'utf8',
-      env: deterministicGitEnv(),
-      stdio: ['ignore', 'pipe', 'ignore'],
+    const out = git(['-C', root, 'ls-files', '-z'], {
       maxBuffer: 64 * 1024 * 1024,
     });
     return out
@@ -421,10 +406,7 @@ describe('honest-claims grep-gate (issue #58)', () => {
   it('scans tracked files only: untracked tool state never flags (issue #375)', () => {
     const root = initFixtureRepo();
     writeFileSync(join(root, 'clean.md'), '# clean\n');
-    execFileSync('git', ['add', 'clean.md'], {
-      cwd: root,
-      env: deterministicGitEnv(),
-    });
+    git(['add', 'clean.md'], { cwd: root });
     // Untracked claim-violating files: agent tool state and a stray note.
     mkdirSync(join(root, '.claude', 'worktrees', 'x'), { recursive: true });
     writeFileSync(
@@ -463,10 +445,7 @@ describe('honest-claims grep-gate (issue #58)', () => {
     vi.stubEnv('STRYKER_MUTATOR_WORKER', 'true');
     const root = initFixtureRepo();
     writeFileSync(join(root, 'clean.ts'), 'export const ok = 1;\n');
-    execFileSync('git', ['add', 'clean.ts'], {
-      cwd: root,
-      env: deterministicGitEnv(),
-    });
+    git(['add', 'clean.ts'], { cwd: root });
     mkdirSync(join(root, '.beads'), { recursive: true });
     writeFileSync(join(root, '.beads', 'claim.md'), `${VIOLATING_LINE}\n`);
     // git would list only clean.ts; the walk lists it too, minus .beads.

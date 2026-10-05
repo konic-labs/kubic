@@ -8,7 +8,7 @@
 // Faux provider only (`KUBIC_PROVIDER=faux` or injected faux catalogs): zero
 // network, zero paid tokens. Temp workspace, `process.cwd()` mocked, temp HOME
 // from the hermetic vitest env.
-import { execFileSync } from 'node:child_process';
+
 import {
   existsSync,
   mkdirSync,
@@ -20,6 +20,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../../packages/exec/src/test-support/git-sandbox.js';
 import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
 import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
 import { buildTrajectoryExport } from '../../../packages/trajectory/src/export.js';
@@ -52,6 +57,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   for (const dir of tempDirs.splice(0)) {
@@ -60,6 +67,16 @@ afterEach(() => {
 });
 
 const ENTERPRISE = '/etc/kubic-test/enterprise.toml';
+
+// The test's git driver (issue #420): one injected sandbox per test, so
+// the repo setup and the production git the run shells share the scrubbed
+// view. Workspaces keep their own dirs; only the env is shared.
+let driver: GitSandbox | undefined;
+
+function git(cwd: string, args: string[]): void {
+  driver ??= createGitSandbox({ injectProcessEnv: true });
+  driver.git(args, { cwd });
+}
 const PROJECT = '/nonexistent-cwd/.kubic/config.toml';
 
 // Issue #430: the tests below load workspace role documents, so they run
@@ -974,7 +991,7 @@ describe('role documents under the enterprise tool policy on the doctor and orch
 
   it('kubic orchestrate does not refuse a role a config layer narrowed below the deny', async () => {
     const workspace = workspaceWithRoles();
-    execFileSync('git', ['init', '-q'], { cwd: workspace });
+    git(workspace, ['init', '-q']);
     const { r, lines, errs } = runners(workspace);
     await r.orchestrate(
       { prompt: 'do the thing', agents: ['alpha', 'beta'], json: true },
@@ -989,7 +1006,7 @@ describe('role documents under the enterprise tool policy on the doctor and orch
     const workspace = workspaceWithRoles();
     // The manager needs a repository before it reaches the role plan; git
     // init creates no worktree, commit or process beyond itself.
-    execFileSync('git', ['init', '-q'], { cwd: workspace });
+    git(workspace, ['init', '-q']);
     const { r, lines, errs } = runners(workspace);
     const code = await r.orchestrate(
       { prompt: 'do the thing', agents: ['alpha', 'beta'], json: true },
@@ -1078,7 +1095,7 @@ process.exit(0);
 
   it('kubic orchestrate does not refuse the run over the dropped env pin provider', async () => {
     const workspace = workspaceWithProviders();
-    execFileSync('git', ['init', '-q'], { cwd: workspace });
+    git(workspace, ['init', '-q']);
     const { r, lines, errs } = runners(workspace);
     // The worker child is a fixture process (issue #179): the providers
     // above are unreachable by design, so a real child would burn the

@@ -2,7 +2,6 @@
 // real child processes, no provider. The fixture child prints the report
 // `kubic run --json` prints (summary, usage rollup, model); the manager must
 // surface it per worker instead of keeping only hunk counts.
-import { execFileSync } from 'node:child_process';
 import {
   mkdtempSync,
   readFileSync,
@@ -15,6 +14,11 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../exec/src/test-support/git-sandbox.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
 import { addWorktree } from './orchestrator/worktree/add.js';
 
@@ -71,13 +75,25 @@ function scratch(prefix: string): string {
 }
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
+// The test's git driver (issue #420): one injected sandbox per test, so
+// setup spawns and the production git the run shells share the scrubbed
+// view. Repos keep their own scratch dirs; only the env is shared.
+let driver: GitSandbox | undefined;
+
+function ensureDriver(): GitSandbox {
+  driver ??= createGitSandbox({ injectProcessEnv: true });
+  return driver;
+}
+
 function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' });
+  return ensureDriver().git(args, { cwd });
 }
 
 async function run(exit: number, json: boolean) {

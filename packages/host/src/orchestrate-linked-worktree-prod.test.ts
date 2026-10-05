@@ -5,7 +5,7 @@
 // from the raw `git rev-parse --show-toplevel`, they split into the linked
 // worktree's own `.kubic/`, where `kubic audit` never looks. Real git, real
 // child processes, no provider.
-import { execFileSync } from 'node:child_process';
+
 import {
   existsSync,
   mkdtempSync,
@@ -19,6 +19,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../exec/src/test-support/git-sandbox.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
 import { orchestratorStateRoot } from './orchestrator/approvals/worker-asks.js';
 import {
@@ -55,29 +60,31 @@ function scratch(prefix: string): string {
 }
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
+// The test's git driver (issue #420). Set by mainAndLinked.
+let driver: GitSandbox | undefined;
+
 function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, {
-    cwd,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  if (driver === undefined)
+    throw new Error('git() needs mainAndLinked() first');
+  return driver.git(args, { cwd });
 }
 
-// A main checkout plus a linked worktree of it on its own branch.
+// A main checkout plus a linked worktree of it on its own branch. Injected:
+// the run under test manages worktrees and commits through production git.
 function mainAndLinked(): { main: string; linked: string } {
-  const main = scratch('kubic-orch-lk-main-');
-  git(main, ['init', '-b', 'main']);
-  git(main, ['config', 'user.email', 'lk@kubic.dev']);
-  git(main, ['config', 'user.name', 'kubic lk']);
-  git(main, ['config', 'commit.gpgsign', 'false']);
+  const sandbox = createGitSandbox({ injectProcessEnv: true });
+  driver = sandbox;
+  const main = sandbox.path;
   writeFileSync(join(main, 'base.txt'), 'base\n');
-  git(main, ['add', 'base.txt']);
-  git(main, ['commit', '-m', 'base']);
+  sandbox.git(['add', 'base.txt']);
+  sandbox.git(['commit', '-m', 'base']);
   const linked = join(scratch('kubic-orch-lk-link-'), 'feature');
   git(main, ['worktree', 'add', linked, '-b', 'feature']);
   return { main, linked: realpathSync(linked) };

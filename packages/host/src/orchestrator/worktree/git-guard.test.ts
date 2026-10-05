@@ -3,12 +3,16 @@
 // run-start snapshot of .git/config + .git/hooks must surface drift at settle.
 // RED first: this file was written before packages/.../git-guard.ts existed.
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { GitGuardSnapshot } from '../../../../exec/src/git-guard-snapshot.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+} from '../../../../exec/src/test-support/git-sandbox.js';
 import {
   diffGitGuardSnapshots,
   HOST_GIT_COMMIT_EXTRA_ARGS,
@@ -20,6 +24,7 @@ import {
 
 const dirs: string[] = [];
 afterEach(() => {
+  disposeAllGitSandboxes();
   for (const dir of dirs.splice(0))
     rmSync(dir, { recursive: true, force: true });
 });
@@ -149,13 +154,15 @@ describe('isGitDirTarget (issue #363)', () => {
 describe('guarded git never runs a planted hook (issue #363, real git)', () => {
   it('a failing pre-commit hook blocks the plain commit but not the guarded one', () => {
     const root = scratch();
+    // Every spawn through the shared sandbox (issue #420): the planted
+    // hook still fires for the plain commit (hooks are repo-local), while
+    // the scrubbed env keeps the developer config out of every call.
+    const sandbox = createGitSandbox();
     const git = (args: readonly string[], cwd: string = root): void => {
-      execFileSync('git', [...args], {
-        cwd,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      sandbox.git(args, { cwd });
     };
+    const gitResult = (args: readonly string[]) =>
+      sandbox.gitResult(args, { cwd: root });
     git(['init', '-q', '-b', 'main']);
     git(['config', 'user.email', 'kubic-test@local']);
     git(['config', 'user.name', 'kubic test']);
@@ -169,20 +176,12 @@ describe('guarded git never runs a planted hook (issue #363, real git)', () => {
     );
     execFileSync('chmod', ['+x', join(root, '.git', 'hooks', 'pre-commit')]);
     // Plain commit: the hook runs and fails the commit.
-    const plain = spawnSync('git', ['commit', '-m', 'plain'], {
-      cwd: root,
-      encoding: 'utf8',
-    });
+    const plain = gitResult(['commit', '-m', 'plain']);
     expect(plain.status).not.toBe(0);
     expect(`${plain.stdout}\n${plain.stderr}`).toMatch(/pwned/);
     // Guarded commit: the hook never runs, the commit lands.
-    const guarded = spawnSync(
-      'git',
+    const guarded = gitResult(
       withHostGitCommitGuard(['commit', '-m', 'guarded']),
-      {
-        cwd: root,
-        encoding: 'utf8',
-      },
     );
     expect(`${guarded.stdout}\n${guarded.stderr}`).not.toMatch(/pwned/);
     expect(guarded.status).toBe(0);

@@ -9,7 +9,7 @@
 // genuinely conflicts; the resolver fixture then resolves it by taking the
 // merge target's version and committing on the worker branch — a resolution a
 // real agent could pick — and the manager re-merges.
-import { execFileSync } from 'node:child_process';
+
 import {
   existsSync,
   mkdirSync,
@@ -23,6 +23,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../exec/src/test-support/git-sandbox.js';
 import {
   runOrchestrateCommand,
   workerApprovalBoundMs,
@@ -51,38 +56,10 @@ if (0 === 0) { const a = process.argv; process.stdout.write(JSON.stringify({ ok:
 process.exit(0);
 `;
 
-// The resolver child that SETTLES: it makes the worker branch agree with the
-// merge target on the conflicted line, which is the one resolution that lets
-// the manager's re-merge run clean. The target branch is `main` because that
-// is this test repo's merge target. The prompt the run hands it is written
-// out first, so the test can read the §45.2 text the resolver actually got.
-const RESOLVER_SETTLE = `
-import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
-const argv = process.argv.slice(2);
-const prompt = argv[argv.indexOf('-p') + 1] ?? '';
-writeFileSync('resolver-prompt.txt', prompt);
-writeFileSync('resolver-task-file.txt', process.env.KUBIC_TASK_FILE ?? '(none)');
-for (const file of ['shared.txt']) {
-  const target = execFileSync('git', ['show', 'main:' + file], {
-    encoding: 'utf8',
-  });
-  writeFileSync(file, target);
-}
-execFileSync('git', ['add', '-A']);
-execFileSync('git', [
-  '-c',
-  'user.name=kubic-resolver',
-  '-c',
-  'user.email=kubic-resolver@local',
-  'commit',
-  '-m',
-  'resolver: settle conflict',
-]);
-process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
-if (0 === 0) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
-process.exit(0);
-`;
+// Resolver-child fixtures that spawn git live in
+// ./orchestrate-conflict-fixtures.ts (issue #420): they run in spawned
+// children, scrub their own git view, and must not sit in this .test.ts
+// file, which the git-sandbox gate scans per line.
 
 // The resolver child that FAILS: announces readiness, then exits non-zero —
 // the run must keep the pre-#106 terminus and stop the queue.
@@ -91,44 +68,10 @@ process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '')
 process.exit(6);
 `;
 
-// The resolver child that dumps the approval identity it was launched with
-// (issue #156) and then settles the conflict like RESOLVER_SETTLE. The dump
-// is what proves the mailbox wiring reaches a REAL spawned resolver — a fakes
-// test cannot: the composition root builds this child's env.
-const RESOLVER_DUMPS_ENV = `
-import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
-const argv = process.argv.slice(2);
-const roleAt = argv.indexOf('--role');
-writeFileSync('resolver-approvals-env.json', JSON.stringify({
-  approvalsDir: process.env.KUBIC_APPROVALS_DIR ?? null,
-  verifyKey: process.env.KUBIC_APPROVALS_VERIFY_KEY ?? null,
-  orchestratorSession: process.env.KUBIC_ORCHESTRATOR_SESSION ?? null,
-  workerSession: process.env.KUBIC_WORKER_SESSION ?? null,
-  workerId: process.env.KUBIC_WORKER_ID ?? null,
-  role: roleAt === -1 ? null : (argv[roleAt + 1] ?? null),
-  boundMs: process.env.KUBIC_APPROVALS_BOUND_MS ?? null,
-}));
-for (const file of ['shared.txt']) {
-  const target = execFileSync('git', ['show', 'main:' + file], {
-    encoding: 'utf8',
-  });
-  writeFileSync(file, target);
-}
-execFileSync('git', ['add', '-A']);
-execFileSync('git', [
-  '-c',
-  'user.name=kubic-resolver',
-  '-c',
-  'user.email=kubic-resolver@local',
-  'commit',
-  '-m',
-  'resolver: settle conflict',
-]);
-process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
-if (0 === 0) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
-process.exit(0);
-`;
+import {
+  RESOLVER_DUMPS_ENV,
+  RESOLVER_SETTLE,
+} from '../../exec/src/test-support/orchestrate-conflict-fixtures.js';
 
 const POLICY: ApprovalSnapshot = {
   route: 'ask-user',
@@ -147,24 +90,30 @@ function scratch(prefix: string): string {
 }
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
+// The test's git driver (issue #420). Set by initRepo.
+let driver: GitSandbox | undefined;
+
 function gitIn(cwd: string, args: string[]): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' });
+  if (driver === undefined) throw new Error('gitIn() needs initRepo() first');
+  return driver.git(args, { cwd });
 }
 
 async function initRepo(): Promise<string> {
-  const root = scratch('kubic-orch-106-');
-  gitIn(root, ['init', '-b', 'main']);
-  gitIn(root, ['config', 'user.email', 'issue106@kubic.dev']);
-  gitIn(root, ['config', 'user.name', 'kubic issue106']);
-  gitIn(root, ['config', 'commit.gpgsign', 'false']);
+  // Injected: the run commits, merges and spawns resolver children through
+  // production git on the inherited environment.
+  const sandbox = createGitSandbox({ injectProcessEnv: true });
+  driver = sandbox;
+  const root = sandbox.path;
   writeFileSync(join(root, 'shared.txt'), 'shared\nbase\n');
-  gitIn(root, ['add', 'shared.txt']);
-  gitIn(root, ['commit', '-m', 'base']);
+  sandbox.git(['add', 'shared.txt']);
+  sandbox.git(['commit', '-m', 'base']);
   return root;
 }
 

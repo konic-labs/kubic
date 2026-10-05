@@ -3,7 +3,6 @@
 // so the names MUST be scoped by the orchestrator session: a later fresh run
 // with the same agents gets its own tree on the current HEAD, never the
 // previous run's stale (possibly dirty, possibly unmerged) one.
-import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -18,6 +17,11 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../exec/src/test-support/git-sandbox.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
 import { addWorktree } from './orchestrator/worktree/add.js';
 import { runCleanCommand } from './orchestrator/worktree/clean.js';
@@ -43,24 +47,32 @@ function scratch(prefix: string): string {
 }
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
+// The test's git driver (issue #420): setup and assertion spawns run
+// through the repo's sandbox. Set by initRepo, which every git-driving
+// test calls first.
+let driver: GitSandbox | undefined;
+
 function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' });
+  if (driver === undefined) throw new Error('git() needs initRepo() first');
+  return driver.git(args, { cwd });
 }
 
 function initRepo(): string {
-  const root = realpathSync(scratch('kubic-orch-144-'));
-  git(root, ['init', '-b', 'main']);
-  git(root, ['config', 'user.email', 'issue144@kubic.dev']);
-  git(root, ['config', 'user.name', 'kubic issue144']);
-  git(root, ['config', 'commit.gpgsign', 'false']);
+  // Injected: the orchestrate run commits and manages worktrees through
+  // production git on the inherited environment.
+  const sandbox = createGitSandbox({ injectProcessEnv: true });
+  driver = sandbox;
+  const root = sandbox.path;
   writeFileSync(join(root, 'base.txt'), 'base\n');
-  git(root, ['add', 'base.txt']);
-  git(root, ['commit', '-m', 'base']);
+  sandbox.git(['add', 'base.txt']);
+  sandbox.git(['commit', '-m', 'base']);
   return root;
 }
 

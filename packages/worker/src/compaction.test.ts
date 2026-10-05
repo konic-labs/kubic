@@ -587,11 +587,14 @@ describe('/compact focus instructions (issue #34)', () => {
     expect(prompt).toContain('focus: focus on the auth flow');
   });
 
-  it('builds a valid prompt with no focus instructions', () => {
+  it('builds the exact prompt skeleton with no focus instructions', () => {
     expect(parseCompactCommand('/compact')).toBe('');
-    const prompt = buildCompactPrompt({});
-    expect(prompt.length).toBeGreaterThan(0);
-    expect(prompt).not.toContain('focus:');
+    // Exact sections, exact order, no focus line: a dropped or reordered
+    // section fails here instead of reaching the summarizer silently.
+    expect(buildCompactPrompt({})).toBe(
+      'Summarize this session for compaction: goal, decisions, open work, cumulative file ops, spill refs.\n' +
+        "Prefer compact state + artifacts + refs over history.",
+    );
   });
 });
 

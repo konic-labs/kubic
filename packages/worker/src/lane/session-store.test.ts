@@ -27,9 +27,12 @@ import {
   BACKGROUND_CONTEXT,
   createModels,
   createRegistry,
+  fauxAssistantMessage,
   Harness,
   UserEntry,
 } from '../pi-boundary.js';
+import { bootFauxLane } from './test-harness.js';
+import { readSessionEntries } from './transcript.js';
 import {
   acquireSessionLock,
   attachSession,
@@ -163,13 +166,30 @@ describe('pi-durable session storage (issue #392)', () => {
       await createSession(store, { cwd: '/work' }, BACKGROUND_CONTEXT),
     );
     expect(session.meta.cwd).toBe('/work');
-    expect(session.id.length).toBeGreaterThan(0);
+    // The id gate session-store.ts enforces (isSessionId): uuidv7 passes
+    // it, so a generator regression fails here instead of at attach.
+    expect(session.id).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(Date.parse(session.meta.createdAt)).toBeGreaterThanOrEqual(before);
     expect(session.dir).toBe(join(root, session.id));
     // The durable storage is on disk under <root>/<id>/ — and the Kubic lock
     // lives in the same directory, which the JSONL backend tolerates.
     expect(existsSync(join(session.dir, 'main.jsonl'))).toBe(true);
     expect(existsSync(join(session.dir, 'lock.json'))).toBe(true);
+    // The storage opens with its identity commit: the first JSONL line is
+    // the format-1 commit creating the kubic.session document (the cwd
+    // itself rides session.json, pinned exact in the header below).
+    const firstLine = readFileSync(join(session.dir, 'main.jsonl'), 'utf8')
+      .split('\n')[0] as string;
+    const first = JSON.parse(firstLine) as {
+      format: number;
+      type: string;
+      seq: number;
+      writes: Array<{ record: { kind: string } }>;
+    };
+    expect(first).toMatchObject({ format: 1, type: 'commit', seq: 1 });
+    expect(
+      first.writes.some((write) => write.record.kind === 'kubic.session'),
+    ).toBe(true);
     // The listing header: the projection listSessions reads without opening
     // a live session's storage.
     expect(readHeader(root, session.id)).toEqual({
@@ -182,6 +202,31 @@ describe('pi-durable session storage (issue #392)', () => {
     expect(
       await readSessionMetadata(session.storage, BACKGROUND_CONTEXT),
     ).toEqual(session.meta);
+  });
+
+  it('a restored entry deep-equals the committed one across an attach', async () => {
+    // One faux turn commits entries to <root>/<id>/main.jsonl; after
+    // cleanup the lock is gone, so a fresh attach reopens the same dir
+    // and must read back byte-identical entries.
+    const root = tmpRoot();
+    const lane = await bootFauxLane({
+      storage: 'jsonl',
+      root,
+      responses: [fauxAssistantMessage('hello')],
+    });
+    const id = lane.sessionId;
+    await lane.run('say hi');
+    const committed = await readSessionEntries(
+      lane.session.storage,
+      BACKGROUND_CONTEXT,
+    );
+    expect(committed.length).toBeGreaterThan(0);
+    await lane.cleanup();
+    const attached = track(
+      await attachSession(storeFor(root), id, BACKGROUND_CONTEXT),
+    );
+    expect(await readSessionEntries(attached.storage, BACKGROUND_CONTEXT))
+      .toEqual(committed);
   });
 
   it('records a declared workspace beside the cwd', async () => {

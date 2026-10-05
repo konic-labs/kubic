@@ -531,6 +531,55 @@ describe('subscribeLaneEvents over watchEvents (#398)', () => {
     }
   });
 
+  it('usage rows carry the committed entry usage verbatim, totals sum it (#287)', async () => {
+    // The harness measures usage at commit (the provider hint is not
+    // preserved verbatim), so the honest pin is pass-through fidelity:
+    // every row deep-equals its own entry's message usage, and the totals
+    // a cost rollup would read sum exactly those rows — the mapping and
+    // the transport invent nothing.
+    const lane = await boot({
+      responses: [fauxAssistantMessage(fauxText('hi'))],
+    });
+    const seen: KubicLaneEvent[] = [];
+    const stop = await subscribeLaneEvents(
+      lane.harness,
+      lane.conversation.id,
+      (event) => seen.push(event),
+      BACKGROUND_CONTEXT,
+    );
+    try {
+      await runTurn(lane, 'say hi');
+      await flush();
+    } finally {
+      await stop();
+    }
+    const usages = seen.filter((event) => event.type === 'usage');
+    expect(usages.length).toBeGreaterThan(0);
+    const totals = { input: 0, output: 0, totalTokens: 0 };
+    for (const event of usages) {
+      if (event.type !== 'usage') continue;
+      expect(event.row.provider).toBe('faux');
+      expect(event.row.model).toBe('faux-1');
+      // Same role narrowing usageRowFromEntry uses: only assistant
+      // messages carry usage.
+      const message = event.entry.model?.[0];
+      if (message?.role !== 'assistant') {
+        throw new Error('expected an assistant message on the usage entry');
+      }
+      expect(event.row.usage).toEqual(message.usage);
+      expect(event.row.entryId).toBe(String(event.entry.id));
+      totals.input += event.row.usage.input;
+      totals.output += event.row.usage.output;
+      totals.totalTokens += event.row.usage.totalTokens;
+    }
+    // Non-zero measured usage flowed end to end (the old length>0 pin
+    // passed on an empty stream of zero rows too). No input+output
+    // identity: the harness measures totalTokens on its own accounting.
+    expect(totals.input).toBeGreaterThan(0);
+    expect(totals.output).toBeGreaterThan(0);
+    expect(totals.totalTokens).toBeGreaterThan(0);
+  });
+
   it('never delivers another conversation’s events', async () => {
     const lane = await boot({
       responses: [fauxAssistantMessage(fauxText('hello'))],

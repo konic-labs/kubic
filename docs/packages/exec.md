@@ -18,11 +18,11 @@ escapes, not a sandbox boundary.
 | Module | Exports |
 | --- | --- |
 | `env.ts` | `ExecutionEnv`, `Provenance`, `ROOT_PROVENANCE`, `FileSystem`, `StatInfo`, `Shell`, `ShellResult`, `SpawnOptions`, `ProcessHandle`, `ProcessSnapshot`, `UpdateCallback`, `CheckpointStore`, `NodeExecutionEnv`, `FakeExecutionEnv`, `FakeScript`, `MemoryCheckpointStore`, `CHECKPOINT_INTERVAL_MS`, `MAX_CHILD_OUTPUT_BYTES`, `KILL_GRACE_MS`, `TOOL_ENV_ALLOWLIST`, `toolSpawnEnv` (§3.8: every spawned child gets the allowlisted env, secrets dropped) |
-| `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `Baseline`, `BaselineOptions`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `MAX_SWEEP_CONTENT_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `removeCreatedEntry`, `isUndoableCreate`, `reconcile` |
+| `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `JournalEntryTooLargeError`, `Baseline`, `BaselineOptions`, `UNREADABLE_HASH`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `MAX_SWEEP_CONTENT_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `sha256HexOfBytes`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `removeCreatedEntry`, `isUndoableCreate`, `reconcile`, `journalMutationLockPath` |
 | `journal-diff.ts` | `FileChange`, `DiffFilter`, `diffEntries`, `unifiedHunks`, `renderDiff` |
 | `journal-status.ts` | `JournalStatus`, `RepoState`, `journalStatus`, `renderLog` |
 | `journal-undo.ts` | `UndoScope`, `UndoPlan`, `UndoOptions`, `UndoResult`, `planUndo`, `applyUndo` |
-| `journal-reconcile.ts` | `RunReconciliationOptions`, `RunReconciliation`, `beginReconciliation` |
+| `journal-reconcile.ts` | `RunReconciliationOptions`, `RunReconciliation` (`baseline`, `baselinePath`, `sweep()`, `rebaseline(turn)` — issue #374: re-capture the baseline and the run start for a new interactive turn), `beginReconciliation` |
 | `ignore.ts` | `IgnoreRule`, `parseIgnoreFile`, `isIgnored` — the shared `.gitignore`-subset matcher (#116, #172): the journal baseline walk and the worker's find/grep walk cannot disagree on what is ignored |
 | `file-bridge.ts` | `FileBridge`, `BridgeFileInfo`, `BridgeLineReader`, `createNodeFileBridge` |
 | `lock-file.ts` | `createLockFile`, `readLockFile`, `removeLockFile` — the O_EXCL lock-file primitive behind the session lock (#118) |
@@ -48,7 +48,7 @@ Supporting shapes, field-for-field:
 | --- | --- |
 | `Provenance` | `sessionId: string`, `agentId: string`, `toolCallId: string`, `turnId: number`, `operation: string` |
 | `StatInfo` | `isFile: boolean`, `isDirectory: boolean`, `size: number` |
-| `FileSystem` | `readFile(path): string`, `writeFile(path, content): void`, `rename(from, to): void`, `listDir(path): string[]`, `stat(path): StatInfo`, `lstat?(path): StatInfo & { isSymbolicLink: boolean }` (optional, #172: `stat` follows links, `lstat` lets the walk skip symlinks instead of descending loops; absent = links are indistinguishable from targets) |
+| `FileSystem` | `readFile(path): string`, `writeFile(path, content): void`, `rename(from, to): void`, `listDir(path): string[]`, `stat(path): StatInfo`, `lstat?(path): StatInfo & { isSymbolicLink: boolean }` (optional, #172: `stat` follows links, `lstat` lets the walk skip symlinks instead of descending loops; absent = links are indistinguishable from targets), `realpath?(path): string` (optional, #140: the physical path with every symlink resolved — the lexical path is confined first, the result is not, so the write path can refuse a target outside the workspace; throws when the path does not exist), `unlink?(path): void` (optional, #140: tmp cleanup after a failed write/rename; absent = no cleanup) |
 | `ShellResult` | `exitCode: number`, `stdout: string`, `stderr: string`, `provenance: Provenance` |
 | `ProcessSnapshot` | `stdout: string`, `stderr: string`, `exitCode: number \| null` |
 | `CheckpointStore` | `record(key, snapshot): void`, `recordFinal(key, snapshot): void`, `latest(key): ProcessSnapshot \| undefined` |
@@ -60,7 +60,11 @@ Supporting shapes, field-for-field:
 turnId: 0, operation: 'init' }`. `NodeExecutionEnv` is the cwd-scoped
 live binding; `FakeExecutionEnv` (+ `FakeScript`) is the hermetic test
 double. `confine()` is lexical only (`resolve()` defeats `..`/absolute
-escapes but not symlinks) — acceptable because solo has no isolation.
+escapes but not symlinks) — acceptable because solo has no isolation. It
+also accepts a path spelled through the workspace root's own `realpath`
+(`/tmp` and `/var` resolve to `/private/...` on macOS), so the write path
+can hand back a target it resolved through a link without tripping the
+guardrail (#140).
 
 ### Journal (`journal.ts`, `journal-diff.ts`)
 
@@ -70,9 +74,10 @@ escapes but not symlinks) — acceptable because solo has no isolation.
 
 | Interface | Fields |
 | --- | --- |
-| `JournalEntryInput` | `path`, `op`, `before: string \| null`, `beforeHash?: string \| null`, `after: string \| null`, `afterHash?: string \| null`, `afterOmitted?: boolean`, `afterBytes?: number`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean` |
-| `JournalEntry` | `path`, `op`, `beforeHash: string \| null`, `afterHash: string \| null`, `deltaHash: string \| null`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean`, `afterOmitted?: boolean`, `afterBytes?: number` |
-| `JournalRetention` | `maxBytes?: number`, `maxAgeMs?: number`, `durable?: boolean` (default `true`) |
+| `JournalEntryInput` | `path`, `op`, `before: string \| null`, `beforeHash?: string \| null`, `after: string \| null`, `afterHash?: string \| null`, `afterOmitted?: boolean`, `afterBytes?: number`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean`, `turn?: number` (issue #374: the interactive turn a sweep entry belongs to) |
+| `JournalEntry` | `path`, `op`, `beforeHash: string \| null`, `afterHash: string \| null`, `deltaHash: string \| null`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean`, `turn?: number`, `afterOmitted?: boolean`, `afterBytes?: number` |
+| `JournalRetention` | `maxBytes?: number`, `maxAgeMs?: number`, `durable?: boolean` (default `true`) — `maxBytes` is the whole store (index + blobs) and is what `[journal] maxBytes` threads into |
+| `UndoResult` | `restored: string[]`, `skipped: string[]`, `skippedDetails: { path, reason }[]`, `warnings: string[]` — a step whose inverse record cannot fit the store's bound is skipped with `too large to record: …` and a warning naming the bound, before the file is touched |
 | `FileChange` (`journal-diff.ts`) | `path`, `op: JournalOp`, `agentId`, `toolCallId: string \| null`, `sessionId`, `timestamp: number`, `unattributed: boolean`, `reversible: boolean`, `before: string \| null`, `after: string \| null`, `corrupt: boolean`, `afterOmitted: boolean`, `afterBytes?: number`, `contentTruncated?: boolean` |
 | `DiffFilter` | `path?: string`, `agent?: string` |
 
@@ -95,17 +100,95 @@ clips — it renders hunks, not whole files.
 
 Journal durability (issue #117): index appends go through the bridge's
 `appendDurably` (open/write/fsync/close) so the entry is on platter
-before `append` returns — one fsync per tool write is the price of
-"reversible", and it is the default (`JournalRetention.durable`; `false`
-trades it for a crash window of one truncated last line, and a bridge
-without `appendDurably` always falls back to a plain append). The fsync
-covers the appended index line only — blob payloads and the retention
-compaction rewrite are renamed without one, so a crash right after a
-compaction can lose more than the last line. Blob writes and undo
-restores are tmp+rename in the target's own directory, so a partial file
-is never visible under its real name; directory-entry fsync is
-deliberately out of scope — rename atomicity is the guarantee, stated in
-[the journal and safety page](../architecture/journal-and-safety.md).
+before `append` returns — a few fsyncs per tool write are the price of
+"reversible" (see the durable-writes paragraph below), and it is the
+default (`JournalRetention.durable`; `false` trades it for a crash window
+of one truncated last line, and a bridge without `appendDurably` always
+falls back to a plain append). Index
+appends repair a torn tail first (issue #343): one stat plus one pread of
+the last byte, and a fragment left by a crash or a full disk gets its own
+newline before the new entry, so the entry lands on a line of its own
+instead of being glued to the fragment and dropped with it. A failed
+append truncates the partial write back to the pre-append length — the
+repair byte included — so the index is exactly as it was and the retry
+repairs the tail again. `readIndex()` returns the parseable entries plus
+the `corruptLines` count, which `kubic status` prints as `corrupt index
+lines: N` (separate from `corrupt`, which counts lost content).
+
+Journal durable writes (issue #344): with `durable` on, the fsync covers
+the content the entry references, in order. A blob is written to a sibling
+tmp, its bytes are fsynced, it is renamed into place, and the blob
+directory is fsynced so the rename survives — then the index line that
+references it is appended durably. A durable entry therefore never points
+at a blob whose bytes were still in the page cache when the power went.
+The retention compaction rewrite is the mirror case: its bytes are fsynced
+before the rename over `index.jsonl` and the journal directory after it,
+so a crash right after a compaction cannot leave an empty or truncated
+index where the whole history was. An existing blob is no longer trusted
+because its name is right: `putBlob` checks its size first (one stat,
+which catches the zero-length crash shape) and then its hash, and rewrites
+a file that fails either check from the bytes in hand — so a blob lost to
+delayed allocation is healed instead of poisoning every later entry that
+reuses it. `durable: false` trades all of this back for throughput; a
+bridge without `flushFile`/`flushDir` keeps rename atomicity without
+rename durability. Undo restores stay tmp+rename without an fsync —
+atomicity, not durability, as
+[the journal and safety page](../architecture/journal-and-safety.md) states.
+
+Journal entry bound (issue #348): retention is enforced on every append and
+stops at the newest entry. `kept` is oldest-first, so the drop loop ends
+when one entry is left: the record of the change just made is never the
+thing that gets dropped, even when that entry alone exceeds the bound. The
+bound is the whole store (issue #350): the index's own lines count alongside
+the blob bytes, because content addressing dedupes blobs and a file
+toggling between two contents grows only the lines. The pass reports the
+excess instead — `enforceRetention` returns
+`{ entries, bytes, overBound }`, and `kubic clean --journal` prints
+`over bound by N byte(s) (newest entry kept)`. An entry that could never fit
+the store is refused before a single blob is written:
+`JournalEntryTooLargeError` (a named error carrying `entryBytes` and
+`maxBytes`) is thrown from `append`, so the tool layer aborts the write as
+`journal_failed` with the target file untouched — the alternative was
+recording a change whose own record the same append's pruning then deleted.
+The bound is on the entry's own blob bytes (before pre-image plus after
+content, or the delta stored for a large after-side; a no-op write counts
+its single blob once), measured before dedupe — an entry that could never
+fit is refused whether or not its bytes happen to be in the store already.
+
+State permissions (issue #361): the bridge's `writeFile`/`appendFile`/
+`appendDurably`/`createDir` take an optional `mode`, applied only where they
+CREATE a path (an existing file or directory keeps its own); the journal uses
+it for 0700 directories and 0600 files, `lock-file.ts`'s `createLockFile` for
+the session lock (0700/0600), and `looseStateDirMode`/`tightenStateDir` are the
+read-and-close pair (`kubic doctor` warns, the next open tightens). Undo
+restores keep the target's mode — never widened.
+
+Cross-process coordination (issue #337): every mutation — `append`,
+`enforceRetention` (rewrite + blob sweep) — runs under an O_EXCL lock beside
+the index (`journalMutationLockPath`, pid recorded, stale after ten seconds,
+waited for up to five); a nested call is re-entrant, a second process waits,
+and a crashed holder is stolen. The rewrite samples the index size *before* it reads the index and abandons
+itself (removing its tmp and dropping the byte/age caches, so the next pass
+re-derives truth) when the index's
+size changed between its read and its rename (a writer that does not hold the
+lock), leaving the interleaved line in place and dropping its caches so the
+next pass re-derives truth. The blob sweep skips `*.tmp` names and blobs newer
+than the pass started. `liveLockHolder(lockPath)` is the read-only view: the
+pid when that process is alive, undefined for missing/torn/stale residue —
+what `kubic clean --journal` and the read-time self-heal use to step aside.
+
+Retention fast path (issues #124, #349, #350): both bounds are proven from
+cache on every append — the tracked byte total (index + blobs) must be at or
+under the size cap, and the index's oldest timestamp (the minimum, folded with
+every append so an out-of-order stamp cannot hide an expired entry, re-seeded
+by every full pass and by every rewrite) must be inside the age window. A
+session under either bound therefore pays no index read and no blob stat per
+append, with or without `journal.retentionDays` configured; the slow pass
+runs when a bound is unknown, unproven, or crossed. A pass that has to prune
+drops at least a tenth of the kept entries, so a store sitting at its cap
+amortizes compaction instead of rewriting the whole index on every append.
+The size cap is `[journal] maxBytes` when configured,
+`DEFAULT_JOURNAL_MAX_BYTES` (100 MiB) otherwise.
 
 Undo records (issue #117): every successful restore appends its inverse
 entry — pre-undo content as `before`, restored content as `after`,
@@ -113,7 +196,21 @@ entry — pre-undo content as `before`, restored content as `after`,
 describes the world after an undo, and a second `undo --step` is the
 redo. It is an attributed entry (no `unattributed` flag, no
 `reconciled` marker); `applyUndo` appends it in the non-dry-run path
-only, and only for a step that actually restored. Plain plans
+only, and only for a step that actually restored. Its before-side is the
+pre-undo content read as BYTES and checked for a lossless utf-8 round-trip
+(issue #352, the same rule the create-removal path applies): binary content is
+recorded as `beforeHash` + `beforeOmitted` with no blob — never a U+FFFD
+decode — the undo warns that it cannot be redone, and `undo --step` then
+reports it non-reversible instead of writing mangled bytes back. Its
+`bytesDelta` counts the bytes that were there either way: an omitted pre-image
+is still its own length of content, not zero (the accounting `write` uses for a
+hash-only pre-image). The record is planned —
+and measured against the store's bound — BEFORE the restore: an inverse
+entry whose own content (the pre-undo file stored whole, plus the restored
+pre-image) would not fit the bound makes the step skip with a warning and
+a named reason, leaving the file exactly as it was. Restoring first and
+then failing to record would leave the workspace changed with no undo/redo
+entry and nothing to report it with. Plain plans
 (`planUndo` without `step`) filter these records out — they are the
 walk's own bookkeeping — so repeated plain undo is idempotent
 (`already undone`, nothing appended); `--step` targets them. A restore
@@ -128,6 +225,11 @@ An agent-authored create (`op: 'create'`, no before-hash, not
 removes the file when its content still matches the recorded after-hash,
 reports `already undone` when it is already absent, and journals a
 `kubic-undo` delete carrying the removed content so `--step` redoes it.
+Both guards confine the PATH: `resolve` + relative containment, plus a refusal
+when any parent component is a symlink (`entry path crosses a symlink`). The
+target's own link-ness is not a refusal — the restore's rename replaces the
+link itself instead of writing through it, and `probeFileState` (a verdict
+input, not a guard) hashes what the path resolves to.
 
 Baseline walk ignores (issue #116): `captureBaseline` honors every
 `.gitignore` on the way down, not just the root's. Rules accumulate per
@@ -138,7 +240,20 @@ exit, so a sibling subtree never inherits another's rules. An unreadable
 nested ignore (chmod 000, a permission-denied mount) leaves the parent rules
 in force and the walk continues: the documented widening, never a throw.
 `reconcile` re-walks through the same `captureBaseline`, so boot and sweep can
-never disagree about what is in scope. The matcher is the shared
+never disagree about what is in scope.
+
+Walk races (issue #351): a walk never turns "I could not look" into "it is
+gone". One entry vanishing between the listing and its lstat no longer fails
+the whole listing — the entry is skipped and its siblings stay in the walk.
+A file that could be seen but not read (`chmod 000`, a permission-denied
+mount) is kept in the baseline with the `UNREADABLE_HASH` sentinel instead of
+being dropped: reconcile then records neither a delete (the file is still
+there) nor a change (nothing was read) for it, and an unreadable-at-boot path
+that is readable later is an honest create with no invented before-hash. A
+directory whose listing fails at sweep time carries its previous baseline
+hashes forward, so its files are compared against their own earlier state
+instead of reading as deleted. Real disappearances (ENOENT) still record
+deletes — the distinction is the error code, not the failure. The matcher is the shared
 `ignore.ts` (#172), so this walk and the worker's find/grep walk also cannot
 disagree about what is ignored. The matcher stays the documented
 common subset (`*`, `?`, `**`, `dir/`, `!`) — character classes and rooted

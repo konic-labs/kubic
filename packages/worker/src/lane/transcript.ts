@@ -22,13 +22,13 @@ import {
   type Conversation,
   type EntryRecord,
   ResetEntry,
-  ROOT_CONVERSATION_ID,
   type Storage,
   SystemEntry,
   ToolResultEntry,
   type Usage,
   UserEntry,
 } from '../pi-boundary.js';
+import { laneConversationIdOf, readSessionMetadata } from './session-store.js';
 
 export type TranscriptItem =
   | { kind: 'user'; text: string; entryId: string }
@@ -208,28 +208,25 @@ export async function readSessionEntries(
   storage: Storage,
   context: Context,
 ): Promise<EntryRecord[]> {
-  // A session that never ran has no root conversation yet: no transcript,
-  // and never a throw (a reader must not invent one).
-  const conversation = await storage.conversation(
-    ROOT_CONVERSATION_ID,
-    context,
+  // Issue #265: the lane conversation — a fork's recorded one, else the
+  // root. A session that never ran has no root conversation yet: no
+  // transcript, and never a throw (a reader must not invent one).
+  const laneId = laneConversationIdOf(
+    await readSessionMetadata(storage, context),
   );
+  const conversation = await storage.conversation(laneId, context);
   if (conversation === undefined) return [];
   // The newest entry that starts a context (a compaction or reset) is the
   // range's lower bound; without one, the conversation's whole visible
   // history. Scans are newest-first, so the result is reversed at the end.
-  const marker = await storage.findLatestHeadMarker(
-    ROOT_CONVERSATION_ID,
-    undefined,
-    context,
-  );
+  const marker = await storage.findLatestHeadMarker(laneId, undefined, context);
   const minEntryId = marker?.head;
   const entries: EntryRecord[] = [];
   let cursor: Awaited<ReturnType<Storage['scanEntries']>>['next'];
   for (;;) {
     const page = await storage.scanEntries(
       {
-        conversationId: ROOT_CONVERSATION_ID,
+        conversationId: laneId,
         ...(minEntryId === undefined ? {} : { minEntryId }),
       },
       ENTRY_PAGE,

@@ -53,6 +53,10 @@ export type RunMode = 'autonomous' | 'interactive';
 
 export type BlockedSpawnOutcome =
   | { outcome: 'queued' }
+  // Issue #277 (§41.1): an interactive run asks the USER before going past the
+  // concurrency cap — the caller raises the `spawn-agents` ask and maps the
+  // verdict; an autonomous run keeps the queueing rule.
+  | { outcome: 'ask'; reason: string }
   | { outcome: 'failed'; reason: string };
 
 export function resolveBlockedSpawn(
@@ -60,7 +64,7 @@ export function resolveBlockedSpawn(
   reason: string,
 ): BlockedSpawnOutcome {
   if (mode === 'autonomous') return { outcome: 'queued' };
-  return { outcome: 'failed', reason };
+  return { outcome: 'ask', reason };
 }
 
 export interface BudgetTermination {

@@ -23,6 +23,7 @@ import type {
   Harness,
   TaskId,
 } from './pi-boundary.js';
+import { estimateContextTokens } from './pi-boundary.js';
 
 export const DEFAULT_RESERVE_TOKENS = 16384;
 
@@ -134,6 +135,14 @@ export interface SoloCompactionLane {
   readonly conversation: Conversation;
 }
 
+export interface ManualCompactionAdmission {
+  taskId: TaskId<CompactionResult>;
+  // The context estimate at admission (Pi's own estimate over the derived
+  // model context), so the caller can report what the cut removed. Read
+  // BEFORE the task is admitted: after placement the context is the summary.
+  tokensBefore: number;
+}
+
 /**
  * §27.2 manual compaction: `/compact [focus]` (issue #330) admits Pi's
  * `CompactionTask` and returns its id. Pi summarizes while the conversation
@@ -149,58 +158,103 @@ export async function compactSoloLane(
   solo: SoloCompactionLane,
   focus: string | undefined,
   context: Context,
-): Promise<{ taskId: TaskId<CompactionResult> }> {
+): Promise<ManualCompactionAdmission> {
   const instructions = buildCompactPrompt(focus === undefined ? {} : { focus });
+  const view = await solo.conversation.context(context);
+  const tokensBefore = estimateContextTokens(view.messages).tokens;
   const taskId = await solo.conversation.compact(instructions, context);
-  return { taskId };
+  return { taskId, tokensBefore };
 }
 
-export interface BranchSummaryEntry {
-  type: 'branch_summary';
-  branch: string;
-  summary: string;
-  at: number;
+// §27.2 (issue #330): how a manual compaction ended. `aborted` is the
+// operator's cancel (Esc/Ctrl-C -> conversation.abort()), `orphaned` a task
+// whose abort protocol could not run; `faulted` is Pi's runtime-detected
+// contract failure (an uncaught throw), reported as a failure by name;
+// `nothing` is Pi's own "nothing to compact" completion — the task ran, the
+// cut selection found no older history to summarize, and NO `pi.compaction`
+// entry was placed (`CompactionResult`'s `entryId`/`submissionId` both
+// absent, pi-durable's types.ts). Reporting that as a cut would be a lie.
+export type ManualCompactionStatus =
+  | 'completed'
+  | 'nothing'
+  | 'failed'
+  | 'aborted'
+  | 'orphaned'
+  | 'faulted';
+
+export interface ManualCompactionOutcome {
+  status: ManualCompactionStatus;
+  // The context estimate before the cut; 0 when the admission itself failed.
+  tokensBefore: number;
+  // The harness' own failure message — never an invented one.
+  error?: string;
 }
 
-// /tree branch_summary entries with switch-back restore: the store
-// keeps per-branch compacted state; switching away snapshots the live
-// state and switching back restores it.
-export class BranchSummaryStore {
-  private states = new Map<string, string>();
-  private summaries = new Map<string, BranchSummaryEntry>();
-  private live: string;
+/**
+ * One manual compaction, admitted and awaited to terminal (#330):
+ * `compactSoloLane` plus `harness.waitForTask`, reported in Kubic's own
+ * vocabulary. Never throws for a refused admission, a failed summary or a
+ * cancellation — the caller reports the outcome, it never has to catch.
+ */
+export interface ManualCompactionOptions {
+  /**
+   * Called the moment the task is ADMITTED, before the wait: a caller that
+   * latched a cancellation during the admission window (the context read and
+   * the admission commit) replays it here, so a Ctrl-C is never lost
+   * (#330 review; the same placement race #312/#334 solved for turns).
+   */
+  onAdmitted?: (taskId: string) => void | Promise<void>;
+}
 
-  constructor(initialBranch: string, initialState: string) {
-    this.states.set(initialBranch, initialState);
-    this.live = initialBranch;
+export async function runManualCompaction(
+  solo: SoloCompactionLane,
+  focus: string | undefined,
+  context: Context,
+  options: ManualCompactionOptions = {},
+): Promise<ManualCompactionOutcome> {
+  let admitted: ManualCompactionAdmission;
+  try {
+    admitted = await compactSoloLane(solo, focus, context);
+  } catch (error) {
+    return { status: 'failed', tokensBefore: 0, error: messageOf(error) };
   }
+  if (options.onAdmitted !== undefined) {
+    try {
+      await options.onAdmitted(String(admitted.taskId));
+    } catch {
+      // The replay is best-effort: the task's own settlement still decides.
+    }
+  }
+  const settled = await solo.harness.waitForTask(admitted.taskId, context);
+  const outcome = settled.state.outcome;
+  if (outcome.status === 'completed') {
+    // Pi's "nothing to compact": the task completed without placing a
+    // summary entry. Distinguish it from a real cut — the footer must never
+    // claim a compaction that did not happen.
+    const result = outcome.result;
+    const placed =
+      result?.entryId !== undefined || result?.submissionId !== undefined;
+    return {
+      status: placed ? 'completed' : 'nothing',
+      tokensBefore: admitted.tokensBefore,
+    };
+  }
+  if (outcome.status === 'failed' || outcome.status === 'faulted') {
+    return {
+      status: outcome.status,
+      tokensBefore: admitted.tokensBefore,
+      error: outcome.error.message,
+    };
+  }
+  return {
+    status: outcome.status,
+    tokensBefore: admitted.tokensBefore,
+    error: outcome.reason ?? `compaction ${outcome.status}`,
+  };
+}
 
-  writeBranchSummary(entry: Omit<BranchSummaryEntry, 'type' | 'at'>): void {
-    this.summaries.set(entry.branch, {
-      type: 'branch_summary',
-      branch: entry.branch,
-      summary: entry.summary,
-      at: Date.now(),
-    });
-  }
-
-  readBranchSummary(branch: string): BranchSummaryEntry | undefined {
-    return this.summaries.get(branch);
-  }
-
-  switchBranch(to: string, state?: string): void {
-    this.states.set(this.live, this.currentState());
-    if (state !== undefined) this.states.set(to, state);
-    this.live = to;
-  }
-
-  current(): string {
-    return this.live;
-  }
-
-  currentState(): string {
-    return this.states.get(this.live) ?? '';
-  }
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export type FileOpKind = 'created' | 'modified' | 'deleted' | 'renamed';

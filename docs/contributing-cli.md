@@ -74,14 +74,19 @@ new literals.
 - commander parse failures (unknown option, missing value, bad argument,
   excess operands) exit **2** with commander's one `error: …` line on
   stderr — `exitCodeForParseError` maps them; never commander's default 1.
-- `--help` / `-h` exits 0 on every command; `--version` / `-V` is root-only.
+- `--help` / `-h` exits 0 on every command; commander answers it before
+  any action runs, so a help request is side-effect free — no lane boot, no
+  runtime-exclude write, no extension load (issue #245). `--version` / `-V`
+  is root-only.
 - Throw `CliUsageError(message)` from an action for a semantic usage error
   (exit 2) or `CliExitError(code, message)` for any other documented code:
   the program prints `error: <message>` on stderr and exits with the code.
 - Anything else thrown reaches the root catch-all: one `error: <message>`
   line, exit 1, the stack only with `KUBIC_DEBUG=1`.
-- An unknown top-level command and a bare `kubic` off a TTY print the root
-  usage line and exit 1; a bare `kubic` on a TTY opens the TUI.
+- An unknown top-level command or root option prints the root usage line to
+  stdout and exits 2 (a usage error, issue #372); a bare `kubic` off a TTY
+  prints the identical line and exits 1 (POSIX usage-on-no-args); a bare
+  `kubic` on a TTY opens the TUI.
 
 ## Output rules
 

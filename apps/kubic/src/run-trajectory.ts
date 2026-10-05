@@ -44,6 +44,8 @@ export interface PersistRunTrajectoryInput {
   agentId: string;
   role: string;
   prompt: string;
+  // §67 (issue #191): the manager's task, when the run was handed one.
+  task?: { taskId: string; objective: string; role: string };
   entries: readonly unknown[];
   model?: { provider: string; id: string };
   thinking?: string | null;
@@ -55,10 +57,18 @@ export interface PersistRunTrajectoryInput {
   // Process identity; absent means this process (the prod default).
   processEnv?: NodeJS.ProcessEnv;
   pid?: number;
+  // The git base captured when the run STARTED (null outside git). Absent
+  // means probe it now — the settle-time HEAD (a TUI turn, a direct call).
+  base?: { revision: string; branch: string | null } | null;
+  // The run verifier's `signal:*` labels (issue #267).
+  evalLabels?: Record<string, string>;
 }
 
-function gitBase(cwd: string): { baseRevision: string; branch: string | null } {
-  const head = gitHeadOf(cwd);
+function gitBase(
+  cwd: string,
+  base: PersistRunTrajectoryInput['base'],
+): { baseRevision: string; branch: string | null } {
+  const head = base === undefined ? gitHeadOf(cwd) : base;
   if (head === null) return { baseRevision: NO_VCS_REVISION, branch: null };
   return { baseRevision: head.revision, branch: head.branch };
 }
@@ -142,6 +152,7 @@ export function persistRunTrajectory(input: PersistRunTrajectoryInput): string {
     workerId,
     role: input.role,
     prompt: input.prompt,
+    ...(input.task === undefined ? {} : { task: input.task }),
     entries: input.entries,
     model: {
       ...(input.model ?? NO_MODEL),
@@ -150,7 +161,7 @@ export function persistRunTrajectory(input: PersistRunTrajectoryInput): string {
     pid: input.pid ?? process.pid,
     generation,
     cwd: input.cwd,
-    ...gitBase(input.cwd),
+    ...gitBase(input.cwd, input.base),
     env: toolSpawnEnv(processEnv),
     changes: journalChanges(input.sessionsRoot, input.sessionId),
     approvals: ledger(input.cwd),
@@ -158,6 +169,7 @@ export function persistRunTrajectory(input: PersistRunTrajectoryInput): string {
     startedAt: input.startedAt,
     endedAt: input.endedAt,
     outcome: input.outcome,
+    evalLabels: input.evalLabels ?? {},
   });
   return writeRunTrajectory(
     createNodeFileBridge(input.sessionsRoot),

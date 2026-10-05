@@ -20,10 +20,28 @@ export type KillFn = () => void;
 export class OperationKillRegistry {
   private readonly kills = new Map<string, KillFn[]>();
 
-  track(operationId: string, kill: KillFn): void {
+  /**
+   * Register a kill for `operationId` and return its unregister fn (issue
+   * #142). The caller that owns the handle calls it when the handle settles:
+   * a lane reuses one registry for the whole session, so a finished call
+   * that stayed tracked kept its handle (and its output) alive for the life
+   * of the run. Idempotent, and a no-op after a drain.
+   */
+  track(operationId: string, kill: KillFn): () => void {
     const existing = this.kills.get(operationId) ?? [];
     existing.push(kill);
     this.kills.set(operationId, existing);
+    let untracked = false;
+    return () => {
+      if (untracked) return;
+      untracked = true;
+      const current = this.kills.get(operationId);
+      if (current === undefined) return; // drained already
+      const at = current.indexOf(kill);
+      if (at === -1) return;
+      current.splice(at, 1);
+      if (current.length === 0) this.kills.delete(operationId);
+    };
   }
 
   drain(operationId: string): KillFn[] {

@@ -5,7 +5,7 @@
 // driven byte-by-byte like the real input listener feeds it. Faux-only,
 // zero network.
 import { describe, expect, it } from 'vitest';
-import { PromptEditor } from './editor-view.js';
+import { PROMPT_HISTORY_MAX, PromptEditor } from './editor-view.js';
 
 const CURSOR_MARKER = '\u001B_pi:c\u0007';
 
@@ -67,5 +67,40 @@ describe('prompt editor (issue #88)', () => {
     editor.handleInput('\r');
     editor.handleInput('\u001b[A');
     expect(editor.getText()).toBe('first prompt');
+  });
+});
+
+// Issue #340 (§16.5): a resumed session's earlier prompts are recallable
+// with Up — the editor is seeded from the committed user entries, newest
+// last, bounded so a very long session stays cheap to resume.
+describe('seeded prompt history (issue #340)', () => {
+  const UP = '\x1b[A';
+
+  it('Up recalls the most recent seeded prompt, then older ones', () => {
+    const editor = new PromptEditor();
+    editor.seedHistory(['first', 'second', 'third']);
+    editor.handleInput(UP);
+    expect(editor.getText()).toBe('third');
+    editor.handleInput(UP);
+    expect(editor.getText()).toBe('second');
+  });
+
+  it('collapses consecutive duplicates and skips blank prompts', () => {
+    const editor = new PromptEditor();
+    editor.seedHistory(['a', 'a', '  ', 'b', 'b']);
+    editor.handleInput(UP);
+    expect(editor.getText()).toBe('b');
+    editor.handleInput(UP);
+    expect(editor.getText()).toBe('a');
+    editor.handleInput(UP);
+    expect(editor.getText()).toBe('a');
+  });
+
+  it('keeps only the newest PROMPT_HISTORY_MAX prompts when seeded with 500', () => {
+    const editor = new PromptEditor();
+    editor.seedHistory(Array.from({ length: 500 }, (_, i) => `p${i}`));
+    for (let i = 0; i < PROMPT_HISTORY_MAX + 20; i += 1) editor.handleInput(UP);
+    // The oldest recallable prompt is the 100th newest, never p0.
+    expect(editor.getText()).toBe(`p${500 - PROMPT_HISTORY_MAX}`);
   });
 });

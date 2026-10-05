@@ -14,6 +14,14 @@ export const MANAGER_ALLOWLIST = [
   'workspace_apply',
   'workspace_merge',
   'ask_user',
+  // §43.1 (issue #205): read-only git inspection for the manager — how it
+  // reads the repo without being able to author. The WRITER git tools
+  // (git_commit/git_stage/git_branch/git_checkpoint) stay out: a lane
+  // carrying one refuses to start through the exact-equality gate below,
+  // and `checkManagerCall` refuses the name outright.
+  'git_status',
+  'git_diff',
+  'git_log',
 ] as const;
 
 export type ManagerToolName = (typeof MANAGER_ALLOWLIST)[number];

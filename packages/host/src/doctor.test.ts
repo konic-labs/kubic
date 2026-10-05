@@ -5,9 +5,14 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { installedPolicyPosture } from './approvals.js';
 import type { DoctorDeps } from './doctor.js';
 import { runDoctorCommand } from './doctor.js';
 import { assembleModels, providerProbesOf } from './models-cli.js';
+import {
+  enterpriseDoctorChecks,
+  resolveEffectivePolicy,
+} from './policy/enterprise.js';
 
 const made: string[] = [];
 
@@ -32,6 +37,124 @@ function cleanDeps(out: (line: string) => void): DoctorDeps {
     loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
   };
 }
+
+describe('policy:detection-only and enterprise checks (issue #289)', () => {
+  it('the default install names network=none as detection-only, exit stays 0', async () => {
+    const lines: string[] = [];
+    const code = await runDoctorCommand(
+      { json: true },
+      {
+        ...cleanDeps((line: string) => lines.push(line)),
+        installedPolicy: () =>
+          installedPolicyPosture({ workspace: process.cwd() }),
+      },
+    );
+    expect(code).toBe(0);
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{
+        id: string;
+        status: string;
+        reason: string;
+        detail: string;
+      }>;
+    };
+    const check = report.checks.find(
+      (entry) => entry.id === 'policy:detection-only',
+    );
+    expect(check?.status).toBe('warn');
+    expect(check?.reason).toBe('detection-only');
+    expect(check?.detail).toContain('network=none');
+    expect(check?.detail).toContain('lexical');
+    expect(check?.detail).toContain('credentials=none');
+  });
+
+  it('emits no detection-only check without the installed-policy probe', async () => {
+    const lines: string[] = [];
+    await runDoctorCommand(
+      { json: true },
+      cleanDeps((line) => lines.push(line)),
+    );
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{ id: string }>;
+    };
+    expect(report.checks.map((check) => check.id)).not.toContain(
+      'policy:detection-only',
+    );
+  });
+
+  it('rides an unenforceable enterprise policy into the matrix and --json', async () => {
+    const policy = resolveEffectivePolicy([
+      {
+        layer: 'enterprise',
+        policy: {
+          network: { mode: 'allowlist' },
+          audit: { sinks: [{ kind: 'syslog', target: 'local0' }] },
+        },
+      },
+    ]).policy;
+    const lines: string[] = [];
+    const code = await runDoctorCommand(
+      { json: true },
+      {
+        ...cleanDeps((line: string) => lines.push(line)),
+        installedPolicy: () =>
+          installedPolicyPosture({ workspace: process.cwd() }),
+        enterpriseChecks: () =>
+          enterpriseDoctorChecks(policy, { syslogAvailable: true }),
+      },
+    );
+    // The unenforceable allowlist (no domains) is a fail, so the exit flips.
+    expect(code).toBe(1);
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{
+        id: string;
+        status: string;
+        reason: string;
+        detail: string;
+      }>;
+    };
+    const network = report.checks.find(
+      (entry) => entry.id === 'policy:enterprise-network',
+    );
+    expect(network?.status).toBe('fail');
+    expect(network?.reason).toBe('policy-mismatch');
+    expect(network?.detail).toContain('no domains');
+    expect(report.checks.map((entry) => entry.id)).toContain(
+      'policy:enterprise-enforceability',
+    );
+    expect(report.checks.map((entry) => entry.id)).toContain(
+      'policy:detection-only',
+    );
+  });
+
+  it('a throwing enterprise probe is a named fail, never a crash', async () => {
+    const lines: string[] = [];
+    const code = await runDoctorCommand(
+      { json: true },
+      {
+        ...cleanDeps((line: string) => lines.push(line)),
+        enterpriseChecks: () => {
+          throw new Error('policy disk gone');
+        },
+      },
+    );
+    expect(code).toBe(1);
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{
+        id: string;
+        status: string;
+        reason: string;
+        detail: string;
+      }>;
+    };
+    const check = report.checks.find(
+      (entry) => entry.id === 'policy:enterprise',
+    );
+    expect(check?.status).toBe('fail');
+    expect(check?.reason).toBe('policy-mismatch');
+    expect(check?.detail).toContain('policy disk gone');
+  });
+});
 
 describe('runDoctorCommand', () => {
   it('clean run passes with exit 0', async () => {
@@ -67,6 +190,8 @@ describe('runDoctorCommand', () => {
       'provider:local',
       'dep:node',
       'policy:approvals',
+      // Issue #361: private-state posture is part of the matrix.
+      'state:permissions',
       // Issue #59 license identity rides the same command.
       'license:kubic',
       // Issue #58 honest-limits registration rides the same command.
@@ -438,5 +563,88 @@ describe('runDoctorCommand mutation hardening (issue #68)', () => {
     expect(lines.join('\n')).toContain(
       'FAIL provider:probe (provider-down): string boom',
     );
+  });
+});
+
+// Issue #361: session transcripts and journaled file content are private
+// state; a group- or world-accessible state directory is named, warned
+// about (never exit-flipping), and tightened by the next open.
+describe('state permissions (issue #361)', () => {
+  it('warns on a world-readable sessions root, and passes when private', async () => {
+    const loose: string[] = [];
+    const looseCode = await runDoctorCommand(
+      {},
+      {
+        ...cleanDeps((line: string) => loose.push(line)),
+        probeStatePermissions: () => ({
+          path: '/home/u/.kubic/sessions',
+          mode: 0o755,
+        }),
+      },
+    );
+    expect(looseCode).toBe(0);
+    const text = loose.join('\n');
+    expect(text).toContain('state:permissions');
+    expect(text).toContain('WARN');
+    expect(text).toMatch(/\/home\/u\/\.kubic\/sessions is 755 .*chmod 700/);
+
+    const clean: string[] = [];
+    const cleanCode = await runDoctorCommand(
+      { json: true },
+      {
+        ...cleanDeps((line: string) => clean.push(line)),
+        probeStatePermissions: () => undefined,
+      },
+    );
+    expect(cleanCode).toBe(0);
+    const report = JSON.parse(clean.join('\n')) as {
+      checks: Array<{ id: string; status: string; detail: string }>;
+    };
+    const check = report.checks.find((c) => c.id === 'state:permissions');
+    expect(check?.status).toBe('pass');
+    expect(check?.detail).toMatch(/private \(0700\) or absent/);
+  });
+});
+
+describe('resource enforcement posture wiring (§82, issue #163)', () => {
+  it('adds the limit:resources check when the probe is wired', async () => {
+    const lines: string[] = [];
+    const code = await runDoctorCommand(
+      { json: true },
+      {
+        ...cleanDeps((line: string) => lines.push(line)),
+        resourceEnforcement: () => ({
+          platform: 'darwin',
+          memoryProbe: true,
+          diskProbe: true,
+          configured: {},
+        }),
+      },
+    );
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{ id: string; status: string; detail: string }>;
+    };
+    const resources = report.checks.find(
+      (entry) => entry.id === 'limit:resources',
+    );
+    expect(resources?.status).toBe('warn');
+    expect(resources?.detail).toContain('enforced: wall clock');
+    expect(resources?.detail).toContain('NOT enforced: memory');
+    expect(code).toBe(0);
+  });
+
+  it('leaves the matrix unchanged when the probe is absent (legacy callers)', async () => {
+    const lines: string[] = [];
+    const code = await runDoctorCommand(
+      { json: true },
+      cleanDeps((line: string) => lines.push(line)),
+    );
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{ id: string }>;
+    };
+    expect(report.checks.map((entry) => entry.id)).not.toContain(
+      'limit:resources',
+    );
+    expect(code).toBe(0);
   });
 });

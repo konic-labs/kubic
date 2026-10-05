@@ -91,6 +91,14 @@ export interface PermissionsConfig {
 export interface JournalConfig {
   retentionDays?: number;
   /**
+   * The journal's byte bound (issue #350): the WHOLE store — `index.jsonl`
+   * plus the blobs it references — is pruned on every append to stay under
+   * this. Content addressing dedupes blobs, so without the index in the
+   * bound a file toggling between two contents grew the journal without
+   * limit. Unset ⇒ `DEFAULT_JOURNAL_MAX_BYTES` (100 MiB).
+   */
+  maxBytes?: number;
+  /**
    * §35 out-of-scope paths (issue #115): workspace-relative paths excluded
    * from the §42.5 baseline and the end-of-run sweep. An entry excludes the
    * path itself and everything under it — `dist` ⇒ `dist`, `dist/a.js`,
@@ -124,6 +132,25 @@ export interface SessionConfig {
   // means off (retention disabled, never "everything is old").
   retentionDays?: number;
 }
+
+// §48 gate commands (issue #267): each runs as `sh -c <command>` in the
+// run's worktree after the run settles, and its exit status becomes the
+// trajectory's `signal:<gate>` label (0 = pass). An absent gate stays
+// `unknown`. timeoutMs bounds each command (a timeout is a fail).
+export interface VerifyConfig {
+  tests?: string;
+  build?: string;
+  lint?: string;
+  typecheck?: string;
+  timeoutMs?: number;
+}
+
+export const VERIFY_COMMAND_KEYS = [
+  'tests',
+  'build',
+  'lint',
+  'typecheck',
+] as const;
 
 // §58 Enterprise Policy (issue #288): the documented flat `[policy]` surface.
 // The parser accepts exactly these keys and normalizes them for the policy
@@ -173,6 +200,7 @@ export interface KubicConfig {
   orchestrator?: OrchestratorConfig;
   ui?: UiConfig;
   session?: SessionConfig;
+  verify?: VerifyConfig;
   policy?: PolicyConfig;
   audit?: AuditTableConfig[];
 }
@@ -198,6 +226,7 @@ const KNOWN_SECTIONS = new Set([
   'orchestrator',
   'ui',
   'session',
+  'verify',
   'policy',
   'audit',
 ]);
@@ -262,6 +291,11 @@ statusBar = true
 store = "jsonl"
 dir = ".kubic/sessions"
 retentionDays = 30
+
+[verify]
+tests = "npm test"
+typecheck = "npm run typecheck"
+timeoutMs = 600000
 
 [policy]
 allowed_models = ["local/*"]
@@ -831,6 +865,18 @@ export function checkCommittedConfigHalfRoot(
   }
 }
 
+// §42.4 journal byte bound (issue #350): a positive integer or nothing. 0 is
+// refused by name — it is not "retention off" (unset is), it is a bound
+// nothing can fit, so every append would be refused and every tool write
+// would fail as journal_failed. Refused here rather than clamped.
+export function checkJournalMaxBytes(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+    throw new ConfigError("'journal': 'maxBytes' must be a positive integer");
+  }
+  return value;
+}
+
 // §45 worker cap (issue #133): a positive integer or nothing. A value that
 // could never admit a worker is refused here, by name — never clamped into
 // one silently. The scheduler's own validation stays as the second layer.
@@ -867,6 +913,45 @@ export function checkRoleModelRef(
     );
   }
   return value;
+}
+
+// Shared by the TOML parser and the programmatic session/agent layers
+// (runtime.ts), which never pass through the parser: a blank or non-string
+// command and a non-positive or fractional timeout are refused by name.
+export function checkVerifyConfig(
+  verify: Record<string, unknown>,
+  keyPath: string,
+): VerifyConfig {
+  checkNoUnknown(
+    verify,
+    new Set([...VERIFY_COMMAND_KEYS, 'timeoutMs']),
+    keyPath,
+  );
+  const parsed: VerifyConfig = {};
+  for (const key of VERIFY_COMMAND_KEYS) {
+    const value = verify[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || value.trim() === '') {
+      throw new ConfigError(
+        `'${keyPath}': '${key}' must be a non-empty command string`,
+      );
+    }
+    parsed[key] = value;
+  }
+  const timeoutMs = verify.timeoutMs;
+  if (timeoutMs !== undefined) {
+    if (
+      typeof timeoutMs !== 'number' ||
+      !Number.isInteger(timeoutMs) ||
+      timeoutMs <= 0
+    ) {
+      throw new ConfigError(
+        `'${keyPath}': 'timeoutMs' must be a positive integer of milliseconds`,
+      );
+    }
+    parsed.timeoutMs = timeoutMs;
+  }
+  return parsed;
 }
 
 function checkNoUnknown(
@@ -1158,13 +1243,15 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
     }
     checkNoUnknown(
       journal,
-      new Set(['retentionDays', 'outOfScope']),
+      new Set(['retentionDays', 'maxBytes', 'outOfScope']),
       'journal',
     );
     const retentionDays = optNumber(journal, 'retentionDays', 'journal');
+    const maxBytes = checkJournalMaxBytes(journal.maxBytes);
     const outOfScope = checkOutOfScopeEntries(journal.outOfScope, 'journal');
     config.journal = {
       ...(retentionDays === undefined ? {} : { retentionDays }),
+      ...(maxBytes === undefined ? {} : { maxBytes }),
       ...(outOfScope === undefined ? {} : { outOfScope }),
     };
   }
@@ -1235,6 +1322,13 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
       ...(dir === undefined ? {} : { dir }),
       ...(retentionDays === undefined ? {} : { retentionDays }),
     };
+  }
+  const verify = raw.verify;
+  if (verify !== undefined) {
+    if (!isRecord(verify)) {
+      throw new ConfigError("'[verify]' must be a table");
+    }
+    config.verify = checkVerifyConfig(verify, 'verify');
   }
   const policy = raw.policy;
   if (policy !== undefined) {
@@ -1340,6 +1434,9 @@ export function serializeTomlConfig(config: KubicConfig): string {
   }
   if (config.session !== undefined) {
     emitTable(lines, 'session', config.session as Record<string, unknown>);
+  }
+  if (config.verify !== undefined) {
+    emitTable(lines, 'verify', config.verify as Record<string, unknown>);
   }
   if (config.policy !== undefined) {
     const { agentPolicy, ...rest } = config.policy;

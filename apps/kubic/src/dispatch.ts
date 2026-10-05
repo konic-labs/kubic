@@ -11,7 +11,19 @@
 // The check order is unchanged: config load → refusal → runtime exclude →
 // usage fallthrough → commander (help, version, crash probe, commands).
 
+import {
+  EXIT_FAILED,
+  EXIT_USAGE,
+} from '../../../packages/core/src/cli/exit-codes.js';
+import { formatJson } from '../../../packages/core/src/cli/output.js';
 import { formatVersionLine } from '../../../packages/core/src/license.js';
+import { refusedOrchestrateEnvelope } from '../../../packages/host/src/orchestrate-cli.js';
+import { refusedReplayEnvelope } from '../../../packages/host/src/replay/replay.js';
+import {
+  buildRunEnvelope,
+  refusedRunResult,
+  shellQuote,
+} from '../../../packages/host/src/run-cli.js';
 import {
   type ModelSelection,
   parseModelFlag,
@@ -33,12 +45,13 @@ import {
 } from './config-runtime.js';
 
 // The root dispatcher's usage line (issue #128): one string, printed by
-// `--help`/`-h` (exit 0 — a help request is a successful invocation) and by
-// the bare/unknown-command fallthrough (exit 1 — usage-on-no-args is the
-// deliberate POSIX posture). Both exits are pinned by
-// scripts/binary-contract.mjs; the two paths must never drift apart.
+// `--help`/`-h` (exit 0 — a help request is a successful invocation), by
+// the bare invocation or a bare TUI flag off a TTY (exit 1 — usage-on-no-args
+// is the deliberate POSIX posture), and by an unknown command or root option
+// (exit 2 — a usage error, issue #372). Every path is pinned by
+// scripts/binary-contract.mjs; they must never drift apart.
 export const ROOT_USAGE =
-  'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
+  'usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
 
 // The supported command names, read off the usage line so the routing
 // table and the listing can never drift apart (dispatch.test.ts also pins
@@ -89,6 +102,19 @@ const CLI_MODEL_COMMANDS: ReadonlySet<string> = new Set([
   'tui',
   'config',
 ]);
+
+// The refused-config envelopes (issue #244), keyed by command: the same
+// `--json` shape the command itself prints — `run`'s compact one-liner (the
+// orchestrator reads a worker's last stdout line), orchestrate's and
+// replay's pretty-printed documents. `tui` has no --json and is absent.
+const REFUSAL_ENVELOPES: Readonly<
+  Record<string, (message: string, exitCode: number) => string>
+> = {
+  run: (message, exitCode) =>
+    JSON.stringify(buildRunEnvelope(refusedRunResult(message), exitCode)),
+  orchestrate: (message) => formatJson(refusedOrchestrateEnvelope(message)),
+  replay: (message) => formatJson(refusedReplayEnvelope(message)),
+};
 
 function tryParseCliModel(value: string): ModelSelection | undefined {
   try {
@@ -183,6 +209,9 @@ const BARE_SKIP_FLAG = '--dangerously-skip-approvals';
 // orchestrator entry — on a TTY it is `kubic tui --orchestrator`; off a TTY
 // it keeps the bare usage + exit 1 posture like the other bare flags.
 const BARE_ORCHESTRATOR_FLAG = '--orchestrator';
+// Issue #295: the bare model pin, `--model <provider/id>` /
+// `--model=<provider/id>`.
+const BARE_MODEL_FLAG = '--model';
 
 export async function dispatchCommand(
   requested: string | undefined,
@@ -200,18 +229,42 @@ export async function dispatchCommand(
   // `kubic tui --dangerously-skip-approvals`; off a TTY it keeps the bare
   // usage + exit 1 posture.
   const interactive = deps.isInteractive?.() === true;
+  // Issue #268 (§17, L-D7): `kubic "<prompt>"` is the headline entry point.
+  // A single argv token that contains whitespace is a prompt; an unknown
+  // command word has no whitespace, so `kubic nosuch` stays the documented
+  // usage error (exit 2, #372) with a hint naming the prompt form. The
+  // prompt form behaves exactly like `kubic run -p "<prompt>"` — headless
+  // in both modes; the spec's TUI-first-turn variant is deliberately not
+  // shipped (docs/design-drift.md).
+  const barePrompt =
+    requested !== undefined &&
+    /\s/.test(requested) &&
+    !ROOT_OPTIONS.has(requested) &&
+    !COMMAND_NAMES.has(requested);
   const bareModel =
     requested !== undefined &&
-    (requested === '--model' || requested.startsWith('--model=')) &&
+    (requested === BARE_MODEL_FLAG ||
+      requested.startsWith(`${BARE_MODEL_FLAG}=`)) &&
     interactive;
   const bareSkip = requested === BARE_SKIP_FLAG && interactive;
   const bareOrchestrator = requested === BARE_ORCHESTRATOR_FLAG && interactive;
   // One bare-flag form of the TUI: every bare flag is `kubic tui <flag>` on
   // a terminal (and keeps the usage + exit 1 posture off one).
   const bareFlag = bareSkip || bareModel || bareOrchestrator;
-  const command =
-    (requested === undefined && interactive) || bareFlag ? 'tui' : requested;
-  const args = bareFlag ? [String(requested), ...rest] : rest;
+  const command = barePrompt
+    ? 'run'
+    : (requested === undefined && interactive) || bareFlag
+      ? 'tui'
+      : requested;
+  const args = barePrompt
+    ? ['-p', requested, ...rest]
+    : bareFlag
+      ? [String(requested), ...rest]
+      : rest;
+  // A help request is side-effect free (issue #245): commander answers
+  // `--help`/`-h` before any action, so the trust question and the
+  // runtime-exclude write must not happen for it either.
+  const helpRequested = rest.some((token) => HELP_TOKENS.has(token));
   // Issue #228 (§35.1): the interactive trust gate runs BEFORE the one
   // process-wide config load. Only the interactive TUI path asks; the
   // resolver persists the answer and this same invocation loads on it, so
@@ -220,7 +273,7 @@ export async function dispatchCommand(
   const trust =
     command !== undefined &&
     interactive &&
-    !rest.some((token) => HELP_TOKENS.has(token)) &&
+    !helpRequested &&
     INTERACTIVE_TRUST_COMMANDS.has(command)
       ? await deps.resolveProjectTrust?.()
       : undefined;
@@ -246,8 +299,18 @@ export async function dispatchCommand(
   // `config` and `doctor` still run so the named reason can be reported.
   const refusalExit = configRefusalExit(cliConfig, command);
   if (refusalExit !== undefined) {
-    // A diagnostic, so stderr: a `--json` consumer's stdout stays empty.
-    (deps.err ?? deps.out)(`error: ${cliConfig.error ?? 'config refused'}`);
+    const reason = cliConfig.error ?? 'config refused';
+    // A diagnostic, so stderr.
+    (deps.err ?? deps.out)(`error: ${reason}`);
+    // Issue #244: under `--json` the refusal is also the command's standard
+    // failure envelope on stdout, so a consumer still parses exactly one
+    // document instead of getting nothing. Commander has not parsed argv yet,
+    // so the raw tokens are scanned for the standalone flag.
+    const envelope =
+      command === undefined ? undefined : REFUSAL_ENVELOPES[command];
+    if (envelope !== undefined && args.includes('--json')) {
+      deps.out(envelope(reason, refusalExit));
+    }
     return refusalExit;
   }
   // Issue #91 (design §35, D34/D35): `.kubic/` runtime state must never
@@ -256,17 +319,22 @@ export async function dispatchCommand(
   // (idempotent, fail-open, never dirties a committed .gitignore) — so the
   // first run/orchestrate leaves `git status` clean while `.kubic/roles`
   // and `config.toml` stay trackable. Skipped outside a git repo.
-  if (command !== undefined && STATE_CREATING_COMMANDS.has(command)) {
+  if (
+    command !== undefined &&
+    STATE_CREATING_COMMANDS.has(command) &&
+    !helpRequested
+  ) {
     deps.ensureRuntimeExclude(
       runtimeExcludeEntriesFor(cliConfig.runtime?.orchestrator.root),
     );
   }
-  // Unknown commands and the bare invocation keep the POSIX usage + exit 1
-  // posture pinned by scripts/binary-contract.mjs — decided before commander
-  // parses, so they print the one usage line on stdout rather than
-  // commander's stderr message. Root options (`--help`, `-V`, …) go on to
-  // the parser. The contract crash probe (issue #128) is registered only
-  // under its env gate, so an ungated `__crash-probe` lands here too.
+  // The bare invocation and a bare TUI flag off a TTY keep the POSIX
+  // usage-on-no-args posture (exit 1, issues #128/#308/#327): they are not
+  // bad invocations, they are the documented no-command form. Everything
+  // else that lands here — an unknown command word, an unknown root option,
+  // `help`, the ungated crash probe — is a usage error (exit 2, issue
+  // #372), so scripts can tell it from a task failure. Both print the one
+  // usage line on stdout rather than commander's stderr message.
   const crashProbe = process.env.__KUBIC_CONTRACT_CRASH_PROBE === '1';
   const known =
     command !== undefined &&
@@ -274,8 +342,28 @@ export async function dispatchCommand(
       COMMAND_NAMES.has(command) ||
       (crashProbe && command === CRASH_PROBE));
   if (!known) {
+    const bareOffTty =
+      command === undefined ||
+      command === BARE_SKIP_FLAG ||
+      command === BARE_ORCHESTRATOR_FLAG ||
+      command === BARE_MODEL_FLAG ||
+      command.startsWith(`${BARE_MODEL_FLAG}=`);
     deps.out(ROOT_USAGE);
-    return 1;
+    // Issue #268 (L-D7): a single-word token stays an unknown command
+    // (#372) — the hint names the prompt form for exactly that word. The
+    // internal crash probe stays hint-free (it is not a user surface).
+    if (
+      !bareOffTty &&
+      command !== undefined &&
+      command !== '' &&
+      command !== CRASH_PROBE &&
+      !command.startsWith('-')
+    ) {
+      deps.out(
+        `hint: to run it as a prompt: kubic run -p ${shellQuote(command)}`,
+      );
+    }
+    return bareOffTty ? EXIT_FAILED : EXIT_USAGE;
   }
   const io = { out: deps.out, err: deps.err ?? deps.out };
   const program = createKubicProgram(io, {

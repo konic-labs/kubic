@@ -29,9 +29,11 @@ import {
   createApprovalAsk,
   enableFullAccess,
   FileApprovalStore,
+  installSoloPolicy,
   type TriggerContext,
   validatePolicy,
 } from './approvals.js';
+import { auditLedgerDirFor, readAuditLedger } from './policy/audit-ledger.js';
 
 const made: string[] = [];
 
@@ -105,5 +107,49 @@ describe('approvals gate the lane (issue #16, slice D)', () => {
     expect(JSON.stringify(allowed[0])).not.toContain(
       'destructive command blocked',
     );
+  });
+});
+
+describe('credential access is challenged and audited (issue #275)', () => {
+  it('denies a headless bash credential read and records trigger:credentials', async () => {
+    const dir = mkTmp('approvals-cred-');
+    const installed = installSoloPolicy({
+      workspace: dir,
+      sessionDir: join(dir, 'session'),
+    });
+    const lane = await bootFauxLane({
+      policy: { interceptors: installed.interceptors },
+      responses: [
+        fauxToolUse([
+          fauxToolCall('bash', { command: 'cat ~/.aws/credentials' }),
+        ]),
+        fauxAssistantMessage('done'),
+      ],
+    });
+    try {
+      const ends: KubicLaneEvent[] = [];
+      const sink: LaneEventSink = (event) => {
+        if (event.type === 'tool-end') ends.push(event);
+      };
+      const stop = await lane.subscribe(sink);
+      try {
+        await lane.run('read the aws credentials');
+      } finally {
+        await stop();
+      }
+      // Refused, never run: the block names the missing approval.
+      expect(ends).toHaveLength(1);
+      expect(JSON.stringify(ends[0])).toContain('not approved');
+    } finally {
+      await lane.cleanup();
+    }
+    expect(installed.denials().map((entry) => entry.capability)).toContain(
+      'credentials',
+    );
+    expect(installed.denials()[0]?.reason).toContain('headless');
+    const record = readAuditLedger(auditLedgerDirFor(dir)).find(
+      (row) => row.permission.permission === 'trigger:credentials',
+    );
+    expect(record?.result).toBe('deny');
   });
 });

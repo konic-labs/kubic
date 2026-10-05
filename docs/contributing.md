@@ -21,7 +21,12 @@ Every issue, every wave, no freelancing:
   it fail → minimal code → watch it pass → refactor. Runner is vitest
   with the `faux` provider (zero network, zero paid tokens in CI); TUI
   work adds pure-render headless snapshots (the pinned `pi-tui` has no
-  `VirtualTerminal`). One behavior per
+  `VirtualTerminal`) or reads live frames back with
+  `TuiAltScreen.getScreenLines()` over the one shared fake Terminal,
+  `test/fake-terminal.ts` (`fakeTerminal()` / `terminalRig()`; never a
+  per-file copy). A test never sleeps for a render: a forced
+  `screen.render()` is synchronous, and a requested render is flushed by
+  faking `setTimeout` + `performance` and running the pending timer. One behavior per
   test, real code over mocks.
 - **LC2 Debug** — anything red goes through root-cause investigation
   first (tight repro loop, recent changes, data flow — no fix proposals

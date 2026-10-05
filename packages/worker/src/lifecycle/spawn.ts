@@ -13,7 +13,7 @@ import type {
 } from '../../../exec/src/env.js';
 import { buildSpawnEnv, redactEnvForLog } from './env.js';
 import { StaleGenerationError } from './replace.js';
-import type { WorkerStatus } from './status.js';
+import type { ProcessStatus } from './status.js';
 
 export const READY_PREFIX = 'KUBIC_WORKER_READY';
 
@@ -52,6 +52,14 @@ export interface SpawnWorkerRequest {
   credentials?: Record<string, string>;
   provenance: Provenance;
   readyTimeoutMs?: number;
+  /**
+   * §51 cancellation grace (issue #249): how long the child's own cooperative
+   * shutdown gets after SIGTERM before the group SIGKILL escalation. The
+   * worker's settle (durable abort, kill-registry drain, reconcile sweep)
+   * needs more than the 2 s tool bound, so the caller passes a worker grace;
+   * absent keeps the exec default.
+   */
+  killGraceMs?: number;
 }
 
 export interface SpawnWorkerDeps {
@@ -87,7 +95,12 @@ export interface SpawnedWorker {
   sessionId: string;
   generation: number;
   pid: number | undefined;
-  status: WorkerStatus;
+  /** §13 process phase: spawning | ready | exiting (issue #151). */
+  status: ProcessStatus;
+  /** True when the process ended before the readiness handshake — the
+   *  spawn layer's own marker, so the launch layer can settle the agent as
+   *  SPAWN_FAILED without guessing from an exit code. */
+  unready: boolean;
   // Redacted-for-log view of the child env (redactEnvForLog): keys stay
   // for debugging, secret values never do. The plaintext env reaches only
   // the exec Shell seam in spawn options — never this handle.
@@ -95,7 +108,15 @@ export interface SpawnedWorker {
   startedAtMs: number;
   startupMs: number | undefined;
   ready: Promise<void>;
-  wait: () => Promise<{ exitCode: number; stdout: string; stderr: string }>;
+  wait: () => Promise<{
+    exitCode: number;
+    signal: string | null;
+    /** The SIGKILL escalation beat the child's cooperative shutdown
+     *  (issue #249): the cancel was FORCED, not settled. */
+    forced: boolean;
+    stdout: string;
+    stderr: string;
+  }>;
   kill: () => void;
 }
 
@@ -145,11 +166,19 @@ export function spawnWorker(
     generation: request.generation,
     pid: undefined,
     status: 'spawning',
+    unready: false,
     env: redactEnvForLog(env),
     startedAtMs,
     startupMs: undefined,
     ready: Promise.resolve(),
-    wait: () => Promise.resolve({ exitCode: 0, stdout: '', stderr: '' }),
+    wait: () =>
+      Promise.resolve({
+        exitCode: 0,
+        signal: null,
+        forced: false,
+        stdout: '',
+        stderr: '',
+      }),
     kill: () => undefined,
   };
 
@@ -168,14 +197,15 @@ export function spawnWorker(
     if (worker.status !== 'spawning') return;
     clearTimeout(timer);
     worker.startupMs = clock() - startedAtMs;
-    worker.status = 'running';
+    worker.status = 'ready';
     deps?.onStartup?.(worker.startupMs);
     settleReady();
   };
 
   const failSpawn = (reason: string): void => {
     if (worker.status !== 'spawning') return;
-    worker.status = 'spawn_failed';
+    worker.status = 'exiting';
+    worker.unready = true;
     try {
       handle.kill();
     } catch {
@@ -195,6 +225,9 @@ export function spawnWorker(
     handle = shell.spawn(request.cmd, request.args, {
       provenance: request.provenance,
       env,
+      ...(request.killGraceMs === undefined
+        ? {}
+        : { killGraceMs: request.killGraceMs }),
       onUpdate: (snapshot) => {
         const text = `${snapshot.stdout}\n${snapshot.stderr}`;
         if (text.includes(marker)) {
@@ -205,14 +238,21 @@ export function spawnWorker(
     });
   } catch (error) {
     clearTimeout(timer);
-    worker.status = 'spawn_failed';
+    worker.status = 'exiting';
+    worker.unready = true;
     failReady(
       error instanceof Error
         ? error
         : new SpawnFailedError(request.workerId, String(error)),
     );
     worker.wait = () =>
-      worker.ready.then(() => ({ exitCode: 1, stdout: '', stderr: '' }));
+      worker.ready.then(() => ({
+        exitCode: 1,
+        signal: null,
+        forced: false,
+        stdout: '',
+        stderr: '',
+      }));
     worker.kill = () => undefined;
     return worker;
   }
@@ -241,6 +281,8 @@ export function spawnWorker(
     }
     return {
       exitCode: result.exitCode,
+      signal: result.signal ?? null,
+      forced: result.forced === true,
       stdout: result.stdout,
       stderr: result.stderr,
     };

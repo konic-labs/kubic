@@ -186,18 +186,18 @@ describe('#106 docs describe what ships (issue #106)', () => {
     }
     // The sibling rows this issue does NOT own stay put — a sweep that took
     // them out would silently re-open a sibling issue. Only the modules that
-    // are STILL dead may carry a row: `merge/telemetry.ts` is #98's and still
-    // unreachable. The approvals rows that were here when this pin was
-    // written are gone because #105 landed and wired them (the sibling did
-    // its job) — so a row for any of those now fails the reachability gate
-    // itself, which is the stronger pin. Asserted by measurement below rather
-    // than by text: `approvals/request.ts` must NOT have a row (reachable),
-    // `merge/telemetry.ts` must (still dead).
+    // are STILL dead may carry a row. The approvals rows that were here when
+    // this pin was written are gone because #105 landed and wired them, and
+    // `merge/telemetry.ts` — #98's module, still unreachable when this pin was
+    // written — was wired by #158 (the orchestrate driver records per-agent
+    // MergeTelemetry). Both now fail the reachability gate if a row comes
+    // back, which is the stronger pin. Asserted by measurement below rather
+    // than by text: every wired module must NOT have a row.
     expect(
       rows.has('packages/host/src/orchestrator/approvals/request.ts'),
     ).toBe(false);
     expect(rows.has('packages/host/src/orchestrator/merge/telemetry.ts')).toBe(
-      true,
+      false,
     );
     // The execution is recorded, not just performed.
     expect(prose(ledger)).toMatch(/#106 executed/);

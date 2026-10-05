@@ -20,6 +20,7 @@ import {
   type TuiApprovalSeat,
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../exec/src/journal.js';
@@ -124,47 +125,7 @@ function fauxLaneBoot(
 }
 
 function fakeTerminal(width: number) {
-  const writes: string[] = [];
-  const counts = { started: 0, stopped: 0 };
-  let handler: ((data: string) => void) | undefined;
-  return {
-    writes,
-    counts,
-    get frame(): string {
-      return writes.join('');
-    },
-    feed: (data: string) => {
-      handler?.(data);
-    },
-    terminal: {
-      start: (input: (data: string) => void) => {
-        counts.started += 1;
-        handler = input;
-      },
-      stop: () => {
-        counts.stopped += 1;
-      },
-      drainInput: () => Promise.resolve(),
-      write: (data: string) => writes.push(data),
-      get columns(): number {
-        return width;
-      },
-      get rows(): number {
-        return 30;
-      },
-      get kittyProtocolActive(): boolean {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    },
-  };
+  return terminalRig(width, 30);
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {
@@ -269,7 +230,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     // The refusal reason never appeared: the call was really approved, and
     // the tree shows the bash call succeeded.
     expect(fake.frame).not.toContain('no approval surface is installed');
-    expect(lines.join('\n')).toMatch(/✓ bash \d+ms/);
+    expect(lines.join('\n')).toMatch(/✓ bash rm -rf \/tmp\/x \d+ms/);
   });
 
   it('denies the gated call on Esc without quitting the session', async () => {
@@ -315,7 +276,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     const doc = lines.join('\n');
     expect(doc).toContain('after the denial');
     expect(doc).not.toContain('Approval required');
-    expect(doc).not.toMatch(/✓ bash \d+ms/);
+    expect(doc).not.toMatch(/✓ bash /);
   });
 
   it('quits cleanly with no approval ever asked (criterion 6)', async () => {

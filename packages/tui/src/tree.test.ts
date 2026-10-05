@@ -5,36 +5,44 @@
 import { describe, expect, it } from 'vitest';
 import {
   AgentTreeView,
-  applyLaneEvent,
+  applyTreeSnapshot,
   collapsedSummary,
   createTreeState,
+  renderAgentInspector,
   renderTreeLines,
   rootGlyph,
+  type TreeLaneSnapshot,
+  type TreeToolSnapshot,
+  type TreeWorker,
   toggleTree,
   toolGlyph,
 } from './tree.js';
+import { visibleWidth } from './tui-boundary.js';
 
-function startTool(
+const ESC = String.fromCharCode(27);
+
+// The production lane input (#333 §66): the host projector folds the events
+// and hands the tree the lane's own state — these are the shapes it passes.
+function tool(
   id: string,
   name: string,
-): {
-  type: 'tool-start';
-  lane: string;
-  runId: string;
-  turnId: string;
-  toolCallId: string;
-  toolName: string;
-  args: unknown;
-} {
+  extra: Partial<TreeToolSnapshot> = {},
+): TreeToolSnapshot {
   return {
-    type: 'tool-start',
-    lane: 'solo',
-    runId: 'r1',
-    turnId: 't1',
     toolCallId: id,
     toolName: name,
-    args: {},
+    status: 'running',
+    isError: false,
+    ...extra,
   };
+}
+
+function lane(
+  status: TreeLaneSnapshot['status'],
+  tools: ReadonlyArray<TreeToolSnapshot>,
+  usage?: { costTotal: number; inputTokens: number; outputTokens: number },
+): TreeLaneSnapshot {
+  return { status, tools, ...(usage === undefined ? {} : { usage }) };
 }
 
 describe('tree glyphs (issue #24; §49.1)', () => {
@@ -48,88 +56,53 @@ describe('tree glyphs (issue #24; §49.1)', () => {
     expect(toolGlyph('running')).toBe('●');
     expect(toolGlyph('done')).toBe('✓');
   });
+
+  it('maps an errored finish to ✗ (issue #345)', () => {
+    expect(toolGlyph('done', true)).toBe('✗');
+    expect(toolGlyph('running', true)).toBe('●');
+  });
 });
 
 describe('tree lane feed (issue #24; §18)', () => {
   it('shows ● root with live children on start/finish', () => {
     const state = createTreeState();
     expect(renderTreeLines(state, 100)[0]).toBe('◌ solo');
-    applyLaneEvent(state, {
-      type: 'run-start',
-      lane: 's',
-      runId: 'r',
-      startedAt: 0,
-    });
-    applyLaneEvent(state, startTool('c1', 'bash'), () => 0);
+    applyTreeSnapshot(state, lane('running', [tool('c1', 'bash')]));
     const lines = renderTreeLines(state, 100);
     expect(lines[0]).toBe('● solo');
     expect(lines[1]).toBe('  ● bash');
-    applyLaneEvent(
+    applyTreeSnapshot(
       state,
-      {
-        type: 'tool-end',
-        lane: 's',
-        runId: 'r',
-        turnId: 't',
-        toolCallId: 'c1',
-        toolName: 'bash',
-        isError: false,
-        terminate: false,
-      },
-      () => 142,
+      lane('running', [
+        tool('c1', 'bash', { status: 'done', durationMs: 142 }),
+      ]),
     );
     expect(renderTreeLines(state, 100)[1]).toBe('  ✓ bash 142ms');
   });
 
-  it('surfaces a tool finish even without a prior start', () => {
+  it('surfaces a tool finish even without a prior running row', () => {
+    // The snapshot carries the lane's whole tool list, so a finish the tree
+    // never saw start (a late join) still renders.
     const state = createTreeState();
-    applyLaneEvent(state, {
-      type: 'tool-end',
-      lane: 's',
-      runId: 'r',
-      turnId: 't',
-      toolCallId: 'c9',
-      toolName: 'bash',
-      isError: true,
-      terminate: false,
-    });
-    expect(renderTreeLines(state, 100)).toContain('  ✓ bash error');
+    applyTreeSnapshot(
+      state,
+      lane('idle', [tool('c9', 'bash', { status: 'done', isError: true })]),
+    );
+    expect(renderTreeLines(state, 100)).toContain('  ✗ bash');
   });
 });
 
 describe('tree collapse (issue #24; §80)', () => {
   it('collapses to a summary vs expanded per-call lines', () => {
     const state = createTreeState();
-    const clock = { now: 0 };
-    applyLaneEvent(state, {
-      type: 'run-start',
-      lane: 's',
-      runId: 'r',
-      startedAt: 0,
-    });
-    for (const [id, at] of [
-      ['c1', 40],
-      ['c2', 60],
-      ['c3', 42],
-    ] as const) {
-      clock.now = 0;
-      applyLaneEvent(state, startTool(id, 'bash'), () => clock.now);
-      clock.now = at;
-      applyLaneEvent(
-        state,
-        {
-          type: 'tool-end',
-          lane: 's',
-          runId: 'r',
-          turnId: 't',
-          toolCallId: id,
-          toolName: 'bash',
-          isError: false,
-          terminate: false,
-        },
-        () => clock.now,
-      );
-    }
+    applyTreeSnapshot(
+      state,
+      lane('running', [
+        tool('c1', 'bash', { status: 'done', durationMs: 40 }),
+        tool('c2', 'bash', { status: 'done', durationMs: 60 }),
+        tool('c3', 'bash', { status: 'done', durationMs: 42 }),
+      ]),
+    );
     expect(collapsedSummary(state)).toBe('…3 calls, 142ms');
     toggleTree(state);
     const collapsed = renderTreeLines(state, 100);
@@ -205,31 +178,13 @@ describe('tree toggle input (issue #24; §16.7)', () => {
 describe('tree snapshots (issue #24; headless, no VirtualTerminal)', () => {
   function populated(): AgentTreeView {
     const state = createTreeState();
-    const clock = { now: 0 };
-    applyLaneEvent(state, {
-      type: 'run-start',
-      lane: 's',
-      runId: 'r',
-      startedAt: 0,
-    });
-    clock.now = 0;
-    applyLaneEvent(state, startTool('c1', 'bash'), () => clock.now);
-    clock.now = 142;
-    applyLaneEvent(
+    applyTreeSnapshot(
       state,
-      {
-        type: 'tool-end',
-        lane: 's',
-        runId: 'r',
-        turnId: 't',
-        toolCallId: 'c1',
-        toolName: 'bash',
-        isError: false,
-        terminate: false,
-      },
-      () => clock.now,
+      lane('running', [
+        tool('c1', 'bash', { status: 'done', durationMs: 142 }),
+        tool('c2', 'bash'),
+      ]),
     );
-    applyLaneEvent(state, startTool('c2', 'bash'));
     return new AgentTreeView(state);
   }
 
@@ -258,10 +213,237 @@ describe('tree snapshots (issue #24; headless, no VirtualTerminal)', () => {
   });
 });
 
-function visibleWidth(line: string): number {
-  const sgr = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
-  return line.replace(sgr, '').length;
+function toolResult(text: string, isError = false): Record<string, unknown> {
+  return {
+    id: 1,
+    conversationId: 1,
+    kind: 'pi.tool-result',
+    model: [
+      {
+        role: 'toolResult',
+        toolCallId: 'c1',
+        toolName: 'bash',
+        isError,
+        content: [{ type: 'text', text }],
+      },
+    ],
+  };
 }
+
+describe('tree tool detail (issue #345; §18, §49.1)', () => {
+  it('renders a running bash call with its command, truncated to width', () => {
+    const state = createTreeState();
+    applyTreeSnapshot(
+      state,
+      lane('running', [
+        tool('c1', 'bash', { args: { command: 'pnpm test auth' } }),
+      ]),
+    );
+    expect(renderTreeLines(state, 100)).toEqual([
+      '● solo',
+      '  ● bash pnpm test auth',
+    ]);
+    const narrow = renderTreeLines(state, 20)[1] ?? '';
+    expect(visibleWidth(narrow)).toBe(20);
+    expect(narrow).toContain('bash pnpm');
+  });
+
+  it('shows the path for read/edit args, and no shell outcome for them', () => {
+    const state = createTreeState();
+    applyTreeSnapshot(
+      state,
+      lane('running', [tool('c1', 'read', { args: { path: 'src/tree.ts' } })]),
+    );
+    expect(renderTreeLines(state, 100)[1]).toBe('  ● read src/tree.ts');
+    // A read result that happens to look like shell output must not become an
+    // outcome: `17 passed` inside a file is not a test report (review #345).
+    applyTreeSnapshot(
+      state,
+      lane('running', [
+        tool('c1', 'read', {
+          status: 'done',
+          args: { path: 'src/tree.ts' },
+          entry: toolResult('[bash exit 1 (bash)]\n17 passed'),
+          durationMs: 12,
+        }),
+      ]),
+    );
+    expect(renderTreeLines(state, 100)[1]).toBe('  ✓ read src/tree.ts 12ms');
+  });
+
+  it('shows a non-zero exit code on a finished bash call', () => {
+    const state = createTreeState();
+    applyTreeSnapshot(
+      state,
+      lane('running', [
+        tool('c1', 'bash', {
+          status: 'done',
+          isError: true,
+          args: { command: 'pnpm test auth' },
+          entry: toolResult('[bash exit 1 (bash)]\n--- stdout ---\nboom'),
+          durationMs: 12,
+        }),
+      ]),
+    );
+    expect(renderTreeLines(state, 100)[1]).toBe(
+      '  ✗ bash pnpm test auth 12ms · exit 1',
+    );
+  });
+
+  it('shows a detected test summary as the outcome', () => {
+    const state = createTreeState();
+    applyTreeSnapshot(
+      state,
+      lane('running', [
+        tool('c1', 'bash', {
+          status: 'done',
+          args: { command: 'pnpm test auth' },
+          entry: toolResult(
+            '[bash exit 0 (bash)]\n--- stdout ---\nTests  17 passed (17)',
+          ),
+          durationMs: 142,
+        }),
+      ]),
+    );
+    expect(renderTreeLines(state, 100)[1]).toBe(
+      '  ✓ bash pnpm test auth 142ms · 17 passed',
+    );
+  });
+
+  it('marks a failed call ✗ and never ✓', () => {
+    const state = createTreeState();
+    applyTreeSnapshot(
+      state,
+      lane('running', [tool('c9', 'bash', { status: 'done', isError: true })]),
+    );
+    const lines = renderTreeLines(state, 100);
+    expect(lines[1]).toBe('  ✗ bash');
+    expect(lines.join('\n')).not.toContain('✓');
+  });
+
+  it('shows $cost and in/out tokens on the root row after usage', () => {
+    // The tree renders the totals the state carries (#333 §66: the projector
+    // sums the ledger and the usage rows; the tree never folds a raw row).
+    const state = createTreeState();
+    applyTreeSnapshot(state, lane('running', []));
+    expect(renderTreeLines(state, 100)[0]).toBe('● solo');
+    applyTreeSnapshot(
+      state,
+      lane('running', [], {
+        costTotal: 0,
+        inputTokens: 1200,
+        outputTokens: 300,
+      }),
+    );
+    expect(renderTreeLines(state, 100)[0]).toBe('● solo $0.00 1.2k/0.3k');
+    applyTreeSnapshot(
+      state,
+      lane('running', [], {
+        costTotal: 0.02,
+        inputTokens: 2000,
+        outputTokens: 1000,
+      }),
+    );
+    expect(renderTreeLines(state, 100)[0]).toBe('● solo $0.02 2.0k/1.0k');
+  });
+
+  it('starts a new group on the second run-start', () => {
+    const state = createTreeState();
+    applyTreeSnapshot(
+      state,
+      lane('running', [
+        tool('c1', 'bash', { status: 'done', durationMs: 142 }),
+      ]),
+    );
+    applyTreeSnapshot(
+      state,
+      lane('done', [tool('c1', 'bash', { status: 'done', durationMs: 142 })]),
+    );
+    // Turn 2: the run starts again and the projector has cleared the list, so
+    // only the new turn's call is live.
+    applyTreeSnapshot(state, lane('running', [tool('c2', 'read')]));
+    expect(state.tools.map((call) => call.id)).toEqual(['c2']);
+    // Completed turns are kept as rollups, never as calls: the state stays
+    // bounded by the turn count, not the session's tool count.
+    expect(state.previousTurns).toEqual([{ calls: 1, durationMs: 142 }]);
+    expect(renderTreeLines(state, 100)).toEqual([
+      '● solo',
+      '  … 1 earlier call in 1 turn',
+      '  ● read',
+    ]);
+  });
+
+  it('folds every turn into the collapsed summary', () => {
+    const state = createTreeState();
+    applyTreeSnapshot(
+      state,
+      lane('running', [tool('c1', 'bash', { status: 'done', durationMs: 40 })]),
+    );
+    applyTreeSnapshot(
+      state,
+      lane('done', [tool('c1', 'bash', { status: 'done', durationMs: 40 })]),
+    );
+    applyTreeSnapshot(state, lane('running', [tool('c2', 'read')]));
+    toggleTree(state);
+    expect(renderTreeLines(state, 100)[1]).toBe('  …2 calls, 40ms');
+  });
+
+  it('truncates CJK args to exactly the column width', () => {
+    const state = createTreeState();
+    applyTreeSnapshot(
+      state,
+      lane('running', [
+        tool('c1', 'bash', {
+          args: { command: '测试命令测试命令测试命令测试命令' },
+        }),
+      ]),
+    );
+    for (const width of [40, 17, 10]) {
+      const line = renderTreeLines(state, width)[1] ?? '';
+      expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+    }
+    // A cut that lands on a glyph boundary fills the row exactly: the old
+    // String.length math counted a CJK glyph as one column and overflowed.
+    const exact = renderTreeLines(state, 14)[1] ?? '';
+    expect(visibleWidth(exact)).toBe(14);
+    expect(exact).toContain('…');
+  });
+
+  it('never lets control characters in args reach the lines', () => {
+    const state = createTreeState();
+    applyTreeSnapshot(
+      state,
+      lane('running', [
+        tool('c1', 'bash', {
+          args: { command: `echo ${ESC}[2J${ESC}[31mboom` },
+        }),
+      ]),
+    );
+    const rendered = renderTreeLines(state, 100).join('\n');
+    expect(rendered).toContain('echo boom');
+    expect(rendered).not.toContain(`${ESC}[2J`);
+    expect(rendered).not.toContain(`${ESC}[31m`);
+    expect(rendered).not.toContain('[2J');
+    expect(rendered).not.toContain('[31m');
+    // A carriage return is an OVERWRITE, not a separator (issue #299): the
+    // terminal shows what came after it, and so does the tree.
+    applyTreeSnapshot(
+      state,
+      lane('running', [
+        tool('c1', 'bash', {
+          args: { command: 'echo boom' },
+        }),
+        tool('c2', 'bash', {
+          args: { command: 'progress 10%\rprogress 100%' },
+        }),
+      ]),
+    );
+    const withReturn = renderTreeLines(state, 100).join('\n');
+    expect(withReturn).toContain('progress 100%');
+    expect(withReturn).not.toContain('10%');
+    expect(withReturn).not.toContain('\r');
+  });
+});
 
 describe('tree mutation hardening (issue #68)', () => {
   it('ignores non-toggle keys without toggling or refocusing', () => {
@@ -287,31 +469,18 @@ describe('tree mutation hardening (issue #68)', () => {
     expect(renderTreeLines(state, 6)[0]).not.toContain('…');
   });
 
-  it('honors constructor label/collapsed options and the injected clock', () => {
+  it('honors constructor label/collapsed options and the snapshot durations', () => {
     const state = createTreeState();
-    applyLaneEvent(state, {
-      type: 'run-start',
-      lane: 's',
-      runId: 'r',
-      startedAt: 0,
-    });
-    applyLaneEvent(state, startTool('c1', 'bash'), () => 1000);
-    const view = new AgentTreeView(state, {
-      collapsed: true,
-      clock: () => 1500,
-    });
+    applyTreeSnapshot(
+      state,
+      lane('running', [
+        tool('c1', 'bash', { status: 'done', durationMs: 500 }),
+      ]),
+    );
+    const view = new AgentTreeView(state, { collapsed: true });
     expect(view.isCollapsed()).toBe(true);
-    view.update({
-      type: 'tool-end',
-      lane: 's',
-      runId: 'r',
-      turnId: 't',
-      toolCallId: 'c1',
-      toolName: 'bash',
-      isError: false,
-      terminate: false,
-    });
-    // One tool: singular 'call' via the injected clock (1500 - 1000).
+    // One tool: singular 'call' — the duration is the projector's measurement,
+    // carried in the snapshot.
     expect(view.render(100)).toEqual(['● solo', '  …1 call, 500ms']);
     expect(view.getState().tools[0]?.durationMs).toBe(500);
     // The label option names the root when the view builds its own state.
@@ -319,13 +488,88 @@ describe('tree mutation hardening (issue #68)', () => {
       new AgentTreeView(undefined, { label: 'lane-7' }).render(100),
     ).toEqual(['◌ lane-7']);
   });
+});
 
-  it('restarts a retooled call instead of duplicating it', () => {
+// Issue #342 (§18, §16.5): orchestrator mode adds per-agent state to the same
+// view — the manager is the root and every worker is a node with its role,
+// status, generation, worktree and spend. A solo state renders as before.
+describe('orchestrator agent tree (issue #342)', () => {
+  const twoWorkers = () => {
+    const state = createTreeState('orchestrator');
+    applyTreeSnapshot(state, {
+      status: 'running',
+      tools: [],
+      workers: [
+        {
+          workerId: 'alpha',
+          role: 'implementer',
+          status: 'running',
+          generation: 1,
+          worktree: '/repo/.kubic/wt/sess-o1/alpha',
+        },
+        {
+          workerId: 'beta',
+          role: 'reviewer',
+          status: 'completed',
+          generation: 2,
+          worktree: '/repo/.kubic/wt/sess-o1/beta',
+          model: 'faux/faux-1',
+          inputTokens: 1200,
+          outputTokens: 300,
+          costUsd: 0.0123,
+        },
+      ],
+    });
+    return state;
+  };
+
+  it('renders the manager and two workers with worktree and generation columns (headless snapshot)', () => {
+    expect(renderTreeLines(twoWorkers(), 100)).toMatchInlineSnapshot(`
+      [
+        "● orchestrator",
+        "  ● alpha  implementer  running  g1  wt:alpha",
+        "  ✓ beta  reviewer  completed  g2  wt:beta  $0.01 1.2k/0.3k",
+      ]
+    `);
+  });
+
+  it('a worker status change updates its node on the next render', () => {
+    const state = twoWorkers();
+    applyTreeSnapshot(state, {
+      status: 'running',
+      tools: [],
+      workers: [
+        {
+          workerId: 'alpha',
+          role: 'implementer',
+          status: 'failed',
+          generation: 1,
+        },
+      ],
+    });
+    const lines = renderTreeLines(state, 100);
+    expect(lines[1]).toBe('  ✗ alpha  implementer  failed  g1');
+    expect(lines).toHaveLength(2);
+  });
+
+  it('a solo state (no workers) renders exactly as before', () => {
     const state = createTreeState();
-    applyLaneEvent(state, startTool('c1', 'bash'), () => 0);
-    applyLaneEvent(state, startTool('c1', 'bash'), () => 50);
-    expect(state.tools.length).toBe(1);
-    expect(state.tools[0]?.done).toBe(false);
-    expect(renderTreeLines(state, 100)).toEqual(['◌ solo', '  ● bash']);
+    applyTreeSnapshot(state, { status: 'idle', tools: [] });
+    expect(renderTreeLines(state, 80)).toEqual(['◌ solo']);
+  });
+
+  it('the AgentInspector shows role, worktree, model and cost (headless snapshot)', () => {
+    const [, beta] = twoWorkers().workers;
+    expect(renderAgentInspector(beta as TreeWorker)).toMatchInlineSnapshot(`
+      [
+        "agent beta",
+        "role: reviewer",
+        "status: completed (generation 2)",
+        "worktree: /repo/.kubic/wt/sess-o1/beta",
+        "model: faux/faux-1",
+        "tokens: 1200 in / 300 out",
+        "cost: $0.0123",
+      ]
+    `);
   });
 });

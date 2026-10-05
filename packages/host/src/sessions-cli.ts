@@ -13,9 +13,11 @@ import { inspectStoredWork } from '../../worker/src/lane/pending.js';
 import {
   attachSession,
   createSession,
+  forkSession,
   listSessions,
   openSessionStore,
   SessionAttachError,
+  SessionForkError,
   SessionFormatError,
   SessionLockError,
 } from '../../worker/src/lane/session-store.js';
@@ -59,7 +61,19 @@ export type SessionsInvocation =
       readonly dangerouslySkipApprovals?: boolean;
     }
   | { readonly command: 'list'; readonly json?: boolean }
-  | { readonly command: 'attach'; readonly id: string; readonly tail?: number }
+  | {
+      readonly command: 'attach';
+      readonly id: string;
+      readonly tail?: number;
+      readonly ids?: boolean;
+    }
+  | {
+      readonly command: 'fork';
+      readonly id: string;
+      readonly at?: number;
+      readonly tree?: boolean;
+      readonly json?: boolean;
+    }
   | {
       readonly command: 'prune';
       readonly keepDays?: number;
@@ -262,6 +276,9 @@ export async function runSessionsCommand(
     );
     return 0;
   }
+  if (invocation.command === 'fork') {
+    return runForkCommand(invocation, deps, store);
+  }
   // attach
   const { id } = invocation;
   const tail = invocation.tail ?? 10;
@@ -295,13 +312,21 @@ export async function runSessionsCommand(
         deps.out(pending.summary);
       }
       // The transcript through the shared adapter (#400): one readable line
-      // per turn instead of a truncated JSON entry (#318).
-      const items = entriesToTranscript(
-        await readSessionEntries(session.storage, BACKGROUND_CONTEXT),
-      );
-      const last = items.slice(Math.max(0, items.length - tail));
-      for (const item of last) {
-        deps.out(renderTranscriptItem(item));
+      // per turn instead of a truncated JSON entry (#318). Issue #265:
+      // `--ids` prefixes each line with its entry id — the `--at` that
+      // `kubic sessions fork` takes.
+      const entries = [
+        ...(await readSessionEntries(session.storage, BACKGROUND_CONTEXT)),
+      ].sort((left, right) => left.id - right.id);
+      const lines: string[] = [];
+      for (const entry of entries) {
+        const item = entriesToTranscript([entry])[0];
+        if (item === undefined) continue;
+        const line = renderTranscriptItem(item);
+        lines.push(invocation.ids === true ? `#${entry.id} ${line}` : line);
+      }
+      for (const line of lines.slice(Math.max(0, lines.length - tail))) {
+        deps.out(line);
       }
     } finally {
       await session.release(BACKGROUND_CONTEXT);
@@ -361,5 +386,54 @@ function renderTranscriptItem(item: TranscriptItem): string {
       return `[compaction] ${oneLine(item.text ?? '')}`;
     case 'reset':
       return `[reset]${item.text === undefined ? '' : ` ${oneLine(item.text)}`}`;
+  }
+}
+
+// `fork` (issue #265; §22.3): a new session from an existing one — a branch
+// fork at an entry (default: the newest), or the whole tree with --tree. The
+// new id is printed (or `{id, source, at}` with --json) and is usable at once
+// with `kubic run --session` / `kubic tui --session`. The store refuses a
+// live-locked source, a missing one and a 0.87 one; all exit 1, like attach.
+async function runForkCommand(
+  invocation: Extract<SessionsInvocation, { command: 'fork' }>,
+  deps: SessionsCommandDeps,
+  store: ReturnType<typeof openSessionStore>,
+): Promise<number> {
+  const log = diagnosticsOf(deps);
+  if (!SESSION_ID_PATTERN.test(invocation.id)) {
+    log.error('invalid session id');
+    return 2;
+  }
+  if (invocation.tree === true && invocation.at !== undefined) {
+    log.error('sessions fork: --at and --tree are mutually exclusive');
+    return 2;
+  }
+  try {
+    const fork = await forkSession(
+      store,
+      invocation.id,
+      {
+        ...(invocation.at === undefined ? {} : { at: invocation.at }),
+        ...(invocation.tree === true ? { tree: true } : {}),
+      },
+      BACKGROUND_CONTEXT,
+    );
+    deps.out(
+      invocation.json === true
+        ? formatJson({ id: fork.id, source: fork.source, at: fork.at ?? null })
+        : fork.id,
+    );
+    return 0;
+  } catch (error) {
+    if (
+      error instanceof SessionLockError ||
+      error instanceof SessionAttachError ||
+      error instanceof SessionFormatError ||
+      error instanceof SessionForkError
+    ) {
+      log.error(error.message);
+      return 1;
+    }
+    throw error;
   }
 }

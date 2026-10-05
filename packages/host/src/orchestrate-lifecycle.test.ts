@@ -47,6 +47,11 @@ const PROVENANCE: Provenance = {
 //   SILENT          never print the marker (a boot that never announces)
 //   SLEEP=<ms>      stay alive after announcing (so a timeout can fire)
 //   EXIT=<n>        exit with n (default 6, the provider-less boundary)
+//   CRASH_GEN=<n>   SIGKILL itself AFTER announcing when the generation the
+//                   launcher handed it (KUBIC_WORKER_GENERATION) is n
+//   CRASH_ALWAYS    SIGKILL itself after announcing, every generation
+//   REPORT_STATUS=<s>  print a §68 report with this status before exiting
+//   NOREPORT_FOR=<id>  skip the §68 report for THIS worker id only
 const FIXTURE = `
 import { writeFileSync } from 'node:fs';
 const argv = process.argv.slice(2);
@@ -65,11 +70,29 @@ if (dumpDir !== null) {
 if (!prompt.includes('SILENT')) {
   process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
 }
+const crashGen = /CRASH_GEN=(\\d+)/.exec(prompt)?.[1];
+if (
+  prompt.includes('CRASH_ALWAYS') ||
+  (crashGen !== undefined && process.env.KUBIC_WORKER_GENERATION === crashGen)
+) {
+  // A crash-class death: signal-killed after the readiness handshake.
+  process.kill(process.pid, 'SIGKILL');
+}
+const noReportFor = /NOREPORT_FOR=(\\S+)/.exec(prompt)?.[1];
+const skipReport =
+  noReportFor !== undefined
+    ? process.env.KUBIC_WORKER_ID === noReportFor
+    : prompt.includes('NOREPORT');
+const reportStatus = /REPORT_STATUS=(\\S+)/.exec(prompt)?.[1];
+if (reportStatus !== undefined) {
+  const a = process.argv;
+  process.stdout.write(JSON.stringify({ ok: false, status: reportStatus, sessionId: a[a.indexOf('--session') + 1], result: { summary: 'fixture stopped' } }) + String.fromCharCode(10));
+}
 if (sleep === null || sleep === undefined) {
-  if (exitCode === 0 && !prompt.includes('NOREPORT')) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
+  if (exitCode === 0 && !skipReport) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
   process.exit(exitCode);
 }
-setTimeout(() => { if (exitCode === 0 && !prompt.includes('NOREPORT')) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); } process.exit(exitCode); }, Number(sleep[1]));
+setTimeout(() => { if (exitCode === 0 && !skipReport) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); } process.exit(exitCode); }, Number(sleep[1]));
 `;
 
 // Every scratch dir is removed after each test; the worktrees live under the
@@ -136,7 +159,11 @@ interface Harness {
 }
 
 async function harness(
-  options: { readyTimeoutMs?: number } = {},
+  options: {
+    readyTimeoutMs?: number;
+    worktreeDiskQuotaMb?: number;
+    workerMemoryLimitMb?: number;
+  } = {},
 ): Promise<Harness> {
   const root = await initRepo();
   const sessionsRoot = scratchRoot('kubic-orch-lifecycle-sessions-');
@@ -203,8 +230,10 @@ describe('prod orchestrate path: workers start through the lifecycle layer (issu
     expect(row?.pid).toBeGreaterThan(0);
     expect(row?.owner).toBe('orchestrate:lifecycle');
     expect(row?.sessionId).toBe('lifecycle-worker-1');
-    // A child that ran and reported its own failure is terminal.
-    expect(row?.status).toBe('crashed');
+    // A child that ran and reported its own failure is terminal: the PROCESS
+    // exited and the AGENT failed (§13, issue #151).
+    expect(row?.status).toBe('exiting');
+    expect(row?.agentStatus).toBe('failed');
   });
 
   it('bumps the generation instead of resetting it when a worker is relaunched', async () => {
@@ -287,7 +316,8 @@ describe('prod orchestrate path: workers start through the lifecycle layer (issu
     expect(typeof row?.startupMs).toBe('number');
     expect(row?.startupMs).toBeGreaterThanOrEqual(0);
     expect(row?.startupMs).toBeLessThan(LIFECYCLE_BUDGETS_MS.teardownMs);
-    expect(row?.status).toBe('completed');
+    expect(row?.status).toBe('exiting');
+    expect(row?.agentStatus).toBe('completed');
     // The §61 budgets the layer enforces are the documented ones.
     expect(LIFECYCLE_BUDGETS_MS).toEqual({
       worktreeMs: 300,
@@ -303,6 +333,10 @@ describe('prod orchestrate path: workers start through the lifecycle layer (issu
     // regression, so the gate is asserted for the legs it owns and the
     // sample is reported in full).
     expect(perf[0]?.sample.spawnMs).toBeGreaterThanOrEqual(0);
+    // §61 (issue #158): the sample also carries the attach leg as a number —
+    // it was never measured before, so the field is present and real.
+    expect(typeof perf[0]?.sample.attachMs).toBe('number');
+    expect(perf[0]?.sample.attachMs).toBeGreaterThanOrEqual(0);
   });
 
   it('fails a silent child as spawn_failed inside the readiness timeout', async () => {
@@ -317,7 +351,8 @@ describe('prod orchestrate path: workers start through the lifecycle layer (issu
     )) as Error;
     expect(error.message).toMatch(/spawn failed for worker 'worker-1'/i);
     const row = h.registry.get('worker-1');
-    expect(row?.status).toBe('spawn_failed');
+    expect(row?.status).toBe('exiting');
+    expect(row?.agentStatus).toBe('spawn_failed');
     // The row is evidence, not a blank: the generation is recorded even on
     // the failed path, and an unfinished launch claims no startup sample.
     expect(row?.generation).toBe(1);
@@ -392,7 +427,10 @@ describe('prod orchestrate path: the §78 code a failed worker reports (issue #9
     expect(text).toMatch(/code=spawn_failed/);
     expect(text).toMatch(/readiness/);
     expect(text).not.toMatch(/ENOENT/);
-    expect(h.registry.get('worker-1')?.status).toBe('spawn_failed');
+    expect(h.registry.get('worker-1')).toMatchObject({
+      status: 'exiting',
+      agentStatus: 'spawn_failed',
+    });
   });
 
   it('reports a worker that ran and failed as worker_failed through the CLI', async () => {
@@ -412,7 +450,10 @@ describe('prod orchestrate path: the §78 code a failed worker reports (issue #9
     // worker_failed run, never a spawn failure — the taxonomy keeps them
     // apart (§52, §78).
     expect(text).toMatch(/code=worker_failed/);
-    expect(h.registry.get('worker-1')?.status).toBe('crashed');
+    expect(h.registry.get('worker-1')).toMatchObject({
+      status: 'exiting',
+      agentStatus: 'failed',
+    });
   });
 });
 
@@ -476,4 +517,283 @@ describe('prod orchestrate path: §68 result contract', () => {
     expect(typeof error.result?.provenance.pid).toBe('number');
     expect(typeof error.result?.provenance.model).toBe('string');
   });
+});
+
+describe('prod orchestrate path: §81 worker replacement (issue #175)', () => {
+  it('replaces a crashed worker once and completes the run at generation 2', async () => {
+    const h = await harness();
+    // The child announces itself, then SIGKILLs itself at generation 1 and
+    // exits clean with a §68 report at generation 2.
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the thing CRASH_GEN=1 EXIT=0',
+        agents: ['worker-1'],
+        session: 'lifecycle',
+        yes: true,
+        json: true,
+      },
+      h.deps,
+    );
+    expect(code).toBe(0);
+    const row = h.registry.get('worker-1');
+    expect(row?.generation).toBe(2);
+    expect(row?.status).toBe('exiting');
+    expect(row?.agentStatus).toBe('completed');
+    // The envelope names the generation that actually ran.
+    const envelope = JSON.parse(
+      h.lines.filter((line) => line.startsWith('{')).pop() as string,
+    ) as {
+      workers: { agentId: string; provenance?: { generation?: number } }[];
+    };
+    expect(envelope.workers[0]?.provenance?.generation).toBe(2);
+    // The replacement is recorded where `kubic workers` reads it.
+    const rows = readWorkerRows(
+      createNodeFileBridge(join(h.root, '.kubic', 'orchestrator')),
+      WORKER_ROWS_FILE,
+    );
+    const persisted = rows.find((entry) => entry.workerId === 'worker-1');
+    expect(persisted?.generation).toBe(2);
+    expect(persisted?.status).toBe('exiting');
+    expect(persisted?.agentStatus).toBe('completed');
+  }, 60_000);
+
+  it('fails worker_failed after the replacement limit, naming both generations', async () => {
+    const h = await harness();
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the thing CRASH_ALWAYS',
+        agents: ['worker-1'],
+        session: 'lifecycle',
+        yes: true,
+      },
+      h.deps,
+    );
+    expect(code).toBe(1);
+    const text = h.lines.join('\n');
+    expect(text).toContain('worker_failed');
+    // Both generations are named: the run replaced once and stopped.
+    expect(text).toMatch(/generations 1 → 2/);
+    // §13 (issue #151): the SIGKILL is recorded BY NAME on the live row and in
+    // the persisted record `kubic workers` reads — the agent failed, the
+    // process exited, and the signal is what killed it.
+    expect(h.registry.get('worker-1')).toMatchObject({
+      generation: 2,
+      status: 'exiting',
+      agentStatus: 'failed',
+      signal: 'SIGKILL',
+    });
+    const persistedCrash = readWorkerRows(
+      createNodeFileBridge(join(h.root, '.kubic', 'orchestrator')),
+      WORKER_ROWS_FILE,
+    ).find((entry) => entry.workerId === 'worker-1');
+    expect(persistedCrash).toMatchObject({
+      status: 'exiting',
+      agentStatus: 'failed',
+      signal: 'SIGKILL',
+    });
+  }, 60_000);
+
+  it('does not replace a launch that never became ready (spawn_failed is terminal)', async () => {
+    const h = await harness({ readyTimeoutMs: 100 });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'say hi SILENT SLEEP=30000',
+        agents: ['worker-1'],
+        session: 'lifecycle',
+        yes: true,
+      },
+      h.deps,
+    );
+    expect(code).toBe(1);
+    // One launch only: the silent child was never replaced.
+    expect(h.registry.get('worker-1')?.generation).toBe(1);
+  }, 60_000);
+
+  it('does not replace a provider-kind death (a setup failure a retry cannot fix)', async () => {
+    const h = await harness();
+    // The child becomes ready, then exits 6 (provider-less boundary): the
+    // lifecycle classifies it as a `provider` failure, not a crash, so the
+    // replacement seam refuses and the generation stays 1.
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'say hi EXIT=6',
+        agents: ['worker-1'],
+        session: 'lifecycle',
+        yes: true,
+      },
+      h.deps,
+    );
+    expect(code).toBe(1);
+    expect(h.registry.get('worker-1')?.generation).toBe(1);
+  }, 60_000);
+});
+
+describe('prod orchestrate path: §13 agent vs process states (issue #151)', () => {
+  it('gives a child that exits 0 with an invalid report agent FAILED, process exiting', async () => {
+    const h = await harness();
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the thing EXIT=0 NOREPORT',
+        agents: ['worker-1'],
+        session: 'lifecycle',
+        yes: true,
+      },
+      h.deps,
+    );
+    expect(code).toBe(1);
+    const row = h.registry.get('worker-1');
+    expect(row?.status).toBe('exiting');
+    expect(row?.agentStatus).toBe('failed');
+  }, 60_000);
+
+  it('maps exit 3 to BUDGET_EXHAUSTED and exit 4 to a FAILED approval terminus', async () => {
+    const budget = await harness();
+    expect(
+      await runOrchestrateCommand(
+        {
+          prompt: 'do the thing EXIT=3',
+          agents: ['worker-1'],
+          session: 'lifecycle',
+          yes: true,
+        },
+        budget.deps,
+      ),
+    ).toBe(3);
+    expect(budget.registry.get('worker-1')).toMatchObject({
+      status: 'exiting',
+      agentStatus: 'budget_exhausted',
+    });
+
+    const approval = await harness();
+    expect(
+      await runOrchestrateCommand(
+        {
+          prompt: 'do the thing EXIT=4',
+          agents: ['worker-1'],
+          session: 'lifecycle',
+          yes: true,
+        },
+        approval.deps,
+      ),
+    ).toBe(4);
+    expect(approval.registry.get('worker-1')).toMatchObject({
+      status: 'exiting',
+      agentStatus: 'failed',
+    });
+    expect(approval.deps.launches?.failureOf('worker-1')?.code).toMatch(
+      /approval/i,
+    );
+  }, 60_000);
+
+  it('reads the child’s own --timeout terminus from its report (exit 1, status timeout)', async () => {
+    const h = await harness();
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the thing EXIT=1 REPORT_STATUS=timeout',
+        agents: ['worker-1'],
+        session: 'lifecycle',
+        yes: true,
+      },
+      h.deps,
+    );
+    expect(code).toBe(1);
+    // The exit code alone says "unclassified failure"; the child's §68 report
+    // names the real terminus (issue #280), and the row follows it.
+    expect(h.registry.get('worker-1')).toMatchObject({
+      status: 'exiting',
+      agentStatus: 'timeout',
+    });
+  }, 60_000);
+});
+
+describe('prod orchestrate path: §13 settling is per agent (issue #151 review)', () => {
+  it('settles only the worker whose own report failed, not a concurrent sibling', async () => {
+    const h = await harness();
+    const dumpDir = scratchRoot('kubic-orch-settle-');
+    // Both workers exit 0; only alpha prints no §68 report, so only alpha's
+    // agent must settle FAILED. The other worker's row keeps its own verdict.
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing EXIT=0 NOREPORT_FOR=alpha PROMPTDUMPDIR=${dumpDir}`,
+        agents: ['alpha', 'beta'],
+        session: 'lifecycle',
+        yes: true,
+      },
+      h.deps,
+    );
+    expect(code).toBe(1);
+    const alpha = h.registry.get('alpha');
+    const beta = h.registry.get('beta');
+    expect(alpha?.status).toBe('exiting');
+    expect(beta?.status).toBe('exiting');
+    // Exactly one of them failed, and the run named that worker.
+    const failed = [alpha, beta].filter((row) => row?.agentStatus === 'failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.workerId).toBe('alpha');
+    // The run's terminus names the worker whose report was invalid.
+    expect(h.lines.join('\n')).toMatch(/alpha/);
+    expect(h.lines.join('\n')).toMatch(/result_invalid/);
+    const persisted = readWorkerRows(
+      createNodeFileBridge(join(h.root, '.kubic', 'orchestrator')),
+      WORKER_ROWS_FILE,
+    );
+    const failedRows = persisted.filter((row) => row.agentStatus === 'failed');
+    expect(failedRows).toHaveLength(1);
+  }, 60_000);
+});
+
+describe('prod orchestrate path: §82 resource enforcement (issue #163)', () => {
+  it('stops a worker whose worktree breaches the disk quota, with the named code', async () => {
+    // A 0 MB quota is breached by any worktree at all: the run must stop the
+    // worker through the resource path and name the code end to end.
+    const h = await harness({ worktreeDiskQuotaMb: 0 });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the thing EXIT=0 SLEEP=5000',
+        agents: ['worker-1'],
+        session: 'lifecycle',
+        yes: true,
+        json: true,
+      },
+      h.deps,
+    );
+    expect(code).toBe(1);
+    const envelope = JSON.parse(
+      h.lines.filter((line) => line.startsWith('{')).pop() as string,
+    ) as { error?: { code?: string }; workers?: { error?: unknown }[] };
+    expect(envelope.error).toMatchObject({ code: 'resource_disk_exceeded' });
+    expect(h.registry.get('worker-1')).toMatchObject({
+      status: 'exiting',
+      agentStatus: 'failed',
+      // The row names WHY the agent failed (issue #163 review): `kubic
+      // workers` reads the code, not just the status.
+      failure: { code: 'resource_disk_exceeded' },
+    });
+    // The breach really KILLED the child: the pid is gone, not merely
+    // reported as stopped while the fixture sleeps on (AC1's first half).
+    const pid = h.registry.get('worker-1')?.pid;
+    expect(typeof pid).toBe('number');
+    await vi.waitFor(() => expect(processAlive(pid as number)).toBe(false), {
+      timeout: 10_000,
+    });
+  }, 60_000);
+
+  it('does not spend the replacement budget on a resource stop', async () => {
+    // A resource stop is the manager's own decision (issue #163 review): a
+    // replacement would start in the same over-quota worktree and be killed
+    // by the first poll. The generation must stay 1 — the retry budget is
+    // not spent on predictable churn.
+    const h = await harness({ worktreeDiskQuotaMb: 0 });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the thing EXIT=0 SLEEP=5000',
+        agents: ['worker-1'],
+        session: 'lifecycle',
+        yes: true,
+      },
+      h.deps,
+    );
+    expect(code).toBe(1);
+    expect(h.registry.get('worker-1')?.generation).toBe(1);
+  }, 60_000);
 });

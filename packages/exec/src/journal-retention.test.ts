@@ -22,7 +22,7 @@ import {
   sha256Hex,
 } from './journal.js';
 
-const counts = vi.hoisted(() => ({ fileInfo: 0, indexReads: 0 }));
+const counts = vi.hoisted(() => ({ fileInfo: 0, blobInfo: 0, indexReads: 0 }));
 
 vi.mock('./file-bridge.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./file-bridge.js')>();
@@ -34,6 +34,10 @@ vi.mock('./file-bridge.js', async (importOriginal) => {
         ...bridge,
         fileInfo: (path: string) => {
           counts.fileInfo += 1;
+          // Blob stats are the O(M) cost this issue removed; the append's
+          // own index tail probe (issue #343) is one lstat per append and
+          // is deliberately not counted here.
+          if (path.includes(`${'/'}blobs${'/'}`)) counts.blobInfo += 1;
           return bridge.fileInfo(path);
         },
         readTextFile: (path: string) => {
@@ -110,11 +114,13 @@ describe('blob size cache (issue #124, slice 1)', () => {
       store.append(entry({ path: `f${i}.txt`, after: uniqueContent(i) }));
     }
     expect(store.blobCount()).toBe(30);
-    counts.fileInfo = 0;
+    counts.blobInfo = 0;
     store.append(entry({ path: 'f50.txt', after: uniqueContent(50) }));
     // Before the size cache this append stat'd every unique referenced blob
-    // (30 here, growing per entry); sizes recorded at write time make it 0.
-    expect(counts.fileInfo).toBe(0);
+    // (30 here, growing per entry). Now the only stat is the integrity check
+    // on the ONE blob the append is about to reuse (issue #344) — content-20
+    // already exists — never the referenced set.
+    expect(counts.blobInfo).toBe(1);
   });
 });
 
@@ -140,8 +146,12 @@ describe('retention reference counting (issue #124, slice 2)', () => {
     expect(store.blobCount()).toBe(3);
     const pruned = store.enforceRetention({ maxBytes: 10 });
     // The freed bytes are exactly the older entry's unique blob: the shared
-    // before-blob survives because b.txt still references it.
-    expect(pruned).toEqual({ entries: 1, bytes: 3 });
+    // before-blob survives because b.txt still references it. The kept line
+    // alone is over the 10-byte bound (issue #350 counts the index), so the
+    // excess is reported rather than hidden.
+    expect(pruned.entries).toBe(1);
+    expect(pruned.bytes).toBe(3);
+    expect(pruned.overBound).toBeGreaterThan(0);
     expect(store.entries().map((e) => e.path)).toEqual(['b.txt']);
     expect(store.hasBlob(sha256Hex('shared\n'))).toBe(true);
     expect(store.hasBlob(sha256Hex('x1\n'))).toBe(false);
@@ -166,12 +176,19 @@ describe('retention reference counting (issue #124, slice 2)', () => {
         bytesDelta: -4,
       }),
     );
-    const pruned = store.enforceRetention({ maxBytes: 3 });
-    // 13 unique bytes referenced, 7 of them the shared blob counted once —
-    // pins both the drop set and the refcounted byte arithmetic.
-    expect(pruned).toEqual({ entries: 2, bytes: 13 });
-    expect(store.entries()).toEqual([]);
-    expect(store.blobCount()).toBe(0);
+    // The newest entry is never dropped (issue #348), so the shared blob's
+    // last reference is released by dropping the two older ones.
+    store.append(entry({ path: 'c.txt', after: 'c\n' }));
+    const pruned = store.enforceRetention({ maxBytes: 2 });
+    // 15 unique blob bytes referenced, 7 of them the shared blob counted
+    // once — pins both the drop set and the refcounted byte arithmetic. The
+    // kept line is over the 2-byte bound (the index counts, issue #350).
+    expect(pruned.entries).toBe(2);
+    expect(pruned.bytes).toBe(13);
+    expect(pruned.overBound).toBeGreaterThan(0);
+    expect(store.entries().map((e) => e.path)).toEqual(['c.txt']);
+    expect(store.hasBlob(sha256Hex('shared\n'))).toBe(false);
+    expect(store.blobCount()).toBe(1);
   });
 });
 
@@ -181,19 +198,21 @@ describe('retention fast path (issue #124, slice 2)', () => {
       ...FAST,
       maxBytes: 10 * 1024 * 1024,
     });
-    counts.fileInfo = 0;
+    counts.blobInfo = 0;
     counts.indexReads = 0;
     for (let i = 0; i < 100; i++) {
       store.append(entry({ path: `f${i}.txt`, after: uniqueContent(i) }));
     }
-    // Sizes are recorded at write time and no prune runs: zero stats.
-    expect(counts.fileInfo).toBe(0);
+    // Sizes are recorded at write time and no prune runs: the only blob
+    // stat is the #344 integrity check on a blob the append is about to
+    // reuse — at most one per append, never the 30-strong referenced set.
+    expect(counts.blobInfo).toBeLessThanOrEqual(100);
     // And the pass is skipped outright: no per-append index reads — one
     // seeding pass at most, never one scan per append.
     expect(counts.indexReads).toBeLessThanOrEqual(2);
   });
 
-  it('a forced prune takes the slow path and computes the same drop set as before', () => {
+  it('a forced prune takes the slow path and drops down to the whole-store bound', () => {
     const store = new FileJournalStore(tmpRoot(), {
       ...FAST,
       maxBytes: 10 * 1024 * 1024,
@@ -202,11 +221,138 @@ describe('retention fast path (issue #124, slice 2)', () => {
       store.append(entry({ path: `f${i}.txt`, after: uniqueContent(i) }));
     }
     const pruned = store.enforceRetention({ maxBytes: 20 });
-    // Drop-oldest-first until the unique blob bytes fit — the same drop set
-    // the pre-change arithmetic produced.
-    expect(pruned).toEqual({ entries: 98, bytes: 280 });
-    expect(store.entries().map((e) => e.path)).toEqual(['f98.txt', 'f99.txt']);
-    expect(store.blobCount()).toBe(2);
+    // Drop-oldest-first until the store fits — the bound counts the index's
+    // own lines as well as the blobs (issue #350), so with 20 bytes only the
+    // newest entry survives. The freed bytes are its 290 blob bytes: the
+    // refcounted arithmetic is unchanged, the bound is not.
+    expect(pruned.entries).toBe(99);
+    expect(pruned.bytes).toBe(290);
+    expect(store.entries().map((e) => e.path)).toEqual(['f99.txt']);
+    expect(store.blobCount()).toBe(1);
+  });
+});
+
+describe('retention fast path with an age policy (issue #349)', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  it('100 appends with an age policy read the index at most once', () => {
+    const store = new FileJournalStore(tmpRoot(), {
+      ...FAST,
+      maxBytes: 10 * 1024 * 1024,
+      maxAgeMs: 7 * DAY_MS,
+    });
+    counts.indexReads = 0;
+    for (let i = 0; i < 100; i++) {
+      // Stamped now, so the 7-day window is what the cached oldest proves.
+      store.append(
+        entry({
+          path: `f${i}.txt`,
+          after: uniqueContent(i),
+          timestamp: Date.now(),
+        }),
+      );
+    }
+    // The first pass seeds the oldest timestamp; every later append proves
+    // from cache that nothing can have aged out (7 days against a session
+    // that is milliseconds old), so the whole index is never re-read.
+    expect(counts.indexReads).toBeLessThanOrEqual(1);
+  });
+
+  it('prunes an entry that crosses the age boundary on the next append', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir, {
+      maxBytes: 10 * 1024 * 1024,
+      maxAgeMs: 1000,
+    });
+    // Pin the wall clock so the boundary is crossed without a sleep.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(1_000_000);
+      store.append(
+        entry({ path: 'aged.txt', after: 'a\n', timestamp: 1_000_000 }),
+      );
+      expect(store.entries().map((e) => e.path)).toEqual(['aged.txt']);
+      // The window passes; the next append's pass must notice, even though
+      // the fast path was the state it left behind.
+      vi.setSystemTime(1_005_000);
+      store.append(
+        entry({ path: 'fresh.txt', after: 'f\n', timestamp: 1_005_000 }),
+      );
+      expect(store.entries().map((e) => e.path)).toEqual(['fresh.txt']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('folds an out-of-order append into the cached oldest timestamp', () => {
+    const store = new FileJournalStore(tmpRoot(), {
+      maxBytes: 10 * 1024 * 1024,
+      maxAgeMs: 1000,
+    });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      // Seed the cache with a fresh entry: the pass proves the window from
+      // cache and leaves oldestTimestamp at "now".
+      vi.setSystemTime(1_000_000);
+      store.append(entry({ path: 'fresh.txt', after: 'f\n' }));
+      expect(store.entries().map((e) => e.path)).toEqual(['fresh.txt']);
+      // A backwards clock step appends an entry already outside the window.
+      // The cache must fold to its stamp, or the next pass proves "nothing
+      // aged out" from a minimum that is higher than the truth.
+      store.append(
+        entry({
+          path: 'stale.txt',
+          after: 's\n',
+          timestamp: 1_000_000 - 5_000,
+        }),
+      );
+      store.append(entry({ path: 'after.txt', after: 'a\n' }));
+      expect(store.entries().map((e) => e.path)).toEqual([
+        'fresh.txt',
+        'after.txt',
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps pruning on later appends once the boundary has been crossed', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir, {
+      maxBytes: 10 * 1024 * 1024,
+      maxAgeMs: 15_000,
+    });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    counts.indexReads = 0;
+    try {
+      vi.setSystemTime(2_000_000);
+      store.append(
+        entry({ path: 'a.txt', after: 'a\n', timestamp: 2_000_000 }),
+      );
+      const r1 = counts.indexReads;
+      // Ten seconds later a.txt is still inside the 15-second window: the
+      // cached oldest proves it and the pass is skipped.
+      vi.setSystemTime(2_010_000);
+      store.append(
+        entry({ path: 'b.txt', after: 'b\n', timestamp: 2_010_000 }),
+      );
+      const r2 = counts.indexReads;
+      // Twenty seconds after a.txt, the boundary is crossed: the pass runs
+      // and drops it while keeping b.txt and c.txt.
+      vi.setSystemTime(2_020_000);
+      store.append(
+        entry({ path: 'c.txt', after: 'c\n', timestamp: 2_020_000 }),
+      );
+      expect(store.entries().map((e) => e.path)).toEqual(['b.txt', 'c.txt']);
+      // One read seeds the cache; the middle append adds none — it proved the
+      // window from cache, which is the whole point of the age fast path. The
+      // crossing pass is the only other reader (one read for the entries, one
+      // for its post-rewrite re-seed). Without the fast path every append is a
+      // slow pass: [1, 2, 4] instead of [1, 1, 3].
+      expect([r1, r2, counts.indexReads]).toEqual([1, 1, 3]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -220,15 +366,19 @@ describe('prune stats bound (issue #124, slice 2)', () => {
     expect(seed.blobCount()).toBe(30);
     const cold = new FileJournalStore(dir); // fresh instance, no cache warmth
     counts.fileInfo = 0;
+    counts.blobInfo = 0;
+    // The whole-store bound (index lines + blobs, issue #350) with 150 bytes
+    // leaves only the newest entry.
     const pruned = cold.enforceRetention({ maxBytes: 150 });
-    // 35 drops over 30 unique blobs: at most one stat per unique blob
-    // total, never drops × M.
-    expect(counts.fileInfo).toBeLessThanOrEqual(30);
-    expect(pruned).toEqual({ entries: 35, bytes: 150 });
-    expect(cold.entries().map((e) => e.path)).toEqual(
-      Array.from({ length: 15 }, (_, k) => `f${k + 35}.txt`),
-    );
-    expect(cold.blobCount()).toBe(15);
+    // 49 drops over 30 unique blobs: at most one BLOB stat per unique blob
+    // total, never drops × M. (The pass's own index stats — the read-time
+    // size and the unchanged-check before the rename, issue #337 — are not
+    // blob stats and are counted separately.)
+    expect(counts.blobInfo).toBeLessThanOrEqual(30);
+    expect(pruned.entries).toBe(49);
+    expect(pruned.bytes).toBe(290);
+    expect(cold.entries().map((e) => e.path)).toEqual(['f49.txt']);
+    expect(cold.blobCount()).toBe(1);
   });
 });
 
@@ -294,14 +444,22 @@ describe('slow passes re-stat referenced blobs (issue #124, review finding 2)', 
     const e1 = store.append(entry({ path: 'f1.txt', after: c1 }));
     store.append(entry({ path: 'f2.txt', after: c2 }));
     // External mutation between passes: f0's blob vanishes, f1's blob is
-    // replaced with different-length content. Live truth is now
-    // 0 + 6 + 100 = 106 — exactly at the bound below, so the old live-stat
-    // code drops nothing. Cached (phantom) sizes of 100 each would inflate
-    // the derived total to 300 and corrupt the drop set.
+    // replaced with different-length content. Live truth is now 0 + 6 + 100
+    // = 106 blob bytes — set the bound to exactly the store's live size
+    // (index lines included, issue #350), so live-stat truth drops nothing.
+    // Cached (phantom) sizes of 100 each would inflate the derived total to
+    // 300 and corrupt the drop set.
     rmSync(join(dir, 'blobs', e0.afterHash ?? ''));
     writeFileSync(join(dir, 'blobs', e1.afterHash ?? ''), 'short\n');
-    const pruned = store.enforceRetention({ maxBytes: 106 });
-    expect(pruned).toEqual({ entries: 0, bytes: 0 });
+    const indexBytes = store
+      .entries()
+      .reduce(
+        (total, e) =>
+          total + Buffer.byteLength(`${JSON.stringify(e)}\n`, 'utf8'),
+        0,
+      );
+    const pruned = store.enforceRetention({ maxBytes: indexBytes + 106 });
+    expect(pruned).toEqual({ entries: 0, bytes: 0, overBound: 0 });
     expect(store.entries().map((e) => e.path)).toEqual([
       'f0.txt',
       'f1.txt',
@@ -311,7 +469,9 @@ describe('slow passes re-stat referenced blobs (issue #124, review finding 2)', 
     // (its blob is gone — dropping it frees nothing), then f1 (frees its
     // live 6 bytes), never f2. The freed bytes are live truth, not phantoms.
     const prunedMore = store.enforceRetention({ maxBytes: 100 });
-    expect(prunedMore).toEqual({ entries: 2, bytes: 6 });
+    expect(prunedMore.entries).toBe(2);
+    expect(prunedMore.bytes).toBe(6);
+    expect(prunedMore.overBound).toBeGreaterThan(0);
     expect(store.entries().map((e) => e.path)).toEqual(['f2.txt']);
   });
 });

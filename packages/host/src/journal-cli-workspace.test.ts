@@ -7,6 +7,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   utimesSync,
@@ -296,5 +297,100 @@ describe('journal CLI workspace binding (issue #362)', () => {
       session: null,
       root: plain,
     });
+  });
+});
+
+// Issue #337: read-time retention and undo are cross-process hazards. A live
+// run appends to its journal while `kubic log --session S` rewrites it (the
+// line it appended is dropped by the rename, and the sweep deletes the blobs
+// it just wrote), and `kubic undo --session S` restores files the run is
+// writing. The session lock is the shipped liveness view: a live holder makes
+// the reader skip its self-heal (with a notice) and makes undo refuse by name
+// until --force.
+describe('journal commands step aside for a live session (issue #337)', () => {
+  function liveLock(sessionsRoot: string, id: string): void {
+    // A live pid — this process — is what `sessionLockIsLive` probes for.
+    writeFileSync(
+      join(sessionsRoot, id, 'lock.json'),
+      JSON.stringify({ pid: process.pid, startedAt: Date.now() }),
+    );
+  }
+
+  async function logSession(
+    sessionsRoot: string,
+    id: string,
+    root: string,
+  ): Promise<{ code: number; lines: string[]; errs: string[] }> {
+    const lines: string[] = [];
+    const errs: string[] = [];
+    const code = await runJournalCommand(
+      { command: 'log', session: id },
+      {
+        root,
+        sessionsRoot,
+        retentionDays: 1,
+        out: (l) => lines.push(l),
+        err: (l) => errs.push(l),
+      },
+    );
+    return { code, lines, errs };
+  }
+
+  it('leaves a live session journal byte-identical, with a notice', async () => {
+    const sessionsRoot = mkTmp('sr337-');
+    const ws = mkTmp('ws337-');
+    await recordSession(sessionsRoot, 'sess-live', ws);
+    // seedWrite stamps entries at 1_700_000_000_000 — years older than the
+    // 1-day window — so the self-heal WOULD drop it.
+    seedWrite(sessionsRoot, 'sess-live', 'a.txt', null, 'a\n');
+    const dir = join(sessionsRoot, 'sess-live', 'journal');
+    const indexPath = join(dir, 'index.jsonl');
+    const indexBefore = readFileSync(indexPath, 'utf8');
+    const blobsBefore = readdirSync(join(dir, 'blobs')).sort();
+    liveLock(sessionsRoot, 'sess-live');
+
+    const live = await logSession(sessionsRoot, 'sess-live', ws);
+    expect(live.code).toBe(0);
+    expect(readFileSync(indexPath, 'utf8')).toBe(indexBefore);
+    expect(readdirSync(join(dir, 'blobs')).sort()).toEqual(blobsBefore);
+    expect(live.errs.join('\n')).toMatch(
+      /retention skipped: session 'sess-live' is attached by pid \d+/,
+    );
+
+    // Control: with the holder gone, the same read prunes as before.
+    rmSync(join(sessionsRoot, 'sess-live', 'lock.json'));
+    const free = await logSession(sessionsRoot, 'sess-live', ws);
+    expect(free.code).toBe(0);
+    expect(free.errs.join('\n')).not.toMatch(/retention skipped/);
+    expect(readFileSync(indexPath, 'utf8')).not.toBe(indexBefore);
+  });
+
+  it('refuses to undo under a live session unless --force', async () => {
+    const sessionsRoot = mkTmp('sr337u-');
+    const ws = mkTmp('ws337u-');
+    await recordSession(sessionsRoot, 'sess-busy', ws);
+    writeFileSync(join(ws, 'a.txt'), 'v1\n');
+    seedWrite(sessionsRoot, 'sess-busy', 'a.txt', 'v1\n', 'v2\n');
+    writeFileSync(join(ws, 'a.txt'), 'v2\n');
+    liveLock(sessionsRoot, 'sess-busy');
+
+    const refused = await run(
+      { command: 'undo', session: 'sess-busy' },
+      { root: ws, sessionsRoot },
+    );
+    expect(refused.code).toBe(1);
+    expect(refused.errs.join('\n')).toMatch(
+      /attached by pid \d+ — refusing to undo under a live run \(pass --force to override\)/,
+    );
+    // Nothing was restored, and nothing was journaled.
+    expect(readFileSync(join(ws, 'a.txt'), 'utf8')).toBe('v2\n');
+    expect(journalOf(sessionsRoot, 'sess-busy').entries()).toHaveLength(1);
+
+    const forced = await run(
+      { command: 'undo', session: 'sess-busy', force: true },
+      { root: ws, sessionsRoot },
+    );
+    expect(forced.code).toBe(0);
+    expect(readFileSync(join(ws, 'a.txt'), 'utf8')).toBe('v1\n');
   });
 });

@@ -41,6 +41,7 @@ import {
   effectiveConfigView,
   loadRuntimeConfig,
   type RuntimeConfig,
+  type RuntimeVerify,
 } from '../../../packages/host/src/config/runtime.js';
 import {
   NO_PROJECT_TRUST,
@@ -528,18 +529,41 @@ export function runtimeRunDeps(result: CliConfigResult): {
   policySource: 'config' | 'default';
   // Issue #230: the config `[approvals]` policy the lane installs.
   approvals?: SoloApprovalConfig;
+  // Issue #267 (§48): the `[verify]` gate commands the run executes in its
+  // worktree after it settles. Undefined when none is configured — every
+  // gate then stays unknown.
+  verify?: RuntimeVerify;
 } {
   const runtime = result.runtime;
   if (runtime === undefined) return { policySource: 'default' };
+  const verifying = Object.keys(runtime.verify.commands).length > 0;
   return {
+    ...(verifying
+      ? {
+          verify: {
+            commands: { ...runtime.verify.commands },
+            ...(runtime.verify.timeoutMs === undefined
+              ? {}
+              : { timeoutMs: runtime.verify.timeoutMs }),
+          },
+        }
+      : {}),
     approvals: runtimeApprovalDeps(result),
     policyClasses: { ...runtime.permissions.classes },
     policySource:
       runtime.permissions.source === 'defaults' ? 'default' : 'config',
     journalRetention:
-      runtime.journal.maxAgeMs === undefined
+      runtime.journal.maxAgeMs === undefined &&
+      runtime.journal.maxBytes === undefined
         ? {}
-        : { maxAgeMs: runtime.journal.maxAgeMs },
+        : {
+            ...(runtime.journal.maxAgeMs === undefined
+              ? {}
+              : { maxAgeMs: runtime.journal.maxAgeMs }),
+            ...(runtime.journal.maxBytes === undefined
+              ? {}
+              : { maxBytes: runtime.journal.maxBytes }),
+          },
     ...(runtime.journal.outOfScope === undefined
       ? {}
       : { reconcileOutOfScope: [...runtime.journal.outOfScope] }),

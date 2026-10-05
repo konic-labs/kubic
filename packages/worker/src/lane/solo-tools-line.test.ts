@@ -119,6 +119,8 @@ function toolsLine(prompt: string): string[] {
 async function boot(extra: {
   policy?: Parameters<typeof bootSoloLane>[0]['policy'];
   toolAllowlist?: string[];
+  toolSelection?: string[];
+  noTools?: boolean;
 }): Promise<{ advertised: string[]; offered: string[] }> {
   const faux = fauxProvider();
   const models = createModels();
@@ -290,5 +292,44 @@ describe('the prompt tools line is the same intersection the conversation offers
     expect(cleared.advertised).toEqual(all);
     expect(cleared.offered).toEqual(all);
     await SOLOS.at(-1)?.close(BACKGROUND_CONTEXT);
+  });
+});
+
+describe('the per-invocation tool selection (issue #273)', () => {
+  it('a --tools selection narrows the offered and advertised set', async () => {
+    const { advertised, offered } = await boot({
+      toolSelection: ['read', 'ls'],
+    });
+    expect(offered).toEqual(['ls', 'read']);
+    expect(advertised).toEqual(['ls', 'read']);
+  });
+
+  it('--no-tools offers and advertises nothing', async () => {
+    const { advertised, offered } = await boot({ noTools: true });
+    expect(offered).toEqual([]);
+    expect(advertised).toEqual([]);
+  });
+
+  it('the selection intersects the role allowlist and the classes, never widening', async () => {
+    const role = await boot({
+      toolAllowlist: ['read', 'write', 'grep'],
+      toolSelection: ['write', 'bash'],
+    });
+    // `write` is in the role set; `bash` is not — the flag cannot add it.
+    expect(role.offered).toEqual(['write']);
+    expect(role.advertised).toEqual(['write']);
+    const classes = await boot({
+      policy: { classes: READ_ONLY_CLASSES },
+      toolSelection: ['read', 'write'],
+    });
+    // The read-only classes drop `write` even though the flag named it.
+    expect(classes.offered).toEqual(['read']);
+    expect(classes.advertised).toEqual(['read']);
+  });
+
+  it('a library caller that sets both forms is refused by name', async () => {
+    await expect(
+      boot({ toolSelection: ['read'], noTools: true }),
+    ).rejects.toThrow(/mutually exclusive/);
   });
 });

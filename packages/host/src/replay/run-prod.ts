@@ -23,9 +23,13 @@ export interface LanePromptOutcome {
 
 export interface ProdReplayRunDeps {
   loadTrajectory: (path: string) => TrajectoryExport;
+  // Issue #272: the whole request travels with the prompt, so the
+  // re-execution can honor its pins (worktree root, role config) instead
+  // of receiving them and dropping them.
   runPrompt: (
     prompt: string,
     model: string,
+    request: ReplayRunRequest,
     runtime: ReplayRuntimeDeps,
   ) => Promise<LanePromptOutcome>;
 }
@@ -65,8 +69,15 @@ export function createProdReplayRun(
     try {
       // The runtime projections ride through to the lane seam unchanged
       // (issue #114): the re-execution runs under the effective config's
-      // policy, never under defaults invented here.
-      outcome = await deps.runPrompt(objective, request.model, runtime);
+      // policy, never under defaults invented here. The request rides with
+      // them (issue #272) so the composition root can root the lane at the
+      // pinned worktree and boot the pinned role.
+      outcome = await deps.runPrompt(
+        objective,
+        request.model,
+        request,
+        runtime,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { terminus: 'failed', summary: message };

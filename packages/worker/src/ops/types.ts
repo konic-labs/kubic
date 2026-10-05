@@ -9,6 +9,7 @@ import type {
   ProcessSnapshot,
 } from '../../../exec/src/env.js';
 import type { FileJournalStore } from '../../../exec/src/journal.js';
+import type { SpillSink } from '../spill.js';
 
 export type JsonValue =
   | string
@@ -73,11 +74,21 @@ export interface OpContext {
   toolCallId?: string;
   journal?: FileJournalStore;
   // Lane abort support (issue #11): the op hands its process kill to the
-  // lane's kill registry so requestLaneAbort drains in-flight trees.
-  trackHandle?: (kill: () => void, invocation: ToolInvocation) => void;
+  // lane's kill registry so requestLaneAbort drains in-flight trees. The
+  // return value is the registry's unregister fn (issue #142): the op calls
+  // it once the handle settles, so a finished call does not keep its handle
+  // (and its output) in a registry the lane reuses for the whole session.
+  trackHandle?: (
+    kill: () => void,
+    invocation: ToolInvocation,
+  ) => (() => void) | undefined;
   // Issue #339: bash default/max timeout and background-job policy.
   // Absent ⇒ resolved from the documented KUBIC_BASH_* env overrides.
   bashPolicy?: import('./bash.js').BashPolicy;
+  // Issue #182: where a clipped stream's full text is written. The lane
+  // injects a session-scoped sink; absent (tests, journal-free contexts) the
+  // clip notice simply names no path and the result shape is unchanged.
+  spill?: SpillSink;
 }
 
 export interface InvocationRef {
@@ -96,7 +107,9 @@ export interface OpErrorDetails {
 // distinct, actionable refusal — never a generic catch-all. `file_too_large`
 // (issue #122) is the pre-allocation size refusal for edit; `is_directory`
 // and `permission_denied` (issue #199) keep read from calling every I/O
-// failure a missing file.
+// failure a missing file; `symlink_escape` (issue #140) is a write path that
+// resolves through a symlink to a location outside the workspace, which the
+// write tool refuses instead of following.
 export const OP_FAILURE_CODES = [
   'invalid_args',
   'not_found',
@@ -107,6 +120,7 @@ export const OP_FAILURE_CODES = [
   'file_too_large',
   'journal_failed',
   'not_a_repo',
+  'symlink_escape',
   'tool_failed',
 ] as const;
 

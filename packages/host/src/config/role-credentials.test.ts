@@ -41,11 +41,23 @@ describe('provider resolution for a worker role (issue #200)', () => {
     expect(providerOfModelRef(undefined)).toBeUndefined();
   });
 
-  it('mirrors the launch contract precedence: env pin, role pin, manager pin, fallback', () => {
+  it('mirrors the launch contract precedence: the told pin, env pin, manager pin, fallback', () => {
+    // Issue #202: the child is TOLD `modelRef` as its `KUBIC_MODEL`, so an
+    // ambient operator pin the manager overwrote must not decide the grant —
+    // the role's provider would then run without its key.
     expect(
       resolveWorkerProvider({
         envModel: 'anthropic/claude',
         modelRef: 'gw/m1',
+        managerModel: 'openai/gpt-5',
+        fallbackProvider: 'local',
+      }),
+    ).toBe('gw');
+    // No told pin: the child inherits the ambient `KUBIC_MODEL`, so that one
+    // decides.
+    expect(
+      resolveWorkerProvider({
+        envModel: 'anthropic/claude',
         managerModel: 'openai/gpt-5',
         fallbackProvider: 'local',
       }),
@@ -317,6 +329,22 @@ describe('workerCredentialDoctorProbe (issue #200)', () => {
     );
     expect(probe.ok).toBe(false);
     expect(probe.detail).toContain("provider 'unusable'");
+  });
+
+  it('qualifies the entry with the agent id only when one role resolves to several providers (issue #178)', () => {
+    const probe = workerCredentialDoctorProbe(
+      [
+        { agentId: 'a', role: 'implementer', modelRef: 'gw/m1' },
+        { agentId: 'b', role: 'implementer', modelRef: 'anthropic/claude' },
+        // Two planners on one provider stay collapsed: one role, one line.
+        { agentId: 'c', role: 'planner', modelRef: 'gw/m1' },
+        { agentId: 'd', role: 'planner', modelRef: 'gw/m1' },
+      ],
+      deps,
+    );
+    expect(probe.detail).toBe(
+      'a(implementer)→gw, b(implementer)→anthropic, planner→gw',
+    );
   });
 
   it('names the fallback provider when no role is assigned', () => {

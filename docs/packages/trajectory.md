@@ -15,11 +15,18 @@ with no shim, unknown fields are preserved, unknown majors are refused
 with `unknown-major` (exit 3). Breaking changes mint major 2.
 
 Quoted from `packages/trajectory/CONTRACT.md`: the §46 fields are
-`schema_version`, `task`, `identity`, `model` (+`escalations`), `prompt`,
-`resources`, `transfer`, `actions` (+args), `observations` (truncated),
-`state` (durable), `provenance` (pid/generation/worktree/model),
+`schema_version`, `task`, `identity` (+`parentSessionId`, `role`),
+`model` (+`escalations`: `reason`/`at`/`fromModel`/`toModel`/`thinking`),
+`prompt`, `resources`, `transfer`, `actions` (+args), `observations`
+(truncated), `state` (durable: `phase`, `snapshot`, `operations[]`
+`{id, kind}`, `memos[]`), `provenance` (pid/generation/worktree/model),
 `environment` (USED snapshot), `worktree` (+baseRevision), `diff`,
-`approvals`, `timestamps`, `usage` (+cost), `result`, `eval` (slot).
+`approvals` (+`requested` redacted summary, `justification`),
+`timestamps`, `usage` (+cost), `result` (+`tests`, `artifacts` refs),
+`eval` (slot). The 1.1 additions are optional on read (1.0 records still
+parse) and always written by the exporter: absent parent → `null`, absent
+role → `task.role`, absent leaves/memos/evidence → `[]`, absent approval
+details → `null`.
 Fail-closed, never silent drop: missing/incomplete provenance →
 `missing-provenance`/`invalid-provenance` (exit 2); `pid` is an explicit
 `null` for process-less (faux) runs, never omitted; a missing
@@ -32,9 +39,16 @@ worker spawn env uses too (#359: role grants ride in the spawn env, so it is
 not secret-free); every
 non-`completed` result carries a §52 `failureCategory` (else
 `missing-failure-category`), while a `completed` result carrying one is
-`contradictory-result`; bad `usage.byModel` rows → `invalid-usage`;
-observations over 8 KiB truncate on a UTF-8 boundary with
-`bytesOriginal` kept. Consumers read via `parseTrajectoryExport` /
+`contradictory-result`; bad `usage.byModel` rows → `invalid-usage` (a
+caller that omits the rollup gets `byModel: {}`); observations over 8 KiB
+truncate on a UTF-8 boundary with
+`bytesOriginal` kept. Every §46 section is type-checked with its required
+nested keys (`model.provider`/`model`, `result.status` in
+`RESULT_STATUSES`, the `actions`/`observations`/`approvals` arrays, the
+`usage` numbers): a null or mistyped section/key is `malformed` (exit 3)
+naming the JSON path (`trajectory.actions must be an array`) — never a raw
+`TypeError` downstream — and unknown extra keys are preserved. Consumers
+read via `parseTrajectoryExport` /
 `parseTrajectoryExportJSON` — no shim. The `eval` slot (`{ suite,
 caseId, labels }`, null-labelled until #53 fills it) is reserved.
 
@@ -82,7 +96,7 @@ The pure assembler is `packages/host/src/trajectory/run-trajectory.ts`
 
 | Field | Type |
 | --- | --- |
-| `schema_version` | `string` (`"1.0"`; `SCHEMA_MAJOR` 1, `SCHEMA_MINOR` 0) |
+| `schema_version` | `string` (`"1.1"`; `SCHEMA_MAJOR` 1, `SCHEMA_MINOR` 1) |
 | `task` | `TrajectoryTask` |
 | `identity` | `TrajectoryIdentity` |
 | `model` | `TrajectoryModel` |
@@ -109,22 +123,22 @@ field-for-field:
 | Interface | Fields |
 | --- | --- |
 | `TrajectoryTask` | `taskId`, `objective`, `role: string` |
-| `TrajectoryIdentity` | `sessionId`, `agentId`, `workerId: string \| null` |
-| `TrajectoryModel` | `provider`, `model`, `thinking: string \| null`, `escalations: TrajectoryEscalation[]` (`{ reason, at }`) |
+| `TrajectoryIdentity` | `sessionId`, `agentId`, `workerId: string \| null`, `parentSessionId?: string \| null`, `role?: string` (1.1) |
+| `TrajectoryModel` | `provider`, `model`, `thinking: string \| null`, `escalations: TrajectoryEscalation[]` (`{ reason, at, fromModel?, toModel?, thinking? }` — 1.1; `toModel` required on write) |
 | `TrajectoryPrompt` | `text: string`, `constraints: string[]` |
 | `TrajectoryResources` | `skills: string[]`, `promptTemplates: string[]` |
 | `TrajectoryTransfer` | `taskId`, `worktree`, `grantRef: string` |
 | `TrajectoryAction` | `seq: number`, `tool: string`, `args: JsonValue` |
 | `TrajectoryObservation` | `seq`, `actionSeq: number`, `output: string`, `truncated: boolean`, `bytesOriginal: number` |
-| `TrajectoryDurableState` | `phase: string`, `snapshot: JsonValue` |
+| `TrajectoryDurableState` | `phase: string`, `snapshot: JsonValue`, `operations?: TrajectoryOperation[]` (`{ id, kind }` — 1.1), `memos?: string[]` (1.1) |
 | `TrajectoryProvenance` | `sessionId`, `agentId`, `pid: number \| null`, `generation: number`, `worktree`, `model: string` |
 | `TrajectoryEnvironment` | `capturedFrom: 'used'`, `cwd: string`, `env: Record<string, string>` |
 | `TrajectoryWorktree` | `path`, `baseRevision: string`, `branch: string \| null` |
 | `TrajectoryDiff` | `filesChanged: string[]`, `files: TrajectoryDiffFile[]` (`{ path, hunks: string[] }`) |
-| `TrajectoryApproval` | `approvalId`, `capability: string`, `verdict: 'approved' \| 'denied' \| 'timed-out'`, `by: string \| null` |
+| `TrajectoryApproval` | `approvalId`, `capability: string`, `verdict: 'approved' \| 'denied' \| 'timed-out'`, `by: string \| null`, `requested?: string \| null`, `justification?: string \| null` (1.1) |
 | `TrajectoryTimestamps` | `startedAt`, `endedAt: string`, `durationMs: number` |
 | `TrajectoryUsage` | `inputTokens`, `outputTokens`, `cachedTokens`, `requests: number`, `costUsd: number`, `byModel: Record<string, TrajectoryModelUsage>` (`{ requests, input, output, costTotal }` — non-negative, else `invalid-usage`) |
-| `TrajectoryResult` | `status: TrajectoryResultStatus`, `summary: string`, `failureCategory: TrajectoryFailureCode \| null`, `error: TrajectoryResultError \| null` (`{ kind, message }`) |
+| `TrajectoryResult` | `status: TrajectoryResultStatus`, `summary: string`, `failureCategory: TrajectoryFailureCode \| null`, `error: TrajectoryResultError \| null` (`{ kind, message }`), `tests?: string[]`, `artifacts?: string[]` (1.1, refs only) |
 | `TrajectoryEvalSlot` | `suite: string \| null`, `caseId: string \| null`, `labels: Record<string, string>` |
 
 `TRAJECTORY_FAILURE_CODES` snapshots the 16 §52 codes owned by
@@ -146,7 +160,8 @@ Build failures throw `TrajectoryExportError` (exit 2) with
 `TrajectoryExportErrorCode`: `missing-provenance`,
 `invalid-provenance`, `missing-environment`, `untrusted-environment`,
 `missing-failure-category`, `contradictory-result`,
-`invalid-timestamps`, `invalid-usage`. Parse failures throw
+`invalid-timestamps`, `invalid-usage`, `invalid-escalation` (1.1: an
+escalation without a non-empty `toModel`). Parse failures throw
 `TrajectorySchemaError` (exit 3): `unknown-major` | `malformed`.
 
 Shape ownership (this package imports none of them — structural

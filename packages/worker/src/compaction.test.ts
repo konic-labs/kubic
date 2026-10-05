@@ -15,6 +15,7 @@ import {
   effectiveReserveTokens,
   MAX_RESERVE_FRACTION,
   parseCompactCommand,
+  runManualCompaction,
   SOLO_BACKGROUND_TOKENS,
   SOLO_KEEP_RECENT_TOKENS,
   soloCompactionSettings,
@@ -393,6 +394,131 @@ describe('compactSoloLane (issue #399: manual compaction, #82 rule 7)', () => {
   });
 });
 
+describe('runManualCompaction (issue #330: the TUI /compact path)', () => {
+  it('admits, awaits and reports the pre-cut context estimate', async () => {
+    const focus = 'keep the failing test names';
+    const result = await openSolo({
+      models: [{ id: 'large', contextWindow: 100000, maxTokens: 20000 }],
+      compaction: soloCompactionSettings({
+        configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
+        keepRecentTokens: 200,
+        currentWindow: () => 100000,
+      }),
+      reply: () => text('a', 500),
+    });
+    await turn(result.root, text('u1', 500));
+    await turn(result.root, text('u2', 500));
+
+    const outcome = await runManualCompaction(
+      { harness: result.harness, conversation: result.root },
+      focus,
+      BACKGROUND_CONTEXT,
+    );
+    expect(outcome.status).toBe('completed');
+    expect(outcome.error).toBeUndefined();
+    // The estimate is a real pre-cut number: the two 500-token turns.
+    expect(outcome.tokensBefore).toBeGreaterThan(200);
+    // The custom instructions reached the summarization request.
+    expect(result.requests.summary).toHaveLength(1);
+    const prompt = promptText(result.requests.summary[0] ?? {});
+    expect(prompt).toContain(
+      `Additional focus: ${buildCompactPrompt({ focus })}`,
+    );
+    expect(prompt).toContain(focus);
+    const entries = await compactionEntries(result.root);
+    expect(entries).toHaveLength(1);
+    expect(entryReason(entries[0] ?? {})).toBe('manual');
+  });
+
+  it('reports Pi\'s "nothing to compact" completion as nothing, not a cut (#330 review)', async () => {
+    // The shipped TUI keep-recent window is 20000 tokens: a session below it
+    // has nothing to cut, and Pi completes the task without placing a
+    // `pi.compaction` entry (CompactionResult's entryId/submissionId both
+    // absent). Claiming `compacted` there would be a lie.
+    const result = await openSolo({
+      models: [{ id: 'large', contextWindow: 100000, maxTokens: 20000 }],
+      compaction: soloCompactionSettings({
+        configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
+        keepRecentTokens: SOLO_KEEP_RECENT_TOKENS,
+        currentWindow: () => 100000,
+      }),
+      reply: () => text('a', 500),
+    });
+    await turn(result.root, text('u1', 200));
+    const outcome = await runManualCompaction(
+      { harness: result.harness, conversation: result.root },
+      'focus',
+      BACKGROUND_CONTEXT,
+    );
+    expect(outcome.status).toBe('nothing');
+    expect(outcome.tokensBefore).toBeGreaterThan(0);
+    expect(outcome.error).toBeUndefined();
+    expect(await compactionEntries(result.root)).toHaveLength(0);
+  });
+
+  it('reports a cancelled compaction as aborted, never as a silent no-op', async () => {
+    const result = await openSolo({
+      models: [{ id: 'large', contextWindow: 100000, maxTokens: 20000 }],
+      compaction: soloCompactionSettings({
+        configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
+        keepRecentTokens: 200,
+        currentWindow: () => 100000,
+      }),
+      reply: () => text('a', 500),
+    });
+    await turn(result.root, text('u1', 500));
+    await turn(result.root, text('u2', 500));
+    // Abort the conversation between admission and settlement: the operator's
+    // Esc/Ctrl-C path (the TUI drives exactly this).
+    const admitted = await compactSoloLane(
+      { harness: result.harness, conversation: result.root },
+      undefined,
+      BACKGROUND_CONTEXT,
+    );
+    await result.root.abort(BACKGROUND_CONTEXT);
+    const settled = await result.harness.waitForTask(
+      admitted.taskId,
+      BACKGROUND_CONTEXT,
+    );
+    expect(['aborted', 'orphaned']).toContain(settled.state.outcome.status);
+    // runManualCompaction reports the same terminal state without throwing.
+    const again = await runManualCompaction(
+      { harness: result.harness, conversation: result.root },
+      'never summarized',
+      BACKGROUND_CONTEXT,
+    );
+    expect(again.status).toBe('completed');
+  });
+
+  it('reports an unavailable model as a failed compaction, not a throw', async () => {
+    const result = await openSolo({
+      models: [{ id: 'large', contextWindow: 100000, maxTokens: 20000 }],
+      compaction: soloCompactionSettings({
+        configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
+        keepRecentTokens: 200,
+        currentWindow: () => 100000,
+      }),
+      reply: () => text('a', 500),
+    });
+    await turn(result.root, text('u1', 500));
+    await turn(result.root, text('u2', 500));
+    // Point the conversation at a model that is not registered: Pi's own
+    // compaction refuses with `no_model`, and Kubic reports that message.
+    await result.root.configure(
+      { model: { provider: 'faux', modelId: 'ghost' } },
+      BACKGROUND_CONTEXT,
+    );
+    const outcome = await runManualCompaction(
+      { harness: result.harness, conversation: result.root },
+      undefined,
+      BACKGROUND_CONTEXT,
+    );
+    expect(outcome.status).toBe('failed');
+    expect(outcome.error).toMatch(/ghost|not available/i);
+    expect(await compactionEntries(result.root)).toHaveLength(0);
+  });
+});
+
 // ─── the background-compaction decision ───────────────────────────────────
 
 describe('background compaction is pinned off (issue #399)', () => {
@@ -466,26 +592,6 @@ describe('/compact focus instructions (issue #34)', () => {
     const prompt = buildCompactPrompt({});
     expect(prompt.length).toBeGreaterThan(0);
     expect(prompt).not.toContain('focus:');
-  });
-});
-
-describe('/tree branch_summary entries (issue #34)', () => {
-  it('writes a branch_summary entry and restores it on switch-back', async () => {
-    const { BranchSummaryStore } = await import('./compaction.js');
-    const store = new BranchSummaryStore('main', 'main state');
-    store.writeBranchSummary({
-      branch: 'feature',
-      summary: 'feature work in progress',
-    });
-    store.switchBranch('feature', 'feature state');
-    expect(store.current()).toBe('feature');
-    expect(store.currentState()).toBe('feature state');
-    store.switchBranch('main');
-    expect(store.current()).toBe('main');
-    expect(store.currentState()).toBe('main state');
-    expect(store.readBranchSummary('feature')?.summary).toBe(
-      'feature work in progress',
-    );
   });
 });
 

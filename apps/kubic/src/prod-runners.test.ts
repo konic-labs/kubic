@@ -151,6 +151,142 @@ describe('kubic audit from a subdirectory', () => {
   });
 });
 
+describe('kubic doctor: enterprise policy and detection-only (issue #289)', () => {
+  function providerFixture(root: string, port: number): void {
+    writeFileSync(
+      join(root, 'models.json'),
+      JSON.stringify({
+        providers: [
+          {
+            id: 'gw',
+            baseUrl: `http://127.0.0.1:${port}/v1`,
+            api: 'openai-completions',
+            apiKeyEnv: 'GW_API_KEY',
+            models: [{ id: 'm1' }],
+          },
+        ],
+      }),
+    );
+  }
+
+  it('the default install names the lexical classes and stays exit 0', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'prod-doctor-289-default-'));
+    roots.push(root);
+    providerFixture(root, 9102);
+    vi.stubEnv('GW_API_KEY', 'sk-doctor-289-not-a-real-key');
+    vi.stubEnv('KUBIC_MODEL', 'gw/m1');
+    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
+    vi.spyOn(process, 'cwd').mockReturnValue(root);
+    const config = loadCliConfig({
+      cwd: root,
+      home: root,
+      env: {
+        ...process.env,
+        GW_API_KEY: 'sk-doctor-289-not-a-real-key',
+        KUBIC_MODEL: 'gw/m1',
+        KUBIC_TRUST_PROJECT: '1',
+      },
+    });
+    const { lines, r } = runners();
+    const code = await r.doctor({ json: true }, config);
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{ id: string; status: string; detail: string }>;
+    };
+    const detection = report.checks.find(
+      (entry) => entry.id === 'policy:detection-only',
+    );
+    expect(detection?.status).toBe('warn');
+    expect(detection?.detail).toContain('network=none');
+    // No `[policy]` section: the enterprise checks are not wired at all.
+    expect(report.checks.map((entry) => entry.id)).not.toContain(
+      'policy:enterprise-network',
+    );
+    expect(code).toBe(0);
+  });
+
+  it('reports the per-agent resource posture honestly (issue #163)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'prod-doctor-163-'));
+    roots.push(root);
+    providerFixture(root, 9104);
+    vi.stubEnv('GW_API_KEY', 'sk-doctor-163-not-a-real-key');
+    vi.stubEnv('KUBIC_MODEL', 'gw/m1');
+    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
+    vi.spyOn(process, 'cwd').mockReturnValue(root);
+    const config = loadCliConfig({
+      cwd: root,
+      home: root,
+      env: {
+        ...process.env,
+        GW_API_KEY: 'sk-doctor-163-not-a-real-key',
+        KUBIC_MODEL: 'gw/m1',
+        KUBIC_TRUST_PROJECT: '1',
+      },
+    });
+    const { lines, r } = runners();
+    const code = await r.doctor({ json: true }, config);
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{ id: string; status: string; detail: string }>;
+    };
+    const resources = report.checks.find(
+      (entry) => entry.id === 'limit:resources',
+    );
+    // The prod builder wires the probe (this test fails if the spread is
+    // dropped) — and the line never claims a cap a stock CLI run does not
+    // apply.
+    expect(resources).toBeDefined();
+    expect(resources?.detail).toContain('enforced: wall clock');
+    expect(resources?.detail).toContain('NOT enforced: memory');
+    expect(resources?.detail).toContain('no CLI flag/config key');
+    expect(code).toBe(0);
+  });
+
+  it('a configured [policy] runs the enterprise checks in --json', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'prod-doctor-289-policy-'));
+    roots.push(root);
+    providerFixture(root, 9103);
+    mkdirSync(join(root, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(root, '.kubic', 'config.toml'),
+      '[policy]\nnetwork_policy = "proxy"\n',
+    );
+    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
+    vi.stubEnv('GW_API_KEY', 'sk-doctor-289-not-a-real-key');
+    vi.stubEnv('KUBIC_MODEL', 'gw/m1');
+    vi.spyOn(process, 'cwd').mockReturnValue(root);
+    const config = loadCliConfig({
+      cwd: root,
+      home: root,
+      env: {
+        ...process.env,
+        KUBIC_TRUST_PROJECT: '1',
+        GW_API_KEY: 'sk-doctor-289-not-a-real-key',
+        KUBIC_MODEL: 'gw/m1',
+      },
+    });
+    const { lines, r } = runners();
+    const code = await r.doctor({ json: true }, config);
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{
+        id: string;
+        status: string;
+        reason: string;
+        detail: string;
+      }>;
+    };
+    const network = report.checks.find(
+      (entry) => entry.id === 'policy:enterprise-network',
+    );
+    expect(network?.status).toBe('fail');
+    expect(network?.reason).toBe('policy-mismatch');
+    expect(network?.detail).toContain('no domains');
+    expect(report.checks.map((entry) => entry.id)).toContain(
+      'policy:enterprise-enforceability',
+    );
+    // The unenforceable value flips the exit (fail, not warn).
+    expect(code).toBe(1);
+  });
+});
+
 describe('kubic doctor: worker credential posture (issue #200)', () => {
   it('lists the provider each role gets credentials for, names only', async () => {
     const root = mkdtempSync(join(tmpdir(), 'prod-doctor-creds-'));
@@ -176,6 +312,12 @@ describe('kubic doctor: worker credential posture (issue #200)', () => {
         'You are the planner.',
         '',
       ].join('\n'),
+    );
+    // The default delegation set is two implementers (issue #178): the
+    // posture describes the roles a bare `kubic orchestrate` assigns.
+    writeFileSync(
+      join(root, '.kubic', 'roles', 'implementer.md'),
+      '---\nrole: implementer\ntools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nBuild it.\n',
     );
     writeFileSync(
       join(root, 'models.json'),
@@ -214,7 +356,7 @@ describe('kubic doctor: worker credential posture (issue #200)', () => {
       entry.id.endsWith('credentials:roles'),
     );
     expect(check?.status).toBe('pass');
-    expect(check?.detail).toBe('planner→gw');
+    expect(check?.detail).toBe('implementer→gw');
     expect(check?.detail).not.toContain('sk-doctor-200-not-a-real-key');
   });
 
@@ -225,6 +367,10 @@ describe('kubic doctor: worker credential posture (issue #200)', () => {
     writeFileSync(
       join(root, '.kubic', 'roles', 'planner.md'),
       '---\nrole: planner\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# planner\n\n## Prompt\n\nYou are the planner.\n',
+    );
+    writeFileSync(
+      join(root, '.kubic', 'roles', 'implementer.md'),
+      '---\nrole: implementer\ntools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nBuild it.\n',
     );
     writeFileSync(
       join(root, 'models.json'),

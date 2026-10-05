@@ -13,7 +13,11 @@
 //     here instead of silently "handled".
 //   shell true — bash present, destructive commands blocked.
 //   shell read-only-allowlist — bash present, destructive AND network
-//     commands blocked.
+//     commands blocked, and every `|`/`&&`/`;`/`&`/newline segment must pass
+//     the explicit read-only verb allowlist (issue #161): redirection,
+//     in-place edits, find write actions, write/exec flags, git options that
+//     execute code, shell expansion, process substitution and any
+//     non-allowlisted verb are refused by name.
 //   shell false — bash absent via allowlist.
 //   network none (and a domain-less allowlist, enforced as none — issue
 //     #166) — network-command verbs blocked in bash. full
@@ -33,12 +37,14 @@
 // detection is still literal-pattern: python/node/npm exfiltration, quoted
 // or backslash-obfuscated verbs, and whitespace tricks around redirect
 // targets stay unenforceable, documented as such in host/approvals.ts.
+import { createHash } from 'node:crypto';
 import { isAbsolute, join, resolve } from 'node:path';
 import {
   effectiveNetworkLevel,
   type NetworkLevel,
   type ShellLevel,
 } from '../../../agents/src/policy.js';
+import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
 import { readRootFor } from '../../../exec/src/read-roots.js';
 import type { HookRegistration, JsonValue } from '../pi-boundary.js';
 import { hook, ToolTask } from '../pi-boundary.js';
@@ -240,6 +246,179 @@ export function isNetworkCommand(command: string): boolean {
   return NETWORK_PATTERNS.some((pattern) => pattern.test(command));
 }
 
+// --- read-only shell allowlist (issue #161; §12.1, §40) -------------------
+//
+// `shell: 'read-only-allowlist'` used to mean "full shell minus network", so
+// a read-only role could still write files and git state through bash. The
+// level now enforces an explicit, closed allowlist: every pipeline/`&&`/`;`
+// segment must head with a read-only verb, redirection is refused, and the
+// verbs that can write as a side effect (git, find, sed/perl) are checked
+// for their write forms. Anything else is blocked with a named reason —
+// never silently allowed. The parser is lexical (quotes are stripped, not
+// interpreted), so it errs toward blocking, like every guard here.
+
+// The verbs a read-only role may run. Deliberately a closed set: adding a
+// verb is a product decision, not a fallthrough.
+const READ_ONLY_VERBS: ReadonlySet<string> = new Set([
+  'ls',
+  'cat',
+  'head',
+  'tail',
+  'wc',
+  'grep',
+  'rg',
+  'find',
+  'git',
+]);
+
+// The git subcommands that only read — the same set §40 derives the git read
+// tools from.
+const READ_ONLY_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  'status',
+  'diff',
+  'log',
+  'show',
+]);
+
+// git global options that take a separate argument, so the option's value is
+// not mistaken for the subcommand. Options that can execute code are NOT
+// here: they are refused before this set is consulted.
+const GIT_OPTION_ARGUMENTS: ReadonlySet<string> = new Set([
+  '-C',
+  '--git-dir',
+  '--work-tree',
+  '--namespace',
+  '--super-prefix',
+  '--attr-source',
+]);
+
+// git global options that can execute arbitrary code (review round 2 of
+// #161): `-c`/`--config-env` set any config git then honours (`core.pager`,
+// `diff.external`, `alias.*`), and `--exec-path`/`--upload-pack`/
+// `--receive-pack` name a binary git runs. A read-only role never needs
+// them, so they are refused by name — over-blocking is the correct
+// direction here.
+const GIT_EXECUTING_OPTION =
+  /^(?:-c|--(?:config-env|exec-path|upload-pack|receive-pack)(?:=|$))/;
+
+// find actions that write or run another command.
+const FIND_WRITE_ACTION =
+  /^-(?:exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)$/;
+
+// sed/perl in-place editing: `-i`, `-i.bak`, a combined cluster (`-ni`,
+// `-pi`), or the long form.
+const IN_PLACE_FLAG = /^-[A-Za-z]*i/;
+
+// Flags that write or execute under an otherwise read-only verb (review of
+// #161): `git diff --output=<file>` writes, `rg --pre=<command>` runs a
+// command per file, `rg --hostname-bin` runs one per hostname lookup.
+const WRITE_FLAG = /^--(?:output|pre|hostname-bin)(?:=|$)/;
+
+// `|`, `||`, `&&`, `;`, a single `&` and a newline all start a new command:
+// checking only the first verb of `ls & git commit -m x` left everything
+// after the `&` unchecked (review of #161). `&&` matches first, so it stays
+// one separator, and `&>`/`&>>` land in a segment whose `>` scan blocks them.
+const SEGMENT_SPLIT = /\|\||&&|[|;&\n]/;
+// Both quote forms, for the redirect and verb scans: a quoted `>` is an
+// argument, and a quoted command name is still that command.
+const QUOTED_SPAN = /'[^']*'|"[^"]*"/g;
+// Only single quotes are literal to the shell, so only they may be stripped
+// before the expansion scan: `"$R"` still expands.
+const SINGLE_QUOTED_SPAN = /'[^']*'/g;
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+function gitReadOnlyViolation(tokens: readonly string[]): string | undefined {
+  let i = 0;
+  while (i < tokens.length) {
+    const token = tokens[i] ?? '';
+    if (token === '--') break;
+    if (token.startsWith('-')) {
+      if (GIT_EXECUTING_OPTION.test(token)) {
+        return `git ${token} can execute code`;
+      }
+      i += GIT_OPTION_ARGUMENTS.has(token) ? 2 : 1;
+      continue;
+    }
+    return READ_ONLY_GIT_SUBCOMMANDS.has(token)
+      ? undefined
+      : `git '${token}' is not read-only`;
+  }
+  return 'git without a read-only subcommand';
+}
+
+function readOnlySegmentViolation(segment: string): string | undefined {
+  const tokens = segment
+    .trim()
+    .split(/\s+/)
+    .filter((token) => token !== '');
+  let i = 0;
+  // Leading `VAR=value` assignments are not the command; a command
+  // substitution inside one is another command and is refused.
+  while (i < tokens.length && ASSIGNMENT.test(tokens[i] ?? '')) {
+    const value = (tokens[i] ?? '').split('=').slice(1).join('=');
+    if (value.includes('$(') || value.includes('`')) {
+      return 'a command substitution is not read-only';
+    }
+    i += 1;
+  }
+  const verb = tokens[i];
+  if (verb === undefined) return undefined;
+  const rest = tokens.slice(i + 1);
+  const writeFlag = rest.find((token) => WRITE_FLAG.test(token));
+  if (writeFlag !== undefined) {
+    return `${verb} ${writeFlag} writes or executes`;
+  }
+  if (verb === 'git') return gitReadOnlyViolation(rest);
+  if (verb === 'find') {
+    const action = rest.find((token) => FIND_WRITE_ACTION.test(token));
+    if (action !== undefined) return `find ${action} is not read-only`;
+  }
+  if (verb === 'sed' || verb === 'perl') {
+    const inPlace = rest.find(
+      (token) =>
+        token === '--in-place' ||
+        token.startsWith('--in-place=') ||
+        IN_PLACE_FLAG.test(token),
+    );
+    if (inPlace !== undefined) return `${verb} -i edits in place`;
+  }
+  if (!READ_ONLY_VERBS.has(verb)) {
+    return `'${verb}' is not on the read-only allowlist`;
+  }
+  return undefined;
+}
+
+// The reason a command is not read-only, or undefined when every segment
+// passes. Exported so the level's contract is unit-testable without a lane.
+export function readOnlyViolation(command: string): string | undefined {
+  for (const segment of command.split(SEGMENT_SPLIT)) {
+    // Quotes are stripped, not interpreted: a quoted `>` is an argument, a
+    // quoted command name is still that command (and is refused).
+    const bare = segment.replace(QUOTED_SPAN, ' ');
+    if (bare.includes('>')) return 'redirection is not read-only';
+    // Expansion is never interpreted, so it can launder another command
+    // (`cat $(git commit -m x)`) or a redirect (`R='> out'; cat a $R`): a
+    // substitution or any unquoted `$` is refused, fail-closed, like the
+    // outside-write detector's expanded targets. Single-quoted text is
+    // literal and stripped first; double quotes are not.
+    const unquoted = segment.replace(SINGLE_QUOTED_SPAN, ' ');
+    if (unquoted.includes('$(') || unquoted.includes('`')) {
+      return 'a command substitution is not read-only';
+    }
+    // Process substitution runs a command too (`<(…)`; the output form
+    // `>(…)` is already caught by the redirect scan above). Review round 2.
+    if (unquoted.includes('<(')) {
+      return 'a process substitution is not read-only';
+    }
+    if (unquoted.includes('$')) {
+      return 'a shell-expanded value is not read-only';
+    }
+    const violation = readOnlySegmentViolation(bare);
+    if (violation !== undefined) return violation;
+  }
+  return undefined;
+}
+
 export function confinePath(
   workspace: string,
   path: string,
@@ -264,12 +443,67 @@ export function redactReason(value: string): string {
   return redactSecrets(short);
 }
 
+// §36.1 rule 2 (issue #192): approval summaries, block reasons, the
+// trajectory, the §60 ledger and the orchestrator's mailbox ask JSON all
+// pass through this redactor, so it composes the shared @kubic/core shape
+// table on top of the inline rules. It is deliberately at least as strong as
+// the host's display redactor (approval-display.ts): the display one keeps
+// prose readable because the operator must see what will run, this one may
+// over-redact because what it writes is persisted.
+const REDACTED = '[REDACTED]';
+
+// A credential-shaped word: 10+ token characters, the same threshold the
+// shared table's bearer rule uses, so a scheme word before prose (`bearer of
+// bad news`) stays readable while a short token still hits the keyword pass.
+const CREDENTIAL_WORD = '[A-Za-z0-9][A-Za-z0-9\\-._~+=]{9,}';
+
+// The FULL credential after an authorization scheme (issue #192). The scheme
+// word is kept so the reader sees what was hidden; `Authorization: Bearer
+// sk-live-123` used to redact only `Bearer` and leave the token in the clear.
+const AUTH_CREDENTIAL = new RegExp(
+  [
+    // Header form: `Authorization[:=] [scheme] <credential>` — the separator
+    // and the scheme are both optional, so the space-separated
+    // `Authorization hunter2` and `--authorization hunter2` forms are covered
+    // too (review of #192: dropping `authorization` from the keyword pass had
+    // left the no-colon spelling in the clear).
+    String.raw`(\bauthorization\s*[:=]?\s*(?:(?:bearer|basic|token|digest)\s+)?)\S+`,
+    // Bare scheme form: `Bearer <credential>` / `Basic <credential>`.
+    `((?:^|[\\s"'=(])(?:bearer|basic|token|digest)\\s+)(${CREDENTIAL_WORD})`,
+  ].join('|'),
+  'gi',
+);
+
+// URL userinfo that carries a password (`https://user:pw@host`). User-only
+// userinfo (`ssh://git@host`) is not a secret and stays readable. The scheme
+// length is BOUNDED: an unbounded `[a-z0-9+.-]*` before the required `://`
+// backtracks over a long letter-run at every start position (quadratic), and
+// no real scheme is 20 characters long.
+const URL_USERINFO = /([a-z][a-z0-9+.-]{1,20}:\/\/)[^/\s@:]+:[^/\s@]+@/gi;
+
+// A user flag whose operand has the `user:password` shape: curl's `-u` /
+// `--user` and its proxy twin `-U` / `--proxy-user`. The short forms may be
+// attached (`-uadmin:hunter2`, review of #192); the long forms need `=` or a
+// space. The colon is required, so an unrelated `-u` (`cp -u a b`,
+// `sort -u names`) is left alone.
+const USER_FLAG_CREDENTIAL =
+  /((?:^|[\s"'])(?:-u|-U)(?:[=\s]\s*)?|(?:^|[\s"'])(?:--user|--proxy-user)[=\s]\s*"?)[^\s"']*:[^\s"']*/gi;
+
+// Secret-named values: `--token abc`, `SECRET_KEY=x`, `password: y`, and a
+// short bare `bearer abc` (the authorization header and the long bare
+// schemes are handled above).
+const KEYWORD_SECRET =
+  /((?:token|password|passwd|secret|api[-_]?key|bearer|private[-_]?key)\s*(?:[=:]\s*|\s+))\S+/gi;
+
 // The redaction half alone, never truncating (issue #316): an approval
 // dialog must show the whole command, so it redacts without cutting.
 export function redactSecrets(value: string): string {
-  return value.replace(
-    /((?:token|password|passwd|secret|api[-_]?key|bearer|authorization|private[-_]?key)\s*(?:[=:]\s*|\s+))\S+/gi,
-    '$1[REDACTED]',
+  return redactSecretShapes(
+    value
+      .replace(AUTH_CREDENTIAL, '$1$2[REDACTED]')
+      .replace(URL_USERINFO, `$1${REDACTED}@`)
+      .replace(USER_FLAG_CREDENTIAL, `$1${REDACTED}`)
+      .replace(KEYWORD_SECRET, `$1${REDACTED}`),
   );
 }
 
@@ -294,6 +528,28 @@ function failClosed<T>(
   } catch (error: unknown) {
     return Promise.resolve(block(errorText(error)));
   }
+}
+
+// The canonical form of a call's arguments for the stand-down key (issue
+// #194): JSON key order is not stable across providers, so every object is
+// sorted before hashing, and the hash keeps the map small whatever a tool's
+// arguments carry (a write's content can be megabytes).
+function canonicalArgsHash(args: Record<string, unknown>): string {
+  const sort = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(sort);
+    if (typeof value === 'object' && value !== null) {
+      const out: Record<string, unknown> = {};
+      for (const key of Object.keys(value).sort()) {
+        out[key] = sort((value as Record<string, unknown>)[key]);
+      }
+      return out;
+    }
+    return value;
+  };
+  return createHash('sha256')
+    .update(JSON.stringify(sort(args)))
+    .digest('hex')
+    .slice(0, 16);
 }
 
 // Tools whose path-like args are confined. read/write/edit/ls take `path`,
@@ -351,21 +607,50 @@ export function policyInterceptorHooks(
 ): HookRegistration[] {
   const isDestructive = options.isDestructive ?? defaultIsDestructive;
   const readRoots = (options.readRoots ?? []).map((root) => resolve(root));
-  // Tool calls a real challenge cleared. Guards below stand down for
-  // exactly these ids — never by tool name or pattern. Unchallenged
-  // fast-path calls never enter this set, so #15 guards stay up for them.
-  // Capped FIFO: durable call ids are unique per call, but an unbounded set
-  // across a long lane lifetime is a leak; eviction only drops stale ids
-  // whose calls already ran. It is deliberately in-memory: a resumed
-  // process re-asks, never inherits a stand-down it did not grant.
-  const approvedCalls = new Map<string, number>();
+  // Tool calls a real challenge cleared, keyed by the call id AND the exact
+  // arguments it was cleared for (issue #194). The id alone is not an
+  // identity: it comes from the provider (an OpenAI-compatible server can
+  // repeat `call_0` or send `""`), so an approved `rm -rf x` must not stand
+  // the guards down for a later, different call that reuses the id. Each
+  // entry is SPENT when that call's beforeTool chain finishes, so a repeated
+  // call asks again instead of inheriting the stand-down. Capped FIFO over
+  // call ids: a call whose chain never finished (a thrown guard) is evicted
+  // eventually, and an entry can only ever stand down the exact id+args pair
+  // it was granted for. Deliberately in-memory: a resumed process re-asks,
+  // never inherits a stand-down it did not grant.
+  const approvedCalls = new Map<string, Set<string>>();
   const APPROVED_CALLS_CAP = 512;
-  const markApproved = (toolCallId: string): void => {
-    approvedCalls.set(toolCallId, Date.now());
-    if (approvedCalls.size > APPROVED_CALLS_CAP) {
+  const markApproved = (
+    callId: string,
+    args: Record<string, unknown>,
+  ): void => {
+    // An empty id is never a stand-down key (defence in depth: the harness
+    // always assigns one, but a broken provider must not win).
+    if (callId === '') return;
+    const keys = approvedCalls.get(callId) ?? new Set<string>();
+    keys.add(canonicalArgsHash(args));
+    // Re-insert so the FIFO evicts the least recently marked call id.
+    approvedCalls.delete(callId);
+    approvedCalls.set(callId, keys);
+    while (approvedCalls.size > APPROVED_CALLS_CAP) {
       const oldest = approvedCalls.keys().next();
-      if (!oldest.done) approvedCalls.delete(oldest.value);
+      if (oldest.done) break;
+      approvedCalls.delete(oldest.value);
     }
+  };
+  const isApproved = (
+    callId: string,
+    args: Record<string, unknown>,
+  ): boolean => {
+    // No hash for the common case: a call id with no entry is the fast path.
+    const keys = callId === '' ? undefined : approvedCalls.get(callId);
+    return keys !== undefined && keys.has(canonicalArgsHash(args));
+  };
+  // Every entry of one call id. Deletion is by id, not by the args hash:
+  // the confine guard rewrites `call.arguments`, so the arguments a later
+  // hook receives are not the ones the stand-down was stored for.
+  const consumeApproved = (callId: string): void => {
+    approvedCalls.delete(callId);
   };
   // Budget first: every attempt counts, even one a later handler blocks.
   let calls = 0;
@@ -412,7 +697,7 @@ export function policyInterceptorHooks(
             toolCallId: call.id,
           });
           if (verdict.approved) {
-            if (verdict.challenged) markApproved(call.id);
+            if (verdict.challenged) markApproved(call.id, call.arguments);
             return undefined;
           }
           return block(`not approved: ${verdict.reason}`);
@@ -424,7 +709,7 @@ export function policyInterceptorHooks(
     hook(ToolTask, {
       beforeTool: (call) =>
         failClosed(() => {
-          if (approvedCalls.has(call.id)) return undefined;
+          if (isApproved(call.id, call.arguments)) return undefined;
           if (call.name !== 'bash') return undefined;
           const command =
             typeof call.arguments.command === 'string'
@@ -448,6 +733,14 @@ export function policyInterceptorHooks(
               `network command blocked (network: ${declared}${declared === 'none' ? '' : ', enforced as none'}): ${command}`,
             );
           }
+          // §12.1 (issue #161): a read-only role gets the explicit allowlist,
+          // not the full shell minus network.
+          if (options.shell === 'read-only-allowlist') {
+            const violation = readOnlyViolation(command);
+            if (violation !== undefined) {
+              return block(`read-only shell blocked: ${violation}: ${command}`);
+            }
+          }
           return undefined;
         }),
     }),
@@ -457,7 +750,7 @@ export function policyInterceptorHooks(
     hook(ToolTask, {
       beforeTool: (call) =>
         failClosed(() => {
-          if (approvedCalls.has(call.id)) return undefined;
+          if (isApproved(call.id, call.arguments)) return undefined;
           if (
             call.name === 'read' &&
             typeof call.arguments.path === 'string' &&
@@ -476,6 +769,20 @@ export function policyInterceptorHooks(
           // under two copies of the alias; the rewrite replaced only
           // strings, and the harness re-validates it against the schema.
           return { arguments: confined as Record<string, JsonValue> };
+        }),
+    }),
+  );
+
+  registrations.push(
+    hook(ToolTask, {
+      // Last in the chain (issue #194): a stand-down is SPENT once the call
+      // it was granted for has run its guards. Registered after every guard
+      // so all of them saw it, and deleting by call id because the confine
+      // guard may have rewritten the arguments a later hook receives.
+      beforeTool: (call) =>
+        failClosed(() => {
+          consumeApproved(call.id);
+          return undefined;
         }),
     }),
   );

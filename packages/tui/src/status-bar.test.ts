@@ -1,6 +1,7 @@
 // Slice A: session aggregates from usage rows (issue #27; §39).
 // Fixture rows must sum to exact session cost/tokens with the cache
-// split kept; TTFT/tool-ms are last-wins (latest row reporting wins).
+// split kept. Issue #346 deleted the TTFT/tool-ms segments (Pi 1.0 routes
+// no timing Kubic can read); the bar renders what the lane really reports.
 // Headless + faux-only: no network, no VirtualTerminal (Pi 0.85.1).
 import { describe, expect, it } from 'vitest';
 import {
@@ -84,21 +85,27 @@ describe('status aggregates (issue #27, slice A)', () => {
     expect(formatStatusCost(summary.costTotal)).toBe('$0.04');
   });
 
-  it('resolves TTFT/tool-ms last-wins from the latest reporting row', () => {
-    const summary = summarizeStatusRows([
-      row({ ttftMs: 100, latencyMs: 40 }),
-      row({ ttftMs: 250, latencyMs: 60 }),
-      row({}),
-    ]);
-    expect(summary.ttftMs).toBe(250);
-    expect(summary.toolMs).toBe(60);
-  });
-
   it('empty rows aggregate without NaN and format $0.00', () => {
     const summary = summarizeStatusRows([]);
     expect(summary.requests).toBe(0);
-    expect(summary.ttftMs).toBeUndefined();
     expect(formatStatusCost(summary.costTotal)).toBe('$0.00');
+  });
+
+  it('reports the last committed request as the context size (issue #347)', () => {
+    const summary = summarizeStatusRows([
+      // Seeded cumulative buckets (#346) are not a request: no entry id.
+      row({ usage: { ...priced().usage, input: 5000, cacheRead: 900 } }),
+      row({
+        entryId: 'e1',
+        usage: { ...priced().usage, input: 300, cacheRead: 120 },
+      }),
+      row({
+        entryId: 'e2',
+        usage: { ...priced().usage, input: 420, cacheRead: 0, cacheWrite: 0 },
+      }),
+    ]);
+    expect(summary.contextTokens).toBe(420);
+    expect(summarizeStatusRows([priced()]).contextTokens).toBeUndefined();
   });
 });
 
@@ -132,14 +139,110 @@ function priced(over: Partial<StatusUsageRow> = {}): StatusUsageRow {
         total: 0.033,
       },
     },
-    ttftMs: 120,
-    latencyMs: 45,
     ...over,
   };
 }
 
+describe('context-window gauge (issue #347; §18)', () => {
+  // A committed request whose prompt was 420 tokens (300 new + 120 cached)
+  // against a 1000-token window: `ctx 42%`.
+  function requestRow(input: number, cacheRead: number): StatusUsageRow {
+    return row({
+      entryId: 'e1',
+      usage: { ...priced().usage, input, cacheRead, cacheWrite: 0 },
+    });
+  }
+
+  const warn = (text: string): string => `[WARN:${text}]`;
+
+  it('renders ctx 42% for a 1000-token window and a 420-token request', () => {
+    const lines = renderStatusLines(
+      state({ rows: [requestRow(300, 120)], contextWindow: 1000 }),
+      100,
+    );
+    expect(lines[0]).toContain('ctx 42%');
+  });
+
+  it('hides the gauge when the context window is unknown', () => {
+    const lines = renderStatusLines(
+      state({ rows: [requestRow(300, 120)] }),
+      100,
+    );
+    expect(lines[0]).not.toContain('ctx ');
+  });
+
+  it('hides the gauge until a committed request reports its prompt size', () => {
+    // A seeded cumulative bucket (#346) is not context pressure.
+    const lines = renderStatusLines(
+      state({ rows: [priced()], contextWindow: 1000 }),
+      100,
+    );
+    expect(lines[0]).not.toContain('ctx ');
+  });
+
+  it('warns at or above the compaction threshold, never below it', () => {
+    const rows = [requestRow(300, 120)];
+    const below = renderStatusLines(
+      state({ rows, contextWindow: 1000, compactionThreshold: 500 }),
+      100,
+      { warning: warn },
+    );
+    expect(below[0]).toContain('ctx 42%');
+    expect(below[0]).not.toContain('[WARN:');
+    const at = renderStatusLines(
+      state({ rows, contextWindow: 1000, compactionThreshold: 420 }),
+      100,
+      { warning: warn },
+    );
+    expect(at[0]).toContain('[WARN:ctx 42%]');
+  });
+
+  it('drops the gauge before the model when the terminal is narrow', () => {
+    const full = renderStatusLines(
+      state({ rows: [requestRow(300, 120)], contextWindow: 1000 }),
+      100,
+    );
+    expect(full[0]).toContain('ctx 42%');
+    expect(full[0]).toContain('thinking medium');
+    const narrow = renderStatusLines(
+      state({ rows: [requestRow(300, 120)], contextWindow: 1000 }),
+      80,
+    );
+    expect(narrow[0]).not.toContain('ctx ');
+    expect(narrow[0]).toContain('thinking medium');
+    expect(narrow[0]).toContain('$0.03');
+  });
+
+  it('clamps a window smaller than the request instead of exceeding 100%', () => {
+    const lines = renderStatusLines(
+      state({ rows: [requestRow(300, 120)], contextWindow: 100 }),
+      100,
+    );
+    expect(lines[0]).toContain('ctx 100%');
+  });
+
+  it('counts the cache-write prefix, not just the reused one (review #347)', () => {
+    // The first request of a session (or one after the cache TTL lapses)
+    // writes the whole prefix: pi's `input` is then only the new user text,
+    // and a gauge that ignored cacheWrite would read `ctx 0%` while the
+    // context is nearly 7% of a 128k window.
+    const rowWithWrite = row({
+      entryId: 'e1',
+      usage: { ...priced().usage, input: 30, cacheRead: 0, cacheWrite: 9000 },
+    });
+    const summary = summarizeStatusRows([rowWithWrite]);
+    expect(summary.contextTokens).toBe(9030);
+    const lines = renderStatusLines(
+      state({ rows: [rowWithWrite], contextWindow: 128000 }),
+      120,
+    );
+    expect(lines[0]).toContain('ctx 7%');
+    expect(lines[0]).not.toContain('ctx 0%');
+  });
+});
+
 describe('status bar rows (issue #27, slice B)', () => {
-  it('renders model/thinking/tokens/cache/cost/TTFT/tool + mode/approvals/session', () => {
+  it('renders model/thinking/tokens/cache/cost + mode/approvals/session', () => {
     const lines = renderStatusLines(state({ rows: [priced()] }), 100);
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain('test/model-long-name');
@@ -147,8 +250,6 @@ describe('status bar rows (issue #27, slice B)', () => {
     expect(lines[0]).toContain('100');
     expect(lines[0]).toContain('cached 20');
     expect(lines[0]).toContain('$0.03');
-    expect(lines[0]).toContain('120ms');
-    expect(lines[0]).toContain('45ms');
     expect(lines[1]).toContain('solo');
     expect(lines[1]).toContain('approvals:on');
     expect(lines[1]).toContain('sess-abc123');
@@ -175,12 +276,12 @@ describe('status bar rows (issue #27, slice B)', () => {
     expect(statusVisibleWidth(lines[1])).toBeLessThanOrEqual(100);
   });
 
-  it('truncates the model first at 70 cols, keeps $ and mode', () => {
+  it('truncates the model first at 50 cols, keeps $ and mode', () => {
     const full = 'test/model-long-name';
-    const lines = renderStatusLines(state({ rows: [priced()] }), 70);
+    const lines = renderStatusLines(state({ rows: [priced()] }), 50);
     expect(lines).toHaveLength(2);
     for (const line of lines) {
-      expect(statusVisibleWidth(line)).toBeLessThanOrEqual(70);
+      expect(statusVisibleWidth(line)).toBeLessThanOrEqual(50);
     }
     expect(lines[0]).toContain('$');
     expect(lines[1]).toContain('solo');
@@ -237,15 +338,15 @@ describe('status bar rows (issue #27, slice B)', () => {
     const frame = (bar: StatusBar, width: number): string[] =>
       bar.render(width).map(stripSgr);
     expect(frame(basic, 100)).toEqual([
-      'test/model-long-name • thinking medium • in 100 out 50 (cached 20) • $0.03 • TTFT 120ms • tool 45ms',
+      'test/model-long-name • thinking medium • in 100 out 50 (cached 20) • $0.03',
       'solo • approvals:on • session sess-abc123',
     ]);
     expect(frame(skipped, 100)).toEqual([
-      'test/model-long-name • thinking medium • in 100 out 50 (cached 20) • $0.03 • TTFT 120ms • tool 45ms',
+      'test/model-long-name • thinking medium • in 100 out 50 (cached 20) • $0.03',
       'solo • ! warning: approvals OFF (full-access) • session sess-abc123',
     ]);
     expect(frame(basic, 60)).toEqual([
-      'test/model… • in 100 out 50 (cached 20) • $0.03 • TTFT 120ms',
+      'test/model-long-name • in 100 out 50 (cached 20) • $0.03',
       'solo • approvals:on • session sess-abc123',
     ]);
   });
@@ -307,15 +408,11 @@ describe('status bar review fixes (issue #27, fix cycle 1)', () => {
       readonly model: string;
       readonly provider: string;
       readonly usage: ExpectedWorkerUsage;
-      readonly ttftMs?: number;
-      readonly latencyMs?: number;
       readonly toolCallId?: string;
       readonly entryId?: string;
     }
     // Type-level: assignability holds in both directions.
     const probe: StatusUsageRow = row({
-      ttftMs: 1,
-      latencyMs: 2,
       toolCallId: 'tool-1',
       entryId: 'entry-1',
     });
@@ -340,11 +437,9 @@ describe('status bar review fixes (issue #27, fix cycle 1)', () => {
     ]);
     expect(Object.keys(backToStatus).sort()).toEqual([
       'entryId',
-      'latencyMs',
       'model',
       'provider',
       'toolCallId',
-      'ttftMs',
       'usage',
     ]);
     expect(Object.keys(row({})).sort()).toEqual(['model', 'provider', 'usage']);
@@ -358,53 +453,44 @@ describe('status bar mutation hardening (issue #68)', () => {
     bar.setRows([priced()]);
     const lines = bar.render(100);
     expect(lines[0]).toContain('$0.03');
-    expect(lines[0]).toContain('120ms');
     expect(bar.getState().rows.length).toBe(1);
   });
 
-  it('drops thinking before tool-ms at 90 cols (priority: thinking first)', () => {
-    const lines = renderStatusLines(state({ rows: [priced()] }), 90);
-    expect(lines[0]).toContain('test/model-long-name');
-    expect(lines[0]).not.toContain('thinking');
-    expect(lines[0]).toContain('tool 45ms');
-    expect(lines[0]).toContain('TTFT 120ms');
+  it('keeps the cost on the last rung at 40 columns (#346 review)', () => {
+    // A realistic resumed session: the token counters are wide enough that
+    // the old tail-truncating rung cut the `$` off entirely.
+    const rows = [
+      row({
+        usage: {
+          ...priced().usage,
+          input: 120345,
+          output: 7890,
+          cacheRead: 90000,
+        },
+      }),
+    ];
+    const lines = renderStatusLines(state({ rows }), 40);
+    expect(statusVisibleWidth(lines[0])).toBeLessThanOrEqual(40);
+    expect(lines[0]).toContain('$');
+    expect(lines[0]).toContain('…');
   });
 
-  it('drops tool-ms before TTFT at 60 cols (priority: tool next)', () => {
-    const lines = renderStatusLines(state({ rows: [priced()] }), 60);
-    expect(lines[0]).toContain('TTFT 120ms');
-    expect(lines[0]).not.toContain('tool 45ms');
-    expect(lines[0]).toContain('$0.03');
-  });
-
-  it('renders the bare cost line at 40 cols without TTFT or tool-ms', () => {
-    const lines = renderStatusLines(state({ rows: [priced()] }), 40);
-    expect(lines[0]).toContain('$0.03');
+  it('never renders a TTFT or tool-ms segment (issue #346 deleted them)', () => {
+    const lines = renderStatusLines(state({ rows: [priced()] }), 100);
     expect(lines[0]).not.toContain('TTFT');
-    expect(lines[0]).not.toContain('tool 45ms');
-  });
-
-  it('a silent row never clears the last TTFT/tool reading', () => {
-    const summary = summarizeStatusRows([
-      row({ ttftMs: 100, latencyMs: 40 }),
-      row({}),
-    ]);
-    expect(summary.ttftMs).toBe(100);
-    expect(summary.toolMs).toBe(40);
+    expect(lines[0]).not.toContain('tool ');
   });
 
   it('truncates the model with an ellipsis when exactly 4 columns remain', () => {
-    const lines = renderStatusLines(state({ rows: [priced()] }), 65);
-    expect(statusVisibleWidth(lines[0])).toBe(65);
+    const lines = renderStatusLines(state({ rows: [priced()] }), 40);
+    expect(statusVisibleWidth(lines[0])).toBe(40);
     // The ellipsis lands on the model (3 chars + '…'), not on the tail.
-    expect(stripSgr(lines[0])).toBe(
-      'tes… • in 100 out 50 (cached 20) • $0.03 • TTFT 120ms • tool 45ms',
-    );
+    expect(stripSgr(lines[0])).toBe('tes… • in 100 out 50 (cached 20) • $0.03');
   });
 
   it('returns the full line when it fits the width exactly', () => {
-    const lines = renderStatusLines(state({ rows: [priced()] }), 99);
-    expect(statusVisibleWidth(lines[0])).toBe(99);
+    const lines = renderStatusLines(state({ rows: [priced()] }), 74);
+    expect(statusVisibleWidth(lines[0])).toBe(74);
     expect(lines[0]).toContain('thinking medium');
     expect(lines[0]).not.toContain('…');
   });

@@ -1,8 +1,9 @@
 // Inspectable panel body for the diff and journal views (issue #96; §17).
-// The panel is the surface half of the two views: `DiffView` renders one
-// tool call's effects, `JournalView` renders the session journal, and this
-// module owns which of them is on screen plus the sanitisation of the
-// journal rows that feed them.
+// The panel is the surface half of the two views: `renderDiffLines` renders
+// one file's effects, `JournalView` renders the session journal, and this
+// module owns which of them is on screen, the multi-file document each panel
+// produces (issue #301) plus the sanitisation of the journal rows that feed
+// them.
 //
 // Sanitisation belongs HERE, at ingress (issue #88's finding, applied to the
 // §17 list): journal rows come from tool calls — a path, an agent id and a
@@ -17,7 +18,7 @@
 // know nothing about lanes, hosts or the approval policy.
 
 import type { DiffFileChange, DiffOp } from './diff-view.js';
-import { DiffView } from './diff-view.js';
+import { renderDiffLines } from './diff-view.js';
 import type { JournalFilter } from './journal-view.js';
 import { JournalView } from './journal-view.js';
 import { sanitizeLaneText } from './lane-cells.js';
@@ -46,10 +47,6 @@ export interface JournalChangeLike {
 // the panel says the same, so a keypress never yields a blank rectangle the
 // operator cannot tell apart from a broken view.
 export const PANEL_EMPTY_LINE = 'no changes';
-
-// The panel row is PANEL_BASIS lines tall (layout.ts); the diff body clamps to
-// one line less so its own "… (N more lines)" tail stays inside the row.
-export const PANEL_BODY_LINES = 11;
 
 // Sanitise a journal row before it reaches a render function. Every string
 // field a tool call or the journal store can carry is cleaned; the non-string
@@ -136,19 +133,37 @@ export class DiffPanel implements Component {
     );
   }
 
-  render(width: number): string[] {
+  // Issue #301: the WHOLE document — every visible row with its own header
+  // and CLI-identical block, in journal order. The panel row is a ScrollView
+  // over this, so nothing is dropped and a long change is reachable by
+  // scrolling; `render` returns the same lines for callers that render the
+  // panel on its own.
+  lines(width: number): string[] {
     const visible = this.visibleRows();
-    const first = visible[0];
-    if (first === undefined) return [PANEL_EMPTY_LINE];
-    // One DiffView per selected call: the view renders a single change and
-    // the selection is the filter (the journal panel is the multi-file
-    // surface). A fresh instance per render keeps the two panels from sharing
-    // mutable render state.
-    const view = new DiffView(first as DiffFileChange, {
-      width,
-      maxLines: PANEL_BODY_LINES,
-    });
-    return view.render(width);
+    if (visible.length === 0) return [PANEL_EMPTY_LINE];
+    return visible.flatMap((row, index) =>
+      renderDiffLines(row as DiffFileChange, {
+        width,
+        fileOrdinal: { index: index + 1, total: visible.length },
+      }),
+    );
+  }
+
+  // Issue #301: the line offset of each file's header in `lines(width)` — the
+  // jump targets for alt+up/alt+down. Width truncation never adds or removes
+  // a line, so the count is width-independent.
+  fileOffsets(): number[] {
+    const offsets: number[] = [];
+    let at = 0;
+    for (const row of this.visibleRows()) {
+      offsets.push(at);
+      at += renderDiffLines(row as DiffFileChange).length;
+    }
+    return offsets;
+  }
+
+  render(width: number): string[] {
+    return this.lines(width);
   }
 
   invalidate(): void {}
@@ -191,6 +206,12 @@ export class JournalPanel implements Component {
   }
 
   render(width: number): string[] {
+    return this.view.render(width);
+  }
+
+  // Issue #301: the same document contract as DiffPanel.lines — the panel row
+  // is a ScrollView over this, so the journal panel's rows scroll too.
+  lines(width: number): string[] {
     return this.view.render(width);
   }
 

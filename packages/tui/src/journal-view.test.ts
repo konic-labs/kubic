@@ -3,7 +3,7 @@
 // exec diffEntries): exact match on path and agent. The flattened text
 // of a 2-file view equals `kubic diff` output line-for-line (the view
 // emits the CLI-identical ---/+++/attribution/hunk blocks; the op label
-// lives on the DiffView header, which the CLI does not print).
+// lives on the op-labelled header, which the CLI does not print).
 // Headless snapshots render directly (no VirtualTerminal in Pi 0.85.1).
 import { describe, expect, it } from 'vitest';
 import type { DiffFileChange } from './diff-view.js';

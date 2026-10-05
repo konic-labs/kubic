@@ -65,7 +65,8 @@ const ENVELOPE_HELP =
 const MODEL_HELP = 'provider/id of the run';
 const WORKTREE_HELP = 'where the run executed (provenance)';
 const GENERATION_HELP = 'worker generation that ran (provenance, integer)';
-const TIER_HELP = 'published tier: smoke|standard|extended (provenance)';
+const SIZE_HELP =
+  'record size: smoke|standard|extended (the §47.1 determinism tier is derived)';
 const WORKSPACE_HELP =
   'inline|worktree (default inline; worktree needs a clean --worktree)';
 const THINKING_HELP = 'thinking level, recorded verbatim';
@@ -145,6 +146,10 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     .option('--mode <mode>', 'filter on mode: solo|orchestrator')
     .option('--posture <name>', 'filter on posture')
     .option('--result <result>', 'filter on result: ok|deny|error')
+    .option(
+      '--session <id>',
+      'filter on orchestrator session: the run and the workers it spawned',
+    )
     .option('--json', JSON_HELP)
     .action(async (options) => done(await runners.audit(options, config)));
 
@@ -153,12 +158,15 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     'eval',
     'score one suite against a task prompt or a recorded trajectory',
     [
-      'kubic eval --trajectory "$(cat t.json)" --suite bugfix-repro --tier smoke',
+      'kubic eval --trajectory "$(cat t.json)" --suite bugfix-repro --size smoke',
     ],
   )
     .requiredOption('--suite <id>', 'built-in suite to score')
     .option('--task <prompt>', 'execute the suite against a task prompt')
-    .option('--trajectory <json>', 'score an inline trajectory export (JSON)')
+    .option(
+      '--trajectory <file>',
+      'score a trajectory export file (`-` reads stdin; inline JSON is kept for back-compat)',
+    )
     .option(
       '--model <id>',
       `${MODEL_HELP} (--task default ${EVAL_DEFAULT_MODEL})${FROM_EXPORT}`,
@@ -168,7 +176,7 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
       '--generation <n>',
       `${GENERATION_HELP}; required with --task${FROM_EXPORT}`,
     )
-    .option('--tier <tier>', TIER_HELP)
+    .option('--size <size>', SIZE_HELP)
     .option('--workspace <kind>', WORKSPACE_HELP)
     .option('--thinking <level>', `${THINKING_HELP}${FROM_EXPORT}`)
     .option('--json', ENVELOPE_HELP)
@@ -178,13 +186,13 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     program,
     'benchmark',
     'run the reproducible suite matrix (stub suites are reported, never passed)',
-    ['kubic benchmark --worktree wt --generation 1 --tier smoke --json'],
+    ['kubic benchmark --worktree wt --generation 1 --size smoke --json'],
   )
     .option('--suite <id>', 'one suite instead of the whole matrix')
     .option('--model <id>', MODEL_HELP, EVAL_DEFAULT_MODEL)
     .option('--worktree <path>', WORKTREE_HELP)
     .requiredOption('--generation <n>', GENERATION_HELP)
-    .option('--tier <tier>', TIER_HELP)
+    .option('--size <size>', SIZE_HELP)
     .option('--workspace <kind>', WORKSPACE_HELP)
     .option('--thinking <level>', THINKING_HELP)
     .option('--json', ENVELOPE_HELP)
@@ -197,7 +205,7 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     [
       'kubic replay traj.json',
       'kubic replay --session 3f2a',
-      'kubic replay traj.json --tier deterministic --model faux/faux --lockfile pins.lock',
+      'kubic replay traj.json --tier deterministic --model faux/echo --lockfile pins.lock',
       'kubic replay traj.json --diff-against other.json --json',
     ],
   )
@@ -230,11 +238,20 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
       'kubic export --trajectory t.json',
       'kubic export --session 3f2a --type sft',
       'kubic export --trajectory a.json --type dpo --against b.json --json',
+      'kubic export --dataset traj/ --type dpo --out pairs.jsonl',
     ],
   )
     .option('--trajectory <file>', 'trajectory export file')
     .option('--session <id>', SESSION_TRAJECTORY_HELP)
     .option('--type <type>', `dataset record: ${DATASET_TYPES.join('|')}`)
+    .option(
+      '--dataset <dir|glob>',
+      'batch mode: every trajectory in a directory or glob',
+    )
+    .option(
+      '--out <file.jsonl>',
+      'batch mode: stream the dataset records into this JSONL file',
+    )
     .option(
       '--against <other.json>',
       'second trajectory for dpo|preference|grpo',

@@ -76,6 +76,7 @@ const RUNNER_KEYS: readonly RunnerKey[] = [
 const ROUTES: readonly (readonly [string, readonly string[], RunnerKey])[] = [
   ['sessions', ['list'], 'sessions'],
   ['git', ['status'], 'git'],
+  ['commit', ['-m', 'msg'], 'git'],
   ['diff', ['--json'], 'journal'],
   ['undo', ['--step'], 'journal'],
   ['log', [], 'journal'],
@@ -83,6 +84,8 @@ const ROUTES: readonly (readonly [string, readonly string[], RunnerKey])[] = [
   ['models', ['--json'], 'models'],
   ['run', ['-p', 'hi'], 'run'],
   ['tui', [], 'tui'],
+  ['attach', ['abc'], 'tui'],
+  ['resume', ['abc'], 'tui'],
   ['doctor', [], 'doctor'],
   ['orchestrate', [], 'orchestrate'],
   ['clean', ['--dry-run'], 'clean'],
@@ -110,10 +113,14 @@ const PARSED: Readonly<Record<string, unknown>> = {
   models: { json: true },
   run: { prompt: 'hi' },
   tui: {},
+  attach: { session: 'abc' },
+  resume: { session: 'abc' },
+  commit: { command: 'commit', message: 'msg' },
   doctor: { skip: [] },
   config: { json: true },
   trust: {},
-  orchestrate: {},
+  // `--skill` is repeatable: commander's collector yields [] when unused.
+  orchestrate: { skills: [] },
   clean: { dryRun: true },
   workers: { json: true },
   git: { command: 'status' },
@@ -132,7 +139,7 @@ const PARSED: Readonly<Record<string, unknown>> = {
     task: 'p',
     generation: '1',
   },
-  benchmark: { generation: '1', model: 'faux/faux' },
+  benchmark: { generation: '1', model: 'faux/echo' },
   replay: { trajectory: 't.json', tier: 'recorded' },
   export: { trajectory: 'trajectory.json' },
 };
@@ -260,7 +267,7 @@ function loadedConfig(): CliConfigResult {
 
 describe('dispatch routing (issue #135)', () => {
   it('pins the roster: 23 commands, 20 runners, every runner exercised', () => {
-    expect(ROUTES).toHaveLength(23);
+    expect(ROUTES).toHaveLength(26);
     expect(RUNNER_KEYS).toHaveLength(20);
     const routed = new Set(ROUTES.map(([, , key]) => key));
     expect([...routed].sort()).toEqual([...RUNNER_KEYS].sort());
@@ -292,11 +299,54 @@ describe('dispatch routing (issue #135)', () => {
     expect(h.calls[0]?.config).toBe(config);
   });
 
-  it('falls through to the usage line for a command outside the table', async () => {
+  it('falls through to the usage line for a command outside the table (usage, exit 2)', async () => {
     const h = harness();
     expect(await dispatchCommand('definitely-not-a-command', [], h.deps)).toBe(
-      1,
+      2,
     );
+    expect(h.lines).toEqual([
+      ROOT_USAGE,
+      "hint: to run it as a prompt: kubic run -p 'definitely-not-a-command'",
+    ]);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('a bare multi-word prompt is `kubic run -p <prompt>` (issue #268, L-D7)', async () => {
+    const h = harness();
+    expect(
+      await dispatchCommand('fix the authentication bug', [], h.deps),
+    ).toBe(0);
+    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([
+      ['run', { prompt: 'fix the authentication bug' }],
+    ]);
+    // The prompt form is a state-creating mode: the exclude rules ship.
+    expect(h.state.excludeCalls).toBe(1);
+    expect(h.lines).toEqual([]);
+  });
+
+  it('a bare prompt carries trailing flags through', async () => {
+    const h = harness();
+    expect(await dispatchCommand('do x', ['--json'], h.deps)).toBe(0);
+    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([
+      ['run', { prompt: 'do x', json: true }],
+    ]);
+  });
+
+  it('a single-word unknown token stays an unknown command with the prompt hint (L-D7)', async () => {
+    const h = harness();
+    expect(await dispatchCommand('nosuch', [], h.deps)).toBe(2);
+    expect(h.lines).toEqual([
+      ROOT_USAGE,
+      "hint: to run it as a prompt: kubic run -p 'nosuch'",
+    ]);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('an empty token gets no dead-end hint (review finding)', async () => {
+    // `kubic ""` cannot be run as a prompt (the prompt is empty), so the
+    // hint would name a command that exits 2 again.
+    const h = harness();
+    expect(await dispatchCommand('', [], h.deps)).toBe(2);
     expect(h.lines).toEqual([ROOT_USAGE]);
     expect(h.calls).toEqual([]);
   });
@@ -432,21 +482,28 @@ describe('front door (issue #128 behavior, moved)', () => {
     }
   });
 
-  it('an ungated crash probe is just an unknown command', async () => {
+  it('an ungated crash probe is just an unknown command (usage, exit 2)', async () => {
     delete process.env.__KUBIC_CONTRACT_CRASH_PROBE;
     const h = harness();
-    expect(await dispatchCommand('__crash-probe', [], h.deps)).toBe(1);
+    expect(await dispatchCommand('__crash-probe', [], h.deps)).toBe(2);
     expect(h.lines).toEqual([ROOT_USAGE]);
     expect(h.calls).toEqual([]);
   });
 
-  it('an unknown root option or `help` is the unknown-command path (usage, exit 1)', async () => {
-    for (const command of ['--bogus', '-x', 'help']) {
+  it('an unknown root option is a usage error; `help` names the prompt form (usage, exit 2)', async () => {
+    for (const command of ['--bogus', '-x']) {
       const h = harness();
-      expect(await dispatchCommand(command, [], h.deps), command).toBe(1);
+      expect(await dispatchCommand(command, [], h.deps), command).toBe(2);
       expect(h.lines, command).toEqual([ROOT_USAGE]);
       expect(h.calls, command).toEqual([]);
     }
+    // A word-shaped token gets the L-D7 hint; a flag-shaped one does not.
+    const help = harness();
+    expect(await dispatchCommand('help', [], help.deps)).toBe(2);
+    expect(help.lines).toEqual([
+      ROOT_USAGE,
+      "hint: to run it as a prompt: kubic run -p 'help'",
+    ]);
   });
 
   it('root options after the command reach the command (positional options)', async () => {
@@ -496,7 +553,7 @@ describe('config refusal (issue #90 policy, moved)', () => {
       ([command]) =>
         !CONSUMING.includes(command) && !REPORTING.includes(command),
     );
-    expect(others).toHaveLength(16);
+    expect(others).toHaveLength(19);
     // Each with its ROUTES argv: a bare `kubic git` is a usage error.
     for (const [command, rest] of others) {
       const h = harness({ config: refusedConfig() });
@@ -506,13 +563,93 @@ describe('config refusal (issue #90 policy, moved)', () => {
     }
   });
 
-  it('prints the refusal on stderr, keeping stdout for data', async () => {
+  it('prints the refusal on stderr, keeping stdout for data without --json', async () => {
     const h = harness({ config: refusedConfig('unknown key [nope]') });
     const errs: string[] = [];
     const deps = { ...h.deps, err: (line: string) => errs.push(line) };
-    expect(await dispatchCommand('run', ['-p', 'hi', '--json'], deps)).toBe(1);
+    expect(await dispatchCommand('run', ['-p', 'hi'], deps)).toBe(1);
     expect(h.lines).toEqual([]);
     expect(errs).toEqual(['error: unknown key [nope]']);
+  });
+
+  it('prints the command’s failure envelope on stdout under --json (issue #244)', async () => {
+    const cases: Array<{
+      command: string;
+      rest: string[];
+      check: (envelope: Record<string, unknown>) => void;
+    }> = [
+      {
+        command: 'run',
+        rest: ['-p', 'hi', '--json'],
+        check: (envelope) => {
+          expect(envelope.status).toBe('failed');
+          expect(envelope.sessionId).toBe('unassigned');
+          expect(envelope.result).toEqual({ summary: 'unknown key [nope]' });
+          expect(envelope.error).toEqual({
+            kind: 'failed',
+            message: 'unknown key [nope]',
+          });
+        },
+      },
+      {
+        command: 'orchestrate',
+        rest: ['-p', 'hi', '--json'],
+        check: (envelope) => {
+          expect(envelope.status).toBe('failed');
+          expect(envelope.sessionId).toBe('unassigned');
+          expect(envelope.workers).toEqual([]);
+          expect(envelope.error).toEqual({
+            kind: 'failed',
+            message: 'unknown key [nope]',
+            code: 'config_refused',
+          });
+        },
+      },
+      {
+        command: 'replay',
+        rest: ['t.json', '--json'],
+        check: (envelope) => {
+          expect(envelope.tier).toBe('unknown');
+          expect(envelope.error).toEqual({
+            code: 'config_refused',
+            message: 'unknown key [nope]',
+          });
+        },
+      },
+    ];
+    for (const { command, rest, check } of cases) {
+      const h = harness({ config: refusedConfig('unknown key [nope]') });
+      const errs: string[] = [];
+      const deps = { ...h.deps, err: (line: string) => errs.push(line) };
+      expect(await dispatchCommand(command, rest, deps), command).toBe(1);
+      expect(errs, command).toEqual(['error: unknown key [nope]']);
+      expect(h.lines, command).toHaveLength(1);
+      const envelope = JSON.parse(h.lines[0] as string) as Record<
+        string,
+        unknown
+      >;
+      expect(envelope.ok, command).toBe(false);
+      expect(envelope.exitCode, command).toBe(1);
+      check(envelope);
+      expect(h.calls, `${command} must not reach a runner`).toEqual([]);
+    }
+  });
+
+  it('a refusal without --json stays stdout-empty for every consuming command', async () => {
+    const cases: Array<[string, string[]]> = [
+      ['run', ['-p', 'hi']],
+      ['orchestrate', ['-p', 'hi']],
+      ['replay', ['t.json']],
+      ['tui', []],
+    ];
+    for (const [command, rest] of cases) {
+      const h = harness({ config: refusedConfig('unknown key [nope]') });
+      const errs: string[] = [];
+      const deps = { ...h.deps, err: (line: string) => errs.push(line) };
+      expect(await dispatchCommand(command, rest, deps), command).toBe(1);
+      expect(h.lines, command).toEqual([]);
+      expect(errs, command).toEqual(['error: unknown key [nope]']);
+    }
   });
 
   it('a refused config short-circuits before the runtime-exclude step', async () => {
@@ -635,15 +772,24 @@ describe('runtime exclude (issue #91, moved order)', () => {
     }
   });
 
-  it('runs the exclude step before the runner, even for a --help argv', async () => {
+  it('a --help argv skips the exclude step (issue #245)', async () => {
     // `kubic run --help` is the command's generated help, not the root's:
-    // the root's help check is argv[0]-only, and the moved order ships the
-    // exclude rules before commander answers (the runner is never reached).
-    const h = harness();
-    expect(await dispatchCommand('run', ['--help'], h.deps)).toBe(0);
-    expect(h.state.excludeCalls).toBe(1);
-    expect(h.calls).toEqual([]);
-    expect(h.lines.join('\n')).toContain('Usage: kubic run');
+    // commander answers it before the action, so the runtime-exclude write
+    // (a repo mutation) must not happen for a help request.
+    for (const command of ['run', 'tui', 'orchestrate']) {
+      for (const flag of ['--help', '-h']) {
+        const h = harness();
+        expect(
+          await dispatchCommand(command, [flag], h.deps),
+          `${command} ${flag}`,
+        ).toBe(0);
+        expect(h.state.excludeCalls, `${command} ${flag}`).toBe(0);
+        expect(h.calls, `${command} ${flag}`).toEqual([]);
+        expect(h.lines.join('\n'), `${command} ${flag}`).toContain(
+          `Usage: kubic ${command}`,
+        );
+      }
+    }
   });
 
   it('ships the configured worktree parent with the runtime prefixes (issue #133)', async () => {
@@ -833,24 +979,35 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
     };
   }
 
-  it('eval --task surfaces the runSuite refusal verbatim', async () => {
-    const cap = capture();
-    const runners = createProdRunners(cap.io);
-    const code = await runners.eval(
-      {
-        task: 'do it',
-        suite: 'swe-bench-mini',
-        worktree: '/tmp/w',
-        generation: '1',
-        tier: 'smoke',
-      },
-      loadedConfig(),
-    );
-    expect(code).toBe(1);
-    expect(cap.lines).toEqual([]);
-    expect(cap.errs).toEqual([
-      'error: live suite execution is not available in this binary: score a recorded trajectory with --trajectory (see packages/eval/COMMUNITY.md)',
-    ]);
+  it('eval --task drives the live suite runner (issue #262)', async () => {
+    // The built-in suite's fixture runs through the solo lane with the faux
+    // provider, so --task produces a scored record instead of the old
+    // "live suite execution is not available" refusal.
+    vi.stubEnv('KUBIC_PROVIDER', 'faux');
+    const workspace = mkdtempSync(join(tmpdir(), 'kubic-dispatch-eval-'));
+    try {
+      const cap = capture();
+      const runners = createProdRunners(cap.io);
+      const code = await runners.eval(
+        {
+          task: 'do it',
+          suite: 'swe-bench-mini',
+          worktree: workspace,
+          generation: '1',
+          size: 'smoke',
+        },
+        loadedConfig(),
+      );
+      expect(code).toBe(0);
+      expect(cap.lines).toHaveLength(1);
+      expect(cap.lines[0]).toMatch(
+        /^eval ok: suite swe-bench-mini success=true /,
+      );
+      expect(cap.lines[0]).toMatch(/determinism=live/);
+      expect(cap.errs).toEqual([]);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
   });
 
   it('clean receives { env, out, err } (an unknown session fails by name on stderr)', async () => {

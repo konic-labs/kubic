@@ -29,9 +29,13 @@ import type {
 import { runOrchestrateCommand } from '../../../packages/host/src/orchestrate-cli.js';
 import type { OrchestratorApprovalRequest } from '../../../packages/host/src/orchestrator/approvals/request.js';
 import type { OrchestratorVerdict } from '../../../packages/host/src/orchestrator/approvals/routing.js';
-import type { WorkerAskSeat } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
+import type {
+  WorkerAskSeat,
+  WorkerQuestionSeat,
+} from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
 import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import type { EffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
+import type { WorkerProjectionEvent } from '../../../packages/host/src/presentation/projector.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
 import {
   type OrchestrateRunOptions,
@@ -45,6 +49,9 @@ import type { TuiOrchestratorRun, TuiTurnOutcome } from './tui-run.js';
 // host verdict shape. Named so both the composition root and tests agree.
 export type TuiAskSeat = (
   request: ApprovalRequest,
+  // Issue #232: the seat the router consults gets the asker's AbortSignal and
+  // withdraws the ask when it aborts.
+  signal?: AbortSignal,
 ) => Promise<ApprovalVerdict | undefined>;
 
 // The worker's ask, rendered by the TUI's approval overlay. The trigger IS
@@ -55,15 +62,21 @@ export type TuiAskSeat = (
 export function workerAskSeatFromAnswer(answer: TuiAskSeat): WorkerAskSeat {
   return async (
     request: OrchestratorApprovalRequest,
+    signal?: AbortSignal,
   ): Promise<OrchestratorVerdict> => {
-    const decision = await answer({
-      key: request.key,
-      capability: request.trigger,
-      toolName: request.toolName,
-      summary: `worker '${request.agentId}': ${request.summary}`,
-      ...(request.command === undefined ? {} : { command: request.command }),
-      justification: request.justification,
-    });
+    // Issue #409: the router's abort reaches the overlay, which withdraws
+    // exactly this ask (the #232 withdrawal) when the bound expires.
+    const decision = await answer(
+      {
+        key: request.key,
+        capability: request.trigger,
+        toolName: request.toolName,
+        summary: `worker '${request.agentId}': ${request.summary}`,
+        ...(request.command === undefined ? {} : { command: request.command }),
+        justification: request.justification,
+      },
+      signal,
+    );
     if (decision === undefined) {
       // A seat that answers nothing is not consent; deny by name so the
       // worker unblocks instead of waiting out its own bound.
@@ -146,10 +159,18 @@ export interface ProdTuiOrchestratorOptions {
   // own `kubic run --role` resolves it.
   roleLayers?: RoleLayerInput[];
   // A frozen enterprise `[model]` is the effective pin (issue #295; §35.1):
-  // `model` is that pin, and every worker runs it whatever KUBIC_MODEL says.
-  // Both travel together — `model` is only meaningful to the run as the
-  // frozen pin.
+  // every worker runs it whatever KUBIC_MODEL says. It outranks
+  // `currentModel`.
   frozenModel?: { provider: string; id: string };
+  // The lane's CURRENT model (issue #202): read per turn, so a `/model`
+  // switch becomes the delegation's `parentModel` and TUI workers inherit
+  // the model the session is actually running — the same §38.1 level
+  // `kubic orchestrate` passes from its own resolved pin. Absent means no
+  // pin (workers keep their own selection default).
+  currentModel?: () =>
+    | Promise<{ provider: string; id: string } | undefined>
+    | { provider: string; id: string }
+    | undefined;
   // The `[orchestrator]` projection (worktree parent + worker cap).
   orchestrator?: RuntimeOrchestrator;
   // Test seams: the deps factory and the command function. Absent means the
@@ -191,14 +212,30 @@ export function createProdTuiOrchestrator(
   const runCommand = options.runCommand ?? runOrchestrateCommand;
   const now = options.now ?? Date.now;
   let lastStamp = 0;
+  // Issue #342: the orchestrator view's feed — one listener, registered by
+  // the TUI loop; every turn's workers report through it.
+  let onWorker: ((event: WorkerProjectionEvent) => void) | undefined;
+  // Issue #154: the late-bound question seat (the app's dialog).
+  let questionSeat: WorkerQuestionSeat | undefined;
   const nextSessionId = (): string => {
     lastStamp = Math.max(now(), lastStamp + 1);
     return `${options.sessionId}-o${lastStamp.toString(36)}`;
   };
   return {
+    watchWorkers(listener) {
+      onWorker = listener;
+    },
+    setQuestionSeat(seat) {
+      questionSeat = seat;
+    },
     async run(objective, onReport): Promise<TuiTurnOutcome> {
       sink = onReport ?? options.out;
       try {
+        // The model the workers inherit: the frozen enterprise pin when one
+        // is in force, else the lane's current model (issue #202) — read per
+        // turn, so a `/model` switch reaches the next delegation.
+        const currentModel =
+          options.frozenModel ?? (await options.currentModel?.());
         const deps = await createDeps({
           out: report,
           err: options.err ?? report,
@@ -206,6 +243,12 @@ export function createProdTuiOrchestrator(
           ...(options.seat === undefined
             ? {}
             : { approvalsSeat: options.seat }),
+          // Issue #154: worker questions reach the TUI dialog; with no seat
+          // bound yet they go unanswered (the worker's bound names them).
+          questionSeat: (question, signal) =>
+            questionSeat === undefined
+              ? Promise.resolve(undefined)
+              : questionSeat(question, signal),
           mergeApproval: options.mergeSeat ?? denyMergeClosed,
           // No `--yes` in the TUI: a merge refusal must not name it.
           yesHint: false,
@@ -221,9 +264,14 @@ export function createProdTuiOrchestrator(
           ...(options.roleLayers === undefined
             ? {}
             : { roleLayers: options.roleLayers }),
-          ...(options.frozenModel === undefined
+          ...(currentModel === undefined
             ? {}
-            : { model: options.frozenModel, modelPinFrozen: true }),
+            : {
+                model: currentModel,
+                ...(options.frozenModel === undefined
+                  ? {}
+                  : { modelPinFrozen: true }),
+              }),
           ...(options.orchestrator === undefined
             ? {}
             : { orchestrator: options.orchestrator }),
@@ -234,7 +282,7 @@ export function createProdTuiOrchestrator(
         });
         const code = await runCommand(
           { prompt: objective, session: nextSessionId() },
-          deps,
+          observeWorkers(deps, (event) => onWorker?.(event)),
         );
         return code === 0
           ? { status: 'completed' }
@@ -247,6 +295,56 @@ export function createProdTuiOrchestrator(
           status: 'failed',
           detail: error instanceof Error ? error.message : String(error),
         };
+      }
+    },
+  };
+}
+
+// Issue #342 (§18): wraps the run's `runWorker` so each worker reports its
+// start (role, worktree, model, generation — a replacement of the same agent
+// is the next generation) and its end (the result's status and spend), the
+// facts the orchestrator view renders. The run itself is untouched.
+export function observeWorkers(
+  deps: OrchestrateCommandDeps,
+  emit: (event: WorkerProjectionEvent) => void,
+): OrchestrateCommandDeps {
+  const generations = new Map<string, number>();
+  const runWorker = deps.runWorker;
+  return {
+    ...deps,
+    runWorker: async (agentId, worktree, prompt, info) => {
+      const generation = (generations.get(agentId) ?? 0) + 1;
+      generations.set(agentId, generation);
+      emit({
+        type: 'worker-start',
+        workerId: agentId,
+        status: 'running',
+        generation,
+        workspace: worktree.path,
+        ...(info?.role === undefined ? {} : { role: info.role }),
+        ...(info?.modelRef === undefined ? {} : { model: info.modelRef }),
+      });
+      try {
+        const output = await runWorker(agentId, worktree, prompt, info);
+        const result = Array.isArray(output) ? undefined : output.result;
+        emit({
+          type: 'worker-update',
+          workerId: agentId,
+          status: result?.status ?? 'completed',
+          ...(result === undefined
+            ? {}
+            : {
+                inputTokens: result.metrics.inputTokens,
+                outputTokens: result.metrics.outputTokens,
+                ...(result.metrics.costUsd === undefined
+                  ? {}
+                  : { costUsd: result.metrics.costUsd }),
+              }),
+        });
+        return output;
+      } catch (error) {
+        emit({ type: 'worker-update', workerId: agentId, status: 'failed' });
+        throw error;
       }
     },
   };

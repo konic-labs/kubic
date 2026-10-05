@@ -21,8 +21,10 @@ import {
   UserEntry,
 } from '../../worker/src/pi-boundary.js';
 import {
+  failureForTerminus,
   type HeadlessRunResult,
   mapCaughtErrorToTerminus,
+  mapLaneOutcomeToFailure,
   mapLaneOutcomeToTerminus,
   mapTerminusToExitCode,
   runRunCommand,
@@ -86,20 +88,49 @@ describe('run -p exit-code contract (§78)', () => {
     expect(mapTerminusToExitCode('provider_probe_failed')).toBe(6);
   });
 
+  it('a mid-run provider error is a task failure, not the probe code (issue #155)', () => {
+    // §78's 6 is the pre-run probe (no provider / unknown model). A
+    // provider error during the run is a failed task whose §52 code is
+    // provider_transient/provider_auth.
+    expect(mapTerminusToExitCode('provider_transient')).toBe(1);
+    expect(mapTerminusToExitCode('provider_auth')).toBe(1);
+  });
+
+  it('a timeout is a task failure, never budget_exhausted (issue #280)', () => {
+    // §78 has no timeout code; the --json status is the honest half, and a
+    // bound the user did not configure as a budget must not claim one.
+    expect(mapTerminusToExitCode('timeout')).toBe(1);
+  });
+
+  it('a cancelled run keeps the POSIX 128+signo convention (issue #280)', () => {
+    // The same convention `kubic tui` pins for a signalled quit (#313).
+    expect(mapTerminusToExitCode('cancelled', 'SIGHUP')).toBe(129);
+    expect(mapTerminusToExitCode('cancelled', 'SIGINT')).toBe(130);
+    expect(mapTerminusToExitCode('cancelled', 'SIGTERM')).toBe(143);
+    // No signal known (a caller-built result): SIGINT's code, never 1.
+    expect(mapTerminusToExitCode('cancelled')).toBe(130);
+  });
+
   it('returns each code end-to-end through runRunCommand', async () => {
     const cases: Array<{
       terminus: HeadlessRunResult['terminus'];
       code: number;
+      signal?: string;
     }> = [
       { terminus: 'completed', code: 0 },
       { terminus: 'failed', code: 1 },
+      { terminus: 'timeout', code: 1 },
+      { terminus: 'cancelled', code: 130, signal: 'SIGINT' },
+      { terminus: 'cancelled', code: 143, signal: 'SIGTERM' },
       { terminus: 'budget_exhausted', code: 3 },
       { terminus: 'approval_denied', code: 4 },
       { terminus: 'approval_timed_out', code: 4 },
       { terminus: 'workspace_unavailable', code: 5 },
       { terminus: 'provider_probe_failed', code: 6 },
+      { terminus: 'provider_transient', code: 1 },
+      { terminus: 'provider_auth', code: 1 },
     ];
-    for (const { terminus, code } of cases) {
+    for (const { terminus, code, signal } of cases) {
       const o = out();
       const exit = await runRunCommand(
         { prompt: 'hello' },
@@ -109,6 +140,7 @@ describe('run -p exit-code contract (§78)', () => {
             completedResult({
               terminus,
               summary: terminus,
+              ...(signal === undefined ? {} : { signal }),
               error:
                 terminus === 'completed'
                   ? undefined
@@ -117,7 +149,7 @@ describe('run -p exit-code contract (§78)', () => {
           ),
         },
       );
-      expect(exit).toBe(code);
+      expect(exit, `${terminus} ${signal ?? ''}`).toBe(code);
     }
   });
 
@@ -222,7 +254,118 @@ describe('mapLaneOutcomeToTerminus (issue #28, E1)', () => {
         code: 'provider_transient',
         message: 'api unavailable',
       }),
-    ).toBe('provider_probe_failed');
+    ).toBe('provider_transient');
+    expect(
+      mapLaneOutcomeToTerminus('failed', {
+        code: 'provider_auth',
+        message: 'invalid api key',
+      }),
+    ).toBe('provider_auth');
+  });
+});
+
+describe('mapLaneOutcomeToFailure (issue #155)', () => {
+  it('carries the §52 code beside the terminus', () => {
+    const tool = mapLaneOutcomeToFailure('failed', {
+      code: 'tool_failed',
+      message: 'exit 1',
+    });
+    expect(tool.terminus).toBe('failed');
+    expect(tool.failure?.code).toBe('tool_failed');
+    expect(tool.failure?.strategy).toBe('retry_same');
+  });
+
+  it('refines a generic model_error detail into its own domain', () => {
+    // The durable reason names the generation task, not the failure's
+    // domain: a rate limit is provider_transient, a tool fault tool_failed.
+    const rate = mapLaneOutcomeToFailure('failed', {
+      code: 'model_error',
+      message: 'api rate limit exceeded (429)',
+    });
+    expect(rate.terminus).toBe('provider_transient');
+    expect(rate.failure?.code).toBe('provider_transient');
+
+    const tool = mapLaneOutcomeToFailure('failed', {
+      code: 'model_error',
+      message: "tool 'read' failed: ENOENT",
+    });
+    expect(tool.terminus).toBe('failed');
+    expect(tool.failure?.code).toBe('tool_failed');
+
+    const model = mapLaneOutcomeToFailure('failed', {
+      code: 'model_error',
+      message: 'the model produced nothing',
+    });
+    expect(model.terminus).toBe('failed');
+    expect(model.failure?.code).toBe('model_failed');
+  });
+
+  it('decides the approval terminus by the timeout marker, not by wording (issue #129)', () => {
+    // An elapsed wait whose reason also says "denied" is still a timeout;
+    // a refusal worded "refused" is still a refusal. The marker rule is the
+    // one all three readers share.
+    const elapsed = mapLaneOutcomeToFailure('failed', {
+      code: 'approval_denied',
+      message: "approval denied for worker 'x': timed out after 25ms",
+    });
+    expect(elapsed.terminus).toBe('approval_timed_out');
+    expect(elapsed.failure?.code).toBe('approval_timed_out');
+    const refused = mapLaneOutcomeToFailure('failed', {
+      code: 'approval_denied',
+      message: 'approval refused: no approval surface',
+    });
+    expect(refused.terminus).toBe('approval_denied');
+    expect(refused.failure?.code).toBe('approval_denied');
+  });
+});
+
+describe('failureForTerminus (issue #155)', () => {
+  it('gives every fixed-code terminus its §52 classification', () => {
+    expect(failureForTerminus('budget_exhausted')).toMatchObject({
+      code: 'budget_exhausted',
+      strategy: 'abandon',
+    });
+    expect(failureForTerminus('approval_denied')).toMatchObject({
+      code: 'approval_denied',
+      strategy: 'abandon',
+    });
+    expect(failureForTerminus('approval_timed_out')).toMatchObject({
+      code: 'approval_timed_out',
+      strategy: 'escalate',
+    });
+    expect(failureForTerminus('workspace_unavailable')).toMatchObject({
+      code: 'workspace_failed',
+      strategy: 'escalate',
+    });
+    expect(failureForTerminus('provider_transient')).toMatchObject({
+      code: 'provider_transient',
+      strategy: 'retry_same',
+    });
+    expect(failureForTerminus('provider_auth')).toMatchObject({
+      code: 'provider_auth',
+      strategy: 'abandon',
+    });
+  });
+
+  it('classifies the pre-run probe as a non-retryable setup failure', () => {
+    // The probe covers "no provider configured" and "the stored model is no
+    // longer registered": both are setup failures, never provider_transient
+    // — a retry chooser must not be told to retry.
+    const probe = failureForTerminus('provider_probe_failed');
+    expect(probe).toMatchObject({ code: 'provider_auth', strategy: 'abandon' });
+    expect(probe?.remedy).toMatch(/register|pin/i);
+  });
+
+  it('carries no §52 code for termini that have none', () => {
+    for (const terminus of [
+      'completed',
+      'failed',
+      'usage',
+      'timeout',
+      'cancelled',
+    ] as const) {
+      expect(failureForTerminus(terminus), terminus).toBeUndefined();
+    }
   });
 });
 
@@ -771,6 +914,88 @@ describe('run -p argument handling (issue #68; mutation hardening)', () => {
     >;
     expect(envelope.ok).toBe(false);
     expect(envelope.error).toEqual({ kind: 'failed', message: 'm' });
+  });
+
+  it('carries the §52 failure (code/remedy/strategy) in the failure envelope (issue #155)', async () => {
+    const o = out();
+    const exit = await runRunCommand(
+      { prompt: 'hello', json: true },
+      {
+        out: o.write,
+        run: stubRun(
+          completedResult({
+            terminus: 'failed',
+            summary: 'tool_failed: exit 1',
+            failure: {
+              code: 'tool_failed',
+              remedy: 'inspect stderr',
+              strategy: 'retry_same',
+            },
+            error: { kind: 'failed', message: 'exit 1' },
+          }),
+        ),
+      },
+    );
+    expect(exit).toBe(1);
+    const envelope = JSON.parse(o.lines[0] as string) as Record<
+      string,
+      unknown
+    >;
+    expect(envelope.failure).toEqual({
+      code: 'tool_failed',
+      remedy: 'inspect stderr',
+      strategy: 'retry_same',
+    });
+  });
+
+  it('synthesizes the failure for a terminus whose §52 code is implied', async () => {
+    const o = out();
+    const exit = await runRunCommand(
+      { prompt: 'hello', json: true },
+      {
+        out: o.write,
+        run: stubRun(
+          completedResult({
+            terminus: 'budget_exhausted',
+            summary: 'turn budget exhausted after 3 turns',
+            error: { kind: 'budget_exhausted', message: 'turn budget' },
+          }),
+        ),
+      },
+    );
+    expect(exit).toBe(3);
+    const envelope = JSON.parse(o.lines[0] as string) as {
+      failure?: { code: string; strategy: string };
+    };
+    expect(envelope.failure?.code).toBe('budget_exhausted');
+    expect(envelope.failure?.strategy).toBe('abandon');
+  });
+
+  it('classifies the pre-run probe envelope as provider_auth/abandon (review finding)', async () => {
+    const o = out();
+    const message =
+      "session model 'faux/small' is unavailable: provider 'faux' is not registered (pin a model to switch this session)";
+    const exit = await runRunCommand(
+      { prompt: 'hello', json: true },
+      {
+        out: o.write,
+        run: stubRun(
+          completedResult({
+            terminus: 'provider_probe_failed',
+            summary: message,
+            error: { kind: 'provider_probe_failed', message },
+          }),
+        ),
+      },
+    );
+    expect(exit).toBe(6);
+    const envelope = JSON.parse(o.lines[0] as string) as {
+      failure?: { code: string; strategy: string };
+    };
+    // Exit 6 tells a consumer the provider is unavailable; the §52 half must
+    // not contradict it with a retryable transient code.
+    expect(envelope.failure?.code).toBe('provider_auth');
+    expect(envelope.failure?.strategy).toBe('abandon');
   });
 
   it('maps a non-Error run rejection to unassigned refs in text', async () => {

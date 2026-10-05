@@ -1,5 +1,8 @@
-// DiffView: single-file journal diff (issue #25; §16.5, §18, §80).
+// Diff rendering: single-file journal diffs (issue #25; §16.5, §18, §80).
 // Text only (§16.8 fallback carries the whole view — no image diffs).
+// Pure render functions: the panel (view-panel.ts) owns the document and the
+// scrolling, so there is no per-view Component wrapper left here (issue #301
+// removed `DiffView`, which the panel's ScrollView superseded).
 //
 // Structural DiffFileChange mirrors exec FileChange
 // (packages/exec/src/journal-diff.ts) WITHOUT importing it: the tui
@@ -7,10 +10,8 @@
 // so only the fields this view reads are typed here. unifiedHunks
 // mirrors exec's algorithm line-for-line so TUI hunks equal
 // `kubic diff` hunks; the ---/+++/attribution block below is byte-equal
-// to exec renderDiff's per-file block (the op label lives on the DiffView
-// header line, which the CLI does not print).
-import type { Component } from './tui-boundary.js';
-import { Text } from './tui-boundary.js';
+// to exec renderDiff's per-file block (the op label lives on the
+// op-labelled header line, which the CLI does not print).
 
 export type DiffOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
 
@@ -31,6 +32,11 @@ export interface DiffRenderOptions {
   readonly context?: number;
   readonly width?: number;
   readonly maxLines?: number;
+  // Issue #301: `(file k/N)` appended to the op-labelled header, so a
+  // multi-file panel says which file of how many it is showing. Only the TUI
+  // diff panel sets it — `kubic diff` parity output never carries it (the
+  // journal view drops the op-labelled header line entirely).
+  readonly fileOrdinal?: { readonly index: number; readonly total: number };
 }
 
 // Binary detection: journal blobs are text; a NUL byte means the
@@ -137,8 +143,11 @@ export function renderDiffLines(
     change.unattributed ? 'unattributed' : null,
     change.reversible ? null : 'non-reversible',
   ].filter((f) => f !== null);
+  const header = renderDiffHeader(change);
   let lines = [
-    renderDiffHeader(change),
+    options.fileOrdinal === undefined
+      ? header
+      : `${header} (file ${options.fileOrdinal.index}/${options.fileOrdinal.total})`,
     `--- a/${change.path}`,
     `+++ b/${change.path}`,
     `# ${who}${flags.length > 0 ? ` [${flags.join(', ')}]` : ''}`,
@@ -167,27 +176,4 @@ export function renderDiffLines(
     }
   }
   return lines;
-}
-
-export class DiffView implements Component {
-  private readonly body: Text;
-  private options: DiffRenderOptions;
-
-  constructor(change?: DiffFileChange, options: DiffRenderOptions = {}) {
-    this.body = new Text('');
-    this.options = options;
-    if (change !== undefined) this.set(change);
-  }
-
-  set(change: DiffFileChange): void {
-    this.body.setText(renderDiffLines(change, this.options).join('\n'));
-  }
-
-  render(width: number): string[] {
-    return this.body.render(width);
-  }
-
-  invalidate(): void {
-    this.body.invalidate();
-  }
 }

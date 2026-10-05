@@ -18,6 +18,7 @@ import {
   detectTriggers,
   enableFullAccess,
   FileApprovalStore,
+  installSoloPolicy,
   MemoryApprovalStore,
   summarizeRequest,
   type TriggerContext,
@@ -422,6 +423,71 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
     const store = new FileApprovalStore(dir);
     expect(store.load()).toEqual({});
     expect(store.loadPosture()).toEqual({ fullAccess: false });
+  });
+
+  // Issue #233: a state file that PARSES but is the wrong shape used to be
+  // cast and then crash the boot (`Object.entries(null)` in the service
+  // constructor, `.fullAccess` on null in installedPolicyPosture). Load is
+  // corrupt-tolerant by contract — the fallback is the documented safe
+  // default, and malformed individual entries are dropped, not the file.
+  it('tolerates well-formed JSON of the wrong shape (issue #233)', () => {
+    const dir = mkTmp('approvals-');
+    const store = new FileApprovalStore(dir);
+    for (const text of ['null', '[]', '"x"', '3', 'true']) {
+      writeFileSync(join(dir, 'approvals.json'), text);
+      expect(store.load(), text).toEqual({});
+      writeFileSync(join(dir, 'posture.json'), text);
+      expect(store.loadPosture(), text).toEqual({ fullAccess: false });
+    }
+    writeFileSync(join(dir, 'posture.json'), '{"fullAccess":"yes"}');
+    expect(store.loadPosture()).toEqual({ fullAccess: false });
+    // A real grant survives; a malformed optional field falls back to the
+    // safe side (no fabricated enable time).
+    writeFileSync(
+      join(dir, 'posture.json'),
+      JSON.stringify({ fullAccess: true, enabledAt: 'soon', enabledBy: 'cli' }),
+    );
+    expect(store.loadPosture()).toEqual({ fullAccess: true, enabledBy: 'cli' });
+  });
+
+  it('drops malformed verdict entries and keeps the valid ones (issue #233)', () => {
+    const dir = mkTmp('approvals-');
+    writeFileSync(
+      join(dir, 'approvals.json'),
+      JSON.stringify({
+        good: { approved: true, by: 'user' },
+        goodDeny: { approved: false, reason: 'no' },
+        noBy: { approved: true },
+        noReason: { approved: false },
+        notObject: 'x',
+        nullEntry: null,
+        arrayEntry: [],
+        weirdApproved: { approved: 'yes', by: 'user' },
+      }),
+    );
+    expect(new FileApprovalStore(dir).load()).toEqual({
+      good: { approved: true, by: 'user' },
+      goodDeny: { approved: false, reason: 'no' },
+    });
+  });
+
+  it('boots a policy and a service over wrong-shaped state files (issue #233)', () => {
+    const workspace = mkTmp('approvals-ws-');
+    const sessionDir = mkTmp('approvals-session-');
+    writeFileSync(join(sessionDir, 'approvals.json'), 'null');
+    writeFileSync(join(sessionDir, 'posture.json'), '{"fullAccess":"yes"}');
+    const installed = installSoloPolicy({ workspace, sessionDir });
+    expect(installed.posture.fullAccess).toBe(false);
+    expect(installed.approvalsSkipped()).toBe(false);
+    // The service reads the same store at construction (Object.entries(null)
+    // used to throw there).
+    expect(
+      () =>
+        new ApprovalService({
+          policy: validatePolicy({}),
+          store: new FileApprovalStore(sessionDir),
+        }),
+    ).not.toThrow();
   });
 
   it('cleans its tmp file when a posture rename fails, and rethrows (issue #132)', () => {

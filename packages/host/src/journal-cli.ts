@@ -10,13 +10,15 @@
 //
 // Exit codes (docs/cli/exit-codes.md): 0 success (including empty diff and
 // clean dry-run), 2 a usage error (thrown as CliUsageError: bad --session
-// id, conflicting store selectors, bad --max-content-bytes) and `undo`
-// completed with skipped steps; an IO failure propagates (root catch-all,
-// exit 1).
+// id, conflicting store selectors, bad --max-content-bytes), 1 an `undo`
+// that completed with skipped steps (issue #372 — the partial outcome has
+// its own code and never reuses the usage one) or any IO failure
+// (propagated to the root catch-all).
 
 import { basename, dirname, join, sep } from 'node:path';
 import {
   CliUsageError,
+  EXIT_FAILED,
   EXIT_OK,
   EXIT_USAGE,
 } from '../../core/src/cli/exit-codes.js';
@@ -40,6 +42,7 @@ import { applyUndo, planUndo } from '../../exec/src/journal-undo.js';
 import {
   listSessions,
   openSessionStore,
+  sessionLockIsLive,
 } from '../../worker/src/lane/session-store.js';
 import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import { MS_PER_DAY } from './config/runtime.js';
@@ -70,6 +73,11 @@ export interface JournalCommandDeps {
   // Issue #362: session id → recorded workspace (the cwd the session was
   // created in). Default: the local session store's own listing.
   sessionWorkspaces?: (sessionsRoot: string) => Promise<Map<string, string>>;
+  // Issue #337: the live holder of a session's lock, by session directory.
+  // Default: the session store's own liveness probe (`sessionLockIsLive`,
+  // pid-based). Injected by tests so a live holder is expressible without a
+  // second process.
+  sessionLockHolder?: (sessionDir: string) => { pid: number } | undefined;
 }
 
 // The store selector every journal command shares.
@@ -299,6 +307,19 @@ interface JournalRun {
 
 const PLAIN = createCliTheme('none');
 
+// Issue #337: the live holder of the store's session lock, when the resolved
+// store is a session journal. `resolved.dir` is `<sessionsRoot>/<id>/journal`,
+// so the session directory — and the `lock.json` the store's own runs hold —
+// is one level up. The workspace journal has no session to check.
+function lockHolderOf(
+  deps: JournalCommandDeps,
+  resolved: ResolvedStore,
+): { pid: number } | undefined {
+  if (resolved.sessionId === undefined) return undefined;
+  const probe = deps.sessionLockHolder ?? sessionLockIsLive;
+  return probe(dirname(resolved.dir));
+}
+
 function loggerFor(deps: JournalCommandDeps): CliLogger {
   return createLineLogger(deps.err ?? deps.out, {
     theme: deps.errTheme ?? PLAIN,
@@ -460,6 +481,20 @@ function skipKindOf(reason: string): SkipKind {
 function journalUndo(run: JournalRun, request: JournalUndoOptions): number {
   const { deps, store, root, theme } = run;
   const dryRun = request.dryRun === true;
+  // Issue #337: a live run on this session is writing the workspace this undo
+  // would restore, and appending to the journal this undo reads — the two
+  // interleave. Refused by name, before anything is planned or written;
+  // `--force` is the documented override (the same knob the staleness refusal
+  // uses), and a dead holder's residue never refuses.
+  if (request.force !== true) {
+    const holder = lockHolderOf(deps, run.resolved);
+    if (holder !== undefined) {
+      run.log.error(
+        `session '${run.resolved.sessionId}' is attached by pid ${holder.pid} — refusing to undo under a live run (pass --force to override)`,
+      );
+      return EXIT_FAILED;
+    }
+  }
   const plan = planUndo(
     store,
     {
@@ -486,9 +521,12 @@ function journalUndo(run: JournalRun, request: JournalUndoOptions): number {
   // scripts (and humans) can tell "cannot reverse" from "refused because
   // the file changed since" from "a previous undo already unwound it".
   const kinds = result.skippedDetails.map((d) => skipKindOf(d.reason));
-  // One JSON document (or the human report); the exit code is shared: 2
-  // when a real run skipped anything, a dry run always 0.
-  const exit = !dryRun && result.skipped.length > 0 ? EXIT_USAGE : EXIT_OK;
+  // One JSON document (or the human report); the exit code is shared: 1
+  // when a real run skipped anything (issue #372 — a partial undo is a
+  // task outcome, so it keeps the generic failure code and never the
+  // usage code; the structured `skipped` list is the machine-readable
+  // half), a dry run always 0.
+  const exit = !dryRun && result.skipped.length > 0 ? EXIT_FAILED : EXIT_OK;
   if (request.json === true) {
     deps.out(
       formatJson({
@@ -566,7 +604,19 @@ function journalLog(run: JournalRun, request: JournalSelection): number {
   // writes nothing.
   const retentionDays = deps.retentionDays ?? 0;
   if (resolved.sessionId !== undefined && retentionDays > 0) {
-    store.enforceRetention({ maxAgeMs: retentionDays * MS_PER_DAY });
+    // Issue #337: pruning under a live run is a race the reader cannot win —
+    // the run appends between this pass's read and its rename, and the
+    // rewrite drops the line (and sweeps blobs the run just wrote). The
+    // session lock is the shipped liveness view (`kubic sessions prune` uses
+    // the same one); a live holder skips the self-heal and says so.
+    const holder = lockHolderOf(deps, resolved);
+    if (holder !== undefined) {
+      run.log.warn(
+        `journal retention skipped: session '${resolved.sessionId}' is attached by pid ${holder.pid} — pruning under a live run can drop entries it just appended`,
+      );
+    } else {
+      store.enforceRetention({ maxAgeMs: retentionDays * MS_PER_DAY });
+    }
   }
   const entries = store.entries();
   // `--json` stays the raw entries array (the count is derivable from the
@@ -624,6 +674,12 @@ function journalStatusCommand(
   // honest answer") so a corrupt store is visible at a glance.
   const corrupt = `corrupt: ${status.corrupt}`;
   deps.out(status.corrupt > 0 ? theme.error(corrupt) : corrupt);
+  // Issue #343: index lines dropped because they do not parse — a torn tail
+  // from a crash or a full disk. Named separately from `corrupt`: that
+  // counts lost content, this counts unreadable lines, and an operator
+  // cannot infer one from the other.
+  const corruptLines = `corrupt index lines: ${status.corruptLines}`;
+  deps.out(status.corruptLines > 0 ? theme.error(corruptLines) : corruptLines);
   if (status.repo === null) {
     deps.out('repo: non-repo directory (journal works without git)');
   } else {

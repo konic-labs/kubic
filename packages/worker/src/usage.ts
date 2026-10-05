@@ -5,6 +5,10 @@
 // one-line model/thinking/cost readout the run status consumes. Since
 // #398 the rows are built from committed pi.assistant entries, so the
 // provider/model are the ones that really answered (#287).
+//
+// Issue #346: the never-written ttftMs/latencyMs fields were deleted with
+// the status bar's TTFT/tool-ms segments — Pi 1.0 reports no timing Kubic
+// can read, and dead fields are the defect.
 
 import type { EntryRecord, ModelThinkingLevel, Usage } from './pi-boundary.js';
 
@@ -12,8 +16,6 @@ export interface KubicUsageRow {
   model: string;
   provider: string;
   usage: Usage;
-  ttftMs?: number;
-  latencyMs?: number;
   toolCallId?: string;
   entryId?: string;
 }

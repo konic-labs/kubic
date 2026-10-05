@@ -21,7 +21,8 @@ describe('worker registry (issue #42)', () => {
     });
     advance(5_000);
     const row = reg.get('w-1');
-    expect(row?.status).toBe('created');
+    expect(row?.status).toBe('spawning');
+    expect(row?.agentStatus).toBe('starting');
     expect(row?.ageMs).toBe(5_000);
   });
 
@@ -50,7 +51,7 @@ describe('worker registry (issue #42)', () => {
     expect(() => reg.replace('w-1', 99)).toThrow(/generation/i);
     // CAS refusal leaves the live row untouched: no bump, no reset.
     expect(reg.get('w-1')?.generation).toBe(1);
-    expect(reg.get('w-1')?.status).toBe('created');
+    expect(reg.get('w-1')?.status).toBe('spawning');
     // Matching expectation still bumps.
     expect(reg.replace('w-1', 1).generation).toBe(2);
   });
@@ -75,6 +76,28 @@ describe('worker registry (issue #42)', () => {
       ageMs: 1_000,
     });
     expect(rows[0]?.resources).toEqual({ skills: ['review'] });
+  });
+
+  it('names the failure a worker settled on, for `kubic workers` (issue #163)', () => {
+    const { reg } = registry();
+    reg.register({
+      workerId: 'w-1',
+      sessionId: 's-1',
+      generation: 1,
+      owner: 'o',
+    });
+    expect(reg.get('w-1')?.failure).toBeUndefined();
+    reg.recordFailure('w-1', {
+      code: 'resource_disk_exceeded',
+      message: "worker 'w-1' exceeded its worktree disk quota",
+    });
+    expect(reg.get('w-1')?.failure).toEqual({
+      code: 'resource_disk_exceeded',
+      message: "worker 'w-1' exceeded its worktree disk quota",
+    });
+    expect(() =>
+      reg.recordFailure('nope', { code: 'x', message: 'y' }),
+    ).toThrow(/unknown worker/);
   });
 
   it('drops a reaped worker exactly once', () => {

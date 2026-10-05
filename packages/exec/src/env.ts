@@ -24,8 +24,10 @@ import {
   readdirSync,
   readFileSync,
   readSync,
+  realpathSync,
   renameSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { constants as osConstants } from 'node:os';
@@ -79,6 +81,24 @@ export interface FileSystem {
    */
   readFileRange?(path: string, start: number, end: number): Uint8Array;
   /**
+   * The physical path `path` names — every symlink resolved (issue #140).
+   * `stat` follows links but only reports a target; a writer needs the
+   * location the OS would actually open, so a tmp+rename lands beside the
+   * real file instead of replacing the link with a regular file. The
+   * lexical path is confined first; the RESULT is not (a link inside the
+   * workspace may point out — the caller decides, see `symlink_escape`
+   * in the worker's write path). Throws when the path does not exist.
+   * Optional so existing seams stay valid; absent = links resolve to
+   * themselves (test doubles).
+   */
+  realpath?(path: string): string;
+  /**
+   * Remove a file (issue #140): the tmp+rename writer's cleanup of the tmp
+   * a failed write or rename left behind. Optional (test doubles have no
+   * cleanup): absent = a failed write leaves its tmp for the operator.
+   */
+  unlink?(path: string): void;
+  /**
    * Set permission bits. Optional (test doubles have no modes): tmp+rename
    * writers copy the replaced file's mode onto the tmp, so an overwrite
    * never strips a script's exec bit or widens a 0600 secret.
@@ -88,6 +108,19 @@ export interface FileSystem {
 
 export interface ShellResult {
   exitCode: number;
+  /**
+   * The signal the leader died from, when it was signalled (issue #151):
+   * `exitCode` already carries 128+signal, but the NAME is what a worker row
+   * records so `kubic workers` can say SIGKILL rather than 137.
+   */
+  signal?: string | null;
+  /**
+   * The group SIGKILL escalation fired before the leader settled (issue
+   * #249): the command's own cooperative shutdown did not finish inside the
+   * kill grace, so it was forced. Absent when no kill was requested or the
+   * leader settled on the SIGTERM alone.
+   */
+  forced?: boolean;
   stdout: string;
   stderr: string;
   provenance: Provenance;
@@ -127,7 +160,10 @@ export interface SpawnOptions {
    * Per-stream output accumulation cap in bytes (issue #121). The tail is
    * kept (endings usually carry the error) and the final result gains a
    * header naming the dropped leading bytes. Default: 10 MiB per stream —
-   * a chatty child (`yes`, a verbose build) must not OOM the run.
+   * a chatty child (`yes`, a verbose build) must not OOM the run. Measured
+   * in UTF-8 bytes and trimmed on code-point boundaries (issue #354), so a
+   * CJK or emoji stream cannot admit 3-4x the cap and the kept tail never
+   * starts with half a surrogate pair.
    */
   maxOutputBytes?: number;
   /**
@@ -169,10 +205,36 @@ function confine(cwd: string, path: string): string {
   // out. Acceptable: solo has no isolation (§3.7), this is an accidental-
   // escape guard, not a sandbox boundary.
   const abs = resolve(cwd, path);
-  if (abs !== cwd && !abs.startsWith(cwd + sep)) {
-    throw new Error(`path escapes cwd confinement: ${path}`);
+  if (abs === cwd || abs.startsWith(cwd + sep)) return abs;
+  // Issue #140: the cwd itself may be reached through a symlink (macOS
+  // resolves /tmp and /var to /private/…), so a caller holding a path the
+  // OS resolved spells the same tree with the physical prefix. Accepting
+  // both keeps the guardrail — the path is still this workspace — without
+  // refusing a legitimate write to a realpath'd target.
+  const real = physicalRoot(cwd);
+  if (
+    real !== undefined &&
+    real !== cwd &&
+    (abs === real || abs.startsWith(real + sep))
+  )
+    return abs;
+  throw new Error(`path escapes cwd confinement: ${path}`);
+}
+
+// realpath(cwd), cached: confine runs on every op's I/O and the workspace
+// root does not move. undefined = the cwd itself cannot be resolved.
+const physicalRoots = new Map<string, string | undefined>();
+
+function physicalRoot(cwd: string): string | undefined {
+  if (physicalRoots.has(cwd)) return physicalRoots.get(cwd);
+  let real: string | undefined;
+  try {
+    real = realpathSync(cwd);
+  } catch {
+    real = undefined;
   }
-  return abs;
+  physicalRoots.set(cwd, real);
+  return real;
 }
 
 class NodeFileSystem implements FileSystem {
@@ -219,6 +281,14 @@ class NodeFileSystem implements FileSystem {
       mode: st.mode & 0o7777,
       isSymbolicLink: st.isSymbolicLink(),
     };
+  }
+
+  realpath(path: string): string {
+    return realpathSync(confine(this.cwd, path));
+  }
+
+  unlink(path: string): void {
+    unlinkSync(confine(this.cwd, path));
   }
 
   chmod(path: string, mode: number): void {
@@ -331,7 +401,9 @@ export const TOOL_ENV_ALLOWLIST: readonly string[] = [
   'GIT_CONFIG_NOSYSTEM',
   // Network reachability and trust roots (not credentials): tools behind
   // a corporate proxy or custom CA must keep working. Both spellings of
-  // the proxy vars are conventional.
+  // the proxy vars are conventional — and their VALUES are scrubbed of
+  // userinfo before they reach a child (issue #366): a proxy URL's
+  // `user:password@` is a credential the name does not reveal.
   'HTTP_PROXY',
   'HTTPS_PROXY',
   'NO_PROXY',
@@ -357,6 +429,40 @@ export const TOOL_ENV_ALLOWLIST: readonly string[] = [
 
 const ALLOWED_UPPER = new Set(TOOL_ENV_ALLOWLIST.map((k) => k.toUpperCase()));
 
+// Issue #366: the proxy variables are allowlisted for reachability, but a
+// proxy URL can carry userinfo — `http://user:password@proxy:3128` — which is
+// a credential in the §3.8 sense even though the NAME looks benign, so
+// `looksSecret` never sees it. §36.1 rule 2: a credential must never reach an
+// agent-visible string, and the model's shell can read the child env. The
+// value keeps its scheme, host and port and loses the userinfo; a proxy that
+// REQUIRES that auth is therefore not usable from a tool child (Kubic does
+// not broker proxy auth — see docs/architecture/journal-and-safety.md).
+const PROXY_VARS = new Set([
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'http_proxy',
+  'https_proxy',
+]);
+
+// The value without its userinfo: scheme and everything from the host on
+// survive verbatim, so no URL parser normalization (a trailing slash, a
+// lower-cased host) creeps into a value other tools must match byte for byte.
+function stripProxyUserinfo(value: string): string {
+  const schemeAt = value.indexOf('://');
+  const start = schemeAt === -1 ? 0 : schemeAt + 3;
+  let end = value.length;
+  for (const separator of ['/', '?', '#']) {
+    const at = value.indexOf(separator, start);
+    if (at !== -1 && at < end) end = at;
+  }
+  const authority = value.slice(start, end);
+  // The LAST '@' in the authority is the userinfo separator (an earlier one
+  // belongs to percent-encoded userinfo).
+  const at = authority.lastIndexOf('@');
+  if (at === -1) return value;
+  return `${value.slice(0, start)}${authority.slice(at + 1)}${value.slice(end)}`;
+}
+
 const SECRET_SUFFIXES = ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'CREDENTIALS'];
 
 function looksSecret(upper: string): boolean {
@@ -366,7 +472,9 @@ function looksSecret(upper: string): boolean {
 }
 
 // Pure: the allowlisted subset of `base` (plus LC_* / XDG_* vars). A
-// secret-shaped name is dropped even if it matches a pattern (LC_*_KEY).
+// secret-shaped name is dropped even if it matches a pattern (LC_*_KEY), and
+// a proxy URL loses its userinfo (issue #366) — the one credential an
+// allowlisted NAME could hide.
 export function toolSpawnEnv(
   base: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> {
@@ -380,7 +488,8 @@ export function toolSpawnEnv(
         : TOOL_ENV_ALLOWLIST.includes(key)) ||
       key.startsWith('LC_') ||
       key.startsWith('XDG_');
-    if (allowed && !looksSecret(upper)) out[key] = value;
+    if (!allowed || looksSecret(upper)) continue;
+    out[key] = PROXY_VARS.has(upper) ? stripProxyUserinfo(value) : value;
   }
   return out;
 }
@@ -417,6 +526,19 @@ function groupAlive(pgid: number): boolean {
   }
 }
 
+// Is the LEADER still a process? Asked of the OS, not of the child object:
+// `exitCode`/`signalCode` are set when the 'exit' event is delivered, which
+// can lag the process's actual death — and the delayed group SIGKILL this
+// guards against (issue #142) is scheduled in exactly that window.
+function leaderAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
 function signalGroup(pgid: number, signal: NodeJS.Signals): void {
   try {
     process.kill(-pgid, signal);
@@ -446,6 +568,16 @@ async function reapGroup(pgid: number, graceMs: number): Promise<void> {
   await waitGroupGone(pgid, graceMs);
 }
 
+// UTF-8 byte length of a code point, computed without allocating a string
+// for it (issue #354): the output accumulator trims on code-point
+// boundaries, so it needs each code point's encoded size.
+function utf8Length(codePoint: number): number {
+  if (codePoint < 0x80) return 1;
+  if (codePoint < 0x800) return 2;
+  if (codePoint < 0x10000) return 3;
+  return 4;
+}
+
 class NodeShell implements Shell {
   readonly cwd: string;
 
@@ -471,26 +603,47 @@ class NodeShell implements Shell {
     // the error — and the final result names exactly what was dropped.
     // `peek` feeds progress snapshots (bounded by the same cap), `final`
     // produces the settled stream with the truncation header.
+    //
+    // Issue #354: the cap is documented in BYTES and must be measured in
+    // bytes. Counting UTF-16 code units admitted up to ~3x the intended
+    // memory for CJK text (one unit, three bytes), misstated the dropped
+    // size, and let `slice(-cap)` start the kept tail with half a surrogate
+    // pair — a lone low surrogate reaches the model, the trajectory and the
+    // session store as U+FFFD. Bytes are the bound; code points are the trim
+    // boundary.
     const cap = options.maxOutputBytes ?? MAX_CHILD_OUTPUT_BYTES;
     const makeAccumulator = () => {
       let text = '';
+      let bytes = 0;
       let dropped = 0;
       return {
         push(chunk: string): void {
-          if (text.length + chunk.length <= cap) {
+          const chunkBytes = Buffer.byteLength(chunk, 'utf8');
+          if (bytes + chunkBytes <= cap) {
             text += chunk;
+            bytes += chunkBytes;
             return;
           }
           const combined = text + chunk;
-          dropped += combined.length - cap;
-          text = combined.slice(-cap);
+          const total = bytes + chunkBytes;
+          const excess = total - cap;
+          let at = 0;
+          let drop = 0;
+          while (drop < excess && at < combined.length) {
+            const codePoint = combined.codePointAt(at) ?? 0;
+            drop += utf8Length(codePoint);
+            at += codePoint > 0xffff ? 2 : 1;
+          }
+          dropped += drop;
+          text = combined.slice(at);
+          bytes = total - drop;
         },
         peek(): string {
           return text;
         },
         final(): string {
           if (dropped === 0) return text;
-          return `[kubic: output truncated — dropped ${dropped} leading bytes, kept the last ${text.length}]\n${text}`;
+          return `[kubic: output truncated — dropped ${dropped} leading bytes, kept the last ${bytes}]\n${text}`;
         },
       };
     };
@@ -504,6 +657,13 @@ class NodeShell implements Shell {
     const outDec = new StringDecoder('utf8');
     const errDec = new StringDecoder('utf8');
     let settled = false;
+    // Issue #249: did the SIGKILL escalation beat the LEADER's own exit?
+    // Derived from the leader, never from the handle settling: `finish()`
+    // awaits the whole group drain, so a grandchild that outlives the
+    // SIGTERM would otherwise report a cooperative settle as forced.
+    let forced = false;
+    let leaderExited = false;
+    let escalationTimer: ReturnType<typeof setTimeout> | undefined;
     const snapshot = (): ProcessSnapshot => ({
       stdout: stdoutAcc.peek(),
       stderr: stderrAcc.peek(),
@@ -539,6 +699,8 @@ class NodeShell implements Shell {
       // the `spawn <path> ENOENT` crash). Settle wait() with a named
       // failure instead, so every caller reads it through the same seam.
       child.on('error', (error: Error) => {
+        // A spawn error means no leader exists (issue #249): nothing to force.
+        leaderExited = true;
         if (settled) return;
         settled = true;
         // Flush any buffered partial byte sequence before the result is
@@ -567,6 +729,7 @@ class NodeShell implements Shell {
       // process group is reaped (unless keepBackground), so the tool never
       // returns with an orphan still running in the detached group.
       let leaderExit: number | undefined;
+      let leaderSignal: NodeJS.Signals | null = null;
       let streamsClosed = false;
       let finishing = false;
       let drainTimer: ReturnType<typeof setTimeout> | undefined;
@@ -574,6 +737,11 @@ class NodeShell implements Shell {
         if (finishing || settled) return;
         finishing = true;
         if (drainTimer !== undefined) clearTimeout(drainTimer);
+        // Issue #249 review: the group SIGKILL escalation belongs to a LIVE
+        // leader. Once the handle settles, a pending timer could signal a
+        // recycled pgid (the #142 stranger hazard) — the settle path reaps
+        // the group itself.
+        if (escalationTimer !== undefined) clearTimeout(escalationTimer);
         const heldPipes = !streamsClosed;
         if (heldPipes) {
           child.stdout?.destroy();
@@ -606,6 +774,8 @@ class NodeShell implements Shell {
         }
         const result: ShellResult = {
           exitCode: leaderExit ?? 1,
+          ...(leaderSignal === null ? {} : { signal: leaderSignal }),
+          ...(forced ? { forced: true } : {}),
           stdout: stdoutAcc.final(),
           stderr: stderrAcc.final(),
           provenance: options.provenance,
@@ -621,8 +791,12 @@ class NodeShell implements Shell {
         resolveDone(result);
       };
       child.on('exit', (code, signal) => {
+        // The leader is gone, whatever else the group is doing (issue #249):
+        // recorded before the settle guard so a finishing handle still knows.
+        leaderExited = true;
         if (settled || finishing) return;
         leaderExit = exitCodeFor(code, signal);
+        leaderSignal = signal;
         if (streamsClosed) {
           void finish();
           return;
@@ -664,8 +838,22 @@ class NodeShell implements Shell {
         // holds the event loop open, and it is a no-op once settled.
         // The group, not just the leader: a leader that exits on SIGTERM
         // settles the handle while group members that ignore it live on,
-        // so the group SIGKILL is unconditional (ESRCH = group gone).
-        const timer = setTimeout(() => {
+        // so the escalation is not gated on the leader surviving the grace.
+        //
+        // Issue #142: it IS gated on the leader being alive when kill() was
+        // called (asked of the OS — see leaderAlive). A leader that has
+        // already exited owns no process group any more — its pgid may be
+        // recycled — so a delayed group SIGKILL could hit a stranger.
+        // Nothing is orphaned by skipping it: the settle path reaps whatever
+        // the group still holds (reapGroup, unless the caller opted into
+        // keepBackground).
+        if (!leaderAlive(pid)) return;
+        escalationTimer = setTimeout(() => {
+          // The leader is still up when the grace elapses: its cooperative
+          // shutdown did not finish, so this is a FORCED kill (issue #249).
+          // The LEADER's exit is the test — a group member that outlives the
+          // SIGTERM is the escalation's cleanup, not a forced worker.
+          if (!leaderExited) forced = true;
           if (process.platform !== 'win32') {
             try {
               process.kill(-pid, 'SIGKILL');
@@ -674,7 +862,7 @@ class NodeShell implements Shell {
             }
           } else if (!settled) signal('SIGKILL');
         }, options.killGraceMs ?? KILL_GRACE_MS);
-        timer.unref();
+        escalationTimer.unref();
       },
     };
   }

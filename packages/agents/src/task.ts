@@ -79,6 +79,52 @@ export type TaskValidation =
   | { valid: true; task: AgentTask }
   | { valid: false; errors: string[] };
 
+/**
+ * What the manager knows when it hands a worker its work (issue #191): the
+ * §67 task's identity, the objective the worker runs, its worktree and the
+ * capability grant — the tool names its lane may register.
+ */
+export interface AgentTaskInput {
+  taskId: string;
+  parentSessionId: string;
+  role: string;
+  objective: string;
+  worktree: string;
+  toolNames: readonly string[];
+  budget?: AgentBudget;
+  constraints?: readonly string[];
+  expectedOutput?: string;
+  model?: ModelSelection;
+  /** §67 task resources (issue #170): the skills this worker is granted. */
+  resources?: TaskResources;
+}
+
+// Build AND validate in one call (§67, issue #191): the manager builds the
+// task it transmits to a worker child, and an invalid task is a named
+// refusal before any process exists. `workspaceMode` is always 'worktree' on
+// this path — §11.1 gives every subagent its own worktree, and the shared /
+// copy modes are not implemented.
+export function buildAgentTask(input: AgentTaskInput): TaskValidation {
+  return validateAgentTask({
+    taskId: input.taskId,
+    parentSessionId: input.parentSessionId,
+    role: input.role,
+    objective: input.objective,
+    worktree: input.worktree,
+    workspaceMode: 'worktree',
+    toolNames: [...input.toolNames],
+    budget: input.budget ?? {},
+    ...(input.constraints === undefined
+      ? {}
+      : { constraints: [...input.constraints] }),
+    ...(input.expectedOutput === undefined
+      ? {}
+      : { expectedOutput: input.expectedOutput }),
+    ...(input.model === undefined ? {} : { model: input.model }),
+    ...(input.resources === undefined ? {} : { resources: input.resources }),
+  });
+}
+
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }

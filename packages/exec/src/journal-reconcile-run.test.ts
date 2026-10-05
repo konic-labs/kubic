@@ -264,3 +264,69 @@ describe('run-scoped reconciliation lifecycle (issue #87)', () => {
     expect(store.readBefore(sweepEntry)).toBe('v2-tool\n');
   });
 });
+
+// Issue #374 (§42.1): an interactive session is one process but many runs —
+// every prompt re-baselines, so a sweep journals only what changed during
+// that turn, tagged with the turn, and an edit made between prompts is
+// absorbed instead of attributed to the agent.
+describe('per-turn rebaseline (issue #374)', () => {
+  const begin = (root: string, store: FileJournalStore) =>
+    beginReconciliation({
+      store,
+      root,
+      runId: 'sess-374',
+      sessionId: 'sess-374',
+      agentId: 'root',
+      now: () => NOW,
+    });
+
+  it('absorbs an edit made before the rebaseline and tags the turn on the next sweep', () => {
+    const root = workspace();
+    const store = journalStore();
+    const run = begin(root, store);
+    run.rebaseline(1);
+    writeFileSync(join(root, 'agent.txt'), 'turn 1\n');
+    expect(run.sweep()).toBe(1);
+    // Between prompts: the operator edits keep.txt outside the agent.
+    writeFileSync(join(root, 'keep.txt'), 'operator edit\n');
+    run.rebaseline(2);
+    writeFileSync(join(root, 'agent2.txt'), 'turn 2\n');
+    expect(run.sweep()).toBe(1);
+    const entries = store.entries();
+    expect(entries.map((entry) => [entry.path, entry.turn])).toEqual([
+      ['agent.txt', 1],
+      ['agent2.txt', 2],
+    ]);
+    expect(entries.some((entry) => entry.path === 'keep.txt')).toBe(false);
+    expect(
+      loadBaseline(dirname(store.indexPath), 'sess-374')?.['keep.txt'],
+    ).toBe(sha256Hex('operator edit\n'));
+  });
+
+  it('a repeat sweep after the settle sweep appends nothing (idempotent quit)', () => {
+    const root = workspace();
+    const store = journalStore();
+    const run = begin(root, store);
+    run.rebaseline(1);
+    writeFileSync(join(root, 'agent.txt'), 'turn 1\n');
+    expect(run.sweep()).toBe(1);
+    expect(run.sweep()).toBe(0);
+    expect(store.entries()).toHaveLength(1);
+  });
+
+  it('a change made during the turn but before its rebaseline is not lost when swept first', () => {
+    // The loop sweeps a pending shell turn BEFORE re-baselining for the next
+    // one (a queued follow-up can start before the settle sweep ran).
+    const root = workspace();
+    const store = journalStore();
+    const run = begin(root, store);
+    run.rebaseline(1);
+    writeFileSync(join(root, 'bash-made.txt'), 'x\n');
+    expect(run.sweep()).toBe(1);
+    run.rebaseline(2);
+    expect(run.sweep()).toBe(0);
+    expect(store.entries().map((entry) => entry.path)).toEqual([
+      'bash-made.txt',
+    ]);
+  });
+});

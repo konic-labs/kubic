@@ -52,6 +52,11 @@ export interface JournalStatus {
   // reconstruct) — designed absences (unattributed hash-only pre-images,
   // deletes) are not counted.
   corrupt: number;
+  // Issue #343: index lines dropped because they do not parse — a torn
+  // tail left by a crash or a full disk. Not the same thing as `corrupt`
+  // (that counts missing content); a dropped line has no entry at all, so
+  // nothing else in this object would show it.
+  corruptLines: number;
   repo: RepoState | null;
 }
 
@@ -132,7 +137,7 @@ export function journalStatus(
   store: FileJournalStore,
   root: string,
 ): JournalStatus {
-  const entries = store.entries();
+  const { entries, corruptLines } = store.readIndex();
   let reversible = 0;
   let unattributed = 0;
   let corrupt = 0;
@@ -162,6 +167,7 @@ export function journalStatus(
     nonReversible: entries.length - reversible,
     unattributed,
     corrupt,
+    corruptLines,
     repo: readRepo(root),
   };
 }

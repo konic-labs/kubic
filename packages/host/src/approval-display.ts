@@ -92,6 +92,22 @@ const FLAG_OPERAND = new RegExp(
 const AUTHORIZATION = /authorization[ \t]*(?::[ \t]*|=)/gi;
 const BARE_BEARER = /\bbearer[ \t]+/gi;
 
+// A user flag whose operand has the `user:password` shape (curl's `-u` /
+// `--user`, its proxy twin `-U` / `--proxy-user`). The colon is required, so
+// an ordinary `-u` (`cp -u a b`, `sort -u names`) stays readable; the short
+// forms may be attached (`-uadmin:hunter2`, review of #192).
+const USER_FLAG =
+  /(?:^|[\s"'])(?:-u|-U)(?:[=\s]\s*)?|(?:^|[\s"'])(?:--user|--proxy-user)[=\s]\s*"?/gi;
+
+// URL userinfo that carries a password (`https://user:pw@host`), redacted by
+// a plain replace so the host stays visible; user-only userinfo
+// (`ssh://git@host`) is not a secret and stays readable (review of #192).
+// The scheme length is BOUNDED: an unbounded `[a-z0-9+.-]*` before the
+// required `://` backtracks over a long letter-run at every start position
+// (quadratic — the linearity test caught it), and no real scheme is 20
+// characters long.
+const URL_USERINFO = /([a-z][a-z0-9+.-]{1,20}:\/\/)[^/\s@:]+:[^/\s@]+@/gi;
+
 const AUTH_SCHEME = /(?:bearer|basic|token|digest)[ \t]+/iy;
 const BARE_SCHEME = /^(?:bearer|basic|token|digest)$/i;
 // A bare `bearer <credential>` outside a header counts only for a
@@ -187,6 +203,7 @@ const VALUE_RULES: ReadonlyArray<ValueRule> = [
   { prefix: ASSIGNED },
   { prefix: KEY_VALUE },
   { prefix: FLAG_OPERAND },
+  { prefix: USER_FLAG, only: (word) => word.includes(':') },
   { prefix: BARE_BEARER, only: (word) => CREDENTIAL.test(word) },
 ];
 
@@ -198,7 +215,9 @@ const VALUE_RULES: ReadonlyArray<ValueRule> = [
 // replaced; every other word is left as written, and so is any value that
 // carries an expansion. Display only: the approval key hashes the raw args.
 function redactApprovalSecrets(command: string): string {
-  let out = command.replace(KEY_SHAPES, REDACTED);
+  let out = command
+    .replace(KEY_SHAPES, REDACTED)
+    .replace(URL_USERINFO, `$1${REDACTED}@`);
   for (const rule of VALUE_RULES) out = redactAfter(out, rule);
   return out;
 }

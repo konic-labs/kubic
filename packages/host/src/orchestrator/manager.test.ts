@@ -31,7 +31,7 @@ import {
 } from './manager.js';
 
 describe('manager allowlist (issue #40)', () => {
-  it('registers exactly the 10 §9.2 tools', () => {
+  it('registers exactly the §9.2/§43.1 tools', () => {
     expect([...MANAGER_ALLOWLIST].sort()).toEqual(
       [
         'spawn_agent',
@@ -44,9 +44,38 @@ describe('manager allowlist (issue #40)', () => {
         'workspace_apply',
         'workspace_merge',
         'ask_user',
+        // §43.1: read-only git inspection for the manager, separate from its
+        // merge capability (issue #205).
+        'git_status',
+        'git_diff',
+        'git_log',
       ].sort(),
     );
-    expect(MANAGER_ALLOWLIST).toHaveLength(10);
+    expect(MANAGER_ALLOWLIST).toHaveLength(13);
+  });
+
+  it('accepts the three read-only git tools and refuses every mutating one (issue #205)', () => {
+    for (const tool of ['git_status', 'git_diff', 'git_log']) {
+      expect(() => assertManagerToolset([...MANAGER_ALLOWLIST])).not.toThrow();
+      expect(() => checkManagerCall(tool)).not.toThrow();
+    }
+    // §43.1 is inspection only: a lane carrying any writer git tool refuses
+    // to start, naming it — the mutating tools are never in the allowlist.
+    for (const tool of [
+      'git_commit',
+      'git_stage',
+      'git_branch',
+      'git_checkpoint',
+      'git_push',
+    ]) {
+      expect(() => registerManagerLane([...MANAGER_ALLOWLIST, tool])).toThrow(
+        new RegExp(tool),
+      );
+      expect(() => registerManagerLane([...MANAGER_ALLOWLIST, tool])).toThrow(
+        ManagerToolsetError,
+      );
+      expect(() => checkManagerCall(tool)).toThrow(ManagerPolicyBlockedError);
+    }
   });
 
   it('asserts the active set equals the allowlist exactly', () => {

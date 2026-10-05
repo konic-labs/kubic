@@ -376,6 +376,13 @@ export interface AuditQuery {
   mode?: AuditMode;
   posture?: string;
   result?: AuditResult;
+  /**
+   * An ORCHESTRATION session id (issue #159; §23): matches the run's own rows
+   * (`agent.session` is the run) and every worker it spawned (`agent.session`
+   * is the worker's `<orch>-<agent>`, `agent.parent` is the run) — so one
+   * filter reads a whole run's decisions.
+   */
+  session?: string;
 }
 
 // Full-access (and any other posture/mode slice) is queryable: exact match
@@ -388,7 +395,10 @@ export function queryAudits(
     (record) =>
       (query.mode === undefined || record.mode === query.mode) &&
       (query.posture === undefined || record.posture === query.posture) &&
-      (query.result === undefined || record.result === query.result),
+      (query.result === undefined || record.result === query.result) &&
+      (query.session === undefined ||
+        record.agent.session === query.session ||
+        record.agent.parent === query.session),
   );
 }
 

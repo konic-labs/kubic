@@ -1,7 +1,7 @@
 // Slice B: model selection, one-way escalation, thinking clamp+persist
 // (issue #20; §38).
 // RED: selectModel/escalateModel/clampThinking do not exist yet.
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -93,6 +93,10 @@ describe('model selection + escalation + thinking (issue #20, slice B)', () => {
     const bridge = createNodeFileBridge('/');
     saveThinkingLevel(bridge, dir, 'high');
     expect(loadThinkingLevel(bridge, dir)).toBe('high');
+    // Issue #361: session state is private — 0600 at creation.
+    if (process.platform !== 'win32') {
+      expect(statSync(join(dir, 'thinking.json')).mode & 0o777).toBe(0o600);
+    }
     expect(loadThinkingLevel(bridge, scratch())).toBe(null);
     // Tampered sidecar: unknown level reads back null, never propagates.
     writeFileSync(

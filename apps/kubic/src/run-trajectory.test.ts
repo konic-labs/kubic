@@ -112,6 +112,29 @@ describe('persistRunTrajectory (issue #383)', () => {
     expect(exported.provenance.model).toBe('faux/echo');
     expect(exported.model.thinking).toBeNull();
   });
+
+  it("names the manager's §67 task when the run was handed one (issue #191)", () => {
+    const { exported } = persist(
+      {},
+      {
+        role: 'implementer',
+        prompt: 'composed prompt',
+        task: {
+          taskId: 'sess-1:alpha',
+          objective: 'Plan step 1 of 1: ship it',
+          role: 'implementer',
+        },
+      },
+    );
+    expect(exported.task).toEqual({
+      taskId: 'sess-1:alpha',
+      objective: 'Plan step 1 of 1: ship it',
+      role: 'implementer',
+    });
+    // Without a task the identity stays the prompt-derived one.
+    const bare = persist({}, { prompt: 'composed prompt' });
+    expect(bare.exported.task.taskId).toMatch(/^prompt:/);
+  });
 });
 
 describe('resolveSessionTrajectory (issue #383)', () => {

@@ -18,7 +18,7 @@ import {
 } from './resolver.js';
 import {
   BUILTIN_ROLE_NAMES,
-  ROLE_MODEL_DEFAULTS,
+  ROLE_THINKING_DEFAULTS,
   spawnForRole,
 } from './roles-data.js';
 
@@ -95,27 +95,34 @@ describe('built-in role documents (issue #44)', () => {
 });
 
 describe('spawn matrix (§12 tool sets)', () => {
-  it('planner is read-only: no write/edit/bash/git tools', () => {
+  it('planner is read-only: no write/edit/git tools, bash only via the read-only shell (issue #157)', () => {
     const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
     const planner = resolveRole(docNamed(docs, 'planner'), []);
     expect(planner.tools).toContain('read');
-    for (const banned of [
-      'write',
-      'edit',
-      'bash',
-      'git_status',
-      'git_commit',
-    ]) {
+    // §12.1 gives the planner read-only inspection commands: bash is present,
+    // and the read-only shell level is what keeps it from writing.
+    expect(planner.tools).toContain('bash');
+    expect(planner.classes.shell).toBe('read-only-allowlist');
+    for (const banned of ['write', 'edit', 'git_status', 'git_commit']) {
       expect(planner.tools).not.toContain(banned);
     }
   });
 
-  it('reviewer is read-only: no write/edit/commit/bash tools', () => {
+  it('reviewer is read-only: no write/edit/commit/git tools, bash only via the read-only shell (issue #157)', () => {
     const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
     const reviewer = resolveRole(docNamed(docs, 'reviewer'), []);
     expect(reviewer.tools).toContain('read');
-    expect(reviewer.tools).toContain('git_diff');
-    for (const banned of ['write', 'edit', 'bash', 'git_commit']) {
+    expect(reviewer.tools).toContain('bash');
+    expect(reviewer.classes.shell).toBe('read-only-allowlist');
+    // §12.1: `git: false` — read-only git runs through the allowlisted shell.
+    expect(reviewer.classes.git).toBe(false);
+    for (const banned of [
+      'write',
+      'edit',
+      'git_commit',
+      'git_status',
+      'git_diff',
+    ]) {
       expect(reviewer.tools).not.toContain(banned);
     }
   });
@@ -167,30 +174,10 @@ describe('role spawn (unknown role, model defaults, overrides)', () => {
     }
   });
 
-  it('per-role model defaults resolve inside the scoped set', () => {
-    const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
-    for (const name of BUILTIN_ROLE_NAMES) {
-      const outcome = spawnForRole({
-        role: name,
-        docs,
-        sessionId: `child-${name}`,
-        parentSessionId: 'parent-1',
-        worktree: '/tmp/wt-child-1',
-      });
-      expect(outcome.ok).toBe(true);
-      if (outcome.ok) {
-        const expected = ROLE_MODEL_DEFAULTS[name];
-        expect(outcome.spec.role).toBe(name);
-        expect(outcome.spec.model).toMatchObject({
-          provider: expected.provider,
-          model: expected.model,
-          thinking: expected.thinking,
-        });
-      }
-    }
-  });
-
-  it('[roles.<r>].model overrides the role default', () => {
+  it('refuses the spawn when no level resolved a model (issue #202)', () => {
+    // §38.1: the model comes from spawn_agent({model}), [roles.<r>].model or
+    // the manager's own model — never a hardcoded provider. A caller with
+    // none of them gets a named refusal, not `local/llama3`.
     const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
     const outcome = spawnForRole({
       role: 'reviewer',
@@ -198,12 +185,56 @@ describe('role spawn (unknown role, model defaults, overrides)', () => {
       sessionId: 'child-reviewer',
       parentSessionId: 'parent-1',
       worktree: '/tmp/wt-child-1',
+    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.code).toBe('SPAWN_FAILED');
+      expect(outcome.reason).toMatch(/no model for role 'reviewer'/);
+      expect(outcome.reason).not.toMatch(/local/);
+    }
+  });
+
+  it('resolves the model as spawn override > [roles.<r>].model > the manager model (issue #202)', () => {
+    const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
+    // The manager's model is the fallback level, with the role's own thinking
+    // default — the role preset no longer names a provider.
+    for (const name of BUILTIN_ROLE_NAMES) {
+      const outcome = spawnForRole({
+        role: name,
+        docs,
+        sessionId: `child-${name}`,
+        parentSessionId: 'parent-1',
+        worktree: '/tmp/wt-child-1',
+        parentModel: 'acme/m0',
+      });
+      expect(outcome.ok).toBe(true);
+      if (outcome.ok) {
+        expect(outcome.spec.role).toBe(name);
+        expect(outcome.spec.model).toMatchObject({
+          provider: 'acme',
+          model: 'm0',
+          thinking: ROLE_THINKING_DEFAULTS[name],
+        });
+      }
+    }
+  });
+
+  it('[roles.<r>].model overrides the manager model, keeping the role thinking default', () => {
+    const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
+    const outcome = spawnForRole({
+      role: 'reviewer',
+      docs,
+      sessionId: 'child-reviewer',
+      parentSessionId: 'parent-1',
+      worktree: '/tmp/wt-child-1',
+      parentModel: 'acme/m0',
       configModel: 'acme/m2',
     });
     expect(outcome.ok).toBe(true);
     if (outcome.ok) {
       expect(outcome.spec.model.provider).toBe('acme');
       expect(outcome.spec.model.model).toBe('m2');
+      expect(outcome.spec.model.thinking).toBe(ROLE_THINKING_DEFAULTS.reviewer);
     }
   });
 

@@ -27,6 +27,7 @@ import {
   runTuiCommand,
   type TuiLaneBoot,
 } from '../../../apps/kubic/src/tui-run.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import { createLineLogger } from '../../core/src/cli/logger.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
@@ -41,6 +42,7 @@ import {
   enableSessionFullAccess,
   FileApprovalStore,
   FULL_ACCESS_FLAG,
+  installSoloPolicy,
 } from './approvals.js';
 import { auditLedgerDir, readAuditLedger } from './policy/audit-ledger.js';
 import { buildRunEnvelope, mapTerminusToExitCode } from './run-cli.js';
@@ -111,6 +113,90 @@ describe('enableSessionFullAccess: the one enable path (issue #308)', () => {
     expect(rows[0]?.posture).toBe('full-access');
     expect(rows[0]?.agent.session).toBe('sess-1');
     expect(JSON.stringify(rows[0])).toContain(`kubic run ${FULL_ACCESS_FLAG}`);
+  });
+});
+
+// Issue #234: full access used to append a `trigger:full-access` row for
+// EVERY call — read and ls included — so a session wrote one fsync'd ledger
+// record per tool call and the trail could not name what was actually
+// waived. Now the detectors run first: an untriggered call is neither
+// audited nor marked challenged, and a triggered call gets one record per
+// capability it raised, all under posture 'full-access'.
+describe('full access audits only the capabilities it waived (issue #234)', () => {
+  function fullAccessPolicy(workspace: string, sessionDir: string) {
+    enableSessionFullAccess({
+      sessionDir,
+      sessionId: 'sess-234',
+      command: 'sessions create',
+      workspace,
+    });
+    return installSoloPolicy({ workspace, sessionDir });
+  }
+
+  it('an untriggered read is not challenged and writes no ledger record', async () => {
+    const workspace = tmpRoot('ws-');
+    const sessionDir = tmpRoot('session-');
+    const policy = fullAccessPolicy(workspace, sessionDir);
+    const before = readAuditLedger(auditLedgerDir(workspace)).length;
+    await expect(
+      policy.ask({
+        toolName: 'ls',
+        args: { path: '.' },
+        toolCallId: 't1',
+      }),
+    ).resolves.toEqual({ approved: true, challenged: false });
+    await expect(
+      policy.ask({
+        toolName: 'read',
+        args: { path: 'src/index.ts' },
+        toolCallId: 't2',
+      }),
+    ).resolves.toEqual({ approved: true, challenged: false });
+    // Only the enable row exists; neither call added one.
+    const records = readAuditLedger(auditLedgerDir(workspace));
+    expect(records).toHaveLength(before);
+    expect(records.filter((row) => row.what.startsWith('tool:'))).toEqual([]);
+  });
+
+  it('a triggered call writes one record naming the capability and the posture', async () => {
+    const workspace = tmpRoot('ws-');
+    const sessionDir = tmpRoot('session-');
+    const policy = fullAccessPolicy(workspace, sessionDir);
+    await expect(
+      policy.ask({
+        toolName: 'bash',
+        args: { command: 'rm -rf build' },
+        toolCallId: 't1',
+      }),
+    ).resolves.toEqual({ approved: true, challenged: true });
+    const records = readAuditLedger(auditLedgerDir(workspace)).filter(
+      (row) => row.what === 'tool:bash',
+    );
+    expect(records).toHaveLength(1);
+    expect(records[0]?.permission.permission).toBe('trigger:destructive-shell');
+    expect(records[0]?.posture).toBe('full-access');
+    expect(records[0]?.result).toBe('ok');
+  });
+
+  it('one record per capability when a call raises several', async () => {
+    const workspace = tmpRoot('ws-');
+    const sessionDir = tmpRoot('session-');
+    const policy = fullAccessPolicy(workspace, sessionDir);
+    await expect(
+      policy.ask({
+        toolName: 'bash',
+        args: { command: 'rm -rf build && curl https://example.com' },
+        toolCallId: 't1',
+      }),
+    ).resolves.toEqual({ approved: true, challenged: true });
+    const records = readAuditLedger(auditLedgerDir(workspace)).filter(
+      (row) => row.what === 'tool:bash',
+    );
+    expect(records.map((row) => row.permission.permission).sort()).toEqual([
+      'trigger:destructive-shell',
+      'trigger:network',
+    ]);
+    for (const row of records) expect(row.posture).toBe('full-access');
   });
 });
 
@@ -291,37 +377,15 @@ describe('kubic tui --dangerously-skip-approvals (issue #308)', () => {
   });
 
   it('shows the OFF indicator and the warning when the boot is full access', async () => {
-    const writes: string[] = [];
+    const rig = terminalRig(120, 30);
     const errors: string[] = [];
-    let handler: ((data: string) => void) | undefined;
-    let started = 0;
     const flags: unknown[] = [];
     const pending = runTuiCommand(
       { dangerouslySkipApprovals: true },
       {
         out: () => undefined,
         err: (line) => errors.push(line),
-        createTerminal: () =>
-          ({
-            start: (input: (data: string) => void) => {
-              started += 1;
-              handler = input;
-            },
-            stop: () => {},
-            drainInput: () => Promise.resolve(),
-            write: (data: string) => writes.push(data),
-            columns: 120,
-            rows: 30,
-            kittyProtocolActive: false,
-            moveBy: () => {},
-            hideCursor: () => {},
-            showCursor: () => {},
-            clearLine: () => {},
-            clearFromCursor: () => {},
-            clearScreen: () => {},
-            setTitle: () => {},
-            setProgress: () => {},
-          }) as never,
+        createTerminal: () => rig.terminal,
         bootLane: async (_id, _answer, bootFlags): Promise<TuiLaneBoot> => {
           flags.push(bootFlags);
           return {
@@ -333,16 +397,16 @@ describe('kubic tui --dangerously-skip-approvals (issue #308)', () => {
         },
       },
     );
-    for (let i = 0; i < 200 && started === 0; i += 1) {
+    for (let i = 0; i < 200 && rig.counts.started === 0; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    for (let i = 0; i < 200 && !writes.join('').includes('OFF'); i += 1) {
+    for (let i = 0; i < 200 && !rig.frame.includes('OFF'); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    handler?.('\x03');
+    rig.feed('\x03');
     expect(await pending).toBe(0);
     expect(flags).toEqual([{ dangerouslySkipApprovals: true }]);
-    expect(writes.join('')).toContain('approvals OFF (full-access)');
+    expect(rig.frame).toContain('approvals OFF (full-access)');
     expect(errors.join('\n')).toContain('full-access approvals skipped');
   });
 });

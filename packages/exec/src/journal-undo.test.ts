@@ -10,7 +10,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FileJournalStore } from './journal.js';
+import { FileJournalStore, sha256Hex, sha256HexOfBytes } from './journal.js';
 import { diffEntries } from './journal-diff.js';
 import { journalStatus } from './journal-status.js';
 import { applyUndo, planUndo } from './journal-undo.js';
@@ -666,5 +666,149 @@ describe('undo of an agent-created file', () => {
     const result = applyUndo(store, planUndo(store, {}, root), root, {});
     expect(result.restored).toEqual([]);
     expect(existsSync(join(root, 'built.js'))).toBe(true);
+  });
+});
+
+// Issue #348 review: the inverse record is appended AFTER the mutation, so a
+// store whose bound cannot take that record must refuse the step BEFORE the
+// file changes. Otherwise `kubic undo` restores a file, throws, and leaves
+// the workspace changed with no undo/redo entry and no report of what
+// happened — reachable even at the default bound, because the inverse record
+// measures the pre-undo content whole plus the restored pre-image.
+describe('undo refuses a step whose inverse record cannot fit (issue #348)', () => {
+  it('leaves a restored file as it is when the record cannot fit', () => {
+    const dir = tmpRoot('j-');
+    const root = tmpRoot('ws-');
+    const before = 'a\n'.repeat(20_000); // 40 KB, stored whole
+    const after = `${before}${'b\n'.repeat(30_000)}`; // 100 KB
+    // The entry is the sweep's hash-only-after shape, so its own blobs are
+    // just the 40 KB pre-image: it fits a bound its inverse record does not.
+    const store = new FileJournalStore(dir, {
+      maxBytes: 80_000,
+      durable: false,
+    });
+    writeFileSync(join(root, 'big.txt'), after);
+    store.append({
+      path: 'big.txt',
+      op: 'write',
+      before,
+      after: null,
+      afterHash: sha256Hex(after),
+      afterOmitted: true,
+      bytesDelta: 0,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 100,
+    });
+
+    // The dry run reports the same skip, so it never promises a restore the
+    // real run refuses.
+    const dry = applyUndo(store, planUndo(store, {}, root), root, {
+      dryRun: true,
+    });
+    expect(dry.restored).toEqual([]);
+    expect(dry.skipped).toEqual(['big.txt']);
+
+    const result = applyUndo(store, planUndo(store, {}, root), root, {});
+    // The inverse record stores the 100 KB pre-undo content whole: over the
+    // 80 KB bound, so the step is refused before the file is touched.
+    expect(result.restored).toEqual([]);
+    expect(result.skipped).toEqual(['big.txt']);
+    expect(result.skippedDetails[0]?.reason).toMatch(
+      /too large to record: the inverse entry needs \d+ bytes, over the journal's 80000-byte bound/,
+    );
+    expect(result.warnings.join('\n')).toMatch(/big\.txt.*left as it is/);
+    expect(readFileSync(join(root, 'big.txt'), 'utf8')).toBe(after);
+    // Nothing was journaled either: the store still holds the one entry.
+    expect(store.entries()).toHaveLength(1);
+  });
+
+  it('keeps a created file when its removal could not be recorded', () => {
+    const dir = tmpRoot('j-');
+    const root = tmpRoot('ws-');
+    const content = 'c\n'.repeat(50_000); // 100 KB
+    const store = new FileJournalStore(dir, {
+      maxBytes: 80_000,
+      durable: false,
+    });
+    writeFileSync(join(root, 'created.txt'), content);
+    store.append({
+      path: 'created.txt',
+      op: 'create',
+      before: null,
+      after: null,
+      afterHash: sha256Hex(content),
+      afterOmitted: true,
+      bytesDelta: 0,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 100,
+    });
+
+    const result = applyUndo(store, planUndo(store, {}, root), root, {});
+    expect(result.restored).toEqual([]);
+    expect(result.skipped).toEqual(['created.txt']);
+    expect(result.skippedDetails[0]?.reason).toMatch(/too large to record/);
+    // A removal that could not be redone is never silent, and never happens.
+    expect(existsSync(join(root, 'created.txt'))).toBe(true);
+    expect(readFileSync(join(root, 'created.txt'), 'utf8')).toBe(content);
+    expect(store.entries()).toHaveLength(1);
+  });
+});
+
+// Issue #352: the inverse record's before-side is a copy of the file as it is
+// NOW (the pre-undo state). Reading it as utf-8 mangles binary bytes into
+// U+FFFD, and a following `undo --step` (the redo) would write that mangled
+// text back — corrupting the user's bytes. The create-removal path already
+// applies the byte-exact lossless rule; the restore path must too.
+describe('undo refuses to record a lossy pre-undo copy (issue #352)', () => {
+  it('records the pre-undo state hash-only when it is not lossless utf-8', () => {
+    const dir = tmpRoot('j-');
+    const root = tmpRoot('ws-');
+    const store = new FileJournalStore(dir, { durable: false });
+    writeFileSync(join(root, 'bin.dat'), 'v1\n');
+    store.append({
+      path: 'bin.dat',
+      op: 'write',
+      before: 'v1\n',
+      after: 'v2\n',
+      bytesDelta: 0,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      timestamp: 100,
+    });
+    // The file has since become binary (invalid utf-8), and the entry is
+    // restored with --force (the disk no longer matches the recorded state).
+    const binary = Buffer.from([0xff, 0xfe, 0x00, 0x41]);
+    writeFileSync(join(root, 'bin.dat'), binary);
+
+    const result = applyUndo(store, planUndo(store, {}), root, { force: true });
+    expect(result.restored).toEqual(['bin.dat']);
+    // The inverse record carries no mangled content: the raw hash, marked
+    // as a designed omission — never U+FFFD text.
+    const record = store.entries().at(-1);
+    expect(record?.agentId).toBe('kubic-undo');
+    expect(record?.beforeOmitted).toBe(true);
+    expect(record?.beforeHash).toBe(sha256HexOfBytes(binary));
+    // `bytesDelta` counts the bytes that were actually there: the 4-byte
+    // binary pre-image against the 3-byte restored text (an omitted pre-image
+    // is not "0 bytes before" — review of #352).
+    expect(record?.bytesDelta).toBe(
+      Buffer.byteLength('v1\n', 'utf8') - binary.length,
+    );
+    expect(record === undefined ? null : store.readBefore(record)).toBeNull();
+    expect(result.warnings.join('\n')).toMatch(/bin\.dat.*cannot be redone/);
+
+    // The forced restore landed the journaled pre-image...
+    expect(readFileSync(join(root, 'bin.dat'), 'utf8')).toBe('v1\n');
+    // ...and the redo refuses instead of writing mangled bytes back.
+    const redo = applyUndo(store, planUndo(store, { step: true }), root, {});
+    expect(redo.restored).toEqual([]);
+    expect(redo.skippedDetails[0]?.reason).toMatch(/no before-content/);
+    expect(readFileSync(join(root, 'bin.dat'), 'utf8')).toBe('v1\n');
+    expect(readFileSync(join(root, 'bin.dat'), 'utf8')).not.toContain('\ufffd');
   });
 });

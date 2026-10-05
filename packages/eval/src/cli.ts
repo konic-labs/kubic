@@ -14,24 +14,37 @@ import { type CliLogger, createLineLogger } from '../../core/src/cli/logger.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
-import type { EvalRecord } from './records.js';
+import { parseTrajectoryExport } from '../../trajectory/src/schema.js';
+import type { EvalDeterminism, EvalRecord } from './records.js';
 import {
+  checkEvalProvenance,
   EvalRunnerError,
   type EvalTaskDeps,
   type EvalWorkspace,
   runEvalTask,
   runEvalTrajectory,
 } from './runner.js';
-import { EVAL_SUITES, findSuite } from './suites.js';
+import { resolveSuites } from './suites.js';
 
 export const EVAL_EXIT_OK = EXIT_OK;
 export const EVAL_EXIT_FAILED = EXIT_FAILED;
 export const EVAL_EXIT_USAGE = EXIT_USAGE;
 
 // The documented default model of a record (`--model` unset).
-export const EVAL_DEFAULT_MODEL = 'faux/faux';
+// The registered id of the shipped testing provider (issue #262): the
+// fixture suites run through the real lane, so the default must name a
+// model the catalog actually holds. The host's faux provider registers
+// `faux/echo` (FAUX_MODEL_REF); the eval package cannot import host (dep
+// direction), so the ref is restated here.
+export const EVAL_DEFAULT_MODEL = 'faux/echo';
 
 export interface EvalCliDeps extends EvalTaskDeps {
+  // §48 (issue #258): `--trajectory <file>` reads the export through this
+  // seam (the exec FileBridge in prod); `--trajectory -` reads stdin.
+  // Absent means a path operand is refused by name (the inline-JSON form
+  // stays available).
+  readFile?: (path: string) => string;
+  readStdin?: () => string;
   // stdout: the record line / matrix table, or the one `--json` envelope.
   out: (line: string) => void;
   // stderr: diagnostics — usage refusals and, off --json, runner errors as
@@ -59,7 +72,7 @@ export interface EvalOptions {
   readonly thinking?: string;
   readonly worktree?: string;
   readonly generation?: string;
-  readonly tier?: string;
+  readonly size?: string;
   readonly json?: boolean;
 }
 
@@ -76,7 +89,7 @@ interface Parsed {
   thinking: string | undefined;
   worktree: string | undefined;
   generation: number | undefined;
-  tier: string;
+  size: string;
   json: boolean;
 }
 
@@ -117,10 +130,16 @@ function normalize(options: EvalOptions): Parsed | string {
   }
   let generation: number | undefined;
   if (options.generation !== undefined) {
-    generation = Number(options.generation);
-    if (options.generation.trim() === '' || !Number.isInteger(generation)) {
+    // Issue #266: only decimal digits name a generation. `Number('')` is 0,
+    // `Number('1e3')` is 1000 and `Number(' 2 ')` is 2 — accepting those
+    // invented a generation the caller never wrote.
+    if (
+      !/^\d+$/.test(options.generation) ||
+      !Number.isSafeInteger(Number(options.generation))
+    ) {
       return '--generation needs an integer';
     }
+    generation = Number(options.generation);
   }
   return {
     suite: options.suite,
@@ -131,7 +150,7 @@ function normalize(options: EvalOptions): Parsed | string {
     thinking: options.thinking,
     worktree: options.worktree,
     generation,
-    tier: options.tier ?? '',
+    size: options.size ?? '',
     json: options.json === true,
   };
 }
@@ -142,11 +161,21 @@ function emitRecord(
   json: boolean,
 ): void {
   if (json) {
-    out(formatJson({ ok: true, exitCode: EVAL_EXIT_OK, record }));
+    // The envelope reports the record's own verdict (issue #370): `ok` and
+    // `exitCode` follow `record.success`, exactly like benchmark's
+    // `{ok: allOk, exitCode}` — a gated-fail record must not print
+    // `exitCode: 0` from a process that exits 1.
+    out(
+      formatJson({
+        ok: record.success,
+        exitCode: record.success ? EVAL_EXIT_OK : EVAL_EXIT_FAILED,
+        record,
+      }),
+    );
     return;
   }
   out(
-    `eval ok: suite ${record.suite} success=${String(record.success)} cost=${record.costUsd} tokens=${record.tokens} latencyMs=${record.latencyMs} tools=${record.toolCalls} model=${record.model} worktree=${record.worktree} generation=${record.generation} tier=${record.tier}`,
+    `eval ok: suite ${record.suite} success=${String(record.success)} cost=${record.costUsd} tokens=${record.tokens} latencyMs=${record.latencyMs} tools=${record.toolCalls} model=${record.model} worktree=${record.worktree} generation=${record.generation} size=${record.size} determinism=${record.determinism}`,
   );
 }
 
@@ -185,6 +214,69 @@ function emitError(
   return EVAL_EXIT_FAILED;
 }
 
+// §48 (issue #258): `--trajectory` takes a file path like `export` and
+// `replay` do; `-` reads stdin; a value that starts with `{`/`[` is the
+// pre-#258 inline-JSON form, kept for back-compat. Every failure is a named
+// refusal: `trajectory-unreadable` (the read failed) or
+// `trajectory-malformed` (not JSON, or not a valid §46 export).
+function loadTrajectoryInput(value: string, deps: EvalCliDeps): unknown {
+  const trimmed = value.trim();
+  const inline = trimmed.startsWith('{') || trimmed.startsWith('[');
+  let raw: string;
+  if (inline) {
+    raw = trimmed;
+  } else if (trimmed === '-') {
+    if (deps.readStdin === undefined) {
+      throw new EvalRunnerError(
+        'trajectory-unreadable',
+        '--trajectory - reads stdin, but this caller supplied no stdin reader',
+      );
+    }
+    try {
+      raw = deps.readStdin();
+    } catch (error) {
+      throw new EvalRunnerError(
+        'trajectory-unreadable',
+        `cannot read stdin: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  } else {
+    if (deps.readFile === undefined) {
+      throw new EvalRunnerError(
+        'trajectory-unreadable',
+        `--trajectory ${JSON.stringify(value)} is a file path, but this caller supplied no file reader`,
+      );
+    }
+    try {
+      raw = deps.readFile(value);
+    } catch (error) {
+      throw new EvalRunnerError(
+        'trajectory-unreadable',
+        `cannot read trajectory ${JSON.stringify(value)}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch (error) {
+    throw new EvalRunnerError(
+      'trajectory-malformed',
+      inline
+        ? `--trajectory inline JSON is malformed: ${error instanceof Error ? error.message : String(error)}`
+        : `trajectory ${JSON.stringify(value)} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  try {
+    return parseTrajectoryExport(parsed);
+  } catch (error) {
+    throw new EvalRunnerError(
+      'trajectory-malformed',
+      `trajectory ${JSON.stringify(value)} is not a valid §46 export: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 // kubic eval --task ... | --trajectory ... (design §48).
 export async function runEvalCommand(
   options: EvalOptions,
@@ -200,6 +292,33 @@ export async function runEvalCommand(
     log.error("required option '--suite <id>' not specified");
     return EVAL_EXIT_USAGE;
   }
+  // Issue #262 (§73): the selector is a suite id or a category alias
+  // (`--suite swe`). eval scores ONE record, so a category with more than
+  // one suite is refused by name rather than silently picking one.
+  const selected = resolveSuites(parsed.suite);
+  if (selected === undefined) {
+    return emitError(
+      deps.out,
+      log,
+      new EvalRunnerError(
+        'unknown-suite',
+        `unknown suite ${JSON.stringify(parsed.suite)}`,
+      ),
+      parsed.json,
+    );
+  }
+  if (selected.length !== 1) {
+    return emitError(
+      deps.out,
+      log,
+      new EvalRunnerError(
+        'ambiguous-suite',
+        `--suite ${JSON.stringify(parsed.suite)} matches ${selected.length} suites — kubic eval scores one record; name the suite id`,
+      ),
+      parsed.json,
+    );
+  }
+  const suiteId = (selected[0] as { id: string }).id;
   if (parsed.task === undefined && parsed.trajectory === undefined) {
     log.error('one of --task <prompt> or --trajectory <json> is required');
     return EVAL_EXIT_USAGE;
@@ -208,13 +327,15 @@ export async function runEvalCommand(
     if (parsed.trajectory !== undefined) {
       let payload: unknown;
       try {
-        payload = JSON.parse(parsed.trajectory) as unknown;
-      } catch {
-        log.error('--trajectory needs inline trajectory export JSON');
-        return EVAL_EXIT_USAGE;
+        payload = loadTrajectoryInput(parsed.trajectory, deps);
+      } catch (error) {
+        if (error instanceof EvalRunnerError) {
+          return emitError(deps.out, log, error, parsed.json);
+        }
+        throw error;
       }
       const record = await runEvalTrajectory({
-        suite: parsed.suite,
+        suite: suiteId,
         trajectory: payload,
         ...(parsed.model === undefined ? {} : { model: parsed.model }),
         ...(parsed.thinking === undefined ? {} : { thinking: parsed.thinking }),
@@ -222,7 +343,7 @@ export async function runEvalCommand(
         ...(parsed.generation === undefined
           ? {}
           : { generation: parsed.generation }),
-        tier: parsed.tier,
+        size: parsed.size,
       });
       emitRecord(deps.out, record, parsed.json);
       return record.success ? EVAL_EXIT_OK : EVAL_EXIT_FAILED;
@@ -234,10 +355,10 @@ export async function runEvalCommand(
     }
     const record = await runEvalTask(
       {
-        suite: parsed.suite,
+        suite: suiteId,
         task: parsed.task as string,
         ...provenance,
-        tier: parsed.tier,
+        size: parsed.size,
         workspace: parsed.workspace,
       },
       deps,
@@ -255,6 +376,18 @@ export interface BenchmarkResult {
   stub: boolean;
   skipped: boolean;
   success: boolean;
+  // Issue #260 (§47.1/§72): the executed row publishes the record's own
+  // determinism tier; a skipped stub names the tier it would run at (live).
+  determinism: EvalDeterminism;
+  // §73 record fields on an executed row (issue #262); absent on a stub.
+  costUsd?: number;
+  tokens?: number;
+  latencyMs?: number;
+  toolCalls?: number;
+  model?: string;
+  thinking?: string | null;
+  worktree?: string;
+  generation?: number;
 }
 
 // kubic benchmark [--suite <id>|all] (design §82): the reproducible
@@ -276,20 +409,32 @@ export async function runBenchmarkCommand(
     log.error(provenance);
     return EVAL_EXIT_USAGE;
   }
-  const selected =
-    parsed.suite === undefined
-      ? [...EVAL_SUITES]
-      : (() => {
-          const one = findSuite(parsed.suite);
-          if (one === undefined) {
-            log.error(
-              `[unknown-suite] unknown suite ${JSON.stringify(parsed.suite)}`,
-            );
-            return null;
-          }
-          return [one];
-        })();
-  if (selected === null) return EVAL_EXIT_USAGE;
+  // Issue #264: validate provenance once, before the matrix. A stub-only
+  // selection never reaches runEvalTask (which owns this check), so without
+  // it `benchmark --suite agentic-live` reported `ok` with no size or
+  // worktree at all.
+  try {
+    checkEvalProvenance({ ...provenance, size: parsed.size });
+  } catch (error) {
+    if (error instanceof EvalRunnerError) {
+      return emitError(deps.out, log, error, parsed.json);
+    }
+    throw error;
+  }
+  // Issue #262 (§73): the selector is a suite id, a category alias
+  // (`--suite swe` → every swe-category suite), or `all`/absent.
+  const selected = resolveSuites(parsed.suite);
+  if (selected === undefined) {
+    return emitError(
+      deps.out,
+      log,
+      new EvalRunnerError(
+        'unknown-suite',
+        `unknown suite ${JSON.stringify(parsed.suite)}`,
+      ),
+      parsed.json,
+    );
+  }
   const results: BenchmarkResult[] = [];
   for (const suite of selected) {
     if (suite.stub) {
@@ -299,6 +444,7 @@ export async function runBenchmarkCommand(
         stub: true,
         skipped: true,
         success: false,
+        determinism: 'live',
       });
       continue;
     }
@@ -308,7 +454,7 @@ export async function runBenchmarkCommand(
           suite: suite.id,
           task: parsed.task ?? `benchmark:${suite.id}`,
           ...provenance,
-          tier: parsed.tier,
+          size: parsed.size,
           workspace: parsed.workspace,
         },
         deps,
@@ -319,24 +465,59 @@ export async function runBenchmarkCommand(
         stub: false,
         skipped: false,
         success: record.success,
+        determinism: record.determinism,
+        // §73 record fields (issue #262): every executed row carries how it
+        // ran, not just the verdict.
+        costUsd: record.costUsd,
+        tokens: record.tokens,
+        latencyMs: record.latencyMs,
+        toolCalls: record.toolCalls,
+        model: record.model,
+        thinking: record.thinking,
+        worktree: record.worktree,
+        generation: record.generation,
       });
     } catch (error) {
+      // A named runner refusal keeps its code (issues #262, #266): a dirty
+      // worktree is `dirty-worktree`, not a generic `eval-failed`; an
+      // unnamed throw falls back to the benchmark's documented mapping. The
+      // envelope also carries the rows already completed — a matrix that
+      // dies on suite 3 still reports suites 1–2.
+      const code =
+        error instanceof EvalRunnerError ? error.code : 'eval-failed';
       const message = error instanceof Error ? error.message : String(error);
       if (parsed.json) {
         deps.out(
           formatJson({
             ok: false,
             exitCode: EVAL_EXIT_USAGE,
-            error: { code: 'eval-failed', message },
+            error: { code, message },
+            results,
           }),
         );
+      } else if (error instanceof EvalRunnerError) {
+        log.error(`[${code}] ${message}`);
       } else {
         log.error(message);
       }
       return EVAL_EXIT_USAGE;
     }
   }
-  const allOk = results.filter((r) => !r.skipped).every((r) => r.success);
+  const executed = results.filter((r) => !r.skipped);
+  // Issue #264: a matrix with no executable suite proves nothing — it is a
+  // refusal (exit 2), never `benchmark ok` over an empty run.
+  if (executed.length === 0) {
+    return emitError(
+      deps.out,
+      log,
+      new EvalRunnerError(
+        'no-executable-suites',
+        'benchmark: no executable suites selected',
+      ),
+      parsed.json,
+    );
+  }
+  const allOk = executed.every((r) => r.success);
   const exit = allOk ? EVAL_EXIT_OK : EVAL_EXIT_FAILED;
   if (parsed.json) {
     deps.out(formatJson({ ok: allOk, exitCode: exit, results }));
@@ -356,7 +537,6 @@ export async function runBenchmarkCommand(
       { fancy: deps.fancy === true, theme },
     ),
   );
-  const executed = results.filter((r) => !r.skipped);
   const verdict = `benchmark ${allOk ? 'ok' : 'FAILED'}: ${executed.filter((r) => r.success).length}/${executed.length} suites passed, ${results.length - executed.length} stub(s) skipped`;
   deps.out(allOk ? theme.success(verdict) : theme.error(verdict));
   return exit;

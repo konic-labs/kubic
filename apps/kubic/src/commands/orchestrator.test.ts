@@ -87,6 +87,8 @@ describe('kubic orchestrate (commander)', () => {
       for (const option of [
         '-p, --prompt <text>',
         '--agents <ids>',
+        '--concurrency <n>',
+        '--on-failure <mode>',
         '--session <id>',
         '--resume',
         '--yes',
@@ -133,6 +135,7 @@ describe('kubic orchestrate (commander)', () => {
           },
           fullAccess: true,
           json: true,
+          skills: [],
         },
       },
     ]);
@@ -149,13 +152,14 @@ describe('kubic orchestrate (commander)', () => {
       prompt: 'ship it',
       session: 's1',
       resume: true,
+      skills: [],
     });
   });
 
   it('hands a flagless invocation to the runner, which owns the -p/--resume rule', async () => {
     const result = await run(['orchestrate']);
     expect(result.calls).toEqual([
-      { runner: 'orchestrate', config: CONFIG, args: {} },
+      { runner: 'orchestrate', config: CONFIG, args: { skills: [] } },
     ]);
   });
 
@@ -183,6 +187,26 @@ describe('kubic orchestrate (commander)', () => {
     );
   });
 
+  it('carries --on-failure to the runner and refuses an unknown mode (issue #169)', async () => {
+    const result = await run([
+      'orchestrate',
+      '-p',
+      'x',
+      '--on-failure',
+      'continue',
+    ]);
+    expect(result.code).toBe(0);
+    expect(result.calls[0]?.args).toEqual({
+      prompt: 'x',
+      onFailure: 'continue',
+      skills: [],
+    });
+    expectUsage(
+      await run(['orchestrate', '-p', 'x', '--on-failure', 'retry']),
+      /--on-failure.*'stop' or 'continue'/i,
+    );
+  });
+
   it('refuses malformed --agents lists with exit 2', async () => {
     for (const agents of ['good,bad/id', 'a,a', ',', '']) {
       expectUsage(
@@ -190,6 +214,50 @@ describe('kubic orchestrate (commander)', () => {
         /--agents/,
       );
     }
+  });
+
+  it('carries --concurrency to the runner, and refuses a non-positive value (issue #206)', async () => {
+    const result = await run([
+      'orchestrate',
+      '-p',
+      'x',
+      '--agents',
+      'a,b,c',
+      '--concurrency',
+      '2',
+    ]);
+    expect(result.code).toBe(0);
+    expect(result.calls[0]?.args).toEqual({
+      prompt: 'x',
+      agents: ['a', 'b', 'c'],
+      concurrency: 2,
+      skills: [],
+    });
+    // Zero, negatives and rubbish are usage errors, never a silent default.
+    for (const value of ['0', '-1', '2.5', 'many']) {
+      expectUsage(
+        await run(['orchestrate', '-p', 'x', '--concurrency', value]),
+        /--concurrency.*positive integer/i,
+      );
+    }
+  });
+
+  it('collects repeatable --skill values and hands them to the runner (issue #170)', async () => {
+    const result = await run([
+      'orchestrate',
+      '-p',
+      'x',
+      '--skill',
+      './skills/house.md',
+      '--skill',
+      '/abs/team.md',
+    ]);
+    expect(result.code).toBe(0);
+    expect(result.calls[0]?.args).toMatchObject({
+      skills: ['./skills/house.md', '/abs/team.md'],
+    });
+    // A bare --skill without a value is a usage error, never an empty skill.
+    expectUsage(await run(['orchestrate', '-p', 'x', '--skill']), /skill/);
   });
 
   it('refuses an invalid --session id with exit 2', async () => {
@@ -356,7 +424,7 @@ describe('orchestrate --dangerously-skip-approvals (issue #308)', () => {
       {
         runner: 'orchestrate',
         config: CONFIG,
-        args: { prompt: 'x', fullAccess: true },
+        args: { prompt: 'x', fullAccess: true, skills: [] },
       },
     ]);
   });
@@ -368,10 +436,41 @@ describe('orchestrate --dangerously-skip-approvals (issue #308)', () => {
       {
         runner: 'orchestrate',
         config: CONFIG,
-        args: { prompt: 'x', fullAccess: true },
+        args: { prompt: 'x', fullAccess: true, skills: [] },
       },
     ]);
     expect(result.err.join('\n')).toContain('--full-access is deprecated');
     expect(result.err.join('\n')).toContain('--dangerously-skip-approvals');
+  });
+
+  it('accepts the id:role[:provider/id] binding syntax and hands the entries to the runner (issue #178)', async () => {
+    const result = await run([
+      'orchestrate',
+      '-p',
+      'x',
+      '--agents',
+      'a:implementer,b:reviewer:acme/m2,c',
+    ]);
+    expect(result.code).toBe(0);
+    expect(result.calls[0]?.args).toMatchObject({
+      agents: ['a:implementer', 'b:reviewer:acme/m2', 'c'],
+    });
+  });
+
+  it('refuses an unknown role in --agents as a usage error before the runner runs (issue #178)', async () => {
+    expectUsage(
+      await run(['orchestrate', '-p', 'x', '--agents', 'a:teleporter']),
+      /Unknown role "teleporter" \(one of planner, implementer, tester, debugger, reviewer\)/,
+    );
+    expectUsage(
+      await run([
+        'orchestrate',
+        '-p',
+        'x',
+        '--agents',
+        'a:implementer:not-a-ref',
+      ]),
+      /must be 'provider\/id'/,
+    );
   });
 });

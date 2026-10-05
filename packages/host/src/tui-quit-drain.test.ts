@@ -25,6 +25,7 @@ import {
   TuiOrchestratorTurn,
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../exec/src/journal.js';
@@ -101,42 +102,7 @@ type Step =
   | (() => Promise<FauxMessage>);
 
 function recordingTerminal() {
-  const writes: string[] = [];
-  const counts = { started: 0, stopped: 0 };
-  let handler: ((data: string) => void) | undefined;
-  return {
-    writes,
-    counts,
-    feed: (data: string) => handler?.(data),
-    terminal: {
-      start: (input: (data: string) => void) => {
-        counts.started += 1;
-        handler = input;
-      },
-      stop: () => {
-        counts.stopped += 1;
-      },
-      drainInput: () => Promise.resolve(),
-      write: (data: string) => writes.push(data),
-      get columns(): number {
-        return 120;
-      },
-      get rows(): number {
-        return 30;
-      },
-      get kittyProtocolActive(): boolean {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    },
-  };
+  return terminalRig(120, 30);
 }
 
 async function waitFor(condition: () => boolean, ticks = 2500): Promise<void> {
@@ -268,12 +234,21 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     const pid = Number(readFileSync(pidFile, 'utf8').trim());
     pids.push(pid);
     expect(alive(pid)).toBe(true);
-    fake.feed('\x1b'); // Esc quits mid-turn
+    fake.feed('\x1b'); // Esc mid-turn: the first press cancels (issue #302)
+    // Issue #302: Esc mid-turn goes through the cancel-first path — the
+    // first press cancels the turn and keeps the session, the second one
+    // quits and drains like the second Ctrl-C.
+    await waitFor(() => fake.writes.join('').includes('cancelling'));
+    fake.feed('\x1b'); // second press: quit and drain
     expect(await exit).toBe(0);
     await waitFor(() => !alive(pid), 500);
     expect(existsSync(join(h.workspace, 'late.txt'))).toBe(false);
     const opId = h.admitted[0] ?? '';
-    expect(h.events).toEqual([`abort:${opId}`, 'close']);
+    // Two presses, two abort requests: the first Esc cancelled the turn
+    // (issue #302) and the second quit, whose drain re-asserts the abort
+    // before closing. The lane treats the repeat as a no-op, and the
+    // session still records exactly the one settlement below.
+    expect(h.events).toEqual([`abort:${opId}`, `abort:${opId}`, 'close']);
     // Resume: the interrupted work settled, nothing dangles (#396's durable
     // read), and the settlement is the abort the quit asked for.
     const sessionId = h.boots[0]?.sessionId ?? '';
@@ -375,6 +350,11 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     await submit(fake, 'hang');
     await waitFor(() => h.admitted.length === 1);
     fake.feed('\x1b');
+    // Issue #302: Esc mid-turn goes through the cancel-first path — the
+    // first press cancels the turn and keeps the session, the second one
+    // quits and drains like the second Ctrl-C.
+    await waitFor(() => fake.writes.join('').includes('cancelling'));
+    fake.feed('\x1b'); // second press: quit and drain
     await waitFor(() => fake.writes.join('').includes('cancelling'));
     expect(timers.map((timer) => timer.ms)).toEqual([1234]);
     expect(fake.counts.stopped).toBe(0);
@@ -408,6 +388,11 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     await submit(fake, 'hang');
     await waitFor(() => h.admitted.length === 1);
     fake.feed('\x1b');
+    // Issue #302: Esc mid-turn goes through the cancel-first path — the
+    // first press cancels the turn and keeps the session, the second one
+    // quits and drains like the second Ctrl-C.
+    await waitFor(() => fake.writes.join('').includes('cancelling'));
+    fake.feed('\x1b'); // second press: quit and drain
     await waitFor(() => fake.writes.join('').includes('cancelling'));
     for (const heldOrReleased of [
       '\x1b[99;5:2u', // Ctrl-C key repeat
@@ -476,6 +461,11 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
         h.events.push('kill');
       });
       fake.feed('\x1b');
+      // Issue #302: Esc mid-turn goes through the cancel-first path — the
+      // first press cancels the turn and keeps the session, the second one
+      // quits and drains like the second Ctrl-C.
+      await waitFor(() => fake.writes.join('').includes('cancelling'));
+      fake.feed('\x1b'); // second press: quit and drain
       await waitFor(() => timers.length === 1);
       timers[0]?.();
       // The close gets its own fresh bound (the drain consumed the first).
@@ -525,6 +515,11 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
         h.events.push('kill');
       });
       fake.feed('\x1b');
+      // Issue #302: Esc mid-turn goes through the cancel-first path — the
+      // first press cancels the turn and keeps the session, the second one
+      // quits and drains like the second Ctrl-C.
+      await waitFor(() => fake.writes.join('').includes('cancelling'));
+      fake.feed('\x1b'); // second press: quit and drain
       await waitFor(() => timers.length === 1);
       timers[0]?.();
       await waitFor(() => timers.length === 2);
@@ -551,6 +546,11 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
       await submit(fake, 'hang');
       await waitFor(() => h.admitted.length === 1);
       fake.feed('\x1b');
+      // Issue #302: Esc mid-turn goes through the cancel-first path — the
+      // first press cancels the turn and keeps the session, the second one
+      // quits and drains like the second Ctrl-C.
+      await waitFor(() => fake.writes.join('').includes('cancelling'));
+      fake.feed('\x1b'); // second press: quit and drain
       await waitFor(() => fake.writes.join('').includes('cancelling'));
       fake.feed('\x03');
       // The close's fresh bound is the second timer; fire it.
@@ -625,7 +625,12 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     // is the gated one, so the turn is still running.
     await waitFor(() => fake.writes.join('').includes('✓ bash'));
     h.boots[0]?.loop?.kills.track(opId, release);
-    fake.feed('\x1b'); // Esc quits mid-turn; the kill releases the gate
+    fake.feed('\x1b'); // Esc mid-turn: the first press cancels (issue #302); the kill releases the gate
+    // Issue #302: Esc mid-turn goes through the cancel-first path — the
+    // first press cancels the turn and keeps the session, the second one
+    // quits and drains like the second Ctrl-C.
+    await waitFor(() => fake.writes.join('').includes('cancelling'));
+    fake.feed('\x1b'); // second press: quit and drain
     expect(await exit).toBe(0);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(sweeps).toBe(0);
@@ -648,6 +653,11 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     await submit(fake, 'hang');
     await waitFor(() => h.admitted.length === 1);
     fake.feed('\x1b');
+    // Issue #302: Esc mid-turn goes through the cancel-first path — the
+    // first press cancels the turn and keeps the session, the second one
+    // quits and drains like the second Ctrl-C.
+    await waitFor(() => fake.writes.join('').includes('cancelling'));
+    fake.feed('\x1b'); // second press: quit and drain
     await waitFor(() => timers.length === 1);
     timers[0]?.();
     // The close's own fresh bound is the second timer.

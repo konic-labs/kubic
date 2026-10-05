@@ -113,7 +113,7 @@ describe('guard drain, prod path (issue #109)', () => {
         env: new NodeExecutionEnv(workspace),
       },
     );
-    expect(result.terminus).toBe('budget_exhausted');
+    expect(result.terminus).toBe('timeout');
     // The child wrote its own pid immediately, then slept; the drain ran
     // before runHeadlessPrompt returned, so nothing can write the pidfile
     // after this point — it must already be there (no polling for it).

@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
+import { orchestratorStateRoot } from './orchestrator/approvals/worker-asks.js';
 import {
   auditLedgerDir,
   auditLedgerDirFor,
@@ -119,10 +120,17 @@ describe('orchestrate from a linked worktree resolves the repo runtime root (iss
     // Nothing split off into the linked worktree's own `.kubic/`.
     expect(existsSync(join(auditLedgerDir(linked), 'audit.jsonl'))).toBe(false);
 
-    // The worker-ask store (mailbox + decisions) the child is told about.
+    // The worker-ask store (mailbox + decisions) the child is told about: it
+    // is keyed by the REPO runtime root — so a run started in the linked
+    // worktree and one started in the main checkout share it — and it lives
+    // under the user home, outside the repo and every worktree (issue #149).
     expect(readdirSync(dump)).toEqual(['worker-1.approvals']);
     const mailbox = readFileSync(join(dump, 'worker-1.approvals'), 'utf8');
-    expect(mailbox.startsWith(join(main, '.kubic', 'orchestrator'))).toBe(true);
+    expect(mailbox).toBe(
+      join(orchestratorStateRoot(join(main, '.kubic', 'orchestrator')), 'lk1'),
+    );
+    expect(mailbox.startsWith(main)).toBe(false);
+    expect(mailbox.startsWith(linked)).toBe(false);
     expect(
       existsSync(join(linked, '.kubic', 'orchestrator', 'approvals')),
     ).toBe(false);

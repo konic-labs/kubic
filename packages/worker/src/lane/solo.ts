@@ -33,6 +33,7 @@ import {
   type ModelThinkingLevel,
   type Registry,
   section,
+  type ToolRegistration,
 } from '../pi-boundary.js';
 import {
   assembleSystemPrompt,
@@ -45,13 +46,18 @@ import {
   type SystemPromptInput,
   type TaskAffinity,
 } from '../prompts.js';
+import { createSessionSpillSink } from '../spill.js';
 import { OperationKillRegistry } from './abort.js';
 import {
   type PolicyInterceptorOptions,
   policyInterceptorHooks,
 } from './interceptors.js';
-import { applyToolPolicy, toolsForNames } from './policy.js';
-import type { SessionHandle } from './session-store.js';
+import {
+  applyToolPolicy,
+  PolicyRefusedError,
+  toolsForNames,
+} from './policy.js';
+import { laneConversationIdOf, type SessionHandle } from './session-store.js';
 import { type KubicToolContext, kubicToolsToPiTools } from './tools-adapter.js';
 import {
   composeTools,
@@ -238,6 +244,13 @@ export interface SoloBootOptions {
   // class-derived policy so the role is the narrower of the two (a role
   // can only narrow, never widen, what the permission classes allow).
   toolAllowlist?: string[];
+  // §40.1 mechanism 1 (issue #273): the per-invocation tool selection
+  // (`--tools <a,b>`). Intersected with the class/role/enterprise sets — a
+  // selection can only narrow, never widen. `noTools` is the empty set (a
+  // chat-only run); the two are mutually exclusive and a library caller
+  // that sets both is refused by name.
+  toolSelection?: string[];
+  noTools?: boolean;
   // Resumed-session model identity (issue #148; §21, §26.1). The root
   // conversation's `pi.agent` document restores a resumed session's STORED
   // model; `model` only seeds a new conversation. When they differ:
@@ -262,6 +275,11 @@ export interface SoloBootOptions {
   // extensions, and a caller-supplied selection could uninstall the tools,
   // the prompt and every policy hook silently (review #394 low 3).
   settings?: Omit<HarnessSettings, 'compaction' | 'extensions'>;
+  // Issue #154 (§14.2): tools that ask the HUMAN something (an orchestrator
+  // worker's `ask_user`). They are interactions, not capabilities: offered
+  // beside the base tools and outside the role / class / enterprise gates
+  // (which narrow what the agent may DO), but never under `--no-tools`.
+  interactionTools?: readonly ToolRegistration[];
 }
 
 function resolveStoredModel(
@@ -378,8 +396,13 @@ export async function bootSoloLane(
     agentId: options.agentId,
     kills,
     ...(options.journal === undefined ? {} : { journal: options.journal }),
+    // Issue #182: clipped bash output spills into the session directory, so
+    // it is pruned with the session and never lands in the workspace.
+    spill: createSessionSpillSink(options.session.dir),
   };
-  const baseTools = kubicToolsToPiTools(toolContext);
+  const interactionTools =
+    options.noTools === true ? [] : [...(options.interactionTools ?? [])];
+  const baseTools = [...kubicToolsToPiTools(toolContext), ...interactionTools];
   // §12.1/§40/§58 intersection (issues #99, #143, #288): the tools the
   // conversation offers and the tools the prompt advertises are ONE set —
   // base tools, narrowed by the permission classes when declared, by the
@@ -397,7 +420,17 @@ export async function bootSoloLane(
   const enterpriseGate = options.policy?.toolAllowed;
   const baseNames = baseTools.map((tool) => tool.name);
   const registeredNames = new Set(baseNames);
-  const roleNames = options.toolAllowlist ?? baseNames;
+  if (options.toolSelection !== undefined && options.noTools === true) {
+    throw new PolicyRefusedError(
+      '--tools and --no-tools are mutually exclusive',
+    );
+  }
+  let roleNames = options.toolAllowlist ?? baseNames;
+  if (options.toolSelection !== undefined) {
+    const selected = new Set(options.toolSelection);
+    roleNames = roleNames.filter((tool) => selected.has(tool));
+  }
+  if (options.noTools === true) roleNames = [];
   let effectiveToolNames =
     classAllowed === undefined
       ? [...roleNames]
@@ -413,11 +446,18 @@ export async function bootSoloLane(
   effectiveToolNames = effectiveToolNames.filter((tool) =>
     registeredNames.has(tool),
   );
+  for (const tool of interactionTools) {
+    if (!effectiveToolNames.includes(tool.name))
+      effectiveToolNames.push(tool.name);
+  }
   // Without a role or enterprise gate, applyToolPolicy already installs the
   // class-derived allowlist; only the two narrowing paths need their own
   // activation (and their set can never exceed the class-derived one).
   const mustActivateTools =
-    options.toolAllowlist !== undefined || enterpriseGate !== undefined;
+    options.toolAllowlist !== undefined ||
+    options.toolSelection !== undefined ||
+    options.noTools === true ||
+    enterpriseGate !== undefined;
 
   // Compaction (#399): reserveTokens is a live getter over the window of the
   // conversation's CURRENT model. It reads the attached `pi.agent` document
@@ -519,7 +559,20 @@ export async function bootSoloLane(
     { models: options.models, registry, settings },
     context,
   );
-  const conversation = await harness.root(context);
+  // Issue #265: a forked session's lane runs its recorded fork, never the
+  // reserved root (which holds the source's whole history in the copy).
+  const forkedLane = options.session.meta.conversation;
+  const conversation =
+    forkedLane === undefined
+      ? await harness.root(context)
+      : await harness.conversation(
+          laneConversationIdOf(options.session.meta),
+          context,
+        );
+  if (conversation === undefined)
+    throw new Error(
+      `session ${options.session.id}: its lane conversation ${forkedLane} is missing`,
+    );
   // The live `pi.agent` document drives currentWindow: attached once here,
   // disposed by close(). `value` is the committed state, so a configure from
   // any caller (this module, the TUI, a headless switch) moves the reserve.

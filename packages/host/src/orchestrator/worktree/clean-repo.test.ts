@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { NodeExecutionEnv } from '../../../../exec/src/env.js';
+import { approvalsSessionDir } from '../approvals/worker-asks.js';
 import { type CleanOptions, runCleanCommand } from './clean.js';
 
 const scratchDirs: string[] = [];
@@ -207,17 +208,30 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     ).toContain('feature/foreign');
   });
 
-  it('refuses outside a git repo with exit 2 without touching anything', async () => {
+  it('refuses outside a git repo with exit 5 without touching anything', async () => {
     const dir = plainDir();
     writeFileSync(join(dir, 'keep.txt'), 'keep\n');
 
-    for (const options of [{}, { dryRun: true }]) {
+    for (const options of [{}, { dryRun: true }, { json: true }]) {
       const { code, lines, errs } = await clean(dir, options);
-      expect(lines).toEqual([]);
       const text = errs.join('\n');
-      expect(code).toBe(2);
+      expect(code).toBe(5);
       expect(text).toContain('needs a git repository');
       expect(text).toContain('nothing was removed');
+      if (options.json === true) {
+        // The refusal is machine-readable under --json too (issue #372).
+        expect(lines).toHaveLength(1);
+        expect(JSON.parse(lines[0] as string)).toMatchObject({
+          ok: false,
+          exitCode: 5,
+          dryRun: false,
+          worktrees: [],
+          branches: [],
+          journal: { entries: 0, bytes: 0 },
+        });
+      } else {
+        expect(lines).toEqual([]);
+      }
     }
     expect(existsSync(join(dir, 'keep.txt'))).toBe(true);
   });
@@ -323,10 +337,14 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
       return join(stateDir, `${session}.json`);
     };
 
-    // Approvals state a run leaves under `approvals/<session>/` (the full-access
-    // record, memoized decisions, the ask mailbox) beside the repo-wide ledger.
+    // Approvals state a run leaves for one session (the full-access record,
+    // memoized decisions, the ask mailbox): under the user home, keyed by the
+    // repo runtime root (issue #149), while the ledger stays in the repo.
     const writeApprovals = (root: string, session: string) => {
-      const dir = join(root, '.kubic', 'orchestrator', 'approvals', session);
+      const dir = approvalsSessionDir(
+        join(root, '.kubic', 'orchestrator'),
+        session,
+      );
       mkdirSync(join(dir, 'asks'), { recursive: true });
       writeFileSync(join(dir, 'skip-records.json'), '[{"sessionId":"x"}]');
       writeFileSync(join(dir, 'decisions.json'), '{"k":{"approved":true}}');

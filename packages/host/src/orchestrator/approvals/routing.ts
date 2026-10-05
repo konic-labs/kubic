@@ -12,15 +12,31 @@ export type OrchestratorVerdict =
   | { approved: true; by: string }
   | { approved: false; reason: string };
 
+// A stored entry the store could not authenticate (issue #149): the file was
+// written by something other than this process's manager — a worker's bash, a
+// sibling, an earlier run. Reported so the router can drop AND audit it, never
+// silently ignore it.
+export interface DroppedDecision {
+  key: string;
+  reason: string;
+}
+
+export interface DecisionLoad {
+  decisions: Record<string, OrchestratorVerdict>;
+  dropped: readonly DroppedDecision[];
+}
+
 export interface DecisionStore {
-  load(): Record<string, OrchestratorVerdict>;
+  load(): DecisionLoad;
   save(decisions: Record<string, OrchestratorVerdict>): void;
 }
 
 export class MemoryDecisionStore implements DecisionStore {
   private decisions: Record<string, OrchestratorVerdict> = {};
-  load(): Record<string, OrchestratorVerdict> {
-    return { ...this.decisions };
+  load(): DecisionLoad {
+    // In memory only, and never outside this process: nothing here can have
+    // been planted by anyone else, so nothing needs authentication.
+    return { decisions: { ...this.decisions }, dropped: [] };
   }
   save(decisions: Record<string, OrchestratorVerdict>): void {
     this.decisions = { ...decisions };
@@ -30,8 +46,12 @@ export class MemoryDecisionStore implements DecisionStore {
 export interface RouterOptions {
   maxPendingMs: number;
   store?: DecisionStore;
+  // Issue #409: the signal aborts when the router's own bound expires, so a
+  // seat that presented the ask (the TUI overlay) withdraws exactly that ask
+  // instead of showing a request the router already denied.
   awaitAnswer?: (
     request: OrchestratorApprovalRequest,
+    signal?: AbortSignal,
   ) => Promise<OrchestratorVerdict | undefined>;
   audit?: (event: { type: string; detail: string }) => void;
 }
@@ -125,12 +145,23 @@ export function createOrchestratorRouter(
   const store = options.store ?? new MemoryDecisionStore();
   const audit = options.audit ?? defaultRouterAudit;
   const decisions = new Map<string, OrchestratorVerdict>();
+  const loaded = store.load();
+  // Unauthenticated entries (issue #149) are dropped before anything else:
+  // decision state lives outside the repository precisely because it is the
+  // state a worker would plant, so an entry this manager did not seal is
+  // evidence of a write, not a decision. Audited, then scrubbed below.
+  for (const drop of loaded.dropped) {
+    audit({
+      type: 'orchestrator-decision-seed-dropped',
+      detail: `${drop.key} ${drop.reason} dropped — user prompt required`,
+    });
+  }
   // Store-loaded verdicts are validated at construction: only
   // {approved:true, by:'user'} approvals are honored. A seeded non-user
   // approval (recomputed key + by:'manager') is dropped with an audit
   // record, so it cannot bypass the user prompt. Loaded denials are kept
   // but untrusted (see trustedDenials): they never auto-decide.
-  for (const [key, verdict] of Object.entries(store.load())) {
+  for (const [key, verdict] of Object.entries(loaded.decisions)) {
     if (verdict.approved && verdict.by !== 'user') {
       audit({
         type: 'orchestrator-decision-seed-dropped',
@@ -242,10 +273,16 @@ export function createOrchestratorRouter(
       });
       return verdict;
     };
-    const answer = options.awaitAnswer?.(req);
+    const presented = new AbortController();
+    const answer = options.awaitAnswer?.(req, presented.signal);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<undefined>((resolve) => {
-      timer = setTimeout(() => resolve(undefined), options.maxPendingMs);
+      timer = setTimeout(() => {
+        // The bound expired: withdraw the presentation BEFORE the deny
+        // settles, so no seat keeps an answered-by-timeout ask on screen.
+        presented.abort();
+        resolve(undefined);
+      }, options.maxPendingMs);
       timer.unref?.();
     });
     const promise: Promise<OrchestratorVerdict> =

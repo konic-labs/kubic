@@ -28,7 +28,9 @@ import {
   isNetworkCommand,
   type PolicyInterceptorOptions,
   policyInterceptorHooks,
+  readOnlyViolation,
   redactReason,
+  redactSecrets,
 } from './interceptors.js';
 
 const openHarnesses: Harness[] = [];
@@ -150,7 +152,13 @@ function probeTools(world: World) {
 }
 
 interface BootOptions {
-  calls: Array<{ name: string; args: Record<string, JsonValue> }>;
+  calls?: Array<{ name: string; args: Record<string, JsonValue> }>;
+  // Issue #194: a scripted multi-turn sequence (each inner array is one
+  // assistant tool-use message) whose entries may pin a provider call id,
+  // for the duplicate-id and empty-id stand-down cases.
+  turns?: Array<
+    Array<{ name: string; args: Record<string, JsonValue>; id?: string }>
+  >;
   policy?: PolicyInterceptorOptions;
   // A hook in the `kubic.budget` extension, installed BEFORE kubic.policy.
   budgetHooks?: HookRegistration[];
@@ -168,10 +176,21 @@ async function boot(options: BootOptions): Promise<Booted> {
   const faux = fauxProvider();
   const models = createModels();
   models.setProvider(faux.provider);
+  const turns = options.turns ?? [
+    (options.calls ?? []).map((call) => ({ ...call, id: undefined })),
+  ];
   faux.setResponses([
-    fauxAssistantMessage(
-      options.calls.map((call) => fauxToolCall(call.name, call.args)),
-      { stopReason: 'toolUse' },
+    ...turns.map((calls) =>
+      fauxAssistantMessage(
+        calls.map((call) =>
+          fauxToolCall(
+            call.name,
+            call.args,
+            call.id === undefined ? {} : { id: call.id },
+          ),
+        ),
+        { stopReason: 'toolUse' },
+      ),
     ),
     fauxAssistantMessage('done'),
   ]);
@@ -410,6 +429,78 @@ describe('policyInterceptorHooks on a real harness (issue #397)', () => {
     expect(results[0]?.isError).toBe(false);
     expect(results[1]?.text).toContain('destructive command blocked');
   });
+
+  it('keys the stand-down on the exact call, not the provider id (issue #194)', async () => {
+    let asks = 0;
+    const booted = await boot({
+      turns: [
+        [{ name: 'bash', args: { command: 'rm -rf /tmp/x' }, id: 'call_0' }],
+        [{ name: 'read', args: { path: '/etc/passwd' }, id: 'call_0' }],
+      ],
+      policy: {
+        workspace: '/work',
+        approve: async () => {
+          asks += 1;
+          return asks === 1
+            ? { approved: true, challenged: true }
+            : { approved: true, challenged: false };
+        },
+      },
+    });
+    await drive(booted);
+    expect(asks).toBe(2);
+    // The approved bash call ran; the later read reused `call_0` and is
+    // still confined — the stand-down was for the bash call's arguments.
+    expect(booted.world.calls.map((call) => call.name)).toEqual([
+      'bash',
+      'read',
+    ]);
+    expect(booted.world.calls[1]?.args.path).toBe('/work/etc/passwd');
+  });
+
+  it('spends the stand-down after the approved call (issue #194)', async () => {
+    let asks = 0;
+    const booted = await boot({
+      turns: [
+        [{ name: 'bash', args: { command: 'rm -rf /tmp/x' }, id: 'call_0' }],
+        [{ name: 'bash', args: { command: 'rm -rf /tmp/x' }, id: 'call_0' }],
+      ],
+      policy: {
+        workspace: '/work',
+        approve: async () => {
+          asks += 1;
+          // Only the first call is challenged and granted; the identical
+          // repeat is approved on the fast path, so only a stale stand-down
+          // could let it skip the guard.
+          return asks === 1
+            ? { approved: true, challenged: true }
+            : { approved: true, challenged: false };
+        },
+      },
+    });
+    await drive(booted);
+    expect(asks).toBe(2);
+    expect(booted.world.calls).toHaveLength(1);
+    const results = await toolResults(booted.root);
+    expect(results[0]?.isError).toBe(false);
+    expect(results[1]?.text).toContain('destructive command blocked');
+  });
+
+  it('never honours a stand-down for an empty call id (issue #194)', async () => {
+    const booted = await boot({
+      turns: [[{ name: 'bash', args: { command: 'rm -rf /tmp/x' }, id: '' }]],
+      policy: {
+        workspace: '/work',
+        approve: async () => ({ approved: true, challenged: true }),
+      },
+    });
+    await drive(booted);
+    // The approval granted, but an empty id is not an identity: the guard
+    // stays up rather than standing down for whatever comes next.
+    expect(booted.world.calls).toHaveLength(0);
+    const results = await toolResults(booted.root);
+    expect(results[0]?.text).toContain('destructive command blocked');
+  });
 });
 
 describe('hook ordering (issue #208)', () => {
@@ -512,6 +603,202 @@ describe('policy interceptor state lifetime (issue #397)', () => {
     expect(
       (await toolResults(second.root)).every((result) => !result.isError),
     ).toBe(true);
+  });
+});
+
+describe('secret redaction (issue #192)', () => {
+  // §36.1 rule 2: these strings reach the trajectory, the §60 ledger, the
+  // TUI and the orchestrator's mailbox ask JSON, so every probe must come
+  // back with no secret material. Probes are faux material only.
+  const PROBES: ReadonlyArray<readonly [string, readonly string[]]> = [
+    ['Authorization: Bearer sk-live-123', ['sk-live-123']],
+    ['Authorization hunter2', ['hunter2']],
+    ['--authorization hunter2', ['hunter2']],
+    ['authorization: basic dXNlcjpwYXNzd29yZA==', ['dXNlcjpwYXNzd29yZA==']],
+    ['curl -H "Authorization: Bearer sk-live-123" https://x', ['sk-live-123']],
+    ['curl -u admin:hunter2 https://x', ['admin:hunter2', 'hunter2']],
+    ['curl -uadmin:hunter2 https://x', ['admin:hunter2', 'hunter2']],
+    ['curl -U admin:hunter2 https://x', ['admin:hunter2']],
+    ['curl --user admin:hunter2 https://x', ['admin:hunter2']],
+    ['curl --user=admin:hunter2 https://x', ['admin:hunter2']],
+    ['curl --proxy-user admin:hunter2 https://x', ['admin:hunter2']],
+    [
+      'git clone https://user:pw123456@github.com/x',
+      ['user:pw123456', 'pw123456'],
+    ],
+    ['echo ghp_abcdef123456', ['ghp_abcdef123456']],
+    ['echo AKIAFAUXTESTKEY00012', ['AKIAFAUXTESTKEY00012']],
+    ['rm --token abc123 /x', ['abc123']],
+  ];
+
+  it.each(PROBES)('redacts every secret in %s', (probe, secrets) => {
+    const out = redactSecrets(probe);
+    for (const secret of secrets) expect(out).not.toContain(secret);
+  });
+
+  it('keeps ordinary flags, prose and user-only URLs readable', () => {
+    for (const text of [
+      'cp -u a b',
+      'sort -u names.txt',
+      'ssh://git@github.com/x',
+      'echo user@example.com',
+    ]) {
+      expect(redactSecrets(text), text).toBe(text);
+    }
+  });
+
+  it('redacts block reasons and approval summaries through the same path', () => {
+    const reason = redactReason(
+      'network command blocked: curl -H "Authorization: Bearer sk-live-123" https://x',
+    );
+    expect(reason).not.toContain('sk-live-123');
+    expect(reason).toContain('[REDACTED]');
+  });
+});
+
+describe('read-only shell allowlist (issue #161)', () => {
+  it.each([
+    'ls',
+    'ls -la',
+    'ls && cat a',
+    'cat a | grep x',
+    'head -n 5 f; tail -n 5 f',
+    'wc -l f',
+    'rg TODO src',
+    'find . -name "*.ts"',
+    'git status',
+    'git -C /work diff HEAD',
+    'git --no-pager log -1',
+    'git show HEAD',
+    'cat < f',
+    // Single-quoted text is literal to the shell: no expansion, no redirect.
+    "cat '$F'",
+    "R='> out'; cat a",
+  ])('allows %s', (command) => {
+    expect(readOnlyViolation(command), command).toBeUndefined();
+  });
+
+  it.each([
+    ['echo x > a', 'redirection'],
+    ['echo x >> a', 'redirection'],
+    ['ls > out.txt', 'redirection'],
+    ['cat x | tee y', 'tee'],
+    ['sed -i s/a/b/ f', 'sed -i'],
+    ['sed --in-place s/a/b/ f', 'sed -i'],
+    ['perl -pi -e s/a/b/ f', 'perl -i'],
+    ['find . -exec rm {} ;', '-exec'],
+    ['find . -delete', '-delete'],
+    ['git commit -m x', 'commit'],
+    ['git push', 'push'],
+    ['npm test', 'npm'],
+    ['node -e "fs.writeFileSync(1,2)"', 'node'],
+    ['rm -rf x', 'rm'],
+    ['ls | xargs rm', 'xargs'],
+    // Review of #161: a single `&` is a separator too, or everything after
+    // it escapes the allowlist.
+    ['ls & git commit -m x', 'commit'],
+    ['ls & sed -i s/a/b/ f', 'sed -i'],
+    ['ls & tee y', 'tee'],
+    ['ls & cp a b', 'cp'],
+    // Shell expansion is never interpreted, so an allowed head verb must not
+    // launder another command through it (fail closed on `$`).
+    ['cat $(git commit -m x)', 'command substitution'],
+    ['cat `npm test`', 'command substitution'],
+    // Review round 2: process substitution runs a command too.
+    ['cat <(git commit -m x)', 'process substitution'],
+    ['cat <(sed -i s/a/b/ f)', 'process substitution'],
+    ["R='> out'; cat a $R", 'shell-expanded'],
+    ['cat a $R', 'shell-expanded'],
+    ['cat "$R"', 'shell-expanded'],
+    // Write/exec flags under an allowed verb.
+    ['git diff --output=out.patch', '--output'],
+    ['rg --pre "cat" pattern', '--pre'],
+    // Review round 2: git global options that execute code.
+    ['git -c diff.external=x diff', '-c'],
+    ['git -c core.pager=x log', '-c'],
+    ['git --exec-path=/tmp log', '--exec-path'],
+    ['git --upload-pack=/tmp/x log', '--upload-pack'],
+  ])('blocks %s naming %s', (command, needle) => {
+    const reason = readOnlyViolation(command);
+    expect(reason, command).toBeDefined();
+    expect(reason, command).toContain(needle);
+  });
+
+  it('blocks a write anywhere in a pipeline, not only the head', () => {
+    expect(readOnlyViolation('cat a; echo x > b')).toContain('redirection');
+    expect(readOnlyViolation('ls && git commit -m x')).toContain('commit');
+  });
+
+  it('blocks non-allowlisted commands in the lane and lets the allowlist run', async () => {
+    const booted = await boot({
+      calls: [
+        { name: 'bash', args: { command: 'ls && cat a' } },
+        { name: 'bash', args: { command: 'echo x > a' } },
+        { name: 'bash', args: { command: 'npm test' } },
+      ],
+      policy: { workspace: '/work', shell: 'read-only-allowlist' },
+    });
+    await drive(booted);
+    const results = await toolResults(booted.root);
+    expect(results[0]?.isError).toBe(false);
+    expect(results[1]?.text).toContain('read-only');
+    expect(results[2]?.text).toContain('read-only');
+    expect(booted.world.calls.map((call) => call.args.command)).toEqual([
+      'ls && cat a',
+    ]);
+  });
+
+  it('runs the read-only presets’ checks and blocks writes, destructive and network calls (issue #157)', async () => {
+    // The reviewer/planner presets run their targeted checks through this
+    // level (`.kubic/roles/{reviewer,planner}.md`: `shell:
+    // read-only-allowlist`, `git: false`), so a lane on it must let a
+    // read-only command through — including read-only git, which is how the
+    // reviewer inspects a diff without a git tool — and block everything that
+    // writes, destroys or dials out.
+    const booted = await boot({
+      calls: [
+        { name: 'bash', args: { command: 'git diff --stat' } },
+        { name: 'bash', args: { command: 'ls && cat a' } },
+        { name: 'bash', args: { command: 'echo x > a' } },
+        { name: 'bash', args: { command: 'rm -rf build' } },
+        { name: 'bash', args: { command: 'curl https://example.com' } },
+      ],
+      policy: { workspace: '/work', shell: 'read-only-allowlist' },
+    });
+    await drive(booted);
+    const results = await toolResults(booted.root);
+    expect(results[0]?.isError).toBe(false);
+    expect(results[1]?.isError).toBe(false);
+    // Each refusal names its own guard: the redirect is the read-only
+    // allowlist, the `rm` the destructive guard, the `curl` the network
+    // guard — all three blocked before the shell sees them.
+    expect(results[2]?.isError).toBe(true);
+    expect(results[2]?.text).toContain('read-only');
+    expect(results[3]?.isError).toBe(true);
+    expect(results[3]?.text).toMatch(/destructive/);
+    expect(results[4]?.isError).toBe(true);
+    expect(results[4]?.text).toMatch(/network/);
+    // Only the two read-only commands reached the shell.
+    expect(booted.world.calls.map((call) => call.args.command)).toEqual([
+      'git diff --stat',
+      'ls && cat a',
+    ]);
+  });
+
+  it('leaves shell:true unchanged', async () => {
+    const booted = await boot({
+      calls: [
+        { name: 'bash', args: { command: 'echo x > a' } },
+        { name: 'bash', args: { command: 'npm test' } },
+        { name: 'bash', args: { command: 'node -e "1"' } },
+      ],
+      policy: { workspace: '/work', shell: true },
+    });
+    await drive(booted);
+    expect(
+      (await toolResults(booted.root)).every((result) => !result.isError),
+    ).toBe(true);
+    expect(booted.world.calls).toHaveLength(3);
   });
 });
 

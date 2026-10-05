@@ -16,7 +16,21 @@ export interface WorkerListRow {
   workerId: string;
   sessionId: string;
   generation: number;
+  /** §13 PROCESS status (issue #151): spawning | ready | exiting. */
   status: string;
+  /** §13 AGENT status (issue #151): starting | running | waiting | settling |
+   *  completed | failed | cancelled | timeout | budget_exhausted |
+   *  spawn_failed. Optional so an embedder that only knows the process phase
+   *  still lists its rows (the column then shows `-`). */
+  agentStatus?: string;
+  /** The signal the process died from, when it was signalled (issue #151). */
+  signal?: string;
+  /** §51 cancel outcome (issue #249): `settled` (the worker's own shutdown
+   *  finished inside its grace) or `forced` (the SIGKILL escalation beat it). */
+  cancel?: string;
+  /** The named failure the worker settled on (§82, issue #163): the resource
+   *  code a limit breach carries, or the §52 code of a crash. */
+  failure?: { code: string; message: string };
   startedAtMs: number;
   owner: string;
   resources?: TaskResources;
@@ -73,10 +87,18 @@ function formatResources(resources: TaskResources | undefined): string {
   return parts.length > 0 ? parts.join(' ') : '-';
 }
 
-// §13 statuses by tone: the run is fine, still settling, or ended badly.
-const GOOD_STATUSES: ReadonlySet<string> = new Set(['running', 'completed']);
+// §13 statuses by tone (issue #151): the AGENT column carries the outcome
+// the operator acts on; the PROCESS column carries the child's own phase, so
+// `exiting / settling` reads as "the child is gone, the manager is validating
+// its work" — which the old single status could only render as `crashed`.
+const GOOD_STATUSES: ReadonlySet<string> = new Set([
+  'running',
+  'completed',
+  'ready',
+]);
 const BAD_STATUSES: ReadonlySet<string> = new Set([
   'spawn_failed',
+  'failed',
   'crashed',
   'timeout',
   'budget_exhausted',
@@ -91,7 +113,8 @@ function styleStatus(status: string, theme: CliTheme): string {
 
 const COLUMNS: readonly TableColumn[] = [
   { header: 'WORKER' },
-  { header: 'STATUS' },
+  { header: 'AGENT' },
+  { header: 'PROCESS' },
   { header: 'GEN', align: 'right' },
   { header: 'AGE' },
   { header: 'OWNER' },
@@ -115,6 +138,10 @@ export async function runWorkersCommand(
           sessionId: row.sessionId,
           generation: row.generation,
           status: row.status,
+          agentStatus: row.agentStatus,
+          ...(row.signal === undefined ? {} : { signal: row.signal }),
+          ...(row.cancel === undefined ? {} : { cancel: row.cancel }),
+          ...(row.failure === undefined ? {} : { failure: row.failure }),
           ageMs: now - row.startedAtMs,
           owner: row.owner,
           resources: row.resources,
@@ -133,7 +160,14 @@ export async function runWorkersCommand(
       renderTable(
         rows.map((row) => [
           row.workerId,
-          styleStatus(row.status, theme),
+          row.agentStatus === undefined
+            ? '-'
+            : row.failure === undefined
+              ? styleStatus(row.agentStatus, theme)
+              : `${styleStatus(row.agentStatus, theme)}(${row.failure.code})`,
+          row.signal === undefined
+            ? styleStatus(row.status, theme)
+            : `${styleStatus(row.status, theme)}(${row.signal})`,
           String(row.generation),
           formatAge(now - row.startedAtMs),
           row.owner,

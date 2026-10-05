@@ -53,6 +53,25 @@ describe('permission policy model (issue #15, slice A)', () => {
     expect(tools.sort()).toEqual(['find', 'grep', 'ls', 'read'].sort());
   });
 
+  // Issue #161: `read-only-allowlist` keeps the bash TOOL (the command
+  // allowlist is enforced by the lane's guard, not by removing bash) and
+  // `shell: true` is unchanged — the level distinction never narrows the
+  // full shell.
+  it('keeps bash for both shell levels, and narrows only the guard', () => {
+    expect(
+      toolsForClasses({ ...SOLO_DEFAULTS, shell: 'read-only-allowlist' }),
+    ).toContain('bash');
+    expect(toolsForClasses({ ...SOLO_DEFAULTS, shell: true })).toContain(
+      'bash',
+    );
+    expect(
+      checkAgreement(
+        { ...SOLO_DEFAULTS, shell: 'read-only-allowlist' },
+        toolsForClasses({ ...SOLO_DEFAULTS, shell: 'read-only-allowlist' }),
+      ).agree,
+    ).toBe(true);
+  });
+
   it('refuses contradictory roles with named reasons', () => {
     const read = checkAgreement({ ...SOLO_DEFAULTS, filesystem: 'read' }, [
       'read',

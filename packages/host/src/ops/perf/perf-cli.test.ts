@@ -3,6 +3,9 @@
 // the required --budget, --help) is commander's and is pinned in
 // apps/kubic/src/commands/analysis.test.ts; this file drives the handler
 // over parsed options and asserts stdout and stderr separately.
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { REDACTED_SECRET } from '../../policy/secret-shapes.js';
 import { evaluateBudget } from './budgets.js';
@@ -296,17 +299,43 @@ describe('kubic perf measured mode (issue #98, criterion 2)', () => {
   it('defaults to real measurement in prod without an injected dep', async () => {
     // A live `kubic perf --measure` must not depend on the composition root
     // passing a source: the CLI binds the real measurement module by
-    // default. attach has no live source yet, so the default is exercised
+    // default. teardown has no live source yet, so the default is exercised
     // and the kind is refused by name — proving the default is the measured
     // path, not a fabricated pass.
     const cap = capture();
     const code = await runPerfCommand(
-      { budget: 'attach', measure: true },
+      { budget: 'teardown', measure: true },
       cap.deps,
     );
     expect(code).toBe(2);
     expect(cap.errs.join('\n')).toMatch(/no live measurement source/);
   });
+
+  it('measures the §61 attach row against a real sessions root (issue #158)', async () => {
+    // The default measurement path, with the sessions root pointed at a temp
+    // dir: real session create/attach cycles, no fabricated numbers.
+    const root = mkdtempSync(join(tmpdir(), 'perf-attach-cli-'));
+    try {
+      const cap = capture({ measureSessionsRoot: root });
+      const code = await runPerfCommand(
+        { budget: 'attach', measure: true, json: true },
+        cap.deps,
+      );
+      expect(code).toBe(0);
+      const report = JSON.parse(cap.lines.join('\n')) as {
+        kind: string;
+        source: string;
+        count: number;
+      };
+      expect(report).toMatchObject({
+        kind: 'attach',
+        source: 'measured',
+        count: 5,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it('maps an unmeasurable kind to a named failure, never a fabricated pass', async () => {
     const cap = capture({

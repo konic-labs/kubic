@@ -7,6 +7,7 @@ import {
 } from './export.js';
 import {
   parseTrajectoryExport,
+  SCHEMA_VERSION,
   TRAJECTORY_FAILURE_CODES,
   TRAJECTORY_FIELDS,
 } from './schema.js';
@@ -159,12 +160,28 @@ describe('trajectory golden fixture (issue #51, §46)', () => {
     expect(Object.keys(exported).sort()).toEqual(
       Object.keys(TRAJECTORY_FIELDS).sort(),
     );
-    expect(exported.schema_version).toBe('1.0');
+    expect(exported.schema_version).toBe(SCHEMA_VERSION);
     expect(exported.task.taskId).toBe('task-1');
     expect(exported.identity).toEqual({
       sessionId: 'sess-1',
       agentId: 'agent-1',
       workerId: 'worker-1',
+      parentSessionId: null,
+      role: 'writer',
+    });
+    // 1.1 (issue #329): every new field is present on a write, with
+    // explicit null/[] meaning "not recorded" — never an invented value.
+    expect(exported.state.operations).toEqual([]);
+    expect(exported.state.memos).toEqual([]);
+    expect(exported.result.tests).toEqual([]);
+    expect(exported.result.artifacts).toEqual([]);
+    expect(exported.approvals[0]).toEqual({
+      approvalId: 'appr-1',
+      capability: 'destructive-shell',
+      verdict: 'approved',
+      by: 'user',
+      requested: null,
+      justification: null,
     });
     expect(exported.model.provider).toBe('acme');
     expect(exported.model.escalations).toEqual([]);
@@ -199,6 +216,106 @@ describe('trajectory golden fixture (issue #51, §46)', () => {
     expect(revived.actions).toHaveLength(2);
     expect(revived.environment.env).toEqual({});
     expect(revived.eval.labels).toEqual({});
+  });
+});
+
+describe('trajectory schema 1.1 (issue #329)', () => {
+  it('carries the additive §46 fields and round-trips through the parser', () => {
+    const exported = buildTrajectoryExport(
+      completeInput({
+        identity: {
+          sessionId: 'sess-2',
+          agentId: 'agent-2',
+          workerId: null,
+          parentSessionId: 'sess-1',
+          role: 'reviewer',
+        },
+        model: {
+          provider: 'acme',
+          model: 'm2',
+          thinking: 'high',
+          escalations: [
+            {
+              reason: 'context overflow',
+              at: '2026-10-04T10:00:30.000Z',
+              fromModel: 'acme/m1',
+              toModel: 'acme/m2',
+              thinking: 'high',
+            },
+          ],
+        },
+        state: {
+          phase: 'done',
+          snapshot: { step: 2 },
+          operations: [
+            { id: 'op-1', kind: 'read' },
+            { id: 'op-2', kind: 'edit' },
+          ],
+          memos: ['memo://a'],
+        },
+        approvals: [
+          {
+            approvalId: 'appr-2',
+            capability: 'destructive-shell',
+            verdict: 'denied',
+            by: 'user',
+            requested: 'rm -rf build (redacted)',
+            justification: 'not needed for this task',
+          },
+        ],
+        result: {
+          status: 'failed',
+          summary: 'gave up',
+          failureCategory: 'model_refused',
+          error: { kind: 'refusal', message: 'no' },
+          tests: ['vitest:packages/trajectory'],
+          artifacts: ['artifact://coverage/lcov.info'],
+        },
+      }),
+    );
+    expect(exported.schema_version).toBe(SCHEMA_VERSION);
+    const revived = parseTrajectoryExport(
+      JSON.parse(JSON.stringify(exported)) as unknown,
+    );
+    expect(revived.identity.parentSessionId).toBe('sess-1');
+    expect(revived.identity.role).toBe('reviewer');
+    expect(revived.model.escalations[0]).toEqual({
+      reason: 'context overflow',
+      at: '2026-10-04T10:00:30.000Z',
+      fromModel: 'acme/m1',
+      toModel: 'acme/m2',
+      thinking: 'high',
+    });
+    expect(revived.state.operations).toEqual([
+      { id: 'op-1', kind: 'read' },
+      { id: 'op-2', kind: 'edit' },
+    ]);
+    expect(revived.state.memos).toEqual(['memo://a']);
+    expect(revived.approvals[0]?.requested).toBe('rm -rf build (redacted)');
+    expect(revived.approvals[0]?.justification).toBe(
+      'not needed for this task',
+    );
+    expect(revived.result.tests).toEqual(['vitest:packages/trajectory']);
+    expect(revived.result.artifacts).toEqual(['artifact://coverage/lcov.info']);
+  });
+
+  it('refuses an escalation without toModel', () => {
+    const build = (): unknown =>
+      buildTrajectoryExport(
+        completeInput({
+          model: {
+            provider: 'acme',
+            model: 'm1',
+            thinking: null,
+            escalations: [{ reason: 'risk', at: '2026-10-04T10:00:30.000Z' }],
+          },
+        }),
+      );
+    expect(build).toThrowError(TrajectoryExportError);
+    expect(build).toThrowError(
+      expect.objectContaining({ code: 'invalid-escalation' }),
+    );
+    expect(build).toThrowError(/model\.escalations\[0\]\.toModel is required/);
   });
 });
 
@@ -408,6 +525,29 @@ describe('trajectory review fixes (round 2)', () => {
       output: 5,
       costTotal: 0.01,
     });
+  });
+
+  it('defaults usage.byModel to an empty record when the caller omits it (issue #331)', () => {
+    const exported = buildTrajectoryExport(
+      completeInput({
+        // A runtime caller that never built the per-model rollup: the
+        // declared TrajectoryUsage contract still requires the field, so
+        // the exporter must supply it rather than emit a record the
+        // parser refuses.
+        usage: {
+          inputTokens: 10,
+          outputTokens: 5,
+          cachedTokens: 0,
+          requests: 1,
+          costUsd: 0.01,
+        } as BuildTrajectoryInput['usage'],
+      }),
+    );
+    expect(exported.usage.byModel).toEqual({});
+    const revived = parseTrajectoryExport(
+      JSON.parse(JSON.stringify(exported)) as unknown,
+    );
+    expect(revived.usage.byModel).toEqual({});
   });
 
   // Issue #359 replaces the old "records the used env VERBATIM" premise: the

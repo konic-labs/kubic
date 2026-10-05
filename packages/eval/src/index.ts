@@ -16,16 +16,19 @@ export {
   runExportCommand,
 } from './export-cli.js';
 export type {
+  EvalDeterminism,
   EvalRecord,
   EvalRecordInput,
-  EvalTier,
+  EvalSize,
   ReconcileResult,
   RecordValidation,
   UsageRowLike,
 } from './records.js';
 export {
-  EVAL_TIERS,
-  isEvalTier,
+  DETERMINISM_TIERS,
+  EVAL_SIZES,
+  isEvalDeterminism,
+  isEvalSize,
   reconcileUsage,
   validateEvalRecord,
 } from './records.js';

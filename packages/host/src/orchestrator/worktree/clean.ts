@@ -19,6 +19,7 @@ import {
   EXIT_FAILED,
   EXIT_OK,
   EXIT_USAGE,
+  EXIT_WORKSPACE,
 } from '../../../../core/src/cli/exit-codes.js';
 import { createLineLogger } from '../../../../core/src/cli/logger.js';
 import { formatJson } from '../../../../core/src/cli/output.js';
@@ -27,10 +28,14 @@ import {
   createCliTheme,
 } from '../../../../core/src/cli/theme.js';
 import type { ExecutionEnv, Provenance } from '../../../../exec/src/env.js';
-import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
+import {
+  createNodeFileBridge,
+  liveLockHolder,
+} from '../../../../exec/src/file-bridge.js';
 import {
   DEFAULT_JOURNAL_MAX_BYTES,
   FileJournalStore,
+  journalMutationLockPath,
 } from '../../../../exec/src/journal.js';
 import {
   commandOwnsSession,
@@ -73,8 +78,11 @@ export const CLEAN_EXIT_OK = EXIT_OK;
 
 export const CLEAN_EXIT_FAILURE = EXIT_FAILED;
 
-// §78: 2 is usage *and* the non-repo refusal (nothing is mutated either way).
+// §78: 2 is usage; the non-repo refusal is 5 (workspace_unavailable, issue
+// #372) — a well-formed invocation whose workspace cannot run the command.
 export const CLEAN_EXIT_USAGE = EXIT_USAGE;
+
+export const CLEAN_EXIT_WORKSPACE = EXIT_WORKSPACE;
 
 export interface CleanOptions {
   dryRun?: boolean;
@@ -96,6 +104,15 @@ export interface CleanPlan {
 export interface JournalPruneResult {
   entries: number;
   bytes: number;
+  // Issue #348: bytes the kept journal is still over the retention bound by,
+  // when the newest entry alone cannot fit — it is never dropped, so the
+  // excess is reported instead of deleted. 0 means the bound holds.
+  overBound: number;
+  // Issue #337: the pid holding the journal's mutation lock, when the prune
+  // was skipped because a writer is live. Pruning under a live run can drop
+  // entries it just appended and delete blobs it just wrote, so the pass
+  // steps aside and says who it stepped aside for.
+  lockedBy?: number;
 }
 
 export interface CleanDeps {
@@ -311,7 +328,18 @@ function defaultPruneJournal(
   policy: { maxAgeMs?: number; maxBytes?: number },
   repoRoot: string,
 ): JournalPruneResult {
-  const store = new FileJournalStore(join(repoRoot, '.kubic', 'journal'));
+  const dir = join(repoRoot, '.kubic', 'journal');
+  // Issue #337: a live writer holds the journal's mutation lock for the
+  // length of one mutation, but `kubic clean --journal` is a destructive
+  // pass over the whole store — under a live run it can drop entries the run
+  // just appended and delete blobs it just wrote. It steps aside instead.
+  const holder = liveLockHolder(
+    journalMutationLockPath(join(dir, 'index.jsonl')),
+  );
+  if (holder !== undefined) {
+    return { entries: 0, bytes: 0, overBound: 0, lockedBy: holder };
+  }
+  const store = new FileJournalStore(dir);
   return store.enforceRetention(policy);
 }
 
@@ -360,7 +388,7 @@ async function defaultResolveRepoRoot(
 }
 
 function noopPrune(): JournalPruneResult {
-  return { entries: 0, bytes: 0 };
+  return { entries: 0, bytes: 0, overBound: 0 };
 }
 
 function messageOf(error: unknown): string {
@@ -432,16 +460,35 @@ export async function runCleanCommand(
   // (issue #133) — `[orchestrator].root`, `.kubic/wt` by default.
   const worktreeRoot = deps.worktreeRoot;
 
-  // Outside a git repo the refusal is explicit and non-destructive: exit 2
-  // before any list or mutation (§78), never a silent solo-like no-op.
+  // Outside a git repo the refusal is explicit and non-destructive: exit 5
+  // before any list or mutation (§78, issue #372), never a silent
+  // solo-like no-op. Under `--json` the same one-document envelope a run
+  // emits is printed (nothing planned, nothing touched, exitCode 5) so the
+  // refusal is machine-readable too; text mode keeps stdout empty and the
+  // one stderr `error:` line.
+  const refuseNonRepo = (message: string): number => {
+    log.error(message);
+    if (options.json === true) {
+      deps.out(
+        formatJson({
+          ok: false,
+          exitCode: CLEAN_EXIT_WORKSPACE,
+          dryRun: options.dryRun === true,
+          worktrees: [],
+          branches: [],
+          journal: noopPrune(),
+        }),
+      );
+    }
+    return CLEAN_EXIT_WORKSPACE;
+  };
   const repoRoot =
     deps.repoRoot ??
     (await (deps.resolveRepoRoot ?? defaultResolveRepoRoot)(deps.env));
   if (repoRoot === undefined) {
-    log.error(
+    return refuseNonRepo(
       '`kubic clean` needs a git repository — it disposes retained `kubic/<session>/<agent>` worktrees and branches only; nothing was removed. Run solo here (`kubic run -p`) or retry inside a git checkout',
     );
-    return CLEAN_EXIT_USAGE;
   }
 
   let plan: CleanPlan;
@@ -504,8 +551,7 @@ export async function runCleanCommand(
   } catch (error) {
     if (isWorktreeError(error)) {
       if (error.code === 'not_a_repo') {
-        log.error(`${error.message} — nothing was removed`);
-        return CLEAN_EXIT_USAGE;
+        return refuseNonRepo(`${error.message} — nothing was removed`);
       }
       log.error(error.message);
       return error.exitCode;
@@ -738,9 +784,21 @@ export async function runCleanCommand(
     deps.out(theme.muted('clean: nothing to prune'));
   }
   if (bounded) {
-    deps.out(
-      `journal: pruned ${journal.entries} entr(ies), freed ${journal.bytes} byte(s)`,
-    );
+    if (journal.lockedBy !== undefined) {
+      // Issue #337: a skipped prune is never silent — it is a different
+      // outcome from "nothing to prune".
+      deps.out(
+        `journal: prune skipped — the journal is in use (pid ${journal.lockedBy})`,
+      );
+    } else {
+      const over =
+        journal.overBound > 0
+          ? `, over bound by ${journal.overBound} byte(s) (newest entry kept)`
+          : '';
+      deps.out(
+        `journal: pruned ${journal.entries} entr(ies), freed ${journal.bytes} byte(s)${over}`,
+      );
+    }
   }
   return exitCode;
 }

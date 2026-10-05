@@ -16,6 +16,7 @@ import {
   type TrajectoryDiff,
   type TrajectoryDurableState,
   type TrajectoryEnvironment,
+  type TrajectoryEscalation,
   type TrajectoryEvalSlot,
   type TrajectoryExport,
   type TrajectoryIdentity,
@@ -45,7 +46,8 @@ export type TrajectoryExportErrorCode =
   | 'missing-failure-category'
   | 'contradictory-result'
   | 'invalid-timestamps'
-  | 'invalid-usage';
+  | 'invalid-usage'
+  | 'invalid-escalation';
 
 export class TrajectoryExportError extends Error {
   readonly code: TrajectoryExportErrorCode;
@@ -262,7 +264,13 @@ function checkUsage(input: BuildTrajectoryInput): TrajectoryUsage {
       }
     }
   }
-  return usage;
+  // Issue #331: the declared contract requires usage.byModel (a record of
+  // per-model rows). A caller that omits it gets the empty record, never
+  // an export the parser (and every consumer) would refuse.
+  return {
+    ...usage,
+    byModel: (isRecord(byModel) ? byModel : {}) as TrajectoryUsage['byModel'],
+  };
 }
 
 // §52 on failures: every non-completed result carries its failure
@@ -328,6 +336,25 @@ function checkResult(input: BuildTrajectoryInput): TrajectoryResult {
   return result as TrajectoryResult;
 }
 
+// 1.1 (issue #329): every escalation must name the model it moved to —
+// an escalation without a target cannot be attributed to a model in RL
+// pairing or cost analysis. Fail-closed, never a silently target-less
+// record.
+function checkEscalations(
+  escalations: TrajectoryEscalation[],
+): TrajectoryEscalation[] {
+  return escalations.map((escalation, index) => {
+    const toModel = escalation?.toModel;
+    if (typeof toModel !== 'string' || toModel.trim() === '') {
+      throw new TrajectoryExportError(
+        'invalid-escalation',
+        `trajectory export blocked: model.escalations[${index}].toModel is required — an escalation without its target model cannot be attributed`,
+      );
+    }
+    return escalation;
+  });
+}
+
 function truncateObservations(
   observations: RawObservation[],
 ): TrajectoryObservation[] {
@@ -379,22 +406,48 @@ export function buildTrajectoryExport(
   return {
     schema_version: SCHEMA_VERSION,
     task: input.task,
-    identity: input.identity,
-    model: input.model,
+    identity: {
+      ...input.identity,
+      // 1.1 (issue #329): ancestry + agent role. An absent parent is an
+      // explicit null and an absent role falls back to the task's own —
+      // a 1.1 write never omits the fields.
+      parentSessionId: input.identity.parentSessionId ?? null,
+      role: input.identity.role ?? input.task.role,
+    },
+    model: {
+      ...input.model,
+      escalations: checkEscalations(input.model.escalations),
+    },
     prompt: input.prompt,
     resources: input.resources,
     transfer: input.transfer ?? null,
     actions: input.actions,
     observations: truncateObservations(input.observations),
-    state: input.state,
+    state: {
+      ...input.state,
+      // 1.1: no leaf/memo recorded is an empty list, never a missing key.
+      operations: input.state.operations ?? [],
+      memos: input.state.memos ?? [],
+    },
     provenance,
     environment,
     worktree: input.worktree,
     diff: input.diff,
-    approvals: input.approvals,
+    approvals: input.approvals.map((approval) => ({
+      ...approval,
+      // 1.1: null means not recorded — never an invented justification.
+      requested: approval.requested ?? null,
+      justification: approval.justification ?? null,
+    })),
     timestamps,
     usage,
-    result: { ...result, error },
+    result: {
+      ...result,
+      error,
+      // 1.1: refs only; no evidence recorded is an empty list.
+      tests: result.tests ?? [],
+      artifacts: result.artifacts ?? [],
+    },
     eval: input.eval ?? { suite: null, caseId: null, labels: {} },
   };
 }

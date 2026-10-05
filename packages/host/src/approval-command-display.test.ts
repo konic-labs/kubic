@@ -27,6 +27,7 @@ import {
   buildOrchestratorRequest,
   type OrchestratorApprovalRequest,
 } from './orchestrator/approvals/request.js';
+import { createApprovalSigner } from './orchestrator/approvals/seal.js';
 import {
   ASKS_DIR,
   answerWorkerAsk,
@@ -145,10 +146,14 @@ describe('orchestrator worker asks forward the full command (issue #316)', () =>
   it('a worker ask delivers the full command to the manager seat', async () => {
     const dir = tmp();
     mkdirSync(join(dir, ASKS_DIR), { recursive: true });
+    // The manager's sealing authority here; the child seat verifies with its
+    // public half (issue #149).
+    const signer = createApprovalSigner();
     const childSeat = createWorkerMailboxSeat({
       dir,
       maxPendingMs: 5000,
       pollMs: 2,
+      verifyKey: signer.verifyKey,
     });
     const verdict = childSeat({
       key: 'k',
@@ -160,8 +165,14 @@ describe('orchestrator worker asks forward the full command (issue #316)', () =>
       command: PADDED,
       justification: 'clean the build output before rebuilding',
     });
-    await waitFor(() => readPendingWorkerAsks(dir).length === 1);
-    const published = readPendingWorkerAsks(dir)[0];
+    await waitFor(
+      () =>
+        readPendingWorkerAsks(dir, { verifyKey: signer.verifyKey }).length ===
+        1,
+    );
+    const published = readPendingWorkerAsks(dir, {
+      verifyKey: signer.verifyKey,
+    })[0];
     if (published === undefined) throw new Error('no ask published');
     const shown: OrchestratorApprovalRequest[] = [];
     const router = createWorkerAskRouter({
@@ -184,10 +195,15 @@ describe('orchestrator worker asks forward the full command (issue #316)', () =>
       worktree: request.worktree,
       provenance: request.provenance,
     });
-    answerWorkerAsk(dir, request.key, {
-      approved: false,
-      reason: outcome.approved ? 'unexpected' : outcome.reason,
-    });
+    answerWorkerAsk(
+      dir,
+      published,
+      {
+        approved: false,
+        reason: outcome.approved ? 'unexpected' : outcome.reason,
+      },
+      signer,
+    );
     await verdict;
     expect(shown[0]?.command).toBe(PADDED);
   });
@@ -264,6 +280,12 @@ describe('the displayed command never hides a non-secret word (issue #316)', () 
     'echo token =abc rm',
     // A quoted value never spans a newline, even through a backslash.
     'PASSWORD="abc\\\nrm -rf x"',
+    // A user flag with no password shape is an ordinary flag; user-only
+    // userinfo is not a secret.
+    'cp -u a b',
+    'sort -u names.txt',
+    'curl -u admin https://example.test',
+    'ssh://git@github.com/x',
   ])('%s is displayed unchanged', (command) => {
     expect(approvalCommandText(command)).toBe(command);
   });
@@ -310,7 +332,23 @@ describe('the displayed command never hides a non-secret word (issue #316)', () 
     ['PRIVATE_KEY=abc rm', 'PRIVATE_KEY=[REDACTED] rm'],
     [
       'curl https://u:p4ss@host/x?token=abc&y=1',
-      'curl https://u:p4ss@host/x?token=[REDACTED]&y=1',
+      'curl https://[REDACTED]@host/x?token=[REDACTED]&y=1',
+    ],
+    [
+      'curl -u admin:hunter2 https://example.test',
+      'curl -u [REDACTED] https://example.test',
+    ],
+    [
+      'curl -uadmin:hunter2 https://example.test',
+      'curl -u[REDACTED] https://example.test',
+    ],
+    [
+      'curl --user=admin:hunter2 https://example.test',
+      'curl --user=[REDACTED] https://example.test',
+    ],
+    [
+      'git clone https://user:pw123456@host/x',
+      'git clone https://[REDACTED]@host/x',
     ],
     [
       'curl -H "Authorization: Bearer abc.def.ghi" https://example.test',

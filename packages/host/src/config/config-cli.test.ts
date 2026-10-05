@@ -44,6 +44,7 @@ function runtime(): RuntimeConfig {
     },
     modes: { solo: true, orchestrator: false, source: 'defaults' },
     orchestrator: {},
+    verify: { commands: {} },
     budgets: {
       configured: false,
       detail: 'no budgets are defaulted by config (§71)',

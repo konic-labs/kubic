@@ -14,10 +14,11 @@ imports nothing internal — `scripts/dep-lint.mjs` rejects any
 
 | Module | Status | Exports |
 | --- | --- | --- |
-| `presentation.ts` | Implemented | `KubicPresentationState` + sub-interfaces, `PRESENTATION_STATE_FIELDS`, `PRESENTATION_COMMANDS`, `isPresentationCommand` |
+| `presentation.ts` | Implemented | `KubicPresentationState` + sub-interfaces (session/agent/budget/lane/tool/worker/approval/usage/connection), `PRESENTATION_STATE_FIELDS`, `PRESENTATION_COMMANDS`, `isPresentationCommand` |
 | `license.ts` | Implemented | `KUBIC_LICENSE`, `KUBIC_LICENSE_FILE`, `formatVersionLine`, `formatLicenseDetail` |
 | `protocol.ts` | Pointer | Owner module open — reserves the contract location (no wire protocol yet) |
 | `secret-keys.ts` | Implemented | `isSecretEnvKey`, `redactSecretEnv`, `REDACTED_ENV_VALUE` — the one secret env-key classifier shared by the worker spawn env and the trajectory exporter (#359) |
+| `secret-shapes.ts` | Implemented | `containsSecretShape`, `findSecretShapes`, `redactSecretShapes`, `REDACTED_SECRET` — the shared secret-shape table (sk-/AKIA/ghp_/xox-/PEM/bearer) composed by the host audit backstop and the worker's `redactSecrets` (#57, #192) |
 | `policy.ts` | Pointer | Permission-policy model lives in `@kubic/agents` `policy.ts` (#15) |
 | `session.ts` | Pointer | Session shapes live in `@kubic/worker` `lane/session-store.ts` (#14) |
 | `index.ts` | Pointer | No barrel — import `presentation.js` / `license.js` directly |
@@ -43,26 +44,34 @@ manager.
 | `usage` | `UsageTotals` |
 | `connection` | `ConnectionState` |
 
-`PRESENTATION_STATE_FIELDS` pins the same seven keys (`session`,
-`agents`, `lanes`, `workers`, `approvals`, `usage`, `connection`) via
+`PRESENTATION_STATE_FIELDS` pins exactly those seven keys via
 `satisfies Record<keyof KubicPresentationState, true>` — adding or
-removing a field breaks compilation.
+removing a field breaks compilation, and the projector re-checks the same
+list at runtime before every hand-out.
 
-Sub-interfaces, field-for-field:
+Sub-interfaces, field-for-field (issue #333 fleshed out the stubs):
 
 | Interface | Fields |
 | --- | --- |
-| `SessionSnapshot` | `sessionId: string` |
-| `AgentSummary` | `agentId: string`, `role: string`, `status: string` |
-| `LaneSnapshot` | `laneId: string` |
-| `WorkerSummary` | `workerId: string` |
-| `ApprovalRequest` | `requestId: string` |
-| `UsageTotals` | `inputTokens: number`, `outputTokens: number`, `costUsd: number` |
-| `ConnectionState` | `status: 'connected' \| 'disconnected' \| 'reconnecting'` |
+| `SessionSnapshot` | `sessionId: string`, `model?: string`, `thinking?: string`, `mode: 'solo' \| 'orchestrator'`, `approvalsSkipped: boolean` |
+| `AgentSummary` | `agentId`, `role`, `status`, `workspace?`, `budget?: BudgetSummary` |
+| `BudgetSummary` | `inputTokens`, `outputTokens`, `costUsd`, `limitUsd?` |
+| `LaneSnapshot` | `laneId`, `agentId`, `status: 'idle'\|'running'\|'done'`, `tools: LaneToolSnapshot[]`, `queued: string[]`, `compacting: boolean`, `fault?`, `retrying?` |
+| `LaneToolSnapshot` | `toolCallId`, `toolName`, `status: 'running'\|'done'`, `isError`, `args?`, `entry?`, `durationMs?` |
+| `WorkerSummary` | `workerId`, `role?`, `status?`, `workspace?`, `budget?`, `generation?`, `model?`, `inputTokens?`, `outputTokens?`, `costUsd?` (issue #342: the orchestrator view's per-agent facts) |
+| `ApprovalRequest` | `requestId`, `toolName?`, `capability?`, `detail?` |
+| `UsageTotals` | `inputTokens`, `outputTokens`, `costUsd`, `requests?`, `cacheReadTokens?`, `cacheWriteTokens?` |
+| `ConnectionState` | `status: 'connected' \| 'disconnected' \| 'reconnecting'`, `detail?` |
 
-Snapshot/summary shapes are stubs refined by their owners: session and
-connection in #14, agents in #41, lanes in #11, workers in #42,
-approvals in #16, usage in #20.
+The state is produced by the host-side projector
+(`packages/host/src/presentation/projector.ts`), which folds the lane event
+stream (#398's `subscribeLaneEvents`) plus the worker and approval facts the
+host feeds it into the state; `apps/kubic/src/tui-run.ts` feeds the TUI from
+it, and `packages/tui/src/tui-app.ts` renders it (`applyPresentation`) — the
+presentation never folds raw events itself (§15.2, §66). The projector also
+exposes `revision()`, its monotonic fold counter (0 at the seed, +1 per
+applied fact): a consumer can tell a fresh state from the one it last
+rendered without diffing. It is deliberately NOT a state field.
 
 ### `PRESENTATION_COMMANDS` (`presentation.ts`)
 

@@ -33,10 +33,10 @@ workspace.
 | `read` | `path`, `offset?` (≥ 1, default 1), `limit?` (≥ 1, default and cap 2000) | At most 8 MiB scanned; at most 51200 bytes returned. |
 | `ls` | `path?` (default `.`) | One directory, not recursive. |
 | `find` | `root?`, `nameContains?`, `type?` (`"file"` \| `"dir"`), `maxResults?` (default 100) | Recursive; see [Search walk](#search-walk-find-and-grep). |
-| `grep` | `pattern` (JavaScript regex), `root?`, `include?`, `maxMatches?` (default 100) | `include` is a path **substring**, not a glob; same [walk](#search-walk-find-and-grep) as `find`. |
-| `write` | `path`, `content` | Whole-file, atomic (tmp + rename). |
-| `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | `oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused. |
-| `bash` | `command`, `timeout?` (seconds, > 0) | bash, else sh; each stream keeps its last 64 KiB. Default timeout 120 s, at most 600 s; see [Bash limits](#bash-limits). |
+| `grep` | `pattern` (JavaScript regex), `root?`, `include?`, `maxMatches?` (default 100) | `include` is a path **substring**, not a glob; same [walk](#search-walk-find-and-grep) as `find`; matching lines are clipped at 500 chars and files that are binary or over 8 MiB are skipped and counted (see [Grep bounds](#grep-bounds)). |
+| `write` | `path`, `content` | Whole-file, atomic (tmp + rename); a symlinked `path` is written through to its target, so the link survives (see [Symlinked writes](#symlinked-writes)); an existing file above 8 MiB is journaled hash-only, so `undo` reports that step non-reversible. |
+| `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | `oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused; writes through a symlink like `write`; matching happens on LF-normalized text with the BOM stripped, and the file keeps its own line ending and BOM (see [Line endings and BOM](#line-endings-and-bom)). |
+| `bash` | `command`, `timeout?` (seconds, > 0) | bash, else sh; each stream keeps its last 64 KiB / 2000 lines, and a clipped stream is spilled in full to a session file whose path the header and `spillPath` name. Default timeout 120 s, at most 600 s; see [Bash limits](#bash-limits). |
 | `git_status` | — | |
 | `git_diff` | `staged?`, `range?`, `path?` | |
 | `git_log` | `max?` (default 20, cap 100), `path?` | |
@@ -89,10 +89,15 @@ src/b.ts:3: // TODO remove
   stopped it, followed by `: <notice>` naming the cap — for example
   `walk entry cap 10000 reached while listing src/gen; results may be
   incomplete`, `walk depth cap 100 reached at <dir>; results may be
-  incomplete`, or `result cap 100 reached (maxMatches); results may be
-  incomplete`. `find` returns its structured result as JSON with the same
+  incomplete`, `result cap 100 reached (maxMatches); results may be
+  incomplete`, or `output cap 51200B reached; results may be incomplete`.
+  `find` returns its structured result as JSON with the same
   `truncated` and `notice` fields. `bash` adds `, timed out`, `, aborted` or
   `, output truncated`, and `(no output)` when both streams are empty.
+- `grep`'s header also names the two things a model must not misread: the
+  `lines clipped at 500 chars` flag when match text was cut, and
+  `N binary file(s) skipped` / `N oversized file(s) skipped` when files were
+  not searched at all (see [Grep bounds](#grep-bounds)).
 - Every other tool returns its structured result as JSON.
 - A refused `git_commit` carries git's own reason: stderr when git wrote
   one, else stdout (an empty index prints `nothing to commit` on stdout).
@@ -102,7 +107,29 @@ src/b.ts:3: // TODO remove
 - A refused call is one line: `error <code>: <message>` — the codes are
   `invalid_args`, `not_found`, `is_directory`, `permission_denied`,
   `no_match`, `ambiguous_match`, `file_too_large`, `journal_failed`,
-  `not_a_repo`, `tool_failed` (and `unknown_tool` / `internal`).
+  `not_a_repo`, `symlink_escape`, `tool_failed` (and `unknown_tool` /
+  `internal`).
+
+## Symlinked writes
+
+`write` and `edit` follow symlinks instead of replacing them (issue
+[#140](https://github.com/konic-labs/kubic/issues/140)): the atomic tmp is
+written beside the **resolved** file and renamed onto it, so writing to a
+link updates its target and the link stays a link — the workspace never
+gains a surprise regular file and the target never keeps the old content.
+The journal records that resolved path (workspace-relative), so `diff` and
+`status` name the file whose content changed, the end-of-run sweep keys it
+exactly like the walk does — no phantom `write` of the target and no phantom
+`delete` of the link — and `kubic undo` restores the target with the link
+left in place. A link (or a symlinked directory above the path) whose target
+resolves **outside the workspace** is refused with
+`error symlink_escape: …` before anything is journaled or written; the tool
+never writes through it, however the workspace root is spelled (the physical
+`realpath` counts as inside). A failed write or rename removes its tmp
+(`<target>.kubic-tmp-<pid>-<n>`) instead of leaking it into the workspace,
+and residue a crashed run left at that name is collected before the next
+write. A dangling link has no target to resolve, so the write replaces the
+link itself.
 
 ## Search walk (`find` and `grep`)
 
@@ -120,6 +147,61 @@ src/b.ts:3: // TODO remove
 - **Caps:** at most **10,000** entries and **100** directory levels, plus the
   op's own `maxResults` / `maxMatches` (default 100). A result a cap cut is
   marked `truncated` and names the cap and where it hit, as shown above.
+
+## Line endings and BOM
+
+`edit` normalizes what it matches against, then restores what the file had
+(issue [#195](https://github.com/konic-labs/kubic/issues/195)):
+
+- **Line endings:** the file's dominant ending is detected, the file body,
+  `oldText` and `newText` are normalized to LF for matching and replacement,
+  and the dominant ending is restored on write. A CRLF file with an LF
+  multi-line `oldText` edits where it used to be `no_match`, the result never
+  mixes endings, and an LF file is byte-for-byte unchanged apart from the
+  replacement. A tie between CRLF and bare LF goes to LF, and a mixed file
+  comes out uniform.
+- **BOM:** a leading UTF-8 BOM is stripped from the file body and from both
+  model texts before matching, and re-added on write only when the file had
+  one — so a first-line edit in a BOM file succeeds, the BOM survives, and a
+  replacement can never introduce a second one. An `oldText` that is nothing
+  but a BOM (empty after normalization) is refused with `invalid_args`.
+
+`expectCount` counts on the normalized text, and the journal records the
+real pre- and post-images (BOM and endings included), so `kubic undo`
+restores the CRLF/BOM file exactly as it was.
+
+## Grep bounds
+
+`grep` bounds what it reads and what it returns (issue
+[#180](https://github.com/konic-labs/kubic/issues/180)):
+
+- **Matching lines are clipped at 500 characters** (`GREP_MAX_LINE_LENGTH`,
+  §27.5 / Pi's own constant) and the result carries `linesTruncated: true`
+  — a minified bundle's 5 MB line can no longer flood the context. The line
+  *number* stays exact; only the text is partial, and the header says
+  `lines clipped at 500 chars`.
+- **Binary files are skipped and counted** (`skippedBinary`): a file whose
+  content contains a NUL byte is never matched, and the header says
+  `N binary file(s) skipped`. This is a NUL test over the whole content —
+  narrower than `read`'s sniff, which also refuses a first chunk that is not
+  valid UTF-8 — so a NUL-free invalid-UTF-8 file is still searched. Skipping
+  binaries is the tool's contract, so it does not mark the search
+  `truncated`.
+- **Entries that are not regular files** (a FIFO, socket or device — the walk
+  lists them) are skipped without a count: reading a FIFO could block the
+  run, and such an entry is not a text-search candidate. A file that
+  vanished between the walk and the read is skipped the same way.
+- **Files over 8 MiB are skipped and counted** (`skippedOversized`): the
+  file costs one `stat` and is never opened, so memory is bounded by the
+  text bound rather than by the largest file in the tree. Because an
+  unsearched text candidate can hide matches, this one *does* mark the
+  result `truncated`, with a notice naming the bound.
+- **The whole result stays within 51200 bytes** (`GREP_RESULT_MAX_BYTES`,
+  read's output cap): matches are added while they fit, the search stops at
+  the last whole line, and the header names `output cap 51200B reached`.
+- `include` remains a **path substring**, not a glob — stated in the tool
+  schema (`OPERATION_PARAMETERS.grep.include`) and in the tool description,
+  and pinned by `ops/grep.test.ts`.
 
 ## Bash limits
 
@@ -143,5 +225,21 @@ src/b.ts:3: // TODO remove
   workers** (the worker environment allowlist does not carry them; issue
   [#201](https://github.com/konic-labs/kubic/issues/201)), so a worker
   always uses the 120 s / 600 s limits and kills its background jobs.
-- **Output:** each stream keeps its last 64 KiB (`[kubic: N leading chars
-  dropped]` header, `, output truncated` flag).
+- **Output:** each stream keeps its last **64 KiB** and its last **2000
+  lines**, whichever is smaller — the tail is where a failure usually ends,
+  and the head is one command away (issue #182): a clipped stream is written
+  in full to a spill file inside the session directory and the header names
+  it —
+  `[kubic: N leading chars dropped — full output: <path>]` — with the same
+  path on `BashResult.spillPath` (`stdout`'s spill when both streams were
+  clipped; each stream's own header names its own file). Read it back through
+  the shell — `bash cat <path>`, or `tail`/`sed` for a window — because
+  `read` is confined to the workspace and the spill lives in the session
+  directory (outside it). The file holds the
+  stream up to the seam's 10 MiB per-stream cap and is removed with the
+  session (`kubic sessions prune`); it is created `0600`, because a command's
+  output can carry secrets. A run whose lane injected no sink (tests, a
+  journal-free context) keeps the `[kubic: N leading chars dropped]` header
+  with no path, and a spill that cannot be written does not fail the call —
+  the header simply names no file. The result also carries
+  `, output truncated`.

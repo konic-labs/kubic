@@ -52,6 +52,11 @@ store = "jsonl"
 dir = ".kubic/sessions"
 retentionDays = 30
 
+[verify]
+tests = "npm test"
+typecheck = "npm run typecheck"
+timeoutMs = 600000
+
 [policy]
 allowed_models = ["local/*"]
 allowed_providers = ["local"]

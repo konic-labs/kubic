@@ -37,6 +37,18 @@ export const ENV_ALLOWLIST: readonly string[] = [
   // locations/identifiers — the same class as KUBIC_WORKER_ID.
   'KUBIC_APPROVALS_DIR',
   'KUBIC_ORCHESTRATOR_SESSION',
+  // The worker's OWN session id (issue #159; §23): `<orch>-<agent>`, what its
+  // approval ask is bound to. It travels beside KUBIC_ORCHESTRATOR_SESSION (the
+  // run that spawned it) so a worker's decision can be attributed to the run
+  // — the two were conflated before, which made the §60 audit row unusable.
+  // An identifier, never a secret, like the two above.
+  'KUBIC_WORKER_SESSION',
+  // The manager's approval VERIFICATION key (issue #149): the child refuses
+  // any answer in the mailbox without a matching MAC, so a worker that writes
+  // its own `{"approved":true}` changes nothing. A public key grants no
+  // signing power, so allowlisting it hands the worker nothing it could use —
+  // the private half never leaves the manager process.
+  'KUBIC_APPROVALS_VERIFY_KEY',
   // models.json lookup for workers (issue #222): the manager's project root
   // (the worktree holds only tracked files, so an untracked models.json is
   // not in it) and the operator's project-trust decision, which gates that
@@ -47,6 +59,19 @@ export const ENV_ALLOWLIST: readonly string[] = [
   // The child's approval bound (issue #230): derived from the manager's
   // config maxPendingMs and kept below it. A number, not a secret.
   'KUBIC_APPROVALS_BOUND_MS',
+  // The documented runtime env overrides (issue #201; RUNTIME_ENV_OVERRIDES
+  // in host/config/runtime.ts). The child loads its own config from its
+  // worktree, so an override the manager resolved — approval route, thinking
+  // level, journal retention — must reach it too, or the worker runs a
+  // different policy than the manager reports. Non-secret values; a frozen
+  // enterprise key still wins inside the child's own load.
+  'KUBIC_MODEL_THINKING',
+  'KUBIC_APPROVALS_ROUTE',
+  'KUBIC_JOURNAL_RETENTION_DAYS',
+  // The worker's §67 task file (issue #191): the manager writes it into the
+  // worker's own session dir and names it here. Tool names, the worktree and
+  // the objective the child already runs — a location, not a secret.
+  'KUBIC_TASK_FILE',
   // Per-spawn budget (issue #208, §71): the orchestration run hands its child
   // the resolved spec (JSON) so the child's own lane enforces maxToolCalls /
   // maxTokens / maxCostUsd — non-secret limits, the same class as the

@@ -20,6 +20,7 @@ import {
   type TuiApprovalSeat,
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../exec/src/journal.js';
@@ -54,46 +55,7 @@ function tmpRoot(): string {
 // The recording fake Terminal: every byte the alt-screen writes is kept, so
 // a test can mark a point and read only the frames written after it.
 function recordingTerminal(width = 100) {
-  const writes: string[] = [];
-  const counts = { started: 0, stopped: 0 };
-  let handler: ((data: string) => void) | undefined;
-  return {
-    writes,
-    counts,
-    mark: (): number => writes.length,
-    since: (mark: number): string => writes.slice(mark).join(''),
-    feed: (data: string): void => {
-      handler?.(data);
-    },
-    terminal: {
-      start: (input: (data: string) => void) => {
-        counts.started += 1;
-        handler = input;
-      },
-      stop: () => {
-        counts.stopped += 1;
-      },
-      drainInput: () => Promise.resolve(),
-      write: (data: string) => writes.push(data),
-      get columns(): number {
-        return width;
-      },
-      get rows(): number {
-        return 30;
-      },
-      get kittyProtocolActive(): boolean {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    },
-  };
+  return terminalRig(width, 30);
 }
 
 // Bounded wait: a real timer tick per step (the alt-screen throttles frames
@@ -205,6 +167,9 @@ describe('idle input repaints (issue #274)', () => {
     const mark = fake.mark();
     fake.feed('a');
     await waitFor(() => fake.since(mark).includes('a'), RENDER_TICK_STEPS);
+    // Issue #302: the draft is on screen, so the first Ctrl-C only clears
+    // it; the second press quits.
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
   });

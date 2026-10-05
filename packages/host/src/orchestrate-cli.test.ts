@@ -18,8 +18,10 @@ import type {
   WorkerSpawnInfo,
 } from './orchestrate-cli.js';
 import {
+  assignedApprovalRole,
   MergeConflictError,
   managerCallsForMerge,
+  parseOrchestratorRunState,
   runOrchestrateCommand,
   workerSessionFor,
 } from './orchestrate-cli.js';
@@ -29,6 +31,8 @@ import {
 } from './orchestrator/manager.js';
 import type { MergedHunk } from './orchestrator/merge/attribution.js';
 import { assertManagerZeroWrites } from './orchestrator/merge/settle.js';
+import type { MergeTelemetry } from './orchestrator/merge/telemetry.js';
+import { totalMergeMs } from './orchestrator/merge/telemetry.js';
 import { addWorktree } from './orchestrator/worktree/add.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
 
@@ -50,7 +54,12 @@ interface FakeWorld {
   debugLines: string[];
   calls: FakeCalls;
   saved: OrchestratorRunState[];
-  runInfo: { agentId: string; workerSessionId: string }[];
+  runInfo: {
+    agentId: string;
+    workerSessionId: string;
+    /** §61 (issue #158): the worktree-creation leg the host measured. */
+    worktreeMs?: number;
+  }[];
   /** The prompt each worker actually received (issue #103). */
   prompts: { agentId: string; prompt: string }[];
 }
@@ -72,7 +81,11 @@ function makeWorld(
     order: [],
   };
   const saved: OrchestratorRunState[] = [];
-  const runInfo: { agentId: string; workerSessionId: string }[] = [];
+  const runInfo: {
+    agentId: string;
+    workerSessionId: string;
+    worktreeMs?: number;
+  }[] = [];
   const prompts: { agentId: string; prompt: string }[] = [];
   const deps: OrchestrateCommandDeps = {
     out: (line: string) => {
@@ -106,6 +119,9 @@ function makeWorld(
       runInfo.push({
         agentId,
         workerSessionId: info?.workerSessionId ?? '(none)',
+        ...(info?.worktreeMs === undefined
+          ? {}
+          : { worktreeMs: info.worktreeMs }),
       });
       prompts.push({ agentId, prompt });
       const count = hunksPerAgent?.[agentId] ?? 1;
@@ -177,7 +193,7 @@ describe('orchestrate usage (issue #76)', () => {
         JSON.stringify(agents),
       ).toBe(2);
       expect(world.errLines).toEqual([
-        expect.stringMatching(/^error: invalid --agents /),
+        expect.stringMatching(/^error: invalid --agents/),
       ]);
       expect(world.calls.ensure).toEqual([]);
     }
@@ -198,14 +214,334 @@ describe('orchestrate usage (issue #76)', () => {
   });
 });
 
-describe('orchestrate non-git refusal (issue #76)', () => {
-  it('refuses outside a git repo with exit 2 and never runs solo', async () => {
+describe('per-agent role and model binding (issue #178)', () => {
+  // The role-plan hook echoes the binding it was given, so the test reads
+  // what the run resolved (the loader itself is covered by
+  // roles/worker-roles.test.ts and the prod orchestrate tests).
+  function echoRoles(
+    seen: Array<{
+      agents: readonly string[];
+      binding?: {
+        roles: Record<string, string>;
+        models: Record<string, string>;
+      };
+    }>,
+  ): NonNullable<OrchestrateCommandDeps['loadWorkerRoles']> {
+    return (agents, binding) => {
+      seen.push({ agents, ...(binding === undefined ? {} : { binding }) });
+      return {
+        assignments: agents.map((agentId) => ({
+          agentId,
+          role: binding?.roles[agentId] ?? 'implementer',
+          promptText: `role:${binding?.roles[agentId] ?? 'implementer'}`,
+          tools: [],
+          modelRef: binding?.models[agentId],
+          thinking: undefined,
+        })),
+        refused: [],
+      };
+    };
+  }
+
+  it('binds each worker to the role its --agents entry names (issue #178)', async () => {
+    const world = makeWorld();
+    const seen: Parameters<typeof echoRoles>[0] = [];
+    const roles: Array<{ agentId: string; role?: string }> = [];
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'demo',
+        agents: ['a:implementer', 'b:reviewer'],
+        session: 'binding',
+        yes: true,
+      },
+      {
+        ...world.deps,
+        loadWorkerRoles: echoRoles(seen),
+        runWorker: async (agentId, worktree, prompt, info) => {
+          roles.push({ agentId, role: info?.role });
+          return world.deps.runWorker(agentId, worktree, prompt, info);
+        },
+      },
+    );
+    expect(code).toBe(0);
+    // The ids are the entry heads; the binding is the parsed roles.
+    expect(seen[0]?.agents).toEqual(['a', 'b']);
+    expect(seen[0]?.binding).toEqual({
+      roles: { a: 'implementer', b: 'reviewer' },
+      models: {},
+    });
+    expect(roles).toEqual([
+      { agentId: 'a', role: 'implementer' },
+      { agentId: 'b', role: 'reviewer' },
+    ]);
+  });
+
+  it('carries an explicit per-agent model pin through the same entry (issue #178)', async () => {
+    const world = makeWorld();
+    const seen: Parameters<typeof echoRoles>[0] = [];
+    const models: Array<string | undefined> = [];
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'demo',
+        agents: ['a:tester:acme/m2'],
+        session: 'binding-model',
+        yes: true,
+      },
+      {
+        ...world.deps,
+        loadWorkerRoles: echoRoles(seen),
+        runWorker: async (agentId, worktree, prompt, info) => {
+          models.push(info?.modelRef);
+          return world.deps.runWorker(agentId, worktree, prompt, info);
+        },
+      },
+    );
+    expect(code).toBe(0);
+    expect(seen[0]?.binding).toEqual({
+      roles: { a: 'tester' },
+      models: { a: 'acme/m2' },
+    });
+    expect(models).toEqual(['acme/m2']);
+  });
+
+  it('refuses an unknown role as a usage error before anything spawns (issue #178)', async () => {
+    const world = makeWorld();
+    const code = await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['a:teleporter'], session: 'badrole' },
+      world.deps,
+    );
+    expect(code).toBe(2);
+    expect(world.errLines.join('\n')).toMatch(/Unknown role "teleporter"/);
+    expect(world.calls.ensure).toEqual([]);
+    expect(world.calls.run).toEqual([]);
+    expect(world.saved).toEqual([]);
+  });
+
+  it('persists the explicit assignment and replays it on --resume (issue #178)', async () => {
+    const first = makeWorld({
+      mergeBranch: (agentId: string) => {
+        if (agentId === 'b') throw new Error('KILLED');
+      },
+    });
+    const code1 = await runOrchestrateCommand(
+      {
+        prompt: 'demo',
+        agents: ['a:planner', 'b:reviewer'],
+        session: 'sess-bind',
+        yes: true,
+      },
+      first.deps,
+    );
+    expect(code1).toBe(1);
+    const stored = first.saved[first.saved.length - 1] as OrchestratorRunState;
+    expect(stored.roles).toEqual({ a: 'planner', b: 'reviewer' });
+
+    // The resume carries no --agents: the stored assignment is the one the
+    // role plan gets, so every retried worker keeps the role it had.
+    const seen: Parameters<typeof echoRoles>[0] = [];
+    const second = makeWorld({
+      loadState: () => structuredClone(stored),
+      loadWorkerRoles: echoRoles(seen),
+    });
+    const code2 = await runOrchestrateCommand(
+      { resume: true, session: 'sess-bind' },
+      second.deps,
+    );
+    expect(code2).toBe(0);
+    expect(seen[0]?.agents).toEqual(['a', 'b']);
+    expect(seen[0]?.binding).toEqual({
+      roles: { a: 'planner', b: 'reviewer' },
+      models: {},
+    });
+    expect(second.calls.run).toEqual(['b']);
+  });
+
+  it('persists the run’s --skill values and re-applies them on --resume (issue #170)', async () => {
+    const first = makeWorld({
+      mergeBranch: (agentId: string) => {
+        if (agentId === 'beta') throw new Error('KILLED');
+      },
+    });
+    const code1 = await runOrchestrateCommand(
+      {
+        prompt: 'demo',
+        agents: ['alpha', 'beta'],
+        session: 'sess-skills',
+        yes: true,
+        skills: ['./skills/house.md'],
+      },
+      first.deps,
+    );
+    expect(code1).toBe(1);
+    const stored = first.saved[first.saved.length - 1] as OrchestratorRunState;
+    expect(stored.skills).toEqual(['./skills/house.md']);
+
+    // The resume carries no flags: the stored skills are what the retried
+    // worker is told (the run resolves them against its own cwd later).
+    const seen: WorkerSpawnInfo[] = [];
+    const second = makeWorld({
+      loadState: () => structuredClone(stored),
+      runWorker: (_agentId, _worktree, _prompt, info) => {
+        seen.push(info as WorkerSpawnInfo);
+        return [];
+      },
+    });
+    const code2 = await runOrchestrateCommand(
+      { resume: true, session: 'sess-skills' },
+      second.deps,
+    );
+    expect(code2).toBe(0);
+    expect(seen[0]?.skills).toEqual(['./skills/house.md']);
+  });
+
+  it('refuses a --skill differing from the stored one, and adopts one for a pre-#170 state (issue #170)', async () => {
+    const stored: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-skills',
+      prompt: 'demo',
+      agents: ['alpha'],
+      skills: ['./skills/house.md'],
+      merged: [],
+      pending: ['alpha'],
+      stopped: false,
+      records: [],
+    };
+    const refused = makeWorld({ loadState: () => structuredClone(stored) });
+    const code = await runOrchestrateCommand(
+      {
+        resume: true,
+        session: 'sess-skills',
+        skills: ['./skills/other.md'],
+      },
+      refused.deps,
+    );
+    expect(code).toBe(2);
+    expect(refused.errLines.join('\n')).toMatch(
+      /--skill differs from the skills stored/,
+    );
+    expect(refused.calls.run).toEqual([]);
+
+    // A state written before #170 has none: the flag is adopted and persisted.
+    const legacy = { ...structuredClone(stored), skills: undefined };
+    const adopted = makeWorld({ loadState: () => structuredClone(legacy) });
+    const seen: WorkerSpawnInfo[] = [];
+    const code2 = await runOrchestrateCommand(
+      {
+        resume: true,
+        session: 'sess-skills',
+        skills: ['./skills/house.md'],
+      },
+      {
+        ...adopted.deps,
+        runWorker: (_agentId, _worktree, _prompt, info) => {
+          seen.push(info as WorkerSpawnInfo);
+          return [];
+        },
+      },
+    );
+    expect(code2).toBe(0);
+    expect(seen[0]?.skills).toEqual(['./skills/house.md']);
+    const saved = adopted.saved[
+      adopted.saved.length - 1
+    ] as OrchestratorRunState;
+    expect(saved.skills).toEqual(['./skills/house.md']);
+  });
+
+  it('adopts an --agents assignment for a state written before the binding persisted (issue #178)', async () => {
+    // The pre-#178 state has nothing to differ from (the --budget rule,
+    // issue #208): the flag is adopted and persisted, never refused.
+    const legacy: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-legacy',
+      prompt: 'demo',
+      agents: ['a', 'b'],
+      merged: [],
+      pending: ['a', 'b'],
+      stopped: false,
+      records: [],
+    };
+    const seen: Parameters<typeof echoRoles>[0] = [];
+    const world = makeWorld({
+      loadState: () => structuredClone(legacy),
+      loadWorkerRoles: echoRoles(seen),
+    });
+    const code = await runOrchestrateCommand(
+      {
+        resume: true,
+        session: 'sess-legacy',
+        agents: ['a:planner', 'b:reviewer'],
+      },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(seen[0]?.binding).toEqual({
+      roles: { a: 'planner', b: 'reviewer' },
+      models: {},
+    });
+    const saved = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(saved.roles).toEqual({ a: 'planner', b: 'reviewer' });
+  });
+
+  it('accepts a bare --agents on resume: the ids are ignored and carry no assignment (issue #178)', async () => {
+    const stored: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-bind',
+      prompt: 'demo',
+      agents: ['a', 'b'],
+      roles: { a: 'planner' },
+      merged: [],
+      pending: ['a', 'b'],
+      stopped: false,
+      records: [],
+    };
+    const world = makeWorld({ loadState: () => structuredClone(stored) });
+    const code = await runOrchestrateCommand(
+      { resume: true, session: 'sess-bind', agents: ['a', 'b'] },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.errLines.join('\n')).not.toMatch(
+      /differs from the assignment/,
+    );
+  });
+
+  it('refuses a --resume whose --agents binding differs from the stored one (issue #178)', async () => {
+    const stored: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-bind',
+      prompt: 'demo',
+      agents: ['a', 'b'],
+      roles: { a: 'planner', b: 'reviewer' },
+      merged: [],
+      pending: ['a', 'b'],
+      stopped: false,
+      records: [],
+    };
+    const world = makeWorld({ loadState: () => structuredClone(stored) });
+    const code = await runOrchestrateCommand(
+      {
+        resume: true,
+        session: 'sess-bind',
+        agents: ['a:tester', 'b:reviewer'],
+      },
+      world.deps,
+    );
+    expect(code).toBe(2);
+    expect(world.errLines.join('\n')).toMatch(
+      /differs from the assignment stored/,
+    );
+    expect(world.calls.run).toEqual([]);
+  });
+});
+
+describe('orchestrate non-git refusal (issue #76, recoded by #372)', () => {
+  it('refuses outside a git repo with exit 5 and never runs solo', async () => {
     const world = makeWorld({ isGitRepo: () => false });
     const code = await runOrchestrateCommand(
       { prompt: 'do things', agents: ['alpha', 'beta'] },
       world.deps,
     );
-    expect(code).toBe(2);
+    expect(code).toBe(5);
     expect(world.lines).toEqual([]);
     expect(world.errLines).toEqual([
       expect.stringMatching(/^error: orchestrator mode needs a git repository/),
@@ -223,13 +559,17 @@ describe('orchestrate non-git refusal (issue #76)', () => {
       { prompt: 'do things', json: true },
       world.deps,
     );
-    expect(code).toBe(2);
+    expect(code).toBe(5);
     expect(world.lines).toHaveLength(1);
     expect(JSON.parse(world.lines[0] as string)).toMatchObject({
       ok: false,
-      exitCode: 2,
-      status: 'usage',
-      error: { code: 'not_a_repo', message: 'not a git repository' },
+      exitCode: 5,
+      status: 'workspace_unavailable',
+      error: {
+        kind: 'workspace_unavailable',
+        code: 'not_a_repo',
+        message: 'not a git repository',
+      },
     });
     expect(world.errLines).toEqual([
       'error: not a git repository code=not_a_repo',
@@ -392,6 +732,42 @@ describe('orchestrate failure codes (issue #76)', () => {
     expect(world.calls.reap).toContain('alpha');
   });
 
+  it('keeps merge_conflict as the terminus and surfaces failure-path reap errors (issue #171)', async () => {
+    const reaped: string[] = [];
+    const world = makeWorld({
+      mergeBranch: () => {
+        throw new MergeConflictError('a2', {
+          oursDiff: 'ours',
+          theirsDiff: 'theirs',
+        });
+      },
+      reapWorker: (agentId: string) => {
+        reaped.push(agentId);
+        throw new Error(`reap exploded for ${agentId}`);
+      },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'demo',
+        agents: ['a1', 'a2'],
+        session: 'sess-1',
+        yes: true,
+        json: true,
+      },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    const envelope = lastJsonLine(world.lines);
+    // The conflict is the run's terminus; the reap errors ride along instead
+    // of replacing it or disappearing.
+    expect(envelope.error).toMatchObject({ code: 'merge_conflict' });
+    expect(envelope.reapErrors).toEqual([
+      { agentId: 'a1', message: 'reap exploded for a1' },
+      { agentId: 'a2', message: 'reap exploded for a2' },
+    ]);
+    expect(reaped).toEqual(['a1', 'a2']);
+  });
+
   it('stops the queue fail-closed on an unresolvable conflict', async () => {
     const world = makeWorld({
       mergeBranch: (agentId: string) => {
@@ -429,6 +805,35 @@ describe('orchestrate failure codes (issue #76)', () => {
     expect(code).toBe(1);
     expect(world.errLines.join('\n')).toMatch(/code=reap_failed/);
     expect(world.calls.merge).toEqual(['alpha', 'beta']);
+  });
+
+  it('reaps every spawned worker even when one reap throws, naming the first (issue #171)', async () => {
+    const reaped: string[] = [];
+    const world = makeWorld({
+      reapWorker: (agentId: string) => {
+        reaped.push(agentId);
+        if (agentId === 'a1') throw new Error('zombie');
+      },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'demo',
+        agents: ['a1', 'a2', 'a3'],
+        session: 'sess-1',
+        json: true,
+      },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    // The first failure does NOT stop the sweep: a2 and a3 are reaped too.
+    expect(reaped).toEqual(['a1', 'a2', 'a3']);
+    const text = world.errLines.join('\n');
+    expect(text).toMatch(/code=reap_failed/);
+    expect(text).toMatch(/a1/);
+    // The envelope carries the collected reap errors next to the primary code.
+    const envelope = lastJsonLine(world.lines);
+    expect(envelope.error).toMatchObject({ code: 'reap_failed' });
+    expect(envelope.reapErrors).toEqual([{ agentId: 'a1', message: 'zombie' }]);
   });
 });
 
@@ -551,13 +956,12 @@ describe('orchestrate crash-resume (issue #76)', () => {
     }
   });
 
-  it('does not report a phantom queue: a settled worker releases its admission slot', async () => {
-    // Review finding F2: `scheduler.complete()` was never called and
-    // `requestSpawn` ran sequentially, so with six agents and the default cap
-    // of four the fifth and sixth were reported `queued: ... at position N` —
-    // while they spawned and merged immediately anyway. A false signal: the
-    // docs claimed the cap "starts to matter" above four, and an operator
-    // reading `queued:` believes a limit is gating the run.
+  it('drains a real admission queue: every worker runs once, in agent order', async () => {
+    // Review finding F2 (issue #106) recorded a false queue: the loop was
+    // strictly sequential and released each slot before the next request, so
+    // a `queued:` line could only come from bookkeeping that was never
+    // released. #206 makes the queue real — six agents against the default
+    // cap of four queue exactly two, and both are drained on release.
     const world = makeWorld();
     const code = await runOrchestrateCommand(
       { prompt: 'do it', agents: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'] },
@@ -565,10 +969,12 @@ describe('orchestrate crash-resume (issue #76)', () => {
     );
     expect(code).toBe(0);
     expect(world.calls.merge).toEqual(['a1', 'a2', 'a3', 'a4', 'a5', 'a6']);
-    // Concurrency is 1 (the loop awaits each worker before the next request),
-    // so no slot is ever contended: a queued report can only come from stale
-    // bookkeeping, never from a real cap.
-    expect(world.debugLines.filter((l) => l.includes('queued'))).toEqual([]);
+    // Exactly the two past the cap were queued, and each names a slot.
+    expect(world.debugLines.filter((l) => l.includes('queued'))).toHaveLength(
+      2,
+    );
+    // Every worker ran exactly once, merges in agent order.
+    expect(world.calls.run).toEqual(['a1', 'a2', 'a3', 'a4', 'a5', 'a6']);
     expect(world.calls.order.filter((l) => l.startsWith('run:'))).toEqual([
       'run:a1',
       'run:a2',
@@ -944,19 +1350,29 @@ describe('orchestrate worker session creation (issue #85)', () => {
       world.deps,
     );
     expect(code).toBe(0);
-    // Creation strictly precedes the spawn for each worker: `kubic run`
+    // Creation strictly precedes the SPAWN for each worker: `kubic run`
     // with an explicit --session only ATTACHES, so a child spawned before
-    // its session exists dies at attach (exit 5 "unknown session").
-    expect(world.calls.order).toEqual([
-      'create:alpha',
-      'run:alpha',
-      'create:beta',
-      'run:beta',
-    ]);
+    // its session exists dies at attach (exit 5 "unknown session"). Workers
+    // run concurrently since #206, so the two workers' legs interleave — the
+    // per-worker order is the invariant, not one global sequence.
+    for (const agentId of ['alpha', 'beta']) {
+      expect(
+        world.calls.order.indexOf(`create:${agentId}`),
+        `create:${agentId} before run:${agentId}`,
+      ).toBeGreaterThanOrEqual(0);
+      expect(world.calls.order.indexOf(`create:${agentId}`)).toBeLessThan(
+        world.calls.order.indexOf(`run:${agentId}`),
+      );
+    }
     // The id the manager creates is exactly the id the child attaches to.
-    expect(world.runInfo).toEqual([
-      { agentId: 'alpha', workerSessionId: 'sess-1-alpha' },
-      { agentId: 'beta', workerSessionId: 'sess-1-beta' },
+    // worktreeMs is the §61 creation leg (issue #158): this world's clock is
+    // frozen, so a correct measurement is exactly 0 — not a launch-time
+    // subtraction that would drift with the ticks in between.
+    expect(
+      [...world.runInfo].sort((a, b) => a.agentId.localeCompare(b.agentId)),
+    ).toEqual([
+      { agentId: 'alpha', workerSessionId: 'sess-1-alpha', worktreeMs: 0 },
+      { agentId: 'beta', workerSessionId: 'sess-1-beta', worktreeMs: 0 },
     ]);
   });
 
@@ -1127,6 +1543,52 @@ describe('orchestrate resume state validation (issue #76 fix)', () => {
       expect(world.calls.run).toEqual([]);
     },
   );
+
+  it('refuses every malformed stored role/model binding shape (issue #178)', () => {
+    // The same table discipline as the stored budget (issue #220): a
+    // half-read assignment must refuse the resume, never apply partly.
+    const bindings: unknown[] = [
+      { roles: null },
+      { roles: [] },
+      { roles: 'planner' },
+      { roles: { alpha: 42 } },
+      // A key that names no worker of the stored run.
+      { roles: { ghost: 'planner' } },
+      // A role outside the five.
+      { roles: { alpha: 'teleporter' } },
+      { models: null },
+      { models: { alpha: 'not-a-ref' } },
+      { models: { alpha: '/m1' } },
+      { models: { ghost: 'acme/m1' } },
+      { models: { alpha: 7 } },
+      // §67 task resources (issue #170): the stored skills are a non-empty
+      // list of non-empty strings, or the state is refused.
+      { skills: 'x' },
+      { skills: [] },
+      { skills: [42] },
+      { skills: [''] },
+    ];
+    for (const binding of bindings) {
+      expect(
+        parseOrchestratorRunState(
+          { ...validBase, ...(binding as Record<string, unknown>) },
+          'sess-1',
+        ),
+        JSON.stringify(binding),
+      ).toBeUndefined();
+    }
+    // A valid assignment round-trips.
+    const ok = parseOrchestratorRunState(
+      {
+        ...validBase,
+        roles: { alpha: 'planner' },
+        models: { alpha: 'acme/m1' },
+      },
+      'sess-1',
+    );
+    expect(ok?.roles).toEqual({ alpha: 'planner' });
+    expect(ok?.models).toEqual({ alpha: 'acme/m1' });
+  });
 });
 
 // Issue #103: the manager lane is live. The run registers its toolset through
@@ -1535,6 +1997,7 @@ describe('worker credential preflight (issue #200)', () => {
         promptText: 'You are the planner.',
         tools: ['read'],
         modelRef: 'gw/m1',
+        thinking: undefined,
       },
     ],
     refused: [],
@@ -1691,10 +2154,20 @@ describe('failure results persist in the saved records (issue #185)', () => {
       },
       metrics: { wallMs: 0, latencyMs: 0 },
     });
+    // Both workers ran concurrently (#206) and both failed: each gets its own
+    // synthesized record, both stay pending for the retry, and nothing merged.
+    expect(failureRecord(world, 'beta')?.result).toMatchObject({
+      status: 'failed',
+      error: { details: { code: 'worker_failed' } },
+    });
     expect(lastState(world).pending).toEqual(['alpha', 'beta']);
     expect(lastState(world).merged).toEqual([]);
-    // The record is one entry, and nothing else was recorded.
-    expect(lastState(world).records).toHaveLength(1);
+    // One record per agent, in agent order — no double-record from the
+    // concurrent failure path.
+    expect(lastState(world).records.map((entry) => entry.agentId)).toEqual([
+      'alpha',
+      'beta',
+    ]);
   });
 
   it('a lifecycle spawn_failed error is a spawn_failed result', async () => {
@@ -1832,6 +2305,11 @@ describe('failure results persist in the saved records (issue #185)', () => {
         runningCount: () => 0,
         queuedCount: () => 0,
         maxConcurrency: () => 1,
+        // The run reconciles its queue view after every scheduler
+        // interaction (issue #206 review): a fake must answer these too.
+        pendingIds: () => [],
+        runningIds: () => [],
+        maxPendingMs: () => 60_000,
       } as unknown as OrchestrateCommandDeps['scheduler'],
     });
     const code = await runOrchestrateCommand(
@@ -2159,5 +2637,266 @@ describe('failure results persist in the saved records (issue #185)', () => {
     expect(lastState(kept).records).toEqual([
       { agentId: 'alpha', branch: 'kubic/alpha', hunks: [], result: completed },
     ]);
+  });
+});
+
+// Issue #159 review finding 1: the approval scope's role is the FALLBACK for an
+// ask that carries none of its own, so the fallback itself is pinned here —
+// otherwise nothing observes it (the child's seat always sets a role).
+describe('the assigned approval role (issue #159)', () => {
+  it('names the assigned §12 role, and `worker` when the plan has none', () => {
+    expect(
+      assignedApprovalRole(
+        {
+          assignments: [
+            { agentId: 'beta', role: 'implementer', tools: [], refused: [] },
+          ],
+          refused: [],
+        } as unknown as Parameters<typeof assignedApprovalRole>[0],
+        'beta',
+      ),
+    ).toBe('implementer');
+    expect(
+      assignedApprovalRole({ assignments: [], refused: [] }, 'gamma'),
+    ).toBe('worker');
+  });
+});
+
+describe('merge telemetry (§61, issue #158)', () => {
+  // A fake clock the injected seams advance, so every phase is a known
+  // number: creation 7 ms, diff 13 ms, merge 11 ms, apply 5 ms.
+  function timedWorld(overrides: Partial<OrchestrateCommandDeps> = {}): {
+    world: FakeWorld;
+    tick: (ms: number) => void;
+    clock: () => number;
+    spawnInfos: (WorkerSpawnInfo | undefined)[];
+  } {
+    let clock = 1_000;
+    const spawnInfos: (WorkerSpawnInfo | undefined)[] = [];
+    const tick = (ms: number) => {
+      clock += ms;
+    };
+    const world = makeWorld({
+      now: () => clock,
+      ensureWorktree: (agentId: string) => {
+        tick(7);
+        return {
+          path: `/repo/.kubic/wt/${agentId}`,
+          branch: `kubic/${agentId}`,
+        };
+      },
+      runWorker: (agentId: string, _worktree, _prompt, info) => {
+        spawnInfos.push(info);
+        // The clock moves while the worker runs: none of it belongs to the
+        // creation leg the spawn info reports.
+        tick(100);
+        return {
+          hunks: [{ path: `${agentId}.txt`, hunk: '@@ -0,0 +1 @@ +x' }],
+          diffMs: 13,
+        };
+      },
+      mergeBranch: () => {
+        tick(11);
+      },
+      // The apply leg's own save is the one that records the merge (the
+      // write-ahead intent save happens inside the merge leg): ticking only
+      // there keeps the two phases apart.
+      saveState: (state) => {
+        if (state.merged.includes('alpha') || state.merged.includes('beta')) {
+          tick(5);
+        }
+      },
+      ...overrides,
+    });
+    return { world, tick, clock: () => clock, spawnInfos };
+  }
+
+  it('reports per-agent merge telemetry whose total is the phase sum', async () => {
+    const { world } = timedWorld();
+    const code = await runOrchestrateCommand(
+      { prompt: 'one thing', agents: ['alpha'], json: true },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    const envelope = lastJsonLine(world.lines);
+    const telemetry = envelope.mergeTelemetry as unknown as MergeTelemetry[];
+    expect(telemetry).toHaveLength(1);
+    expect(telemetry[0]).toMatchObject({
+      agentId: 'alpha',
+      diffMs: 13,
+      mergeMs: 11,
+      resolveMs: 0,
+      applyMs: 5,
+      outcome: 'merged',
+    });
+    // The queue leg is the wait from enqueue to dequeue: no tick between the
+    // two, so 0 ms here — and the total is exactly the phase sum.
+    expect(telemetry[0]?.queueMs).toBe(0);
+    const record = telemetry[0] as MergeTelemetry;
+    expect(totalMergeMs(record)).toBe(
+      record.queueMs +
+        record.diffMs +
+        record.mergeMs +
+        record.resolveMs +
+        record.applyMs,
+    );
+    expect(totalMergeMs(record)).toBe(29);
+  });
+
+  it('prints the same numbers as a merge telemetry line in the human view', async () => {
+    const { world } = timedWorld();
+    const code = await runOrchestrateCommand(
+      { prompt: 'one thing', agents: ['alpha'] },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    const text = world.lines.join('\n');
+    expect(text).toContain('merge telemetry: alpha');
+    expect(text).toContain('queue=0ms');
+    expect(text).toContain('diff=13ms');
+    expect(text).toContain('merge=11ms');
+    expect(text).toContain('apply=5ms');
+    expect(text).toContain('total=29ms');
+    expect(text).toContain('outcome=merged');
+  });
+
+  it('reports the worktree creation leg only, never the gap until launch', async () => {
+    const { world, clock, spawnInfos } = timedWorld();
+    const code = await runOrchestrateCommand(
+      { prompt: 'one thing', agents: ['alpha'], json: true },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    // Creation took 7 ms; the clock advanced another 100 ms before the
+    // launch and the run continued after it — none of that is creation time.
+    expect(spawnInfos[0]?.worktreeMs).toBe(7);
+    expect(clock()).toBeGreaterThan(1_007 + 7);
+  });
+
+  it('leaves the approval gate wait out of mergeMs', async () => {
+    // The gate is a HUMAN-paced wait (a bounded seat can hold it for tens of
+    // seconds), and §61 budgets the merge itself: mergeMs covers
+    // workspace_merge only, exactly like resolveMs is kept apart from it.
+    // A gate tick must therefore move neither mergeMs nor the total.
+    const { world, tick } = timedWorld({
+      requestApproval: () => {
+        // The user takes a second to answer.
+        tick(1_000);
+        return true;
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'one thing', agents: ['alpha'], json: true },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    const telemetry = lastJsonLine(world.lines)
+      .mergeTelemetry as unknown as MergeTelemetry[];
+    expect(telemetry[0]).toMatchObject({ mergeMs: 11, resolveMs: 0 });
+    // The total is the phase sum, so the gate second is in no phase at all —
+    // it is not smuggled into the merge leg. This is the SAME total the
+    // ungated run reports (queue 0 + diff 13 + merge 11 + apply 5): a
+    // human-paced gate cannot move the numbers §61 budgets.
+    expect(totalMergeMs(telemetry[0] as MergeTelemetry)).toBe(29);
+  });
+
+  it('records a denied gate instead of dropping the candidate', async () => {
+    // The gate's verdict ends the run for that candidate: the telemetry must
+    // still name it (the queue wait was measured) rather than leave the
+    // operator with a row that silently vanished.
+    const world = makeWorld({
+      now: () => 1_000,
+      runWorker: () => ({
+        hunks: [{ path: 'alpha.txt', hunk: '@@ -0,0 +1 @@ +x' }],
+        diffMs: 13,
+      }),
+      requestApproval: () => ({ verdict: 'deny' as const }),
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'one thing', agents: ['alpha'], json: true },
+      world.deps,
+    );
+    expect(code).toBe(4);
+    const telemetry = lastJsonLine(world.lines)
+      .mergeTelemetry as unknown as MergeTelemetry[];
+    expect(telemetry).toHaveLength(1);
+    expect(telemetry[0]).toMatchObject({
+      agentId: 'alpha',
+      diffMs: 13,
+      mergeMs: 0,
+      resolveMs: 0,
+      applyMs: 0,
+      outcome: 'approval-denied',
+    });
+  });
+
+  it('records a gate timeout under its own outcome', async () => {
+    const world = makeWorld({
+      now: () => 1_000,
+      requestApproval: () => ({
+        verdict: 'timeout' as const,
+        maxPendingMs: 60,
+      }),
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'one thing', agents: ['alpha'], json: true },
+      world.deps,
+    );
+    expect(code).toBe(4);
+    const telemetry = lastJsonLine(world.lines)
+      .mergeTelemetry as unknown as MergeTelemetry[];
+    expect(telemetry[0]).toMatchObject({
+      agentId: 'alpha',
+      applyMs: 0,
+      outcome: 'approval-timeout',
+    });
+  });
+
+  it('names a failed merge truthfully instead of calling it discarded', async () => {
+    // The merge threw: the branch and worktree stay as evidence (§44.1) and
+    // `state.pending` keeps the worker for `--resume`, so nothing was thrown
+    // away. The record says what happened, and the failure envelope carries
+    // it (the text view prints the line next to the error).
+    const world = makeWorld({
+      now: () => 1_000,
+      mergeBranch: () => {
+        throw new Error('index lock held');
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'one thing', agents: ['alpha'], json: true },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    const envelope = lastJsonLine(world.lines);
+    const telemetry = envelope.mergeTelemetry as unknown as MergeTelemetry[];
+    expect(telemetry).toHaveLength(1);
+    expect(telemetry[0]).toMatchObject({
+      agentId: 'alpha',
+      applyMs: 0,
+      outcome: 'merge-failed',
+    });
+    // The branch is still there for the operator: the run did not discard it.
+    const state = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(state.pending).toEqual(['alpha']);
+    expect(state.merged).toEqual([]);
+  });
+
+  it('counts the queue wait when the candidate waits for the merge slot', async () => {
+    const { world } = timedWorld();
+    // The first merge's apply leg (saveState) advances the clock, so the
+    // second candidate's queue wait is that tick, not zero.
+    const code = await runOrchestrateCommand(
+      { prompt: 'two things', agents: ['alpha', 'beta'], json: true },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    const telemetry = lastJsonLine(world.lines)
+      .mergeTelemetry as unknown as MergeTelemetry[];
+    expect(telemetry.map((record) => record.agentId).sort()).toEqual([
+      'alpha',
+      'beta',
+    ]);
+    expect(telemetry.some((record) => record.queueMs > 0)).toBe(true);
   });
 });

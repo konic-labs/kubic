@@ -28,6 +28,12 @@
 //                   landed after this entry (manual edit, another run).
 //                   Restoring would destroy it; refuse with a reason and
 //                   let --force override.
+//
+// Issue #348 review: a fourth refusal sits before the file is touched — the
+// inverse record the step would append (issue #117) is planned and measured
+// against the store's bound first. A restore whose record cannot fit is
+// skipped with a warning and a named reason, because recording it after the
+// mutation would leave the workspace changed with no undo/redo entry.
 
 import { resolve } from 'node:path';
 import { createNodeFileBridge } from './file-bridge.js';
@@ -36,9 +42,11 @@ import {
   type FileJournalStore,
   isUndoableCreate,
   type JournalEntry,
+  type JournalEntryInput,
   probeFileState,
   removeCreatedEntry,
   restoreEntry,
+  sha256HexOfBytes,
 } from './journal.js';
 
 export interface UndoScope {
@@ -255,6 +263,122 @@ export interface UndoOptions {
   now?: () => number;
 }
 
+// The inverse record a step will append (issue #117), planned before the
+// mutation so its size can be checked against the store's bound first
+// (issue #348 review). `entry` is null when the step records nothing: a
+// restore with no retrievable pre-image, or a create whose removal did not
+// happen. The pre-state reads live here so the branches below act on the
+// same bytes the record was measured from.
+interface InversePlan {
+  entry: JournalEntryInput | null;
+  /** Create-shaped steps: the removed content (null when it was not
+   *  lossless utf-8 text — the removal then cannot be redone). */
+  removedContent: string | null;
+  /** Write-shaped steps (issue #352): the pre-undo content could not be
+   *  recorded as text (binary/invalid utf-8), so the record carries its raw
+   *  hash only and the undo cannot be redone. */
+  lossyBefore: boolean;
+}
+
+function planInverse(
+  step: JournalEntry,
+  store: FileJournalStore,
+  root: string,
+  timestamp: number,
+): InversePlan {
+  if (isUndoableCreate(step)) {
+    // Undo of a create removes the file. The removed content becomes the
+    // undo record's before, so `--step` right after is the redo. Lossless
+    // check on the real bytes (the walk hash is a hash of the utf-8 decode,
+    // so it cannot detect a lossy decode): binary content is never recorded
+    // as a mangled pre-image for the redo.
+    let removedContent: string | null = null;
+    try {
+      const bytes = Buffer.from(
+        createNodeFileBridge(root).readBinaryFile(resolve(root, step.path)),
+      );
+      const decoded = bytes.toString('utf8');
+      removedContent = Buffer.from(decoded, 'utf8').equals(bytes)
+        ? decoded
+        : null;
+    } catch {
+      removedContent = null;
+    }
+    return {
+      removedContent,
+      lossyBefore: false,
+      entry: {
+        path: step.path,
+        op: 'delete',
+        before: removedContent,
+        after: null,
+        bytesDelta:
+          removedContent === null
+            ? 0
+            : -Buffer.byteLength(removedContent, 'utf8'),
+        sessionId: UNDO_AGENT_ID,
+        agentId: UNDO_AGENT_ID,
+        toolCallId: null,
+        timestamp,
+      },
+    };
+  }
+  // Pre-undo state for the record: read before the restore overwrites it —
+  // as BYTES, with the same lossless rule the create-removal path applies
+  // (issue #352). A utf-8 decode that cannot round-trip (binary content) must
+  // not become the record's before-side: a following `undo --step` would
+  // write the mangled text back over the user's bytes. The raw hash is
+  // recorded instead, marked as a designed omission — never U+FFFD text.
+  // A missing file (null) is recorded as such — no content is invented.
+  let preUndo: string | null = null;
+  let preUndoHash: string | null = null;
+  // The pre-image's byte length, whether or not it survived the utf-8 round
+  // trip: `bytesDelta` is the change this record describes, and an omitted
+  // (lossy) pre-image is still bytes that were there (review of #352 — the
+  // same accounting `write` uses for a hash-only pre-image).
+  let preUndoBytes = 0;
+  let lossyBefore = false;
+  try {
+    const bytes = Buffer.from(
+      createNodeFileBridge(root).readBinaryFile(resolve(root, step.path)),
+    );
+    preUndoBytes = bytes.length;
+    const decoded = bytes.toString('utf8');
+    if (Buffer.from(decoded, 'utf8').equals(bytes)) {
+      preUndo = decoded;
+    } else {
+      preUndoHash = sha256HexOfBytes(bytes);
+      lossyBefore = true;
+    }
+  } catch {
+    preUndo = null;
+  }
+  const restoredContent = store.readBefore(step);
+  return {
+    removedContent: null,
+    lossyBefore,
+    entry:
+      restoredContent === null
+        ? null
+        : {
+            path: step.path,
+            // Restores write content — delete entries restore as writes too.
+            op: 'write',
+            before: preUndo,
+            ...(preUndoHash === null
+              ? {}
+              : { beforeHash: preUndoHash, beforeOmitted: true }),
+            after: restoredContent,
+            bytesDelta:
+              Buffer.byteLength(restoredContent, 'utf8') - preUndoBytes,
+            sessionId: UNDO_AGENT_ID,
+            agentId: UNDO_AGENT_ID,
+            toolCallId: null,
+            timestamp,
+          },
+  };
+}
+
 export function applyUndo(
   store: FileJournalStore,
   plan: UndoPlan,
@@ -292,29 +416,33 @@ export function applyUndo(
       skippedDetails.push({ path: step.path, reason: verdict.reason });
       continue;
     }
+    // Issue #348 review: the inverse record is appended AFTER the mutation,
+    // so whether it can be recorded is decided BEFORE the file is touched.
+    // A restore the store would refuse (its own bound is the whole journal:
+    // index + blobs) would otherwise leave the workspace changed with no
+    // undo/redo entry and no report of what happened. The dry run reports
+    // the same skip, so it never promises a restore the real run refuses.
+    const inverse = planInverse(step, store, root, now());
+    if (inverse.entry !== null) {
+      const { entryBytes, maxBytes } = store.entryBound(inverse.entry);
+      if (entryBytes > maxBytes) {
+        skipped.push(step.path);
+        skippedDetails.push({
+          path: step.path,
+          reason: `too large to record: the inverse entry needs ${entryBytes} bytes, over the journal's ${maxBytes}-byte bound`,
+        });
+        warnings.push(
+          `skipped '${step.path}': recording the undo needs ${entryBytes} bytes, over the journal's ${maxBytes}-byte bound — the file was left as it is`,
+        );
+        continue;
+      }
+    }
     if (options.dryRun === true) {
       simulated.set(step.path, stateAfterUndo(step));
       restored.push(step.path);
       continue;
     }
     if (isUndoableCreate(step)) {
-      // Undo of a create removes the file. The removed content becomes the
-      // undo record's before, so `--step` right after is the redo.
-      // Lossless check on the real bytes (the walk hash is a hash of the
-      // utf-8 decode, so it cannot detect a lossy decode): binary content
-      // is never recorded as a mangled pre-image for the redo.
-      let removedContent: string | null = null;
-      try {
-        const bytes = Buffer.from(
-          createNodeFileBridge(root).readBinaryFile(resolve(root, step.path)),
-        );
-        const decoded = bytes.toString('utf8');
-        removedContent = Buffer.from(decoded, 'utf8').equals(bytes)
-          ? decoded
-          : null;
-      } catch {
-        removedContent = null;
-      }
       const removal = removeCreatedEntry(step, root);
       if (!removal.restored) {
         skipped.push(step.path);
@@ -322,66 +450,31 @@ export function applyUndo(
         continue;
       }
       restored.push(step.path);
-      if (removedContent === null) {
+      if (inverse.removedContent === null) {
         warnings.push(
           `removed '${step.path}' without a recoverable copy (content was not lossless utf-8 text) — this removal cannot be redone`,
         );
       }
-      store.append({
-        path: step.path,
-        op: 'delete',
-        before: removedContent,
-        after: null,
-        bytesDelta:
-          removedContent === null
-            ? 0
-            : -Buffer.byteLength(removedContent, 'utf8'),
-        sessionId: UNDO_AGENT_ID,
-        agentId: UNDO_AGENT_ID,
-        toolCallId: null,
-        timestamp: now(),
-      });
+      if (inverse.entry !== null) store.append(inverse.entry);
       continue;
     }
     // The verdict already verified the walk-aware state; restoreEntry keeps
     // the containment/symlink guards and its own write-error reporting.
-    // Pre-undo state for the record: read before the restore overwrites it.
-    // A missing file (null) is recorded as such — no content is invented.
-    let preUndo: string | null = null;
-    try {
-      preUndo = createNodeFileBridge(root).readTextFile(
-        resolve(root, step.path),
-      );
-    } catch {
-      preUndo = null;
-    }
-    const restoredContent = store.readBefore(step);
     const result = restoreEntry(store, step, root, { allowStale: true });
     if (result.restored) {
       restored.push(step.path);
+      if (inverse.lossyBefore) {
+        warnings.push(
+          `restored '${step.path}' without a recoverable copy of its pre-undo content (it was not lossless utf-8 text) — this undo cannot be redone`,
+        );
+      }
       // The undo is itself a change (issue #117): journal the inverse so
       // `kubic diff`/`log` describe the world after the undo — and so a
       // second `undo --step` re-applies the pre-undo content (the redo).
-      // `before` is the pre-undo content, null when the file did not exist
-      // pre-undo; `after` is the content just restored. Attributed to
-      // `kubic-undo`: it is not an unattributed reconciliation find, so no
-      // `reconciled` marker and no hash-only pre-image.
-      if (restoredContent !== null) {
-        store.append({
-          path: step.path,
-          // Restores write content — delete entries restore as writes too.
-          op: 'write',
-          before: preUndo,
-          after: restoredContent,
-          bytesDelta:
-            Buffer.byteLength(restoredContent, 'utf8') -
-            (preUndo === null ? 0 : Buffer.byteLength(preUndo, 'utf8')),
-          sessionId: UNDO_AGENT_ID,
-          agentId: UNDO_AGENT_ID,
-          toolCallId: null,
-          timestamp: now(),
-        });
-      }
+      // The record was planned (and measured against the store's bound)
+      // before the restore; it is null only when the step has no retrievable
+      // pre-image, in which case nothing is recorded — never a guessed one.
+      if (inverse.entry !== null) store.append(inverse.entry);
     } else {
       skipped.push(step.path);
       skippedDetails.push({

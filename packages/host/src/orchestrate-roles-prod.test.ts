@@ -1,14 +1,17 @@
 // Role-driven worker prompts on the PROD orchestrate path (issue #104;
-// §12/§12.1, §40, §71). Drives the real composition-root adapter against
-// real git and a REAL child process: the child fixture dumps the prompt it
-// received and its own environment, so the claims are read from the child's
-// view — not from the spawn call the test could have gotten wrong. Two
-// assertions matter here:
+// §12/§12.1, §40, §71; model resolution reworked by #202). Drives the real
+// composition-root adapter against real git and a REAL child process: the
+// child fixture dumps the prompt it received and its own environment, so the
+// claims are read from the child's view — not from the spawn call the test
+// could have gotten wrong. The assertions matter here:
 //   1. two workers with different roles receive different composed prompts
-//      (role `## Prompt` text + that worker's plan step), and
+//      (role `## Prompt` text + that worker's plan step),
 //   2. the child `kubic run` is told which role it runs as, so its own lane
-//      registers the role's resolved tool set (§40: absence withholds) —
-//      plus the role's model default via the EXISTING `KUBIC_MODEL` pin.
+//      registers the role's resolved tool set (§40: absence withholds), and
+//   3. §38.1 model precedence (#202): the role's `[roles.<r>].model` config
+//      pin, then the manager's effective model — never a hardcoded provider —
+//      with the role's thinking default (or the run's explicit level) on the
+//      child's `KUBIC_MODEL` / `KUBIC_MODEL_THINKING`.
 // No provider is dialled: the fixture child never reaches a model.
 import {
   existsSync,
@@ -21,12 +24,18 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  loadCliConfig,
+  roleLayersFromConfig,
+  runtimeModelPin,
+} from '../../../apps/kubic/src/config-runtime.js';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
 import type { Provenance } from '../../exec/src/env.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { WorkerRegistry } from '../../worker/src/lifecycle/registry.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
+import type { RoleLayerInput } from './roles/resolver.js';
 
 const PROVENANCE: Provenance = {
   sessionId: 'roles-prod',
@@ -51,6 +60,7 @@ if (dumpDir !== null) {
   writeFileSync(dumpDir[1] + '/' + id + '.prompt.txt', prompt);
   writeFileSync(dumpDir[1] + '/' + id + '.role.txt', role);
   writeFileSync(dumpDir[1] + '/' + id + '.model.txt', process.env.KUBIC_MODEL ?? '(none)');
+  writeFileSync(dumpDir[1] + '/' + id + '.thinking.txt', process.env.KUBIC_MODEL_THINKING ?? '(none)');
 }
 process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
 if (0 === 0) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
@@ -68,6 +78,7 @@ function scratchRoot(prefix: string): string {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -101,7 +112,9 @@ const IMPLEMENTER_FM =
 // A repo with the two role documents COMMITTED, the way `.kubic/roles/*.md`
 // live in the real project: the worker's worktree is a checkout of this
 // branch, so the child `kubic run --role <name>` finds its own document.
-async function initRepoWithRoles(): Promise<string> {
+// A project config, when given, is committed with them — an untracked one
+// would dirty the tree the pre-merge guard checks.
+async function initRepoWithRoles(projectConfig?: string): Promise<string> {
   const root = scratchRoot('kubic-orch-roles-');
   await gitOrThrow(root, ['init', '-b', 'main']);
   await gitOrThrow(root, ['config', 'user.email', 'roles@kubic.dev']);
@@ -126,22 +139,53 @@ async function initRepoWithRoles(): Promise<string> {
       'You are the implementer. Execute the plan inside your worktree.',
     ),
   );
+  if (projectConfig !== undefined) {
+    writeFileSync(join(root, '.kubic', 'config.toml'), projectConfig);
+  }
   await gitOrThrow(root, ['add', '-A']);
   await gitOrThrow(root, ['commit', '-m', 'base + roles']);
   return root;
 }
 
-async function harness(): Promise<{
+interface HarnessOptions {
+  /** The manager's effective model pin (`orchestrateDepsWithDefaults.model`). */
+  model?: { provider: string; id: string };
+  /** A committed project `.kubic/config.toml` (trusted for the run). */
+  projectConfig?: string;
+}
+
+async function harness(options: HarnessOptions = {}): Promise<{
   root: string;
   deps: Awaited<ReturnType<typeof orchestrateDepsWithDefaults>>;
   lines: string[];
   dumpDir: string;
 }> {
-  const root = await initRepoWithRoles();
+  const root = await initRepoWithRoles(options.projectConfig);
   const sessionsRoot = scratchRoot('kubic-orch-roles-sessions-');
   const scratch = scratchRoot('kubic-orch-roles-child-');
   const fixture = join(scratch, 'worker-child.mjs');
   writeFileSync(fixture, FIXTURE);
+  // The committed config is loaded and projected exactly as the composition
+  // root does it: `roleLayersFromConfig(cliConfig)` for the `[roles.<name>]`
+  // layers and `runtimeModelPin(cliConfig)` for the manager's effective
+  // model. The run must plan over the same layers the worker's own
+  // `kubic run --role` resolves.
+  let roleLayers: RoleLayerInput[] | undefined;
+  let model = options.model;
+  if (options.projectConfig !== undefined) {
+    const loaded = loadCliConfig({
+      cwd: root,
+      env: { KUBIC_TRUST_PROJECT: '1' },
+      home: scratchRoot('kubic-orch-roles-home-'),
+    });
+    expect(loaded.error).toBeUndefined();
+    roleLayers = roleLayersFromConfig(loaded.runtime as never);
+    if (model === undefined) {
+      const pin = runtimeModelPin(loaded);
+      model =
+        pin === undefined ? undefined : { provider: pin.provider, id: pin.id };
+    }
+  }
   const lines: string[] = [];
   const deps = await orchestrateDepsWithDefaults({
     out: (line) => lines.push(line),
@@ -150,6 +194,8 @@ async function harness(): Promise<{
     sessionsRoot,
     registry: new WorkerRegistry(),
     workerEntry: { cmd: process.execPath, args: [fixture] },
+    ...(model === undefined ? {} : { model }),
+    ...(roleLayers === undefined ? {} : { roleLayers }),
   });
   const dumpDir = scratchRoot('kubic-orch-roles-prompts-');
   return { root, deps, lines, dumpDir };
@@ -166,7 +212,9 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     const code = await runOrchestrateCommand(
       {
         prompt: objective,
-        agents: ['alpha', 'beta'],
+        // The explicit per-agent binding (issue #178): alpha plans, beta
+        // implements.
+        agents: ['alpha:planner', 'beta:implementer'],
         yes: true,
         session: 'rolesession',
       },
@@ -191,12 +239,151 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
       alpha.indexOf('Plan step 1 of 2'),
     );
     // The child is told which role it runs as, so its own lane registers the
-    // role's resolved tool set — and the role's model default travels via the
-    // existing KUBIC_MODEL pin.
+    // role's resolved tool set. §38.1 (#202): no level chose a model for this
+    // run, so no KUBIC_MODEL is invented — the child keeps its own selection
+    // default — and the role's own thinking default still travels.
     expect(readDump(h.dumpDir, 'alpha', 'role')).toBe('planner');
     expect(readDump(h.dumpDir, 'beta', 'role')).toBe('implementer');
-    expect(readDump(h.dumpDir, 'alpha', 'model')).toBe('local/llama3');
-    expect(readDump(h.dumpDir, 'beta', 'model')).toBe('local/llama3');
+    expect(readDump(h.dumpDir, 'alpha', 'model')).toBe('(none)');
+    expect(readDump(h.dumpDir, 'beta', 'model')).toBe('(none)');
+    expect(readDump(h.dumpDir, 'alpha', 'thinking')).toBe('medium');
+    expect(readDump(h.dumpDir, 'beta', 'thinking')).toBe('medium');
+  });
+
+  it('hands the committed [model] to every worker with no role pin (issue #202)', async () => {
+    // Acceptance: parent config `[model]` acme/x, no KUBIC_MODEL env, role
+    // docs present — the child is told acme/x, never local/llama3. (`acme` is
+    // a provider the manager's catalog does not know, so the credential
+    // preflight has nothing to deliver and the claim stays about the model.)
+    const h = await harness({
+      projectConfig: '[model]\nprovider = "acme"\nid = "x"\n',
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`,
+        agents: ['alpha', 'beta'],
+        yes: true,
+        session: 'parentmodel',
+      },
+      h.deps,
+    );
+    expect(code).toBe(0);
+    expect(readDump(h.dumpDir, 'alpha', 'model')).toBe('acme/x');
+    expect(readDump(h.dumpDir, 'beta', 'model')).toBe('acme/x');
+  });
+
+  it('lets the committed [roles.<r>].model pin win for its own worker (issue #202)', async () => {
+    // Acceptance: `[roles.implementer] model = "acme/m2"` makes the
+    // implementer worker run acme/m2 — through the real config load and the
+    // same projection the composition root passes the run.
+    const h = await harness({
+      projectConfig:
+        '[model]\nprovider = "acme"\nid = "x"\n\n[roles.implementer]\nmodel = "acme/m2"\n',
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`,
+        agents: ['alpha:planner', 'beta:implementer'],
+        yes: true,
+        session: 'rolepin',
+      },
+      h.deps,
+    );
+    expect(code).toBe(0);
+    // The planner has no pin: it runs the manager's model.
+    expect(readDump(h.dumpDir, 'alpha', 'model')).toBe('acme/x');
+    // The implementer's own config pin outranks it.
+    expect(readDump(h.dumpDir, 'beta', 'model')).toBe('acme/m2');
+  });
+
+  it('narrows the orchestrated role with the committed [roles.<r>].tools layer (issue #202)', async () => {
+    // Acceptance: config `[roles.reviewer] tools` narrows the orchestrated
+    // reviewer worker — the plan the run uses resolves over the same layers
+    // the worker's own `kubic run --role reviewer` would.
+    const h = await harness({
+      projectConfig:
+        '[roles.reviewer]\ntools = ["read", "ls"]\nmodel = "acme/rev"\n',
+    });
+    writeFileSync(
+      join(h.root, '.kubic', 'roles', 'reviewer.md'),
+      roleText(
+        'reviewer',
+        PLANNER_FM,
+        'You are the reviewer. Inspect the diff.',
+      ),
+    );
+    const plan = h.deps.loadWorkerRoles?.(['w1', 'w2', 'w3', 'w4', 'w5'], {
+      roles: { w5: 'reviewer' },
+      models: {},
+    });
+    const reviewer = plan?.assignments.find(
+      (entry) => entry.role === 'reviewer',
+    );
+    expect(reviewer?.agentId).toBe('w5');
+    expect(reviewer?.tools).toEqual(['ls', 'read']);
+    expect(reviewer?.modelRef).toBe('acme/rev');
+  });
+
+  it("the run's explicit thinking level outranks the role's own default (issue #202)", async () => {
+    // The plan the run uses resolves it per worker: the role's own default
+    // when nothing explicit is set, the run's level for every worker when it
+    // is — and the same value is what the child is told below.
+    const bare = await harness();
+    expect(
+      bare.deps
+        .loadWorkerRoles?.(['alpha', 'beta'])
+        ?.assignments.map((entry) => entry.thinking),
+    ).toEqual(['medium', 'medium']);
+    vi.stubEnv('KUBIC_MODEL_THINKING', 'xhigh');
+    const h = await harness();
+    expect(h.deps.loadWorkerRoles?.(['alpha'])?.assignments[0]?.thinking).toBe(
+      'xhigh',
+    );
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`,
+        agents: ['alpha'],
+        yes: true,
+        session: 'thinkinglevel',
+      },
+      h.deps,
+    );
+    expect(code).toBe(0);
+    expect(readDump(h.dumpDir, 'alpha', 'thinking')).toBe('xhigh');
+  });
+
+  it('defaults every worker of a two-agent run to the implementer (issue #178)', async () => {
+    // Acceptance: the default run no longer spends a worker on a planner
+    // whose plan nothing consumes — position is not a task.
+    const h = await harness();
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`,
+        agents: ['alpha', 'beta'],
+        yes: true,
+        session: 'defaultroles',
+      },
+      h.deps,
+    );
+    expect(code).toBe(0);
+    expect(readDump(h.dumpDir, 'alpha', 'role')).toBe('implementer');
+    expect(readDump(h.dumpDir, 'beta', 'role')).toBe('implementer');
+  });
+
+  it('refuses an unknown role before anything spawns (issue #178)', async () => {
+    const h = await harness();
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`,
+        agents: ['alpha:teleporter'],
+        yes: true,
+        session: 'badrole',
+      },
+      h.deps,
+    );
+    expect(code).toBe(2);
+    expect(h.lines.join('\n')).toMatch(/Unknown role "teleporter"/);
+    expect(readdirSync(h.dumpDir)).toEqual([]);
   });
 
   it('refuses a contradictory role document before any worktree or spawn exists', async () => {
@@ -251,10 +438,10 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     expect(h.lines.join('\n')).toMatch(/role document/i);
   });
 
-  it('lets an explicit operator model pin outrank the role default', async () => {
-    // §12.1 precedence: the role default is the LOWEST-precedence choice. An
-    // operator who pinned KUBIC_MODEL must keep it — the delegation path may
-    // not quietly replace their model with a role default.
+  it('carries the operator KUBIC_MODEL to the worker unchanged (issue #202)', async () => {
+    // §38.1: with no role pin the manager's effective model is the worker's —
+    // an operator who pinned KUBIC_MODEL keeps it, and the delegation path may
+    // neither replace it with a role default nor with anything else.
     const h = await harness();
     const previous = process.env.KUBIC_MODEL;
     process.env.KUBIC_MODEL = 'acme/m9';
@@ -276,6 +463,48 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     }
   });
 
+  it('assigns the embedded presets in a repo with no role documents (issue #203)', async () => {
+    // The same scratch shape as the cwd test, minus the role document: the
+    // built-in presets ship with the binary, so the child is still launched
+    // as a role — `--role planner`, with the embedded planner prompt — instead
+    // of running as a role-less worker.
+    const plain = scratchRoot('kubic-orch-presets-');
+    await gitOrThrow(plain, ['init', '-b', 'main']);
+    await gitOrThrow(plain, ['config', 'user.email', 'roles@kubic.dev']);
+    await gitOrThrow(plain, ['config', 'user.name', 'kubic roles']);
+    await gitOrThrow(plain, ['config', 'commit.gpgsign', 'false']);
+    writeFileSync(join(plain, 'base.txt'), 'base\n');
+    await gitOrThrow(plain, ['add', '-A']);
+    await gitOrThrow(plain, ['commit', '-m', 'base']);
+    const sessionsRoot = scratchRoot('kubic-orch-presets-sessions-');
+    const scratch = scratchRoot('kubic-orch-presets-child-');
+    const fixture = join(scratch, 'worker-child.mjs');
+    writeFileSync(fixture, FIXTURE);
+    const dumpDir = scratchRoot('kubic-orch-presets-prompts-');
+    const deps = await orchestrateDepsWithDefaults({
+      out: () => undefined,
+      err: () => undefined,
+      cwd: plain,
+      sessionsRoot,
+      registry: new WorkerRegistry(),
+      workerEntry: { cmd: process.execPath, args: [fixture] },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing EXIT=0 PROMPTDUMPDIR=${dumpDir}`,
+        agents: ['alpha:planner'],
+        yes: true,
+        session: 'presetsession',
+      },
+      deps,
+    );
+    expect(code).toBe(0);
+    expect(readDump(dumpDir, 'alpha', 'role')).toBe('planner');
+    expect(readDump(dumpDir, 'alpha', 'prompt')).toContain(
+      'You are the planner.',
+    );
+  });
+
   it('resolves role documents from the run cwd, not the process cwd', async () => {
     // The composition root is given an explicit cwd (a caller embedding the
     // run); the role documents must come from THAT repo. A process-cwd read
@@ -287,6 +516,15 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     await gitOrThrow(plain, ['config', 'user.name', 'kubic roles']);
     await gitOrThrow(plain, ['config', 'commit.gpgsign', 'false']);
     writeFileSync(join(plain, 'base.txt'), 'base\n');
+    // A role document that exists ONLY in the scratch repo, with a prompt no
+    // other layer could produce: if the run read the process cwd's own
+    // `.kubic/roles/` (or fell back to the embedded preset) this text could
+    // not reach the child.
+    mkdirSync(join(plain, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(plain, '.kubic', 'roles', 'implementer.md'),
+      '---\nrole: implementer\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nYou are the scratch implementer.\n',
+    );
     await gitOrThrow(plain, ['add', '-A']);
     await gitOrThrow(plain, ['commit', '-m', 'base']);
     const sessionsRoot = scratchRoot('kubic-orch-noroles-sessions-');
@@ -312,13 +550,17 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
       deps,
     );
     expect(code).toBe(0);
-    // No role documents in that repo: the plan prompt stands and no role
-    // reaches the child.
+    // The role comes from the SCRATCH repo's document — the default
+    // implementer preset overridden there — not from the process cwd's own
+    // `.kubic/roles/` nor from the preset embedded in the binary.
     expect(readDump(dumpDir, 'alpha', 'prompt')).toContain('Plan step 1 of 1');
-    expect(readDump(dumpDir, 'alpha', 'prompt')).not.toContain(
-      'You are the planner.',
+    expect(readDump(dumpDir, 'alpha', 'prompt')).toContain(
+      'You are the scratch implementer.',
     );
-    expect(readDump(dumpDir, 'alpha', 'role')).toBe('(none)');
+    expect(readDump(dumpDir, 'alpha', 'prompt')).not.toContain(
+      'You are the implementer.',
+    );
+    expect(readDump(dumpDir, 'alpha', 'role')).toBe('implementer');
     expect(readDump(dumpDir, 'alpha', 'model')).toBe('(none)');
   });
 });

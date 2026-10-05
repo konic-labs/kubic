@@ -19,12 +19,16 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { nodeVersionSupported } from '../bin/node-guard.mjs';
 import {
+  BUILTIN_ROLE_NAMES,
   binaryContract,
+  CONFIG_REFUSAL_KEY,
   CRASH_PROBE_ENV,
   CRASH_PROBE_MESSAGE,
   expectedVersionLine,
+  MODELS_RECEIPT_PREFIX,
   nodeGuardLine,
   ROOT_USAGE_LINE,
+  unknownPromptHint,
 } from './binary-contract.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -48,9 +52,57 @@ function helpOut(line = ROOT_USAGE_LINE) {
   return ok(`${line}\n`);
 }
 
+// `kubic <command> --help` (issue #245): the command's own usage, exit 0,
+// and no lane-boot receipt anywhere.
+const COMMAND_HELP = new Set(['run', 'tui', 'orchestrate']);
+
+function commandHelpOut(command) {
+  return ok(
+    `Usage: kubic ${command} [options]\n\nOptions:\n  -h, --help  print usage\n`,
+  );
+}
+
 // Bare `kubic`: the identical line, exit 1 — POSIX usage-on-no-args.
 function bareOut(line = ROOT_USAGE_LINE) {
   return { code: 1, stdout: `${line}\n`, stderr: '', error: null };
+}
+
+// An unknown command (issue #372, hint per issue #268/L-D7): the root usage
+// line plus the prompt hint on stdout, exit 2 — a usage error, not
+// commander's own stderr message.
+function unknownOut() {
+  return {
+    code: 2,
+    stdout: `${ROOT_USAGE_LINE}\n${unknownPromptHint('nosuch-command')}\n`,
+    stderr: '',
+    error: null,
+  };
+}
+
+// The internal crash probe without its env gate (issue #128): an unknown
+// command with NO prompt hint — the seam is not a user surface (issue #268).
+function usageOnlyOut() {
+  return { code: 2, stdout: `${ROOT_USAGE_LINE}\n`, stderr: '', error: null };
+}
+
+// The headline bare prompt (issue #268/L-D7): a multi-word argv token runs
+// like `kubic run -p`, so the faux provider answers with a completed run.
+function barePromptOut() {
+  return ok(
+    `${JSON.stringify({ ok: true, exitCode: 0, status: 'completed', result: { summary: 'echo: hello there' } })}\n`,
+  );
+}
+
+// `kubic orchestrate -p x` / `kubic clean` outside a git repository (issue
+// #372): one named refusal on stderr, exit 5 (workspace unavailable) —
+// never the usage code.
+function nonRepoRefusalOut(what) {
+  return {
+    code: 5,
+    stdout: '',
+    stderr: `error: ${what} — nothing was removed\n`,
+    error: null,
+  };
 }
 
 // The launcher's guard refusal for a stubbed runtime: one named line on
@@ -86,9 +138,18 @@ function debugCrashOut() {
   };
 }
 
+// The embedded §12 role presets (issue #203) are part of the doctor baseline:
+// a runner with no `.kubic/roles/` reports all five as `builtin role`.
+function rolePresetLines() {
+  return BUILTIN_ROLE_NAMES.map(
+    (name) => `PASS role:${name} (ok): builtin role — 5 tool(s): bash, read`,
+  );
+}
+
 function doctorOut(code = 6, fails = [PROVIDER_FAIL]) {
   const lines = [
     'PASS dep:node (ok): node 24.13.0 (need >=22.19)',
+    ...rolePresetLines(),
     ...fails,
     `doctor: 6 pass, 6 warn, ${fails.length} fail, 0 skip`,
   ];
@@ -113,6 +174,66 @@ function applyOverride(override, stub) {
   return typeof override === 'function' ? override(stub) : override;
 }
 
+// Issue #244: the models.json receipt is a diagnostic, so `--json` stdout is
+// one document. The fake mirrors the real split.
+function modelsJsonOut() {
+  return {
+    code: 0,
+    stdout: `${JSON.stringify([{ id: 'local/llama3' }])}\n`,
+    stderr: `${MODELS_RECEIPT_PREFIX} /x/models.json (project, trusted): local\n`,
+    error: null,
+  };
+}
+
+function doctorJsonOut() {
+  return {
+    code: 0,
+    stdout: `${JSON.stringify({ ok: true, exitCode: 0, checks: [] })}\n`,
+    stderr: `${MODELS_RECEIPT_PREFIX} /x/models.json (project, trusted): local\n`,
+    error: null,
+  };
+}
+
+function modelsTextOut() {
+  return {
+    code: 0,
+    stdout: 'local/llama3\n',
+    stderr: `${MODELS_RECEIPT_PREFIX} /x/models.json (project, trusted): local\n`,
+    error: null,
+  };
+}
+
+// The refusal a project config with an unknown key produces (issue #244).
+const REFUSAL_MESSAGE = `layer 'project': unknown key '${CONFIG_REFUSAL_KEY}'`;
+
+function refusedRunTextOut() {
+  return {
+    code: 1,
+    stdout: '',
+    stderr: `error: ${REFUSAL_MESSAGE}\n`,
+    error: null,
+  };
+}
+
+function refusedRunJsonOut() {
+  return {
+    code: 1,
+    stdout: `${JSON.stringify({
+      ok: false,
+      exitCode: 1,
+      sessionId: 'unassigned',
+      status: 'failed',
+      result: { summary: REFUSAL_MESSAGE },
+      journal: { ref: 'journal:unassigned' },
+      usage: { ref: 'usage:unassigned' },
+      trajectory: { ref: 'trajectory:unassigned' },
+      error: { kind: 'failed', message: REFUSAL_MESSAGE },
+    })}\n`,
+    stderr: `error: ${REFUSAL_MESSAGE}\n`,
+    error: null,
+  };
+}
+
 // Replays the probes with the given per-command overrides. The stubbed-node
 // probes (issue #128) key on `opts.nodeStub`: the contract only stubs
 // below-the-floor values and the exact floor, so the fake mirrors a working
@@ -130,12 +251,60 @@ function fakeRun(overrides = {}) {
       throw new Error(`unexpected node stub: ${stub}`);
     }
     if (args.length === 0) return overrides.bare ?? bareOut();
+    if (args[0] === 'nosuch-command') {
+      return overrides.unknown ?? unknownOut();
+    }
+    if (opts.env?.KUBIC_PROVIDER === 'faux' && args[0] === 'hello there') {
+      return overrides.barePrompt ?? barePromptOut();
+    }
+    if (args.length >= 2 && args[1] === '--help' && COMMAND_HELP.has(args[0])) {
+      return overrides[`${args[0]}Help`] ?? commandHelpOut(args[0]);
+    }
+    if (args[0] === 'orchestrate' || args[0] === 'clean') {
+      if (opts.cwd === undefined) {
+        throw new Error(
+          `the \`${args.join(' ')}\` non-repo probe must run in a non-repo cwd`,
+        );
+      }
+      const refusal = nonRepoRefusalOut(
+        args[0] === 'orchestrate'
+          ? 'orchestrator mode needs a git repository'
+          : '`kubic clean` needs a git repository',
+      );
+      return overrides[args[0]] ?? refusal;
+    }
+    if (args[0] === 'models' && args.includes('--json')) {
+      if (opts.cwd === undefined) {
+        throw new Error('the models --json probe must run in the models cwd');
+      }
+      return overrides.modelsJson ?? modelsJsonOut();
+    }
+    if (args[0] === 'models') {
+      if (opts.cwd === undefined) {
+        throw new Error('the models probe must run in the models cwd');
+      }
+      return overrides.modelsText ?? modelsTextOut();
+    }
+    if (args[0] === 'doctor' && args.includes('--json')) {
+      if (opts.cwd === undefined) {
+        throw new Error('the doctor --json probe must run in the models cwd');
+      }
+      return overrides.doctorJson ?? doctorJsonOut();
+    }
+    // The refused-config probes are the only ones carrying the trust env
+    // opt-in; the provider-less `run -p` probe stays on its own case below.
+    if (opts.env?.KUBIC_TRUST_PROJECT === '1') {
+      if (args.includes('--json')) {
+        return overrides.refusedRunJson ?? refusedRunJsonOut();
+      }
+      return overrides.refusedRunText ?? refusedRunTextOut();
+    }
     if (args[0] === '__crash-probe') {
       // Without the contract's env gate the seam is unreachable (issue
       // #128): the command falls through to the unknown-command path —
-      // the same shape as the bare invocation.
+      // the same shape as any other unknown command (exit 2, issue #372).
       if (opts.env?.[CRASH_PROBE_ENV] !== '1') {
-        return overrides.ungatedCrash ?? bareOut();
+        return overrides.ungatedCrash ?? usageOnlyOut();
       }
       return opts.env?.KUBIC_DEBUG === '1'
         ? (overrides.debugCrash ?? debugCrashOut())
@@ -145,6 +314,12 @@ function fakeRun(overrides = {}) {
     if (args[0] === '--help') return overrides.help ?? helpOut();
     if (args[0] === '-h')
       return overrides.shortHelp ?? overrides.help ?? helpOut();
+    if (args.length >= 2 && args[1] === '--help' && COMMAND_HELP.has(args[0])) {
+      return overrides[`${args[0]}Help`] ?? commandHelpOut(args[0]);
+    }
+    if (args.length >= 2 && args[1] === '--help' && COMMAND_HELP.has(args[0])) {
+      return overrides[`${args[0]}Help`] ?? commandHelpOut(args[0]);
+    }
     if (args[0] === 'doctor') return overrides.doctor ?? doctorOut();
     if (args[0] === 'run') return overrides.run ?? runOut();
     throw new Error(`unexpected probe: ${args.join(' ')}`);
@@ -155,6 +330,9 @@ function contractWith(overrides = {}, options = {}) {
   return binaryContract({
     distPresent: options.distPresent ?? true,
     expectedLine: VERSION_LINE,
+    nonRepoCwd: options.nonRepoCwd ?? '/non-repo',
+    modelsCwd: options.modelsCwd ?? '/models',
+    refusedCwd: options.refusedCwd ?? '/refused',
     run: fakeRun(overrides),
   });
 }
@@ -380,10 +558,109 @@ describe('binary contract failure probes (issue #128)', () => {
 
   it('fails when the seam fires without the env gate (internal-only breach)', () => {
     const result = contractWith({ ungatedCrash: crashOut() });
-    assert.equal(result.problems.length, 2);
-    assert.match(result.problems[0], /without the env gate/);
-    assert.match(result.problems[0], /internal-only/);
-    assert.match(result.problems[1], /without the env gate/);
+    assert.equal(result.problems.length, 3);
+    for (const problem of result.problems) {
+      assert.match(problem, /without the env gate/);
+    }
+    assert.match(result.problems[0], /exited 1 \(expected 2/);
+  });
+});
+
+describe('binary contract unknown-command probe (issue #372)', () => {
+  it('fails when an unknown command exits 1 (the old posture)', () => {
+    const result = contractWith({ unknown: { ...unknownOut(), code: 1 } });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /exited 1 \(expected 2/);
+  });
+
+  it('fails when the unknown-command path writes to stderr', () => {
+    const result = contractWith({
+      unknown: {
+        ...unknownOut(),
+        stderr: "error: unknown command 'nosuch-command'\n",
+      },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /expected silence/);
+  });
+
+  it('fails when the unknown-command path drops the root usage line', () => {
+    const result = contractWith({ unknown: { ...unknownOut(), stdout: '' } });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /expected the root usage line/);
+  });
+
+  it('fails when the unknown-command path drops the prompt hint', () => {
+    const result = contractWith({
+      unknown: { ...unknownOut(), stdout: `${ROOT_USAGE_LINE}\n` },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /prompt hint/);
+  });
+});
+
+describe('binary contract bare-prompt probe (issue #268)', () => {
+  it('fails when the bare prompt does not run like `kubic run -p`', () => {
+    const result = contractWith({
+      barePrompt: { ...barePromptOut(), code: 2 },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /exited 2 \(expected 0/);
+  });
+
+  it('fails when the bare prompt does not settle completed', () => {
+    const result = contractWith({
+      barePrompt: ok(
+        `${JSON.stringify({ ok: false, exitCode: 1, status: 'failed' })}\n`,
+      ),
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /expected ok:true, status:"completed"/);
+  });
+
+  it('fails when the bare prompt prints more than one document', () => {
+    const result = contractWith({
+      barePrompt: ok(
+        `${JSON.stringify({ ok: true, exitCode: 0, status: 'completed' })}\nnoise\n`,
+      ),
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /exactly one --json envelope/);
+  });
+});
+
+describe('binary contract non-repo refusal probes (issue #372)', () => {
+  it('fails when orchestrate outside a git repo exits 2 (the old usage code)', () => {
+    const result = contractWith({
+      orchestrate: {
+        ...nonRepoRefusalOut('orchestrator mode needs a git repository'),
+        code: 2,
+      },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(
+      result.problems[0],
+      /kubic orchestrate -p x` exited 2 \(expected 5/,
+    );
+  });
+
+  it('fails when clean outside a git repo exits 2 (the old usage code)', () => {
+    const result = contractWith({
+      clean: {
+        ...nonRepoRefusalOut('`kubic clean` needs a git repository'),
+        code: 2,
+      },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /kubic clean` exited 2 \(expected 5/);
+  });
+
+  it('fails when the refusal does not name the git requirement', () => {
+    const result = contractWith({
+      clean: { code: 5, stdout: '', stderr: 'error: nope\n', error: null },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /did not name the git requirement/);
   });
 });
 
@@ -766,5 +1043,130 @@ describe('CI wiring (issue #101)', () => {
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
+  });
+});
+
+describe('binary contract --json purity probes (issue #244)', () => {
+  it('fails when the models.json receipt leaks to stdout', () => {
+    const result = contractWith({
+      modelsJson: {
+        ...modelsJsonOut(),
+        stdout: `${MODELS_RECEIPT_PREFIX} /x/models.json (project, trusted): local\n[]\n`,
+      },
+    });
+    assert.ok(
+      result.problems.some((p) => /leaked the models.json receipt/.test(p)),
+      JSON.stringify(result.problems),
+    );
+  });
+
+  it('fails when models --json stdout is not one JSON document', () => {
+    const result = contractWith({
+      modelsJson: { ...modelsJsonOut(), stdout: 'not json\n' },
+    });
+    assert.ok(
+      result.problems.some((p) => /not one JSON document/.test(p)),
+      JSON.stringify(result.problems),
+    );
+  });
+
+  it('fails when the receipt is missing from stderr', () => {
+    const result = contractWith({
+      doctorJson: { ...doctorJsonOut(), stderr: '' },
+    });
+    assert.ok(
+      result.problems.some((p) =>
+        /did not print the models.json receipt/.test(p),
+      ),
+      JSON.stringify(result.problems),
+    );
+  });
+
+  it('fails when the refused-config text run leaks the reason to stdout', () => {
+    const result = contractWith({
+      refusedRunText: {
+        ...refusedRunTextOut(),
+        stdout: `error: ${REFUSAL_MESSAGE}\n`,
+      },
+    });
+    assert.ok(
+      result.problems.some((p) => /stderr-only/.test(p)),
+      JSON.stringify(result.problems),
+    );
+  });
+
+  it('fails when the refused-config envelope is missing under --json', () => {
+    const result = contractWith({
+      refusedRunJson: { ...refusedRunJsonOut(), stdout: '' },
+    });
+    assert.ok(
+      result.problems.some((p) => /exactly one envelope/.test(p)),
+      JSON.stringify(result.problems),
+    );
+  });
+
+  it('fails when the refused-config envelope reports a different exit', () => {
+    const result = contractWith({
+      refusedRunJson: { ...refusedRunJsonOut(), code: 2 },
+    });
+    assert.ok(
+      result.problems.some((p) => /exited 2 \(expected 1/.test(p)),
+      JSON.stringify(result.problems),
+    );
+  });
+
+  it('fails when the refused-config envelope does not name the reason', () => {
+    const result = contractWith({
+      refusedRunJson: {
+        ...refusedRunJsonOut(),
+        stdout: `${JSON.stringify({
+          ok: false,
+          exitCode: 1,
+          error: { kind: 'failed', message: 'refused' },
+        })}\n`,
+      },
+    });
+    assert.ok(
+      result.problems.some((p) => /does not name the reason/.test(p)),
+      JSON.stringify(result.problems),
+    );
+  });
+});
+
+describe('binary contract command help probes (issue #245)', () => {
+  it('fails when a command help request boots a lane (extensions receipt)', () => {
+    const result = contractWith({
+      orchestrateHelp: {
+        code: 0,
+        stdout:
+          'extensions: loaded 1 (kubic/budget: budget: none configured)\nUsage: kubic orchestrate [options]\n',
+        stderr: '',
+        error: null,
+      },
+    });
+    assert.ok(
+      result.problems.some((p) => /must not boot a lane/.test(p)),
+      JSON.stringify(result.problems),
+    );
+  });
+
+  it('fails when a command help request exits non-zero', () => {
+    const result = contractWith({
+      runHelp: { ...commandHelpOut('run'), code: 1 },
+    });
+    assert.ok(
+      result.problems.some((p) => /exited 1 \(expected 0/.test(p)),
+      JSON.stringify(result.problems),
+    );
+  });
+
+  it('fails when a command help request prints the wrong usage', () => {
+    const result = contractWith({
+      tuiHelp: commandHelpOut('doctor'),
+    });
+    assert.ok(
+      result.problems.some((p) => /did not print its usage line/.test(p)),
+      JSON.stringify(result.problems),
+    );
   });
 });

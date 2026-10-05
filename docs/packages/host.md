@@ -132,6 +132,10 @@ Exit codes: 0 ok, 1 fail, 2 usage, 6 provider. `DoctorStatus` is
 `probeSessionOverlap` (issue #118) adds the repo-level `session:overlap`
 note: warn when two or more sessions are recorded against the workspace —
 a disclosure of the end-of-run sweep's blind spot, never a block and never
+exit-flipping. `probeStatePermissions` (issue #361) adds `state:permissions`:
+a `warn` naming a group- or world-accessible sessions root (its mode and the
+`chmod 700` that closes it), a `pass` when it is private or absent, and
+`state permissions unverified` when the probe itself throws — never
 exit-flipping.
 
 ### Session retention (`sessions-cli.ts` + `sessions-prune.ts`, #119)

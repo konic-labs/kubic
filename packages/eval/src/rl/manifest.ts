@@ -18,11 +18,16 @@ function stringifyCanonical(value: unknown): string {
     return `[${value.map(stringifyCanonical).join(',')}]`;
   }
   if (typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter((entry) => entry[1] !== undefined)
-      .sort((left, right) =>
-        left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0,
-      );
+    const record = value as Record<string, unknown>;
+    // Default string order is UTF-16 code-unit order — the same total
+    // order an explicit comparator would implement, minus its equality
+    // branch (object keys are unique, so that branch is unreachable).
+    // Each value is read exactly once: an accessor answering differently
+    // between reads must not decide both inclusion and output.
+    const entries = Object.keys(record)
+      .sort()
+      .map((key) => [key, record[key]] as const)
+      .filter(([, entry]) => entry !== undefined);
     return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stringifyCanonical(entry)}`).join(',')}}`;
   }
   throw new Error(`uncapturable value of type ${typeof value}`);

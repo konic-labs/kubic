@@ -7,19 +7,22 @@
 > Source: `packages/eval/src` (read-only — this page quotes it, never moves it).
 
 `@kubic/eval` is the benchmark harness (issue #53; §48, §72, §73). Every
-stored result carries how it ran — model/thinking/worktree/generation/
-tier; records missing worktree, generation, or tier are rejected (exit
-2), never stored. Cost/latency/tokens reconcile against §39 usage rows
-before a record is accepted. Suites run faux-only in CI (zero network,
-zero paid tokens); anything needing a live PTY or model stays
-`stub: true` and reports `skipped`, never passing work.
+stored result carries how it ran — model/thinking/worktree/generation,
+the record size, and the §47.1 determinism tier; records missing any of
+them are rejected (exit 2), never stored. Cost/latency/tokens reconcile against §39 usage rows
+before a record is accepted. Each executable suite carries a fixture
+(prompt, starting files, gate commands); `kubic eval --task` and
+`kubic benchmark` run it through the real solo lane and score the
+trajectory it writes. Suites run faux-only in CI (zero network, zero paid
+tokens); anything needing a capability the binary does not ship (a live
+PTY) stays `stub: true` and reports `skipped`, never passing work.
 
 Quoted from `packages/eval/COMMUNITY.md` (stub-first contribution path):
 append one row to `EVAL_SUITES` in `suites.ts` (`{ id` — unique,
 lowercase, hyphenated; `category` — one of the 8 `EVAL_CATEGORIES`;
 `title`; `stub: true`; `description` — what signal it measures `}`),
 flip `stub` to `false` when it runs faux-only. `--worktree`,
-`--generation`, and `--tier` are mandatory on every CLI invocation.
+`--generation`, and `--size` are mandatory on every CLI invocation.
 `--json` shapes: eval success `{ ok: true, exitCode: 0, record: {
 suite, success } }`; rejection `{ ok: false, exitCode: 2, error: {
 code, message } }`; benchmark matrix `{ ok: true, exitCode, results: [{
@@ -32,14 +35,15 @@ ci` clean, usage reconciliation, RL export fields untouched (#54).
 
 | Module | Exports |
 | --- | --- |
-| `records.ts` | `EvalRecord`, `EvalRecordInput`, `EvalTier`, `EVAL_TIERS`, `isEvalTier`, `RecordValidation`, `validateEvalRecord`, `UsageRowLike`, `ReconcileResult`, `reconcileUsage` |
+| `records.ts` | `EvalRecord`, `EvalRecordInput`, `EvalSize`, `EVAL_SIZES`, `isEvalSize`, `EvalDeterminism`, `DETERMINISM_TIERS`, `isEvalDeterminism`, `RecordValidation`, `validateEvalRecord`, `UsageRowLike`, `ReconcileResult`, `reconcileUsage` |
 | `suites.ts` | `EvalSuite`, `EVAL_SUITES`, `findSuite` |
 | `categories.ts` | `EvalCategory`, `EVAL_CATEGORIES`, `isEvalCategory` |
-| `signals.ts` | `EvalSignals`, `GateSignal`, `computeSignals`, `gatesPass` |
+| `signals.ts` | `EvalSignals`, `GateSignal`, `computeSignals`, `gatesPass`, `patchQuality` |
 | `runner.ts` | `EvalRunnerErrorCode`, `EvalRunnerError`, `EvalTaskDeps`, `EvalTaskOptions`, `EvalTrajectoryOptions`, `EvalWorkspace`, `SuiteRunOutcome`, `runEvalTask`, `runEvalTrajectory` |
 | `cli.ts` | `BenchmarkResult`, `EvalCliDeps`, `EvalOptions`, `EVAL_DEFAULT_MODEL`, `EVAL_EXIT_OK/FAILED/USAGE`, `runEvalCommand`, `runBenchmarkCommand`. The handlers take the options commander parses in `apps/kubic/src/commands/analysis.ts`; the benchmark matrix is assembled here over `EVAL_SUITES` |
-| `matrix.test.ts` | Category/suite coverage test over `categories.ts` + `suites.ts` (one suite per category, stubs marked) — there is no `matrix.ts`; matrix assembly is a function of `runBenchmarkCommand` |
-| `rl/` | Phase-4 RL export: `types`, `manifest`, `fixtures`, `coding`, `tooluse`, `sft`, `grpo`, `dpo`, `preference`, `provenance`, `verifier` (incl. pairs/sft-grpo/tooluse-coding shapes) |
+| `suites.test.ts` | Category/suite coverage test over `categories.ts` + `suites.ts` — eight categories in order, one suite each, stubs marked. There is no `matrix.ts`: matrix assembly is a function of `runBenchmarkCommand` |
+| `export-cli.ts` | `ExportCliDeps`, `ExportCommandOptions`, `ExportDatasetType`, `DATASET_TYPES`, `runExportCommand` — single-trajectory describe/export plus the `--dataset` batch mode |
+| `rl/` | Phase-4 RL export: `types`, `manifest`, `fixtures`, `coding`, `tooluse`, `sft`, `grpo`, `dpo`, `preference`, `provenance`, `verifier`, `dataset` (directory/glob in, streamed JSONL + `dataset/1` manifest out; incl. pairs/sft-grpo/tooluse-coding shapes) |
 | `index.ts` | Re-exports the surface above |
 
 ## Contracts
@@ -60,7 +64,8 @@ ci` clean, usage reconciliation, RL export fields untouched (#54).
 | `thinking` | `string \| null` | string or null only |
 | `worktree` | `string` (non-empty) | required (§73) |
 | `generation` | `number` (integer ≥ 0) | required (§73) |
-| `tier` | `EvalTier` | required; `smoke \| standard \| extended` |
+| `size` | `EvalSize` | required; `smoke \| standard \| extended` — the record's size class (an implementation-side label, not a §47.1 tier) |
+| `determinism` | `EvalDeterminism` | required; `recorded \| deterministic \| live` (§47.1) — derived from the path: `recorded` for `--trajectory`, `live` for `--task`; benchmark rows publish `live` |
 | `signals` | `EvalSignals` | optional on input |
 | `recordedAt` | `string` (ISO) | set on accept |
 
@@ -74,19 +79,21 @@ input. `reconcileUsage` checks tokens/cost/latency against
 
 `EVAL_CATEGORIES` (8): `swe`, `repo-mod`, `bugfix`, `refactor`,
 `testgen`, `review`, `terminal`, `agentic`. `EvalSuite` fields: `id`,
-`category`, `title`, `stub`, `description`. Built-ins — one per
-category:
+`category`, `title`, `stub`, `description`, `fixture?` (issue #262:
+`prompt`, `files`, `verify` gate commands, `timeoutMs?`).
+`resolveSuites(selector)` accepts an id, a category alias (`swe` → every
+suite of that category) or `all`/undefined. Built-ins — one per category:
 
-| `id` | `category` | `stub` |
-| --- | --- | --- |
-| `swe-bench-mini` | `swe` | false |
-| `repo-mod-rename` | `repo-mod` | false |
-| `bugfix-repro` | `bugfix` | false |
-| `refactor-extract` | `refactor` | false |
-| `testgen-cover` | `testgen` | false |
-| `review-diff` | `review` | false |
-| `terminal-live` | `terminal` | true (needs live PTY) |
-| `agentic-live` | `agentic` | true (needs live model) |
+| `id` | `category` | `stub` | fixture |
+| --- | --- | --- | --- |
+| `swe-bench-mini` | `swe` | false | write the fix file, gate on it |
+| `repo-mod-rename` | `repo-mod` | false | rename via bash, gate on both paths |
+| `bugfix-repro` | `bugfix` | false | write the answer, gate runs the repro script |
+| `refactor-extract` | `refactor` | false | write the extracted module, gate on it |
+| `testgen-cover` | `testgen` | false | write the test file, gate greps it |
+| `review-diff` | `review` | false | write the findings, gate greps the path |
+| `terminal-live` | `terminal` | true | — (needs a live PTY) |
+| `agentic-live` | `agentic` | false | one tool step, gate on its artifact |
 
 ### Signals (`signals.ts`, §48)
 
@@ -98,9 +105,35 @@ number`, `regressionFree: boolean`, `tokens`, `costUsd`, `latencyMs`,
 [trajectory](trajectory.md) export (this package never redefines the
 trajectory shape): counts come straight from it; gate signals are
 `unknown` unless the trajectory eval labels carry an explicit
-`signal:<name>` = pass|fail override — never guessed. `gatesPass`
-vetoes on any red gate: a completed run with red tests/build/lint/
-typecheck has `quality: 0` and is not a success.
+`signal:<name>` = pass|fail — never guessed. `gatesPass` vetoes on any
+red gate: a completed run with red tests/build/lint/typecheck is not a
+success.
+
+### Signals and patch quality
+
+The shipped producer of the gate labels is the run verifier (issue #267,
+`packages/host/src/verify/verifier.ts`). The `[verify]` commands (see
+[configuration](../cli/configuration.md#gate-verification-verify)) run in
+the worktree after `kubic run` settles, and their exit statuses become
+`signal:tests|build|lint|typecheck`. A baseline run at the base revision
+adds `signal:regression`.
+
+- **`regressionFree`**: with a `signal:regression` label, it is true
+  exactly when the run completed and no gate that passed at the base
+  revision fails now. A gate that was already red at base is not a
+  regression. Without the label it falls back to "completed with no red
+  gate".
+- **`quality`** (`patchQuality`), graded in [0, 1]:
+  - 0 when the run did not complete;
+  - otherwise the fraction of known gates that pass (1 when no gate is
+    known, since unknown gates abstain);
+  - halved when a regression was detected.
+
+  For example, tests/build/typecheck pass and lint fails gives 0.75; the
+  same with a regression gives 0.375.
+- **Reference verifier** (`rl/verifier.ts`): `pass` needs
+  `signal:tests = pass` and no red gate. Verified runs therefore feed
+  GRPO rewards and §74 preference pairs without hand-set labels.
 
 ## Dep-direction neighbours
 

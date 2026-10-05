@@ -358,6 +358,92 @@ describe('a settled process handle', () => {
       expect(signalled).toEqual([]);
     },
   );
+
+  it.runIf(process.platform !== 'win32')(
+    'kill() does not schedule a group SIGKILL once the leader has exited (issue #142)',
+    async () => {
+      const { env } = makeNodeEnv();
+      // The leader exits at once but leaves a background member holding the
+      // inherited pipes, so the handle stays unsettled through its drain
+      // window (EXIT_DRAIN_MS) — the exact window in which a kill() used to
+      // schedule a group SIGKILL for a leader that no longer owns a group.
+      const leader = [
+        "require('node:child_process')",
+        ".spawn(process.execPath,['-e','setInterval(()=>{},1000)'],",
+        "{stdio:['ignore','inherit','inherit']})",
+        '.unref();',
+      ].join('');
+      const handle = env.shell.spawn(process.execPath, ['-e', leader], {
+        provenance: PROV,
+        killGraceMs: 5,
+      });
+      const pid = handle.pid;
+      expect(typeof pid).toBe('number');
+      // Wait until the LEADER is gone — reaped, so its pid owns no group any
+      // more. The probe is the same one the handle's gate uses, so the test
+      // and the code agree on "the leader is dead"; a bounded poll on the
+      // OS's own condition, never a fixed sleep for synchronization.
+      const deadline = Date.now() + 2000;
+      for (;;) {
+        try {
+          process.kill(pid as number, 0);
+        } catch {
+          break;
+        }
+        if (Date.now() > deadline) throw new Error('child never exited');
+        await new Promise((resolveTick) => setTimeout(resolveTick, 5));
+      }
+      const signalled: Array<[number, unknown]> = [];
+      const realKill = process.kill.bind(process);
+      const spy = vi.spyOn(process, 'kill').mockImplementation(((
+        signalledPid: number,
+        signal?: string | number,
+      ) => {
+        // A liveness probe (signal 0) must answer truthfully — the handle
+        // asks the OS whether the leader is still there — while every real
+        // signal is recorded instead of sent.
+        if (signal === 0) return realKill(signalledPid, 0);
+        signalled.push([signalledPid, signal]);
+        return true;
+      }) as typeof process.kill);
+      // The escalation is the only timer kill() schedules, so observing the
+      // timers it registers is deterministic: waiting for a SIGKILL that
+      // must not come would race the drain window (and let the settle path's
+      // own reap be recorded instead).
+      const realSetTimeout = globalThis.setTimeout;
+      const timers: number[] = [];
+      const timerSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
+        fn: () => void,
+        ms?: number,
+        ...args: unknown[]
+      ) => {
+        timers.push(ms ?? 0);
+        return realSetTimeout(fn, ms, ...args);
+      }) as typeof setTimeout);
+      try {
+        handle.kill();
+      } finally {
+        timerSpy.mockRestore();
+        spy.mockRestore();
+        // The pipe holder must not outlive the test even when an assertion
+        // above throws: the settle path reaps it, and this makes it certain.
+        try {
+          realKill(-(pid as number), 'SIGKILL');
+        } catch {
+          // Already gone.
+        }
+      }
+      // A dead leader owns no group: the SIGTERM attempt is harmless (ESRCH
+      // when the group is gone), but the delayed group SIGKILL — the one
+      // that could hit a recycled pgid — must not even be scheduled.
+      expect(timers).not.toContain(5);
+      expect(signalled.filter(([, signal]) => signal === 'SIGKILL')).toEqual(
+        [],
+      );
+      // Settling reaps whatever the group still held (the pipe holder).
+      await handle.wait();
+    },
+  );
 });
 
 describe('execution env spawn failures (issue #85)', () => {
@@ -472,6 +558,92 @@ describe('child output caps (issue #121)', () => {
     const result = await handle.wait();
     expect(result.stdout).toBe('tiny\n');
     expect(result.stdout).not.toMatch(/\[kubic: output truncated/);
+  });
+});
+
+// Issue #354: the cap is documented in BYTES, but the accumulator compared
+// UTF-16 code units — so CJK/emoji output admitted up to ~3x the intended
+// memory (a 3-byte character cost 1 unit), the header misstated the dropped
+// size, and slice(-cap) could start the kept tail with half a surrogate
+// pair (a lone low surrogate, which reaches the model and the session store
+// as U+FFFD). Bytes are the bound; code points are the trim boundary.
+const CAP_HEADER =
+  /^\[kubic: output truncated — dropped (\d+) leading bytes, kept the last (\d+)\]\n/;
+
+function cappedTail(stdout: string): {
+  dropped: number;
+  kept: number;
+  tail: string;
+} {
+  const match = stdout.match(CAP_HEADER);
+  expect(match).not.toBeNull();
+  const head = match as RegExpMatchArray;
+  return {
+    dropped: Number(head[1]),
+    kept: Number(head[2]),
+    tail: stdout.slice(head[0].length),
+  };
+}
+
+describe('child output caps count bytes (issue #354)', () => {
+  it('keeps at most maxOutputBytes of UTF-8, not of UTF-16 units', async () => {
+    const { env } = makeNodeEnv();
+    // 100 three-byte characters: 300 UTF-8 bytes, 100 UTF-16 units.
+    const handle = env.shell.spawn(
+      process.execPath,
+      ['-e', `process.stdout.write('日'.repeat(100))`],
+      { provenance: PROV, maxOutputBytes: 10 },
+    );
+    const result = await handle.wait();
+    const { kept, tail } = cappedTail(result.stdout);
+    expect(Buffer.byteLength(tail, 'utf8')).toBeLessThanOrEqual(10);
+    // 3 whole characters fit; the tenth byte would cut one in half.
+    expect(kept).toBe(9);
+    expect(tail).toBe('日日日');
+    expect(tail).not.toContain('\uFFFD');
+  });
+
+  it("reports the header's dropped and kept counts in bytes", async () => {
+    const { env } = makeNodeEnv();
+    const total = Buffer.byteLength('日'.repeat(100), 'utf8');
+    const handle = env.shell.spawn(
+      process.execPath,
+      ['-e', `process.stdout.write('日'.repeat(100))`],
+      { provenance: PROV, maxOutputBytes: 10 },
+    );
+    const result = await handle.wait();
+    const { dropped, kept, tail } = cappedTail(result.stdout);
+    const tailBytes = Buffer.byteLength(tail, 'utf8');
+    // Both numbers describe the same units the cap does: bytes.
+    expect(kept).toBe(tailBytes);
+    expect(dropped).toBe(total - tailBytes);
+  });
+
+  it('never starts the kept tail with half a surrogate pair', async () => {
+    const { env } = makeNodeEnv();
+    // 100 four-byte emoji: 4 UTF-8 bytes, 2 UTF-16 units each.
+    const four = env.shell.spawn(
+      process.execPath,
+      ['-e', `process.stdout.write('😀'.repeat(100))`],
+      { provenance: PROV, maxOutputBytes: 4 },
+    );
+    const fourResult = await four.wait();
+    const whole = cappedTail(fourResult.stdout);
+    // Exactly one complete code point fits in four bytes.
+    expect(whole.tail).toBe('😀');
+    expect(whole.kept).toBe(4);
+    // A cap of three cannot hold an emoji: the tail is empty, never a
+    // dangling low surrogate (which slice(-3) used to produce).
+    const three = env.shell.spawn(
+      process.execPath,
+      ['-e', `process.stdout.write('😀'.repeat(100))`],
+      { provenance: PROV, maxOutputBytes: 3 },
+    );
+    const threeResult = await three.wait();
+    const partial = cappedTail(threeResult.stdout);
+    expect(partial.tail).toBe('');
+    expect(partial.dropped).toBe(400);
+    expect(/^[\uDC00-\uDFFF]/.test(partial.tail)).toBe(false);
   });
 });
 
@@ -612,6 +784,63 @@ describe('toolSpawnEnv allowlist coverage', () => {
       XDG_CONFIG_HOME: 'x',
       GIT_CONFIG_NOSYSTEM: '1',
     });
+  });
+});
+
+// Issue #366: a proxy URL's userinfo (`http://user:password@proxy:3128`) is a
+// credential in the §3.8 sense, but the NAME looks benign, so `looksSecret`
+// never sees it and it reached every tool child — where the model can read it
+// with `echo $HTTPS_PROXY` (§36.1 rule 2). The value keeps its scheme, host
+// and port and loses the userinfo; a proxy that REQUIRES that auth is not
+// usable from a tool child (Kubic does not broker proxy auth).
+describe('proxy credentials in the tool env (issue #366)', () => {
+  it('strips the userinfo, keeping scheme, host and port', () => {
+    const out = toolSpawnEnv({
+      HTTPS_PROXY: 'http://user:sekret-pass@proxy.corp:3128',
+      http_proxy: 'http://u:p@h:1',
+    });
+    expect(out.HTTPS_PROXY).toBe('http://proxy.corp:3128');
+    expect(out.http_proxy).toBe('http://h:1');
+    expect(JSON.stringify(out)).not.toContain('sekret-pass');
+    expect(JSON.stringify(out)).not.toContain('@');
+  });
+
+  it('passes a proxy URL without userinfo through unchanged', () => {
+    const out = toolSpawnEnv({
+      HTTPS_PROXY: 'http://proxy.corp:3128',
+      http_proxy: 'socks5h://proxy.corp:1080',
+      NO_PROXY: 'localhost,127.0.0.1',
+      no_proxy: 'localhost,127.0.0.1',
+    });
+    expect(out).toEqual({
+      HTTPS_PROXY: 'http://proxy.corp:3128',
+      http_proxy: 'socks5h://proxy.corp:1080',
+      NO_PROXY: 'localhost,127.0.0.1',
+      no_proxy: 'localhost,127.0.0.1',
+    });
+  });
+
+  it('handles the shapes a proxy value can take', () => {
+    const out = toolSpawnEnv({
+      // No scheme: the whole value is the authority.
+      HTTP_PROXY: 'user:sekret@proxy.corp:3128',
+      // Userinfo with no password.
+      http_proxy: 'http://user@proxy.corp:3128',
+      // Path and query survive the strip.
+      HTTPS_PROXY: 'http://u:sekret@proxy.corp:3128/path?x=1',
+      // An '@' that is not userinfo stays put.
+      NO_PROXY: 'proxy.corp/@scope',
+      // Percent-encoded userinfo is still userinfo.
+      https_proxy: 'http://u%40x:sekret@proxy.corp:3128',
+    });
+    expect(out).toEqual({
+      HTTP_PROXY: 'proxy.corp:3128',
+      http_proxy: 'http://proxy.corp:3128',
+      HTTPS_PROXY: 'http://proxy.corp:3128/path?x=1',
+      NO_PROXY: 'proxy.corp/@scope',
+      https_proxy: 'http://proxy.corp:3128',
+    });
+    expect(JSON.stringify(out)).not.toContain('sekret');
   });
 });
 

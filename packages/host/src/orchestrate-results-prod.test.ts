@@ -27,6 +27,41 @@ process.stdout.write(JSON.stringify({ ok: ${exit === 0}, exitCode: ${exit}, sess
 process.exit(${exit});
 `;
 
+// Issue #280: the exact envelope a `kubic run` that hit its own wall-clock
+// bound prints — status timeout, exit 1 (never the budget code).
+const timeoutFixture = `
+import { writeFileSync } from 'node:fs';
+writeFileSync('work.txt', 'work\\n');
+process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
+const a = process.argv;
+process.stdout.write(JSON.stringify({ ok: false, exitCode: 1, sessionId: a[a.indexOf('--session') + 1], status: 'timeout', result: { summary: 'run timed out after 50ms' }, error: { kind: 'timeout', message: 'run timed out after 50ms' }, model: 'faux/faux-1' }) + String.fromCharCode(10));
+process.exit(1);
+`;
+
+// Issue #155: the exact envelope a `kubic run` whose lane failed with a
+// model error prints — the §52 failure code travels with the child's own
+// report (the envelope's `error.kind` is the §78 terminus, never a §68 kind).
+const modelFailureFixture = `
+import { writeFileSync } from 'node:fs';
+writeFileSync('work.txt', 'work\\n');
+process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
+const a = process.argv;
+process.stdout.write(JSON.stringify({ ok: false, exitCode: 1, sessionId: a[a.indexOf('--session') + 1], status: 'failed', result: { summary: 'the model produced nothing' }, error: { kind: 'failed', message: 'the model produced nothing' }, failure: { code: 'model_failed', remedy: 'inspect the model error', strategy: 'retry_same' }, model: 'faux/faux-1' }) + String.fromCharCode(10));
+process.exit(1);
+`;
+
+// Issue #244: the exact envelope `kubic run --json` prints when the config
+// load is refused (dispatch's pre-lane failure envelope) — the manager must
+// surface the named reason from it.
+const refusedConfigFixture = `
+import { writeFileSync } from 'node:fs';
+writeFileSync('work.txt', 'work\\n');
+process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
+const message = "layer 'project': unknown key 'bogus_key'";
+process.stdout.write(JSON.stringify({ ok: false, exitCode: 1, sessionId: 'unassigned', status: 'failed', result: { summary: message }, journal: { ref: 'journal:unassigned' }, usage: { ref: 'usage:unassigned' }, trajectory: { ref: 'trajectory:unassigned' }, error: { kind: 'failed', message } }) + String.fromCharCode(10));
+process.exit(1);
+`;
+
 const scratchDirs: string[] = [];
 
 function scratch(prefix: string): string {
@@ -75,7 +110,7 @@ describe('§68 worker results on the prod path (issue #185)', () => {
   it('prints the worker summary line and carries usage from the child report', async () => {
     const text = await run(0, false);
     expect(text.code, text.lines.join('\n')).toBe(0);
-    expect(text.lines).toContain('worker-1 (worker): did X');
+    expect(text.lines).toContain('worker-1 (implementer): did X');
 
     const json = await run(0, true);
     const envelope = JSON.parse(json.lines.join('\n')) as {
@@ -90,7 +125,9 @@ describe('§68 worker results on the prod path (issue #185)', () => {
     const worker = envelope.workers[0];
     expect(worker?.summary).toBe('did X');
     expect(worker?.status).toBe('completed');
-    expect(worker?.role).toBe('worker');
+    // §68 provenance names the worker's ROLE, and every worker now has one —
+    // the built-in implementer preset (issue #203).
+    expect(worker?.role).toBe('implementer');
     expect(worker?.usage).toMatchObject({
       inputTokens: 120,
       outputTokens: 30,
@@ -132,6 +169,119 @@ describe('§68 worker results on the prod path (issue #185)', () => {
       workerId: 'worker-1',
       model: 'faux/faux-1',
     });
+  });
+
+  it('a worker that timed out reports status timeout, never budget_exhausted (issue #280)', async () => {
+    const root = initRepo185();
+    const child = join(scratch('kubic-orch-280-child-'), 'worker-timeout.mjs');
+    writeFileSync(child, timeoutFixture);
+    const lines: string[] = [];
+    const deps = await orchestrateDepsWithDefaults({
+      out: (line) => lines.push(line),
+      err: () => undefined,
+      cwd: root,
+      sessionsRoot: scratch('kubic-orch-280-sessions-'),
+      workerEntry: { cmd: process.execPath, args: [child] },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'work',
+        agents: ['worker-1'],
+        session: 'r280',
+        yes: true,
+        json: true,
+      },
+      deps,
+    );
+    expect(code).toBe(1);
+    const envelope = JSON.parse(lines.join('\n')) as {
+      workers: { status?: string }[];
+    };
+    // The child's own terminus survives the manager: a wall-clock bound is
+    // not a configured budget (§71, issue #280).
+    expect(envelope.workers[0]?.status).toBe('timeout');
+    expect(savedState(root, 'r280').records[0]?.result?.status).toBe('timeout');
+  });
+
+  it('a worker child model error yields model_failed, not process_crashed (issue #155)', async () => {
+    const root = initRepo185();
+    const child = join(
+      scratch('kubic-orch-155-child-'),
+      'worker-model-failed.mjs',
+    );
+    writeFileSync(child, modelFailureFixture);
+    const lines: string[] = [];
+    const deps = await orchestrateDepsWithDefaults({
+      out: (line) => lines.push(line),
+      err: () => undefined,
+      cwd: root,
+      sessionsRoot: scratch('kubic-orch-155-sessions-'),
+      workerEntry: { cmd: process.execPath, args: [child] },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'work',
+        agents: ['worker-1'],
+        session: 'r155',
+        yes: true,
+        json: true,
+      },
+      deps,
+    );
+    expect(code).toBe(1);
+    const envelope = JSON.parse(lines.join('\n')) as {
+      workers: {
+        status?: string;
+        error?: { kind?: string; details?: { code?: string } };
+      }[];
+    };
+    // The manager reads the child's own §52 code and domain; the exit-code
+    // mapping (exit 1 → process) is only the fallback.
+    expect(envelope.workers[0]?.error?.kind).toBe('model');
+    expect(envelope.workers[0]?.error?.details?.code).toBe('model_failed');
+    expect(
+      savedState(root, 'r155').records[0]?.result?.error?.details?.code,
+    ).toBe('model_failed');
+  });
+
+  it('a worker config refusal is reported with the named reason, not result_invalid (issue #244)', async () => {
+    const root = initRepo185();
+    const child = join(scratch('kubic-orch-244-child-'), 'worker-refused.mjs');
+    writeFileSync(child, refusedConfigFixture);
+    const lines: string[] = [];
+    const deps = await orchestrateDepsWithDefaults({
+      out: (line) => lines.push(line),
+      err: () => undefined,
+      cwd: root,
+      sessionsRoot: scratch('kubic-orch-244-sessions-'),
+      workerEntry: { cmd: process.execPath, args: [child] },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'work',
+        agents: ['worker-1'],
+        session: 'r244',
+        yes: true,
+        json: true,
+      },
+      deps,
+    );
+    expect(code).toBe(1);
+    const envelope = JSON.parse(lines.join('\n')) as {
+      workers: {
+        status?: string;
+        summary?: string;
+        error?: { message?: string; details?: { code?: string } };
+      }[];
+    };
+    const worker = envelope.workers[0];
+    expect(worker?.status).toBe('failed');
+    expect(worker?.error?.details?.code).not.toBe('result_invalid');
+    expect(worker?.summary).toContain("unknown key 'bogus_key'");
+    expect(worker?.error?.message).toContain("unknown key 'bogus_key'");
+    expect(savedState(root, 'r244').records[0]?.result?.summary).toContain(
+      "unknown key 'bogus_key'",
+    );
   });
 });
 

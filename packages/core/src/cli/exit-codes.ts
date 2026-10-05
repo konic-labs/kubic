@@ -12,6 +12,12 @@ export const EXIT_BUDGET = 3;
 export const EXIT_APPROVAL = 4;
 export const EXIT_WORKSPACE = 5;
 export const EXIT_PROVIDER = 6;
+// 7 — a delegated run that continued past one or more failed workers
+// (issue #169, `kubic orchestrate --on-failure continue`): whatever succeeded
+// was merged, the failed workers are named with their own codes, and the run
+// is neither ok (0) nor wholly failed (1). `kubic run` never exits 7 — it has
+// one lane, so there is no partial outcome to report.
+export const EXIT_PARTIAL = 7;
 
 // A bad invocation a command detects itself (after commander parsed argv):
 // throw it from an action and the program prints `error: <message>` and
@@ -35,12 +41,14 @@ export class CliExitError extends Error {
   }
 }
 
-// commander's informational exits (help, version) are successes; an
-// unknown top-level command keeps the documented exit 1; every other parse
-// failure (unknown option, missing value, bad argument, excess operands) is
-// a usage error — exit 2, never commander's default 1.
+// commander's informational exits (help, version) are successes; every
+// other parse outcome that is not a help request is a usage error —
+// exit 2, never commander's default 1. An unknown command (top-level or
+// a subcommand of a registered group) is a usage error too: issue #372
+// made it 2 so scripts can tell a bad invocation from a task failure.
 const SUCCESS_CODES = new Set(['commander.helpDisplayed', 'commander.version']);
 const PARSE_ERROR_CODES = new Set([
+  'commander.unknownCommand',
   'commander.unknownOption',
   'commander.missingArgument',
   'commander.optionMissingArgument',
@@ -61,7 +69,6 @@ export function exitCodeForParseError(
   if (commanderCode === 'commander.help') {
     return commanderExitCode === 0 ? EXIT_OK : EXIT_USAGE;
   }
-  if (commanderCode === 'commander.unknownCommand') return EXIT_FAILED;
   if (PARSE_ERROR_CODES.has(commanderCode)) return EXIT_USAGE;
   return commanderExitCode === 0 ? EXIT_OK : EXIT_FAILED;
 }

@@ -10,7 +10,6 @@
 // No child_process here (dep-lint): the probe is injected by the caller.
 
 import type { WorkerRow } from './registry.js';
-import { TERMINAL_STATUSES } from './status.js';
 
 export interface ProcessProbe {
   alive: (pid: number) => boolean;
@@ -49,8 +48,20 @@ export function commandOwnsSession(
   return command?.includes(`--session ${sessionId}`) === true;
 }
 
+// §13 (issue #151): a row is live while its PROCESS has not exited. The agent
+// state is what the listing reports; the process phase is what decides whether
+// a pid still belongs to this worker.
 function claimsLive(row: WorkerRow): boolean {
-  return !TERMINAL_STATUSES.includes(row.status);
+  return row.status !== 'exiting';
+}
+
+/** The §13 pair a dead row is reconciled to: the process is gone and the
+ *  agent failed, or was cancelled by the reconciler's own kill. */
+function exited(
+  row: WorkerRow,
+  agentStatus: 'failed' | 'cancelled',
+): WorkerRow {
+  return { ...row, status: 'exiting', agentStatus };
 }
 
 function managerAlive(
@@ -69,7 +80,8 @@ export function isLiveWorkerRow(
 }
 
 /** Sync read-only view for `kubic workers`: a live-status row whose worker
- *  AND manager are both dead is shown as `crashed`. Nothing is killed. */
+ *  AND manager are both dead is shown as `exiting / failed` (issue #151).
+ *  Nothing is killed. */
 export function viewWorkerRows(
   rows: readonly WorkerRow[],
   alive: (pid: number) => boolean = pidAlive,
@@ -78,7 +90,7 @@ export function viewWorkerRows(
     claimsLive(row) &&
     !managerAlive(row, alive) &&
     (row.pid === undefined || !alive(row.pid))
-      ? { ...row, status: 'crashed' }
+      ? exited(row, 'failed')
       : row,
   );
 }
@@ -99,7 +111,7 @@ export async function reconcileWorkerRows(
     // worker is never killed — only a dead one is marked crashed.
     if (row.managerPid === undefined) {
       const dead = row.pid === undefined || !probe.alive(row.pid);
-      out.push(dead ? { ...row, status: 'crashed' } : row);
+      out.push(dead ? exited(row, 'failed') : row);
       if (dead) marked.push(row.workerId);
       continue;
     }
@@ -107,12 +119,12 @@ export async function reconcileWorkerRows(
       const command = await probe.command?.(row.pid);
       if (commandOwnsSession(command, row.sessionId)) {
         probe.killGroup(row.pid);
-        out.push({ ...row, status: 'cancelled' });
+        out.push(exited(row, 'cancelled'));
         reaped.push(row.workerId);
         continue;
       }
     }
-    out.push({ ...row, status: 'crashed' });
+    out.push(exited(row, 'failed'));
     marked.push(row.workerId);
   }
   return { rows: out, reaped, marked };

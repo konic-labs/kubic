@@ -71,13 +71,19 @@ function spinningModels(rounds: number): MutableModels {
 
 // Issue #383: the trajectory ref names the written §46 file, and a guard
 // exhaustion is recorded with its §52 category (never a missing one).
-function expectBudgetTrajectory(result: HeadlessRunResult): void {
+// Issue #280: the wall-clock bound is `timeout`, `--max-turns` stays
+// `budget_exhausted` — the §52 category follows the guard either way.
+function expectGuardTrajectory(
+  result: HeadlessRunResult,
+  status: 'timeout' | 'budget_exhausted',
+): void {
   expect(
     result.trajectoryRef.endsWith(join(result.sessionId, 'trajectory.json')),
   ).toBe(true);
   const exported = parseTrajectoryExportJSON(
     readFileSync(result.trajectoryRef, 'utf8'),
   );
+  expect(exported.result.status).toBe(status);
   expect(exported.result.failureCategory).toBe('budget_exhausted');
 }
 
@@ -202,7 +208,7 @@ describe('run guard mapping (issue #84)', () => {
     expect(DEFAULT_RUN_TIMEOUT_MS).toBe(300_000);
   });
 
-  it('maps a never-settling turn to budget_exhausted with the ref triple intact', {
+  it('maps a never-settling turn to timeout (exit 1) with the ref triple intact', {
     timeout: 10_000,
   }, async () => {
     const root = tmpRoot();
@@ -215,14 +221,49 @@ describe('run guard mapping (issue #84)', () => {
         env: new FakeExecutionEnv({}),
       },
     );
-    expect(result.terminus).toBe('budget_exhausted');
-    expect(mapTerminusToExitCode(result.terminus)).toBe(3);
+    // Issue #280: the default/user wall clock is a timeout, not a budget
+    // breach — §71 budgets exist only when configured.
+    expect(result.terminus).toBe('timeout');
+    expect(mapTerminusToExitCode(result.terminus)).toBe(1);
     expect(result.sessionId).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(result.journalRef).toBe(`journal:${result.sessionId}`);
     expect(result.usageRef).toBe(`usage:${result.sessionId}`);
-    expectBudgetTrajectory(result);
-    expect(result.error?.kind).toBe('budget_exhausted');
+    expectGuardTrajectory(result, 'timeout');
+    expect(result.error?.kind).toBe('timeout');
     expect(result.error?.message).toMatch(/timed out after 60ms/);
+  });
+
+  it('a `kubic run --timeout` that never settles reports status timeout and exits 1 (issue #280)', {
+    timeout: 10_000,
+  }, async () => {
+    // The acceptance shape: the real headless runner behind the command's
+    // own --timeout wiring, faux provider, real wall clock — the envelope
+    // names `timeout` and the exit code is 1, never the budget code.
+    const o = out();
+    const exit = await runRunCommand(
+      { prompt: 'think forever', timeoutMs: 60, json: true },
+      {
+        out: o.write,
+        run: (prompt, options) =>
+          runHeadlessPrompt(prompt, options, {
+            sessionsRoot: tmpRoot(),
+            models: hangingModels(),
+            env: new FakeExecutionEnv({}),
+          }),
+      },
+    );
+    expect(exit).toBe(1);
+    expect(o.lines).toHaveLength(1);
+    const envelope = JSON.parse(o.lines[0] as string) as {
+      ok: boolean;
+      status: string;
+      exitCode: number;
+      error?: { kind: string };
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.status).toBe('timeout');
+    expect(envelope.exitCode).toBe(1);
+    expect(envelope.error?.kind).toBe('timeout');
   });
 
   it('applies the default bound when no override is passed', async () => {
@@ -244,11 +285,11 @@ describe('run guard mapping (issue #84)', () => {
       await vi.advanceTimersByTimeAsync(DEFAULT_RUN_TIMEOUT_MS);
       await vi.advanceTimersByTimeAsync(10_000);
       const result = await pending;
-      expect(result.terminus).toBe('budget_exhausted');
-      expect(mapTerminusToExitCode(result.terminus)).toBe(3);
+      expect(result.terminus).toBe('timeout');
+      expect(mapTerminusToExitCode(result.terminus)).toBe(1);
       expect(result.journalRef).toBe(`journal:${result.sessionId}`);
       expect(result.usageRef).toBe(`usage:${result.sessionId}`);
-      expectBudgetTrajectory(result);
+      expectGuardTrajectory(result, 'timeout');
     } finally {
       vi.useRealTimers();
     }
@@ -271,7 +312,7 @@ describe('run guard mapping (issue #84)', () => {
     expect(mapTerminusToExitCode(result.terminus)).toBe(3);
     expect(result.journalRef).toBe(`journal:${result.sessionId}`);
     expect(result.usageRef).toBe(`usage:${result.sessionId}`);
-    expectBudgetTrajectory(result);
+    expectGuardTrajectory(result, 'budget_exhausted');
     expect(result.error?.message).toMatch(
       /turn budget exhausted after 3 turns/,
     );

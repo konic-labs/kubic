@@ -244,6 +244,37 @@ export function orchestratorDecisionAudit(
   };
 }
 
+// §60 record for approval state that failed authentication and was ignored
+// (issue #149; §41.2): a worker — or anything else on the machine — planted an
+// answer, a memoized decision or a full-access record this run's manager never
+// sealed. Recorded so the drop is never silent; the state itself is never
+// honoured, so the record is a `deny` with the reason it was refused.
+export interface DroppedStateInput {
+  sessionId: string;
+  /** What was refused, e.g. `decision`, `full-access record`, `answer`. */
+  what: string;
+  /** Why, e.g. `no MAC from this run's manager`. */
+  detail: string;
+}
+
+export function droppedStateAudit(input: DroppedStateInput): AuditInput {
+  return {
+    who: 'agent:unknown',
+    what: 'state:dropped',
+    agent: { session: input.sessionId || UNKNOWN, role: UNKNOWN },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    worker: { pid: process.pid, generation: 0, role: UNKNOWN },
+    workspace: { path: UNKNOWN, base: UNKNOWN },
+    permission: { permission: `state:${input.what}`, approval: 'denied' },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    mode: 'orchestrator',
+    posture: 'approvals',
+    result: 'deny',
+    reason: `${input.what} refused: ${input.detail}`,
+  };
+}
+
 // §60 record for a solo approval decision (the in-process lane's ask).
 export interface SoloDecisionInput {
   sessionId: string;
@@ -427,6 +458,41 @@ export function fullAccessEnabledAudit(
     posture: 'full-access',
     result: 'ok',
     reason: `full access enabled for session ${input.sessionId || UNKNOWN} by ${input.command}`,
+  };
+}
+
+// §60 record for switching a session BACK to enforced approvals (issue
+// #309, §41.4): the TUI's in-session toggle off, the symmetric half of
+// `fullAccessEnabledAudit`. One row per disable, so the ledger carries the
+// whole posture history in order.
+export interface FullAccessDisabledInput {
+  sessionId: string;
+  /** The originating action, e.g. `kubic tui /approvals off`. */
+  command: string;
+  workspace: string;
+  mode: 'solo' | 'orchestrator';
+}
+
+export function fullAccessDisabledAudit(
+  input: FullAccessDisabledInput,
+): AuditInput {
+  return {
+    who: 'user:tui',
+    what: 'posture:approvals',
+    agent: { session: input.sessionId || UNKNOWN, role: 'user' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    worker: { pid: process.pid, generation: 0, role: 'user' },
+    workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
+    permission: {
+      permission: 'posture:approvals',
+      approval: `disabled by ${input.command}`,
+    },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    mode: input.mode,
+    posture: 'approvals',
+    result: 'ok',
+    reason: `full access disabled for session ${input.sessionId || UNKNOWN} by ${input.command}`,
   };
 }
 

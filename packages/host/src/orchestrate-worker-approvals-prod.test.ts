@@ -1,11 +1,12 @@
 // Per-worker approvals across the PROCESS boundary (issue #105).
 // Criterion 1 is one run in which worker asks reach the user; the channel that
-// makes that possible is a mailbox under
-// <repo>/.kubic/orchestrator/approvals/asks/ that a CHILD process writes to and
-// the manager answers. A test that fakes both ends proves nothing about the
-// channel, so this file drives the REAL prod path — `runOrchestrateCommand`
-// over `orchestrateDepsWithDefaults` against real git — with a REAL child
-// process that speaks the mailbox contract:
+// makes that possible is a mailbox directory that a CHILD process writes to and
+// the manager answers. It lives under the USER's home, keyed by the repo
+// runtime root — outside the repo and every worktree (issue #149) — and the
+// manager's answers carry a MAC the child verifies. A test that fakes both
+// ends proves nothing about the channel, so this file drives the REAL prod
+// path — `runOrchestrateCommand` over `orchestrateDepsWithDefaults` against
+// real git — with a REAL child process that speaks the mailbox contract:
 //
 //   child    ── publishWorkerAsk ─────►  asks/<key>.json
 //   manager  ── router + user seat ───►  asks/<key>.answer.json
@@ -16,7 +17,13 @@
 // env allowlist carrying KUBIC_APPROVALS_DIR to the child, the mailbox
 // atomicity across processes, the manager's interval pump answering a live
 // ask, and the child's own bounded wait denying closed when nobody answers.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,7 +33,11 @@ import type { Provenance } from '../../exec/src/env.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
 import type { OrchestratorApprovalRequest } from './orchestrator/approvals/request.js';
-import { workerSeatForRun } from './orchestrator/approvals/worker-asks.js';
+import {
+  approvalsSessionDir,
+  workerSeatForRun,
+} from './orchestrator/approvals/worker-asks.js';
+import { auditLedgerDir, readAuditLedger } from './policy/audit-ledger.js';
 
 const PROVENANCE: Provenance = {
   sessionId: 'issue-105',
@@ -110,28 +121,44 @@ if (dir === undefined || dir === '') {
   console.log(JSON.stringify({ ok: false, why: 'no KUBIC_APPROVALS_DIR' }));
   process.exit(9);
 }
+const verifyKey = process.env.KUBIC_APPROVALS_VERIFY_KEY;
+if (verifyKey === undefined || verifyKey === '') {
+  console.log(JSON.stringify({ ok: false, why: 'no KUBIC_APPROVALS_VERIFY_KEY' }));
+  process.exit(9);
+}
 const agentId = process.env.KUBIC_WORKER_ID ?? 'worker';
 const { publishWorkerAsk, awaitWorkerAskAnswer } = await import(
   pathToFileURL(__MODULE_URL__).href
 );
+// Issue #159 (§23): the two ids are distinct — the worker's OWN session in
+// KUBIC_WORKER_SESSION, the run that spawned it in KUBIC_ORCHESTRATOR_SESSION.
+const workerSession = process.env.KUBIC_WORKER_SESSION ?? 'unknown';
+const orchestratorSession = process.env.KUBIC_ORCHESTRATOR_SESSION ?? 'unknown';
 const published = publishWorkerAsk(dir, {
   trigger: 'network',
   toolName: 'bash',
   args: { command: 'curl https://example.com/release.tgz' },
   justification: 'worker needs the release tarball for its plan step',
-  sessionId: process.env.KUBIC_ORCHESTRATOR_SESSION ?? 'unknown',
+  sessionId: workerSession,
   agentId,
   role: 'worker',
   worktree: process.cwd(),
-  provenance: { parentSessionId: process.env.KUBIC_ORCHESTRATOR_SESSION ?? 'unknown' },
+  provenance: { parentSessionId: orchestratorSession },
 });
 const answer = await awaitWorkerAskAnswer(dir, published.request.key, {
   maxPendingMs: __BOUND_MS__,
   pollMs: 10,
+  verifyKey,
+  nonce: published.nonce,
 });
 writeFileSync(
   join(dir, agentId + '.child.json'),
-  JSON.stringify({ key: published.request.key, answer }),
+  JSON.stringify({
+    key: published.request.key,
+    answer,
+    workerSession,
+    orchestratorSession,
+  }),
 );
 console.log(JSON.stringify({ key: published.request.key, answer }));
 if ((answer.approved ? 0 : 4) === 0) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
@@ -181,6 +208,18 @@ interface ProdHarness {
   asked: OrchestratorApprovalRequest[];
   lines: string[];
   debugLines: string[];
+}
+
+// The run's own mailbox for this session: outside the repo, under the user
+// home (issue #149). The child writes its evidence file here. Keyed by the
+// repo runtime root the run itself resolves it from (`git rev-parse
+// --show-toplevel` reports the physical path, so a symlinked tmpdir must be
+// resolved here too) and named for this session.
+function mailboxDir(root: string): string {
+  return approvalsSessionDir(
+    join(realpathSync(root), '.kubic', 'orchestrator'),
+    'orch-105',
+  );
 }
 
 async function prodHarness(boundMs = 8_000): Promise<ProdHarness> {
@@ -292,18 +331,7 @@ describe('the run attaches a seat when a user is present (issue #105)', () => {
     // denial (AC1 below exits 4 on an APPROVED ask), so read the child's own
     // evidence: it received the injected seat's verdict under the same key.
     const evidence = JSON.parse(
-      readFileSync(
-        // The run's own mailbox: per session (issue #279).
-        join(
-          h.root,
-          '.kubic',
-          'orchestrator',
-          'approvals',
-          'orch-105',
-          'worker-1.child.json',
-        ),
-        'utf8',
-      ),
+      readFileSync(join(mailboxDir(h.root), 'worker-1.child.json'), 'utf8'),
     ) as { key: string; answer: { approved: boolean; reason: string } };
     expect(evidence.key).toBe(injected[0]?.key);
     expect(evidence.answer.approved).toBe(false);
@@ -378,21 +406,33 @@ describe('per-worker approvals: the mailbox crosses the process boundary (issue 
     // The child's own evidence: it saw exactly the user's verdict under the
     // key the router recomputed, and exited 0 on it.
     const evidence = JSON.parse(
-      readFileSync(
-        // The run's own mailbox: per session (issue #279).
-        join(
-          h.root,
-          '.kubic',
-          'orchestrator',
-          'approvals',
-          'orch-105',
-          'worker-1.child.json',
-        ),
-        'utf8',
-      ),
-    ) as { key: string; answer: { approved: boolean } };
+      readFileSync(join(mailboxDir(h.root), 'worker-1.child.json'), 'utf8'),
+    ) as {
+      key: string;
+      answer: { approved: boolean };
+      workerSession: string;
+      orchestratorSession: string;
+    };
     expect(evidence.answer.approved).toBe(true);
     expect(evidence.key).toBe(h.asked[0]?.key);
+    // Issue #159: the child was told its OWN session and the run it belongs
+    // to — two distinct ids, the worker's being `<orch>-<agent>`.
+    expect(evidence.workerSession).toBe('orch-105-worker-1');
+    expect(evidence.orchestratorSession).toBe('orch-105');
+    // And the manager's §60 row carries that same ancestry, so `kubic audit
+    // --session orch-105` can attribute the decision to the run and the role
+    // that asked.
+    const row = readAuditLedger(auditLedgerDir(h.root)).find(
+      (record) => record.what === 'tool:bash',
+    );
+    expect(row).toMatchObject({
+      agent: {
+        session: 'orch-105-worker-1',
+        role: 'worker',
+        parent: 'orch-105',
+      },
+      mode: 'orchestrator',
+    });
   }, 60_000);
 
   it('AC2 (prod): with no user answer the child denies closed on its own bound with the named reason', async () => {
@@ -425,18 +465,7 @@ describe('per-worker approvals: the mailbox crosses the process boundary (issue 
     expect(code).toBe(4);
     expect(elapsed).toBeLessThan(30_000);
     const evidence = JSON.parse(
-      readFileSync(
-        // The run's own mailbox: per session (issue #279).
-        join(
-          h.root,
-          '.kubic',
-          'orchestrator',
-          'approvals',
-          'orch-105',
-          'worker-1.child.json',
-        ),
-        'utf8',
-      ),
+      readFileSync(join(mailboxDir(h.root), 'worker-1.child.json'), 'utf8'),
     ) as { answer: { approved: boolean; code: string; reason: string } };
     expect(evidence.answer.approved).toBe(false);
     // The CHILD's own bound fired (the manager has no seat to answer with):

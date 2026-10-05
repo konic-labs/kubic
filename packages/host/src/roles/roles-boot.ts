@@ -10,12 +10,16 @@
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import type { DoctorCheck } from '../doctor.js';
 import type { EffectivePolicy } from '../policy/enterprise.js';
+import {
+  BUILTIN_PRESET_SOURCE,
+  BUILTIN_ROLE_PRESETS,
+} from './builtin-presets.js';
 import type { RoleLayerInput } from './resolver.js';
 import {
   applyRoleToLane,
   KNOWN_ROLE_TOOLS,
-  loadRoleDocuments,
   type ParsedRoleDoc,
+  parseRoleDocument,
   type ResolvedRole,
   type RoleLane,
   RoleParseError,
@@ -41,12 +45,6 @@ function isAbsentDir(error: unknown, dir: string): boolean {
   // Some fs errors carry no path; the code alone is still unambiguous here
   // because this try block wraps exactly one directory read.
   return path === undefined || path === dir;
-}
-
-// The document path for a role name: `.kubic/roles/<name>.md` under the
-// workspace. Pure join, no fs access — the bridge reads it.
-export function roleDocPath(cwd: string, name: string): string {
-  return `${cwd}/${ROLES_DIR}/${name}.md`;
 }
 
 export class RoleBootError extends Error {
@@ -75,13 +73,50 @@ export interface RolesDirInput {
   layers?: RoleLayerInput[];
 }
 
+// Where a role's winning document came from (issue #203): the preset bundled
+// with the binary, or a document the workspace overrides it with.
+export type RoleSource = 'builtin' | 'repo';
+
 export interface LoadedRoles {
   docs: ParsedRoleDoc[];
+  // The markdown behind each doc, keyed by role name — the repo file's text
+  // when one won, the embedded preset's text otherwise. `rolePromptFor` reads
+  // the `## Prompt` body from here, so an embedded role needs no file.
+  texts: Record<string, string>;
+  // The winning layer per role name (issue #203): `builtin` for an embedded
+  // preset, `repo` for a `.kubic/roles/<name>.md` that overrode it.
+  sources: Record<string, RoleSource>;
   resolved: ResolvedRole[];
   // Documents that parsed but were refused (§40.3) — reported, never
   // silently dropped: a contradictory role is exactly what doctor must
   // show. Keyed by role name.
   refused: Array<{ name: string; reason: string }>;
+}
+
+// The embedded presets are the lowest layer (issue #203): a workspace with no
+// `.kubic/roles/` still gets the five §12 roles, and a repo document of the
+// same name REPLACES the preset instead of joining it (one document per role,
+// so a repo file can tighten or loosen its own role but not fork it). A
+// document declaring a name no preset has joins the set as a new role.
+function withBuiltins(
+  repoDocs: Array<{ doc: ParsedRoleDoc; text: string }>,
+): Pick<LoadedRoles, 'docs' | 'texts' | 'sources'> {
+  const texts: Record<string, string> = {};
+  const sources: Record<string, RoleSource> = {};
+  const docs: ParsedRoleDoc[] = [];
+  for (const [name, text] of Object.entries(BUILTIN_ROLE_PRESETS)) {
+    texts[name] = text;
+    sources[name] = BUILTIN_PRESET_SOURCE;
+    docs.push(parseRoleDocument(text));
+  }
+  for (const { doc, text } of repoDocs) {
+    texts[doc.name] = text;
+    sources[doc.name] = 'repo';
+    const at = docs.findIndex((entry) => entry.name === doc.name);
+    if (at === -1) docs.push(doc);
+    else docs[at] = doc;
+  }
+  return { docs, texts, sources };
 }
 
 // Every .md under .kubic/roles, parsed and resolved. A parse failure is
@@ -91,24 +126,53 @@ export interface LoadedRoles {
 // refused role stops a run.
 export function loadRoles(input: RolesDirInput): LoadedRoles {
   const dir = `${input.cwd}/${ROLES_DIR}`;
-  let docs: ParsedRoleDoc[];
+  // Each entry is read and parsed as ITSELF — the text always comes from the
+  // path that was listed, never re-derived from the parsed role name (a
+  // document whose file stem differs from its `role:` line is legal: it
+  // registers under the declared name). A parse failure is named with the
+  // document's own path so a typo'd frontmatter cannot be mistaken for "no
+  // roles configured".
+  const repoDocs: Array<{ doc: ParsedRoleDoc; text: string }> = [];
+  let entries: Array<{ name: string; path: string }>;
   try {
-    docs = loadRoleDocuments(input.bridge, dir);
+    entries = input.bridge
+      .listDir(dir)
+      .filter((entry) => !entry.isDirectory && entry.name.endsWith('.md'))
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+      .map((entry) => ({ name: entry.name, path: entry.path }));
   } catch (error) {
-    if (error instanceof RoleParseError) {
-      throw new RoleBootError(
-        `role document under ${ROLES_DIR} is invalid: ${error.message}`,
-      );
-    }
     // An absent `.kubic/roles/` is the NORMAL case, not a failure: most
     // workspaces have no role documents and the solo default is unaffected.
     // Letting the raw ENOENT escape made every `kubic doctor` red once the
     // probe was wired to the binary (measured). An unreadable directory that
     // DOES exist still throws — the distinction is between "nothing there"
     // and "there but broken", and only the former is silent.
-    if (isAbsentDir(error, dir)) return { docs: [], resolved: [], refused: [] };
-    throw error;
+    if (!isAbsentDir(error, dir)) throw error;
+    entries = [];
   }
+  for (const entry of entries) {
+    let text: string;
+    try {
+      text = input.bridge.readTextFile(entry.path);
+    } catch (error) {
+      // A listed document that cannot be read is a real failure, and it is
+      // named with its own path.
+      throw new RoleBootError(
+        `role document ${entry.path} is unreadable: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    try {
+      repoDocs.push({ doc: parseRoleDocument(text), text });
+    } catch (error) {
+      if (error instanceof RoleParseError) {
+        throw new RoleBootError(
+          `role document ${entry.path} is invalid: ${error.message}`,
+        );
+      }
+      throw error;
+    }
+  }
+  const { docs, texts, sources } = withBuiltins(repoDocs);
   const resolved: ResolvedRole[] = [];
   const refused: Array<{ name: string; reason: string }> = [];
   for (const doc of docs) {
@@ -128,7 +192,7 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
       throw error;
     }
   }
-  return { docs, resolved, refused };
+  return { docs, texts, sources, resolved, refused };
 }
 
 // The role a lane boot runs as. `--role` names it; an absent flag means no
@@ -148,6 +212,10 @@ export interface RoleSelectionInput extends RolesDirInput {
 export interface SelectedRole {
   resolved: ResolvedRole;
   doc: ParsedRoleDoc;
+  // The winning document's markdown and its layer (issue #203) — callers read
+  // the prompt from `markdown`, which works for an embedded preset too.
+  markdown: string;
+  source: RoleSource;
 }
 
 export function selectRole(input: RoleSelectionInput): SelectedRole {
@@ -162,7 +230,12 @@ export function selectRole(input: RoleSelectionInput): SelectedRole {
   const resolved = resolveRole(doc, input.layers ?? [], {
     ...(input.toolPolicy === undefined ? {} : { toolPolicy: input.toolPolicy }),
   });
-  return { resolved, doc };
+  return {
+    resolved,
+    doc,
+    markdown: loaded.texts[doc.name] ?? '',
+    source: loaded.sources[doc.name] ?? BUILTIN_PRESET_SOURCE,
+  };
 }
 
 // §12.1/§40.3 on the lane: the role's resolved tool set becomes the lane's
@@ -213,7 +286,7 @@ export function rolesDoctorProbe(input: RolesDirInput): DoctorCheck[] {
       },
     ];
   }
-  const checks = roleDoctorChecks(loaded.resolved);
+  const checks = roleDoctorChecks(loaded.resolved, loaded.sources);
   for (const refusal of loaded.refused) {
     checks.push({
       id: `role:${refusal.name}`,
@@ -221,15 +294,6 @@ export function rolesDoctorProbe(input: RolesDirInput): DoctorCheck[] {
       status: 'fail',
       reason: 'policy-mismatch',
       detail: refusal.reason,
-    });
-  }
-  if (checks.length === 0) {
-    checks.push({
-      id: 'role:documents',
-      label: 'role documents',
-      status: 'pass',
-      reason: 'ok',
-      detail: `no role documents under ${ROLES_DIR} (solo default is unaffected)`,
     });
   }
   return checks;

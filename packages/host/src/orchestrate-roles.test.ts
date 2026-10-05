@@ -153,11 +153,22 @@ function makeWorld(overrides: Partial<OrchestrateCommandDeps> = {}): World {
 }
 
 function roleLoaderFor(files: Record<string, string>) {
-  return (agents: readonly string[]) =>
+  return (
+    agents: readonly string[],
+    binding?: { roles: Record<string, string>; models: Record<string, string> },
+  ) =>
     planWorkerRoles({
       bridge: memBridge(files),
       cwd: REPO,
       agents,
+      // The explicit per-agent binding the run resolved (issue #178).
+      ...(binding === undefined
+        ? {}
+        : { roles: binding.roles, models: binding.models }),
+      // §38.1 (#202): the manager's effective model is the fallback under a
+      // role's own `[roles.<r>].model` pin — the run's plan resolves the
+      // value the child is then told.
+      parentModel: 'acme/manager',
     });
 }
 
@@ -171,7 +182,7 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
     const code = await runOrchestrateCommand(
       {
         prompt: OBJECTIVE,
-        agents: ['alpha', 'beta'],
+        agents: ['alpha:planner', 'beta:implementer'],
         session: 'sess-1',
         yes: true,
       },
@@ -197,10 +208,13 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
     expect(alpha?.prompt?.indexOf('You are the planner.')).toBeLessThan(
       alpha?.prompt?.indexOf('Plan step 1 of 2') as number,
     );
-    // The role and its model default travel to the child spawn (§12.1).
+    // The role and its resolved model/thinking levels travel to the child
+    // spawn (§12.1, §38.1): no role pin here, so the manager's model is what
+    // the worker is told.
     expect(world.spawnInfo[0]?.info?.role).toBe('planner');
     expect(world.spawnInfo[1]?.info?.role).toBe('implementer');
-    expect(world.spawnInfo[0]?.info?.modelRef).toBe('local/llama3');
+    expect(world.spawnInfo[0]?.info?.modelRef).toBe('acme/manager');
+    expect(world.spawnInfo[0]?.info?.thinking).toBe('medium');
   });
 
   it('stores the composed prompt per worker and replays it on --resume', async () => {
@@ -246,7 +260,10 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
     expect(second.spawnInfo[0]?.info?.role).toBe('implementer');
   });
 
-  it('keeps the plan step working when no role documents exist (solo default unaffected)', async () => {
+  it('runs the built-in implementer preset when no role documents exist (issue #203)', async () => {
+    // The five §12 presets ship with the binary, so an absent
+    // `.kubic/roles/` no longer means "no role": every worker gets the
+    // default implementer preset, prompt and tool set included.
     const world = makeWorld({ loadWorkerRoles: roleLoaderFor({}) });
     const code = await runOrchestrateCommand(
       {
@@ -259,8 +276,9 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
     );
     expect(code).toBe(0);
     expect(world.prompts[0]?.prompt).toContain('Plan step 1 of 2');
-    expect(world.prompts[0]?.prompt).not.toContain('You are the planner.');
-    expect(world.spawnInfo[0]?.info?.role).toBeUndefined();
+    expect(world.spawnInfo[0]?.info?.role).toBe('implementer');
+    // The composed child prompt carries the embedded preset's instructions.
+    expect(world.prompts[0]?.prompt).toContain('You are the implementer.');
   });
 });
 
@@ -272,7 +290,7 @@ describe('a withholding role withholds by absence (issue #104, criterion 2)', ()
     await runOrchestrateCommand(
       {
         prompt: OBJECTIVE,
-        agents: ['alpha', 'beta'],
+        agents: ['alpha:planner', 'beta:implementer'],
         session: 'sess-1',
         yes: true,
       },

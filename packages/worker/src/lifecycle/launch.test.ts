@@ -19,7 +19,6 @@ import { launchWorker } from './launch.js';
 import { WorkerRegistry } from './registry.js';
 import { StaleGenerationError } from './replace.js';
 import { readyMarker } from './spawn.js';
-import type { WorkerStatus } from './status.js';
 
 const READY = readyMarker('worker-1');
 
@@ -164,12 +163,14 @@ describe('launchWorker (issue #94)', () => {
       registry,
       clock: () => 0,
     });
-    // Spawned but silent: not running yet — the handshake is mandatory.
+    // Spawned but silent: the PROCESS is up, the AGENT has not started —
+    // the handshake is mandatory (§13, issue #151).
     expect(registry.get('worker-1')?.status).toBe('ready');
+    expect(registry.get('worker-1')?.agentStatus).toBe('starting');
     child.emit(`${READY}\n`);
     await launched.ready;
-    expect(launched.status()).toBe('running');
-    expect(registry.get('worker-1')?.status).toBe('running');
+    expect(launched.agentStatus()).toBe('running');
+    expect(registry.get('worker-1')?.agentStatus).toBe('running');
     expect(registry.get('worker-1')?.startupMs).toBe(0);
   });
 
@@ -183,13 +184,14 @@ describe('launchWorker (issue #94)', () => {
     });
     child.emit('still booting\n');
     await expect(launched.ready).rejects.toThrow(/readiness/i);
-    expect(registry.get('worker-1')?.status).toBe('spawn_failed');
-    expect(launched.status()).toBe('spawn_failed');
+    expect(registry.get('worker-1')?.status).toBe('exiting');
+    expect(registry.get('worker-1')?.agentStatus).toBe('spawn_failed');
+    expect(launched.agentStatus()).toBe('spawn_failed');
     expect(launched.failure()?.code).toBe('process_spawn_failed');
     // A failed launch is terminal: the reaper never revives the row.
     child.exit(0);
     await launched.reap();
-    expect(registry.get('worker-1')?.status).toBe('spawn_failed');
+    expect(registry.get('worker-1')?.agentStatus).toBe('spawn_failed');
   });
 
   it('reports a nonzero child exit through the §52 failure code', async () => {
@@ -205,7 +207,10 @@ describe('launchWorker (issue #94)', () => {
     child.exit(6, 'no models available: register a provider first\n');
     const done = await launched.wait();
     expect(done.exitCode).toBe(6);
-    expect(registry.get('worker-1')?.status).toBe('crashed');
+    // §13 (issue #151): the PROCESS exited and the AGENT failed — the row
+    // never calls an exited process "crashed".
+    expect(registry.get('worker-1')?.status).toBe('exiting');
+    expect(registry.get('worker-1')?.agentStatus).toBe('failed');
     // Exit 6 is the §78 provider boundary: the §52 code names the
     // provider, not a generic crash — and a missing provider is a setup
     // failure (non-retryable), never provider_transient.
@@ -228,11 +233,16 @@ describe('launchWorker (issue #94)', () => {
     await launched.ready;
     child.exit(0);
     await launched.wait();
-    expect(registry.get('worker-1')?.status).toBe('completed');
+    // A clean exit is SETTLING, never COMPLETED: the §68 report has not been
+    // checked yet (issue #151). The run path settles it.
+    expect(registry.get('worker-1')?.status).toBe('exiting');
+    expect(registry.get('worker-1')?.agentStatus).toBe('settling');
     expect(launched.failure()).toBeUndefined();
+    expect(launched.settleAgent('completed')).toBe('completed');
+    expect(registry.get('worker-1')?.agentStatus).toBe('completed');
     const report = await launched.reap();
     expect(report.kind).toBe('completed');
-    expect(registry.get('worker-1')?.status).toBe('completed');
+    expect(registry.get('worker-1')?.agentStatus).toBe('completed');
   });
 
   it('exits before readiness as SPAWN_FAILED, never a raw exit code', async () => {
@@ -252,7 +262,8 @@ describe('launchWorker (issue #94)', () => {
         () => 'failed',
       ),
     ).toBe('failed');
-    expect(registry.get('worker-1')?.status).toBe('spawn_failed');
+    expect(registry.get('worker-1')?.status).toBe('exiting');
+    expect(registry.get('worker-1')?.agentStatus).toBe('spawn_failed');
     expect(launched.failure()?.code).toBe('process_spawn_failed');
   });
 
@@ -425,7 +436,8 @@ describe('launchWorker (issue #94)', () => {
     await two.ready;
     expect(two.generation).toBe(2);
     expect(registry.get('worker-1')?.generation).toBe(2);
-    expect(registry.get('worker-1')?.status).toBe('running');
+    expect(registry.get('worker-1')?.status).toBe('ready');
+    expect(registry.get('worker-1')?.agentStatus).toBe('running');
     expect(registry.get('worker-1')?.pid).toBe(5151);
     // Issue #383: each child is told the generation its row carries, so the
     // §46 trajectory it writes matches `kubic workers`.
@@ -450,10 +462,13 @@ describe('launchWorker (issue #94)', () => {
     expect(child.killed()).toBe(1);
     child.exit(0);
     const report = await pending;
-    expect(report.kind).toBe('completed');
-    expect(registry.get('worker-1')?.status).toBe('completed');
+    // §51 (issue #151): a manager-initiated reap is a CANCELLATION, not a
+    // crash — the agent settles CANCELLED even though the child exited 0.
+    expect(report.kind).toBe('cancel');
+    expect(report.status).toBe('cancelled');
+    expect(registry.get('worker-1')?.agentStatus).toBe('cancelled');
     // Idempotent: a second reap reports the same exit, kills nothing more.
-    expect((await launched.reap()).kind).toBe('completed');
+    expect((await launched.reap()).kind).toBe('cancel');
     expect(child.killed()).toBe(1);
   });
 
@@ -469,7 +484,7 @@ describe('launchWorker (issue #94)', () => {
     // with 0 — a launch that has not torn down cannot report a pass on it.
     expect(launched.perf().sample.teardownSettledMs).toBe(0);
     expect(launched.perf().sample.teardownInitiateMs).toBe(0);
-    expect(launched.status()).toBe<WorkerStatus>('ready');
+    expect(launched.processStatus()).toBe('ready');
   });
 
   it('builds the §68 worker result from what the child actually did', async () => {
@@ -486,6 +501,12 @@ describe('launchWorker (issue #94)', () => {
     now += 70;
     child.exit(0);
     await launched.wait();
+    // §13 (issue #151): a clean exit leaves the agent SETTLING; the run path
+    // settles it once the §68 report has been validated. A result read
+    // before that settle reports the unsettled failure, so the test settles
+    // it the way the run does.
+    expect(launched.agentStatus()).toBe('settling');
+    launched.settleAgent('completed');
     const result = launched.result();
     // Provenance is required on EVERY result, including failures (§68):
     // a failed agent that does not report how it ran cannot be replayed.
@@ -583,5 +604,87 @@ describe('launchWorker (issue #94)', () => {
       clock: () => 0,
     });
     expect(bare.usage().requests).toBe(0);
+  });
+});
+
+describe('launchWorker §82 resource enforcement (issue #163)', () => {
+  it('stops a worker whose RSS breaches the cap, with the named resource code', async () => {
+    const child = controllable();
+    const registry = new WorkerRegistry(() => 0);
+    const debugLines: string[] = [];
+    const launched = launchWorker(
+      { ...request(), memoryLimitMb: 500 },
+      {
+        shell: child.shell,
+        registry,
+        clock: () => 0,
+        resourceProbes: { memoryMb: () => 900 },
+        debug: (line) => debugLines.push(line),
+      },
+    );
+    child.emit(`${READY}\n`);
+    await launched.ready;
+    // Deterministic: poll the watchdog the way its interval does.
+    expect(await launched.resources()?.poll()).toMatchObject({
+      code: 'resource_memory_exceeded',
+    });
+    // The breach KILLS the child: the manager's stop reaches the process,
+    // not just the bookkeeping (AC1's first half).
+    await vi.waitFor(() => expect(child.killed()).toBeGreaterThan(0));
+    child.exit(137, 'SIGKILL');
+    await launched.reap('resource');
+    expect(launched.failure()).toMatchObject({
+      code: 'resource_memory_exceeded',
+    });
+    expect(launched.failure()?.message).toMatch(/500MB/);
+    expect(launched.agentStatus()).toBe('failed');
+    expect(registry.get('worker-1')?.agentStatus).toBe('failed');
+    expect(debugLines.join('\n')).toMatch(/resource_memory_exceeded/);
+  });
+
+  it('stops a worker whose worktree breaches its quota', async () => {
+    const child = controllable();
+    const registry = new WorkerRegistry(() => 0);
+    const launched = launchWorker(
+      { ...request(), diskQuotaMb: 10 },
+      {
+        shell: child.shell,
+        registry,
+        clock: () => 0,
+        resourceProbes: { diskMb: () => 900 },
+      },
+    );
+    child.emit(`${READY}\n`);
+    await launched.ready;
+    expect(await launched.resources()?.poll()).toMatchObject({
+      code: 'resource_disk_exceeded',
+    });
+    child.exit(137, 'SIGKILL');
+    await launched.reap('resource');
+    expect(launched.failure()).toMatchObject({
+      code: 'resource_disk_exceeded',
+    });
+    expect(launched.agentStatus()).toBe('failed');
+  });
+
+  it('enforces nothing when no probe is wired (and says so)', async () => {
+    const child = controllable();
+    const registry = new WorkerRegistry(() => 0);
+    const launched = launchWorker(
+      { ...request(), memoryLimitMb: 1 },
+      {
+        shell: child.shell,
+        registry,
+        clock: () => 0,
+      },
+    );
+    child.emit(`${READY}\n`);
+    await launched.ready;
+    // No probe: the limit cannot be enforced, so there is no watchdog and no
+    // breach to report — the posture `kubic doctor` prints.
+    expect(launched.resources()).toBeUndefined();
+    child.exit(0);
+    await launched.wait();
+    expect(launched.failure()).toBeUndefined();
   });
 });

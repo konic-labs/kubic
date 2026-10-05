@@ -9,12 +9,14 @@ import {
   resolve,
 } from 'node:path';
 import type {
+  CredentialLevel,
   PermissionClasses,
   UnsupportedLevel,
 } from '../../agents/src/policy.js';
 import {
   checkAgreement,
   checkExpressible,
+  effectiveCredentialLevel,
   effectiveNetworkLevel,
   toolsForClasses,
   validateClasses,
@@ -35,10 +37,16 @@ import {
 import type { ToolContribution } from '../../worker/src/lane/wrap.js';
 import { withTelemetry } from '../../worker/src/lane/wrap.js';
 import { approvalCommandText, summarizeCommand } from './approval-display.js';
+import {
+  credentialAccessInCommand,
+  credentialAccessInNameFilter,
+  credentialAccessInPath,
+} from './approvals-credentials.js';
 import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
 import {
   appendToLedger,
   auditLedgerDirFor,
+  fullAccessDisabledAudit,
   fullAccessEnabledAudit,
   postureChangedAudit,
   soloDecisionAudit,
@@ -222,9 +230,14 @@ export class MemoryApprovalStore implements ApprovalStore {
 // whitespace tricks around redirection targets, and flag-reordered copy
 // targets (`cp -t /etc a b`) the last-argument heuristic misses. Detector
 // ownership for the rest:
-//   credentials overreach, spawn-agents — no detector: fire only via an
-//     explicit `requires` entry, or via their owners (credentials with
-//     issue #19 git/credential tools, spawn-agents with the orchestrator).
+//   credentials overreach — the credential-path detector (issue #275,
+//     approvals-credentials.ts): well-known home credential locations in a
+//     bash command, and the read-family tool paths onto in-workspace
+//     credential files (.env*, *.pem, *.key, id_rsa*/id_ed25519*). Gated on
+//     the effective `credentials` class, which §40.2 enforces as `none`
+//     (issue #166: `allowlist` carries no list), so a credential path asks.
+//   spawn-agents — no detector: fires only via an explicit `requires`
+//     entry, or via its owner (the orchestrator).
 //   budget/concurrency overrun — the `budgetOverrun` flag; no live
 //     producer yet (orchestrator opt-in budgets #48, worker perf budgets
 //     #55). Until one wires up, the flag is test-only: documented, silent
@@ -233,15 +246,29 @@ export class MemoryApprovalStore implements ApprovalStore {
 //     tool exists to remove). A domain-less `allowlist` is enforced as
 //     `none` (issue #166, §40.2): it fires like `none`, never silently
 //     unrestricted.
-//   sensitive reads — deliberately not a trigger: §41.1 governs writes,
-//     the filesystem read class governs reads.
+//   sensitive reads — the filesystem read class governs reads inside the
+//     workspace; credential-shaped reads are the one carve-out, raised as
+//     the `credentials` capability above (issue #275), not as a filesystem
+//     event.
 function networkGated(level: TriggerContext['network']): boolean {
   return effectiveNetworkLevel(level) === 'none';
+}
+
+// The credentials class gates its detector exactly like network (issue
+// #275): §40.2 (issue #166) enforces `allowlist` as `none`, and a hand-built
+// context that names no level reads as the safe default. Both keep the
+// detector on — a credential path asks, never a silent grant.
+function credentialGated(level: TriggerContext['credentials']): boolean {
+  return effectiveCredentialLevel(level ?? 'none') === 'none';
 }
 
 export interface TriggerContext {
   workspace: string;
   network: 'none' | 'allowlist' | 'full';
+  // The installed credentials class (issue #275). Absent reads as `none`,
+  // the safe default, so a hand-built context still challenges credential
+  // paths instead of silently allowing them.
+  credentials?: CredentialLevel;
   isDestructive: (command: string, workspace: string) => boolean;
   isNetworkCommand: (command: string) => boolean;
   isOutsideWorkspace: (path: string) => boolean;
@@ -1218,6 +1245,23 @@ function shellTargetOutside(
   );
 }
 
+// The read-family arguments that name what a call opens (the same path/root
+// mapping the worker confines with, CONFINED_TOOLS in interceptors.ts) plus
+// the name FILTERS: `grep.include` and `find.nameContains` select files by
+// substring, so `include: '.env'` reaches a committed `.env` without naming
+// a path at all (issue #275 review). The ask runs before that rewrite, so an
+// as-typed home path is still seen here.
+const READ_PATH_ARGS: Record<string, readonly string[]> = {
+  read: ['path'],
+  ls: ['path'],
+  grep: ['root', 'include'],
+  find: ['root', 'nameContains'],
+};
+const READ_FILTER_ARGS: ReadonlySet<string> = new Set([
+  'include',
+  'nameContains',
+]);
+
 export function detectTriggers(
   toolName: string,
   args: Record<string, unknown>,
@@ -1298,6 +1342,29 @@ export function detectTriggers(
       }
       if (networkGated(ctx.network) && ctx.isNetworkCommand(payload)) {
         found.push('network');
+      }
+    }
+    if (
+      credentialGated(ctx.credentials) &&
+      credentialAccessInCommand(command) !== undefined
+    ) {
+      found.push('credentials');
+    }
+  }
+  // In-workspace credential files (issue #275): confinement already keeps
+  // the tools inside the workspace, but `.env*` and key material committed
+  // there are exactly the files the class is about.
+  const readArgs = READ_PATH_ARGS[toolName];
+  if (readArgs !== undefined && credentialGated(ctx.credentials)) {
+    for (const arg of readArgs) {
+      const value = args[arg];
+      if (typeof value !== 'string') continue;
+      const hit = READ_FILTER_ARGS.has(arg)
+        ? (credentialAccessInPath(value) ?? credentialAccessInNameFilter(value))
+        : credentialAccessInPath(value);
+      if (hit !== undefined) {
+        found.push('credentials');
+        break;
       }
     }
   }
@@ -1385,6 +1452,70 @@ export interface AccessPosture {
   enabledBy?: string;
 }
 
+// Shape validation for the on-disk state (issue #233). Load is
+// corrupt-tolerant by contract — a file that PARSES but is the wrong shape
+// (`null`, `[]`, `"x"`, `3`) must fall back to the documented safe default,
+// never be cast and then crash the boot (`Object.entries(null)` in the
+// service constructor, `.fullAccess` on null in installedPolicyPosture).
+// Malformed INDIVIDUAL entries are dropped, not the whole file: one bad key
+// must not erase every decision beside it. Each reader rebuilds the object
+// field by field, so unknown keys never ride along.
+function verdictFrom(value: unknown): ApprovalVerdict | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.approved === true) {
+    if (typeof record.by !== 'string') return undefined;
+    return {
+      approved: true,
+      by: record.by,
+      // A malformed optional field is dropped, never fabricated: without
+      // `justified: true` the service's requireJustification staleness rule
+      // re-asks, which is the fail-safe direction.
+      ...(typeof record.justified === 'boolean'
+        ? { justified: record.justified }
+        : {}),
+    };
+  }
+  if (record.approved === false) {
+    if (typeof record.reason !== 'string') return undefined;
+    return { approved: false, reason: record.reason };
+  }
+  return undefined;
+}
+
+function decisionsFrom(value: unknown): Record<string, ApprovalVerdict> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return {};
+  }
+  const out: Record<string, ApprovalVerdict> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const verdict = verdictFrom(entry);
+    if (verdict !== undefined) out[key] = verdict;
+  }
+  return out;
+}
+
+function postureFrom(value: unknown): AccessPosture {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return { fullAccess: false };
+  }
+  const record = value as Record<string, unknown>;
+  // `true` exactly: `"yes"`, `1` and a missing field are all not a grant.
+  if (record.fullAccess !== true) return { fullAccess: false };
+  return {
+    fullAccess: true,
+    ...(typeof record.enabledAt === 'number' &&
+    Number.isFinite(record.enabledAt)
+      ? { enabledAt: record.enabledAt }
+      : {}),
+    ...(typeof record.enabledBy === 'string'
+      ? { enabledBy: record.enabledBy }
+      : {}),
+  };
+}
+
 export class FileApprovalStore implements ApprovalStore {
   private readonly file: string;
   private readonly postureFile: string;
@@ -1398,10 +1529,7 @@ export class FileApprovalStore implements ApprovalStore {
     const bridge = createNodeFileBridge('/');
     if (!bridge.exists(this.file)) return {};
     try {
-      return JSON.parse(bridge.readTextFile(this.file)) as Record<
-        string,
-        ApprovalVerdict
-      >;
+      return decisionsFrom(JSON.parse(bridge.readTextFile(this.file)));
     } catch {
       return {};
     }
@@ -1410,7 +1538,8 @@ export class FileApprovalStore implements ApprovalStore {
   save(decisions: Record<string, ApprovalVerdict>): void {
     const bridge = createNodeFileBridge('/');
     const tmp = `${this.file}.${process.pid}.tmp`;
-    bridge.writeFile(tmp, JSON.stringify(decisions));
+    // Issue #361: approval state is private like the rest of the session dir.
+    bridge.writeFile(tmp, JSON.stringify(decisions), { mode: 0o600 });
     try {
       bridge.renameFile(tmp, this.file);
     } catch (error) {
@@ -1427,7 +1556,7 @@ export class FileApprovalStore implements ApprovalStore {
     const bridge = createNodeFileBridge('/');
     if (!bridge.exists(this.postureFile)) return { fullAccess: false };
     try {
-      return JSON.parse(bridge.readTextFile(this.postureFile)) as AccessPosture;
+      return postureFrom(JSON.parse(bridge.readTextFile(this.postureFile)));
     } catch {
       return { fullAccess: false };
     }
@@ -1436,7 +1565,8 @@ export class FileApprovalStore implements ApprovalStore {
   savePosture(posture: AccessPosture): void {
     const bridge = createNodeFileBridge('/');
     const tmp = `${this.postureFile}.${process.pid}.tmp`;
-    bridge.writeFile(tmp, JSON.stringify(posture));
+    // Issue #361: posture state is private like the rest of the session dir.
+    bridge.writeFile(tmp, JSON.stringify(posture), { mode: 0o600 });
     try {
       bridge.renameFile(tmp, this.postureFile);
     } catch (error) {
@@ -1521,6 +1651,23 @@ export function enableFullAccess(
   return posture;
 }
 
+// Issue #309 (§41.4): the symmetric half — a session switched back to
+// enforced approvals. Writes the same posture.json the enable path writes
+// (so a resume boots enforced) and returns the posture it recorded.
+export function disableFullAccess(
+  store: FileApprovalStore,
+  by: string,
+  clock: () => number = Date.now,
+): AccessPosture {
+  const posture: AccessPosture = {
+    fullAccess: false,
+    enabledAt: clock(),
+    enabledBy: by,
+  };
+  store.savePosture(posture);
+  return posture;
+}
+
 // The one flag name for session-scoped full access (issue #308, §41.4).
 export const FULL_ACCESS_FLAG = '--dangerously-skip-approvals';
 
@@ -1547,6 +1694,66 @@ export interface SessionFullAccessGrant {
   warning: string;
 }
 
+interface FullAccessChange {
+  enabled: boolean;
+  /** The command recorded in the posture file and the §60 row. */
+  by: string;
+  sessionId: string;
+  workspace: string;
+  mode?: 'solo' | 'orchestrator';
+  /** The posture store to write; absent falls back to `sessionDir`. */
+  store?: FileApprovalStore;
+  sessionDir?: string;
+  clock?: () => number;
+  onAuditError?: (message: string) => void;
+}
+
+// The ONE writer for a session-scoped full-access change (issue #309
+// review): the posture file and its §60 row are produced here, so the
+// CLI-shaped session helpers and the installed policy's in-session toggle
+// cannot drift into two writers for one row shape. Exactly one clock read
+// produces the record the file holds, and it is RETURNED, so a caller that
+// keeps an in-memory posture (the #325 guard's baseline) re-bases on the
+// file's own values instead of a second `Date.now()` that could tick in
+// between — a difference the guard would read as a foreign change and
+// answer with a false `posture:changed-mid-session` row.
+function recordFullAccessChange(change: FullAccessChange): AccessPosture {
+  const clock = change.clock ?? Date.now;
+  const store =
+    change.store ??
+    (change.sessionDir === undefined
+      ? undefined
+      : new FileApprovalStore(change.sessionDir));
+  const posture: AccessPosture =
+    store === undefined
+      ? {
+          fullAccess: change.enabled,
+          enabledAt: clock(),
+          enabledBy: change.by,
+        }
+      : change.enabled
+        ? enableFullAccess(store, change.by, clock)
+        : disableFullAccess(store, change.by, clock);
+  appendToLedger(
+    auditLedgerDirFor(change.workspace),
+    change.enabled
+      ? fullAccessEnabledAudit({
+          sessionId: change.sessionId,
+          command: change.by,
+          workspace: change.workspace,
+          mode: change.mode ?? 'solo',
+        })
+      : fullAccessDisabledAudit({
+          sessionId: change.sessionId,
+          command: change.by,
+          workspace: change.workspace,
+          mode: change.mode ?? 'solo',
+        }),
+    change.onAuditError,
+  );
+  return posture;
+}
+
 // The ONE enable path for session-scoped full access (issue #308): `kubic`,
 // `kubic tui`, `kubic run`, `kubic sessions create` and `kubic orchestrate`
 // all come through here. It records the posture in the session dir (never in
@@ -1556,28 +1763,50 @@ export function enableSessionFullAccess(
   options: SessionFullAccessOptions,
 ): SessionFullAccessGrant {
   const commandLine = `kubic ${options.command} ${FULL_ACCESS_FLAG}`;
-  const clock = options.clock ?? Date.now;
-  const posture =
-    options.sessionDir === undefined
-      ? { fullAccess: true, enabledAt: clock(), enabledBy: commandLine }
-      : enableFullAccess(
-          new FileApprovalStore(options.sessionDir),
-          commandLine,
-          clock,
-        );
-  appendToLedger(
-    auditLedgerDirFor(options.workspace),
-    fullAccessEnabledAudit({
-      sessionId: options.sessionId,
-      command: commandLine,
-      workspace: options.workspace,
-      mode: options.mode ?? 'solo',
-    }),
-    options.onAuditError,
-  );
+  const posture = recordFullAccessChange({
+    enabled: true,
+    by: commandLine,
+    sessionId: options.sessionId,
+    workspace: options.workspace,
+    mode: options.mode,
+    ...(options.sessionDir === undefined
+      ? {}
+      : { sessionDir: options.sessionDir }),
+    ...(options.clock === undefined ? {} : { clock: options.clock }),
+    ...(options.onAuditError === undefined
+      ? {}
+      : { onAuditError: options.onAuditError }),
+  });
   return {
     posture,
     warning: `full-access approvals skipped for session ${options.sessionId} (recorded ${posture.enabledAt}) — every challenged call runs without asking`,
+  };
+}
+
+// The symmetric revocation path (issue #309): `kubic tui`'s in-session
+// toggle off writes posture.json (so a later resume boots enforced) and one
+// `posture:approvals` row, exactly as the enable path writes its own.
+export function disableSessionFullAccess(
+  options: SessionFullAccessOptions,
+): SessionFullAccessGrant {
+  const commandLine = `kubic ${options.command}`;
+  const posture = recordFullAccessChange({
+    enabled: false,
+    by: commandLine,
+    sessionId: options.sessionId,
+    workspace: options.workspace,
+    mode: options.mode,
+    ...(options.sessionDir === undefined
+      ? {}
+      : { sessionDir: options.sessionDir }),
+    ...(options.clock === undefined ? {} : { clock: options.clock }),
+    ...(options.onAuditError === undefined
+      ? {}
+      : { onAuditError: options.onAuditError }),
+  });
+  return {
+    posture,
+    warning: `full-access revoked for session ${options.sessionId} — every challenged call asks again`,
   };
 }
 
@@ -1651,7 +1880,10 @@ export interface SoloPolicyInput {
    * `undefined` is a seat that could not answer — the service's own
    * maxPendingMs bound denies it rather than hanging the turn.
    */
-  answer?: (request: ApprovalRequest) => Promise<ApprovalVerdict | undefined>;
+  answer?: (
+    request: ApprovalRequest,
+    signal?: AbortSignal,
+  ) => Promise<ApprovalVerdict | undefined>;
   /** Trigger sink (debug/trajectory), never consulted for the decision. */
   onTrigger?: (trigger: PolicyTrigger) => void;
   clock?: () => number;
@@ -1751,6 +1983,13 @@ export interface InstalledSoloPolicy {
   // challenged call as full access — the boot posture (#325) the ask
   // itself decides on, so the indicator cannot drift from the policy.
   approvalsSkipped: () => boolean;
+  // Issue #309 (§41.4): the in-session toggle. Flips the LIVE posture the
+  // next ask reads, writes posture.json through the same helpers the CLI
+  // uses, appends the §60 row, and re-bases the #325 guard on the new
+  // posture (the operator's own change is not a foreign one). Returns the
+  // recorded posture; throws only when the posture file cannot be written
+  // (the caller reports it, the in-memory posture stays put).
+  setFullAccess?: (enabled: boolean, by: string) => AccessPosture;
 }
 
 export function installedPolicyPosture(
@@ -1933,10 +2172,38 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     return { approved: false, reason };
   };
   // Issue #307: true exactly when the ask auto-approves every challenged
-  // call as full access — the SAME boot posture the ask consults (#325), so
-  // the status bar's OFF indicator cannot drift from what the policy does.
+  // call as full access — the SAME live posture the ask consults (#325,
+  // #309), so the status bar's OFF indicator cannot drift from the policy.
   const approvalsSkipped = (): boolean =>
     posture.fullAccess && posture.route === 'ask-user';
+  // Issue #309 (§41.4): the in-session toggle. `posture.fullAccess` is the
+  // LIVE cell the ask reads on every call, so flipping it takes effect on
+  // the very next challenged call; `bootPosture` is re-based with it, so the
+  // #325 guard sees the operator's own change rather than a foreign one and
+  // does not restore the file underneath them.
+  const setFullAccess = (enabled: boolean, by: string): AccessPosture => {
+    // ONE writer and ONE clock read (issue #309 review): the helper writes
+    // the file and the §60 row through the same shapes the CLI paths use,
+    // and the record it returns is what the live cell and the #325 guard's
+    // baseline are re-based on — never a second `Date.now()`.
+    const recorded = recordFullAccessChange({
+      enabled,
+      by,
+      sessionId: auditSessionId,
+      workspace: input.workspace,
+      mode: 'solo',
+      ...(store === undefined ? {} : { store }),
+      ...(input.clock === undefined ? {} : { clock: input.clock }),
+      ...(input.onAuditError === undefined
+        ? {}
+        : { onAuditError: input.onAuditError }),
+    });
+    posture.fullAccess = recorded.fullAccess;
+    bootPosture.fullAccess = recorded.fullAccess;
+    bootPosture.enabledAt = recorded.enabledAt;
+    bootPosture.enabledBy = recorded.enabledBy;
+    return recorded;
+  };
   // A posture.json change made DURING the session (issue #325) is refused:
   // the file is restored to the boot posture (so a later resume does not
   // inherit it) and the change is recorded once in the ledger. Checked on
@@ -2005,15 +2272,24 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       capabilities = detected.filter((capability) =>
         ALWAYS_ASK.has(capability),
       );
-      if (capabilities.length === 0) {
-        // Explicit, session-scoped full access — recorded, never implied.
+      // Issue #234: record exactly what full access waived — one record per
+      // capability, posture 'full-access' — and nothing at all for an
+      // untriggered call. The single `trigger:full-access` row this replaces
+      // was written for EVERY call, read and ls included: one fsync per tool
+      // call, and a trail that could not name what ran unapproved.
+      for (const capability of detected) {
+        if (ALWAYS_ASK.has(capability)) continue;
         audit(
           call.toolName,
-          'full-access',
+          capability,
           { approved: true, by: 'full-access' },
           true,
         );
-        return { approved: true, challenged: true };
+      }
+      if (capabilities.length === 0) {
+        // An untriggered call waived nothing, so it is not challenged and no
+        // guard needs standing down.
+        return { approved: true, challenged: detected.length > 0 };
       }
     }
     if (capabilities.length === 0) return { approved: true, challenged: false };
@@ -2142,6 +2418,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     denials: () => [...denials],
     ask,
     approvalsSkipped,
+    setFullAccess,
     settle: guardPosture,
   };
 }
@@ -2171,6 +2448,7 @@ export function triggerContextFor(
     ...(controlPlane === undefined ? {} : { controlPlane }),
 
     network: classes.network,
+    credentials: classes.credentials,
     isDestructive: defaultIsDestructive,
     isNetworkCommand,
     isOutsideWorkspace: (path: string) =>
@@ -2183,8 +2461,15 @@ export interface ApprovalServiceOptions {
   store?: ApprovalStore;
   // Resolves the pending request when a user answers. Never resolves on
   // its own in headless runs — the wait below times out into a denial.
+  //
+  // Issue #232: the service hands the seat an AbortSignal and aborts it when
+  // its own bound expires. A surface that honours it withdraws the obsolete
+  // question instead of leaving a modal nobody can answer (and a worker's
+  // mailbox seat stops polling and cleans up after itself); a seat that
+  // ignores the signal still works — the race below is what decides.
   awaitAnswer?: (
     request: ApprovalRequest,
+    signal?: AbortSignal,
   ) => Promise<ApprovalVerdict | undefined>;
   clock?: () => number;
 }
@@ -2194,6 +2479,7 @@ export class ApprovalService {
   private readonly store: ApprovalStore;
   private readonly awaitAnswer?: (
     request: ApprovalRequest,
+    signal?: AbortSignal,
   ) => Promise<ApprovalVerdict | undefined>;
   private readonly decisions: Map<string, ApprovalVerdict>;
   private readonly pending = new Map<string, ApprovalRequest>();
@@ -2310,10 +2596,22 @@ export class ApprovalService {
   private waitForAnswer(
     request: ApprovalRequest,
   ): Promise<ApprovalVerdict | undefined> {
-    const answer = this.awaitAnswer?.(request);
+    // Issue #232: the bound that denies the call is the bound that withdraws
+    // the QUESTION. Without this the surface kept showing an ask the service
+    // had already given up on: the TUI dialog stayed up (and blocked the next
+    // one), and a worker child's mailbox seat kept polling a turn that ended.
+    const controller = new AbortController();
+    const answer = this.awaitAnswer?.(request, controller.signal);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<undefined>((resolve) => {
-      timer = setTimeout(() => resolve(undefined), this.policy.maxPendingMs);
+      timer = setTimeout(() => {
+        // Resolve the BOUND first, then withdraw the question: the abort makes
+        // the seat resolve too (with its cancelled verdict), and the race must
+        // settle on the timeout — otherwise a withdrawal would latch a denial
+        // the user never gave (#110).
+        resolve(undefined);
+        controller.abort();
+      }, this.policy.maxPendingMs);
       timer.unref?.();
     });
     const notified = new Promise<ApprovalVerdict | undefined>((resolve) => {

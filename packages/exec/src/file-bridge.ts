@@ -78,7 +78,16 @@ export interface FileBridge {
     content: string | Uint8Array,
     options?: { mode?: number },
   ): void;
-  appendFile(path: string, content: string | Uint8Array): void;
+  /**
+   * Append, creating the file with `mode` when it does not exist (issue
+   * #361: the journal index and the session JSONL are private state, and
+   * `mode` is applied only at creation — an existing file keeps its own).
+   */
+  appendFile(
+    path: string,
+    content: string | Uint8Array,
+    options?: { mode?: number },
+  ): void;
   /**
    * Append with fsync (issue #117): the change journal's crash-safety seam.
    * The content is on platter before the call returns — an index append a
@@ -87,7 +96,11 @@ export interface FileBridge {
    * back to `appendFile` when a bridge does not implement it, and its
    * `durable` retention knob can opt out of the fsync cost explicitly.
    */
-  appendDurably?(path: string, content: string | Uint8Array): void;
+  appendDurably?(
+    path: string,
+    content: string | Uint8Array,
+    options?: { mode?: number },
+  ): void;
   /**
    * Truncate (or extend) a file to exactly `size` bytes (issue #392): the
    * pi-durable JSONL storage core drops a torn trailing record with this on
@@ -104,6 +117,15 @@ export interface FileBridge {
    * durability explicitly. Optional like the rest.
    */
   flushFile?(path: string): void;
+  /**
+   * fsync a directory (issue #344): a rename is atomic, but its directory
+   * entry is durable only once the directory itself is flushed. The journal
+   * flushes the blob directory after renaming a blob into place, and the
+   * journal directory after renaming a rewritten index over the old one, so
+   * a power loss cannot roll either name back. Optional like the rest; a
+   * bridge without it keeps rename atomicity without rename durability.
+   */
+  flushDir?(path: string): void;
   renameFile(source: string, destination: string): void;
   /**
    * Set a path's permission bits (issue #117 review): the seam that lets a
@@ -122,7 +144,7 @@ export interface FileBridge {
    * doubles stay valid; throws when the path does not exist.
    */
   realPath?(path: string): string;
-  createDir(path: string, recursive?: boolean): void;
+  createDir(path: string, recursive?: boolean, mode?: number): void;
   remove(path: string, recursive?: boolean, force?: boolean): void;
   createTempDir(prefix?: string): string;
   createTempFile(prefix?: string, suffix?: string): string;
@@ -159,8 +181,15 @@ function sanitizePrefix(prefix: string): string {
 
 export function createNodeFileBridge(cwd: string): FileBridge {
   const absolutePath = (path: string): string => resolve(cwd, path);
-  const ensureParent = (abs: string): void => {
-    mkdirSync(dirname(abs), { recursive: true });
+  const ensureParent = (abs: string, mode?: number): void => {
+    // Issue #361: `mode` is for state directories (0700) and applies only to
+    // directories this call creates; a workspace write keeps the umask
+    // default, because a user's new directory is not Kubic's to make private.
+    if (mode === undefined) {
+      mkdirSync(dirname(abs), { recursive: true });
+      return;
+    }
+    mkdirSync(dirname(abs), { recursive: true, mode });
   };
   return {
     cwd,
@@ -202,7 +231,7 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       options?: { mode?: number },
     ): void => {
       const abs = absolutePath(path);
-      ensureParent(abs);
+      ensureParent(abs, options?.mode);
       // Creation mode (issue #117 review): `writeFileSync`'s mode only
       // applies when the file is created, which is exactly what the restore
       // tmp needs (0600 so crash residue is never world-readable). Omitted
@@ -214,10 +243,18 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       }
       writeFileSync(abs, content, { mode: options.mode });
     },
-    appendFile: (path: string, content: string | Uint8Array): void => {
+    appendFile: (
+      path: string,
+      content: string | Uint8Array,
+      options?: { mode?: number },
+    ): void => {
       const abs = absolutePath(path);
-      ensureParent(abs);
-      appendFileSync(abs, content);
+      ensureParent(abs, options?.mode);
+      if (options?.mode === undefined) {
+        appendFileSync(abs, content);
+        return;
+      }
+      appendFileSync(abs, content, { mode: options.mode });
     },
     // Durable append (issue #117): one fd, one write, one fsync — the line
     // is on platter before the call returns. `writeSync` may write short on
@@ -225,10 +262,17 @@ export function createNodeFileBridge(cwd: string): FileBridge {
     // fsync then covers the whole append. Directory-entry durability of the
     // file's own creation is deliberately out of scope (rename atomicity is
     // the journal's write guarantee — see docs/architecture).
-    appendDurably: (path: string, content: string | Uint8Array): void => {
+    appendDurably: (
+      path: string,
+      content: string | Uint8Array,
+      options?: { mode?: number },
+    ): void => {
       const abs = absolutePath(path);
-      ensureParent(abs);
-      const fd = openSync(abs, 'a');
+      ensureParent(abs, options?.mode);
+      const fd =
+        options?.mode === undefined
+          ? openSync(abs, 'a')
+          : openSync(abs, 'a', options.mode);
       try {
         const buffer =
           typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
@@ -258,14 +302,43 @@ export function createNodeFileBridge(cwd: string): FileBridge {
         closeSync(fd);
       }
     },
+    // Directory fsync (issue #344): the rename's own durability. macOS and
+    // Linux both allow opening a directory read-only and flushing it. A
+    // platform that refuses either step surfaces the error, and the journal
+    // treats an unsupported flush as a degraded write (rename atomicity
+    // still holds) rather than blocking every append — see FLUSH_UNSUPPORTED
+    // in journal.ts.
+    flushDir: (path: string): void => {
+      const fd = openSync(absolutePath(path), 'r');
+      try {
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+    },
     chmod: (path: string, mode: number): void => {
       chmodSync(absolutePath(path), mode);
     },
     fileInfo: (path: string): BridgeFileInfo => infoOf(absolutePath(path)),
-    listDir: (path: string): BridgeFileInfo[] =>
-      readdirSync(absolutePath(path)).map((name) =>
-        infoOf(join(absolutePath(path), name)),
-      ),
+    listDir: (path: string): BridgeFileInfo[] => {
+      const abs = absolutePath(path);
+      const out: BridgeFileInfo[] = [];
+      for (const name of readdirSync(abs)) {
+        try {
+          out.push(infoOf(join(abs, name)));
+        } catch (error) {
+          // Issue #351: one entry vanishing between the listing and its lstat
+          // must not fail the whole listing — the caller would drop the
+          // entire subtree from the walk and read every file in it as
+          // deleted. Only ENOENT is tolerated (the entry is simply gone); a
+          // permission or I/O failure is the caller's to see.
+          if ((error as { code?: string } | null)?.code !== 'ENOENT') {
+            throw error;
+          }
+        }
+      }
+      return out;
+    },
     realPath: (path: string): string => realpathSync(absolutePath(path)),
     exists: (path: string): boolean => {
       try {
@@ -277,8 +350,14 @@ export function createNodeFileBridge(cwd: string): FileBridge {
         throw error;
       }
     },
-    createDir: (path: string, recursive = true): void => {
-      mkdirSync(absolutePath(path), { recursive });
+    createDir: (path: string, recursive = true, mode?: number): void => {
+      // Issue #361: `mode` (0700 for state dirs) applies only to directories
+      // this call creates; existing ones keep their own.
+      if (mode === undefined) {
+        mkdirSync(absolutePath(path), { recursive });
+        return;
+      }
+      mkdirSync(absolutePath(path), { recursive, mode });
     },
     remove: (path: string, recursive = false, force = false): void => {
       rmSync(absolutePath(path), { recursive, force });
@@ -309,6 +388,87 @@ export function createNodeFileBridge(cwd: string): FileBridge {
   };
 }
 
+// Run `run` while holding an O_EXCL lockfile (issue #337): the seam for a
+// mutation that must not interleave with another process's — the journal's
+// append, retention rewrite and blob sweep all run under it. The lock file
+// carries this process's pid, so a read-only observer can tell a live holder
+// from stale residue (`liveLockHolder`). Same stale/wait rules as
+// `updateFileLocked`: a crashed holder is stolen after `staleMs`, and a live
+// one is waited for up to `waitMs` before the caller gets a named timeout.
+// LOCAL FILESYSTEM ONLY, like every lock here.
+export function withFileLocked<T>(
+  lockPath: string,
+  run: () => T,
+  options: { staleMs?: number; waitMs?: number } = {},
+): T {
+  const staleMs = options.staleMs ?? 10_000;
+  const deadline = Date.now() + (options.waitMs ?? 5_000);
+  mkdirSync(dirname(lockPath), { recursive: true });
+  let fd: number | undefined;
+  while (fd === undefined) {
+    try {
+      fd = openSync(lockPath, 'wx');
+      // The pid is for observers, not for the lock itself: the O_EXCL create
+      // is the mutex. Written after the create so a torn payload can only
+      // ever read as stale, never as held.
+      try {
+        writeSync(fd, Buffer.from(String(process.pid), 'utf8'));
+      } catch (error) {
+        // A failed pid write (ENOSPC/EIO) must not leak the descriptor or
+        // leave the lock behind: the caller is about to rethrow, and this
+        // process would otherwise hold a lock nobody can steal for staleMs.
+        closeSync(fd);
+        fd = undefined;
+        rmSync(lockPath, { force: true });
+        throw error;
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      try {
+        if (Date.now() - statSync(lockPath).mtimeMs > staleMs) {
+          unlinkSync(lockPath);
+          continue;
+        }
+      } catch {
+        continue; // the holder released between open and stat
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`timed out waiting for lock ${lockPath}`);
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  }
+  try {
+    return run();
+  } finally {
+    closeSync(fd);
+    rmSync(lockPath, { force: true });
+  }
+}
+
+// The pid recorded in a lockfile when that process is still alive (issue
+// #337): the read-only view a destructive command uses to skip work instead
+// of racing a live writer. undefined for a missing, unreadable, torn or
+// stale file — and for a pid that is gone, which is exactly what makes a
+// crashed holder's residue harmless.
+export function liveLockHolder(lockPath: string): number | undefined {
+  let raw: string;
+  try {
+    raw = readFileSync(lockPath, 'utf8').trim();
+  } catch {
+    return undefined;
+  }
+  const pid = Number(raw);
+  if (!Number.isInteger(pid) || pid <= 0) return undefined;
+  try {
+    // Signal 0: the permission and existence probe, no signal delivered.
+    process.kill(pid, 0);
+    return pid;
+  } catch {
+    return undefined;
+  }
+}
+
 // Atomic, serialized update of one small state file (orchestrator
 // workers.json): an O_EXCL lockfile (stale after `staleMs`, so a crashed
 // holder never wedges the next run) guards a read → update → tmp+rename
@@ -319,48 +479,26 @@ export function updateFileLocked(
   update: (current: string | undefined) => string,
   options: { staleMs?: number; waitMs?: number } = {},
 ): void {
-  const lock = `${absPath}.lock`;
-  const staleMs = options.staleMs ?? 10_000;
-  const deadline = Date.now() + (options.waitMs ?? 5_000);
   mkdirSync(dirname(absPath), { recursive: true });
-  let fd: number | undefined;
-  while (fd === undefined) {
-    try {
-      fd = openSync(lock, 'wx');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  withFileLocked(
+    `${absPath}.lock`,
+    () => {
+      let current: string | undefined;
       try {
-        if (Date.now() - statSync(lock).mtimeMs > staleMs) {
-          unlinkSync(lock);
-          continue;
-        }
-      } catch {
-        continue; // the holder released between open and stat
+        current = readFileSync(absPath, 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
-      if (Date.now() > deadline) {
-        throw new Error(`timed out waiting for lock ${lock}`);
+      const next = update(current);
+      const tmp = `${absPath}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 10)}`;
+      try {
+        writeFileSync(tmp, next);
+        renameSync(tmp, absPath);
+      } catch (error) {
+        rmSync(tmp, { force: true });
+        throw error;
       }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-    }
-  }
-  try {
-    let current: string | undefined;
-    try {
-      current = readFileSync(absPath, 'utf8');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-    const next = update(current);
-    const tmp = `${absPath}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 10)}`;
-    try {
-      writeFileSync(tmp, next);
-      renameSync(tmp, absPath);
-    } catch (error) {
-      rmSync(tmp, { force: true });
-      throw error;
-    }
-  } finally {
-    closeSync(fd);
-    rmSync(lock, { force: true });
-  }
+    },
+    options,
+  );
 }

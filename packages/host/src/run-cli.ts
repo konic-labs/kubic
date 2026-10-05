@@ -13,16 +13,22 @@ import {
   EXIT_BUDGET,
   EXIT_FAILED,
   EXIT_OK,
+  EXIT_PARTIAL,
   EXIT_PROVIDER,
   EXIT_USAGE,
   EXIT_WORKSPACE,
 } from '../../core/src/cli/exit-codes.js';
+import {
+  type ClassifiedFailure,
+  classifyFailure,
+} from '../../worker/src/lane/failures.js';
 import type { OperationErrorLike } from '../../worker/src/lane/settle.js';
 import {
   type LaneTerminalStatus,
   settleTerminalStatus,
 } from '../../worker/src/lane/settle.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
+import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
 
 export const RUN_EXIT_OK = EXIT_OK;
 export const RUN_EXIT_FAILED = EXIT_FAILED;
@@ -31,27 +37,60 @@ export const RUN_EXIT_BUDGET = EXIT_BUDGET;
 export const RUN_EXIT_APPROVAL_DENIED = EXIT_APPROVAL;
 export const RUN_EXIT_WORKSPACE_UNAVAILABLE = EXIT_WORKSPACE;
 export const RUN_EXIT_PROVIDER_PROBE_FAILED = EXIT_PROVIDER;
+// The delegated-run partial terminus (issue #169): some workers failed while
+// the run continued, so the merge that did land is reported on exit 7 rather
+// than hidden behind a plain failure.
+export const RUN_EXIT_PARTIAL_FAILURE = EXIT_PARTIAL;
 
 export type RunTerminusKind =
   | 'completed'
   | 'failed'
   | 'usage'
   | 'budget_exhausted'
+  | 'timeout'
+  | 'cancelled'
   | 'approval_denied'
   | 'approval_timed_out'
   | 'workspace_unavailable'
-  | 'provider_probe_failed';
+  | 'provider_probe_failed'
+  | 'provider_transient'
+  | 'provider_auth';
 
-export function mapTerminusToExitCode(terminus: RunTerminusKind): number {
+// POSIX 128+signo for the interrupts a headless run handles (issue #280),
+// the same convention `kubic tui` pins for a signalled quit (#313).
+const INTERRUPT_SIGNAL_NUMBER: Readonly<Record<string, number>> = {
+  SIGHUP: 1,
+  SIGINT: 2,
+  SIGTERM: 15,
+};
+
+// §78's table names six codes; a run's finer terminus rides on the `--json`
+// status. `timeout` is a plain task failure (1) — §78 has no timeout code,
+// and a wall-clock bound the user did not configure as a budget must not
+// claim `budget_exhausted` (§71, issue #280). `cancelled` keeps POSIX
+// 128+signo (SIGHUP 129, SIGINT 130, SIGTERM 143; SIGINT when no signal is
+// known) so a signalled run reads like a signalled process.
+const INTERRUPT_EXIT_DEFAULT = 128 + 2;
+
+export function mapTerminusToExitCode(
+  terminus: RunTerminusKind,
+  signal?: string,
+): number {
   switch (terminus) {
     case 'completed':
       return RUN_EXIT_OK;
     case 'failed':
+    case 'timeout':
       return RUN_EXIT_FAILED;
     case 'usage':
       return RUN_EXIT_USAGE;
     case 'budget_exhausted':
       return RUN_EXIT_BUDGET;
+    case 'cancelled': {
+      const number =
+        signal === undefined ? undefined : INTERRUPT_SIGNAL_NUMBER[signal];
+      return number === undefined ? INTERRUPT_EXIT_DEFAULT : 128 + number;
+    }
     case 'approval_denied':
     case 'approval_timed_out':
       return RUN_EXIT_APPROVAL_DENIED;
@@ -59,6 +98,55 @@ export function mapTerminusToExitCode(terminus: RunTerminusKind): number {
       return RUN_EXIT_WORKSPACE_UNAVAILABLE;
     case 'provider_probe_failed':
       return RUN_EXIT_PROVIDER_PROBE_FAILED;
+    // Issue #155: a provider error during the run is a failed task, not the
+    // pre-run probe — §78's 6 is reserved for the boot probe (no provider
+    // configured, an unknown stored model). The §52 code is the honest half.
+    case 'provider_transient':
+    case 'provider_auth':
+      return RUN_EXIT_FAILED;
+  }
+}
+
+// Lane outcome → §78 terminus + §52 failure (issue #155). The §52 code is
+// the precise half — what a retry chooser or an RL pairing reads — and the
+// terminus is the §78 class the exit code follows. A provider-classified
+// lane error is `provider_auth`/`provider_transient`, never the pre-run
+// probe terminus: `provider_probe_failed` is reserved for the boot probe.
+export interface LaneOutcomeTerminus {
+  terminus: RunTerminusKind;
+  failure?: ClassifiedFailure;
+}
+
+export function mapLaneOutcomeToFailure(
+  status: LaneTerminalStatus,
+  error?: OperationErrorLike,
+): LaneOutcomeTerminus {
+  if (status === 'completed') return { terminus: 'completed' };
+  const settled = settleTerminalStatus(status, error).error;
+  const kind = settled?.kind ?? 'process';
+  const message = settled?.message ?? '';
+  // The approval terminus follows the shipped marker rule (issue #129,
+  // TIMEOUT_REASON_MARKER): the reason text decides refusal vs elapsed wait,
+  // never a classifier keyword — an elapse whose wording also says "denied"
+  // must stay `approval_timed_out`, and a refusal worded "refused" must
+  // stay `approval_denied` (review finding, issue #155).
+  if (kind === 'approval') {
+    const code = message.includes(TIMEOUT_REASON_MARKER)
+      ? 'approval_timed_out'
+      : 'approval_denied';
+    return { terminus: code, failure: classifyFailure('approval', code, '') };
+  }
+  const failure = classifyFailure(kind, error?.code ?? '', message);
+  switch (failure.code) {
+    case 'budget_exhausted':
+      return { terminus: 'budget_exhausted', failure };
+    case 'workspace_failed':
+      return { terminus: 'workspace_unavailable', failure };
+    case 'provider_auth':
+    case 'provider_transient':
+      return { terminus: failure.code, failure };
+    default:
+      return { terminus: 'failed', failure };
   }
 }
 
@@ -74,13 +162,45 @@ export function mapLaneOutcomeToTerminus(
   status: LaneTerminalStatus,
   error?: OperationErrorLike,
 ): RunTerminusKind {
-  if (status === 'completed') return 'completed';
-  const kind = settleTerminalStatus(status, error).error?.kind;
-  if (kind === 'budget') return 'budget_exhausted';
-  if (kind === 'approval') return 'approval_denied';
-  if (kind === 'workspace') return 'workspace_unavailable';
-  if (kind === 'provider') return 'provider_probe_failed';
-  return 'failed';
+  return mapLaneOutcomeToFailure(status, error).terminus;
+}
+
+// §52 classification of a terminus whose code is implied (issue #155): the
+// guard and gate termini each have exactly one §52 code, and the boot probe
+// is the provider setup failure. The classification never reads the
+// summary — a failure's wording must not flip a fixed code (review finding).
+// `failed` reads its code from the result's own `failure`;
+// `timeout`/`cancelled` have no §52 code.
+export function failureForTerminus(
+  terminus: RunTerminusKind,
+): ClassifiedFailure | undefined {
+  switch (terminus) {
+    case 'budget_exhausted':
+      return classifyFailure('budget', 'budget_exhausted', '');
+    case 'approval_denied':
+      return classifyFailure('approval', 'approval_denied', '');
+    case 'approval_timed_out':
+      return classifyFailure('approval', 'approval_timed_out', '');
+    case 'workspace_unavailable':
+      return classifyFailure('workspace', 'workspace_failed', '');
+    case 'provider_probe_failed':
+      // A probe failure is a setup failure, never transient (the same
+      // decision as CODE_BY_SUBMISSION_REASON.no_model): an unknown model
+      // or an unregistered stored model cannot be retried unchanged, so a
+      // retry chooser must not be told to retry.
+      return {
+        code: 'provider_auth',
+        remedy:
+          'No provider/model is available, or the stored model is no longer registered; register a provider (kubic models) or pin a registered model, then rerun.',
+        strategy: 'abandon',
+      };
+    case 'provider_transient':
+      return classifyFailure('provider', 'provider_transient', '');
+    case 'provider_auth':
+      return classifyFailure('provider', 'provider_auth', '');
+    default:
+      return undefined;
+  }
 }
 
 export interface HeadlessRunResult {
@@ -91,6 +211,13 @@ export interface HeadlessRunResult {
   usageRef: string;
   trajectoryRef: string;
   error?: { kind: string; message: string };
+  // Issue #155: the §52 classification of a lane failure (code, remedy,
+  // strategy) — the precise half the terminus cannot carry. Absent on
+  // termini with no §52 code (`timeout`, `cancelled`, `usage`).
+  failure?: ClassifiedFailure;
+  // Issue #280: the interrupt that ended the run, present exactly when the
+  // terminus is `cancelled`; the exit code is 128+signo from it.
+  signal?: string;
   // Issue #185 (§39, §68): the run's own usage rollup and the model that
   // answered, read back from its session after the run. Absent when no
   // session was ever created (a usage refusal before attach).
@@ -123,12 +250,17 @@ export interface RunEnvelope {
   // Issue #308: scripted callers detect a full-access session here.
   approvals?: { posture: 'approvals' | 'full-access' };
   error?: { kind: string; message: string };
+  // Issue #155: the §52 failure code, remedy and retry strategy, additive.
+  failure?: ClassifiedFailure;
 }
 
 export function buildRunEnvelope(
   result: HeadlessRunResult,
   exitCode: number,
 ): RunEnvelope {
+  // Issue #155: the lane path carries its own classification; every other
+  // failure terminus has exactly one implied §52 code.
+  const failure = result.failure ?? failureForTerminus(result.terminus);
   return {
     ok: exitCode === RUN_EXIT_OK,
     exitCode,
@@ -143,6 +275,7 @@ export function buildRunEnvelope(
       ? {}
       : { approvals: { posture: result.posture } }),
     ...(result.error === undefined ? {} : { error: result.error }),
+    ...(failure === undefined ? {} : { failure }),
   };
 }
 
@@ -166,6 +299,9 @@ export interface RunCommandDeps extends CliIo {
       debug?: boolean;
       // §41.4 (issue #308): forwarded to the runner's one enable path.
       dangerouslySkipApprovals?: boolean;
+      // §40.1 mechanism 1 (issue #273): the per-invocation tool selection.
+      tools?: readonly string[];
+      noTools?: boolean;
     },
   ) => Promise<HeadlessRunResult>;
   persist?: (result: HeadlessRunResult) => Promise<void> | void;
@@ -178,13 +314,13 @@ export interface RunCommandDeps extends CliIo {
 export const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 // Default wall-clock bound for a headless run (issue #84): a model that
-// never stops thinking settles as budget_exhausted instead of hanging
-// the process forever. Overridable per invocation with --timeout.
+// never stops thinking settles as `timeout` (issue #280) instead of
+// hanging the process forever. Overridable per invocation with --timeout.
 export const DEFAULT_RUN_TIMEOUT_MS = 300_000;
 
 // setTimeout stores its delay in a 32-bit signed int: anything above this
 // clamps to 1 ms (TimeoutOverflowWarning), so an accepted "bound" would
-// fire almost immediately and misreport budget_exhausted. Parse-time
+// fire almost immediately and misreport a timeout. Parse-time
 // ceiling, not a clamp: a silently shortened bound is worse than a refusal.
 export const MAX_RUN_TIMEOUT_MS = 2_147_483_647;
 
@@ -204,6 +340,9 @@ export interface RunCommandOptions {
   readonly json?: boolean;
   // §41.4 (issue #308): session-scoped full access for this run's session.
   readonly dangerouslySkipApprovals?: boolean;
+  // §40.1 mechanism 1 (issue #273): `--tools <a,b>` / `--no-tools`.
+  readonly tools?: readonly string[];
+  readonly noTools?: boolean;
 }
 
 // A value the command refuses (exit 2). The message is the whole reason;
@@ -307,6 +446,10 @@ function runFailure(
 ): HeadlessRunResult {
   const message = error instanceof Error ? error.message : String(error);
   const terminus = mapCaughtErrorToTerminus(error);
+  const failure =
+    terminus === 'workspace_unavailable'
+      ? classifyFailure('workspace', 'workspace_failed', message)
+      : classifyFailure('process', '', message);
   const ref = sessionId ?? 'unassigned';
   return {
     terminus,
@@ -315,7 +458,24 @@ function runFailure(
     journalRef: `journal:${ref}`,
     usageRef: `usage:${ref}`,
     trajectoryRef: `trajectory:${ref}`,
+    failure,
     error: { kind: terminus, message },
+  };
+}
+
+// A refused config stops the run before any lane exists (issue #244): the
+// documented exit-1 failure, shaped as the standard run envelope so a
+// `--json` consumer still parses exactly one document (compact, the same
+// line shape every run envelope has — `kubic orchestrate` reads it).
+export function refusedRunResult(message: string): HeadlessRunResult {
+  return {
+    terminus: 'failed',
+    summary: message,
+    sessionId: 'unassigned',
+    journalRef: 'journal:unassigned',
+    usageRef: 'usage:unassigned',
+    trajectoryRef: 'trajectory:unassigned',
+    error: { kind: 'failed', message },
   };
 }
 
@@ -362,12 +522,16 @@ export async function runRunCommand(
       ...(options.dangerouslySkipApprovals === true
         ? { dangerouslySkipApprovals: true }
         : {}),
+      ...(options.tools === undefined || options.tools.length === 0
+        ? {}
+        : { tools: [...options.tools] }),
+      ...(options.noTools === true ? { noTools: true } : {}),
     });
     await deps.persist?.(result);
   } catch (error) {
     result = runFailure(options.session, error);
   }
-  const exitCode = mapTerminusToExitCode(result.terminus);
+  const exitCode = mapTerminusToExitCode(result.terminus, result.signal);
   if (options.json === true) {
     // One compact line, deliberately not pretty-printed: `kubic
     // orchestrate` reads a worker's envelope as the LAST stdout line.

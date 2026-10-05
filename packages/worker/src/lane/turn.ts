@@ -14,6 +14,7 @@
 // Idempotency: `requestId` is a stable per-invocation value, so re-submitting
 // after a crash returns the SAME submission instead of prompting twice.
 
+import type { LaneImagePart } from '../../../core/src/presentation.js';
 import type { Context, Submission } from '../pi-boundary.js';
 import { ConversationBusy } from '../pi-boundary.js';
 import type { FailureCode } from './failures.js';
@@ -27,7 +28,9 @@ import type { SoloLane } from './solo.js';
 
 // `TurnOutcome.failed.reason` for the one refusal Kubic raises itself: the
 // conversation is busy and the caller asked to be rejected rather than
-// queued (#334 keeps today's reject behaviour until then).
+// queued. `reject` stays the default (a submit that races a settling turn
+// must fail loudly, never sit in the inbox unannounced); the TUI's busy
+// Enter passes `followUp` and its steer key `steer` (#334).
 export const TURN_BUSY_REASON = 'busy';
 
 export type TurnAbortReason = 'guard' | 'user' | 'signal';
@@ -75,10 +78,22 @@ export interface RunTurnOptions {
   // submission (README "Persist and Resume"), never a second prompt.
   requestId: string;
   context: Context;
+  // Issue #338 (§16.8): images attached to this prompt, in order. They are
+  // admitted as Pi's own user-message content parts (`{type:'image'}`), so
+  // the committed entry stores them and a resumed session replays them. No
+  // images (or an empty list) keeps the plain-string content the lane has
+  // always sent.
+  images?: readonly LaneImagePart[];
   // Busy handling (README "Busy Conversations"): queued follow-up by
   // default, `reject` throws ConversationBusy — mapped to the named busy
   // failure below.
   whenBusy?: 'reject' | 'followUp' | 'steer';
+  // #334: the admitted submission's id and whether the harness QUEUED it
+  // (a busy conversation's follow-up/steer) or PLACED it at once. The TUI's
+  // busy latch follows placed work only: a queue a failed run left behind
+  // waits in the inbox without a spinner (pi-durable keeps queued inputs
+  // when a run faults).
+  onSubmitted?: (submissionId: string, state: 'placed' | 'queued') => void;
 }
 
 // One turn, settled. Never throws for a refusal, a failed run or a cancelled
@@ -93,7 +108,7 @@ export async function runTurn(
     submission = await solo.conversation.submit(
       {
         type: 'input',
-        content: prompt,
+        content: promptContent(prompt, options.images),
         requestId: options.requestId,
         ...(options.whenBusy === undefined
           ? {}
@@ -104,7 +119,52 @@ export async function runTurn(
   } catch (error) {
     return submissionFailure(error, options.context);
   }
+  options.onSubmitted?.(
+    String(submission.id),
+    await admissionState(submission, options.context),
+  );
   return awaitTurn(submission, options.context);
+}
+
+// The user-message content one turn admits (#338): the prompt as a text part
+// plus one image part per attachment. Without attachments the content stays
+// the bare string every existing reader (and the faux provider tests)
+// expects; an image-only prompt (attach + Enter, #338 review) sends no empty
+// text part at all — the image IS the message.
+function promptContent(
+  prompt: string,
+  images: readonly LaneImagePart[] | undefined,
+):
+  | string
+  | Array<
+      | { type: 'text'; text: string }
+      | { type: 'image'; data: string; mimeType: string }
+    > {
+  if (images === undefined || images.length === 0) return prompt;
+  return [
+    ...(prompt === '' ? [] : [{ type: 'text' as const, text: prompt }]),
+    ...images.map((image) => ({
+      type: 'image' as const,
+      data: image.data,
+      mimeType: image.mimeType,
+    })),
+  ];
+}
+
+// Whether the harness admitted the input as a placed entry (an idle
+// conversation) or queued it in the inbox (#334). A status read that fails
+// (a closed session) reports `placed`: the run's own settlement, never a
+// guess, decides what the caller sees next.
+async function admissionState(
+  submission: Submission,
+  context: Context,
+): Promise<'placed' | 'queued'> {
+  try {
+    const record = await submission.status(context);
+    return record.status === 'queued' ? 'queued' : 'placed';
+  } catch {
+    return 'placed';
+  }
 }
 
 // The wait half of a turn, for a submission admitted elsewhere: the durable

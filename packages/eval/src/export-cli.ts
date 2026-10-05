@@ -30,6 +30,14 @@ import {
   TrajectorySchemaError,
 } from '../../trajectory/src/schema.js';
 import { buildCodingRecord, validateCodingRecord } from './rl/coding.js';
+import {
+  DATASET_TYPES,
+  type DatasetDirEntry,
+  DatasetError,
+  type DatasetFs,
+  type ExportDatasetType,
+  exportDataset,
+} from './rl/dataset.js';
 import { buildDpoRecord, validateDpoRecord } from './rl/dpo.js';
 import { buildGrpoGroup, validateGrpoGroup } from './rl/grpo.js';
 import { canonicalJson } from './rl/manifest.js';
@@ -47,6 +55,11 @@ export const EXPORT_EXIT_USAGE = EXIT_USAGE;
 
 export interface ExportCliDeps {
   readFile: (path: string) => string;
+  // Issue #270: the batch (--dataset) seam. Absent means single-trajectory
+  // mode only; a --dataset invocation without them is refused by name.
+  listDir?: (path: string) => DatasetDirEntry[];
+  writeFile?: (path: string, content: string) => void;
+  appendFile?: (path: string, content: string) => void;
   // stdout: the description / record, or the one `--json` envelope.
   out: (line: string) => void;
   // stderr: diagnostics — usage refusals and, off --json, failures as
@@ -65,25 +78,15 @@ export interface ExportCommandOptions {
   readonly trajectory?: string;
   readonly type?: string;
   readonly against?: string;
+  // Issue #270: batch mode — a directory/glob of trajectories and the
+  // JSONL artifact the dataset is streamed into.
+  readonly dataset?: string;
+  readonly out?: string;
   readonly json?: boolean;
 }
 
-export type ExportDatasetType =
-  | 'sft'
-  | 'dpo'
-  | 'grpo'
-  | 'preference'
-  | 'tooluse'
-  | 'coding';
-
-export const DATASET_TYPES: readonly ExportDatasetType[] = [
-  'sft',
-  'dpo',
-  'grpo',
-  'preference',
-  'tooluse',
-  'coding',
-];
+export type { ExportDatasetType } from './rl/dataset.js';
+export { DATASET_TYPES } from './rl/dataset.js';
 
 // Pair/group types consume two trajectory files (--trajectory + --against);
 // single-trajectory types refuse a stray --against rather than ignoring it.
@@ -94,9 +97,11 @@ const NEEDS_AGAINST: ReadonlySet<ExportDatasetType> = new Set([
 ]);
 
 interface ExportOptions {
-  trajectory: string;
+  trajectory: string | undefined;
   type: ExportDatasetType | undefined;
   against: string | undefined;
+  dataset: string | undefined;
+  out: string | undefined;
   json: boolean;
 }
 
@@ -107,16 +112,41 @@ function isDatasetType(value: string): value is ExportDatasetType {
 // Semantic validation (the type vocabulary and the --against pairing): a
 // usage message on failure, the normalized options otherwise.
 function normalize(options: ExportCommandOptions): ExportOptions | string {
-  const trajectory = options.trajectory;
-  if (trajectory === undefined) {
-    return "required option '--trajectory <file>' not specified";
-  }
+  const json = options.json === true;
   let type: ExportDatasetType | undefined;
   if (options.type !== undefined) {
     if (!isDatasetType(options.type)) {
       return `unknown --type (want ${DATASET_TYPES.join('|')})`;
     }
     type = options.type;
+  }
+  // Issue #270: batch mode — a directory/glob in, a JSONL + manifest out.
+  // The --trajectory/--against pairing belongs to single-file mode.
+  if (options.dataset !== undefined) {
+    if (options.trajectory !== undefined) {
+      return '--dataset takes a directory or glob — --trajectory belongs to single-file mode';
+    }
+    if (options.against !== undefined) {
+      return '--dataset takes a directory or glob — --against belongs to single-file mode';
+    }
+    if (type === undefined) {
+      return `--dataset needs --type (${DATASET_TYPES.join('|')})`;
+    }
+    if (options.out === undefined || options.out.trim() === '') {
+      return '--dataset needs --out <file.jsonl>';
+    }
+    return {
+      trajectory: undefined,
+      type,
+      against: undefined,
+      dataset: options.dataset,
+      out: options.out,
+      json,
+    };
+  }
+  const trajectory = options.trajectory;
+  if (trajectory === undefined) {
+    return "required option '--trajectory <file>' not specified";
   }
   const against = options.against;
   if (type !== undefined && NEEDS_AGAINST.has(type) && against === undefined) {
@@ -128,7 +158,14 @@ function normalize(options: ExportCommandOptions): ExportOptions | string {
   ) {
     return `--against applies only to --type ${[...NEEDS_AGAINST].join('|')}`;
   }
-  return { trajectory, type, against, json: options.json === true };
+  return {
+    trajectory,
+    type,
+    against,
+    dataset: undefined,
+    out: undefined,
+    json,
+  };
 }
 
 const PLAIN = createCliTheme('none');
@@ -207,21 +244,90 @@ export async function runExportCommand(
     log.error(parsed);
     return EXPORT_EXIT_USAGE;
   }
-  const fail = (code: string, message: string): number => {
+  const fail = (
+    code: string,
+    message: string,
+    exitCode: number = EXPORT_EXIT_USAGE,
+  ): number => {
     if (parsed.json) {
       deps.out(
         formatJson({
           ok: false,
-          exitCode: EXPORT_EXIT_USAGE,
+          exitCode,
           error: { code, message },
         }),
       );
     } else {
       log.error(`[${code}] ${message}`);
     }
-    return EXPORT_EXIT_USAGE;
+    return exitCode;
   };
-  const loaded = loadExport(deps.readFile, parsed.trajectory);
+  // Issue #270: batch export — every matching trajectory in, one JSONL
+  // plus a manifest out. Pairing/grouping is automatic and every exclusion
+  // is counted by tag, never silently dropped.
+  if (parsed.dataset !== undefined) {
+    const { listDir, writeFile, appendFile } = deps;
+    if (
+      listDir === undefined ||
+      writeFile === undefined ||
+      appendFile === undefined
+    ) {
+      return fail(
+        'dataset-unsupported',
+        'dataset export needs the filesystem deps (listDir/writeFile/appendFile)',
+      );
+    }
+    const fs: DatasetFs = {
+      listDir,
+      readFile: deps.readFile,
+      writeFile,
+      appendFile,
+    };
+    try {
+      const manifest = exportDataset({
+        type: parsed.type as ExportDatasetType,
+        dataset: parsed.dataset,
+        out: parsed.out as string,
+        fs,
+      });
+      if (parsed.json) {
+        deps.out(
+          formatJson({
+            ok: true,
+            exitCode: EXPORT_EXIT_OK,
+            type: manifest.type,
+            dataset: manifest.dataset,
+            out: manifest.out,
+            manifest,
+          }),
+        );
+      } else {
+        const excluded = Object.values(manifest.excluded).reduce(
+          (sum, count) => sum + count,
+          0,
+        );
+        deps.out(
+          `dataset: ${manifest.records} record(s) from ${manifest.files} file(s), ${excluded} excluded, manifest: ${manifest.manifest}`,
+        );
+      }
+      return EXPORT_EXIT_OK;
+    } catch (error) {
+      if (error instanceof DatasetError) {
+        return fail(error.code, error.message, error.exitCode);
+      }
+      // Mirror the single-file path: an unexpected failure (an --out that
+      // names a directory, EACCES/ENOSPC on the JSONL or the manifest) is
+      // `export-failed` (exit 1) with its envelope, never a raw throw past
+      // the command's error contract.
+      return fail(
+        'export-failed',
+        error instanceof Error ? error.message : String(error),
+        EXPORT_EXIT_FAILED,
+      );
+    }
+  }
+
+  const loaded = loadExport(deps.readFile, parsed.trajectory as string);
   if (!('exported' in loaded)) return fail(loaded.code, loaded.message);
   const exported = loaded.exported;
 

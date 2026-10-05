@@ -35,6 +35,8 @@ import { runExportCommand as runTrajectoryExportCommand } from '../../../package
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { isGitWorktreeClean } from '../../../packages/exec/src/git-clean.js';
+import { looseStateDirMode } from '../../../packages/exec/src/lock-file.js';
+import { readStdinText } from '../../../packages/exec/src/stdin.js';
 import { installedPolicyPosture } from '../../../packages/host/src/approvals.js';
 import { runConfigCommand } from '../../../packages/host/src/config/config-cli.js';
 import {
@@ -84,6 +86,7 @@ import {
   auditLedgerDirFor,
   readAuditLedger,
 } from '../../../packages/host/src/policy/audit-ledger.js';
+import { enterpriseDoctorChecks } from '../../../packages/host/src/policy/enterprise.js';
 import {
   policyFromInstalledAllowlist,
   policyWithInstalledAllowlist,
@@ -91,7 +94,10 @@ import {
 } from '../../../packages/host/src/policy/policy-cli.js';
 import { runReplayCommand } from '../../../packages/host/src/replay/replay.js';
 import { rolesDoctorProbe } from '../../../packages/host/src/roles/roles-boot.js';
-import { planWorkerRoles } from '../../../packages/host/src/roles/worker-roles.js';
+import {
+  planWorkerRoles,
+  thinkingOverrideFromEnv,
+} from '../../../packages/host/src/roles/worker-roles.js';
 import { runRunCommand } from '../../../packages/host/src/run-cli.js';
 import {
   defaultSessionsRoot,
@@ -124,6 +130,7 @@ import {
   sessionRetentionDays,
 } from './config-runtime.js';
 import type { DispatchRunners } from './dispatch.js';
+import { createProdRunSuite } from './eval-prod.js';
 import {
   extensionPostureForDoctor,
   loadExtensionStartup,
@@ -143,18 +150,6 @@ import {
 export interface ProdRunnerIo {
   readonly out: (line: string) => void;
   readonly debug: (line: string) => void;
-}
-
-// Suite execution is injected: the binary scores recorded trajectories
-// (--trajectory path, fully live); live task execution has no model-backed
-// suite runner here, so --task refuses fail-closed instead of scoring
-// fiction. The message is the documented refusal, surfaced verbatim by the
-// eval/benchmark CLI as `eval error: <message>`.
-const LIVE_SUITE_REFUSAL =
-  'live suite execution is not available in this binary: score a recorded trajectory with --trajectory (see packages/eval/COMMUNITY.md)';
-
-async function refuseLiveSuite(): Promise<never> {
-  throw new Error(LIVE_SUITE_REFUSAL);
 }
 
 // The presentation seams of one solo-command invocation, derived once from
@@ -298,6 +293,11 @@ export function prodTuiDeps(
     // flag still wins), so the documented key selects something instead of
     // being parsed and ignored.
     modes: cliConfig.runtime?.modes,
+    // Issue #304 (§16.9): the `[ui] theme` reference — a built-in name or a
+    // JSON theme path, resolved and validated before the alt-screen opens.
+    ...(cliConfig.runtime?.config.ui?.theme === undefined
+      ? {}
+      : { theme: cliConfig.runtime.config.ui.theme }),
     // Issue #327: the manager-lane projections the interactive orchestrator
     // drive consumes — the same `[orchestrator]` worktree/cap values and the
     // same approval snapshot the CLI orchestrate runner threads (never a
@@ -441,6 +441,15 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
     },
     doctor: async (options, cliConfig) => {
       const enterprisePolicy = runtimePolicy(cliConfig);
+      // §58 (issue #289): the enterprise checks run only when a `[policy]`
+      // section is actually configured — the resolved policy is always
+      // present (empty without one), and running the checks over an empty
+      // policy would fail the default matrix for a config that never asked
+      // for enterprise enforcement. `sources` carries one leaf per config
+      // key, so a `policy.` prefix IS "a [policy] section exists".
+      const policyConfigured = Object.keys(
+        cliConfig.runtime?.sources ?? {},
+      ).some((leaf) => leaf.startsWith('policy.'));
       const roleLayers = runtimeLaneDeps(cliConfig).roles?.layers;
       // Default probes are faux-only: providers are listed (never dialed),
       // deps check the live node runtime, policy falls back to host
@@ -464,6 +473,14 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       // an unlistable store makes NO claim (the probe stays un-injected)
       // rather than crashing doctor — the note is informational, so an
       // unreadable store must not turn into a failure of its own.
+      // Issue #361: the sessions root's mode, when it is group- or
+      // world-accessible. Best-effort like the overlap probe: an unreadable
+      // root makes no claim.
+      const statePermissionProbe = () => {
+        const root = defaultSessionsRoot();
+        const mode = looseStateDirMode(root);
+        return mode === undefined ? undefined : { path: root, mode };
+      };
       let sessionOverlapProbe: (() => SessionOverlapProbe) | undefined;
       try {
         const overlapRoot = defaultSessionsRoot();
@@ -486,10 +503,20 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       // NAMES only: no key name, no value.
       const workerCredentialProbe = (): DepProbe => {
         const cwd = process.cwd();
+        const pin = runtimeModelPin(cliConfig);
+        const thinkingOverride = thinkingOverrideFromEnv();
         const plan = planWorkerRoles({
           bridge: createNodeFileBridge(cwd),
           cwd,
           agents: ORCHESTRATE_DEFAULT_AGENTS,
+          // §38.1 (#202): the same model levels the run resolves — the
+          // manager's own pin under each role's `[roles.<r>].model`, and the
+          // run's explicit thinking level over the role default — so the
+          // posture describes the assignments that run would actually make.
+          ...(pin === undefined
+            ? {}
+            : { parentModel: `${pin.provider}/${pin.id}` }),
+          ...(thinkingOverride === undefined ? {} : { thinkingOverride }),
           // The same enterprise role gate the orchestrate run applies, so the
           // posture describes the assignments that run would actually make.
           ...(enterprisePolicy === undefined
@@ -504,7 +531,6 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
             modelRef: assignment.modelRef,
           }),
         );
-        const pin = runtimeModelPin(cliConfig);
         return {
           id: 'credentials:roles',
           ...workerCredentialDoctorProbe(requests, {
@@ -571,6 +597,36 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
             workspace: process.cwd(),
             ...installedPolicyDeps(cliConfig),
           }),
+        // §82 resource enforcement (issue #163): which per-agent limits this
+        // platform can actually enforce — memory needs the RSS probe (`ps`,
+        // POSIX only) and disk the worktree probe (`du`). Wall clock is
+        // always enforced by the per-worker `--timeout`.
+        resourceEnforcement: () => ({
+          platform: process.platform,
+          memoryProbe: process.platform !== 'win32',
+          diskProbe: process.platform !== 'win32',
+          // No CLI flag or config key sets either limit today: they are
+          // composition-root options for embedders and the TUI. Doctor says
+          // "available but not configured" rather than claiming a cap no
+          // stock run applies.
+          configured: {},
+        }),
+        // §58 enterprise policy (issue #289): the SAME effective resolution
+        // `kubic policy` reports, checked for enforceability. `syslogAvailable:
+        // false` is the honest value today: `[[audit]]` sinks are parsed and
+        // validated, but sink construction is a named follow-up
+        // (docs/cli/configuration.md), so a configured syslog sink cannot be
+        // written — the check fails closed instead of claiming an audit trail
+        // that does not exist. The probe is wired only for a configured
+        // `[policy]`, so the default matrix is unchanged.
+        ...(enterprisePolicy === undefined || !policyConfigured
+          ? {}
+          : {
+              enterpriseChecks: () =>
+                enterpriseDoctorChecks(enterprisePolicy, {
+                  syslogAvailable: false,
+                }),
+            }),
         // First-party extensions (issues #80, #93): doctor reports the SAME
         // startup object the lanes boot with — the load below is the one
         // shared loader (packages/extensions/src/startup.ts), projected to
@@ -604,6 +660,9 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         ...(sessionOverlapProbe === undefined
           ? {}
           : { probeSessionOverlap: sessionOverlapProbe }),
+        // Issue #361: always injected — the check itself is a pass when the
+        // state directories are private.
+        probeStatePermissions: statePermissionProbe,
       });
     },
     orchestrate: async (options, cliConfig) => {
@@ -767,19 +826,26 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         },
       );
     },
-    eval: (options) =>
+    eval: (options, cliConfig) =>
       // Analysis surfaces (issue #78): the eval/benchmark presentation
       // layer is library-owned (packages/eval/src/cli.ts, read-only); the
       // root only supplies prod deps. Worktree cleanliness is a real git
-      // probe (packages/exec).
+      // probe (packages/exec); the suite runner is the live one (issue
+      // #262) — each built-in suite's fixture runs through the solo lane
+      // and is scored from the trajectory it writes.
       runEvalCommand(options, {
-        runSuite: refuseLiveSuite,
+        runSuite: createProdRunSuite(options, cliConfig),
         ensureCleanWorktree: (worktree: string) => isGitWorktreeClean(worktree),
+        // §48 (issue #258): --trajectory takes a file path (or `-` for
+        // stdin) like export/replay; relative to the user's cwd.
+        readFile: (path: string) =>
+          createNodeFileBridge(process.cwd()).readTextFile(path),
+        readStdin: readStdinText,
         ...report(),
       }),
-    benchmark: (options) =>
+    benchmark: (options, cliConfig) =>
       runBenchmarkCommand(options, {
-        runSuite: refuseLiveSuite,
+        runSuite: createProdRunSuite(options, cliConfig),
         ensureCleanWorktree: (worktree: string) => isGitWorktreeClean(worktree),
         ...report(),
       }),
@@ -809,6 +875,10 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           ...(enterprisePolicy === undefined
             ? {}
             : { modelPolicy: enterprisePolicy }),
+          // Issue #272: the shared lane projections `kubic run` threads
+          // (agent id + config-sourced role layers + the out-of-scope
+          // paths) — the pinned role merges under them identically.
+          ...runtimeLaneDeps(cliConfig),
         },
       );
     },
@@ -822,6 +892,20 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         // turned `--trajectory t.json` into `/t.json`).
         readFile: (path: string) =>
           createNodeFileBridge(process.cwd()).readTextFile(path),
+        // Issue #270: the batch mode's filesystem seam — listing resolves
+        // the --dataset directory/glob, the JSONL streams one line at a
+        // time, and the manifest lands beside it.
+        listDir: (path: string) =>
+          createNodeFileBridge(process.cwd())
+            .listDir(path)
+            .map((entry) => ({
+              name: entry.name,
+              isDirectory: entry.isDirectory,
+            })),
+        writeFile: (path: string, content: string) =>
+          createNodeFileBridge(process.cwd()).writeFile(path, content),
+        appendFile: (path: string, content: string) =>
+          createNodeFileBridge(process.cwd()).appendFile(path, content),
         ...report(),
       });
     },

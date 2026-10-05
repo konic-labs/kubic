@@ -12,7 +12,7 @@ import { InvalidArgumentError, Option } from '@commander-js/extra-typings';
 import {
   BUDGET_DIMENSIONS,
   type ParsedBudgetSpec,
-  parseAgentList,
+  parseAgentBindings,
   parseBudgetSpec,
 } from '../../../../packages/host/src/orchestrate-cli.js';
 import type { CleanOptions } from '../../../../packages/host/src/orchestrator/worktree/clean.js';
@@ -30,13 +30,11 @@ function sessionId(raw: string): string {
 }
 
 function agentList(raw: string): string[] {
-  const agents = parseAgentList(raw);
-  if (agents === undefined) {
-    throw new InvalidArgumentError(
-      'Use unique comma-separated worker ids of [A-Za-z0-9_-].',
-    );
+  const parsed = parseAgentBindings(raw);
+  if (!parsed.ok) {
+    throw new InvalidArgumentError(parsed.reason);
   }
-  return agents;
+  return parsed.entries;
 }
 
 function budgetSpec(raw: string): ParsedBudgetSpec {
@@ -49,6 +47,11 @@ function budgetSpec(raw: string): ParsedBudgetSpec {
   return spec;
 }
 
+// A repeatable flag's collector: commander calls it once per occurrence.
+function collect(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
 function positiveInt(raw: string): number {
   const value = Number(raw);
   if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < 1) {
@@ -57,16 +60,35 @@ function positiveInt(raw: string): number {
   return value;
 }
 
+// The worker-failure policy (issue #169): `stop` is the shipped all-or-nothing
+// default, `continue` keeps the run going and exits 7 with the failures named.
+// An unknown value is a usage error, never a silently ignored flag.
+function failureMode(raw: string): 'stop' | 'continue' {
+  if (raw !== 'stop' && raw !== 'continue') {
+    throw new InvalidArgumentError("Use 'stop' or 'continue'.");
+  }
+  return raw;
+}
+
 const ORCHESTRATE_EXAMPLES = `
 Examples:
   kubic orchestrate -p "add input validation" --agents api,ui
+  kubic orchestrate -p "add input validation" --agents api:implementer,ui:reviewer
   kubic orchestrate -p "fix the flaky tests" --yes --budget maxToolCalls=20
+  kubic orchestrate -p "refactor" --concurrency 4 --agents api,ui,docs,cli
+  kubic orchestrate -p "migrate the modules" --agents a,b,c --on-failure continue
+  kubic orchestrate -p "use our conventions" --skill ./skills/house-style
   kubic orchestrate --resume --session orch-1790000000000
   kubic orchestrate -p "refactor" --json
 
-Needs a git repository (it never falls back to solo). Exit codes: 0 ok,
+Each --agents entry is <id>[:<role>[:<provider/id>]], where <role> is one
+of planner, implementer, tester, debugger, reviewer (default: implementer).
+
+Needs a git repository (it never falls back to solo). Workers run
+concurrently up to --concurrency (default [orchestrator].maxWorkers, else
+4); the rest queue and start as slots free. Exit codes: 0 ok,
 1 run failure, 2 usage or not a git repo, 3 budget exhausted, 4 approval
-denied or timed out.`;
+denied or timed out, 7 partial (--on-failure continue with failed workers).`;
 
 const CLEAN_EXAMPLES = `
 Examples:
@@ -95,8 +117,18 @@ export const registerOrchestratorCommands: CommandRegistrar = (
     )
     .option(
       '--agents <ids>',
-      'comma-separated worker ids (default: worker-1,worker-2)',
+      'comma-separated workers as <id>[:<role>[:<provider/id>]]; roles: planner|implementer|tester|debugger|reviewer (default: worker-1,worker-2 as implementers)',
       agentList,
+    )
+    .option(
+      '--concurrency <n>',
+      'max workers running at once for this run (overrides [orchestrator].maxWorkers)',
+      positiveInt,
+    )
+    .option(
+      '--on-failure <mode>',
+      "what one worker's failure does to the run: 'stop' (default) fails the run, 'continue' merges the survivors and exits 7",
+      failureMode,
     )
     .option(
       '--session <id>',
@@ -109,6 +141,12 @@ export const registerOrchestratorCommands: CommandRegistrar = (
     )
     .option('--yes', 'auto-approve every merge (non-interactive)')
     .option(
+      '--skill <path>',
+      'skill every worker and the resolver are granted (repeatable); a relative path resolves against this cwd',
+      collect,
+      [],
+    )
+    .option(
       '--budget <dims>',
       'opt-in per-worker budget, e.g. maxToolCalls=20 or w1:maxCostUsd=1;w2:maxTokens=5000',
       budgetSpec,
@@ -120,20 +158,24 @@ export const registerOrchestratorCommands: CommandRegistrar = (
     .option('--full-access', 'deprecated alias of --dangerously-skip-approvals')
     .option('--json', 'print one JSON envelope on stdout')
     .addHelpText('after', ORCHESTRATE_EXAMPLES)
-    .action(async ({ dangerouslySkipApprovals, fullAccess, ...rest }) => {
-      // Issue #308: one flag name for full access across every command;
-      // `--full-access` still works and says what replaced it.
-      if (fullAccess === true) {
-        ctx.err(
-          'hint: --full-access is deprecated — use --dangerously-skip-approvals',
-        );
-      }
-      const options =
-        dangerouslySkipApprovals === true || fullAccess === true
-          ? { ...rest, fullAccess: true }
-          : rest;
-      ctx.setExitCode(await runners.orchestrate(options, config));
-    });
+    .action(
+      async ({ dangerouslySkipApprovals, fullAccess, skill, ...rest }) => {
+        // Issue #308: one flag name for full access across every command;
+        // `--full-access` still works and says what replaced it.
+        if (fullAccess === true) {
+          ctx.err(
+            'hint: --full-access is deprecated — use --dangerously-skip-approvals',
+          );
+        }
+        // Issue #170: `--skill` is repeatable; the typed option is the list.
+        const base = { ...rest, skills: skill ?? [] };
+        const options =
+          dangerouslySkipApprovals === true || fullAccess === true
+            ? { ...base, fullAccess: true }
+            : base;
+        ctx.setExitCode(await runners.orchestrate(options, config));
+      },
+    );
 
   program
     .command('clean')

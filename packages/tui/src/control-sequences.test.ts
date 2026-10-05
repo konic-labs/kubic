@@ -9,6 +9,10 @@
 // assertion below failed with `has raw ESC: true` (verified by dumping the
 // rendered frame: 'HI\u001b[2J\u001b[31mRED\u001b[0m\u0007END').
 import { describe, expect, it } from 'vitest';
+import type {
+  KubicPresentationState,
+  LaneSnapshot,
+} from '../../core/src/presentation.js';
 import { createTuiApp } from './tui-app.js';
 
 const ESC = '\u001b';
@@ -30,6 +34,35 @@ function frameWith(text: string): string {
     },
   ]);
   return app.render(60).join('\n');
+}
+
+// Issue #333: the app renders replicated state, so a test builds the state a
+// projector would produce (the projector itself lives in host).
+function presentation(
+  over: Partial<LaneSnapshot> = {},
+): KubicPresentationState {
+  return {
+    session: { sessionId: 's', mode: 'solo', approvalsSkipped: false },
+    agents: new Map(),
+    lanes: new Map([
+      [
+        's',
+        {
+          laneId: 's',
+          agentId: 'root',
+          status: 'running',
+          tools: [],
+          queued: [],
+          compacting: false,
+          ...over,
+        },
+      ],
+    ]),
+    workers: new Map(),
+    approvals: [],
+    usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+    connection: { status: 'connected' },
+  };
 }
 
 describe('terminal control sequences from lane content (issue #88)', () => {
@@ -66,6 +99,39 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     ]);
     const frame = app.render(60).join('\n');
     expect(frame).not.toContain(`${ESC}[2J`);
+  });
+
+  it('renders coloured tool output as clean text, not parameter noise (#299)', () => {
+    // FORCE_COLOR test runners, `git color.ui=always` and npm progress bars
+    // emit real SGR sequences even without a TTY. Stripping only the ESC
+    // byte left `[31m` visible in every output block; the whole sequence
+    // must go, and the words must stay.
+    const app = createTuiApp({
+      sessionId: 's',
+      model: 'm',
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+    app.applyLaneEntries([
+      {
+        id: 'e9',
+        seq: 9,
+        type: 'message',
+        message: {
+          role: 'toolResult',
+          content: [
+            { type: 'text', text: `${ESC}[31mFAIL${ESC}[0m src/x.ts\n` },
+          ],
+        },
+      },
+    ]);
+    const frame = app.render(60).join('\n');
+    // The renderer's OWN SGR (glyph colours, resets) is not content: strip it
+    // and assert what the operator reads.
+    const plain = frame.replace(new RegExp(`${ESC}\\[[0-9;]*m`, 'g'), '');
+    expect(plain).toContain('FAIL src/x.ts');
+    expect(plain).not.toContain('[31m');
+    expect(plain).not.toContain('[0m');
   });
 
   it('does not let a tool NAME emit raw escapes (second-pass finding)', () => {
@@ -106,11 +172,18 @@ describe('terminal control sequences from lane content (issue #88)', () => {
       mode: 'solo',
       approvalsSkipped: false,
     });
-    app.applyLaneEvent({
-      type: 'tool-start',
-      toolCallId: 'tc-tree',
-      toolName: `ZZ${ESC}[2J${ESC}[31m${BEL}`,
-    });
+    app.applyPresentation(
+      presentation({
+        tools: [
+          {
+            toolCallId: 'tc-tree',
+            toolName: `ZZ${ESC}[2J${ESC}[31m${BEL}`,
+            status: 'running',
+            isError: false,
+          },
+        ],
+      }),
+    );
     const frame = app.render(100).join('\n');
     expect(frame).toContain('ZZ');
     expect(frame).not.toContain(`${ESC}[2J`);

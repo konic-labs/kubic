@@ -36,7 +36,7 @@ describe('runEvalTask refusals are specific', () => {
     thinking: null,
     worktree: '/wt/a',
     generation: 3,
-    tier: 'standard',
+    size: 'standard',
     workspace: 'inline' as const,
   };
   const ok = {
@@ -120,7 +120,7 @@ describe('runEvalTask (issue #53)', () => {
         thinking: null,
         worktree: '/wt/agent-1',
         generation: 3,
-        tier: 'standard',
+        size: 'standard',
         workspace: 'inline',
       },
       {
@@ -135,11 +135,11 @@ describe('runEvalTask (issue #53)', () => {
     expect(record.success).toBe(true);
     expect(record.worktree).toBe('/wt/agent-1');
     expect(record.generation).toBe(3);
-    expect(record.tier).toBe('standard');
+    expect(record.size).toBe('standard');
     expect(record.tokens).toBe(150);
   });
 
-  it('rejects a run missing worktree/generation/tier instead of storing', async () => {
+  it('rejects a run missing worktree/generation/size instead of storing', async () => {
     await expect(
       runEvalTask(
         {
@@ -149,7 +149,7 @@ describe('runEvalTask (issue #53)', () => {
           thinking: null,
           worktree: '',
           generation: 3,
-          tier: 'standard',
+          size: 'standard',
           workspace: 'inline',
         },
         { runSuite: async () => ({ success: true, signals: signals() }) },
@@ -167,7 +167,7 @@ describe('runEvalTask (issue #53)', () => {
         thinking: null,
         worktree: '/wt/clean',
         generation: 1,
-        tier: 'smoke',
+        size: 'smoke',
         workspace: 'worktree',
       },
       {
@@ -197,7 +197,7 @@ describe('runEvalTask (issue #53)', () => {
           thinking: null,
           worktree: '/wt/dirty',
           generation: 1,
-          tier: 'smoke',
+          size: 'smoke',
           workspace: 'worktree',
         },
         {
@@ -220,7 +220,7 @@ describe('runEvalTask (issue #53)', () => {
           thinking: null,
           worktree: '/wt/unchecked',
           generation: 1,
-          tier: 'smoke',
+          size: 'smoke',
           workspace: 'worktree',
         },
         {
@@ -242,7 +242,7 @@ describe('runEvalTask (issue #53)', () => {
           thinking: null,
           worktree: '/wt/a',
           generation: 1,
-          tier: 'smoke',
+          size: 'smoke',
           workspace: 'inline',
         },
         {
@@ -264,7 +264,7 @@ describe('runEvalTask (issue #53)', () => {
           thinking: null,
           worktree: '/wt/a',
           generation: 1,
-          tier: 'smoke',
+          size: 'smoke',
           workspace: 'inline',
         },
         {
@@ -286,7 +286,7 @@ describe('runEvalTask (issue #53)', () => {
           thinking: null,
           worktree: '/wt/a',
           generation: 1,
-          tier: 'smoke',
+          size: 'smoke',
           workspace: 'inline',
         },
         {
@@ -317,7 +317,7 @@ describe('runEvalTask (issue #53)', () => {
           thinking: null,
           worktree: '/wt/a',
           generation: 1,
-          tier: 'smoke',
+          size: 'smoke',
           workspace: 'inline',
         },
         {
@@ -338,7 +338,7 @@ describe('runEvalTask (issue #53)', () => {
             thinking: null,
             worktree: '/wt/a',
             generation,
-            tier: 'smoke',
+            size: 'smoke',
             workspace: 'inline',
           },
           {
@@ -362,7 +362,7 @@ describe('runEvalTask (issue #53)', () => {
         thinking: null,
         worktree: '/wt/a',
         generation: 1,
-        tier: 'smoke',
+        size: 'smoke',
         workspace: 'inline',
       },
       {
@@ -434,7 +434,7 @@ describe('runEvalTrajectory (issue #53)', () => {
       thinking: null,
       worktree: '/wt/agent-1',
       generation: 3,
-      tier: 'standard',
+      size: 'standard',
     });
     expect(record.success).toBe(true);
     expect(record.tokens).toBe(150);
@@ -502,15 +502,15 @@ describe('runEvalTrajectory (issue #53)', () => {
       thinking: null,
       worktree: '/wt/agent-1',
       generation: 3,
-      tier: 'standard',
+      size: 'standard',
     });
     expect(record.success).toBe(false);
   });
 
   it('exposes a machine-readable error code', () => {
-    const error = new EvalRunnerError('missing-tier', 'tier missing');
+    const error = new EvalRunnerError('missing-size', 'size missing');
     expect(error.exitCode).toBe(2);
-    expect(error.toJSON().error.code).toBe('missing-tier');
+    expect(error.toJSON().error.code).toBe('missing-size');
   });
 });
 
@@ -519,7 +519,7 @@ describe('runEvalTrajectory provenance comes from the export (issue #256)', () =
     const record = await runEvalTrajectory({
       suite: 'swe-bench-mini',
       trajectory: makeExport({ model: 'acme/m1', generation: 3 }),
-      tier: 'standard',
+      size: 'standard',
     });
     expect(record.model).toBe('acme/m1');
     expect(record.generation).toBe(3);
@@ -533,13 +533,13 @@ describe('runEvalTrajectory provenance comes from the export (issue #256)', () =
     const record = await runEvalTrajectory({
       suite: 'swe-bench-mini',
       trajectory: exported,
-      tier: 'standard',
+      size: 'standard',
     });
     expect(record.thinking).toBe('high');
     const none = await runEvalTrajectory({
       suite: 'swe-bench-mini',
       trajectory: makeExport(),
-      tier: 'standard',
+      size: 'standard',
     });
     expect(none.thinking).toBeNull();
   });
@@ -554,7 +554,7 @@ describe('runEvalTrajectory provenance comes from the export (issue #256)', () =
       thinking: 'low',
       worktree: '/wt/agent-1',
       generation: 3,
-      tier: 'standard',
+      size: 'standard',
     });
     expect(record.model).toBe('acme/m1');
     expect(record.thinking).toBe('low');
@@ -571,7 +571,7 @@ describe('runEvalTrajectory provenance comes from the export (issue #256)', () =
       const error = await runEvalTrajectory({
         suite: 'swe-bench-mini',
         trajectory: makeExport({ model: 'acme/m1', generation: 3 }),
-        tier: 'standard',
+        size: 'standard',
         ...flags,
       }).catch((caught: unknown) => caught);
       expect(error).toBeInstanceOf(EvalRunnerError);
@@ -587,58 +587,58 @@ describe('runEvalTrajectory provenance comes from the export (issue #256)', () =
     const unknown = (await refusal({
       suite: 'nope',
       trajectory: makeExport(),
-      tier: 'smoke',
+      size: 'smoke',
     })) as EvalRunnerError;
     expect(unknown.code).toBe('unknown-suite');
     expect(unknown.message).toBe('unknown suite "nope"');
     const stub = (await refusal({
       suite: 'terminal-live',
       trajectory: makeExport(),
-      tier: 'smoke',
+      size: 'smoke',
     })) as EvalRunnerError;
     expect(stub.code).toBe('stub-suite');
     expect(stub.message).toMatch(/^suite "terminal-live" is a stub/);
     const malformed = (await refusal({
       suite: 'swe-bench-mini',
       trajectory: { schema_version: '1.0' },
-      tier: 'smoke',
+      size: 'smoke',
     })) as EvalRunnerError;
     expect(malformed.code).toBe('invalid-trajectory');
     expect(malformed.message).toMatch(/^invalid trajectory export: .*§46/);
   });
 
-  it('refuses a blank or unknown tier with distinct codes', async () => {
+  it('refuses a blank or unknown size with distinct codes', async () => {
     await expect(
       runEvalTrajectory({
         suite: 'swe-bench-mini',
         trajectory: makeExport(),
-        tier: '   ',
+        size: '   ',
       }),
     ).rejects.toMatchObject({
-      code: 'missing-tier',
-      message: expect.stringMatching(/^tier is required/),
+      code: 'missing-size',
+      message: expect.stringMatching(/^size is required/),
     });
     await expect(
       runEvalTrajectory({
         suite: 'swe-bench-mini',
         trajectory: makeExport(),
-        tier: 'bogus',
+        size: 'bogus',
       }),
     ).rejects.toMatchObject({
-      code: 'invalid-tier',
-      message: expect.stringMatching(/^unknown tier "bogus"/),
+      code: 'invalid-size',
+      message: expect.stringMatching(/^unknown size "bogus"/),
     });
   });
 
   it('names the error class', () => {
-    expect(new EvalRunnerError('missing-tier', 'x').name).toBe(
+    expect(new EvalRunnerError('missing-size', 'x').name).toBe(
       'EvalRunnerError',
     );
   });
 
-  it('still requires a tier (not recorded in the export)', async () => {
+  it('still requires a size (not recorded in the export)', async () => {
     await expect(
       runEvalTrajectory({ suite: 'swe-bench-mini', trajectory: makeExport() }),
-    ).rejects.toMatchObject({ code: 'missing-tier' });
+    ).rejects.toMatchObject({ code: 'missing-size' });
   });
 });

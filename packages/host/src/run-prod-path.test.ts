@@ -587,3 +587,110 @@ describe('prod run path, result refs (issue #68; mutation hardening)', () => {
     expect(entryTexts(entries).join('\n')).toMatch(/durable hello/);
   });
 });
+
+// Issue #155: the §52 failure taxonomy reaches the --json envelope. The
+// durable `model_error` reason is generic; the detail carries the domain,
+// and the envelope's `failure` field reports the classified code.
+describe('prod run path, §52 failure code in the envelope (issue #155)', () => {
+  function out(): { lines: string[]; write: (line: string) => void } {
+    const lines: string[] = [];
+    return { lines, write: (line: string) => lines.push(line) };
+  }
+
+  function envelopeRun(
+    root: string,
+    responses: Parameters<ReturnType<typeof fauxProvider>['setResponses']>[0],
+  ) {
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses(responses);
+    return (prompt: string) =>
+      runHeadlessPrompt(
+        prompt,
+        {},
+        {
+          sessionsRoot: root,
+          models,
+          env: new FakeExecutionEnv({}),
+        },
+      );
+  }
+
+  it('reports a mid-run provider rate-limit refusal as provider_transient, not the probe code', async () => {
+    const o = out();
+    // 'provider capacity exhausted' is pi-ai's own non-retryable capacity
+    // shape (the rate-limit family): the harness settles immediately instead
+    // of sleeping through three backoffs, and the §52 code is still the
+    // provider one.
+    const exit = await runRunCommand(
+      { prompt: 'rate limited', json: true },
+      {
+        out: o.write,
+        run: envelopeRun(tmpRoot(), [
+          fauxAssistantMessage('refused', {
+            stopReason: 'error',
+            errorMessage: 'provider capacity exhausted',
+          }),
+        ]),
+      },
+    );
+    expect(exit).toBe(1);
+    const envelope = JSON.parse(o.lines[0] as string) as {
+      status: string;
+      exitCode: number;
+      failure?: { code: string };
+    };
+    expect(envelope.status).toBe('provider_transient');
+    expect(envelope.status).not.toBe('provider_probe_failed');
+    expect(envelope.exitCode).toBe(1);
+    expect(envelope.failure?.code).toBe('provider_transient');
+  });
+
+  it('reports a faux tool failure as tool_failed', async () => {
+    const o = out();
+    const exit = await runRunCommand(
+      { prompt: 'tool fails', json: true },
+      {
+        out: o.write,
+        run: envelopeRun(tmpRoot(), [
+          fauxAssistantMessage('failed', {
+            stopReason: 'error',
+            errorMessage: "tool 'read' failed: ENOENT",
+          }),
+        ]),
+      },
+    );
+    expect(exit).toBe(1);
+    const envelope = JSON.parse(o.lines[0] as string) as {
+      status: string;
+      failure?: { code: string; strategy: string };
+    };
+    expect(envelope.status).toBe('failed');
+    expect(envelope.failure?.code).toBe('tool_failed');
+    expect(envelope.failure?.strategy).toBe('retry_same');
+  });
+
+  it('reports a plain faux model error as model_failed', async () => {
+    const o = out();
+    const exit = await runRunCommand(
+      { prompt: 'model fails', json: true },
+      {
+        out: o.write,
+        run: envelopeRun(tmpRoot(), [
+          fauxAssistantMessage('failed', {
+            stopReason: 'error',
+            errorMessage: 'the model produced nothing',
+          }),
+        ]),
+      },
+    );
+    expect(exit).toBe(1);
+    const envelope = JSON.parse(o.lines[0] as string) as {
+      status: string;
+      failure?: { code: string };
+    };
+    expect(envelope.status).toBe('failed');
+    expect(envelope.failure?.code).toBe('model_failed');
+  });
+});

@@ -24,7 +24,10 @@ import { runHeadlessPrompt } from '../../../../apps/kubic/src/headless-run.js';
 import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
 import { NodeExecutionEnv } from '../../../exec/src/env.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
-import { FileJournalStore } from '../../../exec/src/journal.js';
+import {
+  FileJournalStore,
+  JournalEntryTooLargeError,
+} from '../../../exec/src/journal.js';
 import { fauxToolUse } from '../../../worker/src/lane/test-harness.js';
 import {
   createModels,
@@ -316,6 +319,42 @@ describe('solo-lane projections reach the live path (issue #133)', () => {
     });
   }
 
+  it('threads [journal] maxBytes from config into the journal store bound', () => {
+    // §42.4/issue #350: the key must reach the store the run's journal is
+    // built on — the bound covers index.jsonl plus the blobs it references,
+    // and an entry that cannot fit is refused (journal_failed, file
+    // untouched) instead of landing a record the same append's pruning would
+    // delete.
+    const workspace = tmpRoot('kubic-350-bound-');
+    const runtime = namedRuntime(workspace, '[journal]\nmaxBytes = 1048576\n');
+    expect(runtime.journal.maxBytes).toBe(1_048_576);
+    const deps = runtimeRunDeps({
+      runtime,
+      error: undefined,
+      ignoreSplit: NO_SPLIT,
+      trust: NO_PROJECT_TRUST,
+    });
+    expect(deps.journalRetention).toEqual({ maxBytes: 1_048_576 });
+
+    const store = new FileJournalStore(tmpRoot('kubic-350-store-'), {
+      ...(deps.journalRetention ?? {}),
+      durable: false,
+    });
+    expect(() =>
+      store.append({
+        path: 'big.txt',
+        op: 'write',
+        before: null,
+        after: 'x'.repeat(2_000_000),
+        bytesDelta: 0,
+        sessionId: 's1',
+        agentId: 'root',
+        toolCallId: 'call-1',
+        timestamp: 1_700_000_000_000,
+      }),
+    ).toThrow(JournalEntryTooLargeError);
+  });
+
   it('names the lane from [agent].name in the journal and the diff filter', async () => {
     const sessionsRoot = tmpRoot();
     const workspace = tmpRoot('kubic-133-agent-');
@@ -478,8 +517,9 @@ describe('solo-lane projections reach the live path (issue #133)', () => {
     expect(debug.join('\n')).toContain('[policy] role=implementer tools=read');
   });
 
-  it('the wiring itself: both production runners consume the projection', async () => {
-    // One projection, two one-line consumers (`kubic run` + `kubic tui`).
+  it('the wiring itself: every production runner consumes the projection', async () => {
+    // One projection, three one-line consumers (`kubic run`, `kubic tui`, and
+    // the live `kubic replay` re-execution — issue #272).
     // The defect class this issue closes is "the mechanism exists and
     // nothing populates it", so the composition root's own spreads are
     // pinned: a dropped consumer would silently un-name a lane again.
@@ -499,6 +539,6 @@ describe('solo-lane projections reach the live path (issue #133)', () => {
     );
     expect(
       source.match(/\.\.\.runtimeLaneDeps\(cliConfig\)/g) ?? [],
-    ).toHaveLength(2);
+    ).toHaveLength(3);
   });
 });

@@ -10,7 +10,13 @@
 // callback. It never knows what a lane is.
 
 import { tuiTheme } from './theme.js';
-import type { Component, EditorTheme, Focusable, TUI } from './tui-boundary.js';
+import type {
+  AutocompleteProvider,
+  Component,
+  EditorTheme,
+  Focusable,
+  TUI,
+} from './tui-boundary.js';
 import { Editor } from './tui-boundary.js';
 
 // Pi's editor takes the owning TUI at construction (it reads terminal rows
@@ -41,6 +47,11 @@ class TuiDelegate {
 
 export const EDITOR_FALLBACK_ROWS = 24;
 
+// Issue #340: how many prompts Up can recall — Pi's editor keeps the newest
+// 100 itself, so seeding more would only be dropped; the bound keeps a long
+// resumed session cheap to seed.
+export const PROMPT_HISTORY_MAX = 100;
+
 export function editorTheme(): EditorTheme {
   const identity = (text: string): string => text;
   return {
@@ -63,6 +74,11 @@ export function editorTheme(): EditorTheme {
 export class PromptEditor implements Component, Focusable {
   readonly inner: Editor;
   onSubmit?: (text: string) => void;
+  // Issue #338 (review): an image-only prompt is a prompt. The app owns the
+  // pending attachments, so it answers this before the wrapper drops a blank
+  // draft — otherwise attach + Enter is a silent no-op while the footer says
+  // "Enter sends it". Absent means the shipped behaviour (blank is a no-op).
+  allowEmptySubmit: () => boolean = () => false;
 
   private readonly delegate: TuiDelegate;
 
@@ -76,8 +92,8 @@ export class PromptEditor implements Component, Focusable {
     this.history = [];
     this.inner.onSubmit = (text: string): void => {
       const prompt = text.trim();
-      if (prompt === '') return;
-      this.recordHistory(prompt);
+      if (prompt === '' && !this.allowEmptySubmit()) return;
+      if (prompt !== '') this.recordHistory(prompt);
       this.onSubmit?.(prompt);
     };
   }
@@ -87,7 +103,20 @@ export class PromptEditor implements Component, Focusable {
   private recordHistory(prompt: string): void {
     if (this.history[0] === prompt) return;
     this.history.unshift(prompt);
+    if (this.history.length > PROMPT_HISTORY_MAX) this.history.pop();
     this.inner.addToHistory(prompt);
+  }
+
+  // Issue #340 (§16.5): seed the history from a resumed session's committed
+  // prompts, oldest first (newest last), so Up recalls what the previous
+  // process sent. Only the newest PROMPT_HISTORY_MAX are replayed, through
+  // the same consecutive-dedup rule a live submit follows.
+  seedHistory(prompts: readonly string[]): void {
+    const recent = prompts
+      .map((prompt) => prompt.trim())
+      .filter((prompt) => prompt !== '')
+      .slice(-PROMPT_HISTORY_MAX);
+    for (const prompt of recent) this.recordHistory(prompt);
   }
 
   // Focus is the inner editor's own flag (it decides whether to emit the
@@ -101,9 +130,10 @@ export class PromptEditor implements Component, Focusable {
     this.inner.focused = value;
   }
 
-  // While a turn is in flight the loop disables submit: the lane refuses a
-  // second concurrent accept, and a queued prompt would silently vanish.
-  // Pi's `disableSubmit` keeps editing (and history) alive but drops Enter.
+  // While a turn is in flight the loop keeps the editor ENABLED (#334):
+  // Enter queues the draft as a follow-up in the conversation's inbox and
+  // Alt+Enter steers, so there is nothing to disable. `disableSubmit` stays
+  // available for embedders that own a stricter loop.
   setDisabled(disabled: boolean): void {
     this.inner.disableSubmit = disabled;
   }
@@ -112,6 +142,12 @@ export class PromptEditor implements Component, Focusable {
   // terminal dimensions. Called once by the composition root.
   bind(tui: TUI): void {
     this.delegate.bind(tui);
+  }
+
+  // Issue #305: the registry's `/`-command autocomplete, handed to Pi's
+  // editor (it owns the popup, the debounce and the completion keys).
+  setAutocomplete(provider: AutocompleteProvider): void {
+    this.inner.setAutocompleteProvider(provider);
   }
 
   getText(): string {

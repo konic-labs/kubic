@@ -471,3 +471,17 @@ export { withAbortSignal, withCancel } from '@earendil-works/chord/context';
 //     upstream change.
 //   review: issue #391 (K10 #400)
 export { ResetEntry, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
+
+// --- #330 additions ---
+
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-ai/utils/estimate#estimateContextTokens
+//   used by: packages/worker/src/compaction.ts (the manual `/compact` path
+//     reports the context size before the cut in the TUI footer)
+//   why Pi has no alternative: the number has to be the SAME estimate Pi's
+//     own compaction threshold and cut selection use (the provider's usage
+//     blocks plus message estimates); a Kubic reimplementation would report
+//     a different number than the mechanism it describes, and the util
+//     already exists upstream.
+//   review: issue #330
+export { estimateContextTokens } from '@earendil-works/pi-ai/utils/estimate';

@@ -35,6 +35,7 @@
 // tests); this module never touches the network or a model. File reads
 // go through the exec FileBridge (I/O confinement).
 
+import { createHash } from 'node:crypto';
 import type { PermissionClasses } from '../../../agents/src/policy.js';
 import {
   type CliLogger,
@@ -51,6 +52,7 @@ import {
 } from '../../../trajectory/src/schema.js';
 import type { SoloApprovalConfig } from '../approvals.js';
 import type { EffectivePolicy } from '../policy/enterprise.js';
+import type { RoleLayerInput } from '../roles/resolver.js';
 import {
   RUN_EXIT_FAILED,
   RUN_EXIT_OK,
@@ -81,6 +83,12 @@ export interface ReplayRunRequest {
   worktree: string;
   lockfile: string | null;
   roleConfig: string | null;
+  // Issue #272: the role name the live tier's --role-config resolves to
+  // (`{"role": "<name>"}`); the re-execution loads
+  // `.kubic/roles/<name>.md` from the pinned worktree, so the role's tools
+  // and prompt are applied instead of being a checked-then-ignored pin.
+  // null on the deterministic tier (its pins are --model/--lockfile).
+  role: string | null;
 }
 
 export interface ReplayRunResult {
@@ -111,6 +119,14 @@ export interface ReplayRuntimeDeps {
   // gates the project models.json of the assembled catalog. Absent falls
   // back to the env opt-in inside assembleModels.
   trustProject?: (path: string) => boolean;
+  // Issue #272 (§72): the shared solo-lane projections `kubic run` threads
+  // — the configured agent id, the config-sourced role layers the pinned
+  // role merges under its document, and the declared out-of-scope paths.
+  // Absent means the documented run defaults ('root', no layers, the
+  // mechanism's own skips).
+  agentId?: string;
+  roles?: { layers: RoleLayerInput[] };
+  reconcileOutOfScope?: string[];
 }
 
 export interface ReplayCommandDeps {
@@ -194,6 +210,21 @@ function resolveTier(raw: string | undefined): ReplayTier | 'unknown' {
 
 const PLAIN = createCliTheme('none');
 
+// The refused-config envelope (issue #244): the same failure shape the tiered
+// envelope uses, with no invocation to report, so a `--json` consumer still
+// parses exactly one document. The reason is the config refusal's own.
+export function refusedReplayEnvelope(message: string): ReplayEnvelope {
+  return {
+    ok: false,
+    exitCode: RUN_EXIT_FAILED,
+    tier: 'unknown',
+    invocation: null,
+    trajectory: null,
+    changed: [],
+    error: { code: 'config_refused', message },
+  };
+}
+
 function fail(
   deps: ReplayCommandDeps,
   options: { json: boolean; tier: ReplayTier | 'unknown'; log: CliLogger },
@@ -272,11 +303,74 @@ function isModelPin(value: string): boolean {
 }
 
 // §72 pin artifact for the Deterministic tier: a JSON file pinning the
-// exact models the re-execution may use. Minimal but fail-closed: it
-// must parse as an object with a non-empty `models` record.
+// exact model the re-execution may use, plus optional prompt/tool digests.
+// Fail-closed: the requested --model must be pinned, and a pinned digest
+// must match what is about to be re-executed (issue #272) — the pins were
+// required and then ignored before this.
+//
+// Format:
+//   { "models": { "provider/id": {...} | "provider": ["id", ...] },
+//     "prompt": { "digest": "sha256:<hex>" }?,   // the re-run prompt text
+//     "tools":  { "digest": "sha256:<hex>" }? }  // sorted distinct tools
+function sha256Digest(text: string): string {
+  return `sha256:${createHash('sha256').update(text, 'utf8').digest('hex')}`;
+}
+
+function isPinnedModel(models: Record<string, unknown>, pin: string): boolean {
+  if (pin in models) return true;
+  const slash = pin.indexOf('/');
+  const provider = pin.slice(0, slash);
+  const id = pin.slice(slash + 1);
+  const entry = models[provider];
+  if (Array.isArray(entry)) return entry.includes(id);
+  // A provider keyed to a record of its pinned ids.
+  if (isRecord(entry)) return id in entry;
+  return false;
+}
+
+function recordedToolsDigest(trajectory: TrajectoryExport): string {
+  const tools = [...new Set(trajectory.actions.map((action) => action.tool))]
+    .sort()
+    .join('\n');
+  return sha256Digest(tools);
+}
+
+interface ReplayRefusal {
+  code: string;
+  message: string;
+  exit: number;
+}
+
+function checkDigestPin(
+  parsed: Record<string, unknown>,
+  path: string,
+  key: 'prompt' | 'tools',
+  actual: string,
+): ReplayRefusal | null {
+  const entry = parsed[key];
+  if (entry === undefined) return null;
+  if (!isRecord(entry) || typeof entry.digest !== 'string') {
+    return {
+      code: 'lockfile-invalid',
+      message: `lockfile ${JSON.stringify(path)} ${key} pin must be an object with a "digest" string`,
+      exit: RUN_EXIT_USAGE,
+    };
+  }
+  if (entry.digest !== actual) {
+    return {
+      code: 'lockfile-mismatch',
+      message: `lockfile ${JSON.stringify(path)} ${key} pin ${entry.digest} does not match the recorded ${key} (${actual}) — refusing a deterministic replay whose ${key} differs from its pin`,
+      exit: RUN_EXIT_USAGE,
+    };
+  }
+  return null;
+}
+
 function checkLockfile(
   path: string,
-): { ok: true } | { code: string; message: string; exit: number } {
+  model: string,
+  trajectory: TrajectoryExport,
+): { ok: true } | ReplayRefusal {
   let raw: string;
   try {
     raw = readFile(path);
@@ -308,6 +402,27 @@ function checkLockfile(
       exit: RUN_EXIT_USAGE,
     };
   }
+  if (!isPinnedModel(parsed.models, model)) {
+    return {
+      code: 'lockfile-mismatch',
+      message: `lockfile ${JSON.stringify(path)} does not pin model ${JSON.stringify(model)} — refusing a deterministic replay at an unpinned model`,
+      exit: RUN_EXIT_USAGE,
+    };
+  }
+  const promptPin = checkDigestPin(
+    parsed,
+    path,
+    'prompt',
+    sha256Digest(trajectory.task.objective),
+  );
+  if (promptPin !== null) return promptPin;
+  const toolsPin = checkDigestPin(
+    parsed,
+    path,
+    'tools',
+    recordedToolsDigest(trajectory),
+  );
+  if (toolsPin !== null) return toolsPin;
   return { ok: true };
 }
 
@@ -360,6 +475,7 @@ async function executeTierRun(
     worktree: string;
     lockfile: string | null;
     roleConfig: string | null;
+    role: string | null;
     changed: string[];
     experimental: string[];
   },
@@ -372,6 +488,7 @@ async function executeTierRun(
       worktree: params.worktree,
       lockfile: params.lockfile,
       roleConfig: params.roleConfig,
+      role: params.role,
     },
     runtime,
   );
@@ -434,9 +551,14 @@ function resolveWorktreeOverride(
   };
 }
 
+// The live tier's pin artifact (issue #272): a JSON file naming the role
+// the re-execution boots as — `{"role": "<name>"}`. The name is resolved
+// from `.kubic/roles/<name>.md` in the pinned worktree, so the role's
+// tools and prompt actually apply. Fail-closed: a role config that names
+// no role is refused here (exit 2), never checked-then-ignored.
 function checkRoleConfig(
   path: string,
-): { ok: true } | { code: string; message: string; exit: number } {
+): { ok: true; role: string } | ReplayRefusal {
   let raw: string;
   try {
     raw = readFile(path);
@@ -447,14 +569,25 @@ function checkRoleConfig(
       exit: RUN_EXIT_WORKSPACE_UNAVAILABLE,
     };
   }
-  if (raw.trim() === '') {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
     return {
       code: 'role-config-invalid',
-      message: `role config ${JSON.stringify(path)} is empty — live replay needs a pinned role`,
+      message: `role config ${JSON.stringify(path)} is not valid JSON — live replay needs {"role": "<name>"}`,
       exit: RUN_EXIT_USAGE,
     };
   }
-  return { ok: true };
+  const role = isRecord(parsed) ? parsed.role : undefined;
+  if (typeof role !== 'string' || role.trim() === '') {
+    return {
+      code: 'role-config-invalid',
+      message: `role config ${JSON.stringify(path)} must be a JSON object with a non-empty "role" name — live replay needs the pinned role`,
+      exit: RUN_EXIT_USAGE,
+    };
+  }
+  return { ok: true, role: role.trim() };
 }
 
 function modelIdOf(trajectory: TrajectoryExport): string {
@@ -674,7 +807,7 @@ export async function runReplayCommand(
         `invalid-model-pin ${JSON.stringify(options.model)} (want 'provider/id') — deterministic replay needs an exact model pin`,
       );
     }
-    const lock = checkLockfile(options.lockfile);
+    const lock = checkLockfile(options.lockfile, options.model, trajectory);
     if ('exit' in lock) {
       return fail(
         deps,
@@ -708,6 +841,7 @@ export async function runReplayCommand(
       worktree,
       lockfile: options.lockfile,
       roleConfig: null,
+      role: null,
       changed,
       experimental,
     });
@@ -771,6 +905,7 @@ export async function runReplayCommand(
       worktree: resolved.worktree,
       lockfile: null,
       roleConfig: options.roleConfig,
+      role: role.role,
       changed: resolved.changed,
       experimental: resolved.experimental,
     });

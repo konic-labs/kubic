@@ -144,10 +144,18 @@ describe('doctor reports the §40.3 role posture on the production path (#99)', 
     ]).policy;
     const gated = await report(cwd, denyBash);
     const failing = gated.checks.filter((c) => c.status === 'fail');
-    expect(failing.map((c) => c.id)).toEqual(['role:implementer']);
-    expect(failing[0]?.detail ?? '').toMatch(
-      /role 'implementer'.*'bash' denied.*enterprise denial holds/,
-    );
+    // The repo's implementer (bash) and the embedded presets that run a shell
+    // are refused by name; the repo's own planner declares no bash and stays
+    // green (issue #203 adds the presets to the tree).
+    expect(failing.map((c) => c.id)).toEqual([
+      'role:debugger',
+      'role:implementer',
+      'role:reviewer',
+      'role:tester',
+    ]);
+    expect(
+      failing.find((c) => c.id === 'role:implementer')?.detail ?? '',
+    ).toMatch(/role 'implementer'.*'bash' denied.*enterprise denial holds/);
     expect(
       gated.checks.some((c) => c.id === 'role:planner' && c.status === 'pass'),
     ).toBe(true);
@@ -173,33 +181,50 @@ describe('doctor reports the §40.3 role posture on the production path (#99)', 
       { layer: 'project', roles: { implementer: { tools: ['read'] } } },
     ];
     const layered = await report(cwd, denyBash, layers);
-    expect(layered.checks.filter((c) => c.status === 'fail')).toEqual([]);
     expect(
       layered.checks.some(
         (c) => c.id === 'role:implementer' && c.status === 'pass',
       ),
     ).toBe(true);
-    // Control: without the layer the deny turns it red.
+    // The layer covers only the implementer: the roles it does not touch
+    // still declare bash and are still refused (issue #203).
+    expect(
+      layered.checks.filter((c) => c.status === 'fail').map((c) => c.id),
+    ).toEqual([
+      'role:debugger',
+      'role:planner',
+      'role:reviewer',
+      'role:tester',
+    ]);
+    // Control: without the layer the deny turns the implementer red too.
     const bare = await report(cwd, denyBash);
     expect(
       bare.checks.filter((c) => c.status === 'fail').map((c) => c.id),
-    ).toEqual(['role:implementer']);
+    ).toEqual([
+      'role:debugger',
+      'role:implementer',
+      'role:planner',
+      'role:reviewer',
+      'role:tester',
+    ]);
   });
 
-  it('an absent role directory is not a failure', async () => {
-    // Most workspaces have no `.kubic/roles/`; doctor must stay green there.
+  it('an absent role directory reports the embedded presets, not a failure (issue #203)', async () => {
+    // Most workspaces have no `.kubic/roles/`; doctor must stay green there,
+    // and it must name what the run would actually assign — the five presets
+    // that ship with the binary, each marked `builtin`.
     const cwd = tmpRoot('kubic-doctor-noroles-');
     const parsed = await report(cwd);
     const roles = parsed.checks.filter((c) => c.id.startsWith('role:'));
     expect(roles.filter((c) => c.status === 'fail')).toEqual([]);
-    // The probe ran and says why nothing was found, and doctor stays green.
-    expect(roles).toContainEqual(
-      expect.objectContaining({
-        id: 'role:documents',
-        status: 'pass',
-        detail: expect.stringMatching(/no role documents/),
-      }),
-    );
+    expect(roles.map((c) => c.id)).toEqual([
+      'role:debugger',
+      'role:implementer',
+      'role:planner',
+      'role:reviewer',
+      'role:tester',
+    ]);
+    expect(roles.every((c) => /builtin role/.test(c.detail ?? ''))).toBe(true);
     expect(parsed.ok).toBe(true);
   });
 

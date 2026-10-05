@@ -28,7 +28,6 @@ import {
   SystemEntry,
 } from '../../worker/src/pi-boundary.js';
 import { createRoleToolGuard } from './roles/resolver.js';
-import { ROLE_MODEL_DEFAULTS } from './roles/roles-data.js';
 import { composeWorkerPrompt, planWorkerRoles } from './roles/worker-roles.js';
 
 // Every scratch dir is removed after each test (worktrees live under the repo
@@ -141,6 +140,7 @@ describe('a delegated worker lane runs its assigned role (issue #104)', () => {
       bridge: createNodeFileBridge(cwd),
       cwd,
       agents: ['alpha'],
+      roles: { alpha: 'planner' },
     });
     expect(plan.assignments[0]?.role).toBe('planner');
     const composed = composeWorkerPrompt(
@@ -217,13 +217,13 @@ describe('a delegated worker lane runs its assigned role (issue #104)', () => {
     );
   });
 
-  it('the role\u2019s model default is the model the worker lane selects', async () => {
-    // §12.1/§38.2: ROLE_MODEL_DEFAULTS is what the delegation path pins for
-    // the child (via KUBIC_MODEL, which the child's composition root turns
-    // into the explicit model selection). Here the lane is handed exactly
-    // that pin, and the provider records the model it was actually called
-    // with — so the value the orchestrate path sends is provably the one
-    // the lane selects, not merely a pin that happened not to fail.
+  it('the role config pin is the model the worker lane selects (issue #202)', async () => {
+    // §38.1: `[roles.<r>].model` is what the delegation path pins for the
+    // child (via KUBIC_MODEL, which the child's composition root turns into
+    // the explicit model selection). Here the lane is handed exactly that
+    // pin, and the provider records the model it was actually called with —
+    // so the value the orchestrate path sends is provably the one the lane
+    // selects, not merely a pin that happened not to fail.
     const cwd = scratchRoot('roles-lane-');
     writeRole(
       cwd,
@@ -235,15 +235,18 @@ describe('a delegated worker lane runs its assigned role (issue #104)', () => {
       bridge: createNodeFileBridge(cwd),
       cwd,
       agents: ['alpha'],
+      roles: { alpha: 'planner' },
+      layers: [
+        { layer: 'project', roles: { planner: { model: 'acme/planner-1' } } },
+      ],
     });
     const pin = plan.assignments[0]?.modelRef as string;
-    const defaults = ROLE_MODEL_DEFAULTS.planner;
-    expect(pin).toBe(`${defaults.provider}/${defaults.model}`);
-    // A faux provider registered under the id the defaults name, serving the
-    // model they name, so the pin resolves rather than failing closed.
+    expect(pin).toBe('acme/planner-1');
+    // A faux provider registered under the id the pin names, serving the
+    // model it names, so the pin resolves rather than failing closed.
     const faux = fauxProvider({
-      provider: defaults.provider,
-      models: [{ id: defaults.model }],
+      provider: 'acme',
+      models: [{ id: 'planner-1' }],
     });
     const models = createModels();
     models.setProvider(faux.provider);
@@ -260,7 +263,7 @@ describe('a delegated worker lane runs its assigned role (issue #104)', () => {
       {
         sessionsRoot: scratchRoot('roles-lane-sessions-'),
         models,
-        model: { provider: defaults.provider, id: defaults.model },
+        model: { provider: 'acme', id: 'planner-1' },
         env: new FakeExecutionEnv({}),
         roles: { cwd },
       },

@@ -69,7 +69,9 @@ describe('spawnWorker (issue #42)', () => {
     now = 1040;
     await worker.wait();
     await worker.ready;
-    expect(worker.status).toBe('running');
+    // §13 (issue #151): the PROCESS is ready; the launch layer's agent
+    // state is what says the worker is running.
+    expect(worker.status).toBe('ready');
     expect(worker.startupMs).toBe(40);
   });
 
@@ -90,7 +92,8 @@ describe('spawnWorker (issue #42)', () => {
       { clock: () => 0 },
     );
     await expect(worker.ready).rejects.toThrow(/readiness/i);
-    expect(worker.status).toBe('spawn_failed');
+    expect(worker.status).toBe('exiting');
+    expect(worker.unready).toBe(true);
   });
 
   it('binds generation and sessionId onto the spawned worker record', async () => {

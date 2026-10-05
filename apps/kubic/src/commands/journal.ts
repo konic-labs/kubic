@@ -60,7 +60,8 @@ Examples:
   $ kubic diff --json --max-content-bytes 0   # unclipped JSON`;
 
 const UNDO_HELP = `
-Exit 2 when any step was skipped (non-reversible, stale, already undone).
+Exit 1 when any step was skipped (non-reversible, stale, already undone);
+--json names each skipped path, kind and reason.
 
 Examples:
   $ kubic undo --dry-run          # show what would be restored
@@ -190,6 +191,30 @@ function registerGit(program: KubicProgram, ctx: CommandContext): void {
       'the commit message (taken verbatim, even when it starts with -)',
     )
     .addOption(jsonOption())
+    .action(async (opts) => {
+      if (opts.message === '') {
+        throw new CliUsageError('commit needs a non-empty message (-m)');
+      }
+      await git({ command: 'commit', ...opts });
+    });
+
+  // Issue #268 (§17): the top-level alias — `kubic commit -m <message>` is
+  // `kubic git commit`, same runner, message rule and exit codes.
+  program
+    .command('commit')
+    .description('commit the staged changes (same as `kubic git commit`)')
+    .requiredOption(
+      '-m, --message <message>',
+      'the commit message (taken verbatim, even when it starts with -)',
+    )
+    .addOption(jsonOption())
+    .addHelpText(
+      'after',
+      `
+Examples:
+  $ kubic commit -m "fix: handle empty input"
+  $ kubic commit -m "wip" --json`,
+    )
     .action(async (opts) => {
       if (opts.message === '') {
         throw new CliUsageError('commit needs a non-empty message (-m)');

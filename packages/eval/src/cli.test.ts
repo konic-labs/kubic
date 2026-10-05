@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { runBenchmarkCommand, runEvalCommand } from './cli.js';
+import {
+  EVAL_EXIT_FAILED,
+  EVAL_EXIT_USAGE,
+  runBenchmarkCommand,
+  runEvalCommand,
+} from './cli.js';
 import { makeExport } from './rl/fixtures.js';
+import { EvalRunnerError } from './runner.js';
 import type { EvalSignals } from './signals.js';
 
 function signals(): EvalSignals {
@@ -59,7 +65,7 @@ describe('eval command (issue #53)', () => {
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '3',
-        tier: 'standard',
+        size: 'standard',
       },
       { ...deps, out: o.write, err: o.err },
     );
@@ -76,7 +82,7 @@ describe('eval command (issue #53)', () => {
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '3',
-        tier: 'standard',
+        size: 'standard',
         json: true,
       },
       { ...deps, out: o.write, err: o.err },
@@ -84,14 +90,21 @@ describe('eval command (issue #53)', () => {
     expect(exit).toBe(0);
     const envelope = JSON.parse(o.lines.join('\n')) as {
       ok: boolean;
-      record: { suite: string; worktree: string; tier: string };
+      record: {
+        suite: string;
+        worktree: string;
+        size: string;
+        determinism: string;
+      };
     };
     expect(envelope.ok).toBe(true);
     expect(envelope.record.suite).toBe('swe-bench-mini');
-    expect(envelope.record.tier).toBe('standard');
+    expect(envelope.record.size).toBe('standard');
+    // The --task path executes a model-backed suite: the live tier.
+    expect(envelope.record.determinism).toBe('live');
   });
 
-  it('exits 2 when worktree/generation/tier are missing', async () => {
+  it('exits 2 when worktree/generation/size are missing', async () => {
     const o = out();
     const exit = await runEvalCommand(
       { suite: 'swe-bench-mini', task: 'fix', model: 'acme/m1' },
@@ -99,7 +112,7 @@ describe('eval command (issue #53)', () => {
     );
     expect(exit).toBe(2);
     expect(o.lines).toEqual([]);
-    expect(o.errs.join('\n')).toMatch(/worktree|generation|tier/i);
+    expect(o.errs.join('\n')).toMatch(/worktree|generation|size/i);
   });
 
   it('exits 2 on an invalid --workspace instead of coercing to inline', async () => {
@@ -111,7 +124,7 @@ describe('eval command (issue #53)', () => {
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '3',
-        tier: 'standard',
+        size: 'standard',
         workspace: 'worktreee',
       },
       { ...deps, out: o.write, err: o.err },
@@ -175,7 +188,7 @@ describe('eval command (issue #53)', () => {
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '3',
-        tier: 'standard',
+        size: 'standard',
       },
       {
         out: o.write,
@@ -189,6 +202,7 @@ describe('eval command (issue #53)', () => {
     expect(exit).toBe(0);
     expect(ran).toBe(false);
     expect(o.lines.join('\n')).toMatch(/swe-bench-mini/);
+    expect(o.lines.join('\n')).toMatch(/determinism=recorded/);
   });
 });
 
@@ -203,19 +217,53 @@ describe('eval --trajectory provenance (issue #256)', () => {
       {
         suite: 'swe-bench-mini',
         trajectory: exported,
-        tier: 'standard',
+        size: 'standard',
         json: true,
       },
       { ...deps, out: o.write, err: o.err },
     );
     expect(exit).toBe(0);
     const envelope = JSON.parse(o.lines.join('\n')) as {
-      record: { model: string; worktree: string; generation: number };
+      record: {
+        model: string;
+        worktree: string;
+        generation: number;
+        determinism: string;
+      };
     };
     expect(envelope.record).toMatchObject({
       model: 'acme/m1',
       worktree: '/wt/agent-1',
       generation: 3,
+      // Scoring an existing export re-executes nothing (issue #260, §47.1).
+      determinism: 'recorded',
+    });
+  });
+
+  it('exits 1 when the trajectory gates fail, and the envelope follows it', async () => {
+    const red = JSON.stringify(
+      makeExport({
+        model: 'acme/m1',
+        generation: 3,
+        evalLabels: { 'signal:tests': 'fail' },
+      }),
+    );
+    const o = out();
+    const exit = await runEvalCommand(
+      {
+        suite: 'swe-bench-mini',
+        trajectory: red,
+        size: 'standard',
+        json: true,
+      },
+      { ...deps, out: o.write, err: o.err },
+    );
+    expect(exit).toBe(EVAL_EXIT_FAILED);
+    expect(o.errs).toEqual([]);
+    expect(JSON.parse(o.lines.join('\n'))).toMatchObject({
+      ok: false,
+      exitCode: EVAL_EXIT_FAILED,
+      record: { success: false },
     });
   });
 
@@ -226,7 +274,7 @@ describe('eval --trajectory provenance (issue #256)', () => {
         suite: 'swe-bench-mini',
         trajectory: exported,
         model: 'faux/faux',
-        tier: 'standard',
+        size: 'standard',
       },
       { ...deps, out: o.write, err: o.err },
     );
@@ -242,7 +290,7 @@ describe('eval --trajectory provenance (issue #256)', () => {
         suite: 'swe-bench-mini',
         task: 'fix',
         worktree: '/wt/a',
-        tier: 'standard',
+        size: 'standard',
       },
       { ...deps, out: o.write, err: o.err },
     );
@@ -261,7 +309,7 @@ describe('benchmark command (issue #53)', () => {
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '3',
-        tier: 'standard',
+        size: 'standard',
         json: true,
       },
       { ...deps, out: o.write, err: o.err },
@@ -296,6 +344,11 @@ describe('benchmark command (issue #53)', () => {
       expect(stub.success).toBe(false);
       expect((stub as { skipped?: boolean }).skipped).toBe(true);
     }
+    // Issue #260: every row publishes the determinism tier it ran (or would
+    // run) at.
+    for (const row of envelope.results) {
+      expect((row as { determinism?: string }).determinism).toBe('live');
+    }
   });
 
   it('runs a single suite via --suite swe', async () => {
@@ -307,7 +360,7 @@ describe('benchmark command (issue #53)', () => {
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '1',
-        tier: 'smoke',
+        size: 'smoke',
         workspace: 'worktree',
       },
       {
@@ -325,31 +378,89 @@ describe('benchmark command (issue #53)', () => {
     expect(o.lines.join('\n')).toMatch(/swe-bench-mini/);
   });
 
-  it('reports a stub-only run as skipped (success:false) yet exits 0', async () => {
-    const o = out();
+  it('refuses a stub-only matrix instead of reporting ok (issue #264)', async () => {
+    const json = out();
     const exit = await runBenchmarkCommand(
       {
         suite: 'terminal-live',
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '1',
-        tier: 'smoke',
+        size: 'smoke',
+        json: true,
+      },
+      { ...deps, out: json.write, err: json.err },
+    );
+    expect(exit).toBe(2);
+    expect(json.errs).toEqual([]);
+    expect(JSON.parse(json.lines.join('\n'))).toEqual({
+      ok: false,
+      exitCode: 2,
+      error: {
+        code: 'no-executable-suites',
+        message: 'benchmark: no executable suites selected',
+      },
+    });
+    const text = out();
+    const textExit = await runBenchmarkCommand(
+      {
+        suite: 'terminal-live',
+        model: 'acme/m1',
+        worktree: '/wt/a',
+        generation: '1',
+        size: 'smoke',
+      },
+      { ...deps, out: text.write, err: text.err },
+    );
+    expect(textExit).toBe(2);
+    expect(text.lines).toEqual([]);
+    expect(text.errs).toEqual([
+      'error: [no-executable-suites] benchmark: no executable suites selected',
+    ]);
+    expect(text.lines.join('\n')).not.toContain('ok');
+  });
+
+  it('validates provenance once before the matrix (issue #264)', async () => {
+    // The stub branch never reached runEvalTask, so the size check was
+    // skipped entirely and the run exited 0.
+    const o = out();
+    const exit = await runBenchmarkCommand(
+      {
+        suite: 'agentic-live',
+        model: 'acme/m1',
+        worktree: '/wt/a',
+        generation: '1',
         json: true,
       },
       { ...deps, out: o.write, err: o.err },
     );
-    expect(exit).toBe(0);
+    expect(exit).toBe(2);
     const envelope = JSON.parse(o.lines.join('\n')) as {
       ok: boolean;
-      results: Array<{ stub: boolean; skipped: boolean; success: boolean }>;
+      exitCode: number;
+      error: { code: string; message: string };
     };
-    expect(envelope.ok).toBe(true);
-    expect(envelope.results).toHaveLength(1);
-    expect(envelope.results[0]).toMatchObject({
-      stub: true,
-      skipped: true,
-      success: false,
-    });
+    expect(envelope.ok).toBe(false);
+    expect(envelope.exitCode).toBe(2);
+    expect(envelope.error.code).toBe('missing-size');
+    expect(envelope.error.message).toMatch(/size is required/);
+  });
+
+  it('keeps a mixed matrix green when every executed suite passes (issue #264)', async () => {
+    const o = out();
+    const exit = await runBenchmarkCommand(
+      {
+        model: 'acme/m1',
+        worktree: '/wt/a',
+        generation: '1',
+        size: 'smoke',
+      },
+      { ...deps, out: o.write, err: o.err },
+    );
+    expect(exit).toBe(0);
+    expect(o.lines.at(-1)).toBe(
+      'benchmark ok: 7/7 suites passed, 1 stub(s) skipped',
+    );
   });
 
   it('exits 2 on an invalid --workspace', async () => {
@@ -359,7 +470,7 @@ describe('benchmark command (issue #53)', () => {
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '1',
-        tier: 'smoke',
+        size: 'smoke',
         workspace: 'worktreee',
       },
       { ...deps, out: o.write, err: o.err },
@@ -375,7 +486,7 @@ describe('eval/benchmark semantics over parsed options', () => {
     model: 'acme/m1',
     worktree: '/wt/a',
     generation: '3',
-    tier: 'standard',
+    size: 'standard',
   };
 
   it('prints the record line on stdout and nothing on stderr', async () => {
@@ -387,23 +498,25 @@ describe('eval/benchmark semantics over parsed options', () => {
     expect(exit).toBe(0);
     expect(o.lines).toHaveLength(1);
     expect(o.lines[0]).toMatch(
-      /^eval ok: suite swe-bench-mini success=true .* model=acme\/m1 worktree=\/wt\/a generation=3 tier=standard$/,
+      /^eval ok: suite swe-bench-mini success=true .* model=acme\/m1 worktree=\/wt\/a generation=3 size=standard determinism=live$/,
     );
     expect(o.errs).toEqual([]);
   });
 
-  it('defaults the model to faux/faux', async () => {
+  it('defaults the model to the shipped testing provider (faux/echo)', async () => {
     const o = out();
     const { model: _model, ...rest } = PROVENANCE;
     await runEvalCommand(
       { suite: 'swe-bench-mini', task: 'fix', ...rest },
       { ...deps, out: o.write, err: o.err },
     );
-    expect(o.lines[0]).toMatch(/ model=faux\/faux /);
+    expect(o.lines[0]).toMatch(/ model=faux\/echo /);
   });
 
   it('refuses a non-integer generation (exit 2, stderr only)', async () => {
-    for (const generation of ['1.5', 'three', ' ']) {
+    // Issue #266: '' read as 0 and '1e3' as 1000 before the digit check;
+    // '-1' was and stays refused.
+    for (const generation of ['1.5', 'three', ' ', '', '1e3', ' 2 ', '-1']) {
       const o = out();
       const exit = await runEvalCommand(
         { suite: 'swe-bench-mini', task: 'fix', ...PROVENANCE, generation },
@@ -440,16 +553,336 @@ describe('eval/benchmark semantics over parsed options', () => {
     ]);
   });
 
-  it('refuses a --trajectory that is not JSON', async () => {
+  it('refuses a malformed inline --trajectory by name (back-compat form)', async () => {
     const o = out();
     const exit = await runEvalCommand(
       { suite: 'swe-bench-mini', trajectory: '{not json', ...PROVENANCE },
       { ...deps, out: o.write, err: o.err },
     );
     expect(exit).toBe(2);
+    expect(o.errs[0]).toMatch(/^error: \[trajectory-malformed\] /);
+    expect(o.errs[0]).toMatch(/inline JSON is malformed/);
+  });
+
+  it('scores a --trajectory FILE (issue #258)', async () => {
+    const o = out();
+    const exit = await runEvalCommand(
+      { suite: 'swe-bench-mini', trajectory: 'run.json', ...PROVENANCE },
+      {
+        ...deps,
+        readFile: (path: string) => {
+          expect(path).toBe('run.json');
+          // PROVENANCE's worktree must agree with the export's (§48).
+          return JSON.stringify(makeExport({ worktree: '/wt/a' }));
+        },
+        out: o.write,
+        err: o.err,
+      },
+    );
+    expect(exit).toBe(0);
+    expect(o.lines.join('\n')).toMatch(/determinism=recorded/);
+  });
+
+  it('reads --trajectory - from stdin (issue #258)', async () => {
+    const o = out();
+    const exit = await runEvalCommand(
+      { suite: 'swe-bench-mini', trajectory: '-', ...PROVENANCE },
+      {
+        ...deps,
+        readStdin: () => JSON.stringify(makeExport({ worktree: '/wt/a' })),
+        out: o.write,
+        err: o.err,
+      },
+    );
+    expect(exit).toBe(0);
+    expect(o.lines.join('\n')).toMatch(/determinism=recorded/);
+  });
+
+  it('names an unreadable trajectory file (trajectory-unreadable, exit 2)', async () => {
+    const o = out();
+    const exit = await runEvalCommand(
+      { suite: 'swe-bench-mini', trajectory: 'missing.json', ...PROVENANCE },
+      {
+        ...deps,
+        readFile: () => {
+          throw new Error('ENOENT: no such file');
+        },
+        out: o.write,
+        err: o.err,
+      },
+    );
+    expect(exit).toBe(2);
+    expect(o.lines).toEqual([]);
     expect(o.errs).toEqual([
-      'error: --trajectory needs inline trajectory export JSON',
+      'error: [trajectory-unreadable] cannot read trajectory "missing.json": ENOENT: no such file',
     ]);
+  });
+
+  it('names a malformed trajectory file (trajectory-malformed, exit 2)', async () => {
+    for (const [body, message] of [
+      ['{not json', /is not valid JSON/],
+      ['{}', /is not a valid §46 export/],
+    ] as const) {
+      const o = out();
+      const exit = await runEvalCommand(
+        { suite: 'swe-bench-mini', trajectory: 'bad.json', ...PROVENANCE },
+        { ...deps, readFile: () => body, out: o.write, err: o.err },
+      );
+      expect(exit, body).toBe(2);
+      expect(o.lines, body).toEqual([]);
+      expect(o.errs[0], body).toMatch(/^error: \[trajectory-malformed\] /);
+      expect(o.errs[0], body).toMatch(message);
+    }
+  });
+
+  it('refuses a file path when the caller supplied no reader', async () => {
+    const o = out();
+    const exit = await runEvalCommand(
+      { suite: 'swe-bench-mini', trajectory: 'run.json', ...PROVENANCE },
+      { ...deps, out: o.write, err: o.err },
+    );
+    expect(exit).toBe(2);
+    expect(o.errs[0]).toMatch(/^error: \[trajectory-unreadable\] /);
+    expect(o.errs[0]).toMatch(/no file reader/);
+  });
+
+  it('names a record-validation failure invalid-record (issue #266)', async () => {
+    const broken = {
+      runSuite: async () => ({
+        success: true,
+        signals: { ...signals(), costUsd: -1 },
+        usageRows: [
+          { inputTokens: 100, outputTokens: 50, costUsd: -1, latencyMs: 60000 },
+        ],
+      }),
+    };
+    const o = out();
+    const exit = await runEvalCommand(
+      { suite: 'swe-bench-mini', task: 'fix', ...PROVENANCE, json: true },
+      { ...broken, out: o.write, err: o.err },
+    );
+    expect(exit).toBe(2);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      ok: boolean;
+      error: { code: string; message: string };
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe('invalid-record');
+    expect(envelope.error.message).toMatch(/costUsd/);
+  });
+
+  it('keeps the benchmark refusal code and its completed rows (issue #266)', async () => {
+    let calls = 0;
+    const halfRed = {
+      runSuite: async () => {
+        calls += 1;
+        if (calls === 2) {
+          throw new EvalRunnerError(
+            'dirty-worktree',
+            'worktree "/wt/a" is not clean — refusing to benchmark against a dirty tree',
+          );
+        }
+        return {
+          success: true,
+          signals: signals(),
+          usageRows: [
+            {
+              inputTokens: 100,
+              outputTokens: 50,
+              costUsd: 0.02,
+              latencyMs: 60000,
+            },
+          ],
+        };
+      },
+    };
+    const o = out();
+    const exit = await runBenchmarkCommand(
+      {
+        model: 'acme/m1',
+        worktree: '/wt/a',
+        generation: '1',
+        size: 'smoke',
+        json: true,
+      },
+      { ...halfRed, out: o.write, err: o.err },
+    );
+    expect(exit).toBe(2);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      ok: boolean;
+      error: { code: string };
+      results: Array<{ suite: string; success: boolean }>;
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe('dirty-worktree');
+    // The suites that already completed are reported, not dropped.
+    expect(envelope.results).toHaveLength(1);
+    expect(envelope.results[0]).toMatchObject({
+      suite: 'swe-bench-mini',
+      success: true,
+    });
+  });
+
+  it('exits 2 with the named refusal in the --json envelope', async () => {
+    const o = out();
+    const exit = await runEvalCommand(
+      { suite: 'terminal-live', task: 'fix', ...PROVENANCE, json: true },
+      { ...deps, out: o.write, err: o.err },
+    );
+    expect(exit).toBe(EVAL_EXIT_USAGE);
+    expect(o.errs).toEqual([]);
+    expect(JSON.parse(o.lines.join('\n'))).toEqual({
+      ok: false,
+      exitCode: EVAL_EXIT_USAGE,
+      error: {
+        code: 'stub-suite',
+        message:
+          'suite "terminal-live" is a stub — refusing to score unimplemented work',
+      },
+    });
+  });
+
+  it('exits 1 when the record gates fail, and the envelope follows it', async () => {
+    const red = {
+      runSuite: async () => ({
+        success: false,
+        signals: signals(),
+        usageRows: [
+          {
+            inputTokens: 100,
+            outputTokens: 50,
+            costUsd: 0.02,
+            latencyMs: 60000,
+          },
+        ],
+      }),
+    };
+    const text = out();
+    const textExit = await runEvalCommand(
+      { suite: 'swe-bench-mini', task: 'fix', ...PROVENANCE },
+      { ...red, out: text.write, err: text.err },
+    );
+    expect(textExit).toBe(EVAL_EXIT_FAILED);
+    expect(text.lines).toHaveLength(1);
+    expect(text.lines[0]).toMatch(
+      /^eval ok: suite swe-bench-mini success=false /,
+    );
+    expect(text.errs).toEqual([]);
+    const json = out();
+    const jsonExit = await runEvalCommand(
+      { suite: 'swe-bench-mini', task: 'fix', ...PROVENANCE, json: true },
+      { ...red, out: json.write, err: json.err },
+    );
+    expect(jsonExit).toBe(EVAL_EXIT_FAILED);
+    expect(json.errs).toEqual([]);
+    expect(JSON.parse(json.lines.join('\n'))).toEqual({
+      ok: false,
+      exitCode: EVAL_EXIT_FAILED,
+      record: expect.objectContaining({ success: false }),
+    });
+  });
+
+  it('exits 2 when benchmark runs without --generation, before any suite runs', async () => {
+    const o = out();
+    const exit = await runBenchmarkCommand(
+      { size: 'standard' },
+      {
+        ...deps,
+        runSuite: async () => {
+          throw new Error('a refused benchmark must not run a suite');
+        },
+        out: o.write,
+        err: o.err,
+      },
+    );
+    expect(exit).toBe(EVAL_EXIT_USAGE);
+    expect(o.lines).toEqual([]);
+    expect(o.errs).toEqual([
+      "error: required option '--generation <n>' not specified",
+    ]);
+  });
+
+  it('wraps a benchmark runner failure in the --json envelope', async () => {
+    const o = out();
+    const exit = await runBenchmarkCommand(
+      { suite: 'swe-bench-mini', ...PROVENANCE, json: true },
+      {
+        runSuite: async () => {
+          throw new Error('suite exploded');
+        },
+        out: o.write,
+        err: o.err,
+      },
+    );
+    expect(exit).toBe(EVAL_EXIT_USAGE);
+    expect(o.errs).toEqual([]);
+    expect(JSON.parse(o.lines.join('\n'))).toEqual({
+      ok: false,
+      exitCode: EVAL_EXIT_USAGE,
+      error: { code: 'eval-failed', message: 'suite exploded' },
+      // Issue #266: the refusal keeps the rows already completed.
+      results: [],
+    });
+  });
+
+  it('exits 1 with ok:false when an executed benchmark suite fails, reporting every suite', async () => {
+    const oneRed = {
+      runSuite: async (suiteId: string) => ({
+        success: suiteId !== 'bugfix-repro',
+        signals: signals(),
+        usageRows: [
+          {
+            inputTokens: 100,
+            outputTokens: 50,
+            costUsd: 0.02,
+            latencyMs: 60000,
+          },
+        ],
+      }),
+    };
+    const json = out();
+    const jsonExit = await runBenchmarkCommand(
+      { ...PROVENANCE, json: true },
+      { ...oneRed, out: json.write, err: json.err },
+    );
+    expect(jsonExit).toBe(EVAL_EXIT_FAILED);
+    const envelope = JSON.parse(json.lines.join('\n')) as {
+      ok: boolean;
+      exitCode: number;
+      results: Array<{
+        suite: string;
+        stub: boolean;
+        skipped: boolean;
+        success: boolean;
+      }>;
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.exitCode).toBe(EVAL_EXIT_FAILED);
+    expect(envelope.results).toHaveLength(8);
+    expect(
+      envelope.results.map((r) => `${r.suite}:${r.skipped}:${r.success}`),
+    ).toEqual([
+      'swe-bench-mini:false:true',
+      'repo-mod-rename:false:true',
+      'bugfix-repro:false:false',
+      'refactor-extract:false:true',
+      'testgen-cover:false:true',
+      'review-diff:false:true',
+      'terminal-live:true:false',
+      'agentic-live:false:true',
+    ]);
+    const text = out();
+    const textExit = await runBenchmarkCommand(
+      { ...PROVENANCE },
+      { ...oneRed, out: text.write, err: text.err },
+    );
+    expect(textExit).toBe(EVAL_EXIT_FAILED);
+    expect(text.lines[0]).toMatch(/bugfix-repro +bugfix +FAIL/);
+    expect(text.lines[0]).toMatch(/swe-bench-mini +swe +pass/);
+    expect(text.lines.at(-1)).toBe(
+      'benchmark FAILED: 6/7 suites passed, 1 stub(s) skipped',
+    );
+    expect(text.errs).toEqual([]);
   });
 
   it('reports a runner failure on stderr off --json, as an envelope under --json', async () => {

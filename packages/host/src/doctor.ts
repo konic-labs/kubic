@@ -6,7 +6,11 @@
 // validation reuses host/approvals.ts. File access, if ever needed,
 // goes through the exec FileBridge — this module never imports node:fs.
 
-import { describeUnsupported } from '../../agents/src/policy.js';
+import {
+  describeUnsupported,
+  effectiveCredentialLevel,
+  effectiveNetworkLevel,
+} from '../../agents/src/policy.js';
 // License identity (issue #59; §75.1): constants only, no file access —
 // this module never imports node:fs, and the static LICENSE/package.json
 // correspondence is guarded by scripts/license.test.mjs.
@@ -27,9 +31,11 @@ import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 // Issue #58 honest limits (§59.1, §78): registration import only — no
 // existing check builder in this file was modified for #58. Exit codes
 // route through the limits mapper so provider-down exits 6.
+import type { ResourceEnforcementProbe } from './limits/doctor-limits.js';
 import {
   collectLimitChecksFromDeps,
   limitsDoctorExit,
+  resourceEnforcementCheck,
 } from './limits/doctor-limits.js';
 
 export const DOCTOR_EXIT_OK = EXIT_OK;
@@ -51,6 +57,7 @@ export type DoctorReason =
   | 'extension-posture'
   | 'full-access'
   | 'unsupported-level'
+  | 'detection-only'
   | 'skipped';
 
 export interface DoctorCheck {
@@ -96,6 +103,10 @@ export interface DoctorDeps extends CliIo {
   // not enforce. Absent (legacy callers/tests): no installed-policy check,
   // the existing matrix is unchanged.
   installedPolicy?: () => InstalledPolicyPosture;
+  // §82 per-agent resource enforcement (issue #163): which limits this build
+  // can enforce on this platform. Absent (legacy callers/tests) means no
+  // resources line, the existing matrix unchanged.
+  resourceEnforcement?: () => ResourceEnforcementProbe;
   // First-party extension posture (issue #80): structural input so host
   // never imports the extensions package — the composition root maps the
   // real startup probe onto this shape. Absent (tests, unwired callers):
@@ -107,11 +118,20 @@ export interface DoctorDeps extends CliIo {
   // run can never print green. Absent: no role checks (legacy matrices are
   // unchanged).
   probeRoles?: () => DoctorCheck[];
+  // §58 enterprise policy (issue #289): the checks `enterpriseDoctorChecks`
+  // derives from the resolved `[policy]` section, built by the composition
+  // root (host never imports the app). Absent — including when no `[policy]`
+  // is configured at all — means no enterprise checks and an unchanged
+  // default matrix. A throwing probe becomes one named failing check.
+  enterpriseChecks?: () => DoctorCheck[];
   // Repo-level session overlap (issue #118; §42.5): the local session
   // store's view of sessions recorded against one workspace — two or more
   // reports a warn note (concurrent different-session runs are legal; the
   // note states the sweep blind spot). Absent: no overlap check.
   probeSessionOverlap?: () => SessionOverlapProbe;
+  // Issue #361: a state directory that other local users can read (session
+  // transcripts, journaled file content). undefined means private or absent.
+  probeStatePermissions?: () => StatePermissionProbe | undefined;
 }
 
 // The installed posture, described once in host/approvals.ts. Host owns the
@@ -122,11 +142,11 @@ export interface InstalledPolicyPosture {
   source: 'config' | 'default';
   route: 'ask-user' | 'deny';
   classes: {
-    filesystem: string;
-    shell: boolean | string;
-    network: string;
-    git: boolean | string;
-    credentials: string;
+    filesystem: 'none' | 'read' | 'workspace-write' | 'full';
+    shell: false | 'read-only-allowlist' | true;
+    network: 'none' | 'allowlist' | 'full';
+    git: false | 'workspace' | 'full';
+    credentials: 'none' | 'allowlist';
   };
   allowlist: string[];
   interceptors: string[];
@@ -242,6 +262,42 @@ function installedPolicyCheck(
   };
 }
 
+// §58/§59.1 (issue #289): an installed class whose restriction is LEXICAL
+// DETECTION, not enforcement. `policy:installed` prints the classes as facts;
+// this check names the ones a run cannot actually hold, so the line is never
+// read as a sandbox. Warn only — it discloses a limit, it does not flip the
+// exit (the same contract as the static §59.1 notices). Omitted entirely when
+// every installed class is structurally enforced (or unrestricted), so a
+// matrix that has nothing to disclose gains no line.
+function detectionOnlyCheck(
+  posture: InstalledPolicyPosture,
+): DoctorCheck | undefined {
+  const lexical: string[] = [];
+  if (effectiveNetworkLevel(posture.classes.network) === 'none') {
+    lexical.push(
+      'network=none is a lexical bash command detector (approvals.ts isNetworkCommand) — a script the agent writes and runs can reach the network',
+    );
+  }
+  if (posture.classes.filesystem !== 'none') {
+    lexical.push(
+      `filesystem=${posture.classes.filesystem} is lexical path confinement (confinePath) — symlinks are not resolved and the shell can still read anything the command does not name`,
+    );
+  }
+  if (effectiveCredentialLevel(posture.classes.credentials) === 'none') {
+    lexical.push(
+      'credentials=none is a lexical credential-path detector (approvals-credentials.ts) — only the listed paths are challenged',
+    );
+  }
+  if (lexical.length === 0) return undefined;
+  return {
+    id: 'policy:detection-only',
+    label: 'policy detection only',
+    status: 'warn',
+    reason: 'detection-only',
+    detail: `detection only (not enforcement): ${lexical.join('; ')}`,
+  };
+}
+
 // Structural posture from the extensions startup probe
 // (packages/extensions/src/startup.ts): loaded bundle names plus the
 // refused-attempt count, both produced by the same trust checks.
@@ -286,6 +342,38 @@ function sessionOverlapCheck(probe: SessionOverlapProbe): DoctorCheck {
       probe.sessionIds.length === 1
         ? `1 session recorded against ${probe.workspace} — no sweep overlap`
         : `no sessions recorded against ${probe.workspace} — no sweep overlap`,
+  };
+}
+
+// Issue #361: a group- or world-accessible state directory. The probe
+// reports it (and the next open tightens it); doctor warns, never fails —
+// a loose directory is a real exposure but not a broken installation.
+export interface StatePermissionProbe {
+  path: string;
+  mode: number;
+}
+
+function statePermissionCheck(
+  probe: StatePermissionProbe | undefined,
+): DoctorCheck {
+  const base = { id: 'state:permissions', label: 'state permissions' };
+  if (probe === undefined) {
+    return {
+      ...base,
+      status: 'pass',
+      reason: 'ok',
+      detail:
+        'session and journal state directories are private (0700) or absent',
+    };
+  }
+  return {
+    ...base,
+    status: 'warn',
+    reason: 'ok',
+    detail:
+      `${probe.path} is ${probe.mode.toString(8).padStart(3, '0')} — every local user can read ` +
+      'session transcripts and journaled file content; the next open tightens it to 0700 ' +
+      '(or run chmod 700 on it)',
   };
 }
 
@@ -486,6 +574,21 @@ export function collectDoctorChecks(
       detail: probeMessage(error),
     });
   }
+  // §82 resource enforcement posture (issue #163): opt-in via the injected
+  // probe, so legacy matrices are unchanged.
+  if (deps.resourceEnforcement !== undefined) {
+    try {
+      checks.push(resourceEnforcementCheck(deps.resourceEnforcement()));
+    } catch (error) {
+      checks.push({
+        id: 'limit:resources',
+        label: 'limit resources',
+        status: 'warn',
+        reason: 'ok',
+        detail: `per-agent limits — could not be probed: ${probeMessage(error)}`,
+      });
+    }
+  }
   let configured: ConfiguredApprovals | undefined;
   try {
     const raw = deps.loadPolicy();
@@ -506,7 +609,12 @@ export function collectDoctorChecks(
   // fail the matrix with policy-mismatch, never pass quietly.
   if (deps.installedPolicy !== undefined) {
     try {
-      checks.push(installedPolicyCheck(deps.installedPolicy(), configured));
+      const posture = deps.installedPolicy();
+      checks.push(installedPolicyCheck(posture, configured));
+      // Issue #289: the same posture names its lexical classes, so the
+      // installed line is never read as enforcement.
+      const detection = detectionOnlyCheck(posture);
+      if (detection !== undefined) checks.push(detection);
     } catch (error) {
       checks.push({
         id: 'policy:installed',
@@ -550,11 +658,49 @@ export function collectDoctorChecks(
       });
     }
   }
+  // §58 enterprise policy (issue #289): opt-in via the injected probe — the
+  // composition root builds it from the SAME effective `[policy]` resolution
+  // `kubic policy` reports (enterpriseDoctorChecks), and only when a
+  // `[policy]` section is actually configured. Absent means no enterprise
+  // checks, so the default matrix is unchanged. A throwing probe becomes one
+  // named failing check, never a crash.
+  if (deps.enterpriseChecks !== undefined) {
+    try {
+      checks.push(...deps.enterpriseChecks());
+    } catch (error) {
+      checks.push({
+        id: 'policy:enterprise',
+        label: 'policy enterprise',
+        status: 'fail',
+        reason: 'policy-mismatch',
+        detail: probeMessage(error),
+      });
+    }
+  }
   // Repo-level session overlap (issue #118): opt-in via the injected probe —
   // absent means no check (legacy matrices are unchanged). A throwing probe
   // reports warn with the named reason, never fail: the note is
   // informational by design (overlap is legal), so a store hiccup must not
   // flip doctor's exit code.
+  // Issue #361: always present — a clean posture is a pass, so the matrix
+  // shape stays stable and a loose directory is named rather than silent.
+  try {
+    checks.push(
+      statePermissionCheck(
+        deps.probeStatePermissions === undefined
+          ? undefined
+          : deps.probeStatePermissions(),
+      ),
+    );
+  } catch (error) {
+    checks.push({
+      id: 'state:permissions',
+      label: 'state permissions',
+      status: 'warn',
+      reason: 'ok',
+      detail: `state permissions unverified: ${probeMessage(error)}`,
+    });
+  }
   if (deps.probeSessionOverlap !== undefined) {
     try {
       checks.push(sessionOverlapCheck(deps.probeSessionOverlap()));

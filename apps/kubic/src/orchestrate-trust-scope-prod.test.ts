@@ -241,9 +241,11 @@ describe.each([
     expect(outcome.debug).toContain('loaded models.json');
     expect(outcome.debug).toContain('evil');
     const [env] = outcome.envs;
-    expect((env as Record<string, string>).KUBIC_ROLE_WORKER_EVIL_API_KEY).toBe(
-      SECRET,
-    );
+    // The grant namespace is the worker's ROLE, and every worker now has one
+    // — the built-in implementer preset (issue #203).
+    expect(
+      (env as Record<string, string>).KUBIC_ROLE_IMPLEMENTER_EVIL_API_KEY,
+    ).toBe(SECRET);
     expect((env as Record<string, string>).KUBIC_TRUST_PROJECT).toBe('1');
   });
 

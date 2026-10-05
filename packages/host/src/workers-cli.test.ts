@@ -3,6 +3,11 @@
 // clean-exit lines. Presentation only — rows arrive injected, and the
 // options arrive already parsed (argv, `--help` and unknown flags are the
 // commander program's job: apps/kubic/src/commands/orchestrator.test.ts).
+//
+// Issue #151 splits the row's one status into the §13 PAIR: the AGENT state
+// (what the work did) and the PROCESS phase (spawning | ready | exiting), so
+// an exited-but-settling worker reads as `settling [exiting]` instead of
+// `crashed`.
 import { describe, expect, it } from 'vitest';
 import { createCliTheme } from '../../core/src/cli/theme.js';
 import {
@@ -15,7 +20,8 @@ const ROW: WorkerListRow = {
   workerId: 'w-1',
   sessionId: 's-1',
   generation: 2,
-  status: 'running',
+  status: 'ready',
+  agentStatus: 'running',
   startedAtMs: 90_000,
   owner: 'parent-session',
   resources: { skills: ['review'] },
@@ -43,8 +49,8 @@ describe('kubic workers (issue #42)', () => {
     expect(code).toBe(0);
     expect(lines).toHaveLength(1);
     expect(lines[0]?.split('\n')).toEqual([
-      'WORKER  STATUS   GEN  AGE  OWNER            PID  STARTUP  RESOURCES',
-      'w-1     running    2  10s  parent-session  4242     40ms  skills=review',
+      'WORKER  AGENT    PROCESS  GEN  AGE  OWNER            PID  STARTUP  RESOURCES',
+      'w-1     running  ready      2  10s  parent-session  4242     40ms  skills=review',
     ]);
   });
 
@@ -54,14 +60,22 @@ describe('kubic workers (issue #42)', () => {
       workerId: 'w-2',
       sessionId: 's-1',
       generation: 1,
-      status: 'crashed',
+      status: 'exiting',
+      agentStatus: 'failed',
+      signal: 'SIGKILL',
       startedAtMs: 100_000 - 3 * 60 * 60 * 1000,
       owner: 'o',
     };
     await runWorkersCommand({}, deps(lines, [bare]));
     expect(lines[0]?.split('\n')[1]).toBe(
-      'w-2     crashed    1  3h   o        -        -  -',
+      'w-2     failed  exiting(SIGKILL)    1  3h   o        -        -  -',
     );
+    // A row that only knows its process phase (an embedder) still renders.
+    await runWorkersCommand(
+      {},
+      deps(lines, [{ ...bare, agentStatus: undefined, signal: undefined }]),
+    );
+    expect(lines[1]?.split('\n')[1]).toMatch(/^w-2\s+-\s+exiting\s+1\s/);
   });
 
   it('colours the status through the theme and boxes the table when fancy', async () => {
@@ -83,7 +97,8 @@ describe('kubic workers (issue #42)', () => {
         workerId: 'w-1',
         sessionId: 's-1',
         generation: 2,
-        status: 'running',
+        status: 'ready',
+        agentStatus: 'running',
         ageMs: 10_000,
         owner: 'parent-session',
         resources: { skills: ['review'] },
@@ -93,6 +108,48 @@ describe('kubic workers (issue #42)', () => {
     ]);
     // Two-space indented: the one `formatJson` serializer.
     expect(lines[0]).toContain('[\n  {\n    "workerId": "w-1"');
+  });
+
+  it('names the failure a FAILED row settled on (issue #163)', async () => {
+    const lines: string[] = [];
+    const failed: WorkerListRow = {
+      ...ROW,
+      agentStatus: 'failed',
+      failure: {
+        code: 'resource_disk_exceeded',
+        message: "worker 'w-1' exceeded its worktree disk quota",
+      },
+    };
+    const code = await runWorkersCommand({}, deps(lines, [failed]));
+    expect(code).toBe(0);
+    // The AGENT cell carries the code, like PROCESS carries its signal.
+    expect(lines[0]?.split('\n')[1]).toContain(
+      'failed(resource_disk_exceeded)',
+    );
+    const jsonLines: string[] = [];
+    const jsonCode = await runWorkersCommand(
+      { json: true },
+      deps(jsonLines, [failed]),
+    );
+    expect(jsonCode).toBe(0);
+    expect(JSON.parse(jsonLines[0] ?? '')).toEqual([
+      {
+        workerId: 'w-1',
+        sessionId: 's-1',
+        generation: 2,
+        status: 'ready',
+        agentStatus: 'failed',
+        failure: {
+          code: 'resource_disk_exceeded',
+          message: "worker 'w-1' exceeded its worktree disk quota",
+        },
+        ageMs: 10_000,
+        owner: 'parent-session',
+        resources: { skills: ['review'] },
+        pid: 4242,
+        startupMs: 40,
+      },
+    ]);
   });
 
   it('an empty record prints nothing on stdout (`[]` under --json) and says so on stderr', async () => {

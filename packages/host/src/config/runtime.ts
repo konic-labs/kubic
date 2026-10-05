@@ -40,12 +40,14 @@ import {
   checkOrchestratorRoot,
   checkOutOfScopeEntries,
   checkRoleModelRef,
+  checkVerifyConfig,
   defaultLayerPaths,
   type KubicConfig,
   type LayerInput,
   mergeLayered,
   ProjectUntrustedError,
   parseLayerConfig,
+  VERIFY_COMMAND_KEYS,
 } from './config.js';
 import { parseSecretRef } from './secrets.js';
 
@@ -178,6 +180,10 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   'journal.retentionDays': {
     effect: 'journal age bound (maxAgeMs) enforced on every append — §42.4',
   },
+  'journal.maxBytes': {
+    effect:
+      'journal byte bound — index.jsonl plus the blobs it references — enforced on every append; unset ⇒ the 100 MiB default',
+  },
   'journal.outOfScope': {
     effect:
       'paths excluded from the §42.5 baseline and the end-of-run sweep (self + children)',
@@ -193,7 +199,8 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
     effect: 'default admission cap for the orchestrator scheduler (§45)',
   },
   'ui.theme': {
-    kept: 'pi-tui owns presentation; no theme engine exists — key parsed and reported for forward-compat only',
+    effect:
+      'TUI theme: a built-in name (`default`, `dark`, `light`) or a path to a JSON theme file, resolved and validated before the alt-screen opens (a missing or invalid file is a named `error:` line and exit 2)',
   },
   'ui.statusBar': {
     kept: 'pi-tui owns presentation; the status bar belongs to the TUI — key parsed and reported for forward-compat only',
@@ -208,6 +215,25 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   'session.retentionDays': {
     effect:
       'default keep-window for `kubic sessions prune` (deletion stays explicit)',
+  },
+  'verify.tests': {
+    effect:
+      'tests gate command run in the worktree after each run settles; exit status → signal:tests (§48)',
+  },
+  'verify.build': {
+    effect:
+      'build gate command run in the worktree after each run settles; exit status → signal:build (§48)',
+  },
+  'verify.lint': {
+    effect:
+      'lint gate command run in the worktree after each run settles; exit status → signal:lint (§48)',
+  },
+  'verify.typecheck': {
+    effect:
+      'typecheck gate command run in the worktree after each run settles; exit status → signal:typecheck (§48)',
+  },
+  'verify.timeoutMs': {
+    effect: 'per-command bound for the [verify] gates (a timeout is a fail)',
   },
   // §58 enterprise [policy] (issue #288). The allow/deny and model keys reach
   // the live path (lane tool intersection, model selection gate, `kubic
@@ -295,6 +321,9 @@ export interface RuntimeJournal {
   // Undefined means "no age bound configured" — never an invented default.
   retentionDays?: number;
   maxAgeMs?: number;
+  // The configured byte bound (issue #350); undefined means the store's own
+  // default applies (100 MiB), never an invented value here.
+  maxBytes?: number;
   /**
    * §35 out-of-scope paths (issue #115): undefined means none declared — the
    * §42.5 walk still skips `.git/`, `.kubic/` and `.gitignore` hits on its
@@ -359,6 +388,14 @@ export interface RuntimeConfigInputs {
   agent?: KubicConfig;
 }
 
+// §48 gate commands (issue #267): what `kubic run` verifies after each
+// settled run. Empty `commands` means nothing is verified — every gate
+// stays unknown, never a guessed pass.
+export interface RuntimeVerify {
+  commands: Partial<Record<(typeof VERIFY_COMMAND_KEYS)[number], string>>;
+  timeoutMs?: number;
+}
+
 export interface RuntimeConfig {
   config: KubicConfig;
   /**
@@ -375,6 +412,7 @@ export interface RuntimeConfig {
   journal: RuntimeJournal;
   modes: RuntimeModes;
   orchestrator: RuntimeOrchestrator;
+  verify: RuntimeVerify;
   budgets: RuntimeBudgets;
   projectTrusted: boolean;
   overriddenAttempts: string[];
@@ -827,6 +865,9 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     ...(retentionDays === undefined
       ? {}
       : { maxAgeMs: retentionDays * MS_PER_DAY }),
+    ...(config.journal?.maxBytes === undefined
+      ? {}
+      : { maxBytes: config.journal.maxBytes }),
     ...(outOfScopeEntries === undefined
       ? {}
       : { outOfScope: outOfScopeEntries }),
@@ -853,6 +894,26 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   for (const [name, role] of Object.entries(config.roles ?? {})) {
     checkRoleModelRef(role.model, name);
   }
+  // §48 gate commands (issue #267): re-validated for the programmatic
+  // layers, which never pass through the TOML parser.
+  const verifyConfig =
+    config.verify === undefined
+      ? {}
+      : checkVerifyConfig(
+          config.verify as unknown as Record<string, unknown>,
+          'verify',
+        );
+  const verify: RuntimeVerify = {
+    commands: Object.fromEntries(
+      VERIFY_COMMAND_KEYS.flatMap((key) => {
+        const command = verifyConfig[key];
+        return command === undefined ? [] : [[key, command]];
+      }),
+    ),
+    ...(verifyConfig.timeoutMs === undefined
+      ? {}
+      : { timeoutMs: verifyConfig.timeoutMs }),
+  };
 
   // Effective provenance: an applied override owns the leaf it replaced, so
   // the view never reports a file layer for a value an override won.
@@ -897,6 +958,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
         ? {}
         : { maxWorkers: orchestratorMaxWorkers }),
     },
+    verify,
     budgets: {
       configured: false,
       detail:

@@ -70,6 +70,10 @@ export interface RunTrajectoryInput {
   // The role the lane ran as: 'solo', or the `--role` name.
   role: string;
   prompt: string;
+  // §67 (issue #191): the manager's task, when this run was handed one. Its
+  // identity replaces the prompt-derived one, so a worker's trajectory names
+  // the task the manager composed instead of a digest of the composed prompt.
+  task?: { taskId: string; objective: string; role: string };
   // The session's durable entries (any order; older runs filtered here).
   entries: readonly unknown[];
   model: { provider: string; id: string; thinking: string | null };
@@ -87,6 +91,9 @@ export interface RunTrajectoryInput {
   startedAt: number;
   endedAt: number;
   outcome: RunOutcome;
+  // The run verifier's `signal:*` labels (issue #267); absent means none —
+  // every gate stays unknown.
+  evalLabels?: Record<string, string>;
 }
 
 // Two runs of one prompt answer the same task, so they can form a §74
@@ -291,8 +298,18 @@ export function trajectoryResultFor(outcome: RunOutcome): TrajectoryResult {
   let category: TrajectoryFailureCode;
   switch (terminus) {
     case 'budget_exhausted':
-      status = /timed out/.test(summary) ? 'timeout' : 'budget_exhausted';
+      status = 'budget_exhausted';
       category = 'budget_exhausted';
+      break;
+    case 'timeout':
+      // Issue #280: a wall-clock bound is its own terminus. The §52
+      // taxonomy has no timeout code, so the category stays the guard's.
+      status = 'timeout';
+      category = 'budget_exhausted';
+      break;
+    case 'cancelled':
+      status = 'cancelled';
+      category = 'process_crashed';
       break;
     case 'approval_denied':
       category = 'approval_denied';
@@ -305,6 +322,12 @@ export function trajectoryResultFor(outcome: RunOutcome): TrajectoryResult {
       break;
     case 'provider_probe_failed':
       category = classifyFailure('provider', '', summary).code;
+      break;
+    // Issue #155: a mid-run provider error keeps its own terminus — §78's 6
+    // is the pre-run probe, never a transient/auth failure during the run.
+    case 'provider_transient':
+    case 'provider_auth':
+      category = classifyFailure('provider', terminus, summary).code;
       break;
     default: {
       const lane = outcome.lane;
@@ -344,11 +367,15 @@ export function assembleRunTrajectory(
   const entries = runEntries(input.entries, input.startedAt);
   const items = entriesToTranscript(entries);
   const { actions, observations } = actionsAndObservations(items);
-  const taskId = taskIdForPrompt(input.prompt);
+  const taskId = input.task?.taskId ?? taskIdForPrompt(input.prompt);
   const modelRef = `${input.model.provider}/${input.model.id}`;
   const result = trajectoryResultFor(input.outcome);
   return buildTrajectoryExport({
-    task: { taskId, objective: input.prompt, role: input.role },
+    task: {
+      taskId,
+      objective: input.task?.objective ?? input.prompt,
+      role: input.task?.role ?? input.role,
+    },
     identity: {
       sessionId: input.sessionId,
       agentId: input.agentId,
@@ -390,6 +417,11 @@ export function assembleRunTrajectory(
     },
     usage: usageOf(items),
     result,
+    eval: {
+      suite: null,
+      caseId: null,
+      labels: { ...(input.evalLabels ?? {}) },
+    },
   });
 }
 

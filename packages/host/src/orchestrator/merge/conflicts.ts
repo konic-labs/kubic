@@ -323,6 +323,11 @@ export interface ResolverRequest {
   worktree: { path: string; branch: string };
   spec: ResolverSpawnSpec;
   prompt: string;
+  /**
+   * `--skill` values the run grants every child (issue #170): the resolver
+   * gets the same ones as a worker, resolved against the manager's cwd.
+   */
+  skills?: readonly string[];
 }
 
 // The resolver's prompt: derived from the spec alone, so the text a resolver

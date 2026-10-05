@@ -160,7 +160,13 @@ function realRunners(channels: {
         ...io,
         loadRecords: () => [FLOW_AUDIT_FIXTURE],
       }),
-    eval: (options) => runEvalCommand(options, { ...io, ...faux }),
+    eval: (options) =>
+      runEvalCommand(options, {
+        ...io,
+        ...faux,
+        // §48 (issue #258): --trajectory takes a file path.
+        readFile: () => JSON.stringify(makeExport()),
+      }),
     benchmark: (options) => runBenchmarkCommand(options, { ...io, ...faux }),
     replay: (options) =>
       runReplayCommand(options, {
@@ -195,7 +201,7 @@ const PROVENANCE_ARGV = [
   'wt',
   '--generation',
   '1',
-  '--tier',
+  '--size',
   'smoke',
 ];
 
@@ -242,11 +248,11 @@ describe('analysis commands: generated help', () => {
       eval: [
         '--suite <id>',
         '--task <prompt>',
-        '--trajectory <json>',
+        '--trajectory <file>',
         '--model <id>',
         '--worktree <path>',
         '--generation <n>',
-        '--tier <tier>',
+        '--size <size>',
         '--workspace <kind>',
         '--thinking <level>',
         '--json',
@@ -266,6 +272,8 @@ describe('analysis commands: generated help', () => {
         '--trajectory <file>',
         '--type <type>',
         '--against <other.json>',
+        '--dataset <dir|glob>',
+        '--out <file.jsonl>',
         '--json',
       ],
     };
@@ -281,10 +289,10 @@ describe('analysis commands: generated help', () => {
     // #256: eval's --model has no commander default (--trajectory reads the
     // export); the --task default is documented in the help text instead.
     const evalHelp = (await kubic(['eval', '--help'])).out.join('\n');
-    expect(evalHelp).toContain('--task default faux/faux');
-    expect(evalHelp).not.toContain('(default: "faux/faux")');
+    expect(evalHelp).toContain('--task default faux/echo');
+    expect(evalHelp).not.toContain('(default: "faux/echo")');
     expect((await kubic(['benchmark', '--help'])).out.join('\n')).toContain(
-      '(default: "faux/faux")',
+      '(default: "faux/echo")',
     );
     expect((await kubic(['perf', '--help'])).out.join('\n')).toContain(
       'worktree|spawn|attach|teardown',
@@ -365,8 +373,8 @@ describe('analysis commands: usage errors exit 2 (§78)', () => {
       '--suite',
       's',
       '--trajectory',
-      '{}',
-      '--tier',
+      't.json',
+      '--size',
       'smoke',
     ]);
     expect(run.err).toEqual([]);
@@ -430,7 +438,7 @@ describe('analysis commands: parsed options reach the runners', () => {
       ],
       [
         ['benchmark', '--generation', '2', '--workspace', 'worktree'],
-        { generation: '2', workspace: 'worktree', model: 'faux/faux' },
+        { generation: '2', workspace: 'worktree', model: 'faux/echo' },
       ],
     ];
     for (const [argv, options] of cases) {

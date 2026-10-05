@@ -2,9 +2,10 @@
 // #398; §15, §15.3, §20.6, §27.1). Exactly one subscription per
 // conversation relays the §15 groups Kubic routes — run status, tool
 // status, usage, faults — plus the retry and compaction state the 1.0
-// harness commits. Everything else (message deltas, inbox updates,
-// navigation, config) stays inside Pi: Kubic defines no parallel event
-// vocabulary.
+// harness commits, the inbox queue the TUI renders (#334) and the
+// in-flight generation's text deltas (#296). Everything else (thinking
+// deltas, navigation, config) stays inside Pi: Kubic defines no parallel
+// event vocabulary.
 //
 // `watchEvents` is experimental upstream, so it is isolated here: every
 // Kubic consumer sees `KubicLaneEvent`, and `viewState()` (`pi.live`) can
@@ -49,6 +50,15 @@ export interface KubicLaneCompaction {
   readonly error?: string;
 }
 
+// One queued submission of the conversation's inbox (#334): the id and the
+// mode (`followUp` / `steer`, or a passive `write`). The text is the
+// submitter's own — the inbox document carries no content — so a renderer
+// keys its own prompt text by id and drops the row when the id leaves.
+export interface KubicInboxItem {
+  readonly id: string;
+  readonly mode: 'steer' | 'followUp' | 'write';
+}
+
 export type KubicLaneEvent =
   | { type: 'run-start'; inputs: readonly SubmissionId[] }
   | { type: 'run-end'; inputs: readonly SubmissionId[] }
@@ -68,11 +78,32 @@ export type KubicLaneEvent =
       entry?: EntryRecord;
     }
   | {
+      // Issue #296: the running generation's text, appended as it streams.
+      // The partial is not committed yet, so there is no entry to name; the
+      // consumer renders it as a draft and the committed `message_end` entry
+      // replaces it. Only text deltas are routed — thinking stays Pi's.
+      type: 'message-delta';
+      text: string;
+    }
+  | {
       type: 'usage';
       // The committed assistant response, labelled with the provider/model
       // that answered (#287); `entry` carries its transcript cell.
       row: KubicUsageRow;
       entry: EntryRecord;
+    }
+  | {
+      // Issue #317: a committed entry that carries no assistant response —
+      // a user turn, a compaction summary, a reset handoff. The transcript
+      // folds it live instead of waiting for the next full read.
+      type: 'entry';
+      entry: EntryRecord;
+    }
+  | {
+      type: 'inbox';
+      // The inbox as of this commit: admission, placement and withdrawal all
+      // emit it, so the list is a snapshot, never a delta.
+      items: readonly KubicInboxItem[];
     }
   | { type: 'fault'; code: string; message: string }
   | {
@@ -192,11 +223,29 @@ export function toKubicLaneEvent(
         ...(event.entry === undefined ? {} : { entry: event.entry }),
       };
     }
+    case 'message_update': {
+      // Issue #296: the streamed text of the in-flight generation (§61:
+      // deltas render as they arrive). A whole-message change or a thinking
+      // delta carries no text for the transcript, so it maps to nothing.
+      const text = event.changes
+        .map((change) => (change.type === 'text_delta' ? change.delta : ''))
+        .join('');
+      return text === '' ? undefined : { type: 'message-delta', text };
+    }
     case 'message_end': {
       const row = usageRowFromEntry(event.entry);
       return row === undefined
-        ? undefined
+        ? { type: 'entry', entry: event.entry }
         : { type: 'usage', row, entry: event.entry };
+    }
+    case 'inbox_update': {
+      return {
+        type: 'inbox',
+        items: event.items.map((item) => ({
+          id: String(item.id),
+          mode: item.mode,
+        })),
+      };
     }
     case 'auto_retry_start': {
       return {

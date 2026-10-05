@@ -24,6 +24,7 @@ import {
 import { createApprovalSurface } from '../../../packages/tui/src/approval-surface.js';
 import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
+import { fakeTerminal as sharedFakeTerminal } from '../../../test/fake-terminal.js';
 import {
   createProdTuiOrchestrator,
   mergeSeatFromAnswer,
@@ -59,45 +60,7 @@ function fakeTerminal(width: number): Terminal & {
   stopped: number;
   feed: (data: string) => void;
 } {
-  const writes: string[] = [];
-  const counts = { started: 0, stopped: 0 };
-  let handler: ((data: string) => void) | undefined;
-  return {
-    writes,
-    get started(): number {
-      return counts.started;
-    },
-    get stopped(): number {
-      return counts.stopped;
-    },
-    feed: (data: string) => handler?.(data),
-    start: (onInput: (data: string) => void) => {
-      counts.started += 1;
-      handler = onInput;
-    },
-    stop: () => {
-      counts.stopped += 1;
-    },
-    drainInput: () => Promise.resolve(),
-    write: (data: string) => writes.push(data),
-    get columns(): number {
-      return width;
-    },
-    get rows(): number {
-      return 30;
-    },
-    get kittyProtocolActive(): boolean {
-      return false;
-    },
-    moveBy: () => {},
-    hideCursor: () => {},
-    showCursor: () => {},
-    clearLine: () => {},
-    clearFromCursor: () => {},
-    clearScreen: () => {},
-    setTitle: () => {},
-    setProgress: () => {},
-  };
+  return sharedFakeTerminal(width, 30);
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {
@@ -348,11 +311,11 @@ describe('orchestrator worker asks reach the TUI surface and the worker (issue #
     expect(surface.decide('a')).toBe(true);
     expect(await pumped).toBeUndefined();
     expect(
-      readWorkerAskAnswer(approvals.mailboxDir(), published.request.key),
-    ).toEqual({
-      approved: true,
-      by: 'user',
-    });
+      readWorkerAskAnswer(approvals.mailboxDir(), published.request.key, {
+        verifyKey: approvals.verifyKey(),
+        nonce: published.nonce,
+      }),
+    ).toEqual({ state: 'verified', verdict: { approved: true, by: 'user' } });
   });
 
   it('a deny decision reaches the mailbox as a refusal the worker unblocks on', async () => {
@@ -375,9 +338,13 @@ describe('orchestrator worker asks reach the TUI surface and the worker (issue #
     surface.decide('d');
     const termination = await pumped;
     expect(termination?.exitCode).toBe(4);
-    expect(
-      readWorkerAskAnswer(approvals.mailboxDir(), published.request.key),
-    ).toMatchObject({ approved: false });
+    const answer = readWorkerAskAnswer(
+      approvals.mailboxDir(),
+      published.request.key,
+      { verifyKey: approvals.verifyKey(), nonce: published.nonce },
+    );
+    expect(answer.state).toBe('verified');
+    expect(answer.state === 'verified' && answer.verdict.approved).toBe(false);
   });
 });
 
@@ -506,6 +473,63 @@ describe('createProdTuiOrchestrator (issue #327)', () => {
     await drive.run('one');
     await drive.run('two');
     expect(built).toBe(2);
+  });
+
+  it("hands the lane's current model to each delegation (issue #202)", async () => {
+    // A `/model` switch is what the next delegation's workers inherit: the
+    // model is read per turn, and the frozen enterprise pin still wins.
+    const seen: Array<{
+      model?: { provider: string; id: string };
+      modelPinFrozen?: boolean;
+    }> = [];
+    let current = { provider: 'acme', id: 'm1' };
+    const drive = createProdTuiOrchestrator({
+      sessionId: 'orch-9',
+      out: () => {},
+      currentModel: () => current,
+      createDeps: async (options) => {
+        seen.push({
+          ...(options.model === undefined ? {} : { model: options.model }),
+          ...(options.modelPinFrozen === undefined
+            ? {}
+            : { modelPinFrozen: options.modelPinFrozen }),
+        });
+        return {} as OrchestrateCommandDeps;
+      },
+      runCommand: async () => 0,
+    });
+    await drive.run('one');
+    current = { provider: 'acme', id: 'm2' };
+    await drive.run('two');
+    expect(seen).toEqual([
+      { model: { provider: 'acme', id: 'm1' } },
+      { model: { provider: 'acme', id: 'm2' } },
+    ]);
+
+    const frozen: typeof seen = [];
+    const frozenDrive = createProdTuiOrchestrator({
+      sessionId: 'orch-9',
+      out: () => {},
+      currentModel: () => current,
+      frozenModel: { provider: 'enterprise', id: 'pinned' },
+      createDeps: async (options) => {
+        frozen.push({
+          ...(options.model === undefined ? {} : { model: options.model }),
+          ...(options.modelPinFrozen === undefined
+            ? {}
+            : { modelPinFrozen: options.modelPinFrozen }),
+        });
+        return {} as OrchestrateCommandDeps;
+      },
+      runCommand: async () => 0,
+    });
+    await frozenDrive.run('three');
+    expect(frozen).toEqual([
+      {
+        model: { provider: 'enterprise', id: 'pinned' },
+        modelPinFrozen: true,
+      },
+    ]);
   });
 
   it('gives every prompt its OWN orchestrator session id: retained worktrees are session-scoped (issue #327)', async () => {

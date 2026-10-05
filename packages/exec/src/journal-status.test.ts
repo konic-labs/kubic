@@ -1,6 +1,12 @@
 // Slice C: log timeline + status (issue #18; §42.2).
 // RED: renderLog/journalStatus do not exist yet.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -167,11 +173,46 @@ describe('unattributed count (issue #87)', () => {
       nonReversible: 0,
       unattributed: 0,
       corrupt: 0,
+      corruptLines: 0,
       repo: null,
     });
     expect(reconciliationSummary(empty)).toBe(
       'unattributed: 0 of 0 entr(ies) reconciled at run end',
     );
+  });
+});
+
+// Torn index lines (issue #343): a fragment left by a crash or a full disk
+// is dropped from the read — it must never poison the journal — but the
+// drop is named in the status instead of staying silent, so an operator can
+// tell an empty journal from an unreadable one.
+describe('corrupt index lines (issue #343)', () => {
+  it('counts unparsable index lines and keeps the readable entries', () => {
+    const dir = tmpRoot('j-');
+    const store = new FileJournalStore(dir);
+    store.append({
+      path: 'a.txt',
+      op: 'create',
+      before: null,
+      after: 'x\n',
+      bytesDelta: 2,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      timestamp: 1700000000000,
+    });
+    appendFileSync(join(dir, 'index.jsonl'), '{"path":"torn\n');
+    const status = journalStatus(store, tmpRoot('ws-'));
+    expect(status.corruptLines).toBe(1);
+    // A dropped line is not content corruption: no entry claims that
+    // content, so the blob-integrity count stays where it was.
+    expect(status.corrupt).toBe(0);
+    expect(status.entries).toBe(1);
+    expect(status.reversible).toBe(1);
+  });
+
+  it('reports zero for a clean index', () => {
+    expect(journalStatus(seed(), tmpRoot('ws-')).corruptLines).toBe(0);
   });
 });
 

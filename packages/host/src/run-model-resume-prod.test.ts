@@ -180,6 +180,12 @@ describe('kubic run --session model identity (issue #148)', () => {
     expect(result.error?.message).toBe(
       "session model 'faux/small' is unavailable: provider 'faux' is not registered (pin a model to switch this session)",
     );
+    // Issue #155 review: the probe is a setup failure — the envelope's §52
+    // code must never tell a retry chooser to retry it unchanged.
+    expect(buildRunEnvelope(result, 6).failure).toMatchObject({
+      code: 'provider_auth',
+      strategy: 'abandon',
+    });
   });
 
   it('the envelope omits model when no lane booted', async () => {

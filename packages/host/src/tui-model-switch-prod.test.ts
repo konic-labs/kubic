@@ -12,6 +12,7 @@ import {
   runTuiCommand,
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
@@ -48,7 +49,9 @@ function twoProviders(
   const faux = fauxProvider({
     provider: 'faux',
     models: [
-      { id: 'big', contextWindow: 200000 },
+      // `big` reasons; `small` does not — the ladder the `/thinking`
+      // re-clamp test needs (#328 review).
+      { id: 'big', contextWindow: 200000, reasoning: true },
       { id: 'small', contextWindow: 120000 },
     ],
   });
@@ -70,48 +73,30 @@ function twoProviders(
   return models;
 }
 
-function fakeTerminal(width: number) {
-  const writes: string[] = [];
-  const counts = { started: 0, stopped: 0 };
-  let handler: ((data: string) => void) | undefined;
-  return {
-    writes,
-    counts,
-    get frame(): string {
-      return writes.join('');
-    },
-    feed: (data: string) => {
-      handler?.(data);
-    },
-    terminal: {
-      start: (input: (data: string) => void) => {
-        counts.started += 1;
-        handler = input;
-      },
-      stop: () => {
-        counts.stopped += 1;
-      },
-      drainInput: () => Promise.resolve(),
-      write: (data: string) => writes.push(data),
-      get columns(): number {
-        return width;
-      },
-      get rows(): number {
-        return 30;
-      },
-      get kittyProtocolActive(): boolean {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    },
+// One provider whose faux factory records every request's options: the
+// thinking level travels there as `reasoning` (#328).
+function thinkingProviders(
+  record: (options: { reasoning?: string } | undefined) => void,
+): MutableModels {
+  const models = createModels();
+  const faux = fauxProvider({
+    provider: 'faux',
+    models: [{ id: 'big', contextWindow: 200000, reasoning: true }],
+  });
+  const factory = (
+    _context: unknown,
+    options?: { reasoning?: string },
+  ): FauxMessage => {
+    record(options);
+    return fauxAssistantMessage('from faux');
   };
+  faux.setResponses([factory, factory, factory, factory]);
+  models.setProvider(faux.provider);
+  return models;
+}
+
+function fakeTerminal(width: number) {
+  return terminalRig(width, 30);
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {
@@ -197,6 +182,203 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
       provider: 'alt',
       modelId: 'm1',
     });
+  });
+
+  it('does not resurrect an accepted /model steer (#334 review round 2)', async () => {
+    // Alt+Enter submits like Enter when idle. A `/model` steer the loop
+    // ACCEPTED ran the command, so the draft must not come back as if it had
+    // been refused (the pre-fix branch restored on anything but 'queued').
+    const workspace = tmpRoot('tui-334-steer-ws-');
+    const sessionsRoot = tmpRoot('tui-334-steer-sessions-');
+    const lines: string[] = [];
+    const fake = fakeTerminal(120);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: async (sid, answer) =>
+          bootTuiLane(sid, {
+            sessionsRoot,
+            models: twoProviders(),
+            env: new NodeExecutionEnv(workspace),
+            ...(answer === undefined ? {} : { answer }),
+            model: { provider: 'faux', id: 'big' },
+          }),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of '/model alt/m1') fake.feed(ch);
+    fake.feed('\x1b\r');
+    await waitFor(() => fake.frame.includes('model: alt/m1'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    const doc = lines.join('\n');
+    expect(doc).toContain('switched');
+    // The editor row at quit is empty: nothing resurrected the command.
+    expect(doc).not.toContain('/model alt/m1');
+  });
+
+  it('switches the thinking level and sends it with the next request (#328)', async () => {
+    const workspace = tmpRoot('tui-328-thinking-ws-');
+    const sessionsRoot = tmpRoot('tui-328-thinking-sessions-');
+    const lines: string[] = [];
+    const fake = fakeTerminal(120);
+    const seen: Array<string | undefined> = [];
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: async (sid, answer) =>
+          bootTuiLane(sid, {
+            sessionsRoot,
+            models: thinkingProviders((options) =>
+              seen.push(options?.reasoning),
+            ),
+            env: new NodeExecutionEnv(workspace),
+            ...(answer === undefined ? {} : { answer }),
+            model: { provider: 'faux', id: 'big' },
+          }),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    // The report names the boot level, and an unknown level is refused by
+    // name with the vocabulary.
+    type(fake, '/thinking');
+    await waitFor(() => fake.frame.includes('thinking: off'));
+    type(fake, '/thinking bogus');
+    await waitFor(() => fake.frame.includes("unknown thinking level 'bogus'"));
+    // The switch rides the NEXT request as `reasoning`.
+    type(fake, '/thinking high');
+    await waitFor(() => fake.frame.includes('thinking: high'));
+    type(fake, 'hello');
+    await waitFor(() => fake.frame.includes('from faux'));
+    expect(seen).toContain('high');
+    // A level above what the model supports clamps, and the footer says so.
+    type(fake, '/thinking xhigh');
+    await waitFor(() => fake.frame.includes('(clamped from xhigh)'));
+    // Alt+T cycles from high back to off (this model's ladder ends at high).
+    const mark = fake.writes.length;
+    fake.feed('\u001bt');
+    await waitFor(() =>
+      fake.writes.slice(mark).join('').includes('thinking: off'),
+    );
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    // The status bar carries the live level, not the boot one.
+    expect(lines.join('\n')).toContain('thinking off');
+  });
+
+  it('picks a model from the Alt+M overlay (#328)', async () => {
+    const workspace = tmpRoot('tui-328-picker-ws-');
+    const sessionsRoot = tmpRoot('tui-328-picker-sessions-');
+    const lines: string[] = [];
+    const fake = fakeTerminal(120);
+    let sessionId = '';
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: async (sid, answer) => {
+          const boot = await bootTuiLane(sid, {
+            sessionsRoot,
+            models: twoProviders(),
+            env: new NodeExecutionEnv(workspace),
+            ...(answer === undefined ? {} : { answer }),
+            model: { provider: 'faux', id: 'big' },
+          });
+          sessionId = boot.sessionId;
+          return boot;
+        },
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    // Alt+M opens the picker: the usable catalog rows, the live one marked.
+    fake.feed('\u001bm');
+    await waitFor(() => fake.frame.includes('faux/big (current)'));
+    expect(fake.frame).toContain('alt/m1');
+    // Move to the next row and select it: the same switch path as /model.
+    fake.feed('\u001b[B');
+    fake.feed('\r');
+    await waitFor(() => fake.frame.includes('model: faux/small (switched)'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    expect(lines.join('\n')).toContain('faux/small');
+    // The picker switched the real lane: a fresh attach resumes on it.
+    expect(await storedModel(sessionsRoot, sessionId)).toMatchObject({
+      provider: 'faux',
+      modelId: 'small',
+    });
+  });
+
+  it('re-clamps the thinking level when /model moves to a shorter ladder (#328 review)', async () => {
+    const workspace = tmpRoot('tui-328-clamp-ws-');
+    const sessionsRoot = tmpRoot('tui-328-clamp-sessions-');
+    const lines: string[] = [];
+    const fake = fakeTerminal(120);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: async (sid, answer) =>
+          bootTuiLane(sid, {
+            sessionsRoot,
+            models: twoProviders(),
+            env: new NodeExecutionEnv(workspace),
+            ...(answer === undefined ? {} : { answer }),
+            model: { provider: 'faux', id: 'big' },
+          }),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    // `faux/big` reasons: high is on its ladder.
+    type(fake, '/thinking high');
+    await waitFor(() => fake.frame.includes('thinking: high'));
+    // `faux/small` does not: the switch must re-clamp the stored level.
+    type(fake, '/model faux/small');
+    await waitFor(() => fake.frame.includes('model: faux/small (switched)'));
+    const mark = fake.writes.length;
+    type(fake, '/thinking');
+    await waitFor(() =>
+      fake.writes.slice(mark).join('').includes('thinking: off'),
+    );
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+
+  it('cancels the picker with Esc, leaving the model alone (#328)', async () => {
+    const workspace = tmpRoot('tui-328-cancel-ws-');
+    const sessionsRoot = tmpRoot('tui-328-cancel-sessions-');
+    const lines: string[] = [];
+    const fake = fakeTerminal(120);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: async (sid, answer) =>
+          bootTuiLane(sid, {
+            sessionsRoot,
+            models: twoProviders(),
+            env: new NodeExecutionEnv(workspace),
+            ...(answer === undefined ? {} : { answer }),
+            model: { provider: 'faux', id: 'big' },
+          }),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    fake.feed('\u001bm');
+    await waitFor(() => fake.frame.includes('faux/big (current)'));
+    fake.feed('\u001b');
+    await waitFor(() => fake.frame.includes('(picker cancelled)'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    // Still the boot model.
+    expect(lines.join('\n')).toContain('faux/big');
+    expect(lines.join('\n')).not.toContain('faux/small');
   });
 
   it('reports the current model and refuses an unknown one by name', async () => {

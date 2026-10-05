@@ -16,17 +16,46 @@ The journal records every file edit the agent makes, whether or not
 the directory is a git repository — `kubic diff` and `kubic undo`
 work anywhere. Entries are append-only and persist across sessions,
 so undo works after the terminal closes. Durability is claimed exactly
-where it is implemented: the appended index line is fsynced before
-`append` returns (one fsync per tool write — the price of "reversible";
-the store's `durable` knob, default `true`, trades that for a crash
-window of one truncated last line). Everything else is atomicity, not
-fsync: blobs and undo restores are written tmp+rename in the target's
-own directory, so a crash never leaves a half-written file visible
-under its real name, but their bytes are not fsynced before the rename,
-and the retention compaction rewrite is a tmp+rename with no fsync at
-all — a crash right after it can lose more than one truncated last
-line. Directory-entry durability of any rename is out of scope — rename
-atomicity is the guarantee we rely on. Undo is part of the record, not
+where it is implemented: an entry's content is flushed before the index
+line that records it — a blob's bytes are fsynced before its rename and
+its directory after it — and the index line itself is fsynced before
+`append` returns (the price of "reversible" is a few fsyncs per tool
+write; the store's `durable` knob, default `true`, trades all of it for a
+crash window of one truncated last line). An append also repairs a torn tail:
+one pread decides whether the index's last byte is a newline, a fragment
+gets one before the new entry — so the entry lands on a line of its own
+and is never glued to the fragment and dropped with it — and a failed
+append truncates the partial write back to the pre-append length. Dropped
+fragments are named as `corrupt index lines` in `kubic status` and removed
+by the next retention rewrite that drops an entry — a pass under the bound
+takes the fast path and rewrites nothing, so the count can stand for a while. Private state (issue #361): the journal directory and `blobs/` are created
+0700, the index and every blob 0600 — a blob is a copy of file content,
+including 0600 sources like `.env`, and the index names every path of the run.
+An existing group- or world-accessible state directory (the sessions root, a
+journal directory) is tightened to 0700 when the next lock is taken, and
+`kubic doctor`'s `state:permissions` check names it while it stays loose. The
+undo restore keeps the target file's own mode — Kubic never widens a file it
+writes back.
+
+Cross-process coordination (issue #337): every
+journal mutation — append, retention rewrite, blob sweep — runs under an
+O_EXCL lock beside the index (stale after ten seconds, so a crashed holder
+never wedges the journal), the rewrite abandons itself when the index changed
+under it, and the sweep only removes blobs that are unambiguously dead (never
+a `${hash}.${pid}.tmp` another process is renaming into place, never one newer
+than the pass). Commands that only read step aside for a live run instead of
+racing it: `kubic log`'s read-time self-heal skips the pass, with a notice,
+while the session lock is live, `kubic clean --journal` skips the prune and
+names the holder, and `kubic undo` refuses by name (exit 1) unless `--force`. A blob found under the wrong bytes (the
+zero-length crash shape) is rewritten from the content in hand instead of
+being reused, and the retention compaction rewrite is flushed the same
+way — a crash right after it could otherwise replace the whole history
+with an empty file. Everything else is atomicity, not fsync: undo restores
+are written tmp+rename in the target's own directory, so a crash never
+leaves a half-written file visible under its real name, but their bytes are
+not fsynced before the rename. Directory-entry durability of the *first*
+creation of a file is out of scope — rename durability is what the journal
+claims, and `durable: false` opts out of all of it. Undo is part of the record, not
 an exit from it: every successful `kubic undo` appends its own inverse
 entry (attributed `kubic-undo`, the pre-undo content as its before, the
 restored content as its after), so `diff` and `log` describe the world
@@ -43,8 +72,15 @@ captures are bounded the same way: a changed file above 4 MiB — or one whose
 utf-8 decode would be lossy (binary content) — is recorded hash-only
 (`changed, N bytes`; `diff` shows a size-only line), never as a mangled or
 unbounded blob. Retention
-bounds keep growth finite: a size cap is enforced on every append,
-with opt-in age pruning.
+bounds keep growth finite: a size cap — the whole store, index plus blobs,
+configurable as `[journal] maxBytes` — is enforced on every append, with
+opt-in age pruning. An entry whose own content cannot fit the cap is
+refused before anything is written — the tool call fails as `journal_failed`
+and the file is untouched, rather than landing a record the same append's
+pruning would delete — and pruning itself stops at the newest entry: the
+record of the change just made is never the thing that gets dropped, so a
+single entry over the bound is kept and reported (`over bound by N byte(s)`)
+instead of taking the session's history with it.
 
 ## Approvals (§41)
 
@@ -63,6 +99,16 @@ default) or to deny. The rules are fail-closed:
   session decision is reused instead of asked again.
 - Decisions are session-scoped unless the host explicitly wires a
   shared store.
+- An approval's guard stand-down is scoped to exactly the approved call —
+  its tool-call id AND its arguments — and is spent once that call has run.
+  The id comes from the provider, so a server that repeats `call_0` or
+  sends an empty id cannot widen one approval into a standing bypass of the
+  destructive/network guards or of path confinement (issue #194).
+- The session's state files are corrupt-tolerant: an `approvals.json` or
+  `posture.json` that is unreadable or parses to the wrong shape (`null`,
+  an array, a string) falls back to the safe default — no decisions,
+  approvals enforced — and a malformed individual decision entry is
+  dropped rather than erasing the valid ones beside it (issue #233).
 
 ### Kubic's own control plane (issue #324, §59)
 
@@ -122,6 +168,19 @@ secret-shaped name (`*_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`,
 in kubic's environment never reaches a tool. `SSH_AUTH_SOCK` and
 credential helpers' variables are not passed either. Worker processes
 use their own launch allowlist plus role-scoped grants.
+
+**Proxy URLs lose their userinfo (issue #366).** A proxy variable is
+allowlisted for reachability, and its value may carry credentials that the
+NAME does not reveal — `HTTPS_PROXY=http://user:password@proxy.corp:3128`.
+That is a credential in the §3.8 sense, and §36.1 rule 2 forbids it in any
+agent-visible string: the model's shell can read the child env, so the
+password would be one `echo $HTTPS_PROXY` away. Every tool child therefore
+receives the value with its userinfo stripped — scheme, host, port, path and
+query survive verbatim (`http://proxy.corp:3128`) — and the strip is the
+same in both spellings of the variable. A proxy that REQUIRES that
+authentication is consequently not usable from a tool child; Kubic does not
+broker proxy auth (a tool that needs it must be run outside the model's
+shell). `NO_PROXY` lists hosts, never credentials, and is passed through.
 
 ## What the model does and does not promise (§59.1)
 

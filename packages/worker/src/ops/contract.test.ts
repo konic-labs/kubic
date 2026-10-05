@@ -25,7 +25,7 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
   },
   grep: {
     description:
-      'Search file contents line by line with a JavaScript regex. Returns "path:line: text" lines under a header, at most maxMatches (default 100). include keeps only files whose path contains that substring (not a glob). The search skips .git, node_modules and paths a .gitignore excludes, and never follows symlinks; it walks at most 10000 entries and 100 directory levels, and when a cap stops it the header names which one.',
+      'Search file contents line by line with a JavaScript regex. Returns "path:line: text" lines under a header, at most maxMatches (default 100); matching lines are clipped at 500 characters (the header says so when they are). include keeps only files whose path contains that substring (not a glob). Binary files (a NUL byte) are skipped and counted; files over 8388608 bytes are skipped and counted, and the result is then truncated. The search skips .git, node_modules and paths a .gitignore excludes, and never follows symlinks; it walks at most 10000 entries and 100 directory levels, and when a cap stops it the header names which one.',
     replay: 'safe',
   },
   write: {
@@ -35,7 +35,7 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
   },
   edit: {
     description:
-      'Replace exact text in a file atomically (tmp + rename). oldText must match byte for byte, whitespace included, and occur exactly expectCount times (default 1) or the edit is refused (no_match / ambiguous_match). Files over 8 MiB are refused.',
+      'Replace exact text in a file atomically (tmp + rename). oldText must match exactly (after line-ending/BOM normalization), whitespace included, and occur exactly expectCount times (default 1) or the edit is refused (no_match / ambiguous_match). Matching is done on LF-normalized text with any leading BOM stripped, and the file keeps its own line ending and BOM on write (a CRLF file stays CRLF). Files over 8 MiB are refused.',
     replay: 'never',
   },
   bash: {

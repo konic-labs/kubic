@@ -16,6 +16,7 @@ import {
   runTuiCommand,
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { parseTrajectoryExportJSON } from '../../trajectory/src/schema.js';
@@ -33,6 +34,7 @@ import {
   type MutableModels,
 } from '../../worker/src/pi-boundary.js';
 import { installSoloPolicy } from './approvals.js';
+import { createApprovalSigner } from './orchestrator/approvals/seal.js';
 import { auditLedgerDir, readAuditLedger } from './policy/audit-ledger.js';
 
 const made: string[] = [];
@@ -50,6 +52,7 @@ beforeEach(() => {
   vi.stubEnv('KUBIC_WORKER_GENERATION', '');
   vi.stubEnv('KUBIC_ORCHESTRATOR_SESSION', '');
   vi.stubEnv('KUBIC_APPROVALS_DIR', '');
+  vi.stubEnv('KUBIC_APPROVALS_VERIFY_KEY', '');
 });
 
 afterEach(() => {
@@ -182,47 +185,7 @@ describe('kubic run: the audit row and the trajectory name the model the lane ru
 });
 
 function fakeTerminal(width: number) {
-  const writes: string[] = [];
-  const counts = { started: 0, stopped: 0 };
-  let handler: ((data: string) => void) | undefined;
-  return {
-    writes,
-    counts,
-    get frame(): string {
-      return writes.join('');
-    },
-    feed: (data: string) => {
-      handler?.(data);
-    },
-    terminal: {
-      start: (input: (data: string) => void) => {
-        counts.started += 1;
-        handler = input;
-      },
-      stop: () => {
-        counts.stopped += 1;
-      },
-      drainInput: () => Promise.resolve(),
-      write: (data: string) => writes.push(data),
-      get columns(): number {
-        return width;
-      },
-      get rows(): number {
-        return 30;
-      },
-      get kittyProtocolActive(): boolean {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    },
-  };
+  return terminalRig(width, 30);
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {
@@ -364,8 +327,11 @@ describe('an orchestrated worker child records its own identity (issue #279)', (
   it('an ask answered through the manager seat is recorded by the manager only: the child appends nothing', async () => {
     workerEnv();
     vi.stubEnv('KUBIC_APPROVALS_DIR', tmpRoot('audit-id-worker-mailbox-'));
+    // The manager's public key travels with the mailbox (issue #149): without
+    // it the child has nothing to verify an answer with and attaches no seat.
     // The seat's own bound: nobody answers, so it denies closed — still the
     // manager's decision to record, never a second child row.
+    vi.stubEnv('KUBIC_APPROVALS_VERIFY_KEY', createApprovalSigner().verifyKey);
     vi.stubEnv('KUBIC_APPROVALS_BOUND_MS', '60');
     const root = tmpRoot('audit-id-worker-seat-root-');
     const workspace = tmpRoot('audit-id-worker-seat-ws-');

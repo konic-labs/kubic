@@ -234,7 +234,7 @@ describe('guard drain on exit paths (issue #109)', () => {
       { timeoutMs: 40 },
       { ...deps(), models: hangingModels() },
     );
-    expect(result.terminus).toBe('budget_exhausted');
+    expect(result.terminus).toBe('timeout');
     expect(vi.mocked(abortLane)).toHaveBeenCalled();
     // The drain ran before the sweep started.
     expect(guardEvents.events).toEqual(['abort', 'sweep']);

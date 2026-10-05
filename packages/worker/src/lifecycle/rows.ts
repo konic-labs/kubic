@@ -19,7 +19,26 @@ import {
 } from '../../../exec/src/file-bridge.js';
 import { viewWorkerRows } from './orphans.js';
 import type { WorkerRow } from './registry.js';
-import { WORKER_STATUSES } from './status.js';
+import { AGENT_STATUSES, PROCESS_STATUSES } from './status.js';
+
+// §13 rows written before issue #151 carried ONE status field that mixed the
+// process phase and the agent state. A row is read through this mapping
+// instead of being discarded: the listing keeps showing what the row said.
+const LEGACY_STATUS: Record<
+  string,
+  { status: WorkerRow['status']; agentStatus: WorkerRow['agentStatus'] }
+> = {
+  created: { status: 'spawning', agentStatus: 'starting' },
+  spawning: { status: 'spawning', agentStatus: 'starting' },
+  ready: { status: 'ready', agentStatus: 'running' },
+  running: { status: 'ready', agentStatus: 'running' },
+  completed: { status: 'exiting', agentStatus: 'completed' },
+  spawn_failed: { status: 'exiting', agentStatus: 'spawn_failed' },
+  crashed: { status: 'exiting', agentStatus: 'failed' },
+  timeout: { status: 'exiting', agentStatus: 'timeout' },
+  budget_exhausted: { status: 'exiting', agentStatus: 'budget_exhausted' },
+  cancelled: { status: 'exiting', agentStatus: 'cancelled' },
+};
 
 // The file `kubic orchestrate` writes and `kubic workers` reads, relative
 // to the orchestrator state dir (`<repo>/.kubic/orchestrator/`).
@@ -49,13 +68,31 @@ function isRow(value: unknown): value is WorkerRow {
   if (typeof row.generation !== 'number') return false;
   if (typeof row.owner !== 'string') return false;
   if (typeof row.startedAtMs !== 'number') return false;
+  if (typeof row.status !== 'string') return false;
+  const process = (PROCESS_STATUSES as readonly string[]).includes(row.status);
+  const agent =
+    typeof row.agentStatus === 'string' &&
+    (AGENT_STATUSES as readonly string[]).includes(row.agentStatus);
+  if (process && agent) return true;
+  // A pre-#151 row (or a new row whose agent state was dropped) reads through
+  // the legacy mapping, so an upgrade never loses the listing.
+  return LEGACY_STATUS[row.status] !== undefined;
+}
+
+/** Normalize a parsed row: a legacy single-status row gets the §13 pair. */
+function normalized(row: WorkerRow): WorkerRow {
   if (
-    typeof row.status !== 'string' ||
-    !(WORKER_STATUSES as readonly string[]).includes(row.status)
+    (PROCESS_STATUSES as readonly string[]).includes(row.status) &&
+    typeof row.agentStatus === 'string' &&
+    (AGENT_STATUSES as readonly string[]).includes(row.agentStatus)
   ) {
-    return false;
+    return row;
   }
-  return true;
+  const legacy = LEGACY_STATUS[row.status] ?? {
+    status: 'exiting' as const,
+    agentStatus: 'failed' as const,
+  };
+  return { ...row, status: legacy.status, agentStatus: legacy.agentStatus };
 }
 
 // Last write per worker wins; the order is registration order.
@@ -86,7 +123,7 @@ export function readWorkerRows(bridge: FileBridge, path: string): WorkerRow[] {
   if (typeof parsed !== 'object' || parsed === null) return [];
   const payload = parsed as { version?: unknown; rows?: unknown };
   if (payload.version !== 1 || !Array.isArray(payload.rows)) return [];
-  return payload.rows.filter(isRow);
+  return payload.rows.filter(isRow).map(normalized);
 }
 
 // Convenience for a caller holding a registry: snapshot it into the file.
@@ -111,7 +148,8 @@ export function workerRowsPath(repo: string): string {
 export function workersListFromRepo(repo: string): WorkerRow[] {
   try {
     // A manager that died hard leaves rows claiming a live status: the
-    // listing shows them as `crashed` when both worker and manager are gone.
+    // listing shows them as `exiting / failed` when both worker and manager
+    // are gone (issue #151 — a process exiting is not an agent outcome).
     return viewWorkerRows(
       readWorkerRows(
         createNodeFileBridge(join(repo, '.kubic', 'orchestrator')),

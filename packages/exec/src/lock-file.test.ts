@@ -2,11 +2,22 @@
 // the session lock. Exec owns node:fs (I/O confinement, §9) — the worker's
 // session-store keeps the semantics (liveness, stale-steal) and calls these.
 // Hermetic: tmp dirs only, no process signalling anywhere.
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { createLockFile, readLockFile, removeLockFile } from './lock-file.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  createLockFile,
+  looseStateDirMode,
+  readLockFile,
+  removeLockFile,
+} from './lock-file.js';
 
 const roots: string[] = [];
 
@@ -52,5 +63,25 @@ describe('lock file primitive (issue #118)', () => {
     removeLockFile(path);
     expect(readLockFile(path)).toBeUndefined();
     expect(() => removeLockFile(path)).not.toThrow(); // second call: still fine
+  });
+});
+
+// Issue #361: the probe is POSIX-only — Windows cannot change the mode it
+// reports, so a warn there would name a fix that does nothing.
+describe('looseStateDirMode platform gate (issue #361)', () => {
+  it('reports nothing on win32 even for a loose directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'loose-'));
+    roots.push(dir);
+    chmodSync(dir, 0o755);
+
+    expect(looseStateDirMode(dir)).toBe(0o755);
+    const spy = vi
+      .spyOn(process, 'platform', 'get')
+      .mockReturnValue('win32' as NodeJS.Platform);
+    try {
+      expect(looseStateDirMode(dir)).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

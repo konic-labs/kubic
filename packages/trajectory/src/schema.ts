@@ -15,9 +15,9 @@
 // runtime implementations) — the structural interfaces below are
 // snapshots of those shapes, pinned by the golden fixture test.
 
-export const SCHEMA_VERSION = '1.0';
+export const SCHEMA_VERSION = '1.1';
 export const SCHEMA_MAJOR = 1;
-export const SCHEMA_MINOR = 0;
+export const SCHEMA_MINOR = 1;
 
 // Stability promise: `stable` means additive-only within a major —
 // replay (#52) and eval (#53) pinned to major 1 keep parsing.
@@ -31,6 +31,18 @@ export interface TrajectoryChangelogEntry {
 }
 
 export const TRAJECTORY_CHANGELOG: readonly TrajectoryChangelogEntry[] = [
+  {
+    version: '1.1',
+    date: '2026-10-04',
+    changes: [
+      'Additive identity: identity.parentSessionId + identity.role (task.role stays the task record).',
+      'Escalation attribution: model.escalations[].fromModel/toModel/thinking (toModel required on write).',
+      'Approval audit: approvals[].requested (redacted summary) + justification.',
+      'Durable-state leaves: state.operations[] (id/kind) + state.memos[] refs.',
+      'Result evidence: result.tests + result.artifacts refs.',
+      '1.0 records still parse: every 1.1 field is optional on read.',
+    ],
+  },
   {
     version: '1.0',
     date: '2026-09-23',
@@ -103,11 +115,22 @@ export interface TrajectoryIdentity {
   sessionId: string;
   agentId: string;
   workerId: string | null;
+  // 1.1 (issue #329, additive): the parent session for orchestrated
+  // runs and the agent's own role. `task.role` stays the task's record;
+  // `role` is the agent identity the design's §46 tree names.
+  parentSessionId?: string | null;
+  role?: string;
 }
 
 export interface TrajectoryEscalation {
   reason: string;
   at: string;
+  // 1.1 (issue #329): the escalation's endpoints and the thinking level
+  // it moved to. `toModel` is required on write — the exporter refuses an
+  // escalation that cannot be attributed to a target model.
+  fromModel?: string;
+  toModel?: string;
+  thinking?: string | null;
 }
 
 export interface TrajectoryModel {
@@ -150,6 +173,14 @@ export interface TrajectoryObservation {
 export interface TrajectoryDurableState {
   phase: string;
   snapshot: JsonValue;
+  // 1.1 (issue #329): the operation leaves traversed and memo refs.
+  operations?: TrajectoryOperation[];
+  memos?: string[];
+}
+
+export interface TrajectoryOperation {
+  id: string;
+  kind: string;
 }
 
 // §46 provenance: pid/generation/worktree/model. pid is an explicit
@@ -194,6 +225,10 @@ export interface TrajectoryApproval {
   capability: string;
   verdict: 'approved' | 'denied' | 'timed-out';
   by: string | null;
+  // 1.1 (issue #329): the redacted request summary and the decider's
+  // justification. `null` means not recorded — never an invented value.
+  requested?: string | null;
+  justification?: string | null;
 }
 
 export interface TrajectoryTimestamps {
@@ -228,6 +263,10 @@ export interface TrajectoryResult {
   summary: string;
   failureCategory: TrajectoryFailureCode | null;
   error: TrajectoryResultError | null;
+  // 1.1 (issue #329): refs only — the test and artifact evidence the run
+  // produced, never embedded contents.
+  tests?: string[];
+  artifacts?: string[];
 }
 
 // Eval slot owned by issue #53: stable reserved position, filled by the
@@ -318,6 +357,266 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+// §46 structural validation (issue #331): presence is not enough. A
+// published contract read from community files must fail closed with a
+// named path BEFORE a consumer dereferences a section — an `actions:
+// null` used to reach replay and die as a raw TypeError (generic exit 1)
+// instead of TrajectorySchemaError 'malformed'. Types only: unknown extra
+// keys survive (additive-only within major 1), and internals beyond the
+// required keys stay the exporter's job.
+type FieldType =
+  | 'object'
+  | 'array'
+  | 'string'
+  | 'number'
+  | 'string|null'
+  | 'number|null'
+  | 'object|null'
+  | 'string[]'
+  // `state.snapshot` is JsonValue: any JSON value, but the key must exist.
+  | 'json';
+
+// The required nested keys of every §46 object section. `transfer` is
+// object|null and `actions`/`observations`/`approvals` are arrays, so
+// they are listed separately below.
+const SECTION_FIELDS: Readonly<
+  Record<string, Readonly<Record<string, FieldType>>>
+> = {
+  task: { taskId: 'string', objective: 'string', role: 'string' },
+  identity: { sessionId: 'string', agentId: 'string', workerId: 'string|null' },
+  model: {
+    provider: 'string',
+    model: 'string',
+    thinking: 'string|null',
+    escalations: 'array',
+  },
+  prompt: { text: 'string', constraints: 'string[]' },
+  resources: { skills: 'string[]', promptTemplates: 'string[]' },
+  state: { phase: 'string', snapshot: 'json' },
+  provenance: {
+    sessionId: 'string',
+    agentId: 'string',
+    pid: 'number|null',
+    generation: 'number',
+    worktree: 'string',
+    model: 'string',
+  },
+  environment: { capturedFrom: 'string', cwd: 'string', env: 'object' },
+  worktree: { path: 'string', baseRevision: 'string', branch: 'string|null' },
+  diff: { filesChanged: 'string[]', files: 'array' },
+  timestamps: { startedAt: 'string', endedAt: 'string', durationMs: 'number' },
+  usage: {
+    inputTokens: 'number',
+    outputTokens: 'number',
+    cachedTokens: 'number',
+    requests: 'number',
+    costUsd: 'number',
+    byModel: 'object',
+  },
+  result: {
+    status: 'string',
+    summary: 'string',
+    failureCategory: 'string|null',
+    error: 'object|null',
+  },
+  eval: { suite: 'string|null', caseId: 'string|null', labels: 'object' },
+};
+
+const ARRAY_SECTIONS = ['actions', 'observations', 'approvals'] as const;
+
+function describeValue(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
+function malformed(path: string, detail: string): never {
+  throw new TrajectorySchemaError('malformed', `trajectory.${path} ${detail}`);
+}
+
+function fieldMatches(type: FieldType, value: unknown): boolean {
+  switch (type) {
+    case 'object':
+      return isRecord(value);
+    case 'array':
+      return Array.isArray(value);
+    case 'string':
+      return typeof value === 'string';
+    case 'number':
+      return typeof value === 'number';
+    case 'string|null':
+      return value === null || typeof value === 'string';
+    case 'number|null':
+      return value === null || typeof value === 'number';
+    case 'object|null':
+      return value === null || isRecord(value);
+    case 'string[]':
+      return (
+        Array.isArray(value) &&
+        value.every((entry) => typeof entry === 'string')
+      );
+    case 'json':
+      return true;
+  }
+}
+
+function expectedOf(type: FieldType): string {
+  switch (type) {
+    case 'object':
+      return 'an object';
+    case 'array':
+      return 'an array';
+    case 'string':
+      return 'a string';
+    case 'number':
+      return 'a number';
+    case 'string|null':
+      return 'a string or null';
+    case 'number|null':
+      return 'a number or null';
+    case 'object|null':
+      return 'an object or null';
+    case 'string[]':
+      return 'an array of strings';
+    case 'json':
+      return 'a JSON value';
+  }
+}
+
+function checkTrajectoryShape(input: Record<string, unknown>): void {
+  for (const [section, fields] of Object.entries(SECTION_FIELDS)) {
+    const value = input[section];
+    if (!isRecord(value)) {
+      malformed(section, `must be an object (got ${describeValue(value)})`);
+    }
+    for (const [field, type] of Object.entries(fields)) {
+      if (!(field in value)) {
+        malformed(`${section}.${field}`, 'is required');
+      }
+      const fieldValue = value[field];
+      if (!fieldMatches(type, fieldValue)) {
+        malformed(
+          `${section}.${field}`,
+          `must be ${expectedOf(type)} (got ${describeValue(fieldValue)})`,
+        );
+      }
+    }
+  }
+  for (const section of ARRAY_SECTIONS) {
+    const value = input[section];
+    if (!Array.isArray(value)) {
+      malformed(section, `must be an array (got ${describeValue(value)})`);
+    }
+  }
+  const transfer = input.transfer;
+  if (transfer !== null && !isRecord(transfer)) {
+    malformed(
+      'transfer',
+      `must be an object or null (got ${describeValue(transfer)})`,
+    );
+  }
+  // Guaranteed to be an object by the section loop above.
+  const result = input.result as Record<string, unknown>;
+  const status = result.status;
+  if (
+    typeof status !== 'string' ||
+    !(RESULT_STATUSES as readonly string[]).includes(status)
+  ) {
+    malformed(
+      'result.status',
+      `must be one of ${RESULT_STATUSES.join('|')} (got ${JSON.stringify(status)})`,
+    );
+  }
+}
+
+// 1.1 additions (issue #329) are additive: a 1.0 record omits them and
+// still parses. When present they are type-checked, so the reader never
+// hands a consumer an unvalidated new field.
+const OPTIONAL_SECTION_FIELDS: Readonly<
+  Record<string, Readonly<Record<string, FieldType>>>
+> = {
+  identity: { parentSessionId: 'string|null', role: 'string' },
+  state: { operations: 'array', memos: 'string[]' },
+  result: { tests: 'string[]', artifacts: 'string[]' },
+};
+
+const OPTIONAL_ESCALATION_FIELDS: Readonly<Record<string, FieldType>> = {
+  fromModel: 'string',
+  toModel: 'string',
+  thinking: 'string|null',
+};
+
+const OPTIONAL_APPROVAL_FIELDS: Readonly<Record<string, FieldType>> = {
+  requested: 'string|null',
+  justification: 'string|null',
+};
+
+const OPERATION_FIELDS: Readonly<Record<string, FieldType>> = {
+  id: 'string',
+  kind: 'string',
+};
+
+function checkOptionalFields(
+  record: Record<string, unknown>,
+  path: string,
+  fields: Readonly<Record<string, FieldType>>,
+  required: boolean,
+): void {
+  for (const [field, type] of Object.entries(fields)) {
+    if (!(field in record)) {
+      if (required) malformed(`${path}.${field}`, 'is required');
+      continue;
+    }
+    const value = record[field];
+    if (!fieldMatches(type, value)) {
+      malformed(
+        `${path}.${field}`,
+        `must be ${expectedOf(type)} (got ${describeValue(value)})`,
+      );
+    }
+  }
+}
+
+function checkOptionalShape(input: Record<string, unknown>): void {
+  for (const [section, fields] of Object.entries(OPTIONAL_SECTION_FIELDS)) {
+    const value = input[section];
+    if (!isRecord(value)) continue; // the required pass already refused it
+    checkOptionalFields(value, section, fields, false);
+  }
+  const model = input.model as Record<string, unknown>;
+  const escalations = model.escalations;
+  if (Array.isArray(escalations)) {
+    escalations.forEach((entry, index) => {
+      const path = `model.escalations[${index}]`;
+      if (!isRecord(entry)) {
+        malformed(path, `must be an object (got ${describeValue(entry)})`);
+      }
+      checkOptionalFields(entry, path, OPTIONAL_ESCALATION_FIELDS, false);
+    });
+  }
+  const approvals = input.approvals;
+  if (Array.isArray(approvals)) {
+    approvals.forEach((entry, index) => {
+      const path = `approvals[${index}]`;
+      if (!isRecord(entry)) {
+        malformed(path, `must be an object (got ${describeValue(entry)})`);
+      }
+      checkOptionalFields(entry, path, OPTIONAL_APPROVAL_FIELDS, false);
+    });
+  }
+  const state = input.state as Record<string, unknown>;
+  const operations = state.operations;
+  if (Array.isArray(operations)) {
+    operations.forEach((entry, index) => {
+      const path = `state.operations[${index}]`;
+      if (!isRecord(entry)) {
+        malformed(path, `must be an object (got ${describeValue(entry)})`);
+      }
+      checkOptionalFields(entry, path, OPERATION_FIELDS, true);
+    });
+  }
+}
+
 // Consumer entry for replay (#52) and eval (#53): strict major gate,
 // tolerant minor — same-major records parse with no shim; unknown fields
 // are preserved, unknown majors are refused loudly.
@@ -356,6 +655,8 @@ export function parseTrajectoryExport(input: unknown): TrajectoryExport {
       );
     }
   }
+  checkTrajectoryShape(input);
+  checkOptionalShape(input);
   return input as unknown as TrajectoryExport;
 }
 

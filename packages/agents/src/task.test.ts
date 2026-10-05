@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentTask } from './task.js';
-import { AGENT_TASK_FIELDS, validateAgentTask } from './task.js';
+import {
+  AGENT_TASK_FIELDS,
+  buildAgentTask,
+  validateAgentTask,
+} from './task.js';
 
 function validTask(overrides: Partial<AgentTask> = {}): AgentTask {
   return {
@@ -118,5 +122,67 @@ describe('agent task (issue #6, §67)', () => {
     const result = validateAgentTask(revived);
     expect(result.valid).toBe(true);
     if (result.valid) expect(result.task).toEqual(task);
+  });
+});
+
+// §67 (issue #191): the manager builds the task it hands a worker, and the
+// capability grant travels with it — an invalid task is a named refusal
+// BEFORE any process exists.
+describe('buildAgentTask (issue #191)', () => {
+  const input = {
+    taskId: 'sess-1:alpha',
+    parentSessionId: 'sess-1',
+    role: 'implementer',
+    objective: 'Plan step 1 of 1: ship it',
+    worktree: '/repo/.kubic/wt/sess-1/alpha',
+    toolNames: ['read', 'write'],
+  };
+
+  it('builds a worktree task that validates', () => {
+    const built = buildAgentTask(input);
+    expect(built.valid).toBe(true);
+    if (built.valid) {
+      expect(built.task).toMatchObject({
+        taskId: 'sess-1:alpha',
+        parentSessionId: 'sess-1',
+        role: 'implementer',
+        worktree: '/repo/.kubic/wt/sess-1/alpha',
+        workspaceMode: 'worktree',
+        toolNames: ['read', 'write'],
+        budget: {},
+      });
+    }
+  });
+
+  it('refuses a relative worktree or an empty tool set by name', () => {
+    const relative = buildAgentTask({ ...input, worktree: '.kubic/wt/x' });
+    expect(relative.valid).toBe(false);
+    if (!relative.valid) {
+      expect(relative.errors.join('; ')).toMatch(
+        /worktree must be an absolute path/,
+      );
+    }
+    const empty = buildAgentTask({ ...input, toolNames: [] });
+    expect(empty.valid).toBe(false);
+    if (!empty.valid) {
+      expect(empty.errors.join('; ')).toMatch(/toolNames must be a non-empty/);
+    }
+  });
+
+  it('carries the optional levels it was given', () => {
+    const built = buildAgentTask({
+      ...input,
+      budget: { maxToolCalls: 5 },
+      constraints: ['do not touch main'],
+      expectedOutput: 'a diff',
+      model: { provider: 'acme', model: 'm1' },
+    });
+    expect(built.valid).toBe(true);
+    if (built.valid) {
+      expect(built.task.budget).toEqual({ maxToolCalls: 5 });
+      expect(built.task.constraints).toEqual(['do not touch main']);
+      expect(built.task.expectedOutput).toBe('a diff');
+      expect(built.task.model).toEqual({ provider: 'acme', model: 'm1' });
+    }
   });
 });

@@ -15,8 +15,13 @@
 //   - the tool run's §46 trajectory (issue #383): the envelope's trajectory
 //     ref is the absolute path of `<sessions-root>/<id>/trajectory.json`,
 //     the file parses, and `replay <file> --tier recorded`, `eval
-//     --trajectory <json>` and `export --trajectory <file> --type sft` all
-//     succeed on it;
+//     --trajectory <file>` (issue #258; the inline-JSON form is also
+//     exercised for back-compat) and `export --trajectory <file> --type
+//     sft` all succeed on it;
+//   - `benchmark --model faux/echo --worktree <scratch> --generation 0
+//     --size smoke --json`: the built-in fixture suites (issue #262) run
+//     through the real lane in a temp workspace, every executed row is
+//     `success: true` with `determinism: "live"`, and the matrix exits 0;
 //   - `orchestrate -p … --yes --json` in a scratch git repo: the manager
 //     delegates, every worker process answers from the faux provider (the
 //     switch crosses the §3.8 spawn allowlist), and the run completes; each
@@ -68,7 +73,13 @@ function trajectoryAt(label, path, readFile, problems) {
   }
   try {
     const parsed = JSON.parse(readFile(path));
-    if (parsed?.schema_version !== '1.0' || parsed?.provenance === undefined) {
+    // The §46 reader supports major 1; the 1.1 additions are optional on
+    // read (issue #329), so pin the major, not the minor.
+    if (
+      typeof parsed?.schema_version !== 'string' ||
+      !parsed.schema_version.startsWith('1.') ||
+      parsed?.provenance === undefined
+    ) {
       problems.push(`${label}: ${path} is not a §46 trajectory export`);
       return undefined;
     }
@@ -97,7 +108,7 @@ function consumeTrajectory(run, path, readFile, problems) {
       readFile(path),
       '--suite',
       'bugfix-repro',
-      '--tier',
+      '--size',
       'smoke',
       '--json',
     ],
@@ -108,6 +119,27 @@ function consumeTrajectory(run, path, readFile, problems) {
       `eval --trajectory of a run trajectory: exit ${scored.code}, want 0 (${scored.stdout.trim().slice(-300)} ${scored.stderr.trim().slice(-300)})`,
     );
   }
+  // Issue #258: `--trajectory <file>` is the documented form (the inline
+  // JSON stays for back-compat); the file the run wrote must score.
+  const scoredFile = run(
+    [
+      'eval',
+      '--trajectory',
+      path,
+      '--suite',
+      'bugfix-repro',
+      '--size',
+      'smoke',
+      '--json',
+    ],
+    { env: FAUX_ENV },
+  );
+  if (scoredFile.code !== 0) {
+    problems.push(
+      `eval --trajectory <file> of a run trajectory: exit ${scoredFile.code}, want 0 (${scoredFile.stdout.trim().slice(-300)} ${scoredFile.stderr.trim().slice(-300)})`,
+    );
+  }
+
   const exported = run(['export', '--trajectory', path, '--type', 'sft'], {
     env: FAUX_ENV,
   });
@@ -214,6 +246,55 @@ export function fauxSmoke({ run, readFile, sessionsRoot, cwd }) {
         problems.push('faux tool run trajectory: the ls call is not an action');
       }
       consumeTrajectory(run, path, readFile, problems);
+    }
+  }
+
+  // The live suite runner (issue #262): every executable built-in fixture
+  // runs through the real lane in a temp workspace, and the matrix exits by
+  // verdict. This is the shipped-binary proof that `kubic benchmark` is not
+  // a refusal anymore.
+  const benchmark = run(
+    [
+      'benchmark',
+      '--model',
+      'faux/echo',
+      '--worktree',
+      cwd,
+      '--generation',
+      '0',
+      '--size',
+      'smoke',
+      '--json',
+    ],
+    { env: FAUX_ENV },
+  );
+  const benchmarkEnvelope = envelopeOf(
+    'faux benchmark --json',
+    benchmark,
+    problems,
+  );
+  if (benchmark.code !== 0) {
+    problems.push(
+      `faux benchmark: exit ${benchmark.code}, want 0 (${benchmark.stdout.trim().slice(-300)} ${benchmark.stderr.trim().slice(-300)})`,
+    );
+  } else if (benchmarkEnvelope !== undefined) {
+    const executed = (benchmarkEnvelope.results ?? []).filter(
+      (row) => !row.skipped,
+    );
+    if (executed.length !== 7) {
+      problems.push(
+        `faux benchmark: ${executed.length} executed suite(s), want 7`,
+      );
+    }
+    for (const row of executed) {
+      if (row.success !== true) {
+        problems.push(`faux benchmark ${row.suite}: success false`);
+      }
+      if (row.determinism !== 'live') {
+        problems.push(
+          `faux benchmark ${row.suite}: determinism ${JSON.stringify(row.determinism)}, want "live"`,
+        );
+      }
     }
   }
 
@@ -325,7 +406,7 @@ if (import.meta.main) {
       process.exitCode = 1;
     } else {
       console.log(
-        'faux smoke OK: KUBIC_PROVIDER=faux run --json completed (echo + ls tool call), its trajectory.json read by replay/eval/export, text result block, unknown provider refused (exit 6), orchestrate --yes completed across worker processes, each worker trajectory matching its kubic workers row',
+        'faux smoke OK: KUBIC_PROVIDER=faux run --json completed (echo + ls tool call), its trajectory.json read by replay/eval/export, text result block, unknown provider refused (exit 6), benchmark ran the 7 fixture suites through the lane (all success, live tier), orchestrate --yes completed across worker processes, each worker trajectory matching its kubic workers row',
       );
     }
   } finally {

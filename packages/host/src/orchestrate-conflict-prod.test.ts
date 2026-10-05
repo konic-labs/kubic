@@ -12,6 +12,7 @@
 import { execFileSync } from 'node:child_process';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -22,7 +23,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
-import { runOrchestrateCommand } from './orchestrate-cli.js';
+import {
+  runOrchestrateCommand,
+  workerApprovalBoundMs,
+} from './orchestrate-cli.js';
 import type { ApprovalSnapshot } from './orchestrator/merge/conflicts.js';
 import { hashApprovalPolicy } from './orchestrator/merge/conflicts.js';
 
@@ -58,6 +62,7 @@ import { writeFileSync } from 'node:fs';
 const argv = process.argv.slice(2);
 const prompt = argv[argv.indexOf('-p') + 1] ?? '';
 writeFileSync('resolver-prompt.txt', prompt);
+writeFileSync('resolver-task-file.txt', process.env.KUBIC_TASK_FILE ?? '(none)');
 for (const file of ['shared.txt']) {
   const target = execFileSync('git', ['show', 'main:' + file], {
     encoding: 'utf8',
@@ -84,6 +89,45 @@ process.exit(0);
 const RESOLVER_FAIL = `
 process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
 process.exit(6);
+`;
+
+// The resolver child that dumps the approval identity it was launched with
+// (issue #156) and then settles the conflict like RESOLVER_SETTLE. The dump
+// is what proves the mailbox wiring reaches a REAL spawned resolver — a fakes
+// test cannot: the composition root builds this child's env.
+const RESOLVER_DUMPS_ENV = `
+import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+const argv = process.argv.slice(2);
+const roleAt = argv.indexOf('--role');
+writeFileSync('resolver-approvals-env.json', JSON.stringify({
+  approvalsDir: process.env.KUBIC_APPROVALS_DIR ?? null,
+  verifyKey: process.env.KUBIC_APPROVALS_VERIFY_KEY ?? null,
+  orchestratorSession: process.env.KUBIC_ORCHESTRATOR_SESSION ?? null,
+  workerSession: process.env.KUBIC_WORKER_SESSION ?? null,
+  workerId: process.env.KUBIC_WORKER_ID ?? null,
+  role: roleAt === -1 ? null : (argv[roleAt + 1] ?? null),
+  boundMs: process.env.KUBIC_APPROVALS_BOUND_MS ?? null,
+}));
+for (const file of ['shared.txt']) {
+  const target = execFileSync('git', ['show', 'main:' + file], {
+    encoding: 'utf8',
+  });
+  writeFileSync(file, target);
+}
+execFileSync('git', ['add', '-A']);
+execFileSync('git', [
+  '-c',
+  'user.name=kubic-resolver',
+  '-c',
+  'user.email=kubic-resolver@local',
+  'commit',
+  '-m',
+  'resolver: settle conflict',
+]);
+process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
+if (0 === 0) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
+process.exit(0);
 `;
 
 const POLICY: ApprovalSnapshot = {
@@ -176,6 +220,9 @@ describe('prod orchestrate path: conflict delegation (issue #106, §45.2)', () =
         agents: ['alpha', 'beta'],
         session: 'iss106',
         yes: true,
+        // §67 task resources (issue #170): the resolver gets the run's
+        // skills, like every worker (L-D9).
+        skills: ['./skills/house.md'],
       },
       h.deps,
     );
@@ -201,6 +248,29 @@ describe('prod orchestrate path: conflict delegation (issue #106, §45.2)', () =
     // file in each side's changes since the merge base.
     expect(resolverPrompt).toContain('shared.txt');
     expect(resolverPrompt).not.toContain('(no file headers in either diff)');
+    // §67 (issue #191): the resolver gets an explicit task too — the spec's
+    // writer tool set travels as `task.toolNames`, so a worktree without the
+    // role document no longer drops it onto a default lane.
+    const taskFile = readFileSync(
+      join(resolverWorktree, 'resolver-task-file.txt'),
+      'utf8',
+    );
+    expect(taskFile).not.toBe('(none)');
+    const resolverTask = JSON.parse(readFileSync(taskFile, 'utf8')) as {
+      role: string;
+      toolNames: string[];
+      workspaceMode: string;
+    };
+    expect(resolverTask.role).toBe('implementer');
+    expect(resolverTask.workspaceMode).toBe('worktree');
+    expect(resolverTask.toolNames).toContain('write');
+    expect(resolverTask.toolNames).toContain('edit');
+    // The resolver is granted the run's skills, resolved against the
+    // manager's cwd (its own worktree would resolve the relative path
+    // elsewhere).
+    expect(
+      (resolverTask as { resources?: { skills?: string[] } }).resources,
+    ).toEqual({ skills: [join(h.root, 'skills', 'house.md')] });
     // The merge target ends up with the resolver's settlement.
     // main holds alpha's line: the resolver took the merge target's version,
     // so the settling content is alpha's, and the merge is clean afterwards.
@@ -256,6 +326,67 @@ describe('prod orchestrate path: conflict delegation (issue #106, §45.2)', () =
       ),
     ).toBe(false);
     expect(h.lines.join('\n')).not.toMatch(/resolver: resolver child exited/);
+  });
+
+  it('launches the real resolver child with the run approval surface (issue #156)', async () => {
+    const h = await harness(RESOLVER_DUMPS_ENV);
+    // A committed role document for the spec's role (§45.2): the manager then
+    // passes `--role implementer` (and the resolver's own lane would resolve
+    // the document from its worktree), so the dump below pins the role the
+    // resolver was actually told it runs as.
+    mkdirSync(join(h.root, '.kubic', 'roles'), { recursive: true });
+    // Both documents the built-in preset assigns (§12.1): the role plan
+    // refuses a run whose worker would get a role with no document, and the
+    // resolver's spec role is the implementer set.
+    for (const [name, tools, prompt] of [
+      ['planner', '[read, ls, find, grep]', 'Produce ordered steps.'],
+      [
+        'implementer',
+        '[read, ls, find, grep, write, edit, bash]',
+        'Settle conflicts in your worktree.',
+      ],
+    ] as const) {
+      writeFileSync(
+        join(h.root, '.kubic', 'roles', `${name}.md`),
+        `---\nrole: ${name}\n\ntools: ${tools}\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# ${name}\n\n## Prompt\n\n${prompt}\n`,
+      );
+    }
+    gitIn(h.root, ['add', '-A']);
+    gitIn(h.root, ['commit', '-m', 'add some roles']);
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'edit shared.txt in every worktree',
+        agents: ['alpha', 'beta'],
+        session: 'iss156',
+        yes: true,
+      },
+      h.deps,
+    );
+    expect(code, h.lines.join('\n')).toBe(0);
+    const dump = JSON.parse(
+      readFileSync(
+        join(
+          realpathSync(join(h.root, '.kubic', 'wt', 'iss156', 'beta')),
+          'resolver-approvals-env.json',
+        ),
+        'utf8',
+      ),
+    ) as Record<string, string | null>;
+    // The mailbox the run's own approvals layer answers for — outside the
+    // repo, under the user home, for THIS run's session (issues #149, #156).
+    expect(dump.approvalsDir).toContain(join('iss156'));
+    expect(dump.approvalsDir?.startsWith(h.root)).toBe(false);
+    expect(dump.verifyKey).toBeTruthy();
+    // …and the resolver is treated as a delegated child: its own session, the
+    // run as parent, its spec role, and the child's bound below the manager's
+    // (issues #156, #159, #230).
+    expect(dump.orchestratorSession).toBe('iss156');
+    expect(dump.workerSession).toBe('iss156-beta');
+    expect(dump.workerId).toBe('beta');
+    expect(dump.role).toBe('implementer');
+    expect(dump.boundMs).toBe(
+      String(workerApprovalBoundMs(POLICY.maxPendingMs)),
+    );
   });
 
   it('reads real retained-worktree dirtiness and names the files', async () => {

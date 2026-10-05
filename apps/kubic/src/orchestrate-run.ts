@@ -13,12 +13,24 @@
 
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+// §67 (issue #191): the task and the capability grant travel together — the
+// manager builds and validates the task it hands a worker child.
+import {
+  type AgentTask,
+  buildAgentTask,
+} from '../../../packages/agents/src/task.js';
 import type { CliTheme } from '../../../packages/core/src/cli/theme.js';
-import type { ShellResult } from '../../../packages/exec/src/env.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import type { Shell, ShellResult } from '../../../packages/exec/src/env.js';
+import {
+  NodeExecutionEnv,
+  ROOT_PROVENANCE,
+} from '../../../packages/exec/src/env.js';
+import {
+  createNodeFileBridge,
+  type FileBridge,
+} from '../../../packages/exec/src/file-bridge.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import type { PostureOptions } from '../../../packages/extensions/src/startup.js';
 import { enableSessionFullAccess } from '../../../packages/host/src/approvals.js';
@@ -68,6 +80,8 @@ import {
   POSTURE_FULL_ACCESS,
   type WorkerApprovalsRun,
   type WorkerAskSeat,
+  type WorkerQuestionSeat,
+  workerQuestionSeatForRun,
   workerSeatForRun,
 } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
 import type { MergedHunk } from '../../../packages/host/src/orchestrator/merge/attribution.js';
@@ -98,8 +112,15 @@ import {
 } from '../../../packages/host/src/policy/audit-ledger.js';
 import type { EffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
-import { planWorkerRoles } from '../../../packages/host/src/roles/worker-roles.js';
+import {
+  planWorkerRoles,
+  thinkingOverrideFromEnv,
+} from '../../../packages/host/src/roles/worker-roles.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
+import {
+  errorKindForFailureCode,
+  isFailureCode,
+} from '../../../packages/worker/src/lane/failures.js';
 import { inspectStoredWork } from '../../../packages/worker/src/lane/pending.js';
 import {
   attachSession,
@@ -115,6 +136,12 @@ import {
   reconcileWorkerRows,
 } from '../../../packages/worker/src/lifecycle/orphans.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
+// §81 replacement (issue #175): the crash → terminate → reopen → resume
+// protocol. Its generation allocation names the next number; the launcher's
+// registry CAS (inside launchWorker) is what actually allocates it, so there
+// is one allocator — the protocol's stale-generation check reads the number
+// the relaunch will take.
+import { replaceWorker } from '../../../packages/worker/src/lifecycle/replace.js';
 import {
   readWorkerRows,
   updateWorkerRowsFile,
@@ -123,7 +150,7 @@ import {
 } from '../../../packages/worker/src/lifecycle/rows.js';
 import { allowlistedShell } from '../../../packages/worker/src/lifecycle/shell.js';
 import type { WorkerShell } from '../../../packages/worker/src/lifecycle/spawn.js';
-import { TERMINAL_STATUSES } from '../../../packages/worker/src/lifecycle/status.js';
+import { isTerminalAgentStatus } from '../../../packages/worker/src/lifecycle/status.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 import type {
   AgentResult,
@@ -161,6 +188,21 @@ export interface OrchestrateRunOptions {
   readyTimeoutMs?: number;
   /** Wall-clock bound handed to each child `kubic run` (issue #94). */
   workerTimeoutMs?: number;
+  /**
+   * §51 cancellation grace (issue #249) handed to the lifecycle layer: how
+   * long a worker's own cooperative shutdown gets after SIGTERM before the
+   * group SIGKILL escalation. Absent uses the lifecycle default (10 s), which
+   * is deliberately longer than the 2 s tool grace.
+   */
+  workerCancelGraceMs?: number;
+  /**
+   * §82 per-agent limits (issue #163): the RSS cap (MB) each worker runs
+   * under and the worktree disk quota (MB) checked on an interval. Absent
+   * means the corresponding limit is not enforced (and `kubic doctor` says
+   * so). Memory is also handed to the child as `--max-old-space-size`.
+   */
+  workerMemoryLimitMb?: number;
+  worktreeDiskQuotaMb?: number;
   /**
    * How the resolver child is reached (issue #106, §45.2). Defaults to
    * `workerEntry` — the resolver IS a `kubic run` child, so a test that
@@ -209,6 +251,9 @@ export interface OrchestrateRunOptions {
    *  Absent means no surface is attached: every ask denies closed on its
    *  bound, which is what a non-interactive run keeps. */
   approvalsSeat?: WorkerAskSeat;
+  // Issue #154: presents worker questions (free text); default: a readline
+  // prompt on a TTY, none headless.
+  questionSeat?: WorkerQuestionSeat;
   /**
    * The merge gate's decider (issue #327). A caller that OWNS the terminal —
    * the TUI, whose alt-screen and raw stdin a readline would corrupt —
@@ -397,6 +442,83 @@ function launchesView(
   };
 }
 
+/**
+ * §13 WAITING (issue #151): while the router holds an unanswered ask for a
+ * worker, its row says WAITING; the answer (or the bound's denial) flips it
+ * back to RUNNING. Only a LIVE agent flips — a worker that settled keeps its
+ * own terminus — and only a change is written. Exported so the wiring itself
+ * is what the approvals test drives, not a copy of it.
+ */
+export function workerAskStateObserver(
+  registry: WorkerRegistry,
+  persist: () => void,
+): (agentId: string, pending: boolean) => void {
+  return (agentId, pending) => {
+    const row = registry.get(agentId);
+    const next = pending ? 'waiting' : 'running';
+    if (row === undefined || row.agentStatus === next) return;
+    if (row.agentStatus !== 'running' && row.agentStatus !== 'waiting') {
+      return;
+    }
+    registry.updateAgentStatus(agentId, next);
+    persist();
+  };
+}
+
+// §82 resource probes (issue #163): the manager's own readings, through the
+// exec Shell seam (never /proc directly, and never inside the worker). Both
+// return undefined when the reading is not available — an unenforceable limit
+// is reported as such, never guessed.
+export async function processMemoryMb(
+  cwd: string,
+  pid: number,
+  shell: Shell = new NodeExecutionEnv(cwd).shell,
+): Promise<number | undefined> {
+  // The process GROUP first (a worker's tools are its children), then the
+  // leader alone when the group query is unsupported.
+  for (const args of [
+    ['-o', 'rss=', '-g', String(pid)],
+    ['-o', 'rss=', '-p', String(pid)],
+  ]) {
+    try {
+      const done = await shell
+        .spawn('ps', args, {
+          provenance: ROOT_PROVENANCE,
+        })
+        .wait();
+      if (done.exitCode !== 0) continue;
+      const kb = done.stdout
+        .split('\n')
+        .map((line) => Number(line.trim()))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .reduce((sum, value) => sum + value, 0);
+      if (kb > 0) return Math.round(kb / 1024);
+    } catch {
+      // Probe unavailable — try the next form.
+    }
+  }
+  return undefined;
+}
+
+export async function worktreeDiskMb(
+  cwd: string,
+  path: string,
+  shell: Shell = new NodeExecutionEnv(cwd).shell,
+): Promise<number | undefined> {
+  try {
+    const done = await shell
+      .spawn('du', ['-sk', path], {
+        provenance: ROOT_PROVENANCE,
+      })
+      .wait();
+    if (done.exitCode !== 0) return undefined;
+    const kb = Number(done.stdout.trim().split(/\s+/)[0]);
+    return Number.isFinite(kb) ? Math.round(kb / 1024) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function provenanceFor(sessionId: string, agentId: string, tool: string) {
   return {
     sessionId,
@@ -428,8 +550,9 @@ function entryScript(): string {
 
 // Wall-clock bound handed to each child `kubic run` (issue #94). A worker
 // that never settles is the failure mode with no named code: the child's
-// own guard turns it into exit 3 (budget_exhausted), which the lifecycle
-// layer reports as the §52 budget code — never a hang.
+// own guard turns it into exit 1 with status `timeout` (issue #280), which
+// the lifecycle layer reports as that §68 status — never a hang, and never
+// a budget breach the user did not configure.
 const DEFAULT_WORKER_TIMEOUT_MS = 600_000;
 
 // The readiness marker the child prints before its prompt is submitted
@@ -437,12 +560,79 @@ const DEFAULT_WORKER_TIMEOUT_MS = 600_000;
 // announces itself the moment its session is attached, so the launch
 // handshake times the real startup instead of prompt construction.
 
+// The file a worker child reads its §67 task from (issue #191): written into
+// the worker's own session dir by the manager, named to the child through
+// KUBIC_TASK_FILE.
+export const AGENT_TASK_FILE = 'agent-task.json';
+
+// The resolver shares the conflicted worker's session dir, so its task file
+// is named apart from that worker's own (issue #191).
+export const RESOLVER_TASK_FILE = 'resolver-task.json';
+
+// §67 (issue #191): a task that fails validation refuses the spawn before the
+// child exists. Named so the run's terminus says why.
+export class AgentTaskRefusedError extends Error {
+  readonly code = 'task_refused';
+  constructor(agentId: string, errors: readonly string[]) {
+    super(`worker '${agentId}' task refused: ${errors.join('; ')}`);
+    this.name = 'AgentTaskRefusedError';
+  }
+}
+
+// Write the task into the worker's session dir and return its absolute path —
+// the value the child gets in KUBIC_TASK_FILE. The child reads it back from
+// its own side of the session store, never from the manager's process.
+function writeAgentTask(
+  sessionBridge: Pick<FileBridge, 'writeFile' | 'absolutePath'>,
+  sessionId: string,
+  task: AgentTask,
+): string {
+  const relative = join(sessionId, AGENT_TASK_FILE);
+  sessionBridge.writeFile(relative, `${JSON.stringify(task)}\n`);
+  return sessionBridge.absolutePath(relative);
+}
+
+// `--skill` values (issue #170): relative paths resolve against the MANAGER's
+// cwd — a child runs in its own worktree, where the same relative path would
+// name something else — and every value travels twice: as `--skill <abs>` on
+// the child's argv and as the §67 task's `resources.skills`, which is also
+// what the registry row records for `kubic workers`. Order is kept, duplicates
+// collapse.
+function resolveSkillPaths(
+  skills: readonly string[] | undefined,
+  cwd: string,
+): string[] {
+  if (skills === undefined || skills.length === 0) return [];
+  const out: string[] = [];
+  for (const skill of skills) {
+    const absolute = isAbsolute(skill) ? skill : resolve(cwd, skill);
+    if (!out.includes(absolute)) out.push(absolute);
+  }
+  return out;
+}
+
+// `provider/id` → the task's model selection; a ref without a usable split
+// names no model (the child's own pin still travels on KUBIC_MODEL).
+function modelOfRef(
+  ref: string | undefined,
+): { provider: string; model: string } | undefined {
+  if (ref === undefined) return undefined;
+  const slash = ref.indexOf('/');
+  if (slash <= 0 || slash === ref.length - 1) return undefined;
+  return { provider: ref.slice(0, slash), model: ref.slice(slash + 1) };
+}
+
 export class WorkerRunFailure extends Error {
   readonly code:
     | 'spawn_failed'
     | 'worker_failed'
     | 'result_invalid'
-    | 'cancelled';
+    | 'cancelled'
+    // §82 resource enforcement (issue #163): a worker the manager stopped
+    // because a configured limit was breached keeps that named code as the
+    // run's terminus, so the envelope says WHY it stopped.
+    | 'resource_memory_exceeded'
+    | 'resource_disk_exceeded';
   /**
    * The approval-layer terminus the child declared for itself (issue #105).
    * A worker child denies closed on its own bounded wait or on a configured
@@ -459,7 +649,13 @@ export class WorkerRunFailure extends Error {
   result?: AgentResult;
 
   constructor(
-    code: 'spawn_failed' | 'worker_failed' | 'result_invalid' | 'cancelled',
+    code:
+      | 'spawn_failed'
+      | 'worker_failed'
+      | 'result_invalid'
+      | 'cancelled'
+      | 'resource_memory_exceeded'
+      | 'resource_disk_exceeded',
     message: string,
     approval?: { code: string; exitCode: number },
   ) {
@@ -516,6 +712,11 @@ interface ChildReport {
   sessionId?: unknown;
   result?: { summary?: unknown };
   model?: unknown;
+  // Issue #155: the child's own §52 classification, when it printed one —
+  // the precise half the exit code cannot carry. The envelope's `error.kind`
+  // is the §78 terminus (never a §68 kind), so the manager derives the
+  // domain from this code instead (review finding).
+  failure?: { code?: unknown };
   usage?: {
     input?: unknown;
     output?: unknown;
@@ -653,6 +854,16 @@ export function workerFailureResult(
 ): AgentResult {
   const report = done === undefined ? undefined : childReportOf(done.stdout);
   const approval = failure.approval?.code;
+  // Issue #155: the manager reads the child's own §52 code (and the domain
+  // it belongs to) instead of guessing from the exit code. The exit-code
+  // mapping stays the fallback for a child that printed no report.
+  const childCode =
+    report?.failure !== undefined && isFailureCode(report.failure.code)
+      ? report.failure.code
+      : undefined;
+  // Issue #280: a wall-clock timeout and a cancellation keep their own §68
+  // status, read from the child's own report — only a configured budget
+  // (exit 3 / approval terminus) is `budget_exhausted`.
   const status: ResultStatus =
     failure.code === 'spawn_failed'
       ? 'spawn_failed'
@@ -660,16 +871,22 @@ export function workerFailureResult(
         ? 'cancelled'
         : approval === 'BUDGET_EXHAUSTED'
           ? 'budget_exhausted'
-          : report?.status === 'budget_exhausted'
+          : report?.status === 'timeout'
             ? 'timeout'
-            : 'failed';
+            : report?.status === 'cancelled'
+              ? 'cancelled'
+              : 'failed';
   const kind: ResultErrorKind =
     approval === 'BUDGET_EXHAUSTED'
       ? 'budget'
       : approval !== undefined
         ? 'approval'
         : failure.code === 'worker_failed'
-          ? (launchFailure?.kind ?? 'process')
+          ? ((childCode === undefined
+              ? undefined
+              : errorKindForFailureCode(childCode)) ??
+            launchFailure?.kind ??
+            'process')
           : 'process';
   return buildAgentResult({
     status,
@@ -680,7 +897,7 @@ export function workerFailureResult(
       kind,
       message: failure.message,
       details: {
-        code: approval ?? launchFailure?.code ?? failure.code,
+        code: childCode ?? approval ?? launchFailure?.code ?? failure.code,
       },
     },
   });
@@ -731,6 +948,17 @@ function workerRunError(
     return new WorkerRunFailure(
       'spawn_failed',
       `spawn failed for worker '${agentId}': ${failure.message}`,
+    );
+  }
+  // A resource breach is the manager's own terminus (issue #163): the run
+  // reports the named code, never a generic worker_failed.
+  if (
+    failure?.code === 'resource_memory_exceeded' ||
+    failure?.code === 'resource_disk_exceeded'
+  ) {
+    return new WorkerRunFailure(
+      failure.code,
+      `worker '${agentId}' stopped: ${failure.message}`,
     );
   }
   const suffix = failure === undefined ? '' : ` [${failure.code}]`;
@@ -893,6 +1121,10 @@ export async function orchestrateDepsWithDefaults(
 ): Promise<OrchestrateCommandDeps> {
   const cwd = options.cwd ?? process.cwd();
   const debug = options.debug ?? (() => undefined);
+  // Issue #202 (§38.1): the run's explicit thinking level — one derivation
+  // shared with doctor's posture, outranking each role's own thinking default
+  // for that role's worker.
+  const thinkingOverride = thinkingOverrideFromEnv();
   // Issue #133: the runtime `[orchestrator]` projection — the worktree
   // parent and the worker cap, both already validated at config load. The
   // shipped defaults apply when the config sets neither: `.kubic/wt` for
@@ -921,6 +1153,9 @@ export async function orchestrateDepsWithDefaults(
   // (tests do); headless keeps NO seat and denies closed on the bound.
   const optionsSeat =
     options.approvalsSeat ?? workerSeatForRun(process.stdin.isTTY === true);
+  const questionSeat =
+    options.questionSeat ??
+    workerQuestionSeatForRun(process.stdin.isTTY === true);
   let approvalsActive: WorkerApprovalsRun | undefined;
   let approvalsBoundMs = ORCHESTRATE_APPROVAL_BOUND_MS;
   const shellForWorktree = (worktreePath: string): WorkerShell => {
@@ -931,6 +1166,10 @@ export async function orchestrateDepsWithDefaults(
     return workerShell;
   };
   const launchedByAgent = new Map<string, ReturnType<typeof launchWorker>>();
+  // Workers the run cancelled (issue #206 fail-fast): remembered separately
+  // from the signal guard, because the cancellation is per AGENT and may
+  // arrive before that agent's child exists.
+  const cancelRequested = new Set<string>();
   const guard = liveWorkerGuard(options.signals ?? processSignals);
   const throwIfCancelled = (agentId: string): void => {
     const signal = guard.cancelledBy();
@@ -938,6 +1177,12 @@ export async function orchestrateDepsWithDefaults(
       throw new WorkerRunFailure(
         'cancelled',
         `worker '${agentId}' cancelled by ${signal}`,
+      );
+    }
+    if (cancelRequested.has(agentId)) {
+      throw new WorkerRunFailure(
+        'cancelled',
+        `worker '${agentId}' cancelled by the run`,
       );
     }
   };
@@ -954,7 +1199,11 @@ export async function orchestrateDepsWithDefaults(
   let orchestratorSessionId: string | undefined;
   // Worktree creation time per agent, so a launch sample can assert the
   // §61 worktree budget alongside its own spawn/teardown legs.
-  const worktreeStartedAt = new Map<string, number>();
+  // §61 (issue #158): worktree creation duration and session attach duration
+  // per agent, measured where each really happens (creation here, attach in
+  // `createWorkerSession`) and handed to the launch sample as-is.
+  const worktreeMsByAgent = new Map<string, number>();
+  const attachMsByAgent = new Map<string, number>();
   // Extension startup (issue #93): the MANAGER lane loads the first-party
   // bundle set through the same trust gates before it plans any worker — a
   // missing/refused bundle refuses the whole orchestration (the named
@@ -980,6 +1229,32 @@ export async function orchestrateDepsWithDefaults(
     if (root === undefined) throw new Error('not a git repository');
     return root;
   };
+
+  // The approvals identity + mailbox a spawned child (worker OR resolver)
+  // needs to raise an ask the user can answer (issues #105, #149, #156, #159):
+  // the mailbox, the manager's public verification key, the child's bound,
+  // and the two session ids §23 attribution needs — the worker's OWN session
+  // (`<orch>-<agent>`) and the orchestration it belongs to. Absent when the
+  // run carries no approval layer: a child then gets no half-wired surface.
+  const approvalsChildEnv = (
+    childSession: string,
+    orchestrationSession: string,
+  ): Record<string, string> =>
+    approvalsActive === undefined
+      ? {}
+      : {
+          KUBIC_APPROVALS_DIR: approvalsActive.mailboxDir(),
+          // The child accepts an answer only with a matching MAC — the mailbox
+          // directory is one a worker can write, so its contents are bytes
+          // until this key says otherwise (issue #149).
+          KUBIC_APPROVALS_VERIFY_KEY: approvalsActive.verifyKey(),
+          KUBIC_ORCHESTRATOR_SESSION: orchestrationSession,
+          KUBIC_WORKER_SESSION: childSession,
+          // Issue #230: the child's bound, below the manager's.
+          KUBIC_APPROVALS_BOUND_MS: String(
+            workerApprovalBoundMs(approvalsBoundMs),
+          ),
+        };
 
   // Issue #222: a worker child runs in its own worktree, which holds only
   // tracked files — so it is told the manager's repo root and resolves the
@@ -1067,8 +1342,11 @@ export async function orchestrateDepsWithDefaults(
               const next = judged.get(
                 `${row.workerId}:${row.generation}:${row.pid ?? '-'}`,
               );
+              // §13 (issue #151): the AGENT state decides whether the row
+              // still claims live work — the process phase alone cannot (a
+              // settling agent's process is already gone).
               return next !== undefined &&
-                !TERMINAL_STATUSES.includes(row.status)
+                !isTerminalAgentStatus(row.agentStatus)
                 ? next
                 : row;
             }),
@@ -1347,7 +1625,9 @@ export async function orchestrateDepsWithDefaults(
     // Issue #133: the configured worker cap is the run's own admission
     // surface — the same scheduler the CLI would default to, constructed
     // with the validated `[orchestrator].maxWorkers` as its default. Unset
-    // builds no scheduler and the CLI's shipped default cap of four stands.
+    // builds no scheduler and the CLI's shipped default cap of four stands;
+    // the run's `--concurrency` override (issue #206) is applied to whichever
+    // scheduler it gets.
     ...(maxWorkers === undefined
       ? {}
       : {
@@ -1406,12 +1686,27 @@ export async function orchestrateDepsWithDefaults(
     // projected to one role per worker. The refusal is fail-closed in the
     // CLI (role_refused) with the resolver's named reason; this hook only
     // reports what the documents say — it never invents a role.
-    loadWorkerRoles: (agents: readonly string[]) => {
+    loadWorkerRoles: (agents: readonly string[], binding?) => {
       const cwd = options.cwd ?? process.cwd();
       return planWorkerRoles({
         bridge: createNodeFileBridge(cwd),
         cwd,
         agents,
+        // §38.1 (#202): the manager's own effective model is the fallback
+        // level under each role's `[roles.<r>].model`, and the run's explicit
+        // thinking level (`KUBIC_MODEL_THINKING`) outranks the role default.
+        ...(options.model === undefined
+          ? {}
+          : { parentModel: `${options.model.provider}/${options.model.id}` }),
+        ...(thinkingOverride === undefined ? {} : { thinkingOverride }),
+        // The explicit per-agent binding (issue #178): the role each worker
+        // was told on the command line, and its own model pin.
+        ...(binding === undefined || Object.keys(binding.roles).length === 0
+          ? {}
+          : { roles: binding.roles }),
+        ...(binding === undefined || Object.keys(binding.models).length === 0
+          ? {}
+          : { models: binding.models }),
         ...(options.toolPolicy === undefined
           ? {}
           : { toolPolicy: options.toolPolicy }),
@@ -1455,7 +1750,10 @@ export async function orchestrateDepsWithDefaults(
           ...(ownerSession === undefined ? {} : { ownerSession }),
           ...(worktreeRoot === undefined ? {} : { worktreeRoot }),
         });
-        worktreeStartedAt.set(agentId, worktreeStarted);
+        // §61 (issue #158): the duration ends when creation RETURNS — the
+        // launch sample must report the creation leg, not the gap until the
+        // child is spawned.
+        worktreeMsByAgent.set(agentId, Date.now() - worktreeStarted);
         for (const warning of added.warnings) debug(`gap: ${warning.message}`);
         return { path: added.path, branch: added.branch };
       } catch (error) {
@@ -1490,7 +1788,7 @@ export async function orchestrateDepsWithDefaults(
         }
         if (!present) throw worktreeMissingError(path, branch);
         debug(`worktree: resuming '${agentId}' in its own ${path}`);
-        worktreeStartedAt.set(agentId, worktreeStarted);
+        worktreeMsByAgent.set(agentId, Date.now() - worktreeStarted);
         return { path, branch };
       }
     },
@@ -1528,6 +1826,7 @@ export async function orchestrateDepsWithDefaults(
         dir: join(resolveRepoRuntimeRoot(needRoot()), '.kubic', 'orchestrator'),
         sessionId: approvalOptions.sessionId,
         maxPendingMs: approvalOptions.maxPendingMs,
+        ...(questionSeat === undefined ? {} : { questionSeat }),
         ...(approvalOptions.budget === undefined
           ? {}
           : { budget: approvalOptions.budget }),
@@ -1539,6 +1838,12 @@ export async function orchestrateDepsWithDefaults(
           : { budgetForAgent: approvalOptions.budgetForAgent }),
         ...(approvalOptions.fullAccess ? { fullAccess: true } : {}),
         ...(approvalOptions.fresh ? { fresh: true } : {}),
+        // §13 WAITING (issue #151): the router's ask-state changes become the
+        // worker row's waiting/running state.
+        onAskState: workerAskStateObserver(
+          workerRegistry,
+          persistWorkerRowsNow,
+        ),
         // The TTY seat when this run has a user attached; without one a
         // worker ask denies closed on the router's own bound (never a silent
         // hang). `--yes` never replaces it (issue #323): the standing answer
@@ -1552,6 +1857,8 @@ export async function orchestrateDepsWithDefaults(
     },
     createWorkerSession: async (input) => {
       orchestratorSessionId = input.sessionId;
+      // §61 (issue #158): time the create/attach leg — the sample's attachMs.
+      const attachStartedAt = Date.now();
       // Create the worker's session before the child spawns (issue #85):
       // `kubic run --session <id>` only ATTACHES, so without this the child
       // dies at attach (exit 5 "unknown session") before any model call.
@@ -1597,6 +1904,7 @@ export async function orchestrateDepsWithDefaults(
               : ` (${pending.join('; ')} will be resumed by the worker)`
           }`,
         );
+        attachMsByAgent.set(input.agentId, Date.now() - attachStartedAt);
         return { sessionId: input.workerSessionId };
       } catch (error) {
         if (!(error instanceof SessionAttachError)) throw error;
@@ -1618,6 +1926,7 @@ export async function orchestrateDepsWithDefaults(
       debug(
         `session: created '${id}' for worker '${input.agentId}' (cwd ${input.worktree.path})`,
       );
+      attachMsByAgent.set(input.agentId, Date.now() - attachStartedAt);
       return { sessionId: id };
     },
     runWorker: async (
@@ -1631,12 +1940,18 @@ export async function orchestrateDepsWithDefaults(
         workerSessionFor(info?.sessionId ?? 'orch', agentId);
       // §68 provenance (issue #185): the model the child was pinned to (its
       // own report names the one it actually ran, and wins) and thinking.
+      // §38.1 (#202): the pin is the role's own `[roles.<r>].model` when its
+      // worker got one, then the manager's effective model — the same value
+      // the child's `KUBIC_MODEL` carries below.
       const modelPin = modelFrozen
         ? options.model === undefined
           ? undefined
           : `${options.model.provider}/${options.model.id}`
-        : (process.env.KUBIC_MODEL ?? info?.modelRef);
-      const thinking = process.env.KUBIC_MODEL_THINKING;
+        : (info?.modelRef ?? process.env.KUBIC_MODEL);
+      // Issue #202: the child's thinking level is the resolved per-worker one
+      // (the run's explicit `KUBIC_MODEL_THINKING`, else the role's default);
+      // the manager's ambient value is the fallback.
+      const thinking = info?.thinking ?? process.env.KUBIC_MODEL_THINKING;
       // Issue #94: the worker starts through the lifecycle layer, never by
       // reaching for the exec Shell here. launchWorker refuses a stale
       // generation, registers the row `kubic workers` reads, builds the
@@ -1658,6 +1973,41 @@ export async function orchestrateDepsWithDefaults(
         info?.role ?? 'worker',
         info?.modelRef,
       );
+      // §67 task resources (issue #170): the run's `--skill` values, resolved
+      // against the manager's cwd.
+      const skills = resolveSkillPaths(info?.skills, cwd);
+      // §67 (issue #191): the task and the capability grant travel together.
+      // The manager builds and VALIDATES the worker's task before the child
+      // exists — a task whose worktree is not absolute or whose tool set is
+      // empty refuses the spawn by name — and writes it into the worker's
+      // session dir, so the child registers exactly `task.toolNames` instead
+      // of re-deriving a role from its own worktree (a checkout of HEAD, not
+      // the working tree the plan was composed from). No role assignment
+      // means no grant to transmit: no task file, and the child keeps its own
+      // default lane.
+      const taskFile = ((): string | undefined => {
+        // No role assignment means no grant to transmit (the child keeps its
+        // own default lane). An assignment with an EMPTY tool set is a task
+        // that cannot validate — refused below, never silently widened to the
+        // full solo set.
+        if (info?.role === undefined) return undefined;
+        const model = modelOfRef(info.modelRef);
+        const built = buildAgentTask({
+          taskId: `${workerSession}:${agentId}`,
+          parentSessionId: info.sessionId,
+          role: info.role,
+          objective: prompt,
+          worktree: worktree.path,
+          toolNames: info.tools ?? [],
+          ...(budgetForSpawn === undefined ? {} : { budget: budgetForSpawn }),
+          ...(model === undefined ? {} : { model }),
+          ...(skills.length === 0 ? {} : { resources: { skills } }),
+        });
+        if (!built.valid) {
+          throw new AgentTaskRefusedError(agentId, built.errors);
+        }
+        return writeAgentTask(sessionBridge, workerSession, built.task);
+      })();
       if (credentialGrant.refusal !== undefined) {
         // Defence in depth: the preflight checks this same memoized lookup
         // for every pending agent before any worktree exists, so reaching
@@ -1683,15 +2033,19 @@ export async function orchestrateDepsWithDefaults(
           credentials: credentialGrant.grant,
           owner: `orchestrate:${info?.sessionId ?? 'orch'}`,
           // The child's base env is the parent's, filtered by the §3.8
-          // allowlist inside the layer — never inherited wholesale. Two
-          // additions ride on top: the role's model default (issue #104,
-          // §12.1) travels through the EXISTING `KUBIC_MODEL` pin — the
-          // child's own selectModel honours it, so no new model plumbing is
-          // introduced, and a default is the LOWEST-precedence choice, so it
-          // is only sent when the operator has not pinned a model of their
-          // own — and the approvals mailbox (issue #105) is added here, not
-          // inherited: the child learns where to publish an ask it cannot
-          // answer, and which orchestrator session it belongs to.
+          // allowlist inside the layer — never inherited wholesale. What
+          // rides on top: the worker's resolved model and thinking level
+          // (§38.1, issues #202/#178) and the approvals mailbox (issue #105).
+          // The model is the role's `[roles.<r>].model` pin, the explicit
+          // per-agent pin, or the manager's effective model — a real §38.1
+          // level, not a default: it travels through the EXISTING
+          // `KUBIC_MODEL` pin (the child's own selectModel honours it, so no
+          // new model plumbing is introduced) and OVERWRITES an ambient
+          // value, so the manager's env pin never outranks the role's pin.
+          // Only a frozen enterprise pin drops it, because the child's own
+          // load drops it too. The mailbox is added here, not inherited: the
+          // child learns where to publish an ask it cannot answer, and which
+          // orchestrator session it belongs to.
           baseEnv: {
             ...Object.fromEntries(
               Object.entries(process.env).filter(
@@ -1702,21 +2056,33 @@ export async function orchestrateDepsWithDefaults(
                   !(modelFrozen && entry[0] === 'KUBIC_MODEL'),
               ),
             ),
-            ...(modelFrozen ||
-            info?.modelRef === undefined ||
-            process.env.KUBIC_MODEL !== undefined
+            // §38.1 (issue #202): the resolved worker model — the role's
+            // `[roles.<r>].model` pin, else the manager's effective model —
+            // rides the existing `KUBIC_MODEL` pin, OVERWRITING any ambient
+            // value so a role pin is not outranked by the manager's env pin.
+            // No level resolved one: no pin is invented, and the child keeps
+            // its own selection default.
+            ...(modelFrozen || info?.modelRef === undefined
               ? {}
               : { KUBIC_MODEL: info.modelRef }),
-            ...(approvalsActive === undefined
+            // The role's thinking default (or the run's explicit level) is
+            // per worker; absent leaves the child's own `[model].thinking`
+            // (and the manager's ambient value, when it has one) in force.
+            ...(info?.thinking === undefined
               ? {}
-              : {
-                  KUBIC_APPROVALS_DIR: approvalsActive.mailboxDir(),
-                  KUBIC_ORCHESTRATOR_SESSION: workerSession,
-                  // Issue #230: the child's bound, below the manager's.
-                  KUBIC_APPROVALS_BOUND_MS: String(
-                    workerApprovalBoundMs(approvalsBoundMs),
-                  ),
-                }),
+              : { KUBIC_MODEL_THINKING: info.thinking }),
+            // §67 (issue #191): the worker's task — the capability grant the
+            // child's lane registers. ALWAYS written, cleared when this
+            // spawn has none (the KUBIC_BUDGET rule below): an ambient value
+            // inherited from an outer worker would otherwise be read by a
+            // child the manager handed no task, and its worktree check would
+            // fail the inner run. Non-secret (tool names, worktree, the
+            // objective it already runs), the same class as the pins above.
+            KUBIC_TASK_FILE: taskFile ?? '',
+            ...approvalsChildEnv(
+              workerSession,
+              info?.sessionId ?? orchestratorSessionId ?? 'orch',
+            ),
             ...modelsRootEnv(),
             // §71 child-side budget (issue #208): ALWAYS written from the
             // resolved plan — set when one exists, cleared otherwise — so an
@@ -1735,6 +2101,11 @@ export async function orchestrateDepsWithDefaults(
           },
           cmd: options.workerEntry?.cmd ?? process.execPath,
           args: [
+            // §82 (issue #163): the per-worker heap bound travels as a node
+            // flag ahead of the entry script.
+            ...(options.workerMemoryLimitMb === undefined
+              ? []
+              : [`--max-old-space-size=${options.workerMemoryLimitMb}`]),
             ...(options.workerEntry?.args ?? [entryScript()]),
             'run',
             '-p',
@@ -1745,26 +2116,66 @@ export async function orchestrateDepsWithDefaults(
             '--json',
             '--timeout',
             String(options.workerTimeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS),
+            // §67 task resources (issue #170): the child's own `--skill`
+            // surface, absolute so it resolves in its worktree too.
+            ...skills.flatMap((skill) => ['--skill', skill]),
           ],
           provenance: provenanceFor(workerSession, agentId, 'worker-run'),
           ...(options.readyTimeoutMs === undefined
             ? {}
             : { readyTimeoutMs: options.readyTimeoutMs }),
-          worktreeMs: (() => {
-            const started = worktreeStartedAt.get(agentId);
-            return started === undefined ? undefined : Date.now() - started;
-          })(),
+          // §51 cancellation grace (issue #249): the worker's own settle is
+          // not a tool call, so it gets its own (longer) grace.
+          ...(options.workerCancelGraceMs === undefined
+            ? {}
+            : { cancelGraceMs: options.workerCancelGraceMs }),
+          // §82 runtime limits (issue #163): the cap the manager samples and
+          // the quota it checks, with the probes that make them enforceable.
+          ...(options.workerMemoryLimitMb === undefined
+            ? {}
+            : { memoryLimitMb: options.workerMemoryLimitMb }),
+          ...(options.worktreeDiskQuotaMb === undefined
+            ? {}
+            : { diskQuotaMb: options.worktreeDiskQuotaMb }),
+          // §61 (issue #158): creation duration measured at creation return —
+          // the host's own measurement (around `ensureWorktree`) when it
+          // supplied one, else this seam's. Never a launch-time subtraction.
+          worktreeMs: info?.worktreeMs ?? worktreeMsByAgent.get(agentId),
+          // §61 (issue #158): how long the session create/attach leg took.
+          attachMs: attachMsByAgent.get(agentId),
           worktree: worktree.path,
           ...(modelPin === undefined ? {} : { model: modelPin }),
           ...(thinking === undefined ? {} : { thinking }),
+          // §67 task resources (issue #170): the registry row `kubic workers`
+          // reads prints them as `skills=…`.
+          ...(skills.length === 0 ? {} : { resources: { skills } }),
         },
         {
           shell: shellForWorktree(worktree.path),
           registry: workerRegistry,
           debug: (line) => debug(line),
+          // §82 (issue #163): the probes are LAUNCHER deps (they sample the
+          // running child), wired only when a limit is configured — a limit
+          // with no probe is not enforced, and `kubic doctor` says so.
+          ...(options.workerMemoryLimitMb === undefined &&
+          options.worktreeDiskQuotaMb === undefined
+            ? {}
+            : {
+                resourceProbes: {
+                  memoryMb: (pid: number) => processMemoryMb(root ?? cwd, pid),
+                  diskMb: (path: string) => worktreeDiskMb(root ?? cwd, path),
+                },
+              }),
         },
       );
       launchedByAgent.set(agentId, launched);
+      // A cancel that arrived between the readiness check above and this
+      // launch (issue #206): the handle exists now, so the kill lands instead
+      // of waiting out the child's own bound. `throwIfCancelled` still turns
+      // the settled child into this worker's named terminus.
+      if (cancelRequested.has(agentId)) {
+        void launched.reap().catch(() => undefined);
+      }
       const launchedAt = Date.now();
       const observation = (): Omit<
         WorkerObservation,
@@ -1864,8 +2275,20 @@ export async function orchestrateDepsWithDefaults(
         }
         finished = done;
         throwIfCancelled(agentId);
-        if (done.exitCode !== 0 || launched.status() === 'spawn_failed') {
+        if (done.exitCode !== 0 || launched.agentStatus() === 'spawn_failed') {
           persistWorkerRowsNow();
+          // §13 (issue #151): the child's report names a terminus the exit
+          // code cannot — a `--timeout` run exits 1 with status `timeout`
+          // (issue #280), and a cancelled one says so. Correct the row before
+          // the failure travels.
+          const reportStatus = childReportOf(done.stdout)?.status;
+          if (
+            reportStatus === 'timeout' ||
+            reportStatus === 'cancelled' ||
+            reportStatus === 'budget_exhausted'
+          ) {
+            launched.settleFromReport(reportStatus);
+          }
           throw workerRunError(agentId, done, launched.failure());
         }
         await launched.reap().catch(() => undefined);
@@ -1912,6 +2335,9 @@ export async function orchestrateDepsWithDefaults(
               `worker commit failed: ${commit.stderr.trim().slice(0, 200)}`,
             );
         }
+        // §61 (issue #158): time the branch-diff read — the telemetry's
+        // `diffMs` leg, measured where the work really happens.
+        const diffStartedAt = Date.now();
         const base = await resolveBase(needRoot(), workerSession);
         const names = await runGit(
           worktree.path,
@@ -1948,14 +2374,38 @@ export async function orchestrateDepsWithDefaults(
           diff: { diffId: `${base}...${worktree.branch}` },
         });
         if (!contract.ok) {
+          // A clean exit whose §68 report does not parse is a FAILED agent
+          // (issue #151): the process exited, the work did not settle.
+          launched.settleAgent('failed');
           debug(contract.error.message);
           throw new WorkerRunFailure(
             contract.error.code,
             contract.error.message,
           );
         }
-        return { hunks, result: contract.result };
+        // The report validated: the agent is COMPLETED, not merely exited.
+        launched.settleAgent('completed');
+        return {
+          hunks,
+          result: contract.result,
+          diffMs: Date.now() - diffStartedAt,
+        };
       } catch (error) {
+        // A worker whose clean exit was followed by a failed settle (stage,
+        // commit, diff or report) is a FAILED agent, never a settling one
+        // (issue #151). A launch that never became ready keeps its own
+        // SPAWN_FAILED terminus, and an already-settled agent is left alone.
+        // The PER-AGENT handle (issue #151 review): `runWorker` is one shared
+        // closure and workers run concurrently, so a run-scoped pointer would
+        // hold whichever worker launched last — settling a sibling, or none.
+        const settlingHandle = launchedByAgent.get(agentId);
+        if (settlingHandle?.agentStatus() === 'settling') {
+          try {
+            settlingHandle.settleAgent('failed');
+          } catch {
+            // The agent settled concurrently — its own verdict stands.
+          }
+        }
         throw withResult(error);
       }
     },
@@ -2098,6 +2548,41 @@ export async function orchestrateDepsWithDefaults(
       if (resolverGrant.refusal !== undefined) {
         return { resolved: false, reason: resolverGrant.refusal.message };
       }
+      // §67 (issue #191): the resolver gets an explicit task too — its spec's
+      // tool set (the implementer/debugger writer set) travels as
+      // `task.toolNames`, so a worktree without the role document no longer
+      // drops the resolver onto a default lane. Its session dir is the
+      // conflicted worker's (same session id), so the file is named apart
+      // from that worker's own task.
+      // §67 task resources (issue #170): the resolver gets the run's
+      // `--skill` values, resolved against the manager's cwd like a worker's.
+      const resolverSkills = resolveSkillPaths(request.skills, cwd);
+      const resolverTask = buildAgentTask({
+        taskId: `${workerSession}:${request.agentId}:resolver`,
+        parentSessionId: sessionId,
+        role: request.spec.role,
+        objective: request.prompt,
+        worktree: request.worktree.path,
+        toolNames: request.spec.tools,
+        constraints: request.spec.constraints,
+        ...(resolverSkills.length === 0
+          ? {}
+          : { resources: { skills: resolverSkills } }),
+      });
+      if (!resolverTask.valid) {
+        return {
+          resolved: false,
+          reason: `resolver '${request.agentId}' task refused: ${resolverTask.errors.join('; ')}`,
+        };
+      }
+      const resolverTaskFile = ((): string => {
+        const relative = join(workerSession, RESOLVER_TASK_FILE);
+        sessionBridge.writeFile(
+          relative,
+          `${JSON.stringify(resolverTask.task)}\n`,
+        );
+        return sessionBridge.absolutePath(relative);
+      })();
       const launched = launchWorker(
         {
           workerId: request.agentId,
@@ -2112,8 +2597,21 @@ export async function orchestrateDepsWithDefaults(
                 (entry): entry is [string, string] => entry[1] !== undefined,
               ),
             ),
+            // Issue #156: the resolver is a delegated child too, so it gets
+            // the SAME approval surface its workers got — without this it
+            // raised a challenged call into a mailbox it was never told about
+            // and denied closed, while the docs promised the same rules.
+            ...approvalsChildEnv(workerSession, sessionId),
             ...modelsRootEnv(),
             ...trustEnv(),
+            // §67 (issue #191): the resolver's task — explicit toolNames, so
+            // it never falls back to the child's default writer set.
+            KUBIC_TASK_FILE: resolverTaskFile,
+            // No per-spawn budget is resolved for a resolver: cleared rather
+            // than inherited from an outer worker (the KUBIC_BUDGET rule,
+            // issue #208), so it cannot enforce a limit nobody configured
+            // for it.
+            KUBIC_BUDGET: '',
           },
           cmd:
             options.resolverEntry?.cmd ??
@@ -2131,15 +2629,42 @@ export async function orchestrateDepsWithDefaults(
             '--json',
             '--timeout',
             String(options.workerTimeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS),
+            // §67 task resources (issue #170): the resolver's own `--skill`.
+            ...resolverSkills.flatMap((skill) => ['--skill', skill]),
           ],
           provenance: provenanceFor(
             workerSession,
             request.agentId,
             'resolver-run',
           ),
+          ...(resolverSkills.length === 0
+            ? {}
+            : { resources: { skills: resolverSkills } }),
           ...(options.readyTimeoutMs === undefined
             ? {}
             : { readyTimeoutMs: options.readyTimeoutMs }),
+          // §51 cancellation grace (issue #249): the worker's own settle is
+          // not a tool call, so it gets its own (longer) grace.
+          ...(options.workerCancelGraceMs === undefined
+            ? {}
+            : { cancelGraceMs: options.workerCancelGraceMs }),
+          // §82 runtime limits (issue #163): the cap the manager samples and
+          // the quota it checks, with the probes that make them enforceable.
+          ...(options.workerMemoryLimitMb === undefined
+            ? {}
+            : { memoryLimitMb: options.workerMemoryLimitMb }),
+          ...(options.worktreeDiskQuotaMb === undefined
+            ? {}
+            : { diskQuotaMb: options.worktreeDiskQuotaMb }),
+          ...(options.workerMemoryLimitMb === undefined &&
+          options.worktreeDiskQuotaMb === undefined
+            ? {}
+            : {
+                resourceProbes: {
+                  memoryMb: (pid: number) => processMemoryMb(root ?? cwd, pid),
+                  diskMb: (path: string) => worktreeDiskMb(root ?? cwd, path),
+                },
+              }),
         },
         {
           shell: shellForWorktree(request.worktree.path),
@@ -2157,7 +2682,7 @@ export async function orchestrateDepsWithDefaults(
         persistWorkerRowsNow();
       }
       throwIfCancelled(request.agentId);
-      if (done.exitCode !== 0 || launched.status() === 'spawn_failed') {
+      if (done.exitCode !== 0 || launched.agentStatus() === 'spawn_failed') {
         const failure = launched.failure();
         return {
           resolved: false,
@@ -2252,7 +2777,88 @@ export async function orchestrateDepsWithDefaults(
       }
       debug(`reaped: ${agentId} (worktree + branch retained)`);
     },
+    // Fail-fast cancellation (issue #206): a sibling still in flight when a
+    // concurrent worker failed is killed through the lifecycle layer's reap
+    // (SIGTERM, then the detached process group). The running `runWorker`
+    // sees the child exit and settles its own promise; a cancel that arrives
+    // BEFORE the child launched is remembered, and the launch path checks it
+    // as soon as the handle exists — so a cancelled worker never survives
+    // the window between the request and the spawn.
+    cancelWorker: (agentId: string): void => {
+      cancelRequested.add(agentId);
+      const launched = launchedByAgent.get(agentId);
+      if (launched !== undefined) {
+        void launched.reap().catch(() => undefined);
+      }
+    },
+    // §81 worker replacement (issue #175): a crash-class worker is terminated
+    // (its detached group is already gone — reap is idempotent), its session
+    // is reopened to prove it can be resumed, and the registry allocates the
+    // next generation for the retry the host then starts. A launch that never
+    // became ready, or a budget/approval/workspace/provider terminus, is not
+    // replaceable and returns undefined: a fresh child cannot fix a decision
+    // or a setup failure.
+    replaceWorker: async (
+      agentId: string,
+    ): Promise<{ from: number; to: number } | undefined> => {
+      const crashed = launchedByAgent.get(agentId);
+      if (crashed === undefined) return undefined;
+      // §82 (issue #163): a resource stop is the MANAGER's own decision, not
+      // a crash a fresh child can fix — a replacement would start in the same
+      // over-quota worktree and be killed by the first poll. Skip it and say
+      // so, so the retry budget is never spent on predictable churn.
+      const failure = crashed.failure();
+      if (
+        crashed.agentStatus() !== 'failed' ||
+        failure?.kind !== 'process' ||
+        failure.code.startsWith('resource_')
+      ) {
+        debug(
+          `replace: worker '${agentId}' is not replaceable (agent ${crashed.agentStatus()}, ${failure?.code ?? 'no failure'})`,
+        );
+        return undefined;
+      }
+      const from = crashed.generation;
+      const workerSession = crashed.sessionId;
+      const outcome = await replaceWorker(
+        { workerId: agentId, sessionId: workerSession, oldGeneration: from },
+        {
+          allocateGeneration: () =>
+            (workerRegistry.get(agentId)?.generation ?? from) + 1,
+          terminate: async () => {
+            await crashed.reap().catch(() => undefined);
+          },
+          // The session must still be openable: the replacement child
+          // attaches it, and a session that cannot be resumed must fail here
+          // rather than at the child's attach (exit 5).
+          openSession: async (sessionId) => {
+            const session = await attachSession(
+              sessionStore,
+              sessionId,
+              BACKGROUND_CONTEXT,
+            );
+            await session.release(BACKGROUND_CONTEXT);
+            return { laneId: sessionId };
+          },
+          resumeLane: async () => ({ resumed: true }),
+        },
+      );
+      debug(
+        `replace: worker '${agentId}' generation ${from} → ${outcome.generation} (session ${workerSession} reopened)`,
+      );
+      return { from, to: outcome.generation };
+    },
     requestApproval: mergeApprovalSeat,
+    // §41.1/issue #277: an over-cap spawn asks the USER only when this run has
+    // one — a TTY (the seat the merge gate already carries) or the TUI's own
+    // overlay (which injects its seat). Headless runs, and `--yes` runs, stay
+    // autonomous and keep the queueing rule.
+    interactive: optionsSeat !== undefined || process.stdin.isTTY === true,
+    // A run-level ask belongs to no worker worktree: its §60 row names the
+    // manager's own checkout (issue #277). Absent outside a git repository —
+    // the CLI never gets that far without one, and a test that builds these
+    // deps elsewhere must not throw.
+    ...(root === undefined ? {} : { repoRoot: root }),
     ...(options.yesHint === false ? { yesHint: false } : {}),
     // Every settled merge decision lands in the §60 ledger (issue #323),
     // naming who decided: `--yes` for the standing answer, `user` otherwise.

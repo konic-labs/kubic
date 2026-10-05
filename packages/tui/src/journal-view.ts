@@ -3,7 +3,7 @@
 // journal-cli.ts over exec diffEntries): exact match on path and agent.
 // The flattened text is line-for-line equal to `kubic diff` output:
 // each file contributes the CLI-identical ---/+++/attribution/hunk
-// block (the DiffView op-labelled header is omitted here — the CLI
+// block (the op-labelled header is omitted here — the CLI
 // does not print it). Binary/missing blobs become placeholders via
 // diff-view.ts; this module never throws on them.
 

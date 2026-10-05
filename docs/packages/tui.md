@@ -21,12 +21,12 @@ TUI-side analogue of the worker Pi boundary.
 | `layout.ts` | `Viewport`, `LayoutSlots`, `NARROW_COLUMNS`, `buildLayoutRoot`, `renderLayout` |
 | `screen.ts` | `Screen`, `bootScreen` |
 | `status-bar.ts` | `StatusUsageCost`, `StatusUsage`, `StatusUsageRow`, `StatusSummary`, `summarizeStatusRows`, `formatStatusCost`, `StatusMode`, `StatusBarState`, `StatusBarTheme`, `DEFAULT_STATUS_THEME`, `statusVisibleWidth`, `renderStatusLines`, `StatusBarOptions`, `StatusBar` |
-| `transcript.ts` | `TranscriptEntryKind`, `TranscriptEntry`, `TranscriptDelta`, `LaneSnapshot` (re-export), `TranscriptSnapshotOp`, `TranscriptDeltaOp`, `TranscriptOp`, `TranscriptView`, `createTranscriptView`, `replayTranscript` |
-| `tree.ts` | `RunStatus`, `ToolCallState`, `rootGlyph`, `toolGlyph`, `TreeToolCall`, `AgentTreeState`, `createTreeState`, `toggleTree`, `LaneEventLike`, `applyLaneEvent`, `collapsedSummary`, `renderTreeLines`, `TreeMouseEvent`, `TreeMouseResult`, `TreeViewOptions`, `AgentTreeView` |
+| `transcript.ts` | `TranscriptEntryKind`, `TranscriptEntry`, `TranscriptDelta`, `LaneIdentity`, `TranscriptSnapshotOp`, `TranscriptDeltaOp`, `TranscriptOp`, `TranscriptView`, `createTranscriptView`, `replayTranscript` |
+| `tree.ts` | `RunStatus`, `ToolCallState`, `rootGlyph`, `toolGlyph`, `TreeToolCall`, `TreeUsage`, `TreeTurnSummary`, `AgentTreeState`, `createTreeState`, `toggleTree`, `TreeToolSnapshot`, `TreeLaneSnapshot`, `applyTreeSnapshot`, `collapsedSummary`, `formatTreeTokens`, `renderTreeLines`, `TreeMouseEvent`, `TreeMouseResult`, `TreeViewOptions`, `AgentTreeView` |
 | `editor-view.ts` | `EDITOR_FALLBACK_ROWS`, `editorTheme`, `PromptEditor` (Pi `Editor` behind the seam: Enter submit, multi-line entry, history, focus forwarding) |
-| `lane-cells.ts` | `LaneEntryLike`, `PROMPT_PREFIX`, `TOOL_CALL_PREFIX`, `TOOL_RESULT_MAX_CHARS`, `sanitizeLaneText`, `entriesToCells` — committed lane entries → coarse transcript cells (§15.2); every cell's text (user, assistant, tool result, tool name) is sanitized here so model-supplied content cannot drive the terminal |
+| `lane-cells.ts` | `LaneEntryLike`, `PROMPT_PREFIX`, `TOOL_CALL_PREFIX`, `TOOL_RESULT_MAX_CHARS`, `TOOL_DETAIL_MAX_CHARS`, `TOOL_OUTCOME_MAX_CHARS`, `sanitizeLaneText`, `summarizeToolArguments`, `summarizeToolOutcome`, `entriesToCells` — committed lane entries → coarse transcript cells (§15.2); every cell's text (user, assistant, tool result, tool name) is sanitized here so model-supplied content cannot drive the terminal. `sanitizeLaneText` strips complete ECMA-48 sequences (CSI, OSC, C1 CSI, 2-byte ESC forms — not just the ESC byte, #299), collapses carriage-return overwrites to the text after the last `\r`, expands tabs by visible column width, and drops the remaining C0/C1 controls |
 | `tui-app.ts` | `TuiAppSeed`, `TuiInputResult`, `TuiApp`, `createTuiApp`, `seedFromPresentation` — the global keys (Ctrl-C/Esc/Ctrl-D/Ctrl-T) are classified through Pi's `parseKey` (see `tui-boundary.ts`), so both legacy-byte and Kitty CSI-u encodings are honoured |
-| `diff-view.ts` | `DiffOp`, `DiffFileChange`, `DiffRenderOptions`, `isBinaryText`, `unifiedHunks`, `renderDiffHeader`, `renderDiffLines`, `DiffView` |
+| `diff-view.ts` | `DiffOp`, `DiffFileChange`, `DiffRenderOptions`, `isBinaryText`, `unifiedHunks`, `renderDiffHeader`, `renderDiffLines` (pure render functions; the panel owns the document and its scrolling, #301) |
 | `approval-view.ts` | `ApprovalAction`, `ApprovalViewRequest`, `ApprovalDecision`, `APPROVAL_MIN_WIDTH`, `shouldUseInlineFallback`, `ApprovalOverlayOptions`, `approvalOverlayOptions`, `ApprovalOverlayBounds`, `approvalOverlayBounds`, `renderApprovalLines`, `renderApprovalInline`, `APPROVAL_DEFAULT_KEYS`, `ApprovalKeyOverrides`, `resolveApprovalAction`, `ApprovalKeyConflict`, `approvalKeyConflicts`, `ApprovalOverlayHandle`, `ApprovalOverlayTui`, `showApprovalOverlay`, `dismissApprovalOverlay` |
 | `journal-view.ts` | `JournalFilter`, `filterJournalChanges`, `renderJournalLines`, `JournalViewOptions`, `JournalView` |
 | `views.ts`, `components.ts` | Pointer | View assembly lives in `layout.ts` / `*-view.ts` / `tui-app.ts` (#23–#28); no shared or aggregated module |
@@ -59,14 +59,54 @@ module owns arrangement only.
   usage/cost rollups (`StatusUsage`, `StatusUsageRow`,
   `StatusUsageCost`, `StatusSummary`, `summarizeStatusRows`,
   `formatStatusCost`) feed `StatusBarState`, rendered by
-  `renderStatusLines` under `DEFAULT_STATUS_THEME`.
+  `renderStatusLines` under `DEFAULT_STATUS_THEME`. The bar shows
+  model/thinking/tokens/cache/cost only: the TTFT and tool-ms segments
+  were deleted in #346 (Pi 1.0 routes no timing Kubic could read), and
+  `kubic tui --session` seeds the rows from the session's `pi.usage`
+  ledger before the first frame. Issue #347 adds the context gauge: when
+  `StatusBarState.contextWindow` is known and a committed request reported
+  its prompt size (`StatusSummary.contextTokens`), row 1 carries
+  `ctx NN%` — warning-coloured at or above
+  `StatusBarState.compactionThreshold` — and drops before the model when
+  the terminal narrows.
 - **Transcript** (`transcript.ts`): `TranscriptEntryKind` is
-  `text|tool|output`; `TranscriptView` applies snapshot/delta ops
-  (`TranscriptOp`) and replays via `replayTranscript`.
+  `prompt|text|tool|output|compaction`; `TranscriptView` applies snapshot/delta ops
+  (`TranscriptOp`) and replays via `replayTranscript`. The in-flight
+  assistant message streams live (issue #296): `setStream(text)` renders a
+  plain draft after the committed cells while `message-delta` events arrive,
+  and the committed entry replaces it (clearing the draft — the text is
+  never rendered twice); a rebase snapshot also clears it. Tool output is
+  collapsed to `TOOL_OUTPUT_PREVIEW_LINES` rows (cut at the width, with a
+  hint naming hidden or clipped rows); Ctrl-X expands it, and then every
+  output line and the tool call's args summary wrap with a hanging indent
+  instead of being cut (issue #300). A `pi.compaction` entry renders as its
+  own `compaction` cell — a `⟳ context compacted (reason)` marker plus the
+  summary (pi-durable's preamble/`<summary>` wrapper stripped, collapsed to
+  the same preview budget and expanded by Ctrl-X); a `pi.reset` handoff
+  renders as text, and no `branch_summary` kind exists in 1.0 (branching
+  forks into a new conversation). Caching (issue #298): each cell's
+  markdown and finished rows are reused while its text, width and theme
+  level are unchanged — a steady frame (the 100 ms spinner repaint) parses
+  nothing — and a snapshot that drops cells prunes their cache entries;
+  `markdownCacheSize()`/`markdownParses()` expose the counters the perf
+  tests assert on. Snapshot reuse (issue #297): `applyLaneSnapshot` diffs by
+  cell id and keeps the object of every unchanged cell, so a re-applied
+  snapshot allocates nothing; the op log behind `writeLog` is opt-in
+  (`createTranscriptView({ ops: true })`, for `replayTranscript` and tests)
+  — production applies a snapshot per lane event and keeps no copy of it.
 - **Tree** (`tree.ts`): `RunStatus` is `idle|running|done`;
-  `AgentTreeState` toggles (`toggleTree`), consumes lane events
-  (`LaneEventLike` via `applyLaneEvent`), and renders
-  (`renderTreeLines`, `collapsedSummary`, glyphs).
+  `AgentTreeState` toggles (`toggleTree`), takes ONE lane input —
+  `applyTreeSnapshot(state, lane)`, the `TreeLaneSnapshot` the host
+  projector folds (§66; the tree never sees a raw lane event) — and renders
+  (`renderTreeLines`, `collapsedSummary`, glyphs, `formatTreeTokens`). Tool
+  rows carry the args summary and outcome
+  (`summarizeToolArguments`/`summarizeToolOutcome`, shell tool only), a
+  failed call renders
+  `✗`, the root row carries `$cost in/out` (`TreeUsage`, the totals the
+  state carries: the attach snapshot's cumulative ledger, then the usage
+  rows), and calls are grouped per turn (a new running turn rolls the live
+  group into `previousTurns` as a `TreeTurnSummary`, which folds to one
+  line).
 - **Diff** (`diff-view.ts`): `DiffOp` mirrors the journal ops
   (`write|edit|create|delete|rename`); `DiffFileChange` renders headers
   + unified hunks (`renderDiffHeader`, `renderDiffLines`,

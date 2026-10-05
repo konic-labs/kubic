@@ -25,6 +25,7 @@ import {
   fauxToolCall,
   type MutableModels,
 } from '../../../packages/worker/src/pi-boundary.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   type CliConfigResult,
   runtimeApprovalDeps,
@@ -186,7 +187,7 @@ describe('prodTuiDeps hands bootTuiLane every config seam (issues #230, #288, #2
       [ENTERPRISE]:
         '[policy]\nallowed_models = ["corp/approved"]\ndenied_tools = ["bash"]\n',
       [PROJECT]:
-        '[model]\nprovider = "corp"\nid = "approved"\n[approvals]\nroute = "deny"\nmaxPendingMs = 1234\n[journal]\nretentionDays = 2\noutOfScope = ["dist"]\n',
+        '[model]\nprovider = "corp"\nid = "approved"\n[approvals]\nroute = "deny"\nmaxPendingMs = 1234\n[journal]\nretentionDays = 2\noutOfScope = ["dist"]\n[ui]\ntheme = "light"\n',
     });
     let seen: TuiRunOptions | undefined;
     const deps = tuiDepsWithDefaults(
@@ -208,6 +209,9 @@ describe('prodTuiDeps hands bootTuiLane every config seam (issues #230, #288, #2
     expect(seen?.approvals?.maxPendingMs).toBe(1234);
     expect(seen?.journalRetention).toEqual({ maxAgeMs: 2 * 86_400_000 });
     expect(seen?.reconcileOutOfScope).toEqual(['dist']);
+    // Issue #304: the `[ui] theme` reference reaches the deps the runner
+    // reads (dropping the prod spread must not stay green).
+    expect(seen?.theme).toBe('light');
   });
 
   it('forwards the empty policy and no pin when the config declares none (control)', async () => {
@@ -619,45 +623,7 @@ describe('advertised skills outside the workspace stay readable on the tui lane 
 // A recording terminal, as tui-model-switch-prod.test.ts drives the alt-screen
 // key path: the frame text is everything the app wrote.
 function fakeTerminal() {
-  const writes: string[] = [];
-  const counts = { started: 0 };
-  let handler: ((data: string) => void) | undefined;
-  return {
-    counts,
-    get frame(): string {
-      return writes.join('');
-    },
-    feed: (data: string) => {
-      handler?.(data);
-    },
-    terminal: {
-      start: (input: (data: string) => void) => {
-        counts.started += 1;
-        handler = input;
-      },
-      stop: () => {},
-      drainInput: () => Promise.resolve(),
-      write: (data: string) => writes.push(data),
-      // Wide enough that the whole refusal fits on one footer line.
-      get columns(): number {
-        return 240;
-      },
-      get rows(): number {
-        return 30;
-      },
-      get kittyProtocolActive(): boolean {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    },
-  };
+  return terminalRig(240, 30);
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {

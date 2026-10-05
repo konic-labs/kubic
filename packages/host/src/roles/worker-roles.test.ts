@@ -85,27 +85,109 @@ function twoRoleCwd(): Record<string, string> {
   };
 }
 
-function planFor(agents: readonly string[]): WorkerRolesPlan {
+function planFor(
+  agents: readonly string[],
+  binding: {
+    roles?: Record<string, string>;
+    models?: Record<string, string>;
+  } = {},
+): WorkerRolesPlan {
   return planWorkerRoles({
     bridge: memBridge(twoRoleCwd()),
     cwd: CWD,
     agents,
+    ...(binding.roles === undefined ? {} : { roles: binding.roles }),
+    ...(binding.models === undefined ? {} : { models: binding.models }),
   });
 }
 
+const TWO_ROLES = {
+  roles: { alpha: 'planner', beta: 'implementer' },
+};
+
 describe('delegation-path role assignment (issue #104, §12)', () => {
-  it('assigns each worker a role from the fixed five, deterministically', () => {
+  it('defaults every unassigned worker to the implementer, never a positional cycle (issue #178)', () => {
     // The five roles are fixed (D11): the manager composes from them and
-    // never invents a role at runtime. Assignment is a pure function of the
-    // agent order, so a --resume replays the same role per worker.
-    expect(roleForAgent(['alpha', 'beta'], 'alpha')).toBe('planner');
+    // never invents a role at runtime. Position is not a task: a worker with
+    // no explicit role is an implementer — the role that produces a change —
+    // so the default run no longer spawns a planner whose plan nothing uses.
+    expect(roleForAgent(['alpha', 'beta'], 'alpha')).toBe('implementer');
     expect(roleForAgent(['alpha', 'beta'], 'beta')).toBe('implementer');
     expect(roleForAgent(['alpha', 'beta'], 'ghost')).toBeUndefined();
-    expect(roleForAgent(['a', 'b', 'c', 'd', 'e', 'f'], 'f')).toBe('planner');
+    expect(
+      roleForAgent(['a', 'b', 'c', 'd', 'e', 'f'], 'f', {
+        f: 'reviewer',
+      }),
+    ).toBe('reviewer');
+    // An explicit binding names one of the five, by agent.
+    expect(roleForAgent(['alpha', 'beta'], 'alpha', { alpha: 'tester' })).toBe(
+      'tester',
+    );
+  });
+
+  it('never mistakes an Object.prototype member for a binding (issue #178)', () => {
+    // `toString` / `constructor` / `__proto__` are legal agent ids, so a
+    // plain `roles[id]` lookup would hand back a FUNCTION as the role.
+    expect(roleForAgent(['toString'], 'toString')).toBe('implementer');
+    expect(roleForAgent(['constructor'], 'constructor')).toBe('implementer');
+    expect(roleForAgent(['__proto__'], '__proto__')).toBe('implementer');
+    const plan = planFor(['toString', 'constructor'], {
+      roles: { toString: 'planner' },
+    });
+    expect(
+      plan.assignments.map((entry) => [entry.agentId, entry.role]),
+    ).toEqual([
+      ['toString', 'planner'],
+      ['constructor', 'implementer'],
+    ]);
+    // A `__proto__` model pin is a binding too, not a prototype.
+    const pinned = planFor(['__proto__'], {
+      models: { ['__proto__']: 'acme/m' },
+    });
+    expect(pinned.assignments[0]?.modelRef).toBe('acme/m');
+  });
+
+  it('assigns the explicit per-agent roles the caller bound (issue #178)', () => {
+    const plan = planFor(['alpha', 'beta'], TWO_ROLES);
+    expect(plan.refused).toEqual([]);
+    expect(plan.assignments.map((entry) => entry.role)).toEqual([
+      'planner',
+      'implementer',
+    ]);
+    // A worker with no binding keeps the implementer default.
+    const mixed = planFor(['alpha', 'beta'], { roles: { alpha: 'planner' } });
+    expect(mixed.assignments.map((entry) => entry.role)).toEqual([
+      'planner',
+      'implementer',
+    ]);
+  });
+
+  it('refuses an explicit role outside the fixed five by name (issue #178)', () => {
+    const plan = planFor(['alpha'], { roles: { alpha: 'teleporter' } });
+    expect(plan.assignments).toEqual([]);
+    expect(plan.refused.map((entry) => entry.name)).toEqual(['teleporter']);
+    expect(plan.refused[0]?.reason).toMatch(/unknown role 'teleporter'/);
+  });
+
+  it('lets an explicit per-agent model pin outrank the role config pin (issue #178)', () => {
+    const plan = planWorkerRoles({
+      bridge: memBridge(twoRoleCwd()),
+      cwd: CWD,
+      agents: ['alpha', 'beta'],
+      layers: [{ layer: 'project', roles: { planner: { model: 'acme/cfg' } } }],
+      parentModel: 'acme/manager',
+      roles: { alpha: 'planner' },
+      models: { alpha: 'acme/explicit' },
+    });
+    const [alpha, beta] = plan.assignments;
+    // The flag is the highest level (§38.1 agent/spawn override)…
+    expect(alpha?.modelRef).toBe('acme/explicit');
+    // …and the other worker still resolves its own levels.
+    expect(beta?.modelRef).toBe('acme/manager');
   });
 
   it('gives two role-assigned workers different prompts composed of role text + their step', () => {
-    const plan = planFor(['alpha', 'beta']);
+    const plan = planFor(['alpha', 'beta'], TWO_ROLES);
     expect(plan.refused).toEqual([]);
     expect(plan.assignments.map((entry) => entry.role)).toEqual([
       'planner',
@@ -136,14 +218,69 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     expect(composed[1]).toContain("Plan step 2 of 2 for agent 'beta': ship it");
   });
 
-  it('carries the role-resolved tool set and the role model default', () => {
-    const plan = planFor(['alpha', 'beta']);
+  it('carries the role-resolved tool set and no invented model pin (issue #202)', () => {
+    const plan = planFor(['alpha', 'beta'], TWO_ROLES);
     const [planner, implementer] = plan.assignments;
     // §12.1/§40: the tool set is the resolver's own resolved set.
     expect(planner?.tools).toEqual(['find', 'grep', 'ls', 'read']);
     expect(implementer?.tools).toContain('write');
-    // §12.1 model default travels as the existing model-pin ref.
-    expect(planner?.modelRef).toBe('local/llama3');
+    // §38.1: the model comes from the levels that actually set one — the
+    // `[roles.<r>].model` config pin, then the manager's own effective model
+    // — never a hardcoded provider. With neither, the child keeps its own
+    // selection default instead of being forced onto `local/llama3`.
+    expect(planner?.modelRef).toBeUndefined();
+    // The role's own thinking default still travels per worker.
+    expect(planner?.thinking).toBe('medium');
+  });
+
+  it('resolves the worker model as [roles.<r>].model, then the manager model (issue #202)', () => {
+    const plan = planWorkerRoles({
+      bridge: memBridge(twoRoleCwd()),
+      cwd: CWD,
+      agents: ['alpha', 'beta'],
+      roles: { alpha: 'planner' },
+      layers: [{ layer: 'project', roles: { planner: { model: 'acme/p1' } } }],
+      parentModel: 'anthropic/claude',
+    });
+    const [planner, implementer] = plan.assignments;
+    // The role's config pin outranks the manager's model for its own worker…
+    expect(planner?.modelRef).toBe('acme/p1');
+    // …and a role with no pin inherits the manager's effective model.
+    expect(implementer?.modelRef).toBe('anthropic/claude');
+  });
+
+  it("the run's explicit thinking level outranks the role's own default (issue #202)", () => {
+    const overridden = planWorkerRoles({
+      bridge: memBridge(twoRoleCwd()),
+      cwd: CWD,
+      agents: ['alpha', 'beta'],
+      thinkingOverride: 'xhigh',
+    });
+    expect(overridden.assignments.map((entry) => entry.thinking)).toEqual([
+      'xhigh',
+      'xhigh',
+    ]);
+    // Without an explicit level the defaults are per role, not one value for
+    // every worker.
+    const files = twoRoleCwd();
+    files[`${CWD}/.kubic/roles/tester.md`] = roleText(
+      'tester',
+      WRITER,
+      'You are the tester.',
+    );
+    const bare = planWorkerRoles({
+      bridge: memBridge(files),
+      cwd: CWD,
+      agents: ['alpha', 'beta', 'gamma'],
+      roles: { alpha: 'planner', beta: 'implementer', gamma: 'tester' },
+    });
+    expect(
+      bare.assignments.map((entry) => [entry.role, entry.thinking]),
+    ).toEqual([
+      ['planner', 'medium'],
+      ['implementer', 'medium'],
+      ['tester', 'low'],
+    ]);
   });
 
   it('refuses a contradictory role document by the resolver name, assigning nothing', () => {
@@ -160,6 +297,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
       bridge: memBridge(files),
       cwd: CWD,
       agents: ['alpha', 'beta'],
+      roles: TWO_ROLES.roles,
     });
     expect(plan.refused).toHaveLength(1);
     expect(plan.refused[0]?.name).toBe('planner');
@@ -179,48 +317,100 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
       bridge: memBridge(files),
       cwd: CWD,
       agents: ['alpha'],
+      roles: { alpha: 'planner' },
     });
     expect(plan.refused).toHaveLength(1);
     expect(plan.refused[0]?.reason).toContain("no '## Prompt' section");
     expect(plan.assignments).toEqual([]);
   });
 
-  it('refuses when a worker maps to a role with no document, while zero documents stay a no-op', () => {
-    // Two documents, three workers: the third maps to a role whose file is
-    // absent. That is a configuration the operator half-made, so it refuses
-    // by name — composing a prompt with no role would silently ignore the
-    // documents that DO exist. Zero documents is the untouched default
-    // (pinned above), so the two cases must not be conflated.
+  it('refuses when a worker maps to a role with no document, while an absent directory falls back to the presets', () => {
+    // Two documents, three workers: the third is bound to a role name that is
+    // neither a repo document nor a built-in. That is a configuration the
+    // operator half-made, so it refuses by name — composing a prompt with no
+    // role would silently ignore the documents that DO exist. A workspace
+    // with no documents at all is a different case: the embedded presets
+    // apply (pinned below), so the two must not be conflated.
     const plan = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
       agents: ['alpha', 'beta', 'gamma'],
+      roles: { alpha: 'planner', beta: 'implementer', gamma: 'archaeologist' },
     });
     expect(plan.assignments.map((entry) => entry.role)).toEqual([
       'planner',
       'implementer',
     ]);
     expect(plan.refused).toHaveLength(1);
-    expect(plan.refused[0]?.name).toBe('tester');
-    expect(plan.refused[0]?.reason).toMatch(/no role document for 'tester'/);
+    expect(plan.refused[0]?.name).toBe('archaeologist');
+    expect(plan.refused[0]?.reason).toMatch(/unknown role 'archaeologist'/);
   });
 
-  it('assigns no role at all when the workspace has no role documents', () => {
-    // An absent `.kubic/roles/` is the normal case (the solo default is
-    // unaffected) — the delegation path then keeps the plan prompt.
+  it('assigns the built-in presets when the workspace has no role documents (issue #203)', () => {
+    // The five §12 roles ship WITH the binary: an absent `.kubic/roles/` no
+    // longer means "no role". An unbound worker gets the default implementer
+    // preset (issue #178), whose prompt and tool set come from the embedded
+    // document — never from a repo-relative path.
     const plan = planWorkerRoles({
       bridge: memBridge({}),
       cwd: CWD,
       agents: ['alpha'],
     });
-    expect(plan).toEqual({ assignments: [], refused: [] });
+    expect(plan.refused).toEqual([]);
+    expect(plan.assignments).toHaveLength(1);
+    const assignment = plan.assignments[0];
+    expect(assignment?.role).toBe('implementer');
+    expect(assignment?.promptText).toContain('You are the implementer.');
+    expect(assignment?.tools).toContain('write');
+    expect(assignment?.tools).toContain('bash');
+  });
+
+  it('lets a repo document override its built-in preset, and only that one (issue #203)', () => {
+    const plan = planWorkerRoles({
+      bridge: memBridge({
+        [`${CWD}/.kubic/roles/implementer.md`]: [
+          '---',
+          'role: implementer',
+          'tools: [read, ls, find, grep]',
+          'filesystem: read',
+          'shell: false',
+          'network: none',
+          'git: false',
+          'credentials: none',
+          '---',
+          '',
+          '## Prompt',
+          '',
+          'You are the repo implementer.',
+          '',
+        ].join('\n'),
+      }),
+      cwd: CWD,
+      agents: ['alpha', 'beta'],
+      roles: { alpha: 'implementer', beta: 'planner' },
+    });
+    expect(plan.refused).toEqual([]);
+    expect(plan.assignments.map((entry) => entry.role)).toEqual([
+      'implementer',
+      'planner',
+    ]);
+    // The override wins for its own name…
+    expect(plan.assignments[0]?.promptText).toContain('repo implementer');
+    expect([...(plan.assignments[0]?.tools ?? [])].sort()).toEqual([
+      'find',
+      'grep',
+      'ls',
+      'read',
+    ]);
+    // …and the untouched presets still come from the binary.
+    expect(plan.assignments[1]?.promptText).toContain('You are the planner.');
   });
 
   it('withholds write/edit/bash for a read-only role by absence, never approval', () => {
     // §40: the role's resolved tool set is what the lane registers, so a
     // withheld tool is uncallable by construction — the guard's reason
     // names the absence, and no approval decider is consulted.
-    const plan = planFor(['alpha']);
+    const plan = planFor(['alpha'], { roles: { alpha: 'planner' } });
     const planner = plan.assignments[0];
     expect(planner).toBeDefined();
     const guard = createRoleToolGuard(
@@ -256,6 +446,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
       agents: ['alpha', 'beta'],
+      roles: TWO_ROLES.roles,
       toolPolicy: denyBash,
     });
     // planner (read/ls/find/grep) passes a deny-only policy; the implementer
@@ -273,6 +464,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
       agents: ['alpha', 'beta'],
+      roles: TWO_ROLES.roles,
       toolPolicy: resolveEffectivePolicy([
         { layer: 'enterprise', policy: { tools: { deny: ['git_push'] } } },
       ]).policy,
@@ -289,6 +481,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
       agents: ['alpha', 'beta'],
+      roles: TWO_ROLES.roles,
       toolPolicy: resolveEffectivePolicy([
         {
           layer: 'enterprise',
@@ -302,6 +495,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
       agents: ['alpha', 'beta'],
+      roles: TWO_ROLES.roles,
       toolPolicy: resolveEffectivePolicy([
         { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
       ]).policy,
@@ -324,6 +518,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
       agents: ['alpha', 'beta'],
+      roles: TWO_ROLES.roles,
       toolPolicy: denyBash,
       layers,
     });
@@ -338,6 +533,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
       agents: ['alpha', 'beta'],
+      roles: TWO_ROLES.roles,
       toolPolicy: denyBash,
     });
     expect(bare.refused.map((entry) => entry.name)).toEqual(['implementer']);
@@ -361,6 +557,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
       bridge: memBridge(files),
       cwd: CWD,
       agents: ['alpha'],
+      roles: { alpha: 'planner' },
       layers,
     });
     expect(layered.refused).toEqual([]);
@@ -370,6 +567,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
       bridge: memBridge(files),
       cwd: CWD,
       agents: ['alpha'],
+      roles: { alpha: 'planner' },
     });
     expect(bare.assignments).toEqual([]);
     expect(bare.refused[0]?.name).toBe('planner');
@@ -383,6 +581,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
       agents: ['alpha'],
+      roles: { alpha: 'planner' },
       toolPolicy: denyBash,
     });
     expect(plan.refused).toEqual([]);

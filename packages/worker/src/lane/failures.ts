@@ -33,6 +33,10 @@ export const FAILURE_CODES = [
 
 export type FailureCode = (typeof FAILURE_CODES)[number];
 
+export function isFailureCode(value: unknown): value is FailureCode {
+  return (FAILURE_CODES as readonly string[]).includes(value as string);
+}
+
 export const RETRY_STRATEGIES = [
   'retry_same',
   'retry_with_new_context',
@@ -66,6 +70,30 @@ export function classifyFailure(
   const haystack = `${code} ${message}`.toLowerCase();
   switch (kind) {
     case 'model': {
+      // Issue #155: the durable `model_error` reason is generic — it names
+      // the generation task, not the failure's domain. When the detail
+      // names a provider capacity/rate-limit refusal or a tool fault, §52
+      // keeps that distinction instead of collapsing it into model_failed.
+      if (
+        /rate ?limit|too many requests|\b429\b|overloaded|at capacity|capacity exhausted|quota/i.test(
+          haystack,
+        )
+      ) {
+        return {
+          code: 'provider_transient',
+          remedy:
+            'Provider capacity/rate limit; retry unchanged after notBefore.',
+          strategy: 'retry_same',
+        };
+      }
+      if (/\btool\b[^.]*(fail|fault|error|crash)/i.test(haystack)) {
+        return {
+          code: 'tool_failed',
+          remedy:
+            'Tool execution failed; inspect stderr, then retry or switch tools.',
+          strategy: 'retry_same',
+        };
+      }
       if (/refus/.test(haystack)) {
         return {
           code: 'model_refused',
@@ -215,6 +243,32 @@ export function classifyFailure(
 export interface RetryHints {
   retryAfterMs?: number;
   now?: number;
+}
+
+// §52 code → the ResultErrorKind it belongs to (issue #155): the inverse of
+// the classifier, for consumers that only see a code (a worker's own
+// report) and must still name the failure's domain.
+const KIND_BY_FAILURE_CODE: Readonly<Record<FailureCode, ResultErrorKind>> = {
+  model_failed: 'model',
+  model_refused: 'model',
+  provider_transient: 'provider',
+  provider_auth: 'provider',
+  tool_failed: 'tool',
+  tool_invalid_args: 'tool',
+  tool_timeout: 'tool',
+  tool_unavailable: 'tool',
+  process_crashed: 'process',
+  process_spawn_failed: 'process',
+  workspace_failed: 'workspace',
+  context_overflow: 'context',
+  context_polluted: 'context',
+  budget_exhausted: 'budget',
+  approval_denied: 'approval',
+  approval_timed_out: 'approval',
+};
+
+export function errorKindForFailureCode(code: FailureCode): ResultErrorKind {
+  return KIND_BY_FAILURE_CODE[code];
 }
 
 export interface RetryDecision {

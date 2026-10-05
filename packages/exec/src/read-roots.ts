@@ -85,6 +85,29 @@ export function withReadRoots(
               mode,
             ),
         }),
+    ...(base.realpath === undefined
+      ? {}
+      : {
+          realpath: (path: string) => {
+            const rooted = via(path);
+            if (rooted?.realpath !== undefined) return rooted.realpath(path);
+            return (base.realpath as NonNullable<FileSystem['realpath']>).call(
+              base,
+              path,
+            );
+          },
+        }),
+    // Issue #140: writes go to base (confinement is cwd-only), so the tmp
+    // cleanup does too. Without this forward the wrapper would drop the
+    // method and every failed write in a run with read roots would leak its
+    // tmp.
+    ...(base.unlink === undefined
+      ? {}
+      : {
+          unlink: (path: string) => {
+            (base.unlink as NonNullable<FileSystem['unlink']>).call(base, path);
+          },
+        }),
   };
   return {
     cwd: env.cwd,

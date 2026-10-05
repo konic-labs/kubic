@@ -207,6 +207,7 @@ network = "none"
 
 [journal]
 retentionDays = 30
+maxBytes = 1048576
 outOfScope = ["dist", "coverage"]
 ```
 
@@ -234,10 +235,13 @@ of these cannot be expressed by the tool set and are reported as
 unsupported by `kubic doctor` and `kubic policy`, enforced as the named
 narrower level (§40.2, issue #166): network `allowlist` → `none` (no domain
 list exists, so every network command is blocked and raises the network
-approval trigger), credentials `allowlist` → `none`, filesystem `full` →
-`workspace-write`, git `full` → `workspace` ·
-`[journal]` retentionDays/outOfScope · `[roles.<name>]` model/tools ·
-`[orchestrator]` root/maxWorkers · `[ui]` theme/statusBar ·
+approval trigger), credentials `allowlist` → `none` (no credential list
+exists, so every access to a listed credential path raises the credential
+trigger — issue #275), filesystem `full` → `workspace-write`, git
+`full` → `workspace` ·
+`[journal]` retentionDays/maxBytes/outOfScope · `[roles.<name>]` model/tools ·
+`[orchestrator]` root/maxWorkers · `[ui]` theme (a built-in name or a JSON
+theme path, §16.9) /statusBar ·
 `[session]` store/dir/retentionDays · `[policy]` (the §58 enterprise policy,
 below) · `[[audit]]` (sink/level, below). The canonical example is
 `packages/host/src/config/example.toml` (pinned by test — copy it to
@@ -254,28 +258,70 @@ quietly stop configuring anything.
 | --- | --- |
 | `model.provider`, `model.id` | Selects the provider/model for `kubic run` and `kubic tui` (`selectModel`); `--model` and `KUBIC_MODEL` beat it as the `cli`/`env` layers of the config load, and a frozen enterprise `[model]` beats all of them (announced on stderr). |
 | `model.thinking` | Default thinking level for the selected model. |
-| `modes.solo`, `modes.orchestrator` | Selects the session mode. `orchestrator = true` starts `kubic tui` (and a bare interactive `kubic`) in orchestrator mode, where each submitted prompt drives the manager lane `kubic orchestrate` runs; `solo = true` keeps the solo default. The `--orchestrator` flag beats the key, and both `true` is refused by name. |
+| `modes.solo`, `modes.orchestrator` | Selects the session mode. `orchestrator = true` starts `kubic tui` (and a bare interactive `kubic`) in orchestrator mode, where each submitted prompt drives the manager lane `kubic orchestrate` runs; `solo = true` keeps the solo default. The `--orchestrator` flag beats the key, and both `true` is refused by name. The key is the default for a session that was never switched: the in-session toggle (`Ctrl-G`) is persisted with the session (`<session>/mode.json`, issue #276) and a reattach restores it over the key; outside a git repository a saved orchestrator mode starts solo with a `warning:` line. |
 | `approvals.route` | Approval routing (`ask-user` \| `deny`), installed by `kubic run`, `kubic tui`, `kubic replay` and reported by doctor's `policy:installed` line. `deny` refuses every challenged call with `denied by policy route` (exit 4) and never opens the TUI overlay — `autoApprove` entries never apply under it (the lane denies them too, and doctor fails `policy:approvals` for the combination). `KUBIC_APPROVALS_ROUTE` overrides it. |
 | `approvals.maxPendingMs`, `autoApprove`, `sessionScoped`, `requireJustification` | Installed on the solo lane (`run`, `tui`, `replay`) from the same projection doctor prints, so `policy:approvals` and `policy:installed` always show the same route and bound (doctor fails `policy-mismatch` if they ever differ). `maxPendingMs` bounds the TUI overlay: an unanswered ask denies on timeout. `autoApprove` is explicit-only and applies headless too (the audit record says `approved by autoApprove`), except for an always-ask capability (`kubic-state-write`): naming it is accepted but ignored — it takes the normal ask path (the TUI seat, or the instant no-surface refusal headless, never a `maxPendingMs` stall), `kubic doctor`'s `policy:approvals` line warns by name and `kubic config` counts it as not auto-approved. `requireJustification = true` denies any approval that carries no justification (the TUI overlay and `autoApprove` supply none, so every challenged call is refused). `sessionScoped = false` is refused by the config load: decisions are always stored per session. Only real answers (user, route, autoApprove) persist to `approvals.json` — a timeout denies the call but stores nothing, so a later surface can still ask about the same operation. The same bound is the orchestrator's worker-ask bound and its interactive merge gate (issue #130): an unanswered ask denies closed on elapse, naming the bound. Each worker child waits a little less than the manager (a tenth of the bound, at most 5 s, less), so the child denies with its own status first. |
-| `permissions.*` | Permission classes → the lane's derived tool allowlist (§40). |
+| `permissions.*` | Permission classes → the lane's derived tool allowlist (§40). `shell = "read-only-allowlist"` (issue #161, §12.1) keeps `bash` but enforces an explicit read-only command allowlist at the guard: every `|`/`||`/`&&`/`;`/`&`/newline segment must head with `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find` or `git`, and then only in its read-only form — `git status`/`diff`/`log`/`show` (after global options like `-C`/`--no-pager`, without `--output`, and never `-c`/`--config-env`/`--exec-path`/`--upload-pack`/`--receive-pack`, which can execute code), `find` without `-exec*`/`-ok*`/`-delete`/`-fprint*`/`-fls`, `rg` without `--pre`/`--hostname-bin`. Redirection (`>`, `>>`, any fd form) is refused, `sed`/`perl` with `-i`/`--in-place` are refused, and any other verb (`tee`, `rm`, `npm`, `node`, `cp`, …) is blocked by name. Expansion and substitution are never interpreted and are refused outright — `$(…)`, backticks, `<(...)` process substitution and any unquoted `$` (single-quoted text is literal and stays readable) — because an allowed head verb could otherwise launder another command. The parser is lexical, so it over-blocks rather than under-blocks; `shell = true` is unchanged (no allowlist). |
 | `journal.retentionDays` | Journal age bound, enforced on every append. |
+| `journal.maxBytes` | Journal byte bound, enforced on every append: the store — `index.jsonl` plus the blobs it references — is pruned to stay under it, and a pass that has to prune frees a tenth of the bound (the headroom the next appends need). Content addressing dedupes blobs, so a file toggling between two contents (a formatter fighting the agent, repeated `undo --step`) grows the journal through its lines alone; this key is what keeps that bounded. A positive integer (0 is refused by name: it is not "retention off" — unset is — it is a bound nothing fits). Unset ⇒ 100 MiB (`DEFAULT_JOURNAL_MAX_BYTES`). An entry whose own content cannot fit is refused before anything is written, so the tool call fails as `journal_failed` with the file untouched, and a pass that has to prune never drops the newest entry — it reports `over bound by N byte(s)` instead (`kubic clean --journal`). |
 | `journal.outOfScope` | Paths excluded from the §42.5 baseline and the end-of-run sweep (self + children): `outOfScope = ["dist"]` ⇒ `dist/`, `dist/**`. Path-boundary aware (`dist` never matches `dist-x`), plain paths only, empty entries refused by name. |
 | `agent.name` | The solo lane's agent id: journal entries are attributed to it and `kubic diff --agent <name>` filters by it. Unset ⇒ `root`, unchanged. |
-| `roles.<name>.model`, `roles.<name>.tools` | Per-role defaults layered under the role document for `kubic run --role <name>` (§12.1): `model` is a `provider/id` pin the run selects unless an explicit `--model`/`[model]` pin wins, `tools` replaces the document's own list. Each leaf is attributed to the layer that set it (enterprise > product > global > project > workspace > session > agent). A malformed model ref is refused by name at load. Scope: `kubic run --role` and `kubic tui --role` both apply the whole layer (model pin + tools); the TUI also takes the `[agent].name` agent id. |
-| `orchestrator.root` | Parent directory for orchestrator worktrees: the spawned set is `<repo>/<root>/<session>/<agent>`, `kubic clean` plans the same set, and the §35 runtime exclude entries cover it (the derived entry is `/<root>/`, anchored to the repo root, so only that directory matches — a bare `worktrees` never hides `deep/worktrees/…`). Workspace-relative only — refused by name at load: an absolute path, a `..` segment, a trailing `/`, an empty value, a `.` segment (`.`, `./x`, `foo/.` — the entry would match nothing and the worktree set would stay unignored), a control character, a gitignore metacharacter (`*`, `?`, `[`, `]`, a leading `#`, a backslash), and the committed half (`.kubic`, `.kubic/roles` — case-insensitively, since git folds ignore patterns on a case-insensitive filesystem). Unset ⇒ `.kubic/wt`. || `orchestrator.maxWorkers` | Default admission cap for the orchestrator scheduler (§45): the concurrency a run starts with when nothing else caps it. A per-session override and an explicit limits cap still win; a value that is not a positive integer is refused by name. Unset ⇒ 4. |
-| `ui.*` | Kept: pi-tui owns presentation; no theme engine exists — parsed and reported for forward-compat only. |
+| `roles.<name>.model`, `roles.<name>.tools` | Per-role defaults layered under the role document for `kubic run --role <name>` (§12.1): `model` is a `provider/id` pin the run selects unless an explicit `--model`/`[model]` pin wins, `tools` replaces the document's own list. Each leaf is attributed to the layer that set it (enterprise > product > global > project > workspace > session > agent). A malformed model ref is refused by name at load. Scope: `kubic run --role` and `kubic tui --role` both apply the whole layer (model pin + tools); the TUI also takes the `[agent].name` agent id. `kubic orchestrate` resolves each worker over the same layers (§38.1, issue #202): `[roles.<name>].model` outranks the manager's effective model for that worker (which is otherwise inherited), the child is told the winning `provider/id` on `KUBIC_MODEL`, `tools` narrows the orchestrated worker's plan and its `kubic run --role` lane, and the role's thinking default travels on `KUBIC_MODEL_THINKING` unless the run's own `KUBIC_MODEL_THINKING` is set (which outranks it). No role, model or provider is invented when none of those levels sets one. |
+| `orchestrator.root` | Parent directory for orchestrator worktrees: the spawned set is `<repo>/<root>/<session>/<agent>`, `kubic clean` plans the same set, and the §35 runtime exclude entries cover it (the derived entry is `/<root>/`, anchored to the repo root, so only that directory matches — a bare `worktrees` never hides `deep/worktrees/…`). Workspace-relative only — refused by name at load: an absolute path, a `..` segment, a trailing `/`, an empty value, a `.` segment (`.`, `./x`, `foo/.` — the entry would match nothing and the worktree set would stay unignored), a control character, a gitignore metacharacter (`*`, `?`, `[`, `]`, a leading `#`, a backslash), and the committed half (`.kubic`, `.kubic/roles` — case-insensitively, since git folds ignore patterns on a case-insensitive filesystem). Unset ⇒ `.kubic/wt`. || `orchestrator.maxWorkers` | Default admission cap for the orchestrator scheduler (§45): the concurrency a run starts with when nothing else caps it. `kubic orchestrate --concurrency <n>` overrides it for that run, and an explicit limits cap still wins over this key; a value that is not a positive integer is refused by name. Unset ⇒ 4. |
+| `ui.theme` | TUI theme (§16.9, issue #304). A built-in name — `default` or `dark` (the shipped Konic brand palette) or `light` — or a path to a JSON theme file, read relative to the current directory (an absolute path is taken as typed). Resolved and validated **before the alt-screen opens**: a missing file, malformed JSON, an unknown or missing colour, or a value that is not `#rrggbb` is one `error: theme '<ref>': …` line on stderr and exit 2. A custom theme names the seven colours Kubic styles with (the structure — bold accent, dim, italic, … — stays Kubic's); each is downgraded to the terminal's colour level exactly like the built-in palette (truecolor RGB, else the nearest xterm-256 entry, else the nearest ANSI colour, and the identity under `NO_COLOR`). Schema: `{ "name": "solarized", "colors": { "accent": "#268bd2", "warm": "#b58900", "success": "#859900", "error": "#dc322f", "warning": "#cb4b16", "muted": "#93a1a1", "prompt": "#fdf6e3" } }` — `colors` and all seven keys are required, unknown keys are refused by name. Unset ⇒ `default`. |
+| `ui.statusBar` | Kept: the status bar is always shown; hiding it is a named follow-up — parsed and reported for forward-compat only. |
 | `session.store` | Kept: `jsonl` is the only store implemented; `sqlite`/`memory` are a separate decision — parsed and reported for forward-compat only. |
 | `session.dir` | Not yet implemented: sessions stay under `~/.kubic/sessions`; relocation is a named follow-up with no filed issue yet (session-lock placement and the runtime-exclude split must settle first). |
 | `session.retentionDays` | Default keep-window (days) for `kubic sessions prune`: `--keep-days` overrides it. `0` means retention is off — prune exits 0 with `session retention is off (keep-days 0) — nothing is pruned`; unset, prune exits 1 naming both ways to set a window (`--keep-days`, or this key) rather than inventing one. Deletion stays explicit (`--yes`), dry-run is the default, and a session holding a live lock is never pruned — the lock is re-checked immediately before each delete, so a session locked between plan and delete is skipped too. The same window self-heals session journals at read time: `kubic log` (with `--session <id>` or the latest-session fallback) drops aged entries as it reads them — with retention unset, or `0`, the log path writes nothing. |
+| `verify.tests`, `verify.build`, `verify.lint`, `verify.typecheck` | The §48 gate commands (see [Gate verification](#gate-verification-verify)). After each `kubic run` settles, each configured command runs as `sh -c <command>` in the run's worktree and its exit status becomes the trajectory's `signal:<gate>` label (0 = `pass`). A gate with no command stays `unknown`. A blank or non-string command is refused by name at load. |
+| `verify.timeoutMs` | Per-command bound for the `[verify]` gates, a positive integer of milliseconds (default 600000). A command still running at the bound is killed and its gate is `fail`. |
 | `policy.allowed_models` | The model gate: `provider/id`, `provider/*` (or `*` glob) patterns and bare model ids. A selection outside the list — `--model`, `[model]`, `KUBIC_MODEL`, a role pin, or the implicit first-available pick — exits 6 with a named policy refusal before any provider call; the implicit pick skips disallowed providers. It gates `kubic run`, `kubic tui` (boot and `/model` switches — a refused switch leaves the live model untouched) and the re-executing tiers of `kubic replay`. |
 | `policy.allowed_providers` | The provider gate, applied with `allowed_models`: both lists intersect, so a provider the list omits is refused even when a pattern would name the model. |
 | `policy.allowed_tools`, `policy.denied_tools` | The lane tool intersection: `kubic run`/`kubic tui` (and the re-executing tiers of `kubic replay`) activate only tools that survive it, and the system prompt's `tools:` line names exactly that set. A deny holds against every lower layer, a role document and the model — a role that declares a denied tool is refused by name, while a role that declares none of them is unaffected by a deny-only policy. With no allow list, only the deny list narrows; with one, anything outside it is refused. |
-| `policy.network_policy`, `policy.allowed_domains` | Parsed and resolved into the effective policy: `"proxy"` is carried as the engine's allowlist mode. **Not enforced today:** proxy-mediated enforcement is a named follow-up, so these keys protect nothing yet — `kubic config` lists them (`kept`) rather than the section being silently ignored, and `kubic doctor` does not report them (issue #289). The engine mode names (`none`, `allowlist`, `full`) are accepted too. |
+| `policy.network_policy`, `policy.allowed_domains` | Parsed and resolved into the effective policy: `"proxy"` is carried as the engine's allowlist mode. **Not enforced today:** proxy-mediated enforcement is a named follow-up, so these keys protect nothing yet — `kubic config` lists them (`kept`) rather than the section being silently ignored. `kubic doctor` reports the one shape it can judge (issue #289): an `allowlist` with no domains is unenforceable and fails `policy:enterprise-network`; proxy-mediated enforcement itself stays unreported. The engine mode names (`none`, `allowlist`, `full`) are accepted too. |
 | `policy.filesystem_policy` | Parsed and resolved (`workspace-only` is the engine's `workspace-write`; the engine level names are accepted). The lane derives filesystem reach from `[permissions]` classes today, so this value is **not enforced** as a gate of its own; `kubic config` lists it (`kept`), `kubic doctor` does not report it (issue #289). |
 | `policy.require_credential_broker`, `policy.deny_local_credentials` | Parsed and resolved into the effective policy, but **not enforced**: the credential broker is not on the worker spawn path yet, so `require_credential_broker = true` protects nothing today (issues #289, #359). `kubic config` lists both keys (`kept`); `kubic doctor` does not report them. |
 | `policy.data_policy`, `policy.logging_policy` | Parsed and carried (for example `no-external-training`, `full-audit`); no local mechanism can promise a provider-side policy, so they are reported, never claimed as enforced. |
 | `policy.agent_policy` | `{ max_agents, max_cost_usd }`, parsed into the effective policy's `agent` bounds; the orchestrator does not consume them yet, so they are **not enforced**; `kubic config` lists them (`kept`), `kubic doctor` does not report them (issue #289). |
 | `audit` (`[[audit]]`) | Sink tables (`sink` = `syslog` \| `file` \| `memory`, `level` = `privileged` \| `all`, optional `target`/`facility`). Parsed and validated fail-closed (an unknown kind, level or key is named); sink construction is a named follow-up, so the CLI cannot write to them yet. |
+
+### Gate verification (`[verify]`)
+
+```toml
+[verify]
+tests = "npm test"
+typecheck = "npm run typecheck"
+timeoutMs = 600000
+```
+
+With at least one command configured, every `kubic run` (and every
+`kubic orchestrate` worker, which is a `kubic run` in its worktree)
+verifies its work after it settles, before it writes its §46 trajectory:
+
+1. Each configured gate runs in the run's worktree, in the order tests,
+   build, lint, typecheck. The command runs as `sh -c <command>` with the
+   allowlisted tool environment (no secrets) and is killed at `timeoutMs`.
+   Exit 0 is `pass`; any other exit, a spawn failure or a timeout is
+   `fail`.
+2. When the run started from a git revision, the same commands run again
+   in a temporary detached checkout of that revision (`git worktree add
+   --detach`, removed afterwards whatever happens). A gate that passed there
+   and fails after the run is a regression.
+3. The trajectory's eval labels record `signal:<gate>` for each verified
+   gate and, when a baseline was comparable, `signal:regression` (`pass` =
+   no gate regressed, `fail` = at least one did). Outside a git checkout no
+   regression is claimed.
+
+`kubic eval --trajectory`, the reference verifier and the RL exporters read
+these labels; see the signal and quality rules in
+[the eval package](../packages/eval.md#signals-and-patch-quality). With no
+`[verify]` section nothing runs and every gate stays `unknown`. `kubic tui`
+turns are not verified.
+
+The commands are ordinary shell commands run with your permissions, so
+they come only from layers you trust: a project `.kubic/config.toml` is
+refused until the project is trusted (see the trust gate above).
+Verification adds the commands' run time to every `kubic run`.
 
 ### `autoApprove` capabilities
 
@@ -286,7 +332,7 @@ quietly stop configuring anything.
 | Capability | Raised by |
 | --- | --- |
 | `network` | A network command under `network = "none"` (`curl`, `wget`, `ssh`, `scp`, …) — including one hidden inside `$(…)` (nested substitutions included), backticks, or after `eval`. |
-| `credentials` | Credential-tool overreach — no detector yet; fires via `requires:<tool>` or its owning tool. |
+| `credentials` | An access to a listed credential location (issue #275), under the effective `credentials` class — which §40.2 enforces as `none`, `allowlist` included. Bash: home credential paths (`~/.aws/`, `~/.ssh/` — every child except the known-public `known_hosts*`, `authorized_keys*` and `*.pub`, so `~/.ssh/github` and `~/.ssh/*` raise, `~/.config/gh/`, `~/.config/gcloud/`, `~/.docker/config.json`, `~/.kube/config`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.git-credentials`, `~/.azure/`) spelled `~`, `$HOME`, `${HOME}`, `/Users/<user>` or `/home/<user>`, plus workspace credential files (`.env`, `.env.*` except `.env.example`/`.env.sample`/`.env.template`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*` — the public `*.pub` halves excluded). Read-family tools (`read`, `ls`, `find`, `grep`): the same names in the `path`/`root` argument, as typed before the confine rewrite (a home path is rewritten before the tool opens it, but the ask sees it), and the name filters `grep.include` / `find.nameContains` when the filter is a substring of a credential name or contains one (`include: "env"` reaches `.env`, `include: "src/.env.local"` too) — filters shorter than 3 characters are not treated as credential selectors. Matching is case-folded, like the default macOS/Windows volumes. Lexical detection, not enforcement (§59.1): an obfuscated or built-up path is a stated miss. Also fires via `requires:<tool>`. |
 | `git-push` | `git push`, `git remote add/set-url/remove/rename` — in any command segment (`ls; git push`, `cd x && git push`), after git global options (`git -C . push`, `git -c k=v push`, `--git-dir=…`, `--work-tree=…`, `--no-pager`; an option argument may be quoted: `git -C "my dir" push`) and after any command-position boundary: whitespace, `\| ; &`, `(` (`$(git push)`), a path (`/usr/bin/git push`), a backslash (`\git push`), a quote (`bash -c 'git push'`, `sh -c "git push"`) or a backtick. The word must be exactly `git` followed by whitespace — `mygit push`, `digit push`, `gitpush` and `git-lfs push` do not raise. |
 | `destructive-shell` | The destructive matcher (`rm -rf`, `mkfs`, `dd of=/dev/…`, `shred`, `git clean -f`, `chmod/chown -R`, force pushes — `git push --force`/`-f`/`--force-with-lease`/`--force-if-includes`/`+refspec` — `find … -delete`, `git reset --hard`, `git checkout -- <path>`/`.`/`-f`, and `git restore` of the working tree; a staged-only `git restore --staged` is not destructive), including a destructive verb unwrapped through `$(…)` (nested substitutions included), backticks, or after `eval`. |
 | `install` | Package installs and fetch-and-run launchers, in any segment: `npm install/i/add/ci/exec/x`, `npx`, `pnpm install/i/add/dlx`, `yarn` (bare), `yarn add/install/dlx/global add`, `bun install/i/add`, `bunx`, `pip install`, `pipx install/run`, `uv add`, `uv pip install`, `uv tool install`, `uvx`, `gem install`, `composer require/install`, `brew install`, `apt install`, `cargo install/add`, `go install`. Scripts such as `npm test`, `npm run build`, `yarn build` and `uv run` are not installs. |
@@ -301,7 +347,8 @@ quietly stop configuring anything.
 outside this set is reported by `kubic doctor` (`policy:approvals`), never
 silently ignored.
 
-Detection is a literal-pattern heuristic over the command string, not
+Detection is a literal-pattern heuristic over the command string and the
+read-family tool paths, not
 sandbox-grade shell parsing — the posture is stated, not silent. Documented
 heuristics:
 
@@ -412,6 +459,24 @@ heuristics:
   so the effective nesting threshold is 2× the cap — 31 nesting levels
   raise, 32 stay unraised, pinned in the detector tests) — a stated bound,
   never a fabricated unwrap.
+- **Credential paths** (issue #275) — the `credentials` trigger is lexical,
+  like every detector here: it recognizes the listed home locations in a
+  bash command (`~/.aws/credentials`, `$HOME/.ssh/id_rsa`, `/Users/x/.netrc`;
+  the `~`, `$HOME`, `${HOME}` and absolute home spellings), the listed file
+  names in a read-family tool path, and the `grep.include`/`find.nameContains`
+  name filters that select those files by substring (`include: "env"`
+  reaches `.env`; a filter shorter than 3 characters is not treated as a
+  credential selector). Matching is case-folded, like the filesystems it
+  guards (`.ENV`, `~/.AWS/credentials`). Over-triggering is deliberate
+  (`*.pem` is flagged whether or not it holds a key) and a raised credential
+  capability is an ask, never a silent grant; the known-public files
+  (`*.pub`, `authorized_keys*`, `known_hosts*`) stay quiet. Stated misses: a
+  path the list does not name, an obfuscated or split spelling
+  (`~/.a''ws/credentials`, `p=~/.ssh; cat $p/id_rsa`), a Windows-style
+  backslash spelling, and a credential reached indirectly (`bash -c`, a
+  script, a symlink). The `~/.ssh/*`
+  directory name also matches the network verb scan, so those commands raise
+  `network` as well.
 
 What remains out of scope — documented gaps, not silently handled:
 interpreter-based verbs (`bash -c "rm -rf …"`, `python3 -c`, `node -e` —
@@ -724,16 +789,20 @@ not. The split, exactly as shipped:
   and manual: `kubic sessions prune` lists candidates by default and
   deletes only with `--yes`, and `[session] retentionDays` (above) supplies
   the default keep-window — a live-locked session is never pruned.
-- **Journal**: `<root>/.kubic/journal` by default. Every index append is
-  fsynced before it returns — one fsync per tool write is the price of
-  "reversible" (store-level `JournalRetention.durable`, default `true`,
-  trades it for a crash window of one truncated last line). That fsync
-  covers the appended index line only: blob payloads and the retention
-  compaction rewrite are renamed without one, so a crash right after a
-  compaction can lose more than the last line (stated in
-  [the journal and safety page](../architecture/journal-and-safety.md)).
-  Growth is bounded by `[journal] retentionDays` and the 100 MiB default
-  size cap.
+- **Journal**: `<root>/.kubic/journal` by default. With the store's default
+  `durable` on, the content an entry references is flushed before the entry
+  is: a blob's bytes are fsynced before its rename and its directory after
+  it, and the index line is fsynced before the append returns — a few
+  fsyncs per tool write are the price of "reversible", and a crash can
+  neither take back a change the journal promised to undo nor leave a
+  durable entry pointing at bytes that were never written. The retention
+  compaction rewrite is flushed the same way, so a crash right after it
+  cannot leave an empty index where the whole history was (stated in
+  [the journal and safety page](../architecture/journal-and-safety.md);
+  `JournalRetention.durable` is the programmatic opt-out, which trades all
+  of it for a crash window of one truncated last line).
+  Growth is bounded by `[journal] retentionDays`, `[journal] maxBytes` (the
+  whole store: index plus blobs) and the 100 MiB default size cap.
 
 Honest limits, stated plainly (§59.1): solo runs in-process with your
 user authority — no isolation, no containment; approval policy is an

@@ -6,7 +6,13 @@
 // Real code end to end: the prod bootTuiLane re-rooted onto temp state, the
 // real NodeExecutionEnv inside a temp workspace, a recording fake Terminal
 // under the real alt-screen. Faux provider only: zero network.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,8 +22,9 @@ import {
   runTuiCommand,
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
-import type { FileJournalStore } from '../../exec/src/journal.js';
+import { FileJournalStore } from '../../exec/src/journal.js';
 import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
   createModels,
@@ -48,44 +55,7 @@ afterEach(() => {
 type Step = Parameters<typeof fauxAssistantMessage>[0];
 
 function recordingTerminal() {
-  const writes: string[] = [];
-  const counts = { started: 0, stopped: 0 };
-  let handler: ((data: string) => void) | undefined;
-  return {
-    writes,
-    counts,
-    mark: (): number => writes.length,
-    since: (mark: number): string => writes.slice(mark).join(''),
-    feed: (data: string) => handler?.(data),
-    terminal: {
-      start: (input: (data: string) => void) => {
-        counts.started += 1;
-        handler = input;
-      },
-      stop: () => {
-        counts.stopped += 1;
-      },
-      drainInput: () => Promise.resolve(),
-      write: (data: string) => writes.push(data),
-      get columns(): number {
-        return 120;
-      },
-      get rows(): number {
-        return 40;
-      },
-      get kittyProtocolActive(): boolean {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    },
-  };
+  return terminalRig(120, 40);
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {
@@ -532,5 +502,70 @@ describe('JournalPanelFeed throttles journal reads (issue #311)', () => {
     });
     expect(() => feed.request()).not.toThrow();
     expect(() => feed.now()).not.toThrow();
+  });
+});
+
+// Issue #374 (§42.1): every prompt is a run. The sweep re-baselines at each
+// turn start, so a file the operator edits between prompts is never
+// journaled as the agent's change, sweep entries carry their turn, and the
+// quit-time sweep after a settled turn appends nothing new.
+describe('per-turn reconciliation in the TUI (issue #374)', () => {
+  function sweptEntries(sessionsRoot: string) {
+    const [id] = readdirSync(sessionsRoot).filter((e) => !e.startsWith('.'));
+    if (id === undefined) return [];
+    return new FileJournalStore(join(sessionsRoot, id, 'journal'))
+      .entries()
+      .filter((entry) => entry.unattributed === true);
+  }
+
+  it('an edit made between prompts is not attributed to the next turn; entries carry the turn', async () => {
+    const workspace = tmpRoot();
+    const sessionsRoot = tmpRoot();
+    writeFileSync(join(workspace, 'mine.txt'), 'before\n');
+    const { fake, exit } = await openTui(sessionsRoot, workspace, [
+      [fauxToolCall('bash', { command: "printf 'one\\n' > one.txt" })],
+      'turn one',
+      [fauxToolCall('bash', { command: "printf 'two\\n' > two.txt" })],
+      'turn two',
+    ]);
+    await submit(fake, 'first', 'turn one');
+    await waitFor(() =>
+      sweptEntries(sessionsRoot).some((entry) => entry.path === 'one.txt'),
+    );
+    // Out-of-band: the operator edits mine.txt between the two prompts.
+    writeFileSync(join(workspace, 'mine.txt'), 'operator edit\n');
+    await submit(fake, 'second', 'turn two');
+    await waitFor(() =>
+      sweptEntries(sessionsRoot).some((entry) => entry.path === 'two.txt'),
+    );
+    expect(
+      sweptEntries(sessionsRoot).map((entry) => [entry.path, entry.turn]),
+    ).toEqual([
+      ['one.txt', 1],
+      ['two.txt', 2],
+    ]);
+    fake.feed('\x1b');
+    expect(await exit).toBe(0);
+    expect(
+      sweptEntries(sessionsRoot).some((entry) => entry.path === 'mine.txt'),
+    ).toBe(false);
+  });
+
+  it('the quit-time sweep after a settled turn adds no duplicates and no post-turn edits', async () => {
+    const workspace = tmpRoot();
+    const sessionsRoot = tmpRoot();
+    const { fake, exit } = await openTui(sessionsRoot, workspace, [
+      [fauxToolCall('bash', { command: "printf 'x\\n' > made.txt" })],
+      'made',
+    ]);
+    await submit(fake, 'make it', 'made');
+    await waitFor(() => sweptEntries(sessionsRoot).length === 1);
+    // An edit after the last turn settled, before the quit.
+    writeFileSync(join(workspace, 'after.txt'), 'operator\n');
+    fake.feed('\x1b');
+    expect(await exit).toBe(0);
+    expect(sweptEntries(sessionsRoot).map((entry) => entry.path)).toEqual([
+      'made.txt',
+    ]);
   });
 });

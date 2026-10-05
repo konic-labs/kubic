@@ -3,14 +3,35 @@
 // branches + journal retention, output supports --json, and the refusal
 // posture holds on the faux seam before the scratch-repo suite
 // (clean-repo.test.ts) proves it against real git.
-import { describe, expect, it } from 'vitest';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../../exec/src/env.js';
+import { FileJournalStore } from '../../../../exec/src/journal.js';
 import {
   type CleanOptions,
+  cleanDepsWithDefaults,
   planClean,
   planSessionClean,
   runCleanCommand,
 } from './clean.js';
+
+// Issue #337: temp workspaces for the real (non-injected) prune path.
+const scratch: string[] = [];
+
+afterEach(() => {
+  for (const dir of scratch.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
+
 import type { WorktreeEntry } from './list.js';
 import { parseWorktreePorcelain } from './list.js';
 
@@ -98,7 +119,7 @@ describe('kubic clean (issue #45, #92)', () => {
         },
         pruneJournal: () => {
           journalCalls += 1;
-          return { entries: 0, bytes: 0 };
+          return { entries: 0, bytes: 0, overBound: 0 };
         },
       },
     );
@@ -125,7 +146,7 @@ describe('kubic clean (issue #45, #92)', () => {
         err: (line: string) => errs.push(line),
         pruneJournal: (policy: unknown) => {
           policies.push(policy);
-          return { entries: 4, bytes: 1024 };
+          return { entries: 4, bytes: 1024, overBound: 0 };
         },
       },
     );
@@ -164,7 +185,7 @@ describe('kubic clean (issue #45, #92)', () => {
         err: (line: string) => errs.push(line),
         pruneJournal: (policy: { maxBytes?: number; maxAgeMs?: number }) => {
           policies.push(policy);
-          return { entries: 2, bytes: 64 };
+          return { entries: 2, bytes: 64, overBound: 0 };
         },
       },
     );
@@ -201,13 +222,34 @@ describe('kubic clean (issue #45, #92)', () => {
         env,
         out: (line: string) => lines.push(line),
         err: (line: string) => errs.push(line),
-        pruneJournal: () => ({ entries: 3, bytes: 99 }),
+        pruneJournal: () => ({ entries: 3, bytes: 99, overBound: 0 }),
       },
     );
     expect(code).toBe(0);
     const text = lines.join('\n');
     expect(text).toContain('journal: pruned 3 entr(ies), freed 99 byte(s)');
     expect(text).not.toContain('nothing to prune');
+  });
+
+  // Issue #348: the newest entry is never dropped, so a bound it alone
+  // exceeds is reported rather than silently ignored.
+  it('reports an over-bound journal whose newest entry was kept', async () => {
+    const env = new FakeExecutionEnv(repoScripts());
+    const lines: string[] = [];
+    const errs: string[] = [];
+    const code = await runCleanCommand(
+      { journal: true, maxBytes: 10 },
+      {
+        env,
+        out: (line: string) => lines.push(line),
+        err: (line: string) => errs.push(line),
+        pruneJournal: () => ({ entries: 4, bytes: 1024, overBound: 7 }),
+      },
+    );
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toContain(
+      'journal: pruned 4 entr(ies), freed 1024 byte(s), over bound by 7 byte(s) (newest entry kept)',
+    );
   });
 
   it('plans only spawned worktrees, never the main checkout', () => {
@@ -375,7 +417,7 @@ describe('kubic clean (issue #45, #92)', () => {
     ]);
   });
 
-  it('refuses outside a git repo with exit 2 and mutates nothing', async () => {
+  it('refuses outside a git repo with exit 5 and mutates nothing', async () => {
     const env = new FakeExecutionEnv({
       'git rev-parse --show-toplevel': {
         exitCode: 128,
@@ -397,13 +439,42 @@ describe('kubic clean (issue #45, #92)', () => {
         },
       },
     );
-    expect(code).toBe(2);
+    expect(code).toBe(5);
     expect(removals).toBe(0);
     // The refusal is a diagnostic: stderr, one logger line, stdout empty.
     expect(lines).toEqual([]);
     expect(errs).toHaveLength(1);
     expect(errs[0]).toMatch(/^error: `kubic clean` needs a git repository/);
     expect(errs[0]).toContain('nothing was removed');
+
+    // Under --json the refusal is the same one-document envelope a run
+    // emits (issue #372): exitCode 5, nothing planned, nothing touched.
+    const jsonLines: string[] = [];
+    const jsonErrs: string[] = [];
+    const jsonCode = await runCleanCommand(
+      { json: true },
+      {
+        env,
+        out: (line: string) => jsonLines.push(line),
+        err: (line: string) => jsonErrs.push(line),
+        remover: async () => {
+          removals += 1;
+        },
+      },
+    );
+    expect(jsonCode).toBe(5);
+    expect(removals).toBe(0);
+    expect(jsonLines).toHaveLength(1);
+    expect(JSON.parse(jsonLines[0] as string)).toEqual({
+      ok: false,
+      exitCode: 5,
+      dryRun: false,
+      worktrees: [],
+      branches: [],
+      journal: { entries: 0, bytes: 0, overBound: 0 },
+    });
+    expect(jsonErrs).toHaveLength(1);
+    expect(jsonErrs[0]).toMatch(/needs a git repository/);
   });
 
   it('reports a hard failure when a dirty worktree refuses removal', async () => {
@@ -456,7 +527,7 @@ describe('kubic clean never disposes a live worker (§51 crash recovery)', () =>
         remover: async (_e: unknown, path: string) => {
           removed.push(path);
         },
-        pruneJournal: () => ({ entries: 0, bytes: 0 }),
+        pruneJournal: () => ({ entries: 0, bytes: 0, overBound: 0 }),
         liveWorkers: () =>
           new Map([['agent-2', { pid: 4242, sessionId: 's-agent-2' }]]),
         workerCommand: async () => command,
@@ -518,7 +589,7 @@ describe('kubic clean --session is scoped to its own session (issue #144)', () =
           deleted.push(branch);
         },
         pruner: async () => undefined,
-        pruneJournal: () => ({ entries: 0, bytes: 0 }),
+        pruneJournal: () => ({ entries: 0, bytes: 0, overBound: 0 }),
         liveWorkers: () =>
           new Map([['worker-1', { pid: 4242, sessionId: liveSession }]]),
         workerCommand: async () => `node kubic.js run --session ${liveSession}`,
@@ -557,7 +628,7 @@ describe('kubic clean --session is scoped to its own session (issue #144)', () =
           remover: async () => undefined,
           branchDeleter: async () => undefined,
           pruner: async () => undefined,
-          pruneJournal: () => ({ entries: 0, bytes: 0 }),
+          pruneJournal: () => ({ entries: 0, bytes: 0, overBound: 0 }),
           liveWorkers: () => new Map(),
           retireSessionState: (session: string, repo: string) => {
             retired.push([session, repo]);
@@ -603,5 +674,92 @@ describe('kubic clean --session is scoped to its own session (issue #144)', () =
 
     const own = await run('sa-worker-1');
     expect(own.killed).toEqual([4242]);
+  });
+});
+
+// Issue #337: `kubic clean --journal` is a destructive pass over the whole
+// journal — under a live writer it can drop entries the run just appended and
+// delete blobs it just wrote. It steps aside, and says so.
+describe('kubic clean steps aside for a live journal writer (issue #337)', () => {
+  function repoWithJournal(): { repoRoot: string; journalDir: string } {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'clean337-'));
+    scratch.push(repoRoot);
+    const journalDir = join(repoRoot, '.kubic', 'journal');
+    mkdirSync(join(journalDir, 'blobs'), { recursive: true });
+    const store = new FileJournalStore(journalDir);
+    store.append({
+      path: 'a.txt',
+      op: 'write',
+      before: null,
+      after: 'a\n',
+      bytesDelta: 2,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 100,
+    });
+    return { repoRoot, journalDir };
+  }
+
+  function envFor(repoRoot: string): FakeExecutionEnv {
+    return new FakeExecutionEnv({
+      'git rev-parse --show-toplevel': {
+        exitCode: 0,
+        stdout: `${repoRoot}\n`,
+        stderr: '',
+      },
+      'git worktree list --porcelain': {
+        exitCode: 0,
+        stdout: `worktree ${repoRoot}\nHEAD abc\nbranch refs/heads/main\n`,
+        stderr: '',
+      },
+      'git branch --list kubic/* --format=%(refname:short)': {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+      'git worktree prune': { exitCode: 0, stdout: '', stderr: '' },
+    });
+  }
+
+  it('skips the prune and names the holder', async () => {
+    const { repoRoot, journalDir } = repoWithJournal();
+    const indexPath = join(journalDir, 'index.jsonl');
+    const before = readFileSync(indexPath, 'utf8');
+    // A live writer's lock: the pid `withFileLocked` writes.
+    writeFileSync(`${indexPath}.lock`, String(process.pid));
+    const lines: string[] = [];
+    const errs: string[] = [];
+    const code = await runCleanCommand(
+      { journal: true, maxAgeMs: 1 },
+      cleanDepsWithDefaults({
+        env: envFor(repoRoot),
+        out: (l) => lines.push(l),
+        err: (l) => errs.push(l),
+      }),
+    );
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toContain(
+      `journal: prune skipped — the journal is in use (pid ${process.pid})`,
+    );
+    expect(readFileSync(indexPath, 'utf8')).toBe(before);
+    expect(readdirSync(join(journalDir, 'blobs'))).toHaveLength(1);
+
+    // Control: with the holder gone the same invocation prunes (the aged
+    // entry is dropped and its blob swept).
+    rmSync(`${indexPath}.lock`);
+    const after: string[] = [];
+    const code2 = await runCleanCommand(
+      { journal: true, maxAgeMs: 1 },
+      cleanDepsWithDefaults({
+        env: envFor(repoRoot),
+        out: (l) => after.push(l),
+        err: () => undefined,
+      }),
+    );
+    expect(code2).toBe(0);
+    expect(after.join('\n')).toMatch(/journal: pruned 1 entr\(ies\)/);
+    expect(readFileSync(indexPath, 'utf8')).not.toBe(before);
+    expect(readdirSync(join(journalDir, 'blobs'))).toHaveLength(0);
   });
 });

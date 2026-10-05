@@ -15,7 +15,11 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+// The PROD wiring for §13 WAITING (issue #151), so this test drives the real
+// observer instead of a copy of it.
+import { workerAskStateObserver } from '../../../apps/kubic/src/orchestrate-run.js';
+import { WorkerRegistry } from '../../worker/src/lifecycle/registry.js';
 import type {
   MergeDecisionRecord,
   OrchestrateCliOptions,
@@ -86,6 +90,10 @@ interface Harness {
   merges: MergeDecisionRecord[];
   /** How often the merge gate's decider was consulted. */
   mergeAsks: () => number;
+  /** §13 WAITING → RUNNING transitions the router reported (issue #151). */
+  askStates: { agentId: string; pending: boolean }[];
+  /** The registry rows the prod ask-state observer writes (issue #151). */
+  registry: WorkerRegistry;
   /** The layer the CLI constructed through `deps.approvals`. */
   readonly approvals: WorkerApprovalsRun;
   dir: string;
@@ -101,6 +109,12 @@ interface HarnessOptions {
   triggerFor?: (agentId: string) => string;
   /** How many asks each worker raises (the child's own drive). */
   asksPerWorker?: number;
+  /**
+   * Fail the worker's FIRST attempt after its asks were answered (issue
+   * #175): the run must replace it and the replacement must re-ask — same
+   * key, answered from the manager's memoized decision.
+   */
+  crashFirstAttempt?: boolean;
   /** The merge gate's decider; default approves every merge. */
   mergeDecider?: () => boolean;
 }
@@ -109,7 +123,9 @@ interface HarnessOptions {
 // place in the dialog) — routing, decisions, budgets, skip and the mailbox are
 // the real modules.
 function harness(
-  decide: (request: OrchestratorApprovalRequest) => Decision,
+  decide: (
+    request: OrchestratorApprovalRequest,
+  ) => Decision | Promise<Decision>,
   options: HarnessOptions = {},
 ): Harness {
   const dir = scratchRoot('kubic-105-');
@@ -118,12 +134,22 @@ function harness(
   const raised: OrchestratorApprovalRequest[] = [];
   const published: PublishedWorkerAsk[] = [];
   const merges: MergeDecisionRecord[] = [];
+  // §13 WAITING (issue #151): the ask-state changes the router observed, and
+  // the registry rows the PROD observer writes from them.
+  const askStates: { agentId: string; pending: boolean }[] = [];
+  const registry = new WorkerRegistry(() => 1700000000000);
+  // How many times each worker has been launched (issue #175): the fake
+  // child's own attempt counter, the replacement's `from` generation.
+  const attempts = new Map<string, number>();
   let mergeAskCount = 0;
   let built: WorkerApprovalsRun | undefined;
   // The child is told the run's own mailbox (`KUBIC_APPROVALS_DIR`), which is
   // per session (issue #279): read it from the run once the CLI built it.
   const mailbox = (): string =>
     built === undefined ? join(dir, 'approvals') : built.mailboxDir();
+  // The manager's public verification key, once the CLI built the run: the
+  // in-process child stand-in verifies exactly as a spawned child would.
+  const managerKey = (): string => built?.verifyKey() ?? '';
   const deps: OrchestrateCommandDeps = {
     out: (line) => lines.push(line),
     err: (line) => lines.push(line),
@@ -140,6 +166,8 @@ function harness(
     // here (a child-process stand-in), but the CONTRACT is the prod one —
     // the same files, the same bound, the same denial-as-data.
     runWorker: async (agentId, worktree, _prompt, info) => {
+      const attempt = (attempts.get(agentId) ?? 0) + 1;
+      attempts.set(agentId, attempt);
       const trigger =
         options.triggerFor?.(agentId) ??
         (agentId === 'worker-2' ? 'destructive-shell' : 'network');
@@ -165,7 +193,15 @@ function harness(
         const answer = await awaitWorkerAskAnswer(
           mailbox(),
           publishedAsk.request.key,
-          { maxPendingMs: 1_000, pollMs: 5 },
+          {
+            maxPendingMs: 1_000,
+            pollMs: 5,
+            // The child verifies with the manager's PUBLIC key and the nonce
+            // it minted for this ask (issue #149): an answer it did not sign
+            // is not a verdict.
+            verifyKey: managerKey(),
+            nonce: publishedAsk.nonce,
+          },
         );
         if (!answer.approved) {
           // A denial is a DISTINCT status the worker branches on — never a
@@ -174,11 +210,26 @@ function harness(
           lines.push(`worker ${agentId}: ${answer.code} — ${answer.reason}`);
         }
       }
+      if (options.crashFirstAttempt === true && attempt === 1) {
+        // A crash-class terminus (issue #175): no approval/budget code, so
+        // the run replaces this worker and retries it.
+        throw Object.assign(new Error('worker crashed'), {
+          code: 'worker_failed',
+        });
+      }
       const hunks: MergedHunk[] = [
         { path: `${agentId}.txt`, hunk: `@@ -0,0 +1 @@ +${agentId}` },
       ];
       return hunks;
     },
+    ...(options.crashFirstAttempt === true
+      ? {
+          replaceWorker: (agentId: string) => {
+            const from = attempts.get(agentId) ?? 1;
+            return { from, to: from + 1 };
+          },
+        }
+      : {}),
     mergeBranch: () => undefined,
     reapWorker: () => undefined,
     requestApproval: () => {
@@ -206,12 +257,29 @@ function harness(
           ? {}
           : { budgetForAgent: cliOptions.budgetForAgent }),
         ...(cliOptions.fullAccess === true ? { fullAccess: true } : {}),
+        onAskState: (agentId, pending) => {
+          askStates.push({ agentId, pending });
+          // The prod observer (orchestrate-run.ts) is what turns the change
+          // into the row; a row is registered for the worker so it can.
+          if (registry.get(agentId) === undefined) {
+            registry.register({
+              workerId: agentId,
+              sessionId: cliOptions.sessionId,
+              generation: 1,
+              owner: 'orchestrate:test',
+            });
+            registry.updateAgentStatus(agentId, 'running');
+          }
+          workerAskStateObserver(registry, () => undefined)(agentId, pending);
+        },
         ...(options.noSeat === true
           ? {}
           : {
               seat: async (request: OrchestratorApprovalRequest) => {
                 raised.push(request);
-                const verdict = decide(request);
+                // A decider may take its time (issue #206's concurrency test
+                // holds the first answer until the sibling's ask is routed).
+                const verdict = await decide(request);
                 return verdict.approved
                   ? { approved: true, by: 'user' as const }
                   : { approved: false, reason: verdict.reason ?? 'denied' };
@@ -228,6 +296,8 @@ function harness(
     debugLines,
     raised,
     published,
+    askStates,
+    registry,
     merges,
     mergeAsks: () => mergeAskCount,
     get approvals(): WorkerApprovalsRun {
@@ -303,11 +373,100 @@ describe('per-worker approvals on the delegation path (issue #105)', () => {
     expect(h.approvals.decisions.pendingKeys()).toEqual([]);
   });
 
+  it('AC (issue #151): a pending ask shows WAITING, then RUNNING after the answer', async () => {
+    let statusWhilePending: string | undefined;
+    const h = harness((request) => {
+      // The decider runs while the ask is still unanswered: the row must
+      // already say WAITING.
+      statusWhilePending = h.registry.get(request.agentId)?.agentStatus;
+      return { approved: true };
+    });
+    expect(await runOrchestrateCommand(ORCHESTRATE_ARGS, h.deps)).toBe(0);
+    // The router observed the ask as pending, then answered it: the ROW the AC
+    // names goes WAITING → RUNNING, and only on a CHANGE (a second pump that
+    // finds nothing pending reports nothing).
+    expect(statusWhilePending).toBe('waiting');
+    expect(h.askStates).toEqual([
+      { agentId: 'worker-1', pending: true },
+      { agentId: 'worker-1', pending: false },
+    ]);
+    expect(h.registry.get('worker-1')?.agentStatus).toBe('running');
+  });
+
+  it('AC6 (issue #206): two workers’ asks in flight at once are routed and answered independently', async () => {
+    let h!: Harness;
+    let asksAtFirstAnswer = 0;
+    let firstAnswer = true;
+    // The decider holds the FIRST answer until the sibling worker's ask has
+    // been routed too. On the sequential loop that ask could never arrive
+    // while worker-1 is still waiting (worker-2 starts only after worker-1
+    // finished), so the wait below would time out and the assertion would
+    // fail — the two workers would not be in flight together.
+    h = harness(async () => {
+      if (firstAnswer) {
+        firstAnswer = false;
+        try {
+          await vi.waitFor(
+            () => expect(h.raised.length).toBeGreaterThanOrEqual(2),
+            { timeout: 500, interval: 5 },
+          );
+        } catch {
+          // Recorded, not thrown: the assertion below names the defect.
+        }
+        asksAtFirstAnswer = h.raised.length;
+      }
+      return { approved: true };
+    });
+
+    const code = await runOrchestrateCommand(TWO_WORKER_ARGS, h.deps);
+
+    expect(code).toBe(0);
+    // When the first ask was answered, BOTH had already been routed — the
+    // two worker scopes live in one mailbox without one starving the other.
+    expect(asksAtFirstAnswer).toBe(2);
+    expect(h.raised.map((request) => request.agentId)).toEqual([
+      'worker-1',
+      'worker-2',
+    ]);
+    // Both answers were delivered to their own key.
+    for (const request of h.raised) {
+      expect(h.approvals.decisions.decided(request.key)).toEqual({
+        approved: true,
+        by: 'user',
+      });
+    }
+    expect(h.approvals.decisions.pendingKeys()).toEqual([]);
+    expect(h.published).toHaveLength(2);
+  });
+
+  it('AC (issue #175): an approval granted before a crash is not re-asked after replacement', async () => {
+    // The worker asks, is approved, then crashes; the run replaces it
+    // (generation 1 → 2) and the replacement publishes the SAME ask again.
+    const h = harness(() => ({ approved: true }), {
+      crashFirstAttempt: true,
+    });
+    const code = await runOrchestrateCommand(ORCHESTRATE_ARGS, h.deps);
+
+    expect(code).toBe(0);
+    // Both generations published their ask — the same key, because the ask is
+    // the same operation in the same session/worktree.
+    expect(h.published).toHaveLength(2);
+    expect(h.published[0]?.request.key).toBe(h.published[1]?.request.key);
+    // The seat was consulted exactly ONCE: the replacement's ask was answered
+    // from the manager's memoized decision, never re-presented to the user.
+    expect(h.raised).toHaveLength(1);
+    expect(
+      h.approvals.decisions.decided(h.published[0]?.request.key ?? ''),
+    ).toEqual({ approved: true, by: 'user' });
+    expect(h.approvals.decisions.pendingKeys()).toEqual([]);
+    // The replacement is reported, with both generations named.
+    expect(h.debugLines.join('\n')).toMatch(/generation 1 → 2/);
+  });
+
   it('AC2: a bounded wait times out to a denial with the named reason and never hangs', async () => {
     const h = harness(() => ({ approved: true }), {
       noSeat: true,
       maxPendingMs: 30,
-      agents: ['worker-1'],
     });
     const started = Date.now();
     const code = await runOrchestrateCommand(ORCHESTRATE_ARGS, h.deps);
@@ -409,7 +568,12 @@ describe('per-worker approvals on the delegation path (issue #105)', () => {
         await awaitWorkerAskAnswer(
           h.approvals.mailboxDir(),
           published.request.key,
-          { maxPendingMs: 1_000, pollMs: 5 },
+          {
+            maxPendingMs: 1_000,
+            pollMs: 5,
+            verifyKey: h.approvals.verifyKey(),
+            nonce: published.nonce,
+          },
         );
         return [{ path: `${agentId}.txt`, hunk: 'x' }];
       },

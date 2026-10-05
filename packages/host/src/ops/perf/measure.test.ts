@@ -18,6 +18,8 @@ import {
   FakeExecutionEnv,
   NodeExecutionEnv,
 } from '../../../../exec/src/env.js';
+import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
+import { openSessionStore } from '../../../../worker/src/lane/session-store.js';
 import {
   MEASURED_BUDGET_KINDS,
   MeasureError,
@@ -123,9 +125,50 @@ describe('measureSamples: worktree source (issue #98)', () => {
   }, 15_000);
 });
 
-describe('MEASURED_BUDGET_KINDS (issue #98)', () => {
-  it('covers at least spawn and worktree', () => {
-    expect([...MEASURED_BUDGET_KINDS].sort()).toEqual(['spawn', 'worktree']);
+describe('MEASURED_BUDGET_KINDS (issue #98, #158)', () => {
+  it('covers spawn, worktree and attach — teardown stays sample-only', () => {
+    expect([...MEASURED_BUDGET_KINDS].sort()).toEqual([
+      'attach',
+      'spawn',
+      'worktree',
+    ]);
+    expect([...MEASURED_BUDGET_KINDS]).not.toContain('teardown');
+  });
+});
+
+describe('measureSamples: attach cycles (issue #158)', () => {
+  it('measures real create/attach cycles and leaves no session behind', async () => {
+    const root = tmpRoot('perf-attach-');
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const samples = await measureSamples({
+      kind: 'attach',
+      samples: 2,
+      env: new FakeExecutionEnv({}),
+      sessionStore: store,
+    });
+    expect(samples.kind).toBe('attach');
+    expect(samples.source).toBe('measured');
+    expect(samples.samplesMs).toHaveLength(2);
+    for (const ms of samples.samplesMs) expect(ms).toBeGreaterThanOrEqual(0);
+    expect(samples.note).toContain('create/attach cycle');
+    // Cleanup: the measurement's own sessions are gone, and no lock is held.
+    expect(
+      store.bridge
+        .listDir(root)
+        .map((entry) => entry.name)
+        .filter((name) => name.startsWith('perf-')),
+    ).toEqual([]);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('refuses attach without a sessions root instead of fabricating a sample', async () => {
+    await expect(
+      measureSamples({
+        kind: 'attach',
+        samples: 1,
+        env: new FakeExecutionEnv({}),
+      }),
+    ).rejects.toThrow(/needs a sessions root/);
   });
 });
 

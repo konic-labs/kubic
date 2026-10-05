@@ -26,18 +26,18 @@ export const BUILTIN_ROLE_NAMES = [
 
 export type BuiltinRoleName = (typeof BUILTIN_ROLE_NAMES)[number];
 
-export interface RoleModelDefault {
-  provider: string;
-  model: string;
-  thinking: string;
-}
-
-export const ROLE_MODEL_DEFAULTS: Record<BuiltinRoleName, RoleModelDefault> = {
-  planner: { provider: 'local', model: 'llama3', thinking: 'medium' },
-  implementer: { provider: 'local', model: 'llama3', thinking: 'medium' },
-  tester: { provider: 'local', model: 'llama3', thinking: 'low' },
-  debugger: { provider: 'local', model: 'llama3', thinking: 'high' },
-  reviewer: { provider: 'local', model: 'llama3', thinking: 'low' },
+// §12/§38.1: the preset's THINKING half only. The role table's "model
+// default" column names a capability ("strongest reasoning", "fast
+// coding"), never a provider: the model itself resolves from
+// spawn_agent({model}) > [roles.<r>].model > the manager's effective model
+// (issue #202), so a role preset can no longer force `local/llama3` on every
+// worker of a repo that configured its own model.
+export const ROLE_THINKING_DEFAULTS: Record<BuiltinRoleName, string> = {
+  planner: 'medium',
+  implementer: 'medium',
+  tester: 'low',
+  debugger: 'high',
+  reviewer: 'low',
 };
 
 export function isBuiltinRole(name: string): name is BuiltinRoleName {
@@ -51,13 +51,12 @@ function spawnFailed(reason: string): SpawnOutcome {
 function parseConfigModel(
   role: string,
   ref: string,
+  source: string = `[roles.${role}].model`,
 ): { model: ModelSelection } | { error: string } {
   const slash = ref.indexOf('/');
   if (slash <= 0 || slash === ref.length - 1) {
     return {
-      error:
-        `[roles.${role}].model must be 'provider/id' ` +
-        `(got ${JSON.stringify(ref)}): refusing spawn`,
+      error: `${source} must be 'provider/id' (got ${JSON.stringify(ref)}): refusing spawn`,
     };
   }
   return {
@@ -78,14 +77,21 @@ export interface RoleSpawnRequest {
   objective?: string;
   configModel?: string;
   taskModel?: ModelSelection;
+  /**
+   * The manager's effective model pin (`provider/id`, issue #202): the
+   * fallback level under the role's own `[roles.<r>].model` and the
+   * spawn override.
+   */
+  parentModel?: string;
   isGitWorktree?: (path: string) => boolean;
 }
 
 // Role-aware spawn: unknown roles fail with SPAWN_FAILED (§38.2 scoped
 // set, fixed-in-v1 role list — the manager composes from the five, never
-// invents). Model precedence: spawn_agent({model}) beats
-// [roles.<r>].model beats the role default; the winner always lands in
-// the scoped set so the spawn contract below can verify it.
+// invents). Model precedence (§38.1, issue #202): spawn_agent({model}) beats
+// [roles.<r>].model beats the manager's own model; a caller that resolved
+// none of them is refused by name rather than handed a hardcoded provider.
+// The role's thinking default rides the winning model.
 export function spawnForRole(request: RoleSpawnRequest): SpawnOutcome {
   if (!isBuiltinRole(request.role)) {
     return spawnFailed(
@@ -103,19 +109,28 @@ export function spawnForRole(request: RoleSpawnRequest): SpawnOutcome {
       `role '${request.role}' declares no tool set: refusing spawn`,
     );
   }
-  const fallback = ROLE_MODEL_DEFAULTS[request.role];
-  let model: ModelSelection = {
-    provider: fallback.provider,
-    model: fallback.model,
-    thinking: fallback.thinking,
-  };
+  const thinking = ROLE_THINKING_DEFAULTS[request.role];
+  let model: ModelSelection | undefined;
   if (request.configModel !== undefined) {
     const parsed = parseConfigModel(request.role, request.configModel);
     if ('error' in parsed) return spawnFailed(parsed.error);
-    model = { ...parsed.model, thinking: fallback.thinking };
+    model = { ...parsed.model, thinking };
+  } else if (request.parentModel !== undefined) {
+    const parsed = parseConfigModel(
+      request.role,
+      request.parentModel,
+      'the manager model',
+    );
+    if ('error' in parsed) return spawnFailed(parsed.error);
+    model = { ...parsed.model, thinking };
   }
   if (request.taskModel !== undefined) {
     model = { ...request.taskModel };
+  }
+  if (model === undefined) {
+    return spawnFailed(
+      `no model for role '${request.role}': set [roles.${request.role}].model, pass spawn_agent({model}), or pin the run's model — refusing spawn`,
+    );
   }
   const scopedModels: ScopedModel[] = [
     { scope: 'spawn', provider: model.provider, model: model.model },

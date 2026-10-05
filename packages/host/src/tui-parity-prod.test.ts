@@ -15,6 +15,7 @@ import {
   type TuiRunDeps,
   TuiTurnRunner,
 } from '../../../apps/kubic/src/tui-run.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { OperationKillRegistry } from '../../worker/src/lane/abort.js';
 import {
@@ -376,44 +377,7 @@ describe('journal retention reaches the TUI store (issue #113, §42.4)', () => {
 
 describe('kubic tui parses the parity flags (issue #113)', () => {
   function fakeTerminal() {
-    const writes: string[] = [];
-    const counts = { started: 0, stopped: 0 };
-    let onInput: ((data: string) => void) | undefined;
-    return {
-      writes,
-      counts,
-      terminal: {
-        start: (input: (data: string) => void) => {
-          counts.started += 1;
-          onInput = input;
-        },
-        stop: () => {
-          counts.stopped += 1;
-        },
-        drainInput: () => Promise.resolve(),
-        write: (data: string) => writes.push(data),
-        get columns() {
-          return 100;
-        },
-        get rows() {
-          return 30;
-        },
-        get kittyProtocolActive() {
-          return false;
-        },
-        moveBy: () => {},
-        hideCursor: () => {},
-        showCursor: () => {},
-        clearLine: () => {},
-        clearFromCursor: () => {},
-        clearScreen: () => {},
-        setTitle: () => {},
-        setProgress: () => {},
-      },
-      feed: (data: string): void => {
-        onInput?.(data);
-      },
-    };
+    return terminalRig(100, 30);
   }
 
   async function waitFor(condition: () => boolean): Promise<void> {
@@ -469,7 +433,13 @@ describe('the TUI footer names the lane failure (issue #113)', () => {
     // reaches the footer verbatim.
     const app = {
       applyLaneEntries: () => {},
-      applyLaneEvent: () => {},
+      applyPresentation: () => {},
+      presentationSeed: () => ({
+        sessionId: 'sess-1',
+        model: 'faux/faux-1',
+        mode: 'solo' as const,
+        approvalsSkipped: false,
+      }),
       setUsage: () => {},
     } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
     const loop = {
@@ -519,7 +489,13 @@ describe('the TUI footer names the lane failure (issue #113)', () => {
     } as unknown as ConstructorParameters<typeof TuiTurnRunner>[1];
     const app = {
       applyLaneEntries: () => {},
-      applyLaneEvent: () => {},
+      applyPresentation: () => {},
+      presentationSeed: () => ({
+        sessionId: 'sess-1',
+        model: 'faux/faux-1',
+        mode: 'solo' as const,
+        approvalsSkipped: false,
+      }),
       setUsage: () => {},
     } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
     const runner = new TuiTurnRunner(app, loop, 'faux/test');
@@ -538,7 +514,13 @@ describe('the TUI footer names the lane failure (issue #113)', () => {
   it('names the busy refusal the durable turn reports (D6.1)', async () => {
     const app = {
       applyLaneEntries: () => {},
-      applyLaneEvent: () => {},
+      applyPresentation: () => {},
+      presentationSeed: () => ({
+        sessionId: 'sess-1',
+        model: 'faux/faux-1',
+        mode: 'solo' as const,
+        approvalsSkipped: false,
+      }),
       setUsage: () => {},
     } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
     const loop = {

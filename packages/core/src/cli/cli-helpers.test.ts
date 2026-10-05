@@ -47,9 +47,9 @@ describe('exit codes (§78, docs/cli/exit-codes.md)', () => {
     expect(exitCodeForParseError('commander.help', 1)).toBe(EXIT_USAGE);
   });
 
-  it('keeps an unknown top-level command at the documented exit 1', () => {
+  it('maps an unknown command (top-level or subcommand) to the usage code', () => {
     expect(exitCodeForParseError('commander.unknownCommand', 1)).toBe(
-      EXIT_FAILED,
+      EXIT_USAGE,
     );
   });
 

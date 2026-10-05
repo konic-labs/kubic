@@ -47,6 +47,48 @@ describe('spawn env allowlist §3.8 (issue #42)', () => {
     });
   });
 
+  it("carries the manager's documented runtime env overrides (issue #201)", () => {
+    // RUNTIME_ENV_OVERRIDES (host/config/runtime.ts) is part of the config
+    // contract: a worker's own load must resolve the same approval route,
+    // thinking level and journal retention the manager reports, or the child
+    // silently runs a different policy.
+    const out = filterSpawnEnv({
+      PATH: '/bin',
+      KUBIC_MODEL_THINKING: 'high',
+      KUBIC_APPROVALS_ROUTE: 'deny',
+      KUBIC_JOURNAL_RETENTION_DAYS: '7',
+      KUBIC_UNRELATED_NOPE: 'x',
+    });
+    expect(out).toEqual({
+      PATH: '/bin',
+      KUBIC_MODEL_THINKING: 'high',
+      KUBIC_APPROVALS_ROUTE: 'deny',
+      KUBIC_JOURNAL_RETENTION_DAYS: '7',
+    });
+  });
+
+  it("carries a worker's approval identity: its own session, its run, the mailbox (issues #105, #149, #159)", () => {
+    // The mailbox location, the manager's PUBLIC verification key, the bound,
+    // and the two session ids §23 ancestry needs: the worker's OWN session
+    // (`<orch>-<agent>`) and the run that spawned it. All identifiers or
+    // public material — the same class as KUBIC_WORKER_ID.
+    const out = filterSpawnEnv({
+      KUBIC_APPROVALS_DIR: '/home/u/.kubic/orchestrator/ab12/sess-1',
+      KUBIC_APPROVALS_VERIFY_KEY: 'public-key-material',
+      KUBIC_APPROVALS_BOUND_MS: '60000',
+      KUBIC_ORCHESTRATOR_SESSION: 'orch-9',
+      KUBIC_WORKER_SESSION: 'orch-9-worker-1',
+      KUBIC_UNRELATED_NOPE: 'x',
+    });
+    expect(out).toEqual({
+      KUBIC_APPROVALS_DIR: '/home/u/.kubic/orchestrator/ab12/sess-1',
+      KUBIC_APPROVALS_VERIFY_KEY: 'public-key-material',
+      KUBIC_APPROVALS_BOUND_MS: '60000',
+      KUBIC_ORCHESTRATOR_SESSION: 'orch-9',
+      KUBIC_WORKER_SESSION: 'orch-9-worker-1',
+    });
+  });
+
   it('injects the role grant on top of the filtered base', () => {
     const out = buildSpawnEnv(
       { PATH: '/bin', PARENT_TOKEN: 'nope' },

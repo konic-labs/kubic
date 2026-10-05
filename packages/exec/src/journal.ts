@@ -15,8 +15,14 @@ import {
   resolve,
   sep,
 } from 'node:path';
-import { createNodeFileBridge, type FileBridge } from './file-bridge.js';
+import {
+  type BridgeFileInfo,
+  createNodeFileBridge,
+  type FileBridge,
+  withFileLocked,
+} from './file-bridge.js';
 import { type IgnoreRule, isIgnored, parseIgnoreFile } from './ignore.js';
+import { tightenStateDir } from './lock-file.js';
 
 export type JournalOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
 
@@ -49,19 +55,32 @@ export const MAX_SWEEP_CONTENT_BYTES = 4 * 1024 * 1024;
 // explicit override. No default age bound — age pruning is opt-in via
 // retention config / `kubic clean` (issue #18's CLI).
 export const DEFAULT_JOURNAL_MAX_BYTES = 100 * 1024 * 1024;
+// Issue #350: the share of the kept entries a pass that prunes must drop.
+// The index counts against the bound now, so a store sitting at its cap would
+// otherwise rewrite the whole index on every append; dropping a chunk makes
+// compaction amortized (with the default 100 MiB bound, roughly one rewrite
+// per 10 MiB of appended lines) while the store never exceeds `maxBytes`.
+const RETENTION_DROP_SHARE = 10;
 
 export interface JournalRetention {
   maxBytes?: number;
   maxAgeMs?: number;
   /**
-   * fsync every index append before it returns (issue #117), default true.
-   * One fsync per tool write is the price of "reversible": the entry is on
-   * platter before the append returns, so a crash cannot take back a change
-   * the journal already promised to undo. The window it closes is small but
-   * real — a lost last line reads as "the run did nothing". Set `false` to
-   * trade that durability for throughput (a crash may then truncate the
-   * last line, which `entries()` skips); a bridge without `appendDurably`
-   * always falls back to a plain append.
+   * Flush the journal's writes before they are trusted (issues #117,
+   * #344), default true. A few fsyncs per tool write are the price of
+   * "reversible": the blob an entry references is on platter before the
+   * entry is, and the index line is on platter before the append returns,
+   * so a crash can neither take back a change the journal already promised
+   * to undo nor leave a durable entry pointing at bytes that were never
+   * written. The retention rewrite is flushed the same way — it replaces
+   * the whole history, so a crash right after it must not be able to leave
+   * an empty index. Set `false` to trade that durability for throughput (a
+   * crash may then truncate the last line — since #343 the next append
+   * closes the fragment on a line of its own and `kubic status` reports it
+   * as a corrupt index line, and a failed append truncates its own partial
+   * write back to the pre-append length); a
+   * bridge without `appendDurably`/`flushFile`/`flushDir` degrades to the
+   * plain write, keeping atomicity without durability.
    */
   durable?: boolean;
 }
@@ -96,6 +115,43 @@ export interface JournalEntryInput {
   toolCallId: string | null;
   timestamp: number;
   unattributed?: boolean;
+  /**
+   * Issue #374 (§42.1): the interactive turn a reconciliation sweep entry
+   * belongs to — 1 for the session's first prompt in this process. Absent on
+   * tool-journaled entries (their toolCallId already attributes them) and on
+   * every entry written before the field existed.
+   */
+  turn?: number;
+}
+
+export interface JournalIndexRead {
+  entries: JournalEntry[];
+  /**
+   * Index lines whose JSON.parse failed — a torn fragment from a crash or a
+   * full disk (issue #343). `entries()` drops them (a corrupt line must
+   * never poison the journal read) and `kubic status` reports the count, so
+   * the drop is visible instead of silent.
+   */
+  corruptLines: number;
+}
+
+// Issue #348: an entry whose own content cannot fit the store's bound is
+// refused before anything is written. The alternative was a record that the
+// same append's retention pass then deleted — the file change landed
+// unrecorded and undo had nothing to restore. Named so the tool layer can
+// surface it as a journal_failed op error with the bound in the message.
+export class JournalEntryTooLargeError extends Error {
+  readonly entryBytes: number;
+  readonly maxBytes: number;
+
+  constructor(entryBytes: number, maxBytes: number) {
+    super(
+      `journal entry needs ${entryBytes} bytes of content, over the store's ${maxBytes}-byte bound`,
+    );
+    this.name = 'JournalEntryTooLargeError';
+    this.entryBytes = entryBytes;
+    this.maxBytes = maxBytes;
+  }
 }
 
 export interface JournalEntry {
@@ -110,6 +166,8 @@ export interface JournalEntry {
   toolCallId: string | null;
   timestamp: number;
   unattributed?: boolean;
+  /** Issue #374: see JournalEntryInput.turn. */
+  turn?: number;
   /** True when the delta was encoded against '' (reconciliation entries with
    *  no before-blob). Absent on pre-schema entries — see readAfter fallback. */
   deltaBaseEmpty?: boolean;
@@ -133,7 +191,11 @@ export function sha256Hex(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex');
 }
 
-function sha256HexOfBytes(bytes: Uint8Array): string {
+/**
+ * The sha256 of raw bytes (issue #352): what the walk hashes, and what the
+ * undo record keeps for a pre-image that cannot be stored as text.
+ */
+export function sha256HexOfBytes(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
@@ -201,6 +263,49 @@ export function sha256HexOfFile(
 
 type DeltaOp = { eq: number } | { del: number } | { ins: string[] };
 
+// Error codes that mean "this filesystem will not flush this", not "the
+// write failed": the journal degrades to rename atomicity instead of
+// refusing to record work (issue #344 review). ENOSPC/EIO are deliberately
+// absent — those are real failures and must stay fatal.
+const FLUSH_UNSUPPORTED = new Set([
+  'EACCES',
+  'EBADF',
+  'EINVAL',
+  'EISDIR',
+  'ENOTSUP',
+  'EOPNOTSUPP',
+  'EPERM',
+]);
+
+// Issue #337: how long a mutation lock may sit before it is stale (a crashed
+// holder must never wedge the journal) and how long a writer waits for a live
+// holder before failing by name. The holder only ever holds it for one
+// mutation, so the wait is generous.
+const MUTATION_LOCK_STALE_MS = 10_000;
+const MUTATION_LOCK_WAIT_MS = 5_000;
+
+/**
+ * Issue #337: the mutation lock beside a store's index (`index.jsonl.lock`).
+ * Every journal mutation — append, retention rewrite, blob sweep — runs under
+ * it, so two processes cannot interleave: a line appended between a reader's
+ * `entries()` and its rename is otherwise silently dropped by the rename, and
+ * a blob sweep otherwise deletes the `${hash}.${pid}.tmp` another process is
+ * about to rename into place. Exported so a destructive command can observe
+ * the lock read-only (`liveLockHolder`) and skip instead of racing.
+ */
+export function journalMutationLockPath(indexPath: string): string {
+  return `${indexPath}.lock`;
+}
+
+// The index's tail, as `readIndexTail` reports it (issue #343): `size` is the
+// byte length a failed append truncates back to, null when it could not be
+// read; `fragment` means the last byte is not a newline, so the next append
+// must close the line first.
+interface IndexTail {
+  size: number | null;
+  fragment: boolean;
+}
+
 // The unique blobs an entry references: its before pre-image plus either its
 // delta or its after-blob (a delta entry has no after-blob — issue #111).
 // Collapsed per entry: a no-op write with before === after references the
@@ -266,6 +371,58 @@ export function applyDelta(before: string, delta: string): string | null {
   }
 }
 
+// The bytes one index line occupies (issue #350): the entry's JSON plus its
+// terminating newline, exactly what `appendIndexLine` writes and what a
+// retention rewrite re-emits. The size bound counts these — content
+// addressing dedupes blobs, so a file toggling between two contents grows the
+// journal through its lines alone.
+function indexLineBytes(entry: JournalEntry): number {
+  return Buffer.byteLength(`${JSON.stringify(entry)}\n`, 'utf8');
+}
+
+// The delta a large after-side is stored as (issue #111, issue #348 review):
+// encoded ONCE per append so the bound measure and the blob write share the
+// same string — a >64 KiB write must not pay `encodeDelta` twice. null when
+// the after-side is stored whole, or absent.
+function deltaFor(input: JournalEntryInput): string | null {
+  if (input.after === null) return null;
+  if (Buffer.byteLength(input.after, 'utf8') <= LARGE_FILE_BYTES) return null;
+  return encodeDelta(input.before ?? '', input.after);
+}
+
+// Issue #348: the bytes this entry's own blobs occupy — the before pre-image
+// plus either the after content or, for a large after-side, the delta stored
+// instead of it (`delta`, from `deltaFor`). Each blob counts once: a no-op
+// write (before === after) references a single blob, so it is measured once
+// rather than twice. The check is on the entry's own content, not on what
+// dedupe would add — an entry that could never fit the store is refused
+// whether or not its bytes happen to be there already.
+function entryBlobBytes(
+  input: JournalEntryInput,
+  delta: string | null,
+): number {
+  const before = input.before;
+  const beforeBytes = before === null ? 0 : Buffer.byteLength(before, 'utf8');
+  const after = input.after;
+  if (after === null) return beforeBytes;
+  if (delta !== null) return beforeBytes + Buffer.byteLength(delta, 'utf8');
+  if (before !== null && before === after) return beforeBytes;
+  return beforeBytes + Buffer.byteLength(after, 'utf8');
+}
+
+// Issue #349: the minimum timestamp in a kept set — what an age policy's
+// fast path compares against `now`. The minimum, not the first entry: a
+// journal can carry entries appended out of timestamp order (reconciliation
+// writes real clock stamps into a session whose other entries were seeded),
+// and only the minimum proves that nothing has aged out.
+function oldestTimestampOf(entries: JournalEntry[]): number | null {
+  let oldest: number | null = null;
+  for (const entry of entries) {
+    if (oldest === null || entry.timestamp < oldest) oldest = entry.timestamp;
+  }
+  return oldest;
+}
+
 export class FileJournalStore {
   readonly indexPath: string;
   private readonly blobsDir: string;
@@ -285,6 +442,11 @@ export class FileJournalStore {
   // slow pass (which re-derives truth from live stats) or at the next
   // session's seeding pass (a fresh cache stats everything it needs).
   private readonly blobSizes = new Map<string, number>();
+  // Issue #344: the hashes THIS store instance wrote (and flushed). A blob
+  // in here is trusted by size on reuse; a blob that is not (crash residue
+  // from an earlier session, a file another process wrote) is read and
+  // hashed before it is reused.
+  private readonly writtenHere = new Set<string>();
   // The hashes included in `trackedBytes`. Reset to the live referenced set
   // by every full retention pass, so a blob freed by a prune is re-accounted
   // if it is ever written again.
@@ -297,6 +459,21 @@ export class FileJournalStore {
   // one pass, or a journal left near the bound by a previous session would
   // never be pruned again.
   private trackedBytes: number | null = null;
+  // The current index.jsonl size in bytes (issue #350), tracked
+  // incrementally: every append adds the payload it wrote, every rewrite
+  // sets it to the bytes it wrote, and a slow pass that dropped nothing
+  // re-seeds it from the file itself. null means "unknown" and forces the
+  // slow pass — the bound covers the whole store, so an unaccounted index
+  // cannot be proven under it.
+  private indexBytes: number | null = null;
+  // Issue #349: the oldest timestamp in the index (the minimum, not the
+  // first — entries can carry non-monotonic timestamps). Seeded by every
+  // slow pass and updated on every rewrite, it is what lets an age policy
+  // take the fast path: `now - oldest <= maxAgeMs` proves from cache that no
+  // entry can have aged out, so the index needs no read at all. null means
+  // "unknown" (never seeded, or the last rewrite failed) and forces the
+  // slow pass.
+  private oldestTimestamp: number | null = null;
 
   constructor(dir: string, retention: JournalRetention = {}) {
     this.indexPath = join(dir, 'index.jsonl');
@@ -317,8 +494,76 @@ export class FileJournalStore {
     return createNodeFileBridge('/');
   }
 
+  // Issue #337: true while THIS store holds the mutation lock, so its own
+  // nested calls (append → enforceRetention) do not try to take it twice —
+  // the file lock is not re-entrant, and the O_EXCL create would deadlock
+  // against itself.
+  private mutationLockHeld = false;
+  // Issue #361: the state directories are prepared (and tightened) once per
+  // store, not once per append.
+  private stateDirsReady = false;
+
+  /**
+   * Issue #361: the store's own directories are Kubic's private state — the
+   * journal directory and `blobs/` are created 0700 (the index and every blob
+   * hold file content, including copies of 0600 files), and an existing loose
+   * one is tightened on the way in. Called before a mutation writes anything;
+   * a read never creates a directory.
+   */
+  private ensureStateDirs(bridge: FileBridge): void {
+    // Once per store instance: the hot path (an append per tool write) must
+    // not stat and mkdir on every line. A directory that appears later is
+    // covered by the next store's first mutation, and doctor keeps naming a
+    // loose one in the meantime.
+    if (this.stateDirsReady) return;
+    bridge.createDir(dirname(this.indexPath), true, 0o700);
+    bridge.createDir(this.blobsDir, true, 0o700);
+    tightenStateDir(dirname(this.indexPath));
+    tightenStateDir(this.blobsDir);
+    this.stateDirsReady = true;
+  }
+
+  /**
+   * Issue #337: run a mutation under the cross-process lock beside the index.
+   * A second process waits (up to the lock's wait budget) instead of
+   * interleaving; a crashed holder is stolen after the stale window, so the
+   * journal is never wedged by residue.
+   */
+  private withMutationLock<T>(run: () => T): T {
+    if (this.mutationLockHeld) return run();
+    return withFileLocked(
+      journalMutationLockPath(this.indexPath),
+      () => {
+        this.mutationLockHeld = true;
+        try {
+          return run();
+        } finally {
+          this.mutationLockHeld = false;
+        }
+      },
+      { staleMs: MUTATION_LOCK_STALE_MS, waitMs: MUTATION_LOCK_WAIT_MS },
+    );
+  }
+
   append(input: JournalEntryInput): JournalEntry {
+    // Issue #337: the whole append — blob writes, the index line and the
+    // retention pass it triggers — is one mutation.
+    return this.withMutationLock(() => this.appendLocked(input));
+  }
+
+  private appendLocked(input: JournalEntryInput): JournalEntry {
     const bridge = this.bridge();
+    this.ensureStateDirs(bridge);
+    // Issue #348: an entry the store could never keep is refused before a
+    // single blob is written, so the caller's file write is aborted with
+    // the target untouched rather than landing a change whose record the
+    // retention pass below would immediately delete. The delta is encoded
+    // once, here, and reused by the blob write below (issue #348 review).
+    const delta = deltaFor(input);
+    const ownBytes = entryBlobBytes(input, delta);
+    if (ownBytes > this.limits.maxBytes) {
+      throw new JournalEntryTooLargeError(ownBytes, this.limits.maxBytes);
+    }
     const beforeHash =
       input.before === null
         ? (input.beforeHash ?? null)
@@ -339,8 +584,7 @@ export class FileJournalStore {
     }
     let deltaHash: string | null = null;
     if (input.after !== null && afterHash !== null) {
-      if (Buffer.byteLength(input.after, 'utf8') > LARGE_FILE_BYTES) {
-        const delta = encodeDelta(input.before ?? '', input.after);
+      if (delta !== null) {
         deltaHash = sha256Hex(delta);
         this.putBlob(bridge, deltaHash, delta);
       } else {
@@ -366,6 +610,7 @@ export class FileJournalStore {
       toolCallId: input.toolCallId,
       timestamp: input.timestamp,
       ...(input.unattributed === true ? { unattributed: true } : {}),
+      ...(input.turn === undefined ? {} : { turn: input.turn }),
       // Issue #111: record the base the delta was actually encoded against
       // (append computed it as `input.before ?? ''`), so readAfter never has
       // to guess. Exactly the reconcile/create shape: no before-content.
@@ -383,11 +628,18 @@ export class FileJournalStore {
     // Durable append (issue #117): the crash-safety seam. Production takes
     // `appendDurably` (fsync before this returns); a bridge double without
     // it keeps the plain append, and `durable: false` opts out explicitly.
-    const line = `${JSON.stringify(entry)}\n`;
-    if (this.durable && bridge.appendDurably !== undefined) {
-      bridge.appendDurably(this.indexPath, line);
-    } else {
-      bridge.appendFile(this.indexPath, line);
+    const written = this.appendIndexLine(bridge, `${JSON.stringify(entry)}\n`);
+    // Issue #350: the index's own growth is part of the bound, so the
+    // tracked size moves with the append (the repair byte included — it is
+    // bytes in the file like any other).
+    if (this.indexBytes !== null) this.indexBytes += written;
+    // Issue #349 review: entries can be appended out of timestamp order (a
+    // backwards clock step), so the cached minimum is folded with this entry
+    // too — otherwise the age fast path could prove "nothing aged out" from a
+    // cache that is higher than the truth and an expired entry would linger.
+    // A null cache stays null: only a pass may seed it.
+    if (this.oldestTimestamp !== null) {
+      this.oldestTimestamp = Math.min(this.oldestTimestamp, entry.timestamp);
     }
     // Bounded by construction: every append enforces the store's limits,
     // so there is no path that grows the journal without checking.
@@ -396,19 +648,131 @@ export class FileJournalStore {
   }
 
   entries(): JournalEntry[] {
+    return this.readIndex().entries;
+  }
+
+  // The index as read (issue #343): the parseable entries plus the count of
+  // lines dropped on the way. `entries()` stays the entry-only view every
+  // caller uses; `kubic status` needs both, so it reads the index once.
+  readIndex(): JournalIndexRead {
     const bridge = this.bridge();
-    if (!bridge.exists(this.indexPath)) return [];
     const out: JournalEntry[] = [];
+    if (!bridge.exists(this.indexPath)) {
+      return { entries: out, corruptLines: 0 };
+    }
+    let corruptLines = 0;
     for (const line of bridge.readTextFile(this.indexPath).split('\n')) {
       if (line.trim() === '') continue;
       try {
         out.push(JSON.parse(line) as JournalEntry);
       } catch {
-        // Corrupt lines never poison the journal; they are skipped and
-        // dropped by the next retention rewrite.
+        // Corrupt lines never poison the journal; they are skipped, counted
+        // for `status` (issue #343), and dropped by the next retention
+        // rewrite.
+        corruptLines++;
       }
     }
-    return out;
+    return { entries: out, corruptLines };
+  }
+
+  // Append one index line (issue #343). The line is written as ONE append
+  // with a repair prefix, so a crash can never interleave the repair and
+  // the entry:
+  //
+  //   - a torn tail (crash mid-append, ENOSPC, EIO) leaves the index
+  //     without its terminating newline. Appending blind would glue the new
+  //     entry onto that fragment, JSON.parse would fail on the merged line,
+  //     and entries() would drop both — the write happened but the record
+  //     is unreadable. One pread of the last byte decides whether the tail
+  //     needs the newline.
+  //   - a failed append truncates the partial write back to the pre-append
+  //     length, so the index is exactly as it was: no half-line to repair,
+  //     no unreadable entry, and the repair byte goes with it.
+  private appendIndexLine(bridge: FileBridge, line: string): number {
+    // One stat per append: the pre-append length is both the truncate
+    // target and the position the tail probe reads (issue #343).
+    const tail = this.readIndexTail(bridge);
+    const payload = (tail.fragment ? '\n' : '') + line;
+    try {
+      if (this.durable && bridge.appendDurably !== undefined) {
+        // Issue #361: 0600 at creation; an existing index keeps its mode.
+        bridge.appendDurably(this.indexPath, payload, { mode: 0o600 });
+      } else {
+        bridge.appendFile(this.indexPath, payload, { mode: 0o600 });
+      }
+    } catch (error) {
+      if (tail.size !== null) this.truncateIndexTo(bridge, tail.size);
+      throw error;
+    }
+    return Buffer.byteLength(payload, 'utf8');
+  }
+
+  // The index's tail as an append needs it (issue #343): its byte length —
+  // the truncate target for a failed append — and whether it ends in a
+  // fragment. One stat plus one pread of the last byte. Anything unreadable
+  // reports `size: null, fragment: true`: never guess a length to truncate
+  // to (losing the index is worse than a partial line the next append
+  // repairs), and repair the tail (a needless newline costs a blank line
+  // readIndex skips and the next rewrite drops, while a missing one loses
+  // the entry this append is writing).
+  private readIndexTail(bridge: FileBridge): IndexTail {
+    let info: BridgeFileInfo;
+    try {
+      // Review fix: one lstat per append. `exists()` + `fileInfo()` asked the
+      // same question twice (both are lstats).
+      info = bridge.fileInfo(this.indexPath);
+    } catch (error) {
+      // A fresh index (ENOENT) has nothing to truncate and its first line
+      // must not be preceded by a newline; anything else (EACCES, EIO) is
+      // unreadable, so no length is guessed.
+      return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
+        ? { size: 0, fragment: false }
+        : { size: null, fragment: true };
+    }
+    // Review fix: `fileInfo` is an lstat, so for a symlinked index `size` is
+    // the length of the link's target STRING, while `truncateFile` follows
+    // the link — a failed append would truncate the link's target to that
+    // garbage length. Only a regular file yields a truncate target: a known
+    // link or non-regular file leaves the length unknown, which is the
+    // conservative repair path (`isFile === undefined` still counts as
+    // regular, per the bridge's own convention).
+    if (info.isSymbolicLink === true || info.isFile === false) {
+      return { size: null, fragment: true };
+    }
+    const size = info.size;
+    if (size === 0) return { size, fragment: false };
+    try {
+      const last = bridge.readFileRange?.(this.indexPath, size - 1, size);
+      return { size, fragment: last?.[0] !== 0x0a };
+    } catch {
+      return { size, fragment: true };
+    }
+  }
+
+  // Best-effort: `truncateFile` is optional on the bridge and can fail on
+  // its own (the failed append's error is the one the caller must see). A
+  // bridge without it degrades to the tail repair on the next append.
+  private truncateIndexTo(bridge: FileBridge, size: number): void {
+    try {
+      bridge.truncateFile?.(this.indexPath, size);
+    } catch {
+      // Left as-is.
+    }
+  }
+
+  // Issue #348 review: the entry's own content against the store's bound,
+  // for a caller that mutates the workspace and only then records the inverse
+  // — `undo`. It must be able to decide BEFORE the mutation whether the
+  // record will fit: a restore the store would refuse would leave the
+  // workspace changed with no undo/redo entry to show for it.
+  entryBound(input: JournalEntryInput): {
+    entryBytes: number;
+    maxBytes: number;
+  } {
+    return {
+      entryBytes: entryBlobBytes(input, deltaFor(input)),
+      maxBytes: this.limits.maxBytes,
+    };
   }
 
   hasBlob(hash: string): boolean {
@@ -506,21 +870,61 @@ export class FileJournalStore {
   enforceRetention(policy: RetentionPolicy): {
     entries: number;
     bytes: number;
+    // Issue #348: bytes the kept set is still over `policy.maxBytes` by,
+    // when the newest entry alone cannot fit. 0 means the bound holds.
+    overBound: number;
+  } {
+    // Issue #119: a store with no index has nothing to prune, and reading one
+    // must not create it — so the pass is skipped (lock included) before any
+    // write. A fresh store's first append creates the directory through the
+    // lock's own mkdir.
+    if (!this.bridge().exists(this.indexPath)) {
+      return { entries: 0, bytes: 0, overBound: 0 };
+    }
+    // Issue #337: the pass reads the index, rewrites it and sweeps blobs —
+    // one mutation, serialized against every other process's.
+    return this.withMutationLock(() => this.enforceRetentionLocked(policy));
+  }
+
+  private enforceRetentionLocked(policy: RetentionPolicy): {
+    entries: number;
+    bytes: number;
+    overBound: number;
   } {
     const bridge = this.bridge();
-    // Fast path (issue #124): with no age policy and the tracked byte
-    // total comfortably under the bound, no entry can be dropped — skip the
-    // whole pass, index reads included. A session far from the bound pays
-    // zero retention I/O per append.
+    const now = policy.now ?? Date.now();
+    // Fast path (issues #124, #349): the pass can be skipped outright —
+    // index reads included — when both bounds are provable from cache. The
+    // tracked byte total (index + blobs, issue #350) is an upper bound on
+    // what the store occupies, so being at or under the size bound proves
+    // nothing can drop; the oldest entry in the index must be inside the age
+    // window too (`oldestTimestamp` is the minimum, so
+    // `now - oldest <= maxAgeMs` proves nothing can have aged out). A session
+    // under either bound pays zero retention I/O per append, whether or not
+    // an age policy is configured.
+    const ageProven =
+      policy.maxAgeMs === undefined ||
+      (this.oldestTimestamp !== null &&
+        now - this.oldestTimestamp <= policy.maxAgeMs);
     if (
-      policy.maxAgeMs === undefined &&
+      ageProven &&
       policy.maxBytes !== undefined &&
       this.trackedBytes !== null &&
-      this.trackedBytes <= policy.maxBytes * 0.9
+      this.indexBytes !== null &&
+      this.trackedBytes + this.indexBytes <= policy.maxBytes
     ) {
-      return { entries: 0, bytes: 0 };
+      return { entries: 0, bytes: 0, overBound: 0 };
     }
-    const now = policy.now ?? Date.now();
+    // Issue #337: the size of the index this pass is about to read, sampled
+    // BEFORE the read. The rewrite below is only safe while the file is still
+    // that file — a writer that does not hold the mutation lock (an older
+    // build, a hand edit) can append at any point, and the rename would drop
+    // that line silently. Sampled first so an append that lands during or
+    // after the read always moves the size: sampling after the read would
+    // swallow an append that landed inside it, and the rename would then drop
+    // a line the pass never saw. A false abandon (the line was read and is in
+    // `kept`) only costs the next pass a retry.
+    const sizeAtRead = this.indexFileSize(bridge);
     const all = this.entries();
     // `kept` must not alias `all`: the drop loop shifts entries out of
     // `kept` while `all` stays the pre-drop index for `removed`/`before`.
@@ -554,71 +958,159 @@ export class FileJournalStore {
         refs.set(hash, (refs.get(hash) ?? 0) + 1);
       }
     }
+    let overBound = 0;
     if (policy.maxBytes !== undefined) {
+      // Issue #350: the bound is the WHOLE store — the index's own bytes
+      // count too, because content addressing dedupes blobs and a file
+      // toggling between two contents grows only the lines. Each kept entry
+      // is measured once, by the same serialization the rewrite writes, and
+      // a dropped entry subtracts its own line with its blobs.
+      const lineBytes = new Map<JournalEntry, number>();
       let total = 0;
+      for (const e of kept) {
+        const bytes = indexLineBytes(e);
+        lineBytes.set(e, bytes);
+        total += bytes;
+      }
       for (const hash of refs.keys()) total += this.sizeOf(bridge, hash);
       const maxBytes = policy.maxBytes;
-      while (kept.length > 0 && total > maxBytes) {
-        const dropped = kept.shift();
-        if (dropped === undefined) break;
-        for (const hash of blobHashesOf(dropped)) {
-          const count = refs.get(hash) ?? 0;
-          if (count === 1) {
-            total -= this.sizeOf(bridge, hash);
-            refs.delete(hash);
-          } else if (count > 1) {
-            refs.set(hash, count - 1);
+      // Issue #348: stop at the newest entry. `kept` is oldest-first, so
+      // `kept.length > 1` guarantees the last one survives even when it
+      // alone is over the bound — losing the record of the change just made
+      // is the one thing a change journal may not do. Whatever excess is
+      // left is reported to the caller instead of being deleted.
+      //
+      // Issue #350: a pass that has to prune frees a tenth of the BOUND (a
+      // byte low-water mark), so a store at its cap is not rewriting its
+      // whole index on every append — the next chunk of appends fits under
+      // the bound without another pass. A tenth of the kept ENTRIES would buy
+      // the same headroom only when entries are uniform: a store whose oldest
+      // entries hold most of the blobs would collapse to a fraction of the
+      // cap in one pass and lose far more history than the bound required
+      // (issue #350 review). The mark is a tenth of the cap, so the history a
+      // pass destroys stays proportional to what it has to free.
+      if (total > maxBytes) {
+        const lowWater = maxBytes - maxBytes / RETENTION_DROP_SHARE;
+        while (kept.length > 1 && total > lowWater) {
+          const gone = kept.shift();
+          if (gone === undefined) break;
+          total -= lineBytes.get(gone) ?? 0;
+          for (const hash of blobHashesOf(gone)) {
+            const count = refs.get(hash) ?? 0;
+            if (count === 1) {
+              total -= this.sizeOf(bridge, hash);
+              refs.delete(hash);
+            } else if (count > 1) {
+              refs.set(hash, count - 1);
+            }
           }
         }
       }
+      overBound = Math.max(0, total - maxBytes);
     }
     const removed = all.length - kept.length;
     if (removed === 0) {
       // Re-base the tracked total on derived truth at the end of every
       // slow pass — age-only ones included — so the fast path resumes
       // proving "nothing can drop" from live truth (issue #124 review
-      // fix 2).
+      // fix 2). The index was not rewritten, so the kept set IS what is on
+      // disk: the oldest timestamp can be re-seeded from it (issue #349)
+      // and the index's own size is the file's real size (issue #350) —
+      // corrupt residue included, so the bound never under-counts it.
       this.syncTracking(refs.keys(), this.blobBytes(bridge, kept));
-      return { entries: 0, bytes: 0 };
+      this.oldestTimestamp = oldestTimestampOf(kept);
+      this.indexBytes = this.indexFileSize(bridge);
+      return { entries: 0, bytes: 0, overBound };
     }
     const before = this.blobBytes(bridge, all);
     const referenced = new Set(refs.keys());
+    this.ensureStateDirs(bridge);
     const tmp = `${this.indexPath}.${process.pid}.tmp`;
-    bridge.writeFile(
-      tmp,
+    // Issue #350: the same serialization is measured and written, so the
+    // tracked index size after the rewrite is exact.
+    const serialized =
       kept.map((e) => JSON.stringify(e)).join('\n') +
-        (kept.length > 0 ? '\n' : ''),
-    );
+      (kept.length > 0 ? '\n' : '');
+    bridge.writeFile(tmp, serialized, { mode: 0o600 });
     try {
+      // Issue #337: abandon the rewrite when the index changed under it. The
+      // pass keeps nothing it cannot prove is still current: the next pass
+      // sees the new state, and the line that landed is never lost. (The
+      // mutation lock makes this window impossible for a cooperating writer;
+      // this is the guard for one that is not.)
+      const sizeNow = this.indexFileSize(bridge);
+      if (sizeAtRead !== null && sizeNow !== sizeAtRead) {
+        bridge.remove(tmp, false, true);
+        // The caches describe the index this pass read, not the one that just
+        // changed under it: dropping them makes the next pass re-derive truth
+        // instead of proving a bound from a stale under-count.
+        this.trackedBytes = null;
+        this.indexBytes = null;
+        this.oldestTimestamp = null;
+        return { entries: 0, bytes: 0, overBound: 0 };
+      }
+      // Issue #344: the rewrite replaces the journal's whole history, so
+      // with `durable` on its bytes are fsynced before the rename and the
+      // directory after it. Without that, a crash right after the rename
+      // can leave an empty or truncated index where the old one was —
+      // losing everything the compaction was supposed to keep.
+      this.flushDurably(() => bridge.flushFile?.(tmp));
       bridge.renameFile(tmp, this.indexPath);
+      this.flushDurably(() => bridge.flushDir?.(dirname(this.indexPath)));
     } catch {
       try {
         bridge.remove(tmp, false, true);
       } catch {
         // Best-effort tmp cleanup; the index rewrite is what matters.
       }
-      return { entries: 0, bytes: 0 };
+      return { entries: 0, bytes: 0, overBound: 0 };
     }
+    // Issue #337: the sweep only removes blobs that are unambiguously dead.
+    // `${hash}.${pid}.tmp` is another process's in-flight write (the mutation
+    // lock makes this impossible for a cooperating writer, and this guard is
+    // what keeps a non-cooperating one — an older build, a hand copy — from
+    // having its blob deleted between its write and its rename). A blob whose
+    // mtime is newer than this pass started is the same story; an orphaned
+    // blob is a leak, never corruption, so leaving one is always the safe
+    // direction.
+    const sweepStartedAt = Date.now();
     if (bridge.exists(this.blobsDir)) {
       for (const info of bridge.listDir(this.blobsDir)) {
-        if (
-          !info.isDirectory &&
-          !info.isSymbolicLink &&
-          !referenced.has(info.name)
-        ) {
-          try {
-            bridge.remove(join(this.blobsDir, info.name), false, true);
-          } catch {
-            // Best-effort: an orphaned blob is a leak, not corruption.
-          }
+        if (info.isDirectory || info.isSymbolicLink) continue;
+        if (info.name.endsWith('.tmp')) continue;
+        if (info.mtimeMs > sweepStartedAt) continue;
+        if (referenced.has(info.name)) continue;
+        try {
+          bridge.remove(join(this.blobsDir, info.name), false, true);
+        } catch {
+          // Best-effort: an orphaned blob is a leak, not corruption.
         }
       }
     }
     const after = this.blobBytes(bridge, kept);
     // The rewrite moved the index onto `kept`: re-base the tracked total on
-    // its truth so the fast path resumes proving "nothing can drop".
+    // its truth so the fast path resumes proving "nothing can drop", and
+    // re-seed the oldest timestamp from the entries that survived
+    // (issue #349). Not done on the failure path above: there the index
+    // still holds the dropped entries, and a stale-older value only costs
+    // the next pass its fast path, never correctness.
     this.syncTracking(referenced, after);
-    return { entries: removed, bytes: before - after };
+    this.oldestTimestamp = oldestTimestampOf(kept);
+    this.indexBytes = Buffer.byteLength(serialized, 'utf8');
+    return { entries: removed, bytes: before - after, overBound };
+  }
+
+  // Issue #350: the index file's real size, 0 when it does not exist yet and
+  // null when it cannot be read (which forces the slow pass rather than
+  // guessing a size the bound would then trust).
+  private indexFileSize(bridge: FileBridge): number | null {
+    try {
+      return bridge.exists(this.indexPath)
+        ? bridge.fileInfo(this.indexPath).size
+        : 0;
+    } catch {
+      return null;
+    }
   }
 
   private putBlob(
@@ -628,8 +1120,17 @@ export class FileJournalStore {
   ): void {
     const path = join(this.blobsDir, hash);
     if (bridge.exists(path)) {
-      this.trackRef(bridge, hash);
-      return;
+      // Issue #344: a blob under its own name is not proof of integrity. A
+      // crash on a delayed-allocation filesystem can land the rename and
+      // lose the data, leaving a zero-length or torn file at the address;
+      // the old short-circuit then reused that file forever, so every later
+      // entry read as corrupt. Size first (one stat — catches the truncated
+      // crash shape without reading), then the content hash; a blob that
+      // fails either check is rewritten from the bytes in hand.
+      if (this.blobIsIntact(bridge, path, hash, content)) {
+        this.trackRef(bridge, hash);
+        return;
+      }
     }
     // tmp+rename (issue #117): a blob becomes visible under its real name
     // only when complete — a crash can never expose half a blob to
@@ -637,10 +1138,20 @@ export class FileJournalStore {
     // so the rename is atomic. A failed write/rename cleans the tmp up,
     // best-effort, and fails the append: a silently appended entry whose
     // blob was never written would read as corrupt content.
+    //
+    // Issue #344: with `durable` on, the tmp's bytes are fsynced before the
+    // rename and the directory after it. The index line that references
+    // this blob is fsynced (appendDurably) later in `append`, so the order
+    // is data-then-record: a durable entry can never point at a blob whose
+    // bytes were still in the page cache when the power went.
     const tmp = join(this.blobsDir, `${hash}.${process.pid}.tmp`);
     try {
-      bridge.writeFile(tmp, content);
+      // Issue #361: 0600 at creation — a blob is a copy of file content,
+      // including 0600 sources like `.env`; the rename keeps the mode.
+      bridge.writeFile(tmp, content, { mode: 0o600 });
+      this.flushDurably(() => bridge.flushFile?.(tmp));
       bridge.renameFile(tmp, path);
+      this.flushDurably(() => bridge.flushDir?.(this.blobsDir));
     } catch (error) {
       try {
         bridge.remove(tmp, false, true);
@@ -649,6 +1160,12 @@ export class FileJournalStore {
       }
       throw error;
     }
+    // This store wrote and flushed the blob: a later reuse of the same
+    // content is trusted by size alone (issue #344 review) instead of being
+    // read and hashed again — the healing below is for files this store did
+    // not write (crash residue, another process), and `readBlob` still fails
+    // closed on its own hash check if one is corrupted afterwards.
+    this.writtenHere.add(hash);
     // Write-time size: the content is in hand, so no stat is needed —
     // this is what makes retention stat-free for what this store writes.
     const size = Buffer.byteLength(content, 'utf8');
@@ -713,6 +1230,50 @@ export class FileJournalStore {
     return size;
   }
 
+  // Issue #344: is the blob already at `path` the content it claims to be?
+  // The size gate is one stat and catches the truncated crash shape without
+  // reading; a file this store wrote itself is then trusted (it was flushed
+  // on the way in, and a full read+hash per reuse would cost the previous
+  // content of every large re-edit — the #124 property this store keeps),
+  // while anything else is read and hashed before it is reused. A blob that
+  // fails either check is treated as corrupt, so the caller rewrites it from
+  // the bytes in hand and heals it instead of poisoning every later entry
+  // that reuses it.
+  private blobIsIntact(
+    bridge: FileBridge,
+    path: string,
+    hash: string,
+    content: string,
+  ): boolean {
+    try {
+      if (bridge.fileInfo(path).size !== Buffer.byteLength(content, 'utf8')) {
+        return false;
+      }
+      if (this.writtenHere.has(hash)) return true;
+      return sha256Hex(bridge.readTextFile(path)) === hash;
+    } catch {
+      return false;
+    }
+  }
+
+  // Issue #344 review: flushing is a durability upgrade, never a reason to
+  // lose a write. A platform or filesystem that refuses to flush a directory
+  // (Windows' directory handles; FUSE and overlay mounts returning EINVAL)
+  // degrades to rename atomicity instead of blocking every tool write — the
+  // same shape as a bridge without `appendDurably`. A genuine I/O failure
+  // (ENOSPC, EIO) still propagates: a durable entry may not silently
+  // reference bytes that were never flushed. Both callers share this rule;
+  // only a failed append is fatal — a failed compaction means no prune.
+  private flushDurably(run: () => void): void {
+    if (!this.durable) return;
+    try {
+      run();
+    } catch (error) {
+      const code = (error as { code?: string } | null)?.code ?? '';
+      if (!FLUSH_UNSUPPORTED.has(code)) throw error;
+    }
+  }
+
   // Content-addressed read (issue #111): the blob's own name is the
   // contract. Content that does not hash to `hash` (torn write, tampering,
   // bit rot) fails closed to null — a wrong blob must never be served as
@@ -760,6 +1321,17 @@ export class FileJournalStore {
 
 export type Baseline = Record<string, string>;
 
+/**
+ * Issue #351: the sentinel a walk stores for a path it could SEE but not READ
+ * (EACCES/EPERM/EIO — a `chmod 000` secret, a permission-denied mount). It is
+ * not a hash, and a real hash is 64 hex characters, so it can never collide.
+ * Reconcile skips such a path entirely: it was never observed to change (no
+ * read happened) and it was never observed to vanish (lstat succeeded), so
+ * neither a delete nor a change is recorded for it. Persisted with the
+ * baseline, so a resumed run keeps the distinction.
+ */
+export const UNREADABLE_HASH = 'unreadable';
+
 export interface BaselineOptions {
   outOfScope?: string[];
   /**
@@ -777,6 +1349,14 @@ export interface BaselineOptions {
    * implement it; the hook exists so the fallback can never be invisible.
    */
   onNotice?: (detail: string) => void;
+  /**
+   * Issue #351: the previous baseline to carry a subtree forward from when
+   * its listing fails mid-walk (a permission change, a directory that
+   * vanished). The sweep passes its boot baseline, so an unlistable subtree
+   * compares equal to its own previous state instead of reading as deleted;
+   * a boot capture has none, and an unlistable directory contributes nothing.
+   */
+  previous?: Baseline;
 }
 
 // §35 out-of-scope paths (issue #115): an entry excludes the path itself and
@@ -812,7 +1392,25 @@ export function captureBaseline(
     let infos: ReturnType<typeof bridge.listDir> = [];
     try {
       infos = bridge.listDir(dir);
-    } catch {
+    } catch (error) {
+      // Issue #351: the subtree's CURRENT state is unknown, so its previous
+      // hashes stand in for it — reconcile then sees "unchanged" instead of
+      // "every file under it was deleted". Without a previous baseline
+      // there is nothing to carry, and an unreadable directory simply
+      // contributes no entries (never invented ones).
+      //
+      // Review fix: only "could not look" (EACCES/EPERM/EIO) carries
+      // forward. ENOENT means the directory really went away between the
+      // parent's listing and this recursion, and the walk's own race window
+      // must record that subtree's files as deletes like any other
+      // disappearance — carrying them forward would silently lose them, and
+      // the next run's baseline would not contain them either.
+      const code = (error as NodeJS.ErrnoException | null)?.code;
+      if (code === 'ENOENT') return;
+      const prefix = rel === '' ? '' : `${rel}/`;
+      for (const [path, hash] of Object.entries(options.previous ?? {})) {
+        if (prefix === '' || path.startsWith(prefix)) baseline[path] = hash;
+      }
       return;
     }
     // One `exists` per directory entered (issue #116 perf contract): the same
@@ -870,8 +1468,16 @@ export function captureBaseline(
             info.size,
             options.onNotice,
           );
-        } catch {
-          // Vanished mid-walk: reconcile treats it as a delete.
+        } catch (error) {
+          // Issue #351: a real disappearance (ENOENT) leaves the path out of
+          // the walk, and reconcile records the delete it is. Anything else —
+          // EACCES/EPERM/EIO, a `chmod 000` file or a permission-denied mount
+          // — means the path is still there and its content was never
+          // observed: it is kept with the unreadable sentinel, so reconcile
+          // records neither a delete nor a change for it.
+          if ((error as { code?: string } | null)?.code !== 'ENOENT') {
+            baseline[relPath] = UNREADABLE_HASH;
+          }
         }
       }
     }
@@ -912,6 +1518,8 @@ export interface ReconcileContext {
    * expected state; absent ⇒ the whole store is treated as this run.
    */
   runStart?: JournalRunStart;
+  /** Issue #374: the interactive turn the sweep's entries belong to. */
+  turn?: number;
 }
 
 /**
@@ -1297,7 +1905,7 @@ export function reconcile(
   // reconcile now.
   const bridge = options.bridge ?? createNodeFileBridge('/');
   const outOfScope = options.outOfScope ?? [];
-  const current = captureBaseline(root, options);
+  const current = captureBaseline(root, { ...options, previous: baseline });
   // Issue #341: each path's EXPECTED state is the last entry journaled
   // during THIS run, else the boot baseline — never "matches the baseline
   // OR any historical after-hash", which hid same-run reverts, a resumed
@@ -1313,7 +1921,12 @@ export function reconcile(
   }
   const expectedHash = (relPath: string): string | null => {
     if (sinceStart.has(relPath)) return sinceStart.get(relPath) ?? null;
-    return baseline[relPath] ?? null;
+    const boot = baseline[relPath];
+    // Issue #351: an unreadable-at-boot path has no known pre-state. Treated
+    // as absent, so a path that is readable later is an honest create with no
+    // invented before-hash — never the sentinel in the journal, never a
+    // delete of a file that was only unreadable.
+    return boot === undefined || boot === UNREADABLE_HASH ? null : boot;
   };
   let added = 0;
   const record = (input: {
@@ -1342,6 +1955,7 @@ export function reconcile(
       toolCallId: null,
       timestamp: ctx.timestamp,
       unattributed: true,
+      ...(ctx.turn === undefined ? {} : { turn: ctx.turn }),
     });
     added++;
   };
@@ -1350,6 +1964,10 @@ export function reconcile(
     // The walk above already prunes an excluded directory, so this states the
     // rule for a path that reaches the sweep any other way.
     if (isOutOfScope(relPath, outOfScope)) continue;
+    // Issue #351: a path the walk could see but not read has no observed
+    // state — never a change (nothing was read), and never a delete either
+    // (the candidates loop below skips it: it IS present in `current`).
+    if (hash === UNREADABLE_HASH) continue;
     const expected = expectedHash(relPath);
     if (expected === hash) continue;
     const abs = join(root, relPath);

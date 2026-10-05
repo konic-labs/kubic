@@ -163,13 +163,13 @@ describe('kubic program (commander contracts)', () => {
     ).rejects.toThrow('boom');
   });
 
-  it('has no implicit `help` command', async () => {
+  it('has no implicit `help` command (it is an unknown command: usage)', async () => {
     const { channels } = io();
     const p = program(channels);
     p.command('demo').action(() => {});
     expect(
       await runKubicProgram(p, ['help'], channels, { code: () => 0 }),
-    ).toBe(1);
+    ).toBe(2);
   });
 });
 
@@ -189,7 +189,7 @@ describe('command registry', () => {
     const names = registered().commands.map((command) => command.name());
     expect(new Set(names).size).toBe(names.length);
     expect([...names].sort()).toEqual([...COMMAND_NAMES].sort());
-    expect(COMMAND_NAMES.size).toBe(23);
+    expect(COMMAND_NAMES.size).toBe(26);
     expect(ROOT_USAGE).toContain('sessions | git');
   });
 
@@ -207,9 +207,11 @@ describe('command registry', () => {
       return p.commands.map((command) => command.name()).sort();
     };
     expect(owned(registerSoloCommands)).toEqual([
+      'attach',
       'config',
       'doctor',
       'models',
+      'resume',
       'run',
       'sessions',
       'trust',
@@ -221,6 +223,7 @@ describe('command registry', () => {
       'workers',
     ]);
     expect(owned(registerJournalCommands)).toEqual([
+      'commit',
       'diff',
       'git',
       'log',

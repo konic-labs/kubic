@@ -18,7 +18,6 @@ import {
   parseRunMaxTurns,
   parseRunTimeout,
   parseSessionIdArg,
-  shellQuote,
 } from '../../../../packages/host/src/run-cli.js';
 import { parseModelFlag } from '../../../../packages/worker/src/model-select.js';
 import type { CommandContext, CommandRegistrar } from '../cli/context.js';
@@ -59,6 +58,57 @@ function nonNegativeInt(what: string): (value: string) => number {
   });
 }
 
+// §40.1 mechanism 1 (issue #273): `--tools read,ls` — one comma-separated
+// value, repeatable. An empty list is a usage error (use `--no-tools` for
+// the empty set); unknown names and class conflicts are refused by the
+// runner/boot with the §40.3 reason.
+function toolList(value: string): string[] {
+  const names = value
+    .split(',')
+    .map((name) => name.trim())
+    .filter((name) => name !== '');
+  if (names.length === 0) {
+    throw new InvalidArgumentError('needs at least one tool name');
+  }
+  return names;
+}
+
+// commander's negated `--no-tools` can leave `false` as the previous value
+// (the order `--no-tools --tools x`), which the shared collector would try
+// to spread. Tolerating it lets the parse finish so the action's raw-argv
+// mutual-exclusion check can refuse both forms cleanly.
+function collectTools(): (value: string, previous: string[][]) => string[][] {
+  const one = rule(toolList);
+  return (value, previous) => [
+    ...(Array.isArray(previous) ? previous : []),
+    one(value),
+  ];
+}
+
+// commander's `--no-tools` negates the `tools` option (its value becomes
+// false), so both selection forms arrive on one key. Normalize to
+// (names, noTools) and refuse both-given from the raw argv — order decides
+// which value commander keeps, and a silent last-wins would be the
+// dishonest half.
+function toolSelectionOf(
+  parsed: false | string[][] | undefined,
+  rest: readonly string[],
+): { tools: string[]; noTools: boolean } {
+  const rawTools = rest.some(
+    (token) => token === '--tools' || token.startsWith('--tools='),
+  );
+  const rawNoTools = rest.includes('--no-tools');
+  if (rawTools && rawNoTools) {
+    throw new CliUsageError(
+      '--tools and --no-tools are mutually exclusive — pass one',
+    );
+  }
+  return {
+    tools: Array.isArray(parsed) ? parsed.flat() : [],
+    noTools: parsed === false,
+  };
+}
+
 function examples(lines: readonly string[]): string {
   return `\nExamples:\n${lines.map((line) => `  $ ${line}`).join('\n')}`;
 }
@@ -77,7 +127,14 @@ function registerRun(program: Command, ctx: CommandContext): void {
     .description(
       'run one headless prompt in this repo (solo: no isolation — approvals and the journal are the controls)',
     )
-    .option('-p, --prompt <text>', 'the prompt to run (required)')
+    .option(
+      '-p, --prompt <text>',
+      'the prompt to run (or pass it positionally)',
+    )
+    .argument(
+      '[prompt]',
+      'the prompt to run (alternative to -p/--prompt; use -- before one starting with -)',
+    )
     .option(
       '--session <id>',
       'resume into an existing session ([A-Za-z0-9_-])',
@@ -108,6 +165,13 @@ function registerRun(program: Command, ctx: CommandContext): void {
       '--dangerously-skip-approvals',
       'enable full access (no approval asks) for THIS session only — recorded in posture.json and the audit ledger, never in config',
     )
+    .option(
+      '--tools <a,b,...>',
+      'narrow the tool set to these tools (comma-separated, repeatable; intersected with the permission classes and any --role set)',
+      collectTools(),
+      [] as string[][],
+    )
+    .option('--no-tools', 'run with no tools at all (chat only)')
     .allowExcessArguments()
     .addHelpText(
       'after',
@@ -118,37 +182,42 @@ function registerRun(program: Command, ctx: CommandContext): void {
         'KUBIC_PROVIDER=faux kubic run -p hello   # testing provider, no model',
       ]),
     )
-    .action(async (opts, command) => {
+    .action(async (positional, opts, command) => {
       const operands = command.args;
-      if (opts.prompt === undefined) {
-        if (operands.length > 0) {
-          // `kubic run "fix tests"` is the natural first try: name the
-          // operand and the exact flag form (single-quoted, so nothing
-          // expands when pasted).
-          throw new CliUsageError(
-            `unexpected argument ${JSON.stringify(operands[0])} — the prompt is a flag: kubic run -p ${shellQuote(operands.join(' '))}`,
-          );
-        }
+      if (opts.prompt !== undefined && positional !== undefined) {
         throw new CliUsageError(
-          "required option '-p, --prompt <text>' not specified",
+          'both -p/--prompt and a positional prompt were given — pass exactly one (kubic run -p <text>, or kubic run <text>)',
         );
       }
-      if (operands.length > 0) {
+      if (operands.length > 1) {
         throw new CliUsageError(
-          `unexpected argument ${JSON.stringify(operands[0])}`,
+          `unexpected argument ${JSON.stringify(operands[1])} — pass exactly one prompt`,
         );
       }
+      const text = opts.prompt ?? positional;
+      if (text === undefined) {
+        throw new CliUsageError(
+          "required option '-p, --prompt <text>' not specified (or pass the prompt as a positional argument)",
+        );
+      }
+      // The typo guard is `-p`-only: a separate-token value that starts with
+      // `--` is a mistyped flag. A positional prompt that starts with `-`
+      // reaches us only after `--`, which is the explicit opt-in.
+      const fromFlag = opts.prompt !== undefined;
       let prompt: string;
       try {
         prompt = checkPromptValue(
-          opts.prompt,
-          promptWasAttached(ctx.rest, opts.prompt),
+          text,
+          !fromFlag || promptWasAttached(ctx.rest, text),
         );
       } catch (error) {
         throw new CliUsageError(
-          `invalid -p/--prompt: ${(error as Error).message}`,
+          `${fromFlag ? 'invalid -p/--prompt' : 'invalid prompt'}: ${(error as Error).message}`,
         );
       }
+      // §40.1 mechanism 1 (issue #273): the two selection forms are
+      // mutually exclusive; both at once is a usage error naming both.
+      const selection = toolSelectionOf(opts.tools, ctx.rest);
       ctx.setExitCode(
         await ctx.runners.run(
           {
@@ -164,6 +233,8 @@ function registerRun(program: Command, ctx: CommandContext): void {
             ...(opts.dangerouslySkipApprovals === true
               ? { dangerouslySkipApprovals: true }
               : {}),
+            ...(selection.tools.length === 0 ? {} : { tools: selection.tools }),
+            ...(selection.noTools ? { noTools: true } : {}),
           },
           ctx.config,
         ),
@@ -197,6 +268,13 @@ function registerTui(program: Command, ctx: CommandContext): void {
       '--dangerously-skip-approvals',
       'enable full access (no approval asks) for THIS session only — recorded in posture.json and the audit ledger, never in config',
     )
+    .option(
+      '--tools <a,b,...>',
+      'narrow the tool set to these tools (comma-separated, repeatable; intersected with the permission classes and any --role set)',
+      collectTools(),
+      [] as string[][],
+    )
+    .option('--no-tools', 'run with no tools at all (chat only)')
     .addHelpText(
       'after',
       examples([
@@ -206,6 +284,9 @@ function registerTui(program: Command, ctx: CommandContext): void {
       ]),
     )
     .action(async (opts) => {
+      // §40.1 mechanism 1 (issue #273): both selection forms at once is a
+      // usage error naming both (the boot re-validates names/agreement).
+      const selection = toolSelectionOf(opts.tools, ctx.rest);
       ctx.setExitCode(
         await ctx.runners.tui(
           {
@@ -218,6 +299,8 @@ function registerTui(program: Command, ctx: CommandContext): void {
             ...(opts.dangerouslySkipApprovals === true
               ? { dangerouslySkipApprovals: true }
               : {}),
+            ...(selection.tools.length === 0 ? {} : { tools: selection.tools }),
+            ...(selection.noTools ? { noTools: true } : {}),
           },
           ctx.config,
         ),
@@ -345,12 +428,38 @@ function registerTrust(program: Command, ctx: CommandContext): void {
 function registerSessions(program: Command, ctx: CommandContext): void {
   const sessions = program
     .command('sessions')
-    .description('create, list, attach to or prune sessions');
+    .description('create, list, attach to, fork or prune sessions')
+    .option(
+      '--json',
+      'with no subcommand: list the sessions as one JSON array (same as `sessions list --json`)',
+    )
+    // The group action owns the operands so an unknown subcommand is the
+    // documented `error: unknown command '<name>'` (exit 2), not commander's
+    // excess-arguments line.
+    .allowExcessArguments();
   const run = async (
     invocation: Parameters<CommandContext['runners']['sessions']>[0],
   ): Promise<void> => {
     ctx.setExitCode(await ctx.runners.sessions(invocation, ctx.config));
   };
+  // Issue #268: `kubic sessions --json` is the documented list form. The
+  // group action also keeps the two usage errors named (#372: exit 2): no
+  // subcommand, or an unknown one.
+  sessions.action(async (opts, command) => {
+    const name = command.args[0];
+    if (name === undefined) {
+      if (opts.json !== true) {
+        throw new CliUsageError(
+          'sessions needs a subcommand (create | list | attach | fork | prune)',
+        );
+      }
+      await run({ command: 'list', json: true });
+      return;
+    }
+    throw new CliUsageError(
+      `unknown command '${name}' (create | list | attach | prune)`,
+    );
+  });
   sessions
     .command('create')
     .description('create a new session and print its id')
@@ -387,11 +496,50 @@ function registerSessions(program: Command, ctx: CommandContext): void {
       'transcript entries to print (default 10)',
       nonNegativeInt('integer'),
     )
+    .option(
+      '--ids',
+      'prefix each line with its entry id (for `sessions fork --at`)',
+    )
     .action(async (id, opts) => {
       await run({
         command: 'attach',
         id,
         ...(opts.tail === undefined ? {} : { tail: opts.tail }),
+        ...(opts.ids === true ? { ids: true } : {}),
+      });
+    });
+  sessions
+    .command('fork')
+    .description(
+      'fork a session into a new one (at an entry, default the newest; --tree copies every branch)',
+    )
+    .argument(
+      '<id>',
+      'the source session id ([A-Za-z0-9_-])',
+      rule(parseSessionIdArg),
+    )
+    .option(
+      '--at <entry>',
+      'fork at this entry id (inclusive; `kubic sessions attach --ids` shows them)',
+      nonNegativeInt('integer entry id'),
+    )
+    .option('--tree', 'copy the whole tree: every conversation and branch tip')
+    .option('--json', 'print {id, source, at} as one JSON document')
+    .addHelpText(
+      'after',
+      examples([
+        'kubic sessions fork <id>',
+        'kubic sessions fork <id> --at 12 --json',
+        'kubic tui --session "$(kubic sessions fork <id> --at 12)"',
+      ]),
+    )
+    .action(async (id, opts) => {
+      await run({
+        command: 'fork',
+        id,
+        ...(opts.at === undefined ? {} : { at: opts.at }),
+        ...(opts.tree === true ? { tree: true } : {}),
+        ...(opts.json === true ? { json: true } : {}),
       });
     });
   sessions
@@ -438,9 +586,44 @@ function registerSessions(program: Command, ctx: CommandContext): void {
 export const registerSoloCommands: CommandRegistrar = (program, ctx) => {
   registerRun(program, ctx);
   registerTui(program, ctx);
+  registerReattach(program, ctx);
   registerDoctor(program, ctx);
   registerModels(program, ctx);
   registerConfig(program, ctx);
   registerTrust(program, ctx);
   registerSessions(program, ctx);
 };
+
+// Issue #268 (§17): the reattach aliases. `attach <id>` boots the
+// interactive TUI on an existing session — a missing or live-locked session
+// is the TUI boot's own workspace refusal (exit 5) — and `resume <id>` is
+// the same boot, named the way §17 lists it. The full flag surface stays on
+// `kubic tui`; these are the documented shorthands.
+function registerReattach(program: Command, ctx: CommandContext): void {
+  const reattach = (name: 'attach' | 'resume'): void => {
+    program
+      .command(name)
+      .description(
+        name === 'attach'
+          ? 'attach the interactive TUI to an existing session'
+          : 'resume a session in the interactive TUI (same as `kubic tui --session <id>`)',
+      )
+      .argument(
+        '<id>',
+        'the session id ([A-Za-z0-9_-])',
+        rule(parseSessionIdArg),
+      )
+      .addHelpText(
+        'after',
+        examples([
+          `kubic ${name} my-session`,
+          'kubic tui --session my-session --role reviewer   # the full flag surface',
+        ]),
+      )
+      .action(async (id: string) => {
+        ctx.setExitCode(await ctx.runners.tui({ session: id }, ctx.config));
+      });
+  };
+  reattach('attach');
+  reattach('resume');
+}

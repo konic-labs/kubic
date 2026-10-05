@@ -136,6 +136,44 @@ describe('toKubicLaneEvent (§15.3)', () => {
     });
   });
 
+  it('maps a streamed text delta into the live draft (issue #296)', () => {
+    expect(
+      toKubicLaneEvent({
+        type: 'message_update',
+        usage: { input: 1, output: 1 } as never,
+        changes: [{ type: 'text_delta', contentIndex: 0, delta: 'Hel' }],
+      }),
+    ).toEqual({ type: 'message-delta', text: 'Hel' });
+    // Several text deltas in one batch concatenate, in order.
+    expect(
+      toKubicLaneEvent({
+        type: 'message_update',
+        usage: { input: 1, output: 1 } as never,
+        changes: [
+          { type: 'text_delta', contentIndex: 0, delta: 'lo ' },
+          { type: 'thinking_delta', contentIndex: 1, delta: 'hmm' },
+          { type: 'text_delta', contentIndex: 0, delta: 'world' },
+        ],
+      }),
+    ).toEqual({ type: 'message-delta', text: 'lo world' });
+    // Nothing for the transcript: a thinking-only batch, or a whole-message
+    // replacement (the committed entry follows).
+    expect(
+      toKubicLaneEvent({
+        type: 'message_update',
+        usage: { input: 1, output: 1 } as never,
+        changes: [{ type: 'thinking_delta', contentIndex: 0, delta: 'hmm' }],
+      }),
+    ).toBeUndefined();
+    expect(
+      toKubicLaneEvent({
+        type: 'message_update',
+        usage: { input: 1, output: 1 } as never,
+        changes: [{ type: 'message', message: { role: 'assistant' } as never }],
+      }),
+    ).toBeUndefined();
+  });
+
   it('maps a failed tool result to isError', () => {
     const failed = toolResultEntry(2, true);
     expect(
@@ -164,21 +202,23 @@ describe('toKubicLaneEvent (§15.3)', () => {
     );
   });
 
-  it('ignores message ends that are not assistant responses', () => {
+  it('carries non-assistant message ends as committed entries (#317)', () => {
+    // A compaction summary and a reset handoff are user messages with no
+    // usage row; the transcript still needs the entry, so it rides its own
+    // event instead of being dropped.
     const user = entry(8, 'pi.user', {
       role: 'user',
       content: 'hi',
       timestamp: 0,
     });
+    expect(toKubicLaneEvent({ type: 'message_end', entry: user })).toEqual({
+      type: 'entry',
+      entry: user,
+    });
+    const toolResult = toolResultEntry(9);
     expect(
-      toKubicLaneEvent({ type: 'message_end', entry: user }),
-    ).toBeUndefined();
-    expect(
-      toKubicLaneEvent({
-        type: 'message_end',
-        entry: toolResultEntry(9),
-      }),
-    ).toBeUndefined();
+      toKubicLaneEvent({ type: 'message_end', entry: toolResult }),
+    ).toEqual({ type: 'entry', entry: toolResult });
   });
 
   it('maps retries, compactions and task failures', () => {
@@ -225,11 +265,34 @@ describe('toKubicLaneEvent (§15.3)', () => {
     ).toEqual({ type: 'fault', code: 'pi.generation', message: 'boom' });
   });
 
+  it('maps an inbox update to the queued items, ids as strings (#334)', () => {
+    expect(
+      toKubicLaneEvent({
+        type: 'inbox_update',
+        items: [
+          { id: 11 as SubmissionId, mode: 'followUp' },
+          { id: 12 as SubmissionId, mode: 'steer' },
+        ],
+      }),
+    ).toEqual({
+      type: 'inbox',
+      items: [
+        { id: '11', mode: 'followUp' },
+        { id: '12', mode: 'steer' },
+      ],
+    });
+    // Placement and withdrawal emit the same event with the remaining items
+    // (here: none) — the list is a snapshot, so a renderer replaces its rows.
+    expect(toKubicLaneEvent({ type: 'inbox_update', items: [] })).toEqual({
+      type: 'inbox',
+      items: [],
+    });
+  });
+
   it('ignores event kinds Kubic does not route', () => {
     const ignored = [
       { type: 'turn_start' },
       { type: 'turn_end' },
-      { type: 'inbox_update', items: [] },
       { type: 'deferred_poll', pollAt: 1 },
       { type: 'usage_changed', usage: { models: {}, tools: {} } },
       { type: 'agent_changed', agent: {} },
@@ -545,16 +608,24 @@ describe('subscribeLaneEvents over watchEvents (#398)', () => {
     // Fold like the TUI feed does: a snapshot REPLACES the transcript
     // cells, an entry-bearing event appends exactly that entry.
     const cells: number[] = [];
-    const ids = new Set<number>();
+    const index = new Map<number, number>();
+    // The TUI feed UPSERTS by entry id (a re-delivered entry replaces its
+    // cell, it never appends a second one), so the fold here does the same.
     const push = (committed: EntryRecord): void => {
-      cells.push(committed.id as number);
-      ids.add(committed.id as number);
+      const id = committed.id as number;
+      const at = index.get(id);
+      if (at === undefined) {
+        index.set(id, cells.length);
+        cells.push(id);
+      } else {
+        cells[at] = id;
+      }
     };
     let snapshotted = 0;
     for (const event of seen) {
       if (event.type === 'snapshot') {
         cells.length = 0;
-        ids.clear();
+        index.clear();
         for (const committed of event.entries) push(committed);
         snapshotted = event.entries.length;
       } else if ('entry' in event && event.entry !== undefined) {
@@ -566,6 +637,6 @@ describe('subscribeLaneEvents over watchEvents (#398)', () => {
     // The second turn appended its cells on top of the snapshot.
     expect(cells.length).toBeGreaterThan(snapshotted);
     // No cell appears twice.
-    expect(cells.length).toBe(ids.size);
+    expect(cells.length).toBe(index.size);
   });
 });

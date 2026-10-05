@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { runTuiCommand } from '../../../apps/kubic/src/tui-run.js';
+import { terminalRig } from '../../../test/fake-terminal.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import {
   createModels,
@@ -49,44 +50,7 @@ function fauxModels(texts: string[]): MutableModels {
 }
 
 function fakeTerminal(width: number) {
-  const writes: string[] = [];
-  const counts = { started: 0, stopped: 0 };
-  let onInput: ((data: string) => void) | undefined;
-  return {
-    writes,
-    terminal: {
-      start: (input: (data: string) => void) => {
-        counts.started += 1;
-        onInput = input;
-      },
-      stop: () => {
-        counts.stopped += 1;
-      },
-      drainInput: () => Promise.resolve(),
-      write: (data: string) => writes.push(data),
-      get columns(): number {
-        return width;
-      },
-      get rows(): number {
-        return 30;
-      },
-      get kittyProtocolActive(): boolean {
-        return false;
-      },
-      moveBy: () => {},
-      hideCursor: () => {},
-      showCursor: () => {},
-      clearLine: () => {},
-      clearFromCursor: () => {},
-      clearScreen: () => {},
-      setTitle: () => {},
-      setProgress: () => {},
-    },
-    counts,
-    feed: (data: string): void => {
-      onInput?.(data);
-    },
-  };
+  return terminalRig(width, 30);
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {

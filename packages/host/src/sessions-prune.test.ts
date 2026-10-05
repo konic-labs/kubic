@@ -394,6 +394,33 @@ describe('sessions prune, protection rails (issue #119)', () => {
   });
 });
 
+describe('sessions prune, bash spill files (issue #182)', () => {
+  // A clipped bash stream spills into <sessionDir>/spill/. The prune's whole
+  // effect on a candidate is one recursive remove, so the spill goes with the
+  // session — pinned here through the real CLI path (runSessionsCommand →
+  // deleteSessionPruneCandidates), not by reproducing the remove.
+  it('removes a session together with its spill files', async () => {
+    const root = tmpRoot();
+    const dir = sessionDir(root, 'with-spills', 90 * DAY_MS);
+    mkdirSync(join(dir, 'spill'), { recursive: true });
+    const spill = join(dir, 'spill', `0001-stdout-${FAKE_PID}.log`);
+    writeFileSync(spill, 'x'.repeat(10));
+    // mkdir/writeFile bump the dir mtime: re-age it.
+    const secs = (Date.now() - 90 * DAY_MS) / 1000;
+    utimesSync(dir, secs, secs);
+    const kill = stubKill(false);
+    try {
+      const { code, lines } = await prune(root, { keepDays: 30, yes: true });
+      expect(code).toBe(0);
+      expect(existsSync(spill)).toBe(false);
+      expect(existsSync(dir)).toBe(false);
+      expect(lines.join('\n')).toContain('pruned with-spills');
+    } finally {
+      kill.mockRestore();
+    }
+  });
+});
+
 describe('sessions prune, the plan→delete window (issue #119)', () => {
   // Per-pid call counting drives the window deterministically: a holder
   // reads dead on the planning pass (its first liveness call) and live on

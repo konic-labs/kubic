@@ -463,9 +463,12 @@ export function launchWorker(
       {
         // The manager waits for the child's WHOLE cooperative drain, not just
         // the kill (issue #249): the abort may take up to the grace, and the
-        // exec seam then reaps the process group for up to the grace again
-        // (abort <= grace, then reapGroup <= grace), so the budget is twice
-        // the grace plus the teardown budget. A shorter wait would report a
+        // exec seam then reaps the process group for up to the grace again —
+        // abort <= grace, then reapGroup's SIGTERM wait <= grace. (reapGroup
+        // runs a SECOND bounded wait after SIGKILL, but that one only elapses
+        // for a group that survives SIGKILL, which is not a cooperative case:
+        // there `forced` is the honest verdict.) So the budget is twice the
+        // grace plus the teardown budget. A shorter wait would report a
         // timeout — `cancel: "forced"` — for a worker that was still settling
         // inside the grace it was given.
         settleTimeoutMs:

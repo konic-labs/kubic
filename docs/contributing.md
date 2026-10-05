@@ -183,7 +183,7 @@ leaves gating to the per-file check).
   mutates the script systems under test (`scripts/dep-lint.mjs`,
   `scripts/check-pinned-deps.mjs`) and runs the killing suites
   (`scripts/dep-lint.test.mjs`, `scripts/pi-boundary.test.mjs`,
-  `scripts/check-docs-links.test.mjs` — the only suite exercising
+  `scripts/check-pinned-deps.test.mjs`, `scripts/check-docs-links.test.mjs` — the last is the only suite exercising
   `listInternalEdges`) with
   `nodeArgs: ["--test-reporter=tap", "{{testFile}}"]` — in-process, so
   coverage attribution and mutant activation share one process — and

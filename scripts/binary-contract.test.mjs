@@ -976,13 +976,14 @@ describe('CI wiring (issue #101)', () => {
       );
     }
   });
-  it('npm test includes the binary-contract unit suite', () => {
+  it('npm test globs the gate suite, so the binary-contract suite runs', () => {
     const manifest = JSON.parse(
       readFileSync(join(ROOT, 'package.json'), 'utf8'),
     );
-    assert.ok(
-      manifest.scripts.test.includes('scripts/binary-contract.test.mjs'),
-      'npm test must run scripts/binary-contract.test.mjs',
+    assert.match(
+      manifest.scripts.test,
+      /node --test\s+"scripts\/\*\.test\.mjs"/,
+      'npm test must glob scripts/*.test.mjs (issue #376), not hand-list gates',
     );
   });
 

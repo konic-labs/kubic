@@ -6,6 +6,7 @@
     "testFiles": [
       "scripts/dep-lint.test.mjs",
       "scripts/pi-boundary.test.mjs",
+      "scripts/check-pinned-deps.test.mjs",
       "scripts/check-docs-links.test.mjs"
     ],
     "nodeArgs": ["--test-reporter=tap", "{{testFile}}"]

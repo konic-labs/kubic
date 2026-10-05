@@ -1,0 +1,89 @@
+// npm test scope guard (issue #376).
+//
+// `docs/contributing.md` promises `npm test` runs every `scripts/*.test.mjs`
+// via `node --test`. The root `package.json` used to list the files by hand,
+// so a new gate test landed on disk but never ran unless someone remembered
+// to edit the script too. The script now globs the suite; this guard keeps
+// the property structural: the glob form stays, no single gate file is
+// named, and the glob provably matches every gate file on disk.
+import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+// The exact pattern the `test` script passes to `node --test`: one `*`
+// never crosses `/`, and every gate file sits directly in `scripts/`.
+const GATE_GLOB = 'scripts/*.test.mjs';
+const GATE_GLOB_RE = /^scripts\/[^/]+\.test\.mjs$/;
+
+function gateTestsOnDisk(root = ROOT) {
+  return readdirSync(join(root, 'scripts'))
+    .filter((file) => file.endsWith('.test.mjs'))
+    .sort();
+}
+
+function testScript(root = ROOT) {
+  return JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts
+    .test;
+}
+
+// Every way the script and the tree disagree, as `problem` strings.
+function scopeProblems(script, files) {
+  const problems = [];
+  if (!script.includes(`"${GATE_GLOB}"`)) {
+    problems.push(`test script must run node --test "${GATE_GLOB}"`);
+  }
+  for (const file of files) {
+    if (script.includes(`scripts/${file}`)) {
+      problems.push(`test script must not name scripts/${file}`);
+    }
+    if (!GATE_GLOB_RE.test(`scripts/${file}`)) {
+      problems.push(`scripts/${file} is not matched by ${GATE_GLOB}`);
+    }
+  }
+  return problems;
+}
+
+describe('npm test runs every gate (issue #376)', () => {
+  it('the glob owns the set: every gate on disk runs under npm test', () => {
+    const files = gateTestsOnDisk();
+    // The suite ships 10+ gates; an empty or collapsed scripts/ dir must
+    // fail loudly instead of certifying a vacuous glob.
+    assert.ok(
+      files.length >= 10,
+      `expected the gate suite on disk, saw ${files.length} files`,
+    );
+    assert.deepEqual(
+      scopeProblems(testScript(), files),
+      [],
+      'npm test must glob the gate suite, not hand-list it',
+    );
+  });
+
+  it('flags a hand-listed script, a named file and a non-matching file', () => {
+    assert.deepEqual(
+      scopeProblems('node --test scripts/a.test.mjs scripts/b.test.mjs', [
+        'a.test.mjs',
+        'b.test.mjs',
+      ]),
+      [
+        'test script must run node --test "scripts/*.test.mjs"',
+        'test script must not name scripts/a.test.mjs',
+        'test script must not name scripts/b.test.mjs',
+      ],
+    );
+    assert.deepEqual(
+      scopeProblems('node --test "scripts/*.test.mjs"', [
+        'nested/dir.test.mjs',
+      ]),
+      ['scripts/nested/dir.test.mjs is not matched by scripts/*.test.mjs'],
+    );
+    assert.deepEqual(
+      scopeProblems('node --test "scripts/*.test.mjs"', ['a.test.mjs']),
+      [],
+    );
+  });
+});

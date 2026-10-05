@@ -40,6 +40,7 @@ import {
   BUDGET_EXHAUSTED,
   type BudgetGate,
   createBudgetGate,
+  mintUserBudgetApproval,
   type OrchestratorBudget,
   RUN_EXIT_BUDGET,
   recordToolCall,
@@ -1558,27 +1559,121 @@ export function createOrchestratorApprovalsRun(
     return { applied: false, reason: refusal.reason };
   };
 
-  const answerOne = async (
+  // The spend dimensions a raise may name (issue #141): the same closed
+  // set the `--budget` flag accepts. A proposal naming anything else is
+  // refused before it ever reaches the user — the seat decides raises,
+  // never new dimensions. `retryBudget` is excluded (separate issue).
+  const RAISE_DIMENSIONS: readonly string[] = [
+    'maxTokens',
+    'maxCostUsd',
+    'maxRuntimeMs',
+    'maxToolCalls',
+  ];
+
+  // Strict-shape check for a raise proposal: known dims mapping to
+  // positive numbers, within the ceilings validateOrchestratorBudget
+  // enforces. Anything else is refused without troubling the user.
+  const validRaise = (raw: unknown): OrchestratorBudget | undefined => {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      return undefined;
+    }
+    const entries = Object.entries(raw);
+    if (entries.length === 0) return undefined;
+    if (
+      !entries.every(
+        ([name, value]) =>
+          RAISE_DIMENSIONS.includes(name) &&
+          typeof value === 'number' &&
+          Number.isFinite(value) &&
+          value > 0,
+      )
+    ) {
+      return undefined;
+    }
+    try {
+      return validateOrchestratorBudget(raw);
+    } catch {
+      return undefined;
+    }
+  };
+
+  // A worker's budget-raise ask (issue #141, §71): malformed proposals are
+  // refused immediately; well-formed ones are routed to the USER's seat.
+  // Never auto-approved — no `autoApprove` flag, so the session skip cannot
+  // stand in for the user, and this layer has no `--yes` knob to consult
+  // (issue #323). With no seat the bound denies closed with its named
+  // reason. An approval mints the user grant and applies the raise to this
+  // worker's live plan and gate; any refusal terminates the worker's wait
+  // with the reason named.
+  const answerBudgetRaise = async (
     published: PublishedWorkerAsk,
     scope: WorkerApprovalScope,
+    proposed: unknown,
   ): Promise<WorkerApprovalTermination | undefined> => {
-    const { request, args } = published;
-    // §71: a worker proposing to raise its own budget is refused, never
-    // applied — and answered immediately so its bounded wait cannot hang.
-    const proposed = args.budgetRaise;
-    if (typeof proposed === 'object' && proposed !== null) {
-      const refusal = refuseRaise(scope.agentId, proposed);
-      decisions.answer(published, {
-        approved: false,
-        reason: refusal.reason,
-      });
+    const { request } = published;
+    const refuse = (reason: string): WorkerApprovalTermination => {
+      decisions.answer(published, { approved: false, reason });
       return {
         agentId: scope.agentId,
         key: request.key,
         code: APPROVAL_DENIED_CODE,
         exitCode: 4,
-        message: `budget raise refused for worker '${scope.agentId}': ${refusal.reason}`,
+        message: `budget raise refused for worker '${scope.agentId}': ${reason}`,
       };
+    };
+    const raise = validRaise(proposed);
+    if (raise === undefined) {
+      const reason = `proposed budget must map ${RAISE_DIMENSIONS.join(', ')} to positive numbers`;
+      audit({ type: 'budget-raise-refused', detail: reason });
+      debug(`budget: ${reason}`);
+      return refuse(reason);
+    }
+    const outcome = await decisions.ask(inputFromRequest(published, scope));
+    if (!outcome.approved) {
+      const detail = `budget raise for worker '${scope.agentId}' denied: ${outcome.reason}`;
+      audit({ type: 'budget-raise-denied', detail });
+      debug(`budget: ${detail}`);
+      return refuse(outcome.reason);
+    }
+    const applied = applyBudgetRaise({
+      approver: mintUserBudgetApproval(),
+      owner: scope.agentId,
+      current: planFor(scope.agentId).budget ?? {},
+      proposed: raise,
+    });
+    if (!applied.applied) {
+      // Unreachable: the grant is freshly minted and the proposal
+      // pre-validated — guarded so a silent non-application is impossible.
+      const detail = `budget raise for worker '${scope.agentId}' failed to apply: ${applied.reason}`;
+      audit({ type: 'budget-raise-refused', detail });
+      debug(`budget: ${detail}`);
+      return refuse(applied.reason);
+    }
+    // The raise takes effect NOW for this worker: the live plan carries
+    // the new budget and the gate is rebuilt from it (the old gate cached
+    // the old limits). A fresh plan, not a spread — describe() closes over
+    // the budget it was built with.
+    const before = planFor(scope.agentId).describe();
+    plans.set(scope.agentId, budgetForSpawn(applied.budget));
+    gates.delete(scope.agentId);
+    const approvedDetail = `budget raise for worker '${scope.agentId}' approved: ${before} → ${plans.get(scope.agentId)?.describe()}`;
+    audit({ type: 'budget-raise-approved', detail: approvedDetail });
+    debug(`budget: ${approvedDetail}`);
+    decisions.answer(published, { approved: true, by: 'user' });
+    return undefined;
+  };
+
+  const answerOne = async (
+    published: PublishedWorkerAsk,
+    scope: WorkerApprovalScope,
+  ): Promise<WorkerApprovalTermination | undefined> => {
+    const { request, args } = published;
+    // §71: a worker proposing to raise its own budget reaches the USER's
+    // seat (issue #141) — answered below, never refused up front. A
+    // malformed proposal never costs the user a dialog.
+    const proposed = args.budgetRaise;
+    if (typeof proposed === 'object' && proposed !== null) {
+      return answerBudgetRaise(published, scope, proposed);
     }
     // The budget gate is consulted BEFORE the user is prompted: a worker that
     // already exhausted a configured budget never costs the user a dialog.

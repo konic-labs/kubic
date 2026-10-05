@@ -578,7 +578,12 @@ can produce one):
   worker cannot make another tool call. `maxRuntimeMs` is the manager's
   wall-clock watchdog: a worker that outlives it is killed and the run reports
   `limit=wallClock` — distinct from the child's own `--timeout`. A worker
-  cannot raise its own budget: the raise is refused and audited. The spec
+  cannot raise its own budget: a self-raise is refused and audited. On an
+  interactive run the raise ask still reaches the user (issue #141) —
+  approving applies the raise to that worker's live plan and gate and
+  audits `budget-raise-approved`; declining, headless and `--yes` runs deny
+  with the reason named (the session skip never stands in for the user).
+  The spec
   persists with the session, so `--resume` re-applies it; a differing
   `--budget` on resume is refused (exit 2) rather than silently mixed.
 - **The task can also carry an aggregate budget (§71, issue #207).**

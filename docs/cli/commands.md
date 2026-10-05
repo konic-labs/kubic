@@ -461,7 +461,15 @@ never copied to a worker verbatim. The role is chosen per worker by the
 `--agents` binding (issue #178): `<id>:<role>` names one of the five presets,
 and a worker with no binding runs as an **implementer** — never by list
 position, so the default two-worker run no longer spends a worker on a planner
-whose plan nothing consumes. The role also decides the worker's lane: the
+whose plan nothing consumes. After the step, every prompt carries the
+worker's §24 transfer record (issue #184): the task (the run objective),
+its worktree, the role obligations as constraints, the expected output
+(changes committed for review and merge), and the previous findings handed
+down the agent order — one summary line per settled earlier worker naming
+its files, plus its findings, failing tests, diff ref and worktree. A
+result smuggling message-history-shaped content hands nothing down (§69,
+fail-closed) and surfaces no `artifact`; no prompt ever carries a
+transcript. The role also decides the worker's lane: the
 child is told `--role <name>` and registers exactly that role's resolved tool
 set, so a tool the role does not hold is never registered (absence, not
 approval, withholds it). The role's classes and approval obligations travel

@@ -1,20 +1,27 @@
 // Context-contract dispositions (issue #99, scope item 5; §24, §25, §28,
-// §69, §70).
+// §69, §70 — with issue #184 wiring §24/§25/§69 run-side).
 //
 // #99's job for the inert contracts was a per-module wire-or-delete call,
-// executed. This file pins the calls that were NOT "wire", so a later
-// session cannot quietly resurrect a module no path reads, and so the design
-// sections those modules described are recorded as not-yet-implemented
-// instead of silently implied.
+// executed. This file pins the calls that were NOT "wire" (the DELETED
+// list below, and §28's lifetimes, which still have no live path), so a
+// later session cannot quietly resurrect a module no path reads — and it
+// pins the one call that #184 flipped to "wire": §24/§25/§69 now ship as
+// run-side transfer state in `packages/host/src/orchestrator/transfer.ts`,
+// consumed by the run itself (prompt composition, run state, `--json`).
+// The deleted modules stay deleted: the new code is a different layer
+// (run-side records, never agent-side validators), so resurrection would
+// still mean a module no path reads.
 //
 // The deleted modules had zero non-test importers on HEAD fdbcf28 and no
 // honest consumer exists on the shipped path:
 //   - the delegation that ships is a CLI fan-out of separate `kubic run -p`
 //     PROCESSES (issue #95's decision, documented in
 //     docs/architecture/orchestrator.md). There is no in-process parent
-//     transcript to isolate, no artifact exchange, no handoff chain and no
-//     review loop — so §24/§25/§69/§70's validators had nothing to validate
-//     and §28's memory lifetimes duplicated the harness session store.
+//     transcript to isolate — so §24/§25/§69/§70's validators had nothing
+//     to validate and §28's memory lifetimes duplicated the harness
+//     session store. (#184 wires the SHARING half run-side: artifacts and
+//     handoffs flow through run state into later workers' prompts, never
+//     through a parent transcript.)
 //   - wiring any of them would have meant inventing a caller, which the
 //     sibling issues explicitly rejected as worse than deletion.
 import { existsSync, readFileSync } from 'node:fs';
@@ -76,12 +83,32 @@ describe('context contracts: the delete calls stay executed (#99)', () => {
 
   it('names the sections as not yet implemented in the drift page', () => {
     const drift = read(DRIFT);
-    // §24/§25/§69's enforcement and §28's lifetimes have no live path yet;
-    // the drift page is where a clone can read that.
+    // §24/§25 ship run-side since #184 and §28 stays unwired; the drift
+    // page is where a clone reads the split.
     expect(drift).toMatch(/§24[\s\S]{0,300}§25|§25[\s\S]{0,300}§24/);
-    expect(drift).toMatch(/not-yet-implemented|not yet implemented/i);
-    expect(drift).toMatch(/§28/);
+    expect(drift).toMatch(/transfer\.ts/);
+    expect(drift).toMatch(/§28[\s\S]{0,300}not-yet-implemented/);
     expect(drift).toMatch(/§69/);
+  });
+
+  it('wires §24/§25/§69 through a live path, never a deleted module', () => {
+    // The #184 flip, pinned both directions: the transfer module exists
+    // and the run reads it, while the #99-deleted paths stay gone (the
+    // first test in this file already asserts their absence).
+    const module = join(
+      ROOT,
+      'packages',
+      'host',
+      'src',
+      'orchestrator',
+      'transfer.ts',
+    );
+    expect(existsSync(module), 'transfer.ts is gone').toBe(true);
+    expect(read(module)).toContain('TaskTransfer');
+    expect(
+      read(join(ROOT, 'packages', 'host', 'src', 'orchestrate-cli.ts')),
+      'no live path imports the transfer module',
+    ).toContain('./orchestrator/transfer.js');
   });
 
   it('keeps the no-transcript property that holds structurally on the shipped path', () => {

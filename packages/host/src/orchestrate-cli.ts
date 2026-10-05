@@ -2689,6 +2689,11 @@ export async function runOrchestrateCommand(
   const enqueuedAtMs = new Map<string, number>();
   const diffMsByAgent = new Map<string, number>();
   const worktrees = new Map<string, OrchestrateWorktree>();
+  // Declared beside worktrees (issue #184): failure envelopes built before
+  // the launch section read worktree placement through `ensureArtifact`,
+  // so this map must exist before any early return — not just before
+  // the first launch.
+  const prepared = new Map<string, OrchestrateWorktree>();
   const hunksByAgent = new Map<string, MergedHunk[]>();
   // §68 results per worker (issue #185), successes and failures alike.
   const resultsByAgent = new Map<string, AgentResult>();
@@ -3192,7 +3197,6 @@ export async function runOrchestrateCommand(
       }
     }
   }
-  const prepared = new Map<string, OrchestrateWorktree>();
   // Pending workers whose write-ahead completion (issue #160) this resume
   // reuses: prepared like the rest, but never spawned or run again.
   const resumedCompleted = new Set<string>();

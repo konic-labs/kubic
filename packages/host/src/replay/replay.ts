@@ -50,6 +50,7 @@ import {
   type TrajectoryExport,
   TrajectorySchemaError,
 } from '../../../trajectory/src/schema.js';
+import type { SoloCompactionOptions } from '../../../worker/src/lane/solo.js';
 import type { SoloApprovalConfig } from '../approvals.js';
 import type { EffectivePolicy } from '../policy/enterprise.js';
 import type { RoleLayerInput } from '../roles/resolver.js';
@@ -130,6 +131,15 @@ export interface ReplayRuntimeDeps {
   // loads only for a trusted root. Absent means untrusted.
   roles?: { layers: RoleLayerInput[]; trustProject?: (dir: string) => boolean };
   reconcileOutOfScope?: string[];
+  // §27.1 (issue #239): the `[session]` compaction policy, from the same
+  // projection `kubic run` threads — the live re-execution tiers compact
+  // under the configured policy, not the lane defaults. Absent means the
+  // lane defaults. (Review: previously rode an untyped spread here.)
+  compaction?: SoloCompactionOptions;
+  // [agent] systemPromptFile contents (issue #240), from the same
+  // projection `kubic run` threads — the re-executed tiers assemble the
+  // same prompt. Absent means the lane assembles its prompt unchanged.
+  systemPromptSection?: string;
 }
 
 export interface ReplayCommandDeps {

@@ -213,6 +213,30 @@ describe('replay re-execution consumes the effective config (issue #114)', () =>
     expect(captured?.journalRetention).toEqual({ maxAgeMs: 60_000 });
   });
 
+  it('threads the compaction policy and prompt section to the re-execution seam (issues #239, #240)', async () => {
+    // The review caught these riding an untyped spread: the live tiers
+    // compacted and augmented correctly at runtime, but no type named
+    // the fields and no test pinned them. The composition root builds
+    // this runtime from the same projections `kubic run` consumes, so
+    // the config that governs a run governs its replay.
+    let captured: ReplayRuntimeDeps | undefined;
+    const run = createProdReplayRun({
+      loadTrajectory: () => fixtureTrajectory(),
+      runPrompt: async (_prompt, _model, _request, runtime) => {
+        captured = runtime;
+        return { terminus: 'completed', summary: 'replayed' };
+      },
+    });
+    const result = await run(request(), {
+      ...RUNTIME,
+      compaction: { reserveTokens: 4000 },
+      systemPromptSection: 'Be terse.\n',
+    });
+    expect(result.terminus).toBe('completed');
+    expect(captured?.compaction).toEqual({ reserveTokens: 4000 });
+    expect(captured?.systemPromptSection).toBe('Be terse.\n');
+  });
+
   it('a config-sourced policy class blocks a network-shaped command on replay re-execution', async () => {
     // The effective config (issue #90): an explicit [permissions] layer
     // makes the classes config-sourced. `shell = "read-only-allowlist"` is

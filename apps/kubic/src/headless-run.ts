@@ -40,6 +40,7 @@ import {
   beginReconciliation,
   type RunReconciliation,
 } from '../../../packages/exec/src/journal-reconcile.js';
+import { createSecretCommandRunner } from '../../../packages/exec/src/secret-runner.js';
 import {
   budgetLimitsOf,
   budgetToolGate,
@@ -1626,6 +1627,11 @@ async function runHeadlessPromptImpl(
           identityWords = catalogIdentity(catalog);
           return identityWords;
         },
+        // `!command` secret refs (issue #224) execute in the run's
+        // workspace through the production runner — rerun per request.
+        runCommand: createSecretCommandRunner({
+          cwd: deps.env?.cwd ?? process.cwd(),
+        }),
       });
       capture.liveSecrets = keyResolver.live;
       // Worker role credentials (issue #200; §36.3): when this process IS an

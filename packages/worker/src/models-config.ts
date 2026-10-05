@@ -6,6 +6,11 @@
 // is refused with a named reason, never silently mapped.
 
 import {
+  parseSecretRef,
+  type SecretRef,
+  SecretRefError,
+} from '../../core/src/secret-refs.js';
+import {
   type ApiKeyAuth,
   createProvider,
   envApiKeyAuth,
@@ -54,10 +59,22 @@ export interface CustomProviderSpec {
   name?: string;
   baseUrl: string;
   apiKeyEnv?: string;
-  /** A literal key (§38.5 `"apiKey": "not-needed"`); secret refs are refused. */
+  /**
+   * The key: a literal (`"not-needed"`), an allowlisted `$VAR`, or a
+   * `!command` (issue #224) — parsed at load, resolved per request.
+   * Escaped `\$` / `\!` stay literal.
+   */
   apiKey?: string;
-  /** Static per-provider headers (e.g. opencode-go's x-opencode-session). */
+  /**
+   * Per-provider headers. Literal values ride statically; `$VAR`
+   * (allowlisted) and `!command` values are parsed into `headerRefs`
+   * (issue #224) and resolve per request instead.
+   */
   headers?: Record<string, string>;
+  /** Parsed `apiKey` ref (issue #224); absent for apiKeyEnv providers. */
+  apiKeyRef?: SecretRef;
+  /** Parsed header refs by name (issue #224); literals stay in `headers`. */
+  headerRefs?: Record<string, SecretRef>;
   api: CustomApi;
   models: CustomModelSpec[];
 }
@@ -341,19 +358,15 @@ function parseProvider(raw: unknown): CustomProviderSpec {
       `provider '${id}': apiKeyEnv '${apiKeyEnv}' is not an allowed key variable (use a KUBIC_* name or a *_API_KEY name)`,
     );
   }
-  // A literal key (§38.5: `"apiKey": "not-needed"` for a keyless local
-  // server). `$ENV`/`!command` secret refs are not resolved here — refused
-  // by name rather than sent verbatim as a key.
+  // The key (issue #224): a literal (`"not-needed"`), an allowlisted
+  // `$VAR`, or a `!command` — parsed at load through the shared table,
+  // resolved per request. Escaped `\$` / `\!` stay literal and never
+  // reach the resolver.
   const apiKey = raw.apiKey;
   if (apiKey !== undefined) {
     if (typeof apiKey !== 'string' || apiKey === '') {
       throw new ModelsJsonError(
         `provider '${id}': apiKey must be a non-empty string when set`,
-      );
-    }
-    if (apiKey.startsWith('$') || apiKey.startsWith('!')) {
-      throw new ModelsJsonError(
-        `provider '${id}': apiKey secret references ($ENV / !command) are not supported — use apiKeyEnv to read the key from the environment`,
       );
     }
     if (apiKeyEnv !== undefined) {
@@ -362,10 +375,28 @@ function parseProvider(raw: unknown): CustomProviderSpec {
       );
     }
   }
-  // Static per-provider headers (gateways like opencode-go require one on
-  // every request). Keys and values must both be non-empty strings — a
-  // malformed map is a named refusal, never a silent drop.
+  let apiKeyRef: SecretRef | undefined;
+  if (typeof apiKey === 'string') {
+    try {
+      apiKeyRef = parseSecretRef(apiKey);
+    } catch (error) {
+      throw new ModelsJsonError(
+        `provider '${id}': apiKey ${error instanceof SecretRefError ? error.message : 'is not a valid secret ref'}`,
+      );
+    }
+    if (apiKeyRef.kind === 'env' && !API_KEY_ENV.test(apiKeyRef.name)) {
+      throw new ModelsJsonError(
+        `provider '${id}': apiKey '$${apiKeyRef.name}' names '${apiKeyRef.name}' which is not an allowed key variable (use a KUBIC_* name or a *_API_KEY name)`,
+      );
+    }
+  }
+  // Per-provider headers (gateways like opencode-go require one on every
+  // request). Keys and values must both be non-empty strings — a malformed
+  // map is a named refusal, never a silent drop. Literal values ride
+  // statically; `$VAR` (allowlisted) and `!command` values are parsed into
+  // headerRefs and resolve per request (issue #224) — never verbatim.
   let headers: Record<string, string> | undefined;
+  let headerRefs: Record<string, SecretRef> | undefined;
   if (raw.headers !== undefined) {
     if (!isRecord(raw.headers)) {
       throw new ModelsJsonError(
@@ -383,8 +414,25 @@ function parseProvider(raw: unknown): CustomProviderSpec {
           `provider '${id}': headers keys and values must be non-empty strings (got ${JSON.stringify(key)}: ${JSON.stringify(value)})`,
         );
       }
+      let ref: SecretRef;
+      try {
+        ref = parseSecretRef(value);
+      } catch (error) {
+        throw new ModelsJsonError(
+          `provider '${id}': headers '${key}' ${error instanceof SecretRefError ? error.message : 'is not a valid secret ref'}`,
+        );
+      }
+      if (ref.kind === 'literal') {
+        headers = { ...headers, [key]: ref.value };
+        continue;
+      }
+      if (ref.kind === 'env' && !API_KEY_ENV.test(ref.name)) {
+        throw new ModelsJsonError(
+          `provider '${id}': headers '${key}' '$${ref.name}' names '${ref.name}' which is not an allowed key variable (use a KUBIC_* name or a *_API_KEY name)`,
+        );
+      }
+      headerRefs = { ...headerRefs, [key]: ref };
     }
-    headers = { ...(raw.headers as Record<string, string>) };
   }
   return {
     id,
@@ -394,7 +442,9 @@ function parseProvider(raw: unknown): CustomProviderSpec {
     baseUrl,
     ...(typeof apiKeyEnv === 'string' ? { apiKeyEnv } : {}),
     ...(typeof apiKey === 'string' ? { apiKey } : {}),
+    ...(apiKeyRef === undefined ? {} : { apiKeyRef }),
     ...(headers === undefined ? {} : { headers }),
+    ...(headerRefs === undefined ? {} : { headerRefs }),
     api,
     models: raw.models.map((m) => parseModel(m, id)),
   };
@@ -477,11 +527,23 @@ export const LOCAL_MODELS_EXAMPLE = {
 // the host's resolver reads the named env var through `readEnv` (Pi's auth
 // context) and returns the key, auditing the use. It never sees a stored
 // credential — those resolve through Pi as before.
-export interface ApiKeyUse {
-  provider: string;
-  envVar: string;
-  readEnv: (name: string) => Promise<string | undefined>;
-}
+// Request-time key material for one custom provider (issue #224): either
+// the legacy named env var or a parsed secret ref. The host's resolver
+// reads the named env var through `readEnv` (Pi's auth context) and
+// returns the key, auditing the use; a ref use runs the host's secret
+// command runner instead. Neither ever sees a stored credential — those
+// resolve through Pi as before.
+export type ApiKeyUse =
+  | {
+      provider: string;
+      envVar: string;
+      readEnv: (name: string) => Promise<string | undefined>;
+    }
+  | {
+      provider: string;
+      ref: SecretRef;
+      readEnv: (name: string) => Promise<string | undefined>;
+    };
 
 export interface RegisterCustomProvidersOptions {
   resolveApiKey?: (use: ApiKeyUse) => Promise<string | undefined>;
@@ -518,35 +580,158 @@ function literalApiKeyAuth(
   };
 }
 
+// One provider's key material at registration (issue #224): a literal
+// value, a legacy env-var name, or a parsed secret ref. A literal never
+// reaches the host resolver — it is already in the catalog.
+type KeyPart =
+  | { kind: 'literal'; value: string }
+  | { kind: 'envName'; envVar: string }
+  | { kind: 'ref'; ref: SecretRef };
+
+function keySourceLabel(key: KeyPart): string {
+  if (key.kind === 'literal') return 'models.json apiKey';
+  if (key.kind === 'envName') return key.envVar;
+  if (key.ref.kind === 'literal') return 'models.json apiKey';
+  if (key.ref.kind === 'env') return key.ref.name;
+  return `!${key.ref.argv[0] ?? 'command'}`;
+}
+
+function noRunnerError(provider: string, what: string): Error {
+  return new ModelsJsonError(
+    `provider '${provider}': ${what} needs a secret-command runner — the availability probe never executes commands, refusing rather than dropping it`,
+  );
+}
+
+// Availability WITHOUT resolving (a probe is not a use): a literal is
+// always present, an env name reads presence, a command ref is unknowable
+// without executing — and the check path never executes.
+async function keyAvailable(
+  key: KeyPart,
+  env: (name: string) => Promise<string | undefined>,
+): Promise<boolean> {
+  if (key.kind === 'literal') return true;
+  if (key.kind === 'envName') return Boolean(await env(key.envVar));
+  if (key.ref.kind === 'env') return Boolean(await env(key.ref.name));
+  // A command ref (or a hand-built literal): unknowable here at best —
+  // the check path never executes, so absence is never reported.
+  return true;
+}
+
+async function headersAvailable(
+  refs: Record<string, SecretRef> | undefined,
+  env: (name: string) => Promise<string | undefined>,
+): Promise<boolean> {
+  if (refs === undefined) return true;
+  for (const ref of Object.values(refs)) {
+    if (ref.kind === 'env' && !(await env(ref.name))) return false;
+  }
+  return true;
+}
+
+// The no-hook resolver (issue #224): env refs read env-direct through
+// Pi's auth context, literals serve direct, and a `!command` refuses by
+// name — the resolve path has no runner of its own, so executing one here
+// would be a silent drop of the audit + sandboxing the host runner owns.
+async function directSecretResolve(
+  use: ApiKeyUse,
+): Promise<string | undefined> {
+  if ('envVar' in use) return use.readEnv(use.envVar);
+  if (use.ref.kind === 'env') return use.readEnv(use.ref.name);
+  if (use.ref.kind === 'literal') return use.ref.value;
+  throw noRunnerError(use.provider, `apiKey '${use.ref.raw}'`);
+}
+
 // The provider's api-key auth when the host resolves keys itself: `check`
 // answers availability WITHOUT resolving (a probe is not a use), and every
 // `resolve` — Pi calls it per request — goes through the host's resolver.
-function requestTimeApiKeyAuth(
+function providerKeyAuth(
   provider: string,
-  envVar: string,
+  key: KeyPart,
+  headerRefs: Record<string, SecretRef> | undefined,
   resolveApiKey: (use: ApiKeyUse) => Promise<string | undefined>,
 ): ApiKeyAuth {
-  const base = envApiKeyAuth(`${provider} API key`, [envVar]);
+  const label = keySourceLabel(key);
+  const base = envApiKeyAuth(`${provider} API key`, [label]);
   return {
     ...base,
     check: async ({ ctx, credential, signal }) => {
       signal.throwIfAborted();
       if (credential?.key)
         return { source: 'stored credential', type: 'api_key' };
-      const value = await ctx.env(envVar);
-      return value ? { source: envVar, type: 'api_key' } : undefined;
+      const env = (name: string): Promise<string | undefined> => ctx.env(name);
+      if (key.kind === 'literal') return { source: label, type: 'api_key' };
+      if (key.kind === 'envName') {
+        return (await env(key.envVar))
+          ? { source: label, type: 'api_key' }
+          : undefined;
+      }
+      if (key.ref.kind === 'env' && !(await env(key.ref.name)))
+        return undefined;
+      // A command ref is unknowable without executing — and the check path
+      // never executes — so it counts as configured here.
+      if (!(await headersAvailable(headerRefs, env))) return undefined;
+      return { source: label, type: 'api_key' };
     },
     resolve: async ({ ctx, credential, signal }) => {
       signal.throwIfAborted();
       if (credential?.key) return base.resolve({ ctx, credential, signal });
-      if (!(await ctx.env(envVar))) return undefined;
-      const key = await resolveApiKey({
-        provider,
-        envVar,
-        readEnv: (name) => ctx.env(name),
-      });
+      const env = (name: string): Promise<string | undefined> => ctx.env(name);
+      if (!(await keyAvailable(key, env))) return undefined;
+      if (!(await headersAvailable(headerRefs, env))) {
+        const names = Object.keys(headerRefs ?? {});
+        throw new ModelsJsonError(
+          `provider '${provider}': headers:${names.join(',')} unavailable without their values — refusing rather than sending an incomplete credential set`,
+        );
+      }
+      let keyValue: string | undefined;
+      if (key.kind === 'literal') {
+        keyValue = key.value;
+      } else if (key.kind === 'envName') {
+        const value = await env(key.envVar);
+        if (value) {
+          keyValue = await resolveApiKey({
+            provider,
+            envVar: key.envVar,
+            readEnv: (name) => ctx.env(name),
+          });
+        }
+      } else if (key.ref.kind === 'literal') {
+        keyValue = key.ref.value;
+      } else {
+        keyValue = await resolveApiKey({
+          provider,
+          ref: key.ref,
+          readEnv: (name) => ctx.env(name),
+        });
+      }
       signal.throwIfAborted();
-      return key ? { auth: { apiKey: key }, source: envVar } : undefined;
+      if (keyValue === undefined || keyValue === '') return undefined;
+      const headers: Record<string, string> = {};
+      for (const [name, ref] of Object.entries(headerRefs ?? {})) {
+        if (ref.kind === 'literal') {
+          headers[name] = ref.value;
+        } else {
+          const value = await resolveApiKey({
+            provider,
+            ref,
+            readEnv: (n) => ctx.env(n),
+          });
+          signal.throwIfAborted();
+          if (value === undefined || value === '') {
+            throw new ModelsJsonError(
+              `provider '${provider}': headers '${name}' unavailable without its value — refusing rather than sending it verbatim`,
+            );
+          }
+          headers[name] = value;
+        }
+      }
+      return {
+        auth: {
+          apiKey: keyValue,
+          ...(Object.keys(headers).length === 0 ? {} : { headers }),
+        },
+        source: label,
+      };
     },
   };
 }
@@ -559,21 +744,40 @@ export function registerCustomProviders(
   const names: string[] = [];
   for (const spec of specs) {
     const key = spec.apiKeyEnv ?? 'KUBIC_API_KEY';
+    // Api-key precedence (issue #224): a literal models.json key with no
+    // header refs wins outright; otherwise the provider goes through the
+    // request-time auth — the host's resolver when given, env-direct with
+    // named command refusals when not — and a legacy apiKeyEnv pair keeps
+    // Pi's own env auth unless the host takes over.
+    let apiKey: ApiKeyAuth;
+    if (spec.apiKeyRef?.kind === 'literal' && spec.headerRefs === undefined) {
+      apiKey = literalApiKeyAuth(`${spec.id} API key`, spec.apiKeyRef.value);
+    } else if (
+      spec.apiKeyRef !== undefined ||
+      spec.headerRefs !== undefined ||
+      options.resolveApiKey !== undefined
+    ) {
+      const part: KeyPart =
+        spec.apiKeyRef === undefined
+          ? { kind: 'envName', envVar: key }
+          : spec.apiKeyRef.kind === 'literal'
+            ? { kind: 'literal', value: spec.apiKeyRef.value }
+            : { kind: 'ref', ref: spec.apiKeyRef };
+      apiKey = providerKeyAuth(
+        spec.id,
+        part,
+        spec.headerRefs,
+        options.resolveApiKey ?? directSecretResolve,
+      );
+    } else {
+      apiKey = envApiKeyAuth(`${spec.id} API key`, [key]);
+    }
     const provider = createProvider({
       id: spec.id,
       ...(spec.name === undefined ? {} : { name: spec.name }),
       baseUrl: spec.baseUrl,
       ...(spec.headers === undefined ? {} : { headers: spec.headers }),
-      auth: {
-        // api-key precedence: a literal models.json key wins, then the
-        // host's request-time resolver (audited per use), then the env key.
-        apiKey:
-          spec.apiKey !== undefined
-            ? literalApiKeyAuth(`${spec.id} API key`, spec.apiKey)
-            : options.resolveApiKey === undefined
-              ? envApiKeyAuth(`${spec.id} API key`, [key])
-              : requestTimeApiKeyAuth(spec.id, key, options.resolveApiKey),
-      },
+      auth: { apiKey },
       models: spec.models.map((m) => ({
         id: m.id,
         name: m.name ?? m.id,

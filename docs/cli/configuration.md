@@ -693,8 +693,8 @@ file is refused whole (never half-applied) and named when:
 - a provider id collides with a **built-in** provider (`anthropic`,
   `openai`, …) — a custom provider can never replace a built-in's URL or
   auth, trusted or not;
-- `apiKeyEnv` names a variable outside the allowlist: a `KUBIC_*` name or a
-  `*_API_KEY` name (`OPENROUTER_API_KEY`, `KUBIC_GATEWAY_TOKEN`). Anything
+- `apiKeyEnv` — or an `apiKey` / header `$VAR` — names a variable outside
+  the allowlist: a `KUBIC_*` name or a `*_API_KEY` name (`OPENROUTER_API_KEY`, `KUBIC_GATEWAY_TOKEN`). Anything
   else (`AWS_SECRET_ACCESS_KEY`, `GITHUB_TOKEN`, `HOME`) is refused, so a
   file can never choose an arbitrary secret to send as a bearer token.
   Without `apiKeyEnv` the key is read from `KUBIC_API_KEY`.
@@ -731,9 +731,9 @@ of entries with their own `id` is accepted as an alias):
 | --- | --- |
 | `baseUrl` | `http(s)` endpoint (required). |
 | `api` | `openai-completions` or `openai-responses` (required). |
-| `apiKey` | A literal key (e.g. `not-needed` for a keyless local server). `$ENV`/`!command` references are refused — use `apiKeyEnv`. Not together with `apiKeyEnv`. |
+| `apiKey` | A literal key (e.g. `not-needed` for a keyless local server), an allowlisted `$VAR` (same allowlist as `apiKeyEnv`), or a `!command` resolved per request. Escaped `\$` / `\!` stay literal. Not together with `apiKeyEnv`. |
 | `apiKeyEnv` | The env variable holding the key (allowlist above; default `KUBIC_API_KEY`). |
-| `name`, `headers` | Display name; static per-request headers (non-empty strings). |
+| `name`, `headers` | Display name; per-request headers (non-empty strings). Literal values ride every request statically; `$VAR` (allowlisted) and `!command` values resolve per request through the key auth instead and never reach the wire verbatim. |
 | `models` | Non-empty list of models (ids unique per provider). |
 
 | Model key | Meaning |
@@ -753,8 +753,25 @@ Secrets never appear in config: a secret-shaped value or a secret ref in
   provider's `apiKeyEnv` names the environment variable holding its key; that
   is a `$ENV_VAR` ref, resolved through the request-time resolver on **every**
   model request (never cached; a missing or empty variable leaves the provider
-  unconfigured). Availability checks (`kubic models`, the provider probe) read
-  presence only and are not a use.
+  unconfigured). The same holds for an `apiKey` written as an allowlisted
+  `$VAR` — except a missing variable fails the request closed naming it —
+  and for `$VAR` / `!command` header values, which resolve into the request's
+  auth headers instead of reaching the wire verbatim. An `apiKey` written
+  `\$literal` (or any other plain string) stays a literal key and never
+  touches the resolver. Availability checks (`kubic models`, the provider
+  probe) read presence only and are not a use.
+- **A `!command` ref runs a helper on every request.** The command and its
+  arguments are parsed quote-aware (`!op read "my vault/item"` stays one
+  argument) and executed directly — never through a shell — with a 10s
+  timeout and a 64 KiB output cap; an empty result, a failure, or a timeout
+  fails the request closed naming the provider and command. The check path
+  never executes it (an unknowable command counts as configured; a missing
+  binary or a broken helper surfaces at the first request). Commands run
+  only from trusted `models.json` files — an untrusted project file is
+  refused before it is read — and in an orchestrated worker the command
+  runs in the child itself. Without the request-time resolver (the
+  orchestrator's availability guess) a command ref counts as configured on
+  the probe and refuses by name if a request ever reaches it.
 - **Every use is audited.** Each resolution appends one §60 record to the
   audit ledger (`.kubic/orchestrator/approvals/audit.jsonl`, read by
   `kubic audit`): `what: credential:<provider>`, the ref as a sentinel
@@ -797,9 +814,7 @@ Anthropic counts as **configured** in `kubic models` and `kubic doctor` when
 the three required variables are present (the two ids are optional), while an
 API key or `ANTHROPIC_AUTH_TOKEN`, when set, wins as it does in Pi.
 
-Not implemented: `!command` and literal refs inside `models.json` (the
-parser exists in `packages/host/src/config/secrets.ts`; wiring them is
-#224), and **tool-credential brokering** — no budget-bounded scoped token is
+Not implemented: **tool-credential brokering** — no budget-bounded scoped token is
 issued to a worker or revoked at settle/exit (see
 [design drift, item 22](../design-drift.md#item-22--363-tool-credential-brokering-is-not-implemented)).
 
@@ -807,9 +822,12 @@ issued to a worker or revoked at settle/exit (see
 orchestrator worker is a `kubic run` child behind the §3.8 allowlist, so its
 provider key does not travel as ambient env. The manager resolves which
 provider each worker's role will use, forwards exactly that provider's key
-environment variables, and passes them as the child's role grant —
+environment variables — the declared `apiKeyEnv`, the documented
+`KUBIC_API_KEY` default, and every `$VAR` an `apiKey` or header ref names —
+and passes them as the child's role grant —
 `KUBIC_ROLE_<ROLE>_<ENV_VAR>` (e.g. `KUBIC_ROLE_IMPLEMENTER_GW_API_KEY`) —
-from where the child reads them back as the provider's apiKey auth. Nothing
+from where the child reads them back as the provider's apiKey auth. A
+`!command` key forwards nothing: the child runs the command itself. Nothing
 else rides along: never a sibling role's provider key, never an unrelated
 parent secret (`AWS_SECRET_ACCESS_KEY`, `GITHUB_TOKEN`, …), never the key
 under its plain name in the child env. A `models.json` key is still resolved

@@ -339,6 +339,60 @@ describe('provider key env index for worker grants (issue #200)', () => {
       noKeyNeeded: true,
     });
   });
+
+  // Issue #224: a ref key forwards what the child needs to re-resolve —
+  // the $VAR name like an apiKeyEnv, header $VARs too — while a !command
+  // key forwards nothing (the child runs it itself) without becoming an
+  // undeliverable refusal.
+  it('forwards ref key material for worker grants (issue #224)', async () => {
+    const cwd = tmpDir();
+    writeFileSync(
+      join(cwd, 'models.json'),
+      JSON.stringify({
+        providers: [
+          {
+            id: 'envkey',
+            baseUrl: 'http://127.0.0.1:9002/v1',
+            api: 'openai-completions',
+            apiKey: '$GW_API_KEY',
+            models: [{ id: 'm1' }],
+          },
+          {
+            id: 'cmdkey',
+            baseUrl: 'http://127.0.0.1:9003/v1',
+            api: 'openai-completions',
+            apiKey: '!vault kv get -field=password secret/api',
+            models: [{ id: 'm1' }],
+          },
+          {
+            id: 'headref',
+            baseUrl: 'http://127.0.0.1:9004/v1',
+            api: 'openai-completions',
+            apiKey: 'not-needed',
+            headers: { 'x-token': '$KUBIC_GATEWAY_TOKEN' },
+            models: [{ id: 'm1' }],
+          },
+        ],
+      }),
+    );
+    const assembled = await assembleModels(
+      cwd,
+      { KUBIC_TRUST_PROJECT: '1' },
+      { home: tmpDir() },
+    );
+    expect(assembled.keyEnv.get('envkey')).toEqual({
+      envVars: ['GW_API_KEY'],
+      noKeyNeeded: false,
+    });
+    expect(assembled.keyEnv.get('cmdkey')).toEqual({
+      envVars: [],
+      noKeyNeeded: true,
+    });
+    expect(assembled.keyEnv.get('headref')).toEqual({
+      envVars: ['KUBIC_GATEWAY_TOKEN'],
+      noKeyNeeded: false,
+    });
+  });
 });
 
 // Issue #200 (§36.3): a worker is granted through the KUBIC_ROLE_* namespace

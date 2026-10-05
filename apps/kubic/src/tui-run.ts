@@ -48,6 +48,7 @@ import {
   applyUndo,
   planUndo,
 } from '../../../packages/exec/src/journal-undo.js';
+import { createSecretCommandRunner } from '../../../packages/exec/src/secret-runner.js';
 import { budgetToolGate } from '../../../packages/extensions/src/runtime.js';
 import type { BundleLoad } from '../../../packages/extensions/src/startup.js';
 import {
@@ -1376,10 +1377,15 @@ export async function bootTuiLane(
       // Reported below by the loop's own surfaces; the boot stands.
     }
     // Request-time provider keys, audited per use (issue #359, §36.1).
+    // `!command` secret refs (issue #224) execute in the run's workspace
+    // through the production runner — rerun per request.
     const keyResolver = createLedgerModelKeyResolver({
       workspace: options.env?.cwd ?? process.cwd(),
       role: 'root',
       sessionId: () => id,
+      runCommand: createSecretCommandRunner({
+        cwd: options.env?.cwd ?? process.cwd(),
+      }),
     });
     const assembled =
       options.models === undefined

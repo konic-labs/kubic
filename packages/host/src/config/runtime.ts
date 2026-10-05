@@ -625,7 +625,7 @@ function assertNoSecretRefs(config: KubicConfig): void {
       const ref = parseSecretRef(value);
       if (ref.kind === 'env' || ref.kind === 'command') {
         throw new ConfigError(
-          `${path || 'config'}: secrets never appear in config (§36) — declare the ref in models.json instead`,
+          `${path || 'config'}: secrets never appear in config (§36) — provider keys live in models.json instead (apiKey / header refs, resolved at request time)`,
         );
       }
       return;

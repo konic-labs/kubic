@@ -24,7 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { createLedgerModelKeyResolver } from './config/model-key-audit.js';
-import { createModelKeyResolver } from './config/secrets.js';
+import { createModelKeyResolver, parseSecretRef } from './config/secrets.js';
 import { assembleModels } from './models-cli.js';
 import { runAuditCommand } from './policy/audit-cli.js';
 import { auditLedgerDir, readAuditLedger } from './policy/audit-ledger.js';
@@ -229,6 +229,152 @@ describe('createModelKeyResolver (issue #359)', () => {
   });
 });
 
+// Issue #224 (§36.2): the resolver serves parsed secret refs — an explicit
+// `$VAR` fails closed naming the variable, a `!command` runs the injected
+// runner on every resolve (rerun per request, never cached), one audit
+// record per use carrying the ref but never the value.
+describe('createModelKeyResolver ref uses (issue #224)', () => {
+  it('resolves an env ref with one audit event per use, never the value', async () => {
+    const events: unknown[] = [];
+    const resolver = createModelKeyResolver({
+      role: 'root',
+      audit: (event) => events.push(event),
+      now: () => 0,
+    });
+    const use = {
+      provider: 'gw',
+      ref: parseSecretRef('$GW_API_KEY'),
+      readEnv: async () => SECRET,
+    };
+    expect(await resolver.resolve(use)).toBe(SECRET);
+    expect(await resolver.resolve(use)).toBe(SECRET);
+    expect(events).toEqual([
+      {
+        ref: '$GW_API_KEY',
+        role: 'root',
+        purpose: 'model-request:gw',
+        provider: 'gw',
+        at: '1970-01-01T00:00:00.000Z',
+      },
+      {
+        ref: '$GW_API_KEY',
+        role: 'root',
+        purpose: 'model-request:gw',
+        provider: 'gw',
+        at: '1970-01-01T00:00:00.000Z',
+      },
+    ]);
+    expect(JSON.stringify(events)).not.toContain(SECRET);
+    expect(resolver.live()).toEqual([SECRET]);
+  });
+
+  it('a missing env ref fails closed naming the variable: no event, no value', async () => {
+    const events: unknown[] = [];
+    const resolver = createModelKeyResolver({
+      role: 'root',
+      audit: (event) => events.push(event),
+    });
+    await expect(
+      resolver.resolve({
+        provider: 'gw',
+        ref: parseSecretRef('$GW_API_KEY'),
+        readEnv: async () => '',
+      }),
+    ).rejects.toThrow(/missing env secret: GW_API_KEY/);
+    expect(events).toEqual([]);
+    expect(resolver.live()).toEqual([]);
+  });
+
+  it('runs the command on every resolve and audits the command ref, never the value', async () => {
+    const events: unknown[] = [];
+    const runs: string[][] = [];
+    const resolver = createModelKeyResolver({
+      role: 'root',
+      audit: (event) => events.push(event),
+      now: () => 0,
+      runCommand: (argv) => {
+        runs.push([...argv]);
+        return 'command-key-224';
+      },
+    });
+    const use = {
+      provider: 'gw',
+      ref: parseSecretRef('!echo hi-224'),
+      readEnv: async () => undefined,
+    };
+    expect(await resolver.resolve(use)).toBe('command-key-224');
+    expect(await resolver.resolve(use)).toBe('command-key-224');
+    expect(runs).toEqual([
+      ['echo', 'hi-224'],
+      ['echo', 'hi-224'],
+    ]);
+    // The audited ref is the ref as written (like `$VAR`), never the value.
+    expect(events).toEqual([
+      {
+        ref: '!echo hi-224',
+        role: 'root',
+        purpose: 'model-request:gw',
+        provider: 'gw',
+        at: '1970-01-01T00:00:00.000Z',
+      },
+      {
+        ref: '!echo hi-224',
+        role: 'root',
+        purpose: 'model-request:gw',
+        provider: 'gw',
+        at: '1970-01-01T00:00:00.000Z',
+      },
+    ]);
+    expect(JSON.stringify(events)).not.toContain('command-key-224');
+    expect(resolver.live()).toEqual(['command-key-224']);
+  });
+
+  it('a command ref without a runner fails closed naming the provider', async () => {
+    const resolver = createModelKeyResolver({
+      role: 'root',
+      audit: () => {},
+    });
+    await expect(
+      resolver.resolve({
+        provider: 'gw',
+        ref: parseSecretRef('!echo hi-224'),
+        readEnv: async () => undefined,
+      }),
+    ).rejects.toThrow(/provider 'gw': no secret-command runner/);
+  });
+
+  it('an empty command output fails closed naming the provider and command', async () => {
+    const resolver = createModelKeyResolver({
+      role: 'root',
+      audit: () => {},
+      runCommand: () => '',
+    });
+    await expect(
+      resolver.resolve({
+        provider: 'gw',
+        ref: parseSecretRef('!echo hi-224'),
+        readEnv: async () => undefined,
+      }),
+    ).rejects.toThrow(/provider 'gw': empty output from secret command/);
+  });
+
+  it('a literal ref is a programmer error, never a use', async () => {
+    const events: unknown[] = [];
+    const resolver = createModelKeyResolver({
+      role: 'root',
+      audit: (event) => events.push(event),
+    });
+    await expect(
+      resolver.resolve({
+        provider: 'gw',
+        ref: parseSecretRef('not-needed'),
+        readEnv: async () => undefined,
+      }),
+    ).rejects.toThrow(/env or command ref/);
+    expect(events).toEqual([]);
+  });
+});
+
 describe('a first-use audit failure never carries the value (issue #359)', () => {
   it('the resolved value is registered as live BEFORE its audit event fires', async () => {
     const seenAtAudit: string[][] = [];
@@ -266,6 +412,10 @@ describe('a first-use audit failure never carries the value (issue #359)', () =>
     );
     const errors: string[] = [];
     const resolver = createLedgerModelKeyResolver({
+      // Env-only tests: the runner must never fire for $VAR uses.
+      runCommand: () => {
+        throw new Error('no commands in this test');
+      },
       workspace: worktree,
       role: 'root',
       sessionId: () => 'sess-359',
@@ -289,6 +439,10 @@ describe('a first-use audit failure never carries the value (issue #359)', () =>
     const workspace = tmpRoot(`ws-${value}-`);
     const errors: string[] = [];
     const resolver = createLedgerModelKeyResolver({
+      // Env-only tests: the runner must never fire for $VAR uses.
+      runCommand: () => {
+        throw new Error('no commands in this test');
+      },
       workspace,
       role: 'root',
       sessionId: () => 'sess-359',
@@ -367,6 +521,10 @@ describe('a dummy key equal to its provider id (issue #359)', () => {
     const workspace = tmpRoot('ws-359-lms-ledger-');
     const errors: string[] = [];
     const resolver = createLedgerModelKeyResolver({
+      // Env-only tests: the runner must never fire for $VAR uses.
+      runCommand: () => {
+        throw new Error('no commands in this test');
+      },
       workspace,
       role: 'root',
       sessionId: () => 'sess-359',
@@ -412,6 +570,10 @@ describe('createLedgerModelKeyResolver with a short or provider-named key (issue
     const workspace = tmpRoot('ws-359-short-');
     const errors: string[] = [];
     const resolver = createLedgerModelKeyResolver({
+      // Env-only tests: the runner must never fire for $VAR uses.
+      runCommand: () => {
+        throw new Error('no commands in this test');
+      },
       workspace,
       role: 'root',
       sessionId: () => 'sess-359',
@@ -509,6 +671,61 @@ describe('kubic run: models.json key use is audited (issue #359)', () => {
     // own project skills from process.cwd() (a Stryker sandbox lives inside
     // the checkout, so anything defaulting to the cwd reaches the real repo).
     expect(debugLines.filter((line) => line.includes('skills:'))).toEqual([]);
+  });
+
+  // Issue #224 end to end: a `!command` apiKey runs the production runner
+  // per request — the command prints the key from the process env, so
+  // models.json carries the ref but never the value — and the §60 ledger
+  // holds one value-less record for the use.
+  it('a !command apiKey resolves through the runner; the ledger holds the ref, never the value (issue #224)', async () => {
+    const provider = await fakeProvider();
+    const workspace = tmpRoot('ws-224-');
+    const sessionsRoot = tmpRoot();
+    vi.stubEnv('KUBIC_TEST_KEY_224', SECRET);
+    const command = `!${process.execPath} -e console.log(process.env.KUBIC_TEST_KEY_224)`;
+    writeFileSync(
+      join(workspace, 'models.json'),
+      JSON.stringify({
+        providers: [
+          {
+            id: 'gw',
+            baseUrl: provider.url,
+            api: 'openai-completions',
+            apiKey: command,
+            models: [{ id: 'm1' }],
+          },
+        ],
+      }),
+    );
+    const result = await runHeadlessPrompt(
+      'say hello',
+      { debug: true },
+      {
+        sessionsRoot,
+        ...hermetic(workspace),
+        model: { provider: 'gw', id: 'm1' },
+      },
+    );
+    expect(result.terminus).toBe('completed');
+    // The command's output really went out as the key...
+    expect(provider.auths).toEqual([`Bearer ${SECRET}`]);
+    // ...and the ledger holds one record naming the ref, not the value.
+    const ledger = readAuditLedger(auditLedgerDir(workspace));
+    const uses = ledger.filter((record) => record.what === 'credential:gw');
+    expect(uses).toHaveLength(1);
+    expect(uses[0]).toMatchObject({
+      who: 'agent:root',
+      mode: 'solo',
+      credential: { sentinel: `sentinel:${command}` },
+      permission: { permission: 'credential:use' },
+      reason: 'model-request:gw',
+      result: 'ok',
+    });
+    expect(JSON.stringify(uses)).not.toContain(SECRET);
+    // models.json itself never carried the value — only the ref.
+    expect(readFileSync(join(workspace, 'models.json'), 'utf8')).not.toContain(
+      SECRET,
+    );
   });
 
   it('a provider error that echoes the key never reaches the debug channel, the envelope or a persisted file', async () => {

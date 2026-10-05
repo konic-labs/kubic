@@ -151,7 +151,14 @@ export async function bootManagerLane(
   // close the storage under the live harness.
   const harness = await Harness.open(
     options.session.adopt(),
-    { models: options.models, registry },
+    {
+      models: options.models,
+      registry,
+      // One tool at a time, as on the solo lane: spawn admission must
+      // follow call order, so a queued `spawn_agent` never jumps the cap
+      // ahead of an earlier call (issue #414).
+      settings: { toolExecution: 'sequential' },
+    },
     context,
   );
   const conversation = await harness.root(context);

@@ -153,7 +153,8 @@ file that no longer exists, or when a row's file has become reachable
 | 4 | `packages/host/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 117 | `packages/host/src/limits/skip-records.ts` | #86 | wire: full-access skip records surface with approvals (#86/#48) |
 | 18 | `packages/host/src/limits/trust-first.ts` | #100 | wire: docs ordering note consumed by help/docs rendering (#100) |
-| 175 | `packages/host/src/orchestrator/manager-lane.ts` | #414 | wire: model-driven manager lane boot — step 1 (#413) boots it from tests only; the spawn/wait/collect adapters route live runs through it |
+| 182 | `packages/host/src/orchestrator/manager-lane.ts` | #416 | wire: model-driven manager lane boot — steps 1–2 boot it from tests only; the routing step drives live runs through it |
+| 517 | `packages/host/src/orchestrator/manager-tools.ts` | #416 | wire: spawn/wait/collect adapters over the run's seams — consumed by the lane boot once live runs route through it |
 
 | 4 | `packages/host/src/root-agent.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/host/src/worker-manager.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |

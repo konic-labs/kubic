@@ -119,6 +119,7 @@ import {
   resolverPromptFor,
 } from './orchestrator/merge/conflicts.js';
 import { createMergeQueue } from './orchestrator/merge/queue.js';
+import type { ReviewVerdict } from './orchestrator/merge/review.js';
 import { REVIEWER_READONLY_TOOLS } from './orchestrator/merge/review.js';
 import {
   applySettlementAfterReview,
@@ -562,6 +563,19 @@ export interface OrchestratorRunState {
   // recomposes the same findings deterministically.
   transfers?: Record<string, TaskTransfer>;
   artifacts?: Record<string, TaskArtifact>;
+  // Review verdicts (issue #188, §70): the reviewer's routing per worker —
+  // accept merges, request-changes discards, escalate routes the debugger
+  // loop. Recorded by the `review_verdict` lane tool; the merge call
+  // executes the verdict. A worker with no verdict merges (the shipped
+  // default). Persisted so a --resume re-executes the same verdict
+  // instead of re-merging a refused diff.
+  reviewVerdicts?: Record<string, ReviewVerdict>;
+  // Discarded diffs (issue #188, §70): one entry per worker whose diff
+  // the verdict refused — branch + hunks (+ the §68 result when present),
+  // mirroring `completed`. A discard is terminal: --resume never retries
+  // it, and the branch stays for inspection. A state written before #188
+  // has none.
+  discarded?: OrchestratedWorkerRecord[];
   // Write-ahead worker completions (issue #160): one entry per worker that
   // settled successfully but is not merged yet — branch + hunks (+ the §68
   // result when the worker reported one). Persisted as soon as the worker
@@ -637,6 +651,21 @@ export function parseOrchestratorRunState(
     return undefined;
   }
   const agents = value.agents as string[];
+  // The launched-worker universe (issue #184 review): agents plus
+  // plan-step ids in plan order — lane mints join agents only post-drive,
+  // but their plan steps are appended at spawn. Hoisted: verdict, transfer
+  // and artifact key checks all share it.
+  const plannedIds: string[] = [];
+  if (Array.isArray(value.plan)) {
+    for (const step of value.plan) {
+      const id = (step as { agentId?: unknown }).agentId;
+      if (typeof id === 'string' && !plannedIds.includes(id)) {
+        plannedIds.push(id);
+      }
+    }
+  }
+  const knownAgent = (key: string): boolean =>
+    agents.includes(key) || plannedIds.includes(key);
   // Explicit per-agent binding (issue #178): a record whose keys do not name
   // this run's workers, whose role is outside the five, or whose model is
   // not `provider/id` is refused, never half-applied.
@@ -701,6 +730,35 @@ export function parseOrchestratorRunState(
       if (!validStoredWorkerRecord(record)) return undefined;
     }
   }
+  // Review verdicts (issue #188, §70): values are exactly the three
+  // reviewer verdicts, keys name launched workers (agents plus plan-step
+  // ids — the lane mint universe, same as transfers/artifacts).
+  if (value.reviewVerdicts !== undefined) {
+    if (
+      typeof value.reviewVerdicts !== 'object' ||
+      value.reviewVerdicts === null
+    ) {
+      return undefined;
+    }
+    for (const [key, verdict] of Object.entries(value.reviewVerdicts)) {
+      if (!knownAgent(key)) return undefined;
+      if (
+        verdict !== 'accept' &&
+        verdict !== 'request-changes' &&
+        verdict !== 'escalate'
+      ) {
+        return undefined;
+      }
+    }
+  }
+  // Discarded diffs (issue #188) ride the worker-record shape: anything
+  // else fails closed here.
+  if (value.discarded !== undefined) {
+    if (!Array.isArray(value.discarded)) return undefined;
+    for (const record of value.discarded) {
+      if (!validStoredWorkerRecord(record)) return undefined;
+    }
+  }
   // The stored plan (issue #103) is untrusted JSON like everything else: a
   // step that is not exactly id/step/total/prompt would reach runWorker as
   // a non-string prompt, so anything malformed fails closed here.
@@ -756,21 +814,9 @@ export function parseOrchestratorRunState(
   // The transfer records (issue #184, §24/§25): keys must name this run's
   // workers and every record must validate — a torn or hand-edited state
   // fails closed rather than composing prompts from garbage. The key
-  // universe is agents plus plan-step ids in plan order (issue #184
-  // review): lane mints join agents only post-drive, but their
-  // transfers/artifacts persist at mid-drive saves — refusing mint keys
-  // would make a follow-up-then-kill lane run unresumable.
-  const plannedIds: string[] = [];
-  if (Array.isArray(value.plan)) {
-    for (const step of value.plan) {
-      const id = (step as { agentId?: unknown }).agentId;
-      if (typeof id === 'string' && !plannedIds.includes(id)) {
-        plannedIds.push(id);
-      }
-    }
-  }
-  const knownAgent = (key: string): boolean =>
-    agents.includes(key) || plannedIds.includes(key);
+  // universe is agents plus plan-step ids (see knownAgent above):
+  // refusing mint keys would make a follow-up-then-kill lane run
+  // unresumable.
   if (value.transfers !== undefined) {
     if (typeof value.transfers !== 'object' || value.transfers === null) {
       return undefined;
@@ -1430,6 +1476,12 @@ export interface OrchestrateEnvelope {
     artifact?: TaskArtifact;
   } & Partial<WorkerResultView>)[];
   mergeOrder: string[];
+  // Discarded diffs (issue #188, §70): agent ids the review verdict
+  // refused, in discard order. Details ride the workers[] rows (branch)
+  // and the run's debug channel (verdict); mergeOrder never names them.
+  // Present on every envelope (empty when nothing was refused) so the
+  // shape is stable for consumers.
+  discarded: string[];
   attribution: AttributedHunk[];
   // The manager's final message (issue #418): present only on
   // lane-driven runs whose drive produced one — the text `result:` line
@@ -1849,6 +1901,7 @@ export function refusedOrchestrateEnvelope(
     mode: 'interactive',
     workers: [],
     mergeOrder: [],
+    discarded: [],
     attribution: [],
     graph: [],
     error: { kind: 'failed', message, code: 'config_refused' },
@@ -1993,7 +2046,7 @@ export async function runOrchestrateCommand(
     message: string,
     partial?: Pick<
       OrchestrateEnvelope,
-      'workers' | 'mergeOrder' | 'attribution'
+      'workers' | 'mergeOrder' | 'discarded' | 'attribution'
     >,
     // The agents the envelope should describe. Defaults to the parsed list,
     // which is right for the pre-state failures (usage/non-git refusals) —
@@ -2011,6 +2064,7 @@ export async function runOrchestrateCommand(
         status,
         workers: partial?.workers ?? [],
         mergeOrder: partial?.mergeOrder ?? [],
+        discarded: partial?.discarded ?? [],
         attribution: partial?.attribution ?? [],
         graph: delegationGraphLines(sessionId, graphAgents ?? parsed.agents),
         error: { kind: status, message, code },
@@ -2130,6 +2184,7 @@ export async function runOrchestrateCommand(
               : { artifact: resumed.artifacts[record.agentId] }),
           })),
           mergeOrder: resumed.merged,
+          discarded: (resumed.discarded ?? []).map((entry) => entry.agentId),
           attribution: resumed.records.flatMap((record) =>
             attributeMergedHunks(record.hunks, record.agentId),
           ),
@@ -2859,10 +2914,11 @@ export async function runOrchestrateCommand(
 
   const partial = (): Pick<
     OrchestrateEnvelope,
-    'workers' | 'mergeOrder' | 'attribution'
+    'workers' | 'mergeOrder' | 'discarded' | 'attribution'
   > => ({
     workers: workerRows(),
     mergeOrder: [...state.merged],
+    discarded: (state.discarded ?? []).map((entry) => entry.agentId),
     attribution: state.records.flatMap((record) =>
       attributeMergedHunks(record.hunks, record.agentId),
     ),
@@ -5411,6 +5467,12 @@ export async function runOrchestrateCommand(
     `merge order: ${state.merged.join(' -> ')}`,
     `attribution: ${perAgent}`,
     ...state.merged.map((agentId) => `${theme.success('merged:')} ${agentId}`),
+    // Review verdicts (issue #188, §70): refused diffs read beside the
+    // merges — the branch stays for inspection, named with its verdict.
+    ...(state.discarded ?? []).map(
+      (entry) =>
+        `${theme.warning('discarded:')} ${entry.agentId} (${state.reviewVerdicts?.[entry.agentId] ?? 'unknown'})`,
+    ),
     // §61 (issue #158): the measured merge phases, one line per candidate.
     ...mergeTelemetryLines(),
     ...failedWorkers.map(
@@ -5460,6 +5522,7 @@ export async function runOrchestrateCommand(
       status: partialError === undefined ? 'completed' : 'partial',
       workers: workerRows(),
       mergeOrder: [...state.merged],
+      discarded: (state.discarded ?? []).map((entry) => entry.agentId),
       attribution,
       ...(state.managerSummary === undefined
         ? {}

@@ -2271,6 +2271,55 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
       ).toBeUndefined();
     });
 
+    it('resume validation carries review verdicts and discarded diffs', () => {
+      // Issue #188 (§70) slice S1a: the verdict map and the discarded
+      // list persist — keys name launched workers (the mint universe),
+      // values are exactly the three reviewer verdicts.
+      const base = {
+        version: 1,
+        sessionId: 's',
+        prompt: 'p',
+        agents: ['alpha'],
+        merged: [],
+        pending: [],
+        stopped: false,
+        records: [],
+        plan: [
+          { agentId: 'alpha', step: 1, total: 1, prompt: 'a' },
+          { agentId: 'worker-1', step: 1, total: 1, prompt: 'w' },
+        ],
+        reviewVerdicts: { 'worker-1': 'request-changes' },
+        discarded: [{ agentId: 'worker-1', branch: 'kubic/s/w1', hunks: [] }],
+      };
+      const parsed = parseOrchestratorRunState(base, 's');
+      expect(parsed?.reviewVerdicts).toEqual({
+        'worker-1': 'request-changes',
+      });
+      expect(parsed?.discarded).toHaveLength(1);
+      // A fourth verdict, a stranger key, and a shapeless record refuse.
+      expect(
+        parseOrchestratorRunState(
+          {
+            ...base,
+            reviewVerdicts: { 'worker-1': 'maybe-later' },
+          },
+          's',
+        ),
+      ).toBeUndefined();
+      expect(
+        parseOrchestratorRunState(
+          { ...base, reviewVerdicts: { ghost: 'accept' } },
+          's',
+        ),
+      ).toBeUndefined();
+      expect(
+        parseOrchestratorRunState(
+          { ...base, discarded: [{ agentId: 'worker-1' }] },
+          's',
+        ),
+      ).toBeUndefined();
+    });
+
     it('a history-shaped finding is rejected fail-closed: the run survives, the prompt stays clean', async () => {
       const seen: { agentId: string; prompt: string }[] = [];
       const world = makeWorld({

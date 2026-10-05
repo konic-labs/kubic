@@ -169,8 +169,15 @@ function sessionLogIncludes(root: string, needle: string): boolean {
   return false;
 }
 
-async function waitFor(condition: () => boolean, ticks = 500): Promise<void> {
-  for (let i = 0; i < ticks && !condition(); i += 1) {
+async function waitFor(
+  condition: () => boolean,
+  deadlineMs = 10_000,
+): Promise<void> {
+  // Deadline-based (issue #385): a tick count is a latency assertion in
+  // disguise — under contention 500 × 2 ms lapses before the frame lands.
+  // A generous deadline only fails a true hang, never a slow scheduler.
+  const start = Date.now();
+  while (!condition() && Date.now() - start < deadlineMs) {
     // A real tick, not just a microtask: the alt-screen throttles renders,
     // so a frame can land a few milliseconds after the state change.
     await new Promise((resolve) => setTimeout(resolve, 2));
@@ -322,8 +329,6 @@ describe('kubic tui prompt loop (issue #88)', () => {
       // truncated on a 100-column screen.
       await waitFor(() => fake.writes.join('').includes('lane abort failed'));
       expect(fake.counts.stopped).toBe(0);
-      await new Promise((r) => setTimeout(r, 50));
-      expect(rejections).toEqual([]);
       release();
       fake.feed('\x03'); // idle again: Ctrl-C quits
       expect(await pending).toBe(0);
@@ -331,6 +336,10 @@ describe('kubic tui prompt loop (issue #88)', () => {
       // quits; wait for its result to reach the session log so afterEach's
       // rmSync is not raced by a late append that recreates the temp root.
       await waitFor(() => sessionLogIncludes(root, '"kind":"pi.assistant"'));
+      // After settlement, not after a fixed sleep (issue #385): a 50 ms
+      // nap lets the assertion pass when the rejection simply arrives
+      // later. The log wait above is the turn's settlement signal.
+      expect(rejections).toEqual([]);
     } finally {
       process.off('unhandledRejection', onRejection);
     }

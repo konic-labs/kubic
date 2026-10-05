@@ -97,16 +97,22 @@ async function pollUntil(
 
 describe('guard drain, prod path (issue #109)', () => {
   it('kills the detached bash child on wall-clock exhaustion before returning', {
-    timeout: 10_000,
+    // The run itself takes timeoutMs plus drain time; the budget here is
+    // a liveness bound, not a latency assertion (issue #385).
+    timeout: 30_000,
   }, async () => {
     const sessionsRoot = tmpRoot();
     const workspace = tmpRoot('ws-');
     const pidFile = join(workspace, 'pidmarker.txt');
     const result = await runHeadlessPrompt(
       'hang a bash child',
-      // Long enough for the faux turn to reach the bash call and the shell
-      // to publish its pid (a few ms); short enough not to idle the suite.
-      { timeoutMs: 400 },
+      // Generous on purpose (issue #385): the guard must fire strictly
+      // AFTER the faux turn reaches the bash call and the child publishes
+      // its pid — under scheduler contention a tight budget fires first
+      // and the pidfile assertion below flakes. Nothing here asserts how
+      // fast the turn runs; order (marker, then guard, then return) is
+      // what the assertions pin.
+      { timeoutMs: 5_000 },
       {
         sessionsRoot,
         models: hangingBashModels('pidmarker.txt'),

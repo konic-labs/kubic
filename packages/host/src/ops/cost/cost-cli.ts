@@ -346,10 +346,7 @@ export async function loadSessionCostRows(
         ? all
         : [named, ...children]
       : all.filter((entry) =>
-          touchesWorkspace(
-            entry.meta?.workspace ?? entry.meta?.cwd,
-            workspace,
-          ),
+          touchesWorkspace(entry.meta?.workspace ?? entry.meta?.cwd, workspace),
         );
   const rows: AgentCostInput[] = [];
   for (const entry of scoped) {

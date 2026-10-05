@@ -276,7 +276,7 @@ describe('this repo ships the split (issue #91)', () => {
     );
     assert.match(
       runtime,
-      /checkWorkspaceIgnoreSplit\(bridge, cwd\)/,
+      /checkWorkspaceIgnoreSplit\(bridge, projectRoot\)/,
       'apps/kubic/src/config-runtime.ts must run the ignore-split check on the real repo',
     );
     const hostRuntime = readFileSync(

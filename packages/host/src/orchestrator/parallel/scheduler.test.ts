@@ -474,3 +474,35 @@ describe('parallel log sanitizing (issue #47 review)', () => {
     expect(sanitizeLogLine('a\u001fb\u007fc')).toBe('abc');
   });
 });
+
+describe('withdraw (issue #414 review)', () => {
+  it('withdraws a queued entry so a later drain never admits the ghost', () => {
+    const sched = new ParallelScheduler({ maxConcurrency: 1 });
+    expect(sched.requestSpawn(req('a1'), 'autonomous')).toMatchObject({
+      outcome: 'admitted',
+    });
+    expect(sched.requestSpawn(req('a2'), 'autonomous')).toMatchObject({
+      outcome: 'queued',
+    });
+    expect(sched.withdraw('a2')).toBe('withdrawn');
+    expect(sched.pendingIds()).toEqual([]);
+    // The freed slot goes to new work, never to the withdrawn ghost.
+    sched.complete('a1');
+    expect(sched.runningIds()).toEqual([]);
+    expect(sched.requestSpawn(req('a3'), 'autonomous')).toMatchObject({
+      outcome: 'admitted',
+    });
+  });
+
+  it('reports running when the entry was just admitted', () => {
+    const sched = new ParallelScheduler({ maxConcurrency: 1 });
+    sched.requestSpawn(req('a1'), 'autonomous');
+    expect(sched.withdraw('a1')).toBe('running');
+    expect(sched.runningIds()).toEqual(['a1']);
+  });
+
+  it('reports unknown for an id it never held', () => {
+    const sched = new ParallelScheduler();
+    expect(sched.withdraw('nobody')).toBe('unknown');
+  });
+});

@@ -202,6 +202,27 @@ export class ParallelScheduler {
     return { outcome: 'queued', position: this.queue.length };
   }
 
+  /**
+   * Abandon a queued entry the spawner no longer wants (issue #414
+   * review): a timed-out `spawn_agent` withdraws instead of leaving a
+   * ghost the next drain would admit to running with nothing to launch or
+   * complete it. Returns 'withdrawn' when an entry was removed, 'running'
+   * when the id was just admitted (the caller proceeds to launch it),
+   * 'unknown' otherwise.
+   */
+  withdraw(agentId: string): 'withdrawn' | 'running' | 'unknown' {
+    const index = this.queue.findIndex(
+      (entry) => entry.request.agentId === agentId,
+    );
+    if (index >= 0) {
+      this.queue.splice(index, 1);
+      this.log(`parallel withdraw: queued agent '${agentId}' withdrawn`);
+      return 'withdrawn';
+    }
+    if (this.running.has(agentId)) return 'running';
+    return 'unknown';
+  }
+
   // Settle a running agent and FIFO-drain the queue: only the head is
   // considered, so a still-blocked head keeps later entries queued
   // (starvation-safe — nobody jumps the line). Returns woken agent ids.

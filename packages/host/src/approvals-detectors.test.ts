@@ -972,3 +972,38 @@ describe('git config mutation raises kubic-state-write (issue #428)', () => {
     ).toEqual([]);
   });
 });
+
+describe('git argv bypass spellings (issue #435)', () => {
+  // RED first: attached short options, display-modifier writes and the
+  // push detector's twin miss all slipped past the #428 guards.
+  const ctx = triggerContext();
+  it.each([
+    'git -C/tmp/repo config core.hooksPath /dev/null',
+    'git -cuser.name=x config a.b c',
+    'git -C/tmp/repo config --add a.b c',
+    'git config --show-origin a.b c',
+    'git config --show-scope a.b c',
+    'git config --show-origin --add a.b c',
+  ])('raises for config write %s', (command) => {
+    expect(detectTriggers('bash', { command }, ctx)).toEqual([
+      'kubic-state-write',
+    ]);
+  });
+
+  it.each([
+    'git -C/tmp/repo config core.hooksPath',
+    'git -cuser.name=x --get a.b',
+    'git config --show-origin --get a.b',
+    'git config --show-origin a.b',
+  ])('stays quiet for config read %s', (command) => {
+    expect(detectTriggers('bash', { command }, ctx)).toEqual([]);
+  });
+
+  it.each([
+    'git -C/tmp/repo push origin main',
+    'git -cuser.name=x push',
+    'git --git-dir=/tmp/repo/.git push',
+  ])('raises git-push for %s', (command) => {
+    expect(detectTriggers('bash', { command }, ctx)).toEqual(['git-push']);
+  });
+});

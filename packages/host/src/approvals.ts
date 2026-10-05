@@ -317,6 +317,9 @@ export interface TriggerContext {
 // merely contains the word (`git -c "a push" status`) still reads as a push.
 const GIT_WORD = /(^|[|;&\s(/'"\\`!])git(?=\s)/gi;
 const GIT_ARG_OPTION = /^-c$/i;
+// Attached short options (issue #435): `-C<path>` and `-cname=val` are
+// complete in one word — unlike bare `-c`/`-C` they consume nothing more.
+const GIT_ATTACHED_SHORT = /^-[cC][\s\S]+$/;
 const GIT_FLAG = /^(?:-p|--[a-z][a-z-]*)$/i;
 const GIT_VALUE_OPTION =
   /^--(?:git-dir|work-tree|namespace|exec-path|config-env)$/i;
@@ -419,7 +422,11 @@ function gitVerbFollows(
       }
       if (GIT_ARG_OPTION.test(token.text)) next |= EXPECT_ARGUMENT;
       // `-C <dir>` — the regex flag was case-insensitive, so `-C` is `-c`.
-      if (GIT_FLAG.test(token.text) || GIT_VALUE_ASSIGNED.test(token.text)) {
+      if (
+        GIT_FLAG.test(token.text) ||
+        GIT_VALUE_ASSIGNED.test(token.text) ||
+        GIT_ATTACHED_SHORT.test(token.text)
+      ) {
         next |= EXPECT_OPTION;
       }
       // A value option may take the next word or stand alone.
@@ -456,8 +463,12 @@ function gitPushOrRemoteMutation(command: string): boolean {
 // two-reader walk as the push detector (quote-aware plus plain
 // whitespace-split), linear in the command, failing toward asking.
 const GIT_CONFIG_VERB = /^config$/i;
+// Display modifiers only (issue #435): `--show-origin`/`--show-scope`
+// neither read nor write, so `git config --show-origin <name> <value>`
+// counts positionals and raises while `--show-origin --get <name>` and a
+// bare `--show-origin <name>` stay quiet.
 const GIT_CONFIG_READ =
-  /^(--get|--get-all|--get-regexp|--list|-l|--get-urlmatch|--get-color|--get-colorbool|--show-origin|--show-scope)$/i;
+  /^(--get|--get-all|--get-regexp|--list|-l|--get-urlmatch|--get-color|--get-colorbool)$/i;
 const GIT_CONFIG_WRITE =
   /^(--add|--unset|--unset-all|--replace-all|--rename-section|--remove-section|--edit)$/i;
 const GIT_CONFIG_VALUE_OPTION = /^--file$/i;
@@ -493,7 +504,12 @@ function configMutationFollows(
         position = value.end;
         continue;
       }
-      if (GIT_FLAG.test(text) || GIT_VALUE_ASSIGNED.test(text)) continue;
+      if (
+        GIT_FLAG.test(text) ||
+        GIT_VALUE_ASSIGNED.test(text) ||
+        GIT_ATTACHED_SHORT.test(text)
+      )
+        continue;
       if (GIT_CONFIG_VERB.test(text)) {
         subcommand = true;
         continue;

@@ -177,7 +177,8 @@ that decide them:
   through the single `hostGitArgs` choke point — a hook planted in a
   worker tree cannot execute during the orchestrator's commit or merge,
   even when `.git/config` itself was tampered with (the `-c` flags beat
-  file config). Any write tool call or bash redirect/tee/cp target under
+  file config; the subcommand is found past any leading global option,
+  so `--no-pager`/`-C` never shed the flag). Any write tool call or bash redirect/tee/cp target under
   the workspace's OWN `.git/` or any ANCESTOR's (a worker's worktree sits
   under the repo, so the shared main-checkout `.git/` is covered) raises
   the always-ask `kubic-state-write` capability, and so does a

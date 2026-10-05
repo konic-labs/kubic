@@ -574,12 +574,23 @@ function provenanceFor(sessionId: string, agentId: string, tool: string) {
  * additionally carry `--no-verify` via `withHostGitCommitGuard`. This is
  * the ONLY place host argv gains the commit flag — call sites pass plain
  * argv, so no commit path can hand-roll (and forget) it. The subcommand
- * is read past leading `-c` pairs (the run's own identity flags); any
- * other leading global-flag shape falls back to the plain guard.
+ * is read past any leading global options (issue #435: `-c`/`-C` and the
+ * value-taking longs skip their argument, every other `-`/`--` word
+ * skips itself), so a `--no-pager` or `-C` commit keeps `--no-verify`.
  */
+// Global options that take a separate value (issue #435): skipped with
+// their argument when hunting the subcommand.
+const HOST_GLOBAL_VALUE =
+  /^(-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)$/i;
+
 export function hostGitArgs(args: readonly string[]): string[] {
   let index = 0;
-  while (args[index] === '-c' && index + 1 < args.length) index += 2;
+  while (index < args.length) {
+    const token = args[index] ?? '';
+    if (HOST_GLOBAL_VALUE.test(token)) index += 2;
+    else if (token.startsWith('-')) index += 1;
+    else break;
+  }
   if (args[index] === 'commit') return withHostGitCommitGuard(args);
   return withHostGitGuard(args);
 }

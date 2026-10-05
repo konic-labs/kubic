@@ -1,0 +1,184 @@
+// The `kubic skills` listing core (issue #238): one row per skill with
+// its status and reason, the doctor counts line, and the TUI's one-time
+// boot notice. Pure data in, pure data out — no bridge, no network.
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+import {
+  type BootSkills,
+  bootSkills,
+  describeSkillSkips,
+  skillsDoctorSummary,
+  summarizeSkills,
+} from './skills-boot.js';
+
+const made: string[] = [];
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
+
+function tmpRoot(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
+}
+
+function booted(): BootSkills {
+  return {
+    skills: [
+      {
+        name: 'rev',
+        description: 'Package skill',
+        filePath: '/repo/pkg/rev/SKILL.md',
+        source: 'package',
+        content: 'Body.',
+      },
+      {
+        name: 'quiet',
+        description: 'Hidden helper',
+        filePath: '/home/u/.agents/skills/quiet/SKILL.md',
+        source: 'user',
+        disableModelInvocation: true,
+        content: 'Body.',
+      },
+      {
+        name: 'deploy',
+        description: 'Deploy skill',
+        filePath: '/repo/.pi/skills/deploy/SKILL.md',
+        source: 'project',
+        roles: ['implementer'],
+        content: 'Body.',
+      },
+    ],
+    block: undefined,
+    hidden: ['quiet'],
+    withheld: [{ name: 'deploy', reason: "not visible to role 'reviewer'" }],
+    unknownSkills: [],
+    skipped: [
+      {
+        name: 'evil',
+        filePath: '/abs/elsewhere/evil/SKILL.md',
+        source: 'package',
+        status: 'excluded',
+        reason:
+          "package skill '/abs/elsewhere/evil' outside trusted root '/repo'",
+      },
+      {
+        name: 'broken',
+        filePath: '/home/u/.agents/skills/broken/SKILL.md',
+        source: 'user',
+        status: 'error',
+        reason: 'unreadable /home/u/.agents/skills/broken/SKILL.md',
+      },
+    ],
+    readRoots: [],
+  };
+}
+
+describe('summarizeSkills (issue #238)', () => {
+  it('maps every skill to visible/hidden/withheld/excluded/error with reasons', () => {
+    expect(summarizeSkills(booted())).toEqual([
+      {
+        name: 'broken',
+        source: 'user',
+        path: '/home/u/.agents/skills/broken/SKILL.md',
+        status: 'error',
+        reason: 'unreadable /home/u/.agents/skills/broken/SKILL.md',
+      },
+      {
+        name: 'deploy',
+        source: 'project',
+        path: '/repo/.pi/skills/deploy/SKILL.md',
+        status: 'withheld',
+        reason: "not visible to role 'reviewer'",
+      },
+      {
+        name: 'evil',
+        source: 'package',
+        path: '/abs/elsewhere/evil/SKILL.md',
+        status: 'excluded',
+        reason:
+          "package skill '/abs/elsewhere/evil' outside trusted root '/repo'",
+      },
+      {
+        name: 'quiet',
+        source: 'user',
+        path: '/home/u/.agents/skills/quiet/SKILL.md',
+        status: 'hidden',
+        reason: expect.stringContaining('disable-model-invocation'),
+      },
+      {
+        name: 'rev',
+        source: 'package',
+        path: '/repo/pkg/rev/SKILL.md',
+        status: 'visible',
+      },
+    ]);
+  });
+});
+
+describe('skillsDoctorSummary (issue #238)', () => {
+  it('reports counts and warns on errors, never fails', () => {
+    const summary = skillsDoctorSummary(booted());
+    expect(summary.id).toBe('skills');
+    expect(summary.status).toBe('warn');
+    expect(summary.detail).toBe('3 loaded, 1 hidden, 1 withheld, 1 errors');
+  });
+
+  it('passes clean with no errors', () => {
+    const clean: BootSkills = {
+      ...booted(),
+      skipped: [],
+      withheld: [],
+      hidden: [],
+    };
+    const summary = skillsDoctorSummary(clean);
+    expect(summary.status).toBe('pass');
+    expect(summary.detail).toBe('3 loaded, 0 hidden, 0 withheld, 0 errors');
+  });
+});
+
+describe('describeSkillSkips (issue #238)', () => {
+  it('returns undefined when nothing was skipped', () => {
+    expect(describeSkillSkips([])).toBeUndefined();
+  });
+
+  it('names the counts in one line', () => {
+    expect(describeSkillSkips(booted().skipped)).toBe(
+      'skills: 2 skipped (1 error, 1 excluded) — run `kubic skills` for every skill and why it was left out',
+    );
+  });
+});
+
+describe('bootSkills passes discovery skips through (issue #238)', () => {
+  it('an untrusted project skill reaches the listing as excluded', () => {
+    const cwd = tmpRoot('kubic-238-skipped-');
+    const dir = join(cwd, '.pi', 'skills', 'gem');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'SKILL.md'),
+      '---\nname: gem\ndescription: Left out\n---\n\nBody.\n',
+    );
+    const home = tmpRoot('kubic-238-home-');
+    const result = bootSkills({
+      bridge: createNodeFileBridge(cwd),
+      cwd,
+      homeDir: home,
+      trusted: false,
+    });
+    expect(result.skills).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        name: 'gem',
+        filePath: `${cwd}/.pi/skills/gem/SKILL.md`,
+        source: 'project',
+        status: 'excluded',
+        reason: expect.stringContaining('untrusted'),
+      },
+    ]);
+  });
+});

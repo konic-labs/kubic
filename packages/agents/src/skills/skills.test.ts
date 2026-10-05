@@ -597,6 +597,128 @@ describe('package-declared skill confinement (issue #423)', () => {
   });
 });
 
+describe('skipped-skill reporting (issue #238)', () => {
+  it('names untrusted project skills as excluded with the reason', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${CWD}/.pi/skills/hidden-gem/SKILL.md`,
+      skillMd('name: hidden-gem\ndescription: Left out'),
+    );
+    const lines: string[] = [];
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      log: (line) => {
+        lines.push(line);
+      },
+    });
+    expect(result.skills).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        name: 'hidden-gem',
+        filePath: `${CWD}/.pi/skills/hidden-gem/SKILL.md`,
+        source: 'project',
+        status: 'excluded',
+        reason: expect.stringContaining('untrusted'),
+      },
+    ]);
+    expect(lines.some((line) => /untrusted cwd/.test(line))).toBe(true);
+  });
+
+  it('excludes only the untrusted ancestors under per-path trust', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/repo/.pi/skills/far/SKILL.md',
+      skillMd('name: far\ndescription: Far skill'),
+    );
+    env.fs.writeFile(
+      '/repo/pkg/.pi/skills/near/SKILL.md',
+      skillMd('name: near\ndescription: Near skill'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/pkg',
+      trusted: false,
+      trustProject: (dir) => dir === '/repo/pkg',
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['near']);
+    expect(result.skipped).toEqual([
+      {
+        name: 'far',
+        filePath: '/repo/.pi/skills/far/SKILL.md',
+        source: 'project',
+        status: 'excluded',
+        reason: expect.stringContaining('/repo'),
+      },
+    ]);
+  });
+
+  it('reports an unreadable SKILL.md as an error with its reason', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/broken/SKILL.md`,
+      skillMd('name: broken\ndescription: Unreadable'),
+    );
+    const unreadable: FileBridge = {
+      ...bridge,
+      readTextFile: (path: string): string => {
+        if (path.endsWith('/broken/SKILL.md')) throw new Error('EACCES');
+        return bridge.readTextFile(path);
+      },
+    };
+    const lines: string[] = [];
+    const result = discoverSkills({
+      bridge: unreadable,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      log: (line) => {
+        lines.push(line);
+      },
+    });
+    expect(result.skills).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        name: 'broken',
+        filePath: `${HOME}/.agents/skills/broken/SKILL.md`,
+        source: 'user',
+        status: 'error',
+        reason: expect.stringContaining('unreadable'),
+      },
+    ]);
+    expect(lines.some((line) => /unreadable/.test(line))).toBe(true);
+  });
+
+  it('reports confined-away package entries as excluded skips (issue #423)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/repo/pkg/package.json',
+      JSON.stringify({ skills: ['/abs/elsewhere/evil'] }),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/pkg',
+      trusted: true,
+    });
+    expect(result.skills).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        name: 'evil',
+        filePath: '/abs/elsewhere/evil/SKILL.md',
+        source: 'package',
+        status: 'excluded',
+        reason: expect.stringContaining('outside trusted root'),
+      },
+    ]);
+  });
+});
+
 describe('role scoping and capability gating (issue #36)', () => {
   it('hides role-restricted skills from other roles with a reason', () => {
     const { env, bridge } = setup();

@@ -17,6 +17,8 @@ import { SOLO_DEFAULTS } from '../../agents/src/policy.js';
 import type {
   DiscoverSkillsOptions,
   LoadedSkill,
+  SkillSource,
+  SkippedSkill,
   WithheldSkill,
 } from '../../agents/src/skills/skills.js';
 import {
@@ -98,6 +100,11 @@ export interface BootSkills {
   // boot already warned each one via `warn`; reported as well so a caller
   // that renders its own diagnostics (doctor, tests) can read them.
   unknownSkills: string[];
+  // Issue #238: every skill the walk met but did not load (excluded by
+  // distrust or confinement, or failed reads), each with its reason —
+  // the `kubic skills` listing and the TUI notice name these instead of
+  // dropping them.
+  skipped: SkippedSkill[];
   // Issue #173 (§29.3): the read-only roots of every ADVERTISED skill that
   // lives outside the cwd (user roots under $HOME, trusted ancestor project
   // roots, explicit --skill paths): a `SKILL.md` opens its skill directory
@@ -145,7 +152,7 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
       : { settingsSkills: options.settingsSkills }),
     ...(options.log === undefined ? {} : { log: options.log }),
   };
-  const { skills, unknownSkills } = discoverSkills(load);
+  const { skills, unknownSkills, skipped } = discoverSkills(load);
   // Issue #177: explicit intent that resolved to nothing is a visible
   // warning, not a debug line — otherwise a typo reads as a loaded skill.
   for (const value of unknownSkills) {
@@ -194,10 +201,15 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
     hidden,
     withheld: [...roleWithheld, ...gated.withheld],
     unknownSkills,
+    skipped,
     readRoots: skillReadRoots(visible, options.cwd),
   };
 }
 
+export type {
+  SkillSource,
+  SkippedSkill,
+} from '../../agents/src/skills/skills.js';
 // The role/capability gate (§29.4, issue #181): applied in `bootSkills`
 // above — discovery stays in the loader (it owns the roots and trust),
 // while the grant (the resolved role, its `skills` list, the installed
@@ -205,6 +217,91 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
 // by name on the log sink and in `BootSkills.withheld`, never silently
 // dropped.
 export type { LoadedSkill, WithheldSkill };
+
+// The `kubic skills` listing row (issue #238): one per skill the boot met,
+// loaded or not. `visible` reached the prompt; `hidden` stays
+// model-invisible by its own flag; `withheld` failed the role/capability
+// gate; `excluded` was left out by policy (distrust, confinement); `error`
+// failed to read. Every non-visible row carries the reason — the same
+// discovery plus role gating the lane boots, summarized, never
+// reimplemented.
+export type SkillRowStatus =
+  | 'visible'
+  | 'hidden'
+  | 'withheld'
+  | 'excluded'
+  | 'error';
+
+export interface SkillRow {
+  name: string;
+  source: SkillSource;
+  path: string;
+  status: SkillRowStatus;
+  reason?: string;
+}
+
+export function summarizeSkills(booted: BootSkills): SkillRow[] {
+  const withheldByName = new Map(
+    booted.withheld.map((entry) => [entry.name, entry.reason]),
+  );
+  const hidden = new Set(booted.hidden);
+  const rows: SkillRow[] = booted.skills.map((skill) => {
+    if (hidden.has(skill.name)) {
+      return {
+        name: skill.name,
+        source: skill.source,
+        path: skill.filePath,
+        status: 'hidden' as SkillRowStatus,
+        reason:
+          'hidden from the model (disable-model-invocation: explicit calls only)',
+      };
+    }
+    const reason = withheldByName.get(skill.name);
+    if (reason !== undefined) {
+      return {
+        name: skill.name,
+        source: skill.source,
+        path: skill.filePath,
+        status: 'withheld' as SkillRowStatus,
+        reason,
+      };
+    }
+    return {
+      name: skill.name,
+      source: skill.source,
+      path: skill.filePath,
+      status: 'visible' as SkillRowStatus,
+    };
+  });
+  for (const skip of booted.skipped) {
+    rows.push({
+      name: skip.name,
+      source: skip.source,
+      path: skip.filePath,
+      status: skip.status,
+      reason: skip.reason,
+    });
+  }
+  // Sorted by name: the `--json` envelope is stable across filesystems
+  // (directory listing order is not).
+  rows.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return rows;
+}
+
+// The TUI's one-time boot notice (issue #238): the loader lines the TUI
+// used to drop, as a single summary — `undefined` when nothing was
+// skipped, so a clean boot stays silent.
+export function describeSkillSkips(
+  skipped: readonly SkippedSkill[],
+): string | undefined {
+  if (skipped.length === 0) return undefined;
+  const errors = skipped.filter((skip) => skip.status === 'error').length;
+  const excluded = skipped.length - errors;
+  const parts: string[] = [];
+  if (errors > 0) parts.push(`${errors} error${errors === 1 ? '' : 's'}`);
+  if (excluded > 0) parts.push(`${excluded} excluded`);
+  return `skills: ${skipped.length} skipped (${parts.join(', ')}) — run \`kubic skills\` for every skill and why it was left out`;
+}
 
 // Doctor surface (issue #181, §29.4): the same boot the lane runs, judged
 // with the lane's classes and no role — a skill the default lane would
@@ -220,4 +317,33 @@ export function skillsDoctorProbe(input: BootSkillOptions): DoctorCheck[] {
     reason: 'policy-mismatch' as const,
     detail: held.reason,
   }));
+}
+
+// The `kubic doctor` skills line (issue #238): counts of what the boot
+// met — loaded, hidden, withheld, errors. Errors warn (a skill the lane
+// silently misses is worth a look); the line never fails, and anything
+// narrower (a role's own narrowing) stays on the run's debug log.
+export function skillsDoctorSummary(booted: BootSkills): DoctorCheck {
+  const errors = booted.skipped.filter(
+    (skip) => skip.status === 'error',
+  ).length;
+  const detail =
+    `${booted.skills.length} loaded, ${booted.hidden.length} hidden, ` +
+    `${booted.withheld.length} withheld, ${errors} errors`;
+  if (errors > 0) {
+    return {
+      id: 'skills',
+      label: 'skills',
+      status: 'warn',
+      reason: 'deps-missing',
+      detail,
+    };
+  }
+  return {
+    id: 'skills',
+    label: 'skills',
+    status: 'pass',
+    reason: 'ok',
+    detail,
+  };
 }

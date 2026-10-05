@@ -75,6 +75,26 @@ export interface DiscoverSkillsResult {
   // Explicit --skill values that resolved to nothing (issue #177): the
   // caller reports these on stderr — a silent skip reads as a loaded skill.
   unknownSkills: string[];
+  // Issue #238: every skill the walk met but did not load — excluded by
+  // distrust or confinement, or failed reads — each with its reason, so
+  // the `kubic skills` listing (and the TUI notice) can name what was
+  // left out instead of dropping it silently.
+  skipped: SkippedSkill[];
+}
+
+// Issue #238: a skill the walk met but did not load. `excluded` is
+// policy — distrust, or a package entry confined away (issue #423);
+// `error` is a failed read. The name of an excluded project skill is the
+// directory basename: the frontmatter name is unknowable without reading
+// the file, which trust forbids.
+export type SkillSkipStatus = 'excluded' | 'error';
+
+export interface SkippedSkill {
+  name: string;
+  filePath: string;
+  source: SkillSource;
+  status: SkillSkipStatus;
+  reason: string;
 }
 
 export interface GateContext {
@@ -407,12 +427,22 @@ function loadSkillFile(
   filePath: string,
   source: SkillSource,
   log?: (line: string) => void,
+  note?: (skip: SkippedSkill) => void,
 ): LoadedSkill | undefined {
   let raw: string;
   try {
     raw = bridge.readTextFile(filePath);
   } catch {
     log?.(`skill skipped (unreadable ${filePath})`);
+    // Issue #238: the failed read is reported, not just logged, so the
+    // listing can show it as an error with its reason.
+    note?.({
+      name: basenameOf(dirnameOf(filePath)),
+      filePath,
+      source,
+      status: 'error',
+      reason: `unreadable ${filePath}`,
+    });
     return undefined;
   }
   return { ...parseSkillFile(filePath, raw), source };
@@ -423,8 +453,9 @@ function loadSkillDir(
   dir: string,
   source: SkillSource,
   log?: (line: string) => void,
+  note?: (skip: SkippedSkill) => void,
 ): LoadedSkill | undefined {
-  return loadSkillFile(bridge, joinPosix(dir, 'SKILL.md'), source, log);
+  return loadSkillFile(bridge, joinPosix(dir, 'SKILL.md'), source, log, note);
 }
 
 // A --skill value is a directory, a SKILL.md file, or a bare name. Paths
@@ -548,13 +579,19 @@ function confinedPackageDir(
   declared: string,
   ancestor: string,
   log?: (line: string) => void,
-): string | undefined {
+): string | SkippedSkill {
   const lexical = normalizeSkillPath(declared);
   if (!isWithinDir(lexical, ancestor)) {
-    log?.(
-      `skill skipped (package skill '${declared}' outside trusted root '${ancestor}')`,
-    );
-    return undefined;
+    const reason = `package skill '${declared}' outside trusted root '${ancestor}'`;
+    log?.(`skill skipped (${reason})`);
+    // Issue #238: the confinement refusal is reported, not just logged.
+    return {
+      name: basenameOf(lexical),
+      filePath: joinPosix(lexical, 'SKILL.md'),
+      source: 'package',
+      status: 'excluded',
+      reason,
+    };
   }
   let resolved = lexical;
   try {
@@ -563,10 +600,15 @@ function confinedPackageDir(
     resolved = lexical;
   }
   if (!isWithinDir(resolved, ancestor)) {
-    log?.(
-      `skill skipped (package skill '${declared}' resolves outside trusted root '${ancestor}')`,
-    );
-    return undefined;
+    const reason = `package skill '${declared}' resolves outside trusted root '${ancestor}'`;
+    log?.(`skill skipped (${reason})`);
+    return {
+      name: basenameOf(lexical),
+      filePath: joinPosix(lexical, 'SKILL.md'),
+      source: 'package',
+      status: 'excluded',
+      reason,
+    };
   }
   return lexical;
 }
@@ -587,6 +629,11 @@ export function discoverSkills(
   } = options;
   const byName = new Map<string, LoadedSkill>();
   const roots: string[] = [];
+  // Issue #238: every met-but-not-loaded skill, each with its reason.
+  const skipped: SkippedSkill[] = [];
+  const note = (skip: SkippedSkill): void => {
+    skipped.push(skip);
+  };
   const add = (skill: LoadedSkill | undefined): void => {
     if (skill !== undefined) byName.set(skill.name, skill);
   };
@@ -610,21 +657,42 @@ export function discoverSkills(
     for (const root of userRoots) {
       roots.push(root);
       for (const dir of listSkillDirs(bridge, root)) {
-        add(loadSkillDir(bridge, dir, 'user', log));
+        add(loadSkillDir(bridge, dir, 'user', log, note));
       }
     }
+    // Issue #238: distrust names what it leaves out instead of staying
+    // silent — directory names only (the walk reads no contents, so
+    // nothing crosses the trust boundary). Package.json entries stay
+    // unenumerated: naming them means reading the project file. An
+    // untrusted root is never added to `roots`, so a bare --skill name
+    // cannot resolve into it.
     const trustFor = trustProject ?? (() => trusted);
-    if (trustProject !== undefined || trusted) {
-      const chain = projectChain(bridge, cwd);
-      for (const ancestor of chain) {
-        if (!trustFor(ancestor)) continue;
+    const chain = projectChain(bridge, cwd);
+    let anyTrusted = false;
+    for (const ancestor of chain) {
+      if (!trustFor(ancestor)) {
         for (const rootName of ['.pi/skills', '.agents/skills']) {
           const root = joinPosix(ancestor, rootName);
           if (userRootSet.has(root)) continue;
-          roots.push(root);
           for (const dir of listSkillDirs(bridge, root)) {
-            add(loadSkillDir(bridge, dir, 'project', log));
+            note({
+              name: basenameOf(dir),
+              filePath: joinPosix(dir, 'SKILL.md'),
+              source: 'project',
+              status: 'excluded',
+              reason: `project skills excluded (untrusted project root ${ancestor})`,
+            });
           }
+        }
+        continue;
+      }
+      anyTrusted = true;
+      for (const rootName of ['.pi/skills', '.agents/skills']) {
+        const root = joinPosix(ancestor, rootName);
+        if (userRootSet.has(root)) continue;
+        roots.push(root);
+        for (const dir of listSkillDirs(bridge, root)) {
+          add(loadSkillDir(bridge, dir, 'project', log, note));
         }
       }
       // Package-declared dirs: nearest package.json wins per name via the
@@ -632,15 +700,16 @@ export function discoverSkills(
       // Issue #423: each entry is confined to the ancestor that declared
       // it — absolute paths, `..` escapes and outside-resolving symlinks
       // are refused with a reason, never loaded under project trust.
-      for (const ancestor of chain) {
-        if (!trustFor(ancestor)) continue;
-        for (const dir of readPackageSkillDirs(bridge, ancestor, log)) {
-          const confined = confinedPackageDir(bridge, dir, ancestor, log);
-          if (confined !== undefined)
-            add(loadSkillDir(bridge, confined, 'package', log));
+      for (const dir of readPackageSkillDirs(bridge, ancestor, log)) {
+        const confined = confinedPackageDir(bridge, dir, ancestor, log);
+        if (typeof confined === 'string') {
+          add(loadSkillDir(bridge, confined, 'package', log, note));
+        } else {
+          note(confined);
         }
       }
-    } else {
+    }
+    if (!anyTrusted) {
       log?.('skill discovery: untrusted cwd, project skills excluded');
     }
   }
@@ -650,7 +719,9 @@ export function discoverSkills(
   // #177): a relative dir in the settings file is cwd-relative, not
   // bridge-root-relative.
   for (const dir of settingsSkills) {
-    add(loadSkillDir(bridge, resolveSkillPath(cwd, dir), 'settings', log));
+    add(
+      loadSkillDir(bridge, resolveSkillPath(cwd, dir), 'settings', log, note),
+    );
   }
   // An explicit --skill that resolves to nothing is reported, not just
   // debug-logged (issue #177): the caller warns on stderr, so a typo
@@ -661,7 +732,7 @@ export function discoverSkills(
     if (skill === undefined) unknownSkills.push(value);
     else add(skill);
   }
-  return { skills: [...byName.values()], unknownSkills };
+  return { skills: [...byName.values()], unknownSkills, skipped };
 }
 
 export function gateSkills(

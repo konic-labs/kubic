@@ -23,8 +23,11 @@ const ENV_REF = /^\$([A-Za-z_][A-Za-z0-9_]*)$/;
 // Shell-ish argv split for `!command` (issue #224): single- and
 // double-quoted spans stay one element, a backslash quotes the next
 // character anywhere. No expansion, no globbing — the runner receives
-// argv verbatim (execFile, never a shell). An unterminated quote runs to
-// the end rather than throwing; quotes are syntax and consumed either way.
+// argv verbatim (execFile, never a shell). An unterminated boundary quote
+// runs to the end rather than throwing. A quote OPENS quoting only at a
+// word boundary (review GAP, issue #224): a mid-word quote is far more
+// likely an apostrophe (`don't`) than grouping, so it stays literal and
+// the helper receives exactly what was written. A close always closes.
 export function splitSecretCommand(input: string): string[] {
   const argv: string[] = [];
   let current = '';
@@ -54,9 +57,13 @@ export function splitSecretCommand(input: string): string[] {
       continue;
     }
     if (char === "'" || char === '"') {
-      quote = char;
-      started = true;
-      continue;
+      // Word-boundary only (issue #224 GAP): mid-word quotes are
+      // literal apostrophes, not grouping — fall through and keep them.
+      if (current === '') {
+        quote = char;
+        started = true;
+        continue;
+      }
     }
     if (char === ' ' || char === '\t' || char === '\n' || char === '\r') {
       push();

@@ -762,7 +762,9 @@ Secrets never appear in config: a secret-shaped value or a secret ref in
   probe) read presence only and are not a use.
 - **A `!command` ref runs a helper on every request.** The command and its
   arguments are parsed quote-aware (`!op read "my vault/item"` stays one
-  argument) and executed directly — never through a shell — with a 10s
+  argument — a quote opens grouping only at a word boundary, so a mid-word
+  quote like `don't` stays literal and the helper receives exactly what was
+  written) and executed directly — never through a shell — with a 10s
   timeout and a 64 KiB output cap; an empty result, a failure, or a timeout
   fails the request closed naming the provider and command. The check path
   never executes it (an unknowable command counts as configured; a missing

@@ -38,10 +38,25 @@ describe('splitSecretCommand (issue #224)', () => {
     ]);
   });
 
-  it('an unterminated quote runs to the end, never throws', () => {
-    // Quotes are syntax and consumed: the word still arrives whole, minus
-    // the quote mark. Balanced quoting is the documented form.
-    expect(splitSecretCommand("echo don't")).toEqual(['echo', 'dont']);
+  it('an unterminated boundary quote runs to the end, never throws', () => {
+    // A quote that OPENS at a word boundary is syntax (consumed); the
+    // word still arrives whole, minus the quote mark.
+    expect(splitSecretCommand('echo "unclosed')).toEqual(['echo', 'unclosed']);
+  });
+
+  it('treats quotes as syntax only at word boundaries (issue #224 GAP)', () => {
+    // A mid-word quote is far more likely an apostrophe than grouping:
+    // it stays literal so the helper receives what was written.
+    expect(splitSecretCommand("echo don't")).toEqual(['echo', "don't"]);
+    expect(splitSecretCommand('echo a"b')).toEqual(['echo', 'a"b']);
+    expect(splitSecretCommand("echo a'b'c")).toEqual(['echo', "a'b'c"]);
+    // Boundary quotes still group, and a close always closes.
+    expect(splitSecretCommand('op read "my vault/item"')).toEqual([
+      'op',
+      'read',
+      'my vault/item',
+    ]);
+    expect(splitSecretCommand('echo "foo"bar')).toEqual(['echo', 'foobar']);
   });
 
   it('yields nothing for blank input', () => {

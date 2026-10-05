@@ -12,6 +12,7 @@ import {
   ConfigError,
   type ConfigLayer,
   checkGitignoreSplit,
+  checkRoleModelRef,
   defaultLayerPaths,
   EXAMPLE_TOML,
   GITIGNORE_REQUIRED_ENTRIES,
@@ -1069,5 +1070,30 @@ describe('[verify] section (issue #267)', () => {
     expect(() => parseTomlConfig('verify = 1\n')).toThrow(
       "'[verify]' must be a table",
     );
+  });
+});
+
+describe('checkRoleModelRef (issue #211)', () => {
+  it.each(['llama', '/x', 'x/', ''])(
+    'refuses %j with the provider/id message',
+    (ref) => {
+      expect(() => checkRoleModelRef(ref, 'implementer')).toThrow(
+        "'roles.implementer': 'model' must be 'provider/id'",
+      );
+    },
+  );
+
+  it('refuses a blank or non-string ref', () => {
+    expect(() => checkRoleModelRef('   ', 'implementer')).toThrow(
+      "'roles.implementer': 'model' must be 'provider/id'",
+    );
+    expect(() => checkRoleModelRef(42, 'implementer')).toThrow(
+      "'roles.implementer': 'model' must be 'provider/id'",
+    );
+  });
+
+  it('passes a provider/id ref and undefined through', () => {
+    expect(checkRoleModelRef('g/file', 'implementer')).toBe('g/file');
+    expect(checkRoleModelRef(undefined, 'implementer')).toBeUndefined();
   });
 });

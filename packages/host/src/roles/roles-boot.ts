@@ -18,17 +18,13 @@ import {
 } from './builtin-presets.js';
 import type { RoleLayerInput } from './resolver.js';
 import {
-  applyRoleToLane,
-  KNOWN_ROLE_TOOLS,
   type ParsedRoleDoc,
   parseRoleDocument,
   type ResolvedRole,
-  type RoleLane,
   RoleParseError,
   RoleRefusedError,
   resolveRole,
   roleDoctorChecks,
-  validateResolvedRole,
 } from './resolver.js';
 
 export const ROLES_DIR = '.kubic/roles';
@@ -372,32 +368,4 @@ export function rolesDoctorProbe(input: RolesDirInput): DoctorCheck[] {
     });
   }
   return checks;
-}
-
-// Lane application: validate FIRST (so a contradictory role never touches
-// the lane), then narrow via the resolver's own applyRoleToLane.
-export async function applySelectedRole(
-  lane: RoleLane,
-  selected: SelectedRole,
-  context: unknown,
-): Promise<string[]> {
-  validateResolvedRole(selected.resolved);
-  validateRoleToolsRegistered(selected.resolved);
-  return applyRoleToLane(lane, selected.resolved, context);
-}
-
-// Defense in depth (§40.3): the role's tools must be a subset of the tools
-// the lane actually registers. resolveRole already refuses unknown names;
-// this pins the same invariant at the lane boundary so a future tool-set
-// edit cannot silently widen a role.
-export function validateRoleToolsRegistered(resolved: ResolvedRole): void {
-  const unknown = resolved.tools.find(
-    (tool) => !(KNOWN_ROLE_TOOLS as readonly string[]).includes(tool),
-  );
-  if (unknown !== undefined) {
-    throw new RoleRefusedError(
-      resolved.name,
-      `tool '${unknown}' is not registered on this lane`,
-    );
-  }
 }

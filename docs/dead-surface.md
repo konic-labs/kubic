@@ -125,6 +125,13 @@ file that no longer exists, or when a row's file has become reachable
   `trajectory/src/index.ts` barrel cannot be deleted (a §64 skeleton path
   pinned by `scripts/dep-lint.test.mjs`); its row is re-owned from `delete:`
   to a named `keep:`.
+- Issue #211 executed a function-level **delete**: `applySelectedRole` +
+  `validateRoleToolsRegistered` in the live
+  `packages/host/src/roles/roles-boot.ts` had zero callers anywhere (the
+  solo boot applies roles inline via `selectRole`/`rolePromptFor`, the
+  delegation path via `worker-roles.ts`), so they were deleted rather than
+  wired to an invented caller. Function-level, in a reachable file — no
+  ledger row.
 
 | LOC | file | owner | disposition |
 | --- | --- | --- | --- |

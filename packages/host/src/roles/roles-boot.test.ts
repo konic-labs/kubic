@@ -3,7 +3,13 @@
 // `<root>/.kubic/roles/*.md` as one from the root. In-memory bridge only:
 // zero network, zero paid tokens.
 import { describe, expect, it } from 'vitest';
-import { loadRoles, rolesDoctorProbe, selectRole } from './roles-boot.js';
+import {
+  loadRoles,
+  RoleBootError,
+  rolePromptFor,
+  rolesDoctorProbe,
+  selectRole,
+} from './roles-boot.js';
 
 // An in-memory FileBridge slice: listDir + readTextFile over a path→text
 // map, so the loader is driven without touching the filesystem.
@@ -182,5 +188,75 @@ describe('project role documents are trust-gated (issue #430, §33)', () => {
     expect(held).toHaveLength(1);
     expect(held[0]?.status).toBe('warn');
     expect(held[0]?.detail).toContain('withheld: untrusted project root');
+  });
+});
+
+describe('rolePromptFor refuses instruction-less roles by name (issue #211)', () => {
+  const frontmatter =
+    '---\nrole: promptless\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# promptless\n\n';
+
+  function selectedWithBody(body: string): ReturnType<typeof selectRole> {
+    const bridge = memBridge({
+      '/repo/.kubic/roles/promptless.md': `${frontmatter}${body}`,
+    });
+    return selectRole({
+      bridge,
+      cwd: '/repo',
+      trusted: true,
+      role: 'promptless',
+    });
+  }
+
+  it("a missing '## Prompt' section names the role", () => {
+    const selected = selectedWithBody('Just prose, no prompt heading.\n');
+    expect(() => rolePromptFor(selected.doc, selected.markdown)).toThrow(
+      RoleBootError,
+    );
+    expect(() => rolePromptFor(selected.doc, selected.markdown)).toThrow(
+      "role 'promptless' has no '## Prompt' section",
+    );
+  });
+
+  it("an empty '## Prompt' section names the role", () => {
+    const selected = selectedWithBody('## Prompt\n\n   \n');
+    expect(() => rolePromptFor(selected.doc, selected.markdown)).toThrow(
+      "role 'promptless' has an empty '## Prompt' section",
+    );
+  });
+
+  it("'## Prompt' followed by '## Notes' returns only the prompt", () => {
+    const selected = selectedWithBody(
+      '## Prompt\n\nDo the thing.\n\n## Notes\n\nLater notes.\n',
+    );
+    expect(rolePromptFor(selected.doc, selected.markdown)).toBe(
+      'Do the thing.',
+    );
+  });
+
+  it('trims surrounding whitespace', () => {
+    const selected = selectedWithBody('## Prompt\n\n   Do the thing.   \n');
+    expect(rolePromptFor(selected.doc, selected.markdown)).toBe(
+      'Do the thing.',
+    );
+  });
+});
+
+describe('selectRole unknown roles (issue #211)', () => {
+  it('lists the loaded names in the refusal', () => {
+    const bridge = memBridge({
+      '/repo/.kubic/roles/scout.md': roleDoc('scout'),
+    });
+    expect(() =>
+      selectRole({ bridge, cwd: '/repo', trusted: true, role: 'ghost' }),
+    ).toThrow(/no role document for 'ghost' under \.kubic\/roles/);
+    try {
+      selectRole({ bridge, cwd: '/repo', trusted: true, role: 'ghost' });
+      expect.unreachable('selectRole(ghost) must throw');
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain('(loaded: ');
+      expect(message).toContain('scout');
+      expect(message).toContain('implementer');
+    }
   });
 });

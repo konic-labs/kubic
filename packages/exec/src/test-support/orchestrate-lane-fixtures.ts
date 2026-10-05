@@ -4,7 +4,7 @@
 // node:fs/child_process outside *.test.ts files (the dep-lint I/O
 // confinement rule scans text, including fixture strings) — and because
 // it runs in a spawned child, not in the test, so it cannot call the
-// test's sandbox helper (the git-sandbox gate scans .test.ts text, which
+// test's shared git helper (the git-helper gate scans .test.ts text, which
 // is also why this string is not inline there).
 //
 // The script runs as a REAL worker child (written to scratch and executed

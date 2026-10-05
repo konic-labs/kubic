@@ -189,7 +189,8 @@ export interface AuditTableConfig {
   sink: string;
   level?: string;
   target?: string;
-  facility?: string;
+  // Review finding (issue #286): docs promise a name or a number 0–23.
+  facility?: string | number;
 }
 
 export interface KubicConfig {
@@ -1125,7 +1126,23 @@ function parseAuditTables(raw: unknown): AuditTableConfig[] {
       );
     }
     const target = reqString(entry, 'target', path, true);
-    const facility = reqString(entry, 'facility', path, true);
+    // Review finding (issue #286): docs promise a name or a number
+    // 0–23, so a TOML number rides through as-is; a fractional or
+    // out-of-range number is refused here, by name.
+    const facilityRaw = entry['facility'];
+    if (
+      facilityRaw !== undefined &&
+      typeof facilityRaw === 'number' &&
+      (!Number.isInteger(facilityRaw) || facilityRaw < 0 || facilityRaw > 23)
+    ) {
+      throw new ConfigError(
+        `'${path}': 'facility' must be a facility name or a number 0–23`,
+      );
+    }
+    const facility =
+      typeof facilityRaw === 'number'
+        ? facilityRaw
+        : reqString(entry, 'facility', path, true);
     return {
       sink,
       level,

@@ -300,6 +300,30 @@ describe('§58 [policy] + [[audit]] (issue #288)', () => {
     ).toThrow(/unknown key 'bogus'/);
   });
 
+  // Review finding (issue #286): docs promise `facility` as "name or
+  // number 0–23", so TOML `facility = 19` must parse to the number.
+  it('accepts a numeric facility 0–23 in [[audit]]', () => {
+    const parsed = parseTomlConfig(
+      '[[audit]]\nsink = "syslog"\nlevel = "privileged"\nfacility = 19\n',
+    );
+    expect(parsed.audit).toEqual([
+      { sink: 'syslog', level: 'privileged', facility: 19 },
+    ]);
+  });
+
+  it('refuses an out-of-range or fractional facility by name', () => {
+    expect(() =>
+      parseTomlConfig(
+        '[[audit]]\nsink = "syslog"\nlevel = "privileged"\nfacility = 99\n',
+      ),
+    ).toThrow(/facility/);
+    expect(() =>
+      parseTomlConfig(
+        '[[audit]]\nsink = "syslog"\nlevel = "privileged"\nfacility = 1.5\n',
+      ),
+    ).toThrow(/facility/);
+  });
+
   it('keeps the audit list appendable across multiple [[audit]] tables', () => {
     const parsed = parseTomlConfig(
       '[[audit]]\nsink = "syslog"\nlevel = "privileged"\n\n[[audit]]\nsink = "file"\nlevel = "all"\ntarget = "/var/log/kubic.jsonl"\n',

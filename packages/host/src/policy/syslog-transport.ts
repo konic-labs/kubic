@@ -14,6 +14,13 @@ type SocketFactory = typeof createSocket;
 interface Sendable {
   send: (...args: never[]) => void;
   close: () => void;
+  // Review finding (issue #286): a target that vanishes after the doctor
+  // probe raises an async socket error — the no-op listener keeps it
+  // from escaping the synchronous, best-effort sink as an unhandled
+  // 'error' throw. Optional so older injected fakes without `on` still
+  // typecheck; prod sockets always carry it. `unknown[]` (not `never[]`)
+  // keeps the real dgram socket's `on` comparable under the cast below.
+  on?: (event: string, listener: (...args: unknown[]) => void) => void;
 }
 
 export function createUnixSyslogTransport(
@@ -25,6 +32,7 @@ export function createUnixSyslogTransport(
       const socket = (create as (...args: never[]) => Sendable)(
         'unix_dgram' as never,
       );
+      socket.on?.('error', () => {});
       try {
         socket.send(line as never, socketPath as never);
       } finally {
@@ -44,6 +52,7 @@ export function createUdpSyslogTransport(
       const socket = (create as (...args: never[]) => Sendable)(
         'udp4' as never,
       );
+      socket.on?.('error', () => {});
       try {
         socket.send(line as never, port as never, host as never);
       } finally {

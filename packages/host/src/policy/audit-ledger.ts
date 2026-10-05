@@ -485,7 +485,7 @@ export type PrivilegedActionKind = (typeof PRIVILEGED_ACTION_KINDS)[number];
 // The `level = "privileged"` filter (issue #286; §58): a `[[audit]]` sink
 // at the privileged level keeps approval decisions (`tool:<name>`, solo and
 // orchestrator) and the seven privileged-action whats, and drops the rest
-// (`state:dropped`, `credential:<provider>`, `posture:approvals`). The repo
+// (`state:dropped`, `credential:<provider>`). The repo
 // ledger always keeps everything — the level only gates configured sinks.
 export function isPrivilegedAuditWhat(what: string): boolean {
   return (
@@ -495,6 +495,10 @@ export function isPrivilegedAuditWhat(what: string): boolean {
     // kinds stay closed.
     what === 'run:start' ||
     what === 'posture:full-access' ||
+    // Review finding (issue #286): the revoke half of a privileged
+    // posture change reaches privileged sinks too — the disable half of
+    // a grant must never vanish while the grant is kept.
+    what === 'posture:approvals' ||
     what === 'undo-restore' ||
     what.startsWith('merge:') ||
     what.startsWith('worktree-create:') ||

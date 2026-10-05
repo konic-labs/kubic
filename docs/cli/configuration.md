@@ -628,8 +628,11 @@ target = "/var/log/kubic.jsonl"
 - `sink`: `syslog` (one RFC 5424 line per record), `file` (one JSON line
   per record appended at the exact `target` path), or `memory`
   (process-scoped, for embedders and tests).
-- `level`: `privileged` keeps approval decisions (`tool:<name>`) and the
-  seven privileged actions, dropping everything else; `all` keeps every
+- `level`: `privileged` keeps approval decisions (`tool:<name>`), the
+  seven privileged actions, and the full-access revoke
+  (`posture:approvals` — the disable half of a privileged posture
+  change travels with its grant, issue #286 review), dropping
+  everything else; `all` keeps every
   row. The repo ledger always keeps everything regardless of level.
 - `target` (syslog): a unix datagram socket path (bare `/dev/log` or
   `unix:/path`; the default is `/var/run/syslog` on macos and `/dev/log`

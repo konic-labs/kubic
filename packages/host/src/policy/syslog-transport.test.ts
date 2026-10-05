@@ -35,6 +35,39 @@ describe('syslog transports (issue #286)', () => {
     expect(close).toHaveBeenCalled();
   });
 
+  // Review finding (issue #286): a target that vanishes after the doctor
+  // probe raises an async socket error — best-effort delivery must swallow
+  // it, never throw it out of the synchronous sink.
+  it.each([
+    ['unix', createUnixSyslogTransport, ['/dev/log']],
+    ['udp', createUdpSyslogTransport, ['loghost', 514]],
+  ])(
+    'attaches an error listener that swallows async socket errors (%s)',
+    (_kind, createTransport, args) => {
+      const listeners = new Map<string, (...a: never[]) => void>();
+      const send = vi.fn();
+      const close = vi.fn();
+      const create = vi.fn(() => ({
+        send,
+        close,
+        on: (event: string, listener: (...a: never[]) => void) => {
+          listeners.set(event, listener);
+        },
+      }));
+      const transport = (
+        createTransport as (...a: unknown[]) => { send: (line: string) => void }
+      )(
+        ...args,
+        create as unknown as Parameters<typeof createUnixSyslogTransport>[1],
+      );
+      transport.send('<134>1 line');
+      const onError = listeners.get('error');
+      expect(onError).toBeDefined();
+      expect(() => onError?.(new Error('socket vanished') as never)).not
+        .toThrow();
+    },
+  );
+
   it('a socket-creation failure throws synchronously', () => {
     const create = (): never => {
       throw new Error('dgram unsupported');

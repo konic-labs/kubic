@@ -727,6 +727,9 @@ describe('configured sink fan-out (issue #286)', () => {
       'tool:bash',
       'run:start',
       'posture:full-access',
+      // Review finding (issue #286): the revoke half of a privileged
+      // posture change reaches privileged sinks too.
+      'posture:approvals',
       'merge:kubic/worker-1',
       'worker-spawn:worker-1',
       'worker-terminate:worker-1',
@@ -736,11 +739,7 @@ describe('configured sink fan-out (issue #286)', () => {
     ]) {
       expect(isPrivilegedAuditWhat(what)).toBe(true);
     }
-    for (const what of [
-      'state:dropped',
-      'credential:openai',
-      'posture:approvals',
-    ]) {
+    for (const what of ['state:dropped', 'credential:openai']) {
       expect(isPrivilegedAuditWhat(what)).toBe(false);
     }
   });

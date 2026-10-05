@@ -31,7 +31,9 @@ import {
   SOLO_PROMPT_SECTION,
   SOLO_ROLE,
   type SoloLane,
+  splitSoloModelId,
 } from './solo.js';
+import { PromptCacheError } from '../prompts.js';
 
 vi.mock('./interceptors.js', () => ({
   policyInterceptorHooks: () => [],
@@ -125,6 +127,29 @@ vi.mock('./tools-adapter.js', async () => {
         }),
       ),
   };
+});
+
+// Model-id splitting (issue #218): the lane only boots 'provider/id' —
+// the table pins what splits and what throws PromptCacheError, so a
+// misrouted id fails at parse time, never inside a run.
+describe('splitSoloModelId', () => {
+  it('splits provider from id on the first slash', () => {
+    expect(splitSoloModelId('prov/id')).toEqual({
+      provider: 'prov',
+      modelId: 'id',
+    });
+  });
+
+  it.each(['noslash', '/id', 'prov/'])('rejects %s', (id) => {
+    expect(() => splitSoloModelId(id)).toThrowError(PromptCacheError);
+  });
+
+  it("keeps 'b/c' as the model id for 'a/b/c'", () => {
+    expect(splitSoloModelId('a/b/c')).toEqual({
+      provider: 'a',
+      modelId: 'b/c',
+    });
+  });
 });
 
 const DIRS: string[] = [];

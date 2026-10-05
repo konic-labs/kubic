@@ -202,8 +202,24 @@ afterEach(() => {
 // A line that violates the isolation-guarantee rule, for scope fixtures.
 const VIOLATING_LINE = 'solo runs in an isolated sandbox for safety';
 
-// Deterministic git env for fixture repos: no developer config leaks in.
-function fixtureGitEnv(): Record<string, string | undefined> {
+// Empty global/system config for deterministic git (no device files:
+// the #365 helper uses a real empty file, and so does this gate).
+// Memoized; the directory joins tempRoots for afterEach cleanup.
+let emptyGitConfigPath: string | undefined;
+function emptyGitConfig(): string {
+  if (emptyGitConfigPath === undefined || !existsSync(emptyGitConfigPath)) {
+    const dir = mkdtempSync(join(tmpdir(), 'honest-claims-gitconfig-'));
+    tempRoots.push(dir);
+    emptyGitConfigPath = join(dir, 'empty-config');
+    writeFileSync(emptyGitConfigPath, '');
+  }
+  return emptyGitConfigPath;
+}
+
+// Deterministic git env for fixture repos and the listing: no developer
+// config leaks in, and no ambient GIT_DIR repoints the tree (a hook-run
+// suite would scan the wrong tree).
+function deterministicGitEnv(): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...process.env };
   for (const key of Object.keys(env)) {
     if (key.startsWith('GIT_')) {
@@ -211,8 +227,8 @@ function fixtureGitEnv(): Record<string, string | undefined> {
     }
   }
   env.GIT_CONFIG_NOSYSTEM = '1';
-  env.GIT_CONFIG_GLOBAL = '/dev/null';
-  env.GIT_CONFIG_SYSTEM = '/dev/null';
+  env.GIT_CONFIG_GLOBAL = emptyGitConfig();
+  env.GIT_CONFIG_SYSTEM = emptyGitConfig();
   return env;
 }
 
@@ -221,7 +237,7 @@ function initFixtureRepo(): string {
   tempRoots.push(root);
   execFileSync('git', ['init', '-q', '-b', 'main'], {
     cwd: root,
-    env: fixtureGitEnv(),
+    env: deterministicGitEnv(),
   });
   return root;
 }
@@ -231,22 +247,6 @@ function isSourcePath(path: string): boolean {
     SOURCE_EXTENSIONS.some((ext) => path.endsWith(ext)) &&
     !TEST_FILE_SUFFIXES.some((suffix) => path.endsWith(suffix))
   );
-}
-
-// Deterministic git env for the listing: the gate must not depend on the
-// developer's config or an ambient GIT_DIR (a hook-run suite would scan
-// the wrong tree).
-function listingGitEnv(): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...process.env };
-  for (const key of Object.keys(env)) {
-    if (key.startsWith('GIT_')) {
-      delete env[key];
-    }
-  }
-  env.GIT_CONFIG_NOSYSTEM = '1';
-  env.GIT_CONFIG_GLOBAL = '/dev/null';
-  env.GIT_CONFIG_SYSTEM = '/dev/null';
-  return env;
 }
 
 // Tracked files via git, or null when git cannot answer (not a repo,
@@ -259,7 +259,7 @@ function trackedSourceFiles(root: string): string[] | null {
   try {
     const out = execFileSync('git', ['-C', root, 'ls-files', '-z'], {
       encoding: 'utf8',
-      env: listingGitEnv(),
+      env: deterministicGitEnv(),
       stdio: ['ignore', 'pipe', 'ignore'],
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -423,7 +423,7 @@ describe('honest-claims grep-gate (issue #58)', () => {
     writeFileSync(join(root, 'clean.md'), '# clean\n');
     execFileSync('git', ['add', 'clean.md'], {
       cwd: root,
-      env: fixtureGitEnv(),
+      env: deterministicGitEnv(),
     });
     // Untracked claim-violating files: agent tool state and a stray note.
     mkdirSync(join(root, '.claude', 'worktrees', 'x'), { recursive: true });
@@ -465,7 +465,7 @@ describe('honest-claims grep-gate (issue #58)', () => {
     writeFileSync(join(root, 'clean.ts'), 'export const ok = 1;\n');
     execFileSync('git', ['add', 'clean.ts'], {
       cwd: root,
-      env: fixtureGitEnv(),
+      env: deterministicGitEnv(),
     });
     mkdirSync(join(root, '.beads'), { recursive: true });
     writeFileSync(join(root, '.beads', 'claim.md'), `${VIOLATING_LINE}\n`);
@@ -479,28 +479,25 @@ describe('honest-claims grep-gate (issue #58)', () => {
   it('reviewed exceptions still match their justification patterns', () => {
     // Exceptions are drift-pinned: if the line changes so the denial is
     // gone, the exception stops applying and the scan re-flags it.
-    // Pinned against the walk, not the tracked listing (issue #375): the
-    // design doc is gitignored, so only the walk sees it when present.
+    // Resolved directly, not via any listing (issue #375 review): the
+    // design doc is gitignored, so neither the tracked listing nor the
+    // gitignore-aware walk contains it — filtering a listing would pin
+    // nothing and this test would always `continue`.
     for (const entry of REVIEWED_EXCEPTIONS) {
       expect(entry.reason.length).toBeGreaterThan(0);
-      const hits = walkSourceFiles(process.cwd()).filter((file) =>
-        file.endsWith(entry.fileSuffix),
-      );
-      if (hits.length === 0) {
-        // File absent here (e.g. gitignored design docs in fresh
-        // clones) — nothing to pin; the scan test above still guards
-        // every file that is present.
+      const file = join(process.cwd(), entry.fileSuffix);
+      if (!existsSync(file)) {
+        // File absent here (e.g. gitignored design docs in worktrees
+        // and fresh clones) — nothing to pin.
         continue;
       }
-      const matched = hits.some((file) =>
-        readFileSync(file, 'utf8')
-          .split('\n')
-          .some(
-            (line) =>
-              new RegExp(entry.pattern).test(line) &&
-              findClaimViolations(line).length > 0,
-          ),
-      );
+      const matched = readFileSync(file, 'utf8')
+        .split('\n')
+        .some(
+          (line) =>
+            new RegExp(entry.pattern).test(line) &&
+            findClaimViolations(line).length > 0,
+        );
       expect(matched).toBe(true);
     }
   });

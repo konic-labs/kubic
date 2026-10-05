@@ -4,14 +4,21 @@
 // totalMergeMs is the sum of ALL five phases: resolveMs is tracked
 // separately from mergeMs (mergeMs covers workspace_merge only) but IS
 // included in the total — resolveMs is never folded into mergeMs
-// itself. Pure — the SpanRecorder (§29) owns aggregation; this is the
-// record.
+// itself. The approval gate's wait is in NO phase (issue #158 review): it is
+// human-paced, and §61 budgets the merge, not the user's answer.
+// Pure — the SpanRecorder (§29) owns aggregation; this is the record.
 
 export type MergeOutcome =
   | 'merged'
   | 'resolved-merged'
-  | 'discarded'
-  | 'stopped-unresolvable';
+  // The candidate's branch did not land this run: the merge itself threw, so
+  // the branch and worktree stay as evidence (§44.1) and `state.pending` keeps
+  // the worker for `--resume`. Never "discarded" — nothing is thrown away.
+  | 'merge-failed'
+  | 'stopped-unresolvable'
+  // The merge gate's verdict ended the candidate before any merge leg ran.
+  | 'approval-denied'
+  | 'approval-timeout';
 
 export interface MergeTelemetry {
   agentId: string;

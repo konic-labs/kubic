@@ -365,11 +365,15 @@ Workers never outlive the manager on a signal: each child runs in its own
 process group, so while any worker is live the manager traps
 SIGINT/SIGTERM/SIGHUP (and process exit), kills every live worker's group,
 then re-delivers the signal. A manager killed with SIGKILL cannot do this.
-Each run also reports **§61 merge telemetry** (issue #158): per settled
-worker, the merge phases the run measured — `queueMs` (enqueue → dequeue),
-`diffMs` (the worker's own branch-diff read), `mergeMs`, `resolveMs` (the
-resolver's rework) and `applyMs` (attribution + record + persist). The run's
-`--json` document carries them under `mergeTelemetry`, the text view prints one
+Each run also reports **§61 merge telemetry** (issue #158): per candidate, the
+merge phases the run measured — `queueMs` (enqueue → dequeue), `diffMs` (the
+worker's own branch-diff read), `mergeMs` (the `workspace_merge` leg alone,
+starting after the merge gate's verdict), `resolveMs` (the resolver's rework)
+and `applyMs` (attribution + record + persist). The merge gate's own wait is in
+no phase: it is human-paced and §61 budgets the merge, not the user's answer.
+The run's `--json` document carries the records under `mergeTelemetry` (on the
+failure envelope too, so a denied gate or a failed merge names its outcome
+instead of vanishing), the text view prints one
 `merge telemetry: <agent> … total=<sum>ms outcome=<…>` line each, and
 `totalMergeMs` is exactly the phase sum. The same runs sample the §61
 **attach** leg (session create/attach per worker) and report the **worktree

@@ -2568,7 +2568,7 @@ describe('the assigned approval role (issue #159)', () => {
 describe('merge telemetry (§61, issue #158)', () => {
   // A fake clock the injected seams advance, so every phase is a known
   // number: creation 7 ms, diff 13 ms, merge 11 ms, apply 5 ms.
-  function timedWorld(): {
+  function timedWorld(overrides: Partial<OrchestrateCommandDeps> = {}): {
     world: FakeWorld;
     tick: (ms: number) => void;
     clock: () => number;
@@ -2609,6 +2609,7 @@ describe('merge telemetry (§61, issue #158)', () => {
           tick(5);
         }
       },
+      ...overrides,
     });
     return { world, tick, clock: () => clock, spawnInfos };
   }
@@ -2673,6 +2674,115 @@ describe('merge telemetry (§61, issue #158)', () => {
     // launch and the run continued after it — none of that is creation time.
     expect(spawnInfos[0]?.worktreeMs).toBe(7);
     expect(clock()).toBeGreaterThan(1_007 + 7);
+  });
+
+  it('leaves the approval gate wait out of mergeMs', async () => {
+    // The gate is a HUMAN-paced wait (a bounded seat can hold it for tens of
+    // seconds), and §61 budgets the merge itself: mergeMs covers
+    // workspace_merge only, exactly like resolveMs is kept apart from it.
+    // A gate tick must therefore move neither mergeMs nor the total.
+    const { world, tick } = timedWorld({
+      requestApproval: () => {
+        // The user takes a second to answer.
+        tick(1_000);
+        return true;
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'one thing', agents: ['alpha'], json: true },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    const telemetry = lastJsonLine(world.lines)
+      .mergeTelemetry as unknown as MergeTelemetry[];
+    expect(telemetry[0]).toMatchObject({ mergeMs: 11, resolveMs: 0 });
+    // The total is the phase sum, so the gate second is in no phase at all —
+    // it is not smuggled into the merge leg. This is the SAME total the
+    // ungated run reports (queue 0 + diff 13 + merge 11 + apply 5): a
+    // human-paced gate cannot move the numbers §61 budgets.
+    expect(totalMergeMs(telemetry[0] as MergeTelemetry)).toBe(29);
+  });
+
+  it('records a denied gate instead of dropping the candidate', async () => {
+    // The gate's verdict ends the run for that candidate: the telemetry must
+    // still name it (the queue wait was measured) rather than leave the
+    // operator with a row that silently vanished.
+    const world = makeWorld({
+      now: () => 1_000,
+      runWorker: () => ({
+        hunks: [{ path: 'alpha.txt', hunk: '@@ -0,0 +1 @@ +x' }],
+        diffMs: 13,
+      }),
+      requestApproval: () => ({ verdict: 'deny' as const }),
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'one thing', agents: ['alpha'], json: true },
+      world.deps,
+    );
+    expect(code).toBe(4);
+    const telemetry = lastJsonLine(world.lines)
+      .mergeTelemetry as unknown as MergeTelemetry[];
+    expect(telemetry).toHaveLength(1);
+    expect(telemetry[0]).toMatchObject({
+      agentId: 'alpha',
+      diffMs: 13,
+      mergeMs: 0,
+      resolveMs: 0,
+      applyMs: 0,
+      outcome: 'approval-denied',
+    });
+  });
+
+  it('records a gate timeout under its own outcome', async () => {
+    const world = makeWorld({
+      now: () => 1_000,
+      requestApproval: () => ({
+        verdict: 'timeout' as const,
+        maxPendingMs: 60,
+      }),
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'one thing', agents: ['alpha'], json: true },
+      world.deps,
+    );
+    expect(code).toBe(4);
+    const telemetry = lastJsonLine(world.lines)
+      .mergeTelemetry as unknown as MergeTelemetry[];
+    expect(telemetry[0]).toMatchObject({
+      agentId: 'alpha',
+      applyMs: 0,
+      outcome: 'approval-timeout',
+    });
+  });
+
+  it('names a failed merge truthfully instead of calling it discarded', async () => {
+    // The merge threw: the branch and worktree stay as evidence (§44.1) and
+    // `state.pending` keeps the worker for `--resume`, so nothing was thrown
+    // away. The record says what happened, and the failure envelope carries
+    // it (the text view prints the line next to the error).
+    const world = makeWorld({
+      now: () => 1_000,
+      mergeBranch: () => {
+        throw new Error('index lock held');
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'one thing', agents: ['alpha'], json: true },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    const envelope = lastJsonLine(world.lines);
+    const telemetry = envelope.mergeTelemetry as unknown as MergeTelemetry[];
+    expect(telemetry).toHaveLength(1);
+    expect(telemetry[0]).toMatchObject({
+      agentId: 'alpha',
+      applyMs: 0,
+      outcome: 'merge-failed',
+    });
+    // The branch is still there for the operator: the run did not discard it.
+    const state = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(state.pending).toEqual(['alpha']);
+    expect(state.merged).toEqual([]);
   });
 
   it('counts the queue wait when the candidate waits for the merge slot', async () => {

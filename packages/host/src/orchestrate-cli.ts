@@ -1522,6 +1522,19 @@ export async function runOrchestrateCommand(
     return envelope.exitCode;
   };
   const reapErrors: { agentId: string; message: string }[] = [];
+  // §61 (issue #158): one record per candidate the merge loop measured.
+  // Declared before the failure helpers: a pre-loop refusal (not-a-repo,
+  // usage) reaches `fail()` too, and its envelope must still be buildable.
+  const mergeTelemetry: MergeTelemetry[] = [];
+  // §61 (issue #158): the measured merge phases, one line per candidate. Used
+  // by the success view AND the failure envelope — a candidate whose gate
+  // denied it, or whose merge threw, was measured too, and the operator reads
+  // why it stopped instead of a row that vanished.
+  const mergeTelemetryLines = (): string[] =>
+    mergeTelemetry.map(
+      (record) =>
+        `merge telemetry: ${record.agentId} queue=${record.queueMs}ms diff=${record.diffMs}ms merge=${record.mergeMs}ms resolve=${record.resolveMs}ms apply=${record.applyMs}ms total=${totalMergeMs(record)}ms outcome=${record.outcome}`,
+    );
   const fail = (
     exitCode: number,
     code: string,
@@ -1550,8 +1563,11 @@ export async function runOrchestrateCommand(
         graph: delegationGraphLines(sessionId, graphAgents ?? parsed.agents),
         error: { kind: status, message, code },
         ...(reapErrors.length === 0 ? {} : { reapErrors: [...reapErrors] }),
+        // Present only when the loop recorded a candidate before it failed —
+        // never an empty array claiming measurements that did not happen.
+        ...(mergeTelemetry.length === 0 ? {} : { mergeTelemetry }),
       },
-      [`${theme.accent('session:')} ${sessionId}`],
+      [`${theme.accent('session:')} ${sessionId}`, ...mergeTelemetryLines()],
     );
   };
 
@@ -1915,9 +1931,6 @@ export async function runOrchestrateCommand(
       queued: queuedHighWater,
       maxConcurrency: scheduler.maxConcurrency(),
     });
-  // §61 merge telemetry per agent (issue #158): the phases the merge loop
-  // measures, in settle order, reported on the envelope and the text view.
-  const mergeTelemetry: MergeTelemetry[] = [];
   // §61 (issue #158): when each candidate was enqueued (the queue leg) and the
   // branch-diff duration the worker's own run reported (the diff leg).
   const enqueuedAtMs = new Map<string, number>();
@@ -3105,7 +3118,6 @@ export async function runOrchestrateCommand(
     const queuedAtMs = enqueuedAtMs.get(agentId) ?? now();
     const queueMs = Math.max(0, now() - queuedAtMs);
     const diffMs = diffMsByAgent.get(agentId) ?? 0;
-    const mergeStartedAt = now();
     let resolveMs = 0;
     let outcome: MergeOutcome = 'merged';
     // The gate's verdict (issue #130). A plain boolean from an older seam
@@ -3134,6 +3146,24 @@ export async function runOrchestrateCommand(
           : {}),
     });
     if (verdict.verdict !== 'approve') {
+      // The gate's verdict ends this candidate before any merge leg ran: the
+      // record still names it (the queue wait was measured) with every merge
+      // phase at 0, so the operator reads the denial instead of a candidate
+      // that silently vanished from the table.
+      mergeTelemetry.push(
+        recordMergeTelemetry({
+          agentId,
+          queueMs,
+          diffMs,
+          mergeMs: 0,
+          resolveMs: 0,
+          applyMs: 0,
+          outcome:
+            verdict.verdict === 'timeout'
+              ? 'approval-timeout'
+              : 'approval-denied',
+        }),
+      );
       const saveFailure = await saveOrFail(state);
       if (saveFailure !== undefined) {
         await reapSpawned(spawned);
@@ -3159,6 +3189,11 @@ export async function runOrchestrateCommand(
       );
     }
     state = { ...state, merging: agentId };
+    // §61 (issue #158): the merge leg starts HERE, after the gate. The gate is
+    // a human-paced wait (a bounded seat can hold it for tens of seconds) and
+    // §61 budgets the merge itself, so that wait belongs to no phase — mergeMs
+    // covers workspace_merge only, exactly as resolveMs is kept apart from it.
+    const mergeStartedAt = now();
     {
       const saveFailure = await saveOrFail(state);
       if (saveFailure !== undefined) {
@@ -3288,7 +3323,9 @@ export async function runOrchestrateCommand(
           mergeMs: Math.max(0, now() - mergeStartedAt - resolveMs),
           resolveMs,
           applyMs: 0,
-          outcome: 'discarded',
+          // Nothing is discarded: the branch and worktree stay as evidence
+          // (§44.1) and `state.pending` keeps the worker for `--resume`.
+          outcome: 'merge-failed',
         }),
       );
       await reapSpawned(spawned);
@@ -3444,10 +3481,7 @@ export async function runOrchestrateCommand(
     `attribution: ${perAgent}`,
     ...state.merged.map((agentId) => `${theme.success('merged:')} ${agentId}`),
     // §61 (issue #158): the measured merge phases, one line per candidate.
-    ...mergeTelemetry.map(
-      (record) =>
-        `merge telemetry: ${record.agentId} queue=${record.queueMs}ms diff=${record.diffMs}ms merge=${record.mergeMs}ms resolve=${record.resolveMs}ms apply=${record.applyMs}ms total=${totalMergeMs(record)}ms outcome=${record.outcome}`,
-    ),
+    ...mergeTelemetryLines(),
     ...failedWorkers.map(
       (failure) =>
         `${theme.error('failed:')} ${failure.agentId} code=${failure.code}`,

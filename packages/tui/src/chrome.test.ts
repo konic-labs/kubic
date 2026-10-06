@@ -208,6 +208,7 @@ describe('key-hint sets (01-M)', () => {
         ['a', 'allow once'],
         ['^S', 'allow for session'],
         ['d', 'deny'],
+        ['c', 'deny + comment'],
         ['?', 'explain'],
         ['PgUp', 'read transcript'],
       ],

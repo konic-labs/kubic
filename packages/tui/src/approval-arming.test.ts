@@ -134,7 +134,8 @@ describe('allow-session needs a key prose cannot produce (issue #315)', () => {
       String.fromCharCode(32 + i),
     );
     for (const ch of printable) {
-      if (ch === 'a' || ch === 'd') continue; // allow-once / deny
+      // allow-once / deny / the comment input (#467 — it answers nothing).
+      if (ch === 'a' || ch === 'd' || ch === 'c') continue;
       expect(surface.decide(ch)).toBe(false);
     }
     expect(surface.isShowing()).toBe(true);

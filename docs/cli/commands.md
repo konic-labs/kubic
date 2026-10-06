@@ -1472,6 +1472,9 @@ the built-in palette; see `[ui] theme` under
 | `d`, `Esc` | Approval card: **deny** the challenged call. `Esc` acts at once (the only immediate action), `d` after the arming delay. A denial latches for the session like `Ctrl-S`, so the same operation is refused without asking again. |
 | `v` | Approval card: show the next page of a command too tall for the card, or an edit's whole diff (never decides). |
 | `?` | Approval card: open (and close) the model's explanation for the ask (never decides). |
+| `c` | Approval card: **deny with a comment** (issue #467) — opens a one-line input on the card; `Enter` denies with `denied by the user: <comment>` as the reason the model reads (an empty comment is a plain deny), `Esc` goes back to the card. At most 500 characters; recorded in the §60 ledger as the denial's reason. Like `d`, the denial latches for the session. |
+| `e` | Approval card: **edit the command, then allow it** (issue #467; a shell ask of the solo lane only) — opens the proposed command in a one-line input; `Enter` runs what you typed instead. The edited command is judged again from the start, so an edit that is itself destructive asks again; an unchanged command is a plain allow once, an emptied one is not accepted. The call's result opens with `[edited by the user — ran: <yours> (proposed: <the model's>)]`, so neither the model nor the transcript takes it for the proposed command's output. Nothing is latched; the §60 ledger records both commands. |
+| `A` | Approval card: **allow all edits this turn** (issue #467; an edit or write ask a role's `requires` raised inside the workspace) — this call and every such ask until the turn ends. Never another capability: a write outside the workspace, into `.kubic/` or onto credentials still asks. The status line says `edits auto-approved this turn` while it applies; nothing is latched. |
 | `Ctrl-C` | **Interrupt** the in-flight turn and keep the session; a second press while the interrupt drains quits. Idle, **a composed draft is never discarded**: the first press clears it (`^C: draft cleared`); on an empty editor a press shows `press ^C again to quit` on the notice row for 2 s, and a second press inside that window quits (issue #454). **Cancelling clears the queue**: the abort withdraws every queued follow-up, and the footer names the count (`cancelled · dropped 2 queued prompts`). A prompt queued after a *failed* run stays in the inbox and is placed by the next submit (pi-durable's own rule). During an **orchestrator** run (which cannot be cancelled from the TUI) it quits directly — the manager's signal guard reaps its live workers as the process exits. |
 | `Esc` | **Never quits** (issue #454). It closes the editor's dropdown or an open picker or dialog; during a turn it **interrupts** it like the first `Ctrl-C` — the session and the draft stay, and a second `Esc` while the interrupt drains does nothing (an orchestrator run, which cannot be interrupted here, says so on the footer). Idle on an empty editor it enters **block mode** (see *Block mode* above). While an approval is pending it denies. For a one-press quit key, bind `app.exit` in `~/.kubic/keybindings.json`. |
 | `Ctrl-D` | Quit on an empty draft; while typing it stays delete-forward. |
@@ -1610,6 +1613,9 @@ shipped bindings.
 | `approval.allowOnce` | `a` | approval: allow once |
 | `approval.allowSession` | `ctrl+s` | approval: allow for the session |
 | `approval.deny` | `d`, `escape` | approval: deny |
+| `approval.comment` | `c` | approval: deny with a comment for the model |
+| `approval.edit` | `e` | approval: edit the command, then allow it |
+| `approval.allowEdits` | `shift+a` | approval: allow all edits this turn |
 | `approval.explain` | `?` | approval: show why the model asked (the card's explanation row) |
 | `approval.page` | `v` | approval: next page of a long command |
 

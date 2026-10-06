@@ -144,6 +144,22 @@ export const KEY_ACTIONS = {
     keys: [APPROVAL_PAGE_KEY],
     description: 'approval: next page of a long command',
   },
+  // Issue #467: steering answers.
+  'approval.comment': {
+    scope: 'approval',
+    keys: APPROVAL_DEFAULT_KEYS.comment,
+    description: 'approval: deny with a comment for the model',
+  },
+  'approval.edit': {
+    scope: 'approval',
+    keys: APPROVAL_DEFAULT_KEYS.edit,
+    description: 'approval: edit the command, then allow it',
+  },
+  'approval.allowEdits': {
+    scope: 'approval',
+    keys: APPROVAL_DEFAULT_KEYS['allow-edits'],
+    description: 'approval: allow all edits this turn',
+  },
   // Issue #459: the card's explanation row (the model's justification).
   'approval.explain': {
     scope: 'approval',
@@ -375,6 +391,9 @@ export function createKeyRegistry(
         'allow-once': bound.get('approval.allowOnce') ?? [],
         'allow-session': bound.get('approval.allowSession') ?? [],
         deny: bound.get('approval.deny') ?? [],
+        comment: bound.get('approval.comment') ?? [],
+        edit: bound.get('approval.edit') ?? [],
+        'allow-edits': bound.get('approval.allowEdits') ?? [],
       }) as ApprovalKeyOverrides,
     notices,
   };

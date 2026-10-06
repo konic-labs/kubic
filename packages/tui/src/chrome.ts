@@ -176,6 +176,8 @@ export type HintContext =
   | 'idle'
   | 'working'
   | 'approval'
+  // Issue #467: the approval card's comment or command input is open.
+  | 'approvalInput'
   | 'overlay'
   | 'palette'
   | 'model'
@@ -227,10 +229,20 @@ export function keyHintSet(
         ...bound('approval.allowOnce', 'allow once'),
         ...bound('approval.allowSession', 'allow for session'),
         ...bound('approval.deny', 'deny'),
+        ...bound('approval.comment', 'deny + comment'),
         ...bound('approval.explain', 'explain'),
         ['PgUp', 'read transcript'],
       ],
       ...quitHint(),
+    };
+  }
+  if (context === 'approvalInput') {
+    return {
+      hints: [
+        ['⏎', 'send'],
+        ['^U', 'clear'],
+      ],
+      right: ['esc', 'back to the card'],
     };
   }
   // Issue #460: the palette names its own keys (03-A).

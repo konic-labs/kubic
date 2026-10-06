@@ -21,6 +21,7 @@ import {
   toolsForClasses,
   validateClasses,
 } from '../../agents/src/policy.js';
+import { redactSecretShapes } from '../../core/src/secret-shapes.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import type {
   ApprovalAskVerdict,
@@ -179,11 +180,22 @@ export interface ApprovalRequest {
   // Issue #459: an edit or write ask's change against the file on disk (the
   // TUI card's diff preview). Absent when it could not be computed.
   preview?: ToolDisplay;
+  // Issue #467: the answers this ask can take beyond allow and deny — the
+  // command can be edited before it runs (a solo shell call), or the edits
+  // of the rest of the turn approved at once (a solo edit/write a role's
+  // obligation raised inside the workspace).
+  editable?: boolean;
+  batchable?: boolean;
 }
 
 // The `by` a seat answers for a single-call approval (the TUI overlay's 'a',
 // issue #231): approved, audited, never latched or persisted.
 export const ALLOW_ONCE = 'allow-once';
+// Issue #467: the `by` for "allow all edits this turn" — this call, and the
+// edit/write asks of the same kind until the turn ends; never latched.
+export const ALLOW_TURN_EDITS = 'allow-turn-edits';
+// Issue #467: the comments and edited commands a seat may send, at most.
+export const APPROVAL_NOTE_MAX_CHARS = 500;
 // The request fields an ask shows (issue #316): the one-line summary and,
 // for a bash call, the full command — both from the call's own args.
 export function approvalRequestDisplay(
@@ -198,7 +210,14 @@ export function approvalRequestDisplay(
 }
 
 export type ApprovalVerdict =
-  | { approved: true; by: string; justified?: boolean }
+  | {
+      approved: true;
+      by: string;
+      justified?: boolean;
+      // Issue #467: the operator rewrote the command before allowing it; the
+      // rewritten call is judged again from the start.
+      edited?: { command: string };
+    }
   | { approved: false; reason: string };
 
 export interface ApprovalStore {
@@ -2128,6 +2147,10 @@ export interface InstalledSoloPolicy {
   // recorded posture; throws only when the posture file cannot be written
   // (the caller reports it, the in-memory posture stays put).
   setFullAccess?: (enabled: boolean, by: string) => AccessPosture;
+  // Issue #467: the turn ended — an `allow all edits this turn` answer
+  // stops applying. And whether one applies right now (the status line).
+  endTurn?: () => void;
+  editsApprovedThisTurn?: () => boolean;
 }
 
 export function installedPolicyPosture(
@@ -2243,6 +2266,9 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       | { approved: true; by?: string }
       | { approved: false; reason: string },
     fullAccess: boolean,
+    // Issue #467: what an approval's record says beyond `approved` (an
+    // edited command names both).
+    note?: string,
   ): void => {
     const onError = input.onAuditError ?? (() => undefined);
     try {
@@ -2269,6 +2295,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
               ? {}
               : { by: decision.by }
             : { reason: decision.reason }),
+          ...(note === undefined ? {} : { note }),
           posture: fullAccess ? 'full-access' : 'approvals',
           ...(worker === undefined
             ? {}
@@ -2390,7 +2417,19 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       onError,
     );
   };
-  const ask: ApprovalAsk = async (call) => {
+  // Issue #467: the operator approved this turn's edits at once (`A`): an
+  // edit or write whose challenge is its role obligation runs without asking
+  // until the turn ends — never latched, never another capability (a path
+  // outside the workspace raises `outside-write`, which still asks).
+  let turnEdits = false;
+  const turnEditable = (toolName: string, capability: string): boolean =>
+    (toolName === 'edit' || toolName === 'write') &&
+    capability === `requires:${toolName}`;
+  const ask: ApprovalAsk = (call) => judge(call, 0);
+  const judge = async (
+    call: ApprovalCall,
+    edits: number,
+  ): Promise<ApprovalAskVerdict> => {
     // A posture.json change made mid-session (issue #325) is refused and
     // restored before this call is judged.
     guardPosture();
@@ -2480,6 +2519,16 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
         const reason = `denied by policy route (capability: ${capability})`;
         return deny(capability, call.toolName, reason);
       }
+      // Issue #467: this turn's edits were approved at once.
+      if (turnEdits && turnEditable(call.toolName, capability)) {
+        audit(
+          call.toolName,
+          capability,
+          { approved: true, by: ALLOW_TURN_EDITS },
+          false,
+        );
+        continue;
+      }
       // Config autoApprove (issue #230; §41.2): explicit-only, decided by
       // the service (which also enforces requireJustification), and
       // consulted BEFORE the no-surface refusal, so a headless run honours it
@@ -2523,20 +2572,69 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
                 call.args,
               )
             : undefined;
+        // Issue #467: the answers a solo ask can take beyond allow/deny.
+        const editable =
+          worker === undefined &&
+          call.toolName === 'bash' &&
+          typeof call.args.command === 'string';
+        const batchable =
+          worker === undefined && turnEditable(call.toolName, capability);
         const verdict = await service.request({
           key,
           capability,
           toolName: call.toolName,
           ...approvalRequestDisplay(call.toolName, capability, call.args),
           ...(preview === undefined ? {} : { preview }),
+          ...(editable ? { editable: true } : {}),
+          ...(batchable ? { batchable: true } : {}),
         });
         // A worker child's seat IS the manager (issue #279): the manager's
         // worker-asks record is the one §60 record for this decision.
         if (!verdict.approved) {
+          // A denial's reason reaches the model (a user's comment rides it,
+          // issue #467): bounded like every other summary.
+          const reason = boundedNote(verdict.reason);
           return worker === undefined
-            ? deny(capability, call.toolName, verdict.reason)
-            : refuseUnaudited(capability, call.toolName, verdict.reason);
+            ? deny(capability, call.toolName, reason)
+            : refuseUnaudited(capability, call.toolName, reason);
         }
+        // Issue #467: the operator rewrote the command. The rewrite is a new
+        // call: judged again from the start (a destructive edit asks again),
+        // and what runs is the rewrite.
+        if (verdict.edited !== undefined && editable) {
+          const command = verdict.edited.command;
+          if (command.trim() === '') {
+            return deny(
+              capability,
+              call.toolName,
+              'denied by the user: the edited command is empty',
+            );
+          }
+          if (edits >= MAX_APPROVAL_EDITS) {
+            return deny(
+              capability,
+              call.toolName,
+              `denied: one call was edited more than ${MAX_APPROVAL_EDITS} times`,
+            );
+          }
+          audit(
+            call.toolName,
+            capability,
+            { approved: true, by: 'user-edit' },
+            false,
+            boundedNote(
+              redactSecretShapes(
+                `edited by the user: ${String(call.args.command)} → ${command}`,
+              ),
+            ),
+          );
+          const editedArgs = { ...call.args, command };
+          const next = await judge({ ...call, args: editedArgs }, edits + 1);
+          return next.approved
+            ? { ...next, arguments: next.arguments ?? editedArgs }
+            : next;
+        }
+        if (verdict.by === ALLOW_TURN_EDITS && batchable) turnEdits = true;
         if (worker === undefined) {
           audit(
             call.toolName,
@@ -2584,7 +2682,23 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     approvalsSkipped,
     setFullAccess,
     settle: guardPosture,
+    endTurn: () => {
+      turnEdits = false;
+    },
+    editsApprovedThisTurn: () => turnEdits,
   };
+}
+
+// Issue #467: how many times one call may be rewritten before it is refused
+// (every rewrite is an operator's answer; the bound is a backstop).
+const MAX_APPROVAL_EDITS = 8;
+
+// Issue #467: a seat's free text (a denial comment, a note) as the policy
+// records and the model reads it: one line, bounded.
+function boundedNote(text: string): string {
+  const line = text.replace(/\s+/g, ' ').trim();
+  const max = APPROVAL_NOTE_MAX_CHARS + 64;
+  return line.length <= max ? line : `${line.slice(0, max - 1)}…`;
 }
 
 // The trigger context the shipped default evaluates capabilities with: the
@@ -2695,7 +2809,15 @@ export class ApprovalService {
     // operation for this session). An 'allow once' approves THIS call only:
     // it is returned without being stored or persisted, so the next
     // identical call asks again.
-    if (!(stamped.approved && stamped.by === ALLOW_ONCE)) {
+    // Issue #467: a turn's edit batch is not a session answer either.
+    if (
+      !(
+        stamped.approved &&
+        (stamped.by === ALLOW_ONCE ||
+          stamped.by === ALLOW_TURN_EDITS ||
+          stamped.edited !== undefined)
+      )
+    ) {
       this.decisions.set(request.key, stamped);
       this.persist();
     }

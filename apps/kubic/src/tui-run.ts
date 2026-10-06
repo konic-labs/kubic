@@ -924,6 +924,10 @@ export interface TuiLaneBoot {
   // next challenged call follows and the indicator moves in one frame.
   // Absent (viewer boots) means the toggle refuses by name.
   setFullAccess?: (enabled: boolean) => SessionFullAccessGrant;
+  // Issue #467: the installed policy's turn boundary — an `allow all edits
+  // this turn` answer stops applying — and whether one applies right now.
+  endApprovalTurn?: () => void;
+  editsApprovedThisTurn?: () => boolean;
   // Issue #305: `/resume`'s rows — the sessions store this boot belongs to,
   // newest first. Absent (injected boots) means `/resume` refuses by name.
   listSessions?: () => Promise<readonly TuiSessionChoice[]>;
@@ -2089,6 +2093,9 @@ export async function bootTuiLane(
         }));
       },
       cwd: env.cwd,
+      // Issue #467: the turn boundary of `allow all edits this turn`.
+      endApprovalTurn: () => installed.endTurn?.(),
+      editsApprovedThisTurn: () => installed.editsApprovedThisTurn?.() === true,
       // Issue #309: the toggle's host path. `installed.setFullAccess` flips
       // the live posture the ask reads and writes posture.json + the §60
       // row; the returned grant carries the warning the caller reports.
@@ -4358,6 +4365,9 @@ export async function runTuiCommand(
     // Issue #463: block mode's copies — OSC 52 on the terminal the screen
     // runs on (through tmux's passthrough when inside it); refused on a
     // terminal known to drop it, so a copy is never claimed falsely.
+    // Issue #467: the status line's word on a turn's edit batch — the
+    // policy of whichever boot is current.
+    editsApprovedThisTurn: () => boot.editsApprovedThisTurn?.() === true,
     // Issue #466: the roles the dashboard's `^N` offers a new worker, in
     // the order a task usually needs them (the implementer is the default).
     dispatchRoles: DISPATCH_ROLE_ORDER.filter((role) =>
@@ -6456,6 +6466,8 @@ export async function runTuiCommand(
             if (inFlightTurns === 0) {
               droppedOnCancel = 0;
               if (activeTurn === driver) activeTurn = undefined;
+              // Issue #467: the turn is over — so is its edit batch.
+              boot.endApprovalTurn?.();
             }
             // Sync BEFORE the footer: `setBusy(false)` clears the footer row.
             syncBusy();

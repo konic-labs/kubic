@@ -47,9 +47,12 @@ describe('approval card (issue #459; 02-A … 02-D)', () => {
     );
     expect(lines).toContain(' ┃   ○ cwd           ~/Desktop/kubic-playground');
     const keys = lines.find((line) => line.includes('allow once')) ?? '';
+    // Issue #467: `c` joins the keys; at 100 columns `esc = deny` takes its
+    // own row.
     expect(keys).toMatch(
-      /a {2}allow once {4}\^S {2}allow for session {4}d {2}deny {4}\? {2}explain +esc = deny $/,
+      /a {2}allow once {4}\^S {2}allow for session {4}d {2}deny {4}c {2}deny \+ comment {4}\? {2}explain$/,
     );
+    expect(lines).toContain(' ┃   esc = deny ');
     expect(lines.at(-1)?.startsWith(' ┗━━')).toBe(true);
     for (const line of lines)
       expect(visibleWidth(line)).toBeLessThanOrEqual(100);

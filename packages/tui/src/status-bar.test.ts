@@ -493,3 +493,18 @@ describe('status bar review fixes (issue #27, fix cycle 1)', () => {
     expect(Object.keys(row({})).sort()).toEqual(['model', 'provider', 'usage']);
   });
 });
+
+describe('a turn of auto-approved edits (issue #467)', () => {
+  it('says so beside the state word while it applies', () => {
+    const line = renderStatusLine(
+      state({ turn: 'working', turnEdits: true }),
+      120,
+      plain,
+      NOW,
+    );
+    expect(line).toContain('edits auto-approved this turn  │  working');
+    expect(
+      renderStatusLine(state({ turn: 'working' }), 120, plain, NOW),
+    ).not.toContain('auto-approved');
+  });
+});

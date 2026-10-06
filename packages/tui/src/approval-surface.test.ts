@@ -143,6 +143,9 @@ describe('approval surface: boot key check (issue #96, criterion 1)', () => {
       'allow-once': ['a'],
       'allow-session': ['ctrl+s'],
       deny: ['d', 'escape'],
+      comment: ['c'],
+      edit: ['e'],
+      'allow-edits': ['shift+a'],
     });
   });
 });

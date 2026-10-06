@@ -160,6 +160,8 @@ export interface StatusBarState {
   readonly turn?: StatusTurnState;
   readonly busySince?: number;
   readonly journalChanges?: number;
+  // Issue #467: an `allow all edits this turn` answer applies right now.
+  readonly turnEdits?: boolean;
 }
 
 const SEPARATOR = '  │  ';
@@ -328,7 +330,12 @@ export function renderStatusLine(
       ? spinnerFrame(Math.max(0, now - (state.busySince ?? now)))
       : TOOL;
   const lead = ui.fg(role)(` ${mark} `);
-  const word = `${ui.fg(role)(TURN_WORD[turn])} `;
+  // Issue #467: a turn's edits approved at once say so beside the state.
+  const word = `${
+    state.turnEdits === true
+      ? `${ui.fg('warn')('edits auto-approved this turn')}${ui.fg('fg3')(SEPARATOR)}`
+      : ''
+  }${ui.fg(role)(TURN_WORD[turn])} `;
   const changes = state.journalChanges ?? 0;
   const segments: StatusSegments = {
     model: ui.fg('fg1')(state.model),
@@ -363,7 +370,10 @@ export function renderStatusLine(
 export interface StatusBarOptions {
   // Issue #453: the turn facts read at render time (the app's busy,
   // approval and cancel state), so the state word never lags a frame.
-  readonly live?: () => Pick<StatusBarState, 'turn' | 'busySince'>;
+  readonly live?: () => Pick<
+    StatusBarState,
+    'turn' | 'busySince' | 'turnEdits'
+  >;
 }
 
 export class StatusBar implements Component {

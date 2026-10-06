@@ -341,6 +341,9 @@ export interface TuiAppSeed {
   // Issue #466: the roles the dashboard's `^N` offers a new worker (`tab`
   // cycles them), the first being the default.
   readonly dispatchRoles?: readonly string[];
+  // Issue #467: whether an `allow all edits this turn` answer applies now
+  // (the solo policy's own state), for the status line.
+  readonly editsApprovedThisTurn?: () => boolean;
   // Issue #458: the project's absolute root; with `listFiles`, file
   // references in answers link to `file://<root>/<path>`.
   readonly fileRoot?: string;
@@ -1037,7 +1040,12 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   };
   // Issue #453: the state word reads the app's live turn facts per frame.
   const status = new StatusBar(barState, {
-    live: () => ({ turn: turnState(), busySince: noticeRow.busySince }),
+    live: () => ({
+      turn: turnState(),
+      busySince: noticeRow.busySince,
+      // Issue #467: the policy's own word on a turn's edit batch.
+      ...(seed.editsApprovedThisTurn?.() === true ? { turnEdits: true } : {}),
+    }),
   });
   // The live model label the header, welcome block and status bar show; one
   // path for the boot, a `/model` switch and a session reset (#305).
@@ -1123,6 +1131,11 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       ...(seed.cwdLabel === undefined ? {} : { cwd: seed.cwdLabel }),
       pageKey: keyCap(keys.label('approval.page')),
       explainKey: keyCap(keys.label('approval.explain')),
+      // Issue #467: the card's open comment or command input.
+      ...((): { input?: { kind: 'comment' | 'edit'; text: string } } => {
+        const open = approvalSurface.inputMode();
+        return open === undefined ? {} : { input: open };
+      })(),
     };
   };
   // Issue #454: Pi's editor inside the kit's box (editor-frame.ts).
@@ -2345,7 +2358,11 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     return failed ? 'error' : 'ready';
   };
   const hintContext = (): HintContext => {
-    if (cardVisible()) return 'approval';
+    if (cardVisible()) {
+      return approvalSurface.inputMode() === undefined
+        ? 'approval'
+        : 'approvalInput';
+    }
     if (palette !== undefined) return 'palette';
     if (blockViewer !== undefined) return 'overlay';
     if (blockMode !== undefined) return 'blocks';
@@ -2400,6 +2417,19 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // session; the operator can still quit after the request settles. A key
       // the surface does not claim falls through to the normal loop (so the
       // draft, Ctrl-T, Ctrl-O/R and the rest keep working).
+      // Issue #467: the card's open input takes the keys first — text never
+      // reaches a decision key, Esc goes back to the card, Enter sends.
+      if (cardVisible()) {
+        const typed = approvalSurface.typeInto(data);
+        if (typed === 'settled') {
+          settleApproval();
+          return { quit: false, consumed: true, cancel: false };
+        }
+        if (typed === 'consumed') {
+          overlayHost?.requestRender?.();
+          return { quit: false, consumed: true, cancel: false };
+        }
+      }
       // Issue #465: an ask the dashboard defers is not on screen, so it
       // takes no keys until `a` opens it.
       if (cardVisible() && approvalSurface.decide(data)) {

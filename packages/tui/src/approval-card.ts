@@ -86,6 +86,8 @@ export interface ApprovalCardOptions {
   readonly cwd?: string;
   readonly pageKey: string;
   readonly explainKey: string;
+  /** Issue #467: the open comment or command input, if any. */
+  readonly input?: { readonly kind: 'comment' | 'edit'; readonly text: string };
 }
 
 // Issue #316: the card shows what will actually run. A command wraps across
@@ -254,11 +256,36 @@ export function renderApprovalCard(
     k === ''
       ? ''
       : `${ui.style({ fg: 'fg0', bold: true })(k)}  ${ui.fg('fg1')(what)}`;
-  const escDeny = options.keys.deny.includes('escape')
-    ? `${ui.fg('fg2')('esc = deny')} `
-    : '';
+  const escDeny =
+    options.input === undefined && options.keys.deny.includes('escape')
+      ? `${ui.fg('fg2')('esc = deny')} `
+      : '';
+  // The keys once the card is armed (the row a locked card reserves).
+  const armedParts = [
+    key(cap('allow-once'), 'allow once'),
+    key(cap('allow-session'), 'allow for session'),
+    key(cap('deny'), 'deny'),
+    // Issue #467: steering — only where the host offered it.
+    key(cap('comment'), 'deny + comment'),
+    request.editable === true ? key(cap('edit'), 'edit command') : '',
+    request.batchable === true
+      ? key(cap('allow-edits'), 'allow all edits this turn')
+      : '',
+    paged || preview !== undefined
+      ? key(options.pageKey, preview === undefined ? 'next page' : 'full diff')
+      : '',
+    key(options.explainKey, 'explain'),
+  ].filter((part) => part !== '');
   let parts: string[];
-  if (!options.allowable) {
+  if (options.input !== undefined) {
+    // Issue #467: the open input stands where the keys were.
+    const editing = options.input.kind === 'edit';
+    parts = [
+      `${ui.fg('fg2')(editing ? 'edit the command ›' : 'deny with a comment ›')} ${ui.fg('fg0')(options.input.text)}${ui.fg('accent')('▏')}`,
+      key('⏎', editing ? 'allow as edited' : 'deny with it'),
+      key('esc', 'back'),
+    ];
+  } else if (!options.allowable) {
     parts = [
       ui.fg('warn')(
         'the terminal is too short to show this command — enlarge it',
@@ -268,27 +295,21 @@ export function renderApprovalCard(
   } else if (!options.armed) {
     parts = [ui.fg('fg2')('… keys unlock in a moment')];
   } else {
-    parts = [
-      key(cap('allow-once'), 'allow once'),
-      key(cap('allow-session'), 'allow for session'),
-      key(cap('deny'), 'deny'),
-      paged || preview !== undefined
-        ? key(
-            options.pageKey,
-            preview === undefined ? 'next page' : 'full diff',
-          )
-        : '',
-      key(options.explainKey, 'explain'),
-    ].filter((part) => part !== '');
+    parts = armedParts;
   }
   const gap = '    ';
-  const oneRow = `${indent}${parts.join(gap)}`;
-  if (narrow || visibleWidth(oneRow) + visibleWidth(escDeny) + 1 > inner) {
-    // Whole keys per row: a key is never cut off (a part wider than a row
-    // wraps on its own), and `esc = deny` takes the last row.
+  // The rows a set of keys takes: one row when it fits beside `esc = deny`,
+  // else whole keys per row (a key is never cut off; a part wider than a row
+  // wraps on its own) with `esc = deny` on the last row.
+  const keyRows = (set: readonly string[]): string[] => {
+    const oneRow = `${indent}${set.join(gap)}`;
+    if (!narrow && visibleWidth(oneRow) + visibleWidth(escDeny) + 1 <= inner) {
+      return [leftRight(oneRow, escDeny, inner)];
+    }
+    const rows: string[] = [];
     const keyRoom = Math.max(1, inner - indent.length);
     let row = '';
-    for (const part of parts) {
+    for (const part of set) {
       const pieces =
         visibleWidth(part) > keyRoom ? wrapTextWithAnsi(part, keyRoom) : [part];
       for (const piece of pieces) {
@@ -300,16 +321,23 @@ export function renderApprovalCard(
         ) {
           row += `${gap}${piece}`;
         } else {
-          body.push(`${indent}${row}`);
+          rows.push(`${indent}${row}`);
           row = piece;
         }
       }
     }
-    if (row !== '') body.push(`${indent}${row}`);
-    if (escDeny !== '') body.push(`${indent}${escDeny}`);
-  } else {
-    body.push(leftRight(oneRow, escDeny, inner));
+    if (row !== '') rows.push(`${indent}${row}`);
+    if (escDeny !== '') rows.push(`${indent}${escDeny}`);
+    return rows;
+  };
+  const shownRows = keyRows(parts);
+  // A locked card keeps the height it will have once armed, so arming never
+  // moves the frame (nor changes whether the card fits).
+  if (options.input === undefined && options.allowable && !options.armed) {
+    const armedHeight = keyRows(armedParts).length;
+    while (shownRows.length < armedHeight) shownRows.push('');
   }
+  body.push(...shownRows);
   const title = `${badge(ui, 'APPROVAL', 'waiting')}${ui.fg('warn')(' ━ ')}${ui.style({ fg: 'fg0', bold: true })(request.toolName)}${
     preview === undefined ? '' : ` ${previewCounts(ui, preview)}`
   }`;

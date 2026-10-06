@@ -40,6 +40,7 @@ import {
   resolveApprovalKey,
 } from './approval-view.js';
 import { sanitizeLaneText } from './lane-cells.js';
+import { matchesKey } from './tui-boundary.js';
 
 export { APPROVAL_DEFAULT_KEYS };
 
@@ -80,6 +81,22 @@ function defaultArmTimer(ms: number, fire: () => void): () => void {
 // surface does not care which host service asked.
 export type SurfaceRequest = ApprovalViewRequest;
 
+/** Issue #467: the card's one-line input — a denial comment or a command. */
+export interface ApprovalInput {
+  readonly kind: 'comment' | 'edit';
+  readonly text: string;
+}
+
+/** Issue #467: the longest comment the card takes (the host bounds it too). */
+export const APPROVAL_COMMENT_MAX_CHARS = 500;
+/** And the longest command an edit may grow to. */
+export const APPROVAL_EDIT_MAX_CHARS = 16 * 1024;
+
+// Text a key (or a burst of typing) inserts: no control character in it.
+function insertable(data: string): boolean {
+  return data !== '' && [...data].every((ch) => ch >= ' ' && ch !== '\u007f');
+}
+
 export interface ApprovalSurface {
   // Called by the decider. Resolves when the user decides (or when the
   // session gives up); never rejects.
@@ -109,6 +126,13 @@ export interface ApprovalSurface {
   // `decide` (a held-key repeat): that is typing too, so the arming window
   // restarts. A no-op when nothing shows.
   noteDroppedKey(): void;
+  // Issue #467: `c` (comment) or `e` (edit) opened a one-line input on the
+  // card. While it is open, `typeInto` takes the keys first: text, Backspace,
+  // Ctrl-U, Esc (back to the card) and Enter (send) — `settled` when Enter
+  // answered the ask, `consumed` for any other key it used, undefined for a
+  // key it leaves alone (a global key). `decide` takes no key meanwhile.
+  inputMode(): ApprovalInput | undefined;
+  typeInto(data: string): 'settled' | 'consumed' | undefined;
   // Issue #465: the shown request just came on screen (the dashboard's `a`
   // opened its card): it arms from now, like a fresh ask — a key pressed
   // with the one that opened it cannot answer it. A no-op when nothing shows.
@@ -221,6 +245,10 @@ function decisionFor(action: ApprovalAction): ApprovalDecision {
   if (action === 'allow-session') {
     return { approved: true, by: 'allow-session' };
   }
+  // Issue #467: the host's `ALLOW_TURN_EDITS`.
+  if (action === 'allow-edits') {
+    return { approved: true, by: 'allow-turn-edits' };
+  }
   return { approved: false, reason: 'denied by the user' };
 }
 
@@ -256,6 +284,8 @@ export function createApprovalSurface(
   let windowMs = armingMs;
   // The previous key the surface saw, for the terminal-repeat rule.
   let lastKey: { readonly data: string; readonly at: number } | undefined;
+  // Issue #467: the card's open input, if any (closed for every new ask).
+  let input: ApprovalInput | undefined;
   let page = 0;
   let explain = false;
   let cancelArmTimer: (() => void) | undefined;
@@ -302,6 +332,7 @@ export function createApprovalSurface(
     // hints unlock visibly.
     page = 0;
     explain = false;
+    input = undefined;
     startArming(shown, armingMs);
     notify();
   };
@@ -421,11 +452,87 @@ export function createApprovalSurface(
     },
     decide: (data: string): boolean => {
       const current = shown;
-      if (current === undefined) return false;
+      if (current === undefined || input !== undefined) return false;
       const action = findAction(data);
       if (action === undefined) return false;
+      // Issue #467: `c` and `e` open the card's input instead of answering;
+      // `e` and `A` act only on the asks the host offered them for.
+      if (action === 'comment') {
+        input = { kind: 'comment', text: '' };
+        notify();
+        return false;
+      }
+      if (action === 'edit') {
+        if (current.request.editable !== true) return false;
+        input = { kind: 'edit', text: current.request.command ?? '' };
+        notify();
+        return false;
+      }
+      if (action === 'allow-edits' && current.request.batchable !== true) {
+        return false;
+      }
       settle(current, decisionFor(action));
       return true;
+    },
+    inputMode: (): ApprovalInput | undefined =>
+      shown === undefined ? undefined : input,
+    typeInto: (data: string): 'settled' | 'consumed' | undefined => {
+      const current = shown;
+      const open = input;
+      if (current === undefined || open === undefined) return undefined;
+      if (matchesKey(data, 'escape')) {
+        input = undefined;
+        notify();
+        return 'consumed';
+      }
+      if (matchesKey(data, 'enter')) {
+        const text = open.text.trim();
+        if (open.kind === 'comment') {
+          input = undefined;
+          settle(current, {
+            approved: false,
+            reason:
+              text === ''
+                ? 'denied by the user'
+                : `denied by the user: ${text}`,
+          });
+          return 'settled';
+        }
+        // An emptied command is not an answer: the input stays open.
+        if (text === '') return 'consumed';
+        input = undefined;
+        settle(
+          current,
+          text === (current.request.command ?? '').trim()
+            ? { approved: true, by: 'allow-once' }
+            : {
+                approved: true,
+                by: 'allow-once',
+                edited: { command: open.text },
+              },
+        );
+        return 'settled';
+      }
+      if (matchesKey(data, 'backspace')) {
+        input = { ...open, text: [...open.text].slice(0, -1).join('') };
+        notify();
+        return 'consumed';
+      }
+      if (matchesKey(data, 'ctrl+u')) {
+        input = { ...open, text: '' };
+        notify();
+        return 'consumed';
+      }
+      if (insertable(data)) {
+        const max =
+          open.kind === 'comment'
+            ? APPROVAL_COMMENT_MAX_CHARS
+            : APPROVAL_EDIT_MAX_CHARS;
+        input = { ...open, text: `${open.text}${data}`.slice(0, max) };
+        notify();
+        return 'consumed';
+      }
+      return undefined;
     },
     pending: (): SurfaceRequest | undefined => shown?.request,
     isShowing: (): boolean => shown !== undefined,
@@ -483,6 +590,11 @@ export function createApprovalSurface(
           APPROVAL_DEFAULT_KEYS['allow-session']),
       ],
       deny: [...(overrides?.deny ?? APPROVAL_DEFAULT_KEYS.deny)],
+      comment: [...(overrides?.comment ?? APPROVAL_DEFAULT_KEYS.comment)],
+      edit: [...(overrides?.edit ?? APPROVAL_DEFAULT_KEYS.edit)],
+      'allow-edits': [
+        ...(overrides?.['allow-edits'] ?? APPROVAL_DEFAULT_KEYS['allow-edits']),
+      ],
     }),
     // Delegates to ask() so the sanitiser, the queue and the abort path are
     // always in the path. `seat` is also the value runTuiCommand hands the

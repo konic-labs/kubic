@@ -125,12 +125,19 @@ describe.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(
         'allow-once': ['a'],
         'allow-session': ['ctrl+s'],
         deny: ['d', 'escape'],
+        comment: ['c'],
+        edit: ['e'],
+        'allow-edits': ['shift+a'],
       });
       const section = tuiSection();
       expect(section).toMatch(/\| `a` \|[^|]*allow once/i);
       expect(section).toMatch(/\| `Ctrl-S` \|[^|]*allow for the session/i);
       expect(section).toMatch(/arming delay[^.]*400 ms/i);
       expect(section).toMatch(/\| `d`, `Esc` \|[^|]*deny/i);
+      // Issue #467: the steering answers.
+      expect(section).toMatch(/\| `c` \|[^|]*deny with a comment/i);
+      expect(section).toMatch(/\| `e` \|[^|]*edit the command/i);
+      expect(section).toMatch(/\| `A` \|[^|]*allow all edits this turn/i);
     });
 
     it('documents the card keys the code binds (issue #459)', () => {

@@ -13,7 +13,15 @@ import type { CellDisplay } from './transcript.js';
 import type { Component } from './tui-boundary.js';
 import { matchesKey } from './tui-boundary.js';
 
-export type ApprovalAction = 'allow-once' | 'allow-session' | 'deny';
+// Issue #467: `comment` denies with the operator's words, `edit` rewrites a
+// command before allowing it, `allow-edits` approves the turn's edits.
+export type ApprovalAction =
+  | 'allow-once'
+  | 'allow-session'
+  | 'deny'
+  | 'comment'
+  | 'edit'
+  | 'allow-edits';
 
 // Structural request: the fields the dialog renders. The host owns the
 // trigger/policy truth; the view never classifies, only presents.
@@ -28,10 +36,13 @@ export interface ApprovalViewRequest {
   // Issue #459: an edit or write ask's change, as the inline diff the card
   // shows (the host computes it against the file on disk).
   readonly preview?: CellDisplay;
+  // Issue #467: the host's word on which steering answers this ask takes.
+  readonly editable?: boolean;
+  readonly batchable?: boolean;
 }
 
 export type ApprovalDecision =
-  | { approved: true; by: string }
+  | { approved: true; by: string; edited?: { command: string } }
   | { approved: false; reason: string };
 
 // Overlay geometry (§16.4): centered 70% width / 60% height, visible at
@@ -124,6 +135,11 @@ export const APPROVAL_DEFAULT_KEYS: Record<
   'allow-once': ['a'],
   'allow-session': ['ctrl+s'],
   deny: ['d', 'escape'],
+  // Issue #467: plain letters like allow-once — each acts only after the
+  // arming delay, and `c`/`e` only open an input the operator must send.
+  comment: ['c'],
+  edit: ['e'],
+  'allow-edits': ['shift+a'],
 };
 
 // Issue #315: decision keys are ignored for this long after a request
@@ -157,6 +173,9 @@ const ACTION_ORDER: ReadonlyArray<ApprovalAction> = [
   'deny',
   'allow-once',
   'allow-session',
+  'comment',
+  'edit',
+  'allow-edits',
 ];
 
 function resolvedBindings(
@@ -168,6 +187,10 @@ function resolvedBindings(
     'allow-session':
       overrides?.['allow-session'] ?? APPROVAL_DEFAULT_KEYS['allow-session'],
     deny: overrides?.deny ?? APPROVAL_DEFAULT_KEYS.deny,
+    comment: overrides?.comment ?? APPROVAL_DEFAULT_KEYS.comment,
+    edit: overrides?.edit ?? APPROVAL_DEFAULT_KEYS.edit,
+    'allow-edits':
+      overrides?.['allow-edits'] ?? APPROVAL_DEFAULT_KEYS['allow-edits'],
   };
 }
 

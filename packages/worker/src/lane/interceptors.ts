@@ -88,7 +88,13 @@ export interface ApprovalCall {
 }
 
 export type ApprovalAskVerdict =
-  | { approved: true; challenged: boolean }
+  | {
+      approved: true;
+      challenged: boolean;
+      // Issue #467: the operator edited the call before allowing it — these
+      // arguments replace the call's (and were judged themselves).
+      arguments?: Record<string, unknown>;
+    }
   | { approved: false; reason: string };
 
 const SENSITIVE_PATH = /(\.ssh\/|\.gnupg?\/|\/etc\/|passwd$|\.key$|\.pem$)/i;
@@ -652,6 +658,10 @@ export function policyInterceptorHooks(
   const consumeApproved = (callId: string): void => {
     approvedCalls.delete(callId);
   };
+  // Issue #467: the shell calls the operator rewrote, by call id — the
+  // result says what ran, so neither the model nor the transcript takes the
+  // proposed command's output for its own. Capped like the stand-downs.
+  const editedCalls = new Map<string, { from: string; to: string }>();
   // Budget first: every attempt counts, even one a later handler blocks.
   let calls = 0;
   let triggered = false;
@@ -697,11 +707,48 @@ export function policyInterceptorHooks(
             toolCallId: call.id,
           });
           if (verdict.approved) {
-            if (verdict.challenged) markApproved(call.id, call.arguments);
-            return undefined;
+            // Issue #467: an edited call runs as edited — the later guards see
+            // (and a stand-down covers) exactly the arguments that were judged.
+            const args = verdict.arguments ?? call.arguments;
+            if (verdict.challenged) markApproved(call.id, args);
+            if (
+              verdict.arguments !== undefined &&
+              call.name === 'bash' &&
+              call.id !== ''
+            ) {
+              editedCalls.set(call.id, {
+                from: String(call.arguments.command ?? ''),
+                to: String(verdict.arguments.command ?? ''),
+              });
+              while (editedCalls.size > APPROVED_CALLS_CAP) {
+                const oldest = editedCalls.keys().next();
+                if (oldest.done) break;
+                editedCalls.delete(oldest.value);
+              }
+            }
+            return verdict.arguments === undefined
+              ? undefined
+              : { arguments: verdict.arguments as Record<string, JsonValue> };
           }
           return block(`not approved: ${verdict.reason}`);
         }),
+      // Issue #467: an edited call's result opens with what actually ran.
+      afterTool: (call, result) => {
+        const edit = editedCalls.get(call.id);
+        if (edit === undefined) return undefined;
+        editedCalls.delete(call.id);
+        if (result.content === undefined) return undefined;
+        return {
+          ...result,
+          content: [
+            {
+              type: 'text',
+              text: `[edited by the user — ran: ${redactSecrets(edit.to)} (proposed: ${redactSecrets(edit.from)})]\n`,
+            },
+            ...result.content,
+          ],
+        };
+      },
     }),
   );
 

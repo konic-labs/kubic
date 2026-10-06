@@ -291,7 +291,9 @@ function imageCellIdOf(key: string): string {
 // construction (the composition root) takes effect on the next frame.
 class TranscriptDocument implements Component {
   cells: TranscriptEntry[] = [];
-  welcome: string[] = [];
+  // Issue #462: the welcome block — fixed lines, or the preflight drawn at
+  // the frame's width.
+  welcome: readonly string[] | ((width: number) => string[]) = [];
   pending: string | undefined;
   // Issue #338: the images the echoed prompt carries.
   pendingImages: readonly LaneImagePart[] = [];
@@ -429,7 +431,9 @@ class TranscriptDocument implements Component {
     const theme = tuiTheme();
     // Issue #453: welcome lines wrap rather than cut — the honest lane
     // notice they carry is read whole.
-    const out: string[] = this.welcome.flatMap((line) =>
+    const welcome =
+      typeof this.welcome === 'function' ? this.welcome(w) : this.welcome;
+    const out: string[] = welcome.flatMap((line) =>
       line === ''
         ? ['']
         : wrapTextWithAnsi(line, w).map((part) => fit(part, w)),
@@ -787,7 +791,9 @@ export interface TranscriptView {
   render(width: number): string[];
   // TUI polish: the welcome block at the top of the document, the prompt
   // echoed before the lane commits it, and the expand-all toggle.
-  setWelcome(lines: ReadonlyArray<string>): void;
+  setWelcome(
+    lines: ReadonlyArray<string> | ((width: number) => string[]),
+  ): void;
   setPendingPrompt(
     prompt: string | undefined,
     images?: readonly LaneImagePart[],
@@ -979,8 +985,10 @@ export function createTranscriptView(
     liveCells(): ReadonlyArray<TranscriptEntry> {
       return entries.slice();
     },
-    setWelcome(lines: ReadonlyArray<string>): void {
-      document.welcome = [...lines];
+    setWelcome(
+      lines: ReadonlyArray<string> | ((width: number) => string[]),
+    ): void {
+      document.welcome = typeof lines === 'function' ? lines : [...lines];
     },
     setPendingPrompt(
       prompt: string | undefined,

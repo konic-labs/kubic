@@ -201,6 +201,8 @@ import {
 export interface ProdRunnerIo {
   readonly out: (line: string) => void;
   readonly debug: (line: string) => void;
+  // Issue #462: the version the TUI's first screen names.
+  readonly version?: () => string;
 }
 
 // Test-only overrides for the orchestrate runner (issue #179): prod-path
@@ -436,6 +438,12 @@ export function prodTuiDeps(
     // Issue #228 review: the same per-path check gates the project models.json
     // and each ancestor skill root on the interactive lane.
     trustProject: projectTrustFor(cliConfig),
+    // Issue #462: the first screen's version and trust row (the trust row
+    // is omitted when the project has no layer).
+    ...(io.version === undefined ? {} : { version: io.version() }),
+    ...(cliConfig.trust?.present === true
+      ? { projectTrust: cliConfig.trust.trusted ? 'loaded' : 'untrusted' }
+      : {}),
     // Issue #133: the SAME lane projections `kubic run` consumes — the
     // interactive lane names itself and layers `--role` identically.
     ...runtimeLaneDeps(cliConfig),
@@ -929,7 +937,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       return runTuiCommand(
         options,
         tuiDepsWithDefaults({
-          ...prodTuiDeps({ out, debug }, cliConfig),
+          ...prodTuiDeps(io, cliConfig),
           extensions,
         }),
       );

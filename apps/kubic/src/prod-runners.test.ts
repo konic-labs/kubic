@@ -46,6 +46,7 @@ import {
 import type { CliConfigResult } from './config-runtime.js';
 import { loadCliConfig } from './config-runtime.js';
 import { createProdRunners, prodTuiDeps } from './prod-runners.js';
+import { tuiDepsWithDefaults } from './tui-run.js';
 
 const roots: string[] = [];
 let driver: GitSandbox | undefined;
@@ -1110,6 +1111,42 @@ describe('kubic tui (prod wiring)', () => {
       prodTuiDeps({ out: () => undefined, debug: () => undefined }, loaded)
         .agentId,
     ).toBe('alice');
+  });
+
+  // Issue #462: the first screen's version and trust row reach the run deps
+  // through the real builders (a field the defaults drop stays green
+  // otherwise).
+  it('threads the version and the project trust to the first screen', () => {
+    const home = mkdtempSync(join(tmpdir(), 'prod-tui-home-'));
+    roots.push(home);
+    const project = mkdtempSync(join(tmpdir(), 'prod-tui-project-'));
+    roots.push(project);
+    mkdirSync(join(project, '.kubic'), { recursive: true });
+    writeFileSync(join(project, '.kubic', 'config.toml'), '[journal]\n');
+    new ProjectTrustStore(projectTrustStorePath(home)).set(project, true);
+    const loaded = loadCliConfig({ cwd: project, home, env: {} });
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(
+        {
+          out: () => undefined,
+          debug: () => undefined,
+          version: () => '1.2.3',
+        },
+        loaded,
+      ),
+    );
+    expect(deps.version).toBe('1.2.3');
+    expect(deps.projectTrust).toBe('loaded');
+    const bare = mkdtempSync(join(tmpdir(), 'prod-tui-bare-'));
+    roots.push(bare);
+    const none = tuiDepsWithDefaults(
+      prodTuiDeps(
+        { out: () => undefined, debug: () => undefined },
+        loadCliConfig({ cwd: bare, home, env: {} }),
+      ),
+    );
+    expect('projectTrust' in none).toBe(false);
+    expect('version' in none).toBe(false);
   });
 });
 

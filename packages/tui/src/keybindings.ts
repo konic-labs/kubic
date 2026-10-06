@@ -62,6 +62,13 @@ export const KEY_ACTIONS = {
     keys: ['ctrl+p'],
     description: 'open the command palette',
   },
+  // Issue #462: `?` on an idle, empty editor lists every key; anywhere
+  // else it is the character.
+  'help.keys': {
+    scope: 'global',
+    keys: ['?'],
+    description: 'list every key (on an idle, empty editor)',
+  },
   'session.mode': {
     scope: 'global',
     keys: ['ctrl+g'],

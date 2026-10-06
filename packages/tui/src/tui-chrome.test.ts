@@ -64,11 +64,13 @@ describe('header facts (issue #453)', () => {
       orchestrator: 'orchestrator: worktrees separate writers only',
     };
     const app = seed({ laneNotice: (mode) => notices[mode] });
-    const narrow = app.render(60).join('\n');
+    // Issue #462: it is the preflight's isolation row, wrapped under the
+    // value column.
+    const narrow = app.render(60).join('\n').replace(/\s+/gu, ' ');
     expect(narrow).toContain('controls: approvals + journal');
     expect(narrow).not.toContain('orchestrator: worktrees');
     app.setMode('orchestrator');
-    const doc = app.render(100).join('\n');
+    const doc = app.render(100).join('\n').replace(/\s+/gu, ' ');
     expect(doc).toContain(notices.orchestrator);
     expect(doc).not.toContain('no isolation');
   });

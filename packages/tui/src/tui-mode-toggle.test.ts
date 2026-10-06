@@ -35,7 +35,7 @@ describe('session mode toggle (issue #327)', () => {
 
   it('flips the header badge, not just the state', () => {
     const target = app();
-    expect(target.render(100).join('\n')).not.toMatch(/orchestrator/i);
+    expect(target.render(100)[0]).not.toMatch(/orchestrator/i);
     target.handleInput(CTRL_G);
     const frame = target.render(100);
     expect(frame[0]).toContain('[ORCHESTRATOR] approvals on');
@@ -68,7 +68,8 @@ describe('session mode toggle (issue #327)', () => {
   });
 
   it('the footer hint names the toggle key', () => {
-    expect(app().render(100).join('\n')).toContain('ctrl+g mode');
+    // Issue #462: the preflight's start row names it.
+    expect(app().render(100).join('\n')).toContain('^G orchestrator mode');
   });
 
   it('setMode is the same state the key writes (one writer, two callers)', () => {

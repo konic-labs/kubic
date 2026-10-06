@@ -1044,7 +1044,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     // The quit document is the whole layout: the editor row shows the idle
     // key hints, never the working line — the queue waiting in the inbox did
     // not keep the session busy.
-    expect(doc).toContain('enter send');
+    expect(doc).toContain('⏎ send');
     expect(doc).not.toContain('working…');
   });
 

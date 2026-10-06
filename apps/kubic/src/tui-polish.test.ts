@@ -29,10 +29,7 @@ import {
   renderTreeLines,
   type TreeToolSnapshot,
 } from '../../../packages/tui/src/tree.js';
-import {
-  createTuiApp,
-  renderKeyHints,
-} from '../../../packages/tui/src/tui-app.js';
+import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
 import { Text, visibleWidth } from '../../../packages/tui/src/tui-boundary.js';
 import { fakeTerminal } from '../../../test/fake-terminal.js';
 import { TuiTurnRunner } from './tui-run.js';
@@ -320,7 +317,6 @@ describe('app chrome', () => {
       ` ■ KUBIC ${' '.repeat(60 - 9 - 20)}[SOLO] approvals on `,
     );
     expect(renderHeader(tuiTheme().ui, info, 20)).toBe(' ■ KUBIC     [SOLO] ');
-    expect(renderKeyHints(20)).toBe('enter send');
     const working = renderWorkingLine(
       tuiTheme().ui,
       { elapsedMs: 1500, queues: true },

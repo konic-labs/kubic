@@ -36,7 +36,7 @@ describe('mode indicator seeded from the installed posture (issue #307)', () => 
       mode: 'solo',
       approvalsSkipped: false,
     });
-    expect(solo.render(100).join('\n')).not.toMatch(/orchestrator/i);
+    expect(solo.render(100)[0]).not.toMatch(/orchestrator/i);
     const orchestrator = createTuiApp({
       sessionId: 's',
       model: 'faux/m',

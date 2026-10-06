@@ -76,3 +76,73 @@ export async function promptFrame(): Promise<{
     cancel: (message) => clack.cancel(message),
   };
 }
+
+export interface KeyChoice<T extends string> {
+  /** The key that answers (`y`); matched without case. */
+  readonly key: string;
+  readonly label: string;
+  readonly value: T;
+}
+
+// The input a one-key prompt reads: a TTY stream in raw mode.
+export interface KeyPromptInput {
+  setRawMode?(mode: boolean): unknown;
+  readonly isRaw?: boolean;
+  on(event: 'data', listener: (chunk: Buffer | string) => void): unknown;
+  off(event: 'data', listener: (chunk: Buffer | string) => void): unknown;
+  resume(): unknown;
+  pause(): unknown;
+}
+
+export interface KeyPromptIo {
+  readonly input: KeyPromptInput;
+  readonly write: (text: string) => void;
+}
+
+// One keystroke from a short list (issue #462, the trust question): the
+// key IS the answer — no Enter, no arrows; any other key is ignored. Same
+// contract as promptConfirm: never prompts off a TTY, `null` on Ctrl-C or
+// Esc. The caller renders the question (`message`, keys included); raw
+// mode is restored however the prompt ends.
+export async function promptKey<T extends string>(
+  options: PromptBase<T> & {
+    readonly choices: readonly KeyChoice<T>[];
+    readonly io?: KeyPromptIo;
+  },
+): Promise<T | null> {
+  if (!options.interactive) return options.nonInteractive;
+  const io: KeyPromptIo = options.io ?? {
+    input: process.stdin as unknown as KeyPromptInput,
+    write: (text) => {
+      process.stdout.write(text);
+    },
+  };
+  io.write(`${options.message}\n`);
+  const wasRaw = io.input.isRaw === true;
+  io.input.setRawMode?.(true);
+  io.input.resume();
+  return new Promise<T | null>((resolve) => {
+    const finish = (answer: T | null): void => {
+      io.input.off('data', onData);
+      io.input.setRawMode?.(wasRaw);
+      io.input.pause();
+      resolve(answer);
+    };
+    const onData = (chunk: Buffer | string): void => {
+      for (const char of chunk.toString()) {
+        if (char === '\u0003' || char === '\u001b') {
+          finish(null);
+          return;
+        }
+        const choice = options.choices.find(
+          (candidate) => candidate.key.toLowerCase() === char.toLowerCase(),
+        );
+        if (choice !== undefined) {
+          finish(choice.value);
+          return;
+        }
+      }
+    };
+    io.input.on('data', onData);
+  });
+}

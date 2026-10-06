@@ -167,6 +167,7 @@ import {
   type LaneEntryLike,
   userPromptsOf,
 } from '../../../packages/tui/src/lane-cells.js';
+import { renderNoKeyPreflight } from '../../../packages/tui/src/preflight.js';
 import type { Screen } from '../../../packages/tui/src/screen.js';
 import { bootScreen } from '../../../packages/tui/src/screen.js';
 import {
@@ -266,6 +267,7 @@ import {
   clampThinking,
   ModelSelectError,
   type ModelSelection,
+  NoModelAvailableError,
   parseModelFlag,
   supportedThinking,
 } from '../../../packages/worker/src/model-select.js';
@@ -877,6 +879,8 @@ export interface TuiLaneBoot {
   // turns, cost and age (read without a lock; a held one is listed, never
   // opened). Absent means `/resume` falls back to `listSessions`.
   summarizeSessions?: (exclude?: string) => Promise<readonly SessionSummary[]>;
+  // Issue #462: where a provider's key comes from, for the first screen.
+  keySourceOf?: (provider: string) => string | undefined;
   // Issue #305: the workspace root the journal (and `/undo`) resolves paths
   // against. Absent means `/undo` refuses by name rather than guessing.
   cwd?: string;
@@ -1032,6 +1036,10 @@ export interface TuiRunDeps {
   readWorkspace?: () => Promise<TuiWorkspace>;
   // Issue #453: the header clock's time source; absent hides the clock.
   clock?: () => Date;
+  // Issue #462: the version the first screen names, and the project
+  // layer's trust state (absent: the project has no layer).
+  version?: string;
+  projectTrust?: 'loaded' | 'untrusted';
 }
 
 export type TuiSignal = 'SIGINT' | 'SIGTERM' | 'SIGHUP';
@@ -1998,6 +2006,8 @@ export async function bootTuiLane(
       journal,
       // Issue #305: `/resume` lists THIS boot's sessions store; `/undo`
       // resolves journal paths against the same workspace root.
+      keySourceOf: (provider: string) =>
+        assembled?.providers.get(provider)?.authSource,
       // The workspace a TUI session records is the process cwd (see the
       // createSession above), so "this project" is matched against it. Each
       // summary parses a session file, so one read serves the palette and
@@ -2590,6 +2600,10 @@ export type TuiDepsInput = {
   // budget gate. Per-invocation, NOT config (outside TuiConfigProjection
   // on purpose — the #294 by-name rule governs config keys only).
   extensions?: BundleLoad;
+  // Issue #462: the first screen's version and the project layer's trust
+  // state — invocation facts, forwarded by name below.
+  version?: string;
+  projectTrust?: 'loaded' | 'untrusted';
 } & TuiConfigProjection;
 
 // The config projections `kubic tui` consumes (issues #86, #90, #113, #115,
@@ -2776,6 +2790,11 @@ export function tuiDepsWithDefaults(
     // runTuiCommand before the alt-screen opens (a named error and exit 2
     // when the file is missing or invalid).
     ...(provided.theme === undefined ? {} : { theme: provided.theme }),
+    // Issue #462: the first screen's version and trust row.
+    ...(provided.version === undefined ? {} : { version: provided.version }),
+    ...(provided.projectTrust === undefined
+      ? {}
+      : { projectTrust: provided.projectTrust }),
     // Issue #327: the non-git orchestrator refusal needs a real probe before
     // the alt-screen opens. Lazy: solo sessions never call it.
     isGitRepo: () => defaultIsGitRepo(),
@@ -4141,6 +4160,30 @@ export async function runTuiCommand(
     // below executes is safe (it is only ever invoked during turns).
     boot.setCurrentTurnSupplier?.(() => reconcileTurn);
   } catch (error) {
+    // Issue #462 (05-F): no provider has a key — the first screen's
+    // no-key block, printed to the terminal (no alt screen was entered, so
+    // the `export` lines stay in the scrollback), then exit 6.
+    if (error instanceof NoModelAvailableError) {
+      const workspace = await deps.readWorkspace?.().catch(() => undefined);
+      for (const line of renderNoKeyPreflight(resolvedTheme.ui, {
+        project: {
+          path: tildePath(process.cwd()),
+          ...(workspace === undefined
+            ? {}
+            : workspace.branch === undefined
+              ? { git: false }
+              : {
+                  branch: workspace.branch,
+                  ...(workspace.dirty === undefined
+                    ? {}
+                    : { dirty: workspace.dirty }),
+                }),
+        },
+      })) {
+        (deps.err ?? deps.out)(line);
+      }
+      return RUN_EXIT_PROVIDER_PROBE_FAILED;
+    }
     const message = error instanceof Error ? error.message : String(error);
     (deps.err ?? deps.out)(`error: ${message}`);
     if (error instanceof ModelSelectError)
@@ -4246,6 +4289,18 @@ export async function runTuiCommand(
     // Issue #453: the welcome block's honest notice per mode, and the
     // header clock.
     laneNotice: noticeFor,
+    // Issue #462: the first screen's facts only this boot has.
+    preflight: {
+      ...(deps.version === undefined ? {} : { version: deps.version }),
+      ...(boot.keySourceOf === undefined
+        ? {}
+        : { keySource: boot.keySourceOf }),
+      testingModel: `${FAUX_PROVIDER_ID}/${FAUX_MODEL_ID}`,
+      ...(deps.projectTrust === undefined ? {} : { trust: deps.projectTrust }),
+      // The limits modules' own lines, verbatim (and suppressed the same
+      // way); the faux note is the provider row's, not the isolation row's.
+      isolation: laneNotice,
+    },
     ...(deps.clock === undefined
       ? {}
       : { clock: () => formatClock(deps.clock?.() ?? new Date()) }),
@@ -4509,6 +4564,47 @@ export async function runTuiCommand(
   // Issue #453: the header's project / branch / dirty count — read once the
   // screen is up and after every settled turn. A failed read keeps the last
   // facts (the reader itself never throws).
+  // Issue #462: this project's recent sessions on the first screen, read in
+  // the background (the cached read also serves `/resume` and the palette).
+  const loadRecentSessions = (): void => {
+    const summarize = boot.summarizeSessions;
+    if (summarize === undefined) return;
+    void summarize(boot.sessionId).then(
+      (summaries) => {
+        if (stopped) return;
+        app.setRecentSessions(
+          summaries
+            // A session that never ran a prompt is not worth a row here
+            // (`/resume` still lists it).
+            .filter(
+              (summary) =>
+                summary.state === 'ready' && (summary.turns ?? 0) > 0,
+            )
+            .slice(0, 3)
+            .map((summary) => {
+              const created =
+                summary.createdAt === undefined
+                  ? Number.NaN
+                  : Date.parse(summary.createdAt);
+              const turns = summary.turns ?? 0;
+              return {
+                title: summary.title ?? summary.id,
+                age: Number.isNaN(created)
+                  ? ''
+                  : formatAge(Date.now() - created),
+                detail: `${turns} turn${turns === 1 ? '' : 's'}${
+                  summary.costUsd === undefined
+                    ? ''
+                    : ` · ${formatCost(summary.costUsd)}`
+                }`,
+              };
+            }),
+        );
+        screen?.update();
+      },
+      () => {},
+    );
+  };
   const refreshWorkspace = (): void => {
     const read = deps.readWorkspace;
     if (read === undefined) return;
@@ -4725,6 +4821,7 @@ export async function runTuiCommand(
     booted.render();
     startClock();
     refreshWorkspace();
+    loadRecentSessions();
     attachSignals();
     stdin?.once('end', onStdinEnd);
     stdin?.once('close', onStdinEnd);

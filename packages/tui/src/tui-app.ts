@@ -89,6 +89,7 @@ import {
 } from './file-mentions.js';
 import {
   DEFAULT_KEY_REGISTRY,
+  KEY_ACTIONS,
   type KeyAction,
   type KeyRegistry,
 } from './keybindings.js';
@@ -101,6 +102,7 @@ import {
 import { buildLayoutRoot, type Viewport } from './layout.js';
 import { PaletteView } from './palette-view.js';
 import { PickerView } from './picker-view.js';
+import { type PreflightInfo, renderPreflight } from './preflight.js';
 import { QuestionView, type WorkerQuestionLike } from './question-view.js';
 import {
   findSlashCommand,
@@ -120,7 +122,7 @@ import {
   type StatusUsageRow,
   summarizeStatusRows,
 } from './status-bar.js';
-import { tuiTheme, WORDMARK_GLYPH } from './theme.js';
+import { tuiTheme } from './theme.js';
 import {
   createTranscriptView,
   type ToolCallState,
@@ -238,6 +240,27 @@ export interface TuiWorkspace {
   readonly dirty?: number;
 }
 
+// Issue #462: the facts only the composition root has for the preflight
+// (docs/ui 05-B); the app supplies the model, workspace, mode and keys.
+export interface TuiPreflightSeed {
+  readonly version?: string;
+  /** Where a provider's key comes from (`ANTHROPIC_API_KEY`). */
+  readonly keySource?: (provider: string) => string | undefined;
+  /** The testing model (`faux/echo`): no model is called. */
+  readonly testingModel?: string;
+  /** The project layer's trust state; absent when the project has none. */
+  readonly trust?: 'loaded' | 'untrusted';
+  /** The isolation sentence per mode. */
+  readonly isolation?: (mode: StatusMode) => string;
+}
+
+// Issue #462: one recent session on the first screen.
+export interface TuiRecentSession {
+  readonly title: string;
+  readonly age: string;
+  readonly detail: string;
+}
+
 export interface TuiAppSeed {
   readonly sessionId: string;
   readonly model: string;
@@ -288,6 +311,8 @@ export interface TuiAppSeed {
   // Issue #453: the honest lane notice for a mode, shown in the welcome
   // block ('' when suppressed). The composition root owns the text.
   readonly laneNotice?: (mode: StatusMode) => string;
+  // Issue #462: what the first screen's preflight needs from the boot.
+  readonly preflight?: TuiPreflightSeed;
   // Issue #458: the project's absolute root; with `listFiles`, file
   // references in answers link to `file://<root>/<path>`.
   readonly fileRoot?: string;
@@ -491,6 +516,15 @@ export interface TuiModelPickerOptions {
 // so the picker stays closed and the loop reports it on the footer.
 export const MODEL_PICKER_MIN_WIDTH = 60;
 
+// Issue #462: the `?` overlay's groups, by action prefix.
+const KEY_GROUPS: ReadonlyArray<readonly [string, readonly string[]]> = [
+  ['editor', ['app.', 'prompt.', 'help.']],
+  ['session', ['session.', 'model.', 'approvals.']],
+  ['transcript', ['transcript.', 'view.']],
+  ['panels', ['panel.']],
+  ['approvals', ['approval.']],
+];
+
 // Issue #461: the thinking levels in order, for the picker's thinking row
 // (a requested level the model lacks is clamped down to one it has).
 const THINKING_ORDER = [
@@ -596,6 +630,10 @@ export interface TuiApp {
   // no overlay seat or the terminal is too narrow (the loop says so).
   openPalette(sources: TuiPaletteSources): boolean;
   isPaletteOpen(): boolean;
+  // Issue #462: this project's recent sessions on the first screen.
+  setRecentSessions(sessions: readonly TuiRecentSession[]): void;
+  // Issue #462: `?` — every key binding, grouped (also reachable here).
+  openKeysOverlay(): boolean;
   // Issue #305: a command's own output (the `/help` list, `/session`,
   // `/undo`'s verdict) as transcript text. A later lane snapshot replaces
   // it, exactly like the orchestrator report.
@@ -687,95 +725,6 @@ export interface TuiApp {
 export interface JournalFilterLike {
   readonly path?: string;
   readonly agent?: string;
-}
-
-// The key hints shown under the editor while idle. The editor's own keys are
-// fixed (Pi owns them); every Kubic action reads its key from the registry
-// (issue #303), so a rebound action is hinted under its new key and an
-// unbound one is not hinted at all.
-export function keyHints(
-  keys: KeyRegistry = DEFAULT_KEY_REGISTRY,
-): ReadonlyArray<readonly [string, string]> {
-  const actions: ReadonlyArray<readonly [KeyAction, string]> = [
-    ['transcript.expand', 'expand output'],
-    ['panel.diff', 'diff'],
-    ['panel.journal', 'journal'],
-    ['view.tree', 'tree'],
-    ['session.mode', 'mode'],
-    ['app.exit', 'quit'],
-  ];
-  return [
-    ['enter', 'send'],
-    ['ctrl+j', 'newline'],
-    ['ctrl+a/ctrl+e', 'line start/end'],
-    ...actions
-      .map(([action, what]) => [keys.label(action), what] as const)
-      .filter(([key]) => key !== ''),
-  ];
-}
-
-export const KEY_HINTS: ReadonlyArray<readonly [string, string]> = keyHints();
-
-// Issue #302: pi-tui's alt screen claims these keys ahead of the editor, so
-// they scroll the transcript — which is also why Home/End no longer reach
-// the line ends (Ctrl-A/Ctrl-E do). The welcome block names them: a key the
-// operator cannot discover is a key that does not exist (§17).
-export const TRANSCRIPT_KEY_HINTS: ReadonlyArray<readonly [string, string]> = [
-  ['pgup/pgdn', 'scroll'],
-  ['home/end', 'top/bottom'],
-  ['ctrl+up/down', 'prev/next prompt'],
-  ['ctrl+shift+f', 'search'],
-];
-
-export function renderKeyHints(
-  width: number,
-  hints: ReadonlyArray<readonly [string, string]> = KEY_HINTS,
-): string {
-  const theme = tuiTheme();
-  let line = '';
-  let plain = 0;
-  for (const [key, action] of hints) {
-    const sep = line === '' ? '' : theme.muted(' · ');
-    const piece = `${sep}${theme.bold(key)} ${theme.muted(action)}`;
-    const pieceWidth = (line === '' ? 0 : 3) + key.length + 1 + action.length;
-    if (plain + pieceWidth > width) break;
-    line += piece;
-    plain += pieceWidth;
-  }
-  return line;
-}
-
-// The welcome block at the top of the transcript: what this is, where it
-// runs, and the solo notice in full.
-export function welcomeLines(info: {
-  sessionId: string;
-  model: string;
-  notice?: string;
-  hints?: ReadonlyArray<readonly [string, string]>;
-}): string[] {
-  const hints = info.hints ?? KEY_HINTS;
-  const theme = tuiTheme();
-  const lines = [
-    '',
-    `${theme.accentBold(WORDMARK_GLYPH)} ${theme.bold('Kubic')} ${theme.muted('— terminal coding agent by Konic')}`,
-    `  ${theme.muted(`model ${info.model}`)}`,
-  ];
-  if (info.notice !== undefined && info.notice !== '') {
-    lines.push(`  ${theme.warning('!')} ${theme.muted(info.notice)}`);
-  }
-  lines.push('', `  ${theme.muted('Type a task and press enter.')}`);
-  // Three hints per row keeps every row inside a narrow terminal: the hint
-  // rows are rendered at their natural width (the welcome block is not
-  // re-wrapped), so a long row would be cut rather than continued.
-  for (let i = 0; i < hints.length; i += 3) {
-    lines.push(
-      `  ${renderKeyHints(Number.POSITIVE_INFINITY, hints.slice(i, i + 3))}`,
-    );
-  }
-  lines.push(
-    `  ${theme.muted('transcript:')} ${renderKeyHints(Number.POSITIVE_INFINITY, TRANSCRIPT_KEY_HINTS)}`,
-  );
-  return lines;
 }
 
 // Issue #150 (§20.6, §27.1): the footer line for a lane's transient
@@ -945,19 +894,71 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // the header and the status bar both read this cell, and Ctrl-G writes it
   // (refused while a turn runs). The seed is only the starting value.
   const sessionMode: { current: StatusMode } = { current: seed.mode };
-  const refreshWelcome = (): void => {
-    // Issue #453: the honest lane notice rides the welcome block now that
-    // the permanent footer is gone; the header keeps the mode badge on every
-    // frame and `/safety` prints the full text. The composition root owns
-    // the wording (and its suppression), per mode.
-    transcript.setWelcome(
-      welcomeLines({
-        sessionId,
+  // Issue #462: the first screen is the preflight (05-A … E), drawn from
+  // live state each frame — the model, the workspace the header reads, the
+  // mode, the keys and the recent sessions — and gone after the first
+  // prompt (a resumed session with history never shows it). The honest
+  // isolation sentence is the composition root's, per mode; `/safety`
+  // prints the limits in full.
+  let welcomeVisible = true;
+  let recentSessions: readonly TuiRecentSession[] = [];
+  const preflightInfo = (): PreflightInfo => {
+    const mode = sessionMode.current;
+    const provider = modelLabel.split('/')[0] ?? modelLabel;
+    const keySource = seed.preflight?.keySource?.(provider);
+    const known = workspace !== undefined;
+    return {
+      version: seed.preflight?.version ?? '',
+      provider: {
         model: modelLabel,
-        notice: seed.laneNotice?.(sessionMode.current),
-        hints: keyHints(keys),
-      }),
+        ...(modelLabel === seed.preflight?.testingModel
+          ? { testing: true }
+          : {}),
+        ...(keySource === undefined
+          ? {}
+          : { keySource: sanitizeLaneText(keySource) }),
+      },
+      ...(seed.cwdLabel === undefined
+        ? {}
+        : {
+            project: {
+              path: seed.cwdLabel,
+              ...(workspace?.branch === undefined
+                ? known
+                  ? { git: false }
+                  : {}
+                : { branch: workspace.branch, git: true }),
+              ...(workspace?.dirty === undefined
+                ? {}
+                : { dirty: workspace.dirty }),
+            },
+          }),
+      ...(seed.preflight?.trust === undefined
+        ? {}
+        : { trust: seed.preflight.trust }),
+      mode,
+      isolation:
+        seed.preflight?.isolation?.(mode) ?? seed.laneNotice?.(mode) ?? '',
+      keys: {
+        palette: keyCap(keys.label('app.palette')),
+        mode: keyCap(keys.label('session.mode')),
+        help: keyCap(keys.label('help.keys')),
+      },
+      recent: recentSessions,
+    };
+  };
+  const refreshWelcome = (): void => {
+    transcript.setWelcome(
+      welcomeVisible
+        ? (width: number) =>
+            renderPreflight(tuiTheme().ui, preflightInfo(), width)
+        : [],
     );
+  };
+  const hideWelcome = (): void => {
+    if (!welcomeVisible) return;
+    welcomeVisible = false;
+    refreshWelcome();
   };
   refreshWelcome();
   const barState: StatusBarState = {
@@ -1250,6 +1251,10 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     // the tail.
     const outcome = submitHandler(prompt) ?? 'accepted';
     if (outcome !== 'refused') noteRecentCommand(prompt);
+    // Issue #462: the first prompt (not a command) clears the first screen.
+    if (outcome === 'accepted' && parseSlashCommand(prompt) === undefined) {
+      hideWelcome();
+    }
     if (outcome === 'refused') {
       // Issue #334 (review): a refused prompt never eats the draft. Pi's
       // editor clears the draft BEFORE onSubmit fires, so the text has to go
@@ -1527,6 +1532,51 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       },
     });
     return showPicker(view, 'model', options.onCancel);
+  };
+  // Issue #462: `?` — every binding of the registry, grouped, with the key
+  // it has now (a rebound key shows its own; an unbound one says so), and
+  // the alt-screen's own transcript keys.
+  const openKeysOverlay = (): boolean => {
+    const groups: PickerGroup[] = KEY_GROUPS.map(([id, prefixes]) => ({
+      id,
+      title: id,
+      rows: [
+        ...(id === 'transcript'
+          ? [
+              {
+                value: 'pageup',
+                text: 'scroll the transcript a page',
+                right: 'PgUp/PgDn',
+              },
+              {
+                value: 'home',
+                text: 'top / bottom of the transcript',
+                right: 'Home/End',
+              },
+            ]
+          : []),
+        ...(Object.keys(KEY_ACTIONS) as KeyAction[])
+          .filter((action) =>
+            prefixes.some((prefix) => action.startsWith(prefix)),
+          )
+          .map((action) => {
+            const cap = keyCap(keys.label(action));
+            return {
+              value: action,
+              text: KEY_ACTIONS[action].description,
+              right: cap === '' ? 'unbound' : cap,
+            };
+          }),
+      ],
+    }));
+    const view = new PickerView({
+      title: 'Keys',
+      groups,
+      maxRows: pickerMaxRows,
+      onSelect: () => closeModelPicker(),
+      onClose: () => closeModelPicker(true),
+    });
+    return showPicker(view, 'list', undefined);
   };
   // Issue #154: the open worker question, and the ones waiting behind it.
   let questionOpen: { readonly view: QuestionView } | undefined;
@@ -2181,6 +2231,16 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
           cycleThinking: true,
         };
       }
+      // Issue #462: `?` on an idle, empty editor lists every key; anywhere
+      // else it is the character.
+      if (
+        action === 'help.keys' &&
+        !busy &&
+        editor.getText() === '' &&
+        openKeysOverlay()
+      ) {
+        return { quit: false, consumed: true, cancel: false };
+      }
       editor.handleInput(data);
       return { quit: false, consumed: true, cancel: false };
     },
@@ -2291,6 +2351,8 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // must not clear on the previous turn's cell).
       promptCells = cells.filter((cell) => cell.kind === 'prompt').length;
       toolCells = cells.filter((cell) => cell.kind === 'tool').length;
+      // Issue #462: a session with history never shows the first screen.
+      if (promptCells > 0) hideWelcome();
       if (title === undefined) {
         const first = cells
           .filter((cell) => cell.kind === 'prompt')
@@ -2457,6 +2519,15 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     openPalette: (sources: TuiPaletteSources): boolean =>
       openPaletteOverlay(sources),
     isPaletteOpen: (): boolean => palette !== undefined,
+    setRecentSessions: (sessions: readonly TuiRecentSession[]): void => {
+      recentSessions = sessions.map((session) => ({
+        title: sanitizeLaneText(session.title),
+        age: sanitizeLaneText(session.age),
+        detail: sanitizeLaneText(session.detail),
+      }));
+      overlayHost?.requestRender?.();
+    },
+    openKeysOverlay: (): boolean => openKeysOverlay(),
     openConfirm: (options: TuiConfirmOptions): boolean => {
       if (overlayHost === undefined) return false;
       closeConfirm('cancel');
@@ -2541,6 +2612,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         journalChanges: 0,
       });
       status.setRows([...(options.usage ?? [])]);
+      // Issue #462: a fresh session starts on the first screen again (a
+      // resumed one with history hides it when its entries apply).
+      welcomeVisible = true;
       refreshWelcome();
     },
     setPendingEcho: (prompt: string | undefined): void => {

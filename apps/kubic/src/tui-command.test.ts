@@ -81,12 +81,9 @@ describe('kubic tui (issue #75)', () => {
     expect(terminal.stopped).toBe(1);
     const doc = lines.join('\n');
     // Issue #453: header, transcript, status line, key hints.
-    const order = [
-      '[SOLO] approvals on',
-      'Kubic — terminal coding agent',
-      ' ready ',
-      '⏎ send',
-    ].map((m) => doc.indexOf(m));
+    const order = ['[SOLO] approvals on', 'PREFLIGHT', ' ready ', '⏎ send'].map(
+      (m) => doc.indexOf(m),
+    );
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });

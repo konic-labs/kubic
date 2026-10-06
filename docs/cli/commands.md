@@ -350,7 +350,7 @@ worktree limit is what `kubic doctor` reports) and by the opt-out
 per process start, not per session. On an interactive terminal (issue #447,
 see above) the three lines become one compact line under the run heading,
 under the same suppression rules. `kubic tui` shows the same statement
-as its one-line form in the welcome block (and the full text on `/safety`),
+as the first screen's isolation row (and the full text on `/safety`),
 and the re-execution tiers of
 `kubic replay` announce it too (they drive this same run path).
 
@@ -370,7 +370,7 @@ policy, the session store and the journal.
 - **Always announced.** `run` prints
   `warn: provider: faux/echo (testing provider: scripted replies, no model is called; KUBIC_PROVIDER=faux)`
   on stderr before the first turn (stdout and `--json` stay clean); the
-  TUI welcome block reads `faux/echo: testing provider, no model is called`;
+  TUI's first screen reads `◆ provider  faux/echo  testing provider, no model is called`;
   `kubic models` and `kubic doctor` list the `faux` provider and print the
   same warning.
 - **Pinned.** The model is `faux/echo`; a configured `[model]` pin or
@@ -1021,8 +1021,8 @@ the status bar and usage rows name the model the lane actually runs, and a
 kept or switched model is named in the first footer. `--thinking <level>` boots the lane at that level under the same rule as `kubic run` (resolved against the session record and the role default, clamped to the model with a named notice); the status bar seeds from the committed level. In the loop,
 `/model <provider/id>` switches the live lane: the id is resolved against
 the catalogue, committed to the session as a config update, and the
-welcome block and status line both move to it; `/model` alone
-reports the current model, and an unknown or malformed id is refused in
+first screen's provider row and the status line both move to it; `/model`
+alone opens the model picker, and an unknown or malformed id is refused in
 the footer while the lane keeps the model it had. `/scoped-models`
 reports the role's resolved allowed set (§38.2, issue #255) — the entries
 the boot selected against, with any per-entry thinking — or that the role
@@ -1191,9 +1191,14 @@ same context the headless one does:
 - **Model selection (§38.1):** the same precedence as `run` — an explicit
   pin (`--model <provider/id>`, else `[model]` in config or
   `KUBIC_MODEL`), then the `--role` layer's `[roles.<name>].model`, then
-  the first registered model. The welcome block and status line name the
+  the first registered model. The first screen and the status line name the
   model the lane actually runs on. An unknown or unavailable pinned model exits
-  6 with the named reason before the alt-screen opens. A bare `kubic
+  6 with the named reason before the alt-screen opens. With no pin and no
+  provider key at all, the first screen's no-key block is printed to stderr
+  instead — `✕ provider  no model provider has a key`, the `export …` lines to
+  set one, the local-model and `KUBIC_PROVIDER=faux` alternatives — and the
+  exit is 6 (`provider_probe_failed`); no alt screen is entered, so the lines
+  stay in the scrollback (issue #462). A bare `kubic
   --model <provider/id>` on a terminal is `kubic tui --model …`.
 - **Agent id and role layers (§12.1, §35):** `[agent].name` names the lane
   (journal and reconciliation attribution, so `kubic diff --agent <name>`
@@ -1319,8 +1324,23 @@ a large workspace pays it (and the screen pauses) after every turn that used
   they are not written to the session.
   `Ctrl-X` expands every card and wraps its lines in full. A context
   compaction is a `─── compacted · auto ───` rule with the summary under it,
-  collapsed the same way. Its welcome block carries the honest one-line lane
-  notice.
+  collapsed the same way.
+- **The first screen** (issue #462; docs/ui 05): an empty session opens on
+  a preflight instead of a wall of keys — the wordmark with the version
+  (`■ kubic <version>` below 70 columns); PREFLIGHT rows `✓ provider` (the
+  model and where its key comes from, or `◆ … testing provider` for faux),
+  `✓ project` (the path, `git <branch> · clean | N changed`, or `not a git
+  repository`), `✓ trust` (`.kubic/config.toml loaded`, only when the
+  project has a layer), `✓ journal` and `○ isolation` (`none in solo` and
+  what that means, or the orchestrator's worktree limits, with `/safety`);
+  START (`⏎ describe a task below`, then `/ commands  @ attach a file  ^P
+  palette  ^G orchestrator mode  ? all keys` from the key bindings); and
+  RECENT IN THIS PROJECT — up to three sessions with their age, first prompt
+  and `turns · cost`, then `/resume to open one`. It is not a transcript
+  entry: the first prompt (not a command) clears it, a resumed session with
+  history never shows it, and `/new` brings it back. `?` on an idle, empty
+  editor lists every key binding, grouped (editor, session, transcript,
+  panels, approvals), with the key each has now.
 - **The notice row** above the editor — the "footer" the rest of this page
   refers to: a command's reply, a refusal, a turn's outcome
   (`cancelled`, `error: …`), the lane's retry or compaction activity, and,
@@ -1502,6 +1522,7 @@ shipped bindings.
 | `app.exit` | unbound | quit on an empty draft (clears a draft first); bind a key to get a one-press quit |
 | `app.eof` | `ctrl+d` | quit on an empty draft; delete-forward while typing |
 | `app.palette` | `ctrl+p` | open the command palette |
+| `help.keys` | `?` | list every key (on an idle, empty editor; elsewhere `?` is typed) |
 | `session.mode` | `ctrl+g` | switch solo / orchestrator between turns |
 | `view.tree` | `ctrl+t` | toggle the tree |
 | `panel.diff` | `ctrl+o` | toggle the diff panel |
@@ -1689,7 +1710,8 @@ back on, cursor shown, mouse tracking and the Kitty protocol off, cooked
 mode), then prints `error: kubic tui crashed: …` on stderr and exits 1.
 `Ctrl-Z` suspend is not supported. Solo mode runs in-process with your user authority: no
 isolation, no containment. The no-isolation statement is on screen from the
-first frame: the welcome block carries the one-line form, the header's
+first frame: the first screen's isolation row carries it (`none in solo`
+and what that means, with `/safety` beside it), the header's
 `SOLO` badge stays on every frame, and `/safety` prints the full text from
 the limits module on demand (in orchestrator mode, the orchestrator's own
 limits). The startup line is suppressed for orchestrator-managed worker children

@@ -90,6 +90,9 @@ describe('persisted session mode (issue #276)', () => {
     await waitFor(() => fresh.fake.counts.started === 1);
     fresh.fake.feed('\x04');
     expect(await fresh.exit).toBe(0);
-    expect(fresh.lines.join('\n')).not.toContain('orchestrator');
+    // The header badge says solo (the first screen's start row names the
+    // orchestrator key, issue #462 — not the mode).
+    expect(fresh.lines.join('\n')).toContain('[SOLO]');
+    expect(fresh.lines.join('\n')).not.toContain('[ORCHESTRATOR]');
   });
 });

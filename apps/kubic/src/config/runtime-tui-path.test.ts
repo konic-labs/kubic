@@ -376,9 +376,9 @@ describe('the TUI selects the pinned model (issue #295)', () => {
     fake.feed('\x04');
     expect(await exit).toBe(0);
     const doc = lines.join('\n');
-    // The welcome block (`model fx/b`) and the status line both name the
-    // pinned model (issue #453 moved it off the header).
-    expect(doc).toContain('model fx/b');
+    // The first screen's provider row and the status line both name the
+    // pinned model (issue #453 moved it off the header; #462 the row).
+    expect(doc).toMatch(/provider {5}fx\/b/u);
     expect(doc).toMatch(/● fx\/b · /);
     expect(doc.match(/fx\/b/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
     expect(doc).not.toContain('fx/a');

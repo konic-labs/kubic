@@ -21,10 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../packages/exec/src/journal.js';
-import {
-  FAUX_FOOTER,
-  FAUX_MODEL_REF,
-} from '../../../packages/host/src/faux-provider.js';
+import { FAUX_MODEL_REF } from '../../../packages/host/src/faux-provider.js';
 import {
   SOLO_NOTICE_OPT_OUT_ENV,
   SOLO_NOTICE_WORKER_ENV,
@@ -378,7 +375,8 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     );
     await waitFor(() => fake.started() === 1);
     const frame = fake.writes.join('');
-    expect(frame).toContain(FAUX_FOOTER);
+    // Issue #462: the first screen's provider row says it.
+    expect(frame).toContain('faux/echo  testing provider, no model is called');
     expect(frame).toContain(soloTuiLine());
     fake.feed('\x03');
     fake.feed('\x03');
@@ -424,9 +422,10 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
-    // The final document keeps the badge and the welcome block's line.
+    // The final document keeps the badge; the first screen (and its
+    // isolation row) left with the first prompt (issue #462) — `/safety`
+    // above is how the line is reached after that.
     expect(lines.join('\n')).toContain('[SOLO] approvals on');
-    expect(lines.join('\n')).toContain(soloTuiLine());
   });
 
   it('stays silent for an orchestrator worker session', async () => {

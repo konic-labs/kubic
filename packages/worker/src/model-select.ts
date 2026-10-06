@@ -27,6 +27,16 @@ export class ModelSelectError extends Error {
   }
 }
 
+// Issue #462: no model at all — no provider has a key and no explicit or
+// configured model was named. The TUI answers it with the first screen's
+// no-key block (docs/ui 05-F) instead of a bare error line.
+export class NoModelAvailableError extends ModelSelectError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NoModelAvailableError';
+  }
+}
+
 export interface ModelSelection {
   provider: string;
   id: string;
@@ -77,7 +87,7 @@ export function selectModel(
     const first = models.getModels(providerId)[0];
     if (first !== undefined) return first as AnyModel;
   }
-  throw new ModelSelectError(
+  throw new NoModelAvailableError(
     fallbackProviders === undefined
       ? 'no models available: register a provider first'
       : "no models available: register a provider first (set a built-in provider's env key, e.g. ANTHROPIC_API_KEY, or add models.json)",

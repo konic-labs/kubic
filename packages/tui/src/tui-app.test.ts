@@ -58,12 +58,9 @@ describe('tui app root (issue #75)', () => {
     });
     const rows = app.render(100);
     const doc = rows.join('\n');
-    const order = [
-      '■ KUBIC',
-      'Kubic — terminal coding agent',
-      `${MODEL} · off`,
-      '⏎ send',
-    ].map((marker) => doc.indexOf(marker));
+    const order = ['■ KUBIC', 'PREFLIGHT', `${MODEL} · off`, '⏎ send'].map(
+      (marker) => doc.indexOf(marker),
+    );
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     // The header is the first row; the status line and the hints the last.
@@ -83,7 +80,7 @@ describe('tui app root (issue #75)', () => {
     app.handleInput('\x14');
     expect(app.render(100).join('\n')).toContain('◌ solo');
     const narrow = app.render(70).join('\n');
-    expect(narrow).not.toMatch(/[✓◌]/);
+    expect(narrow).not.toContain('◌ solo');
     expect(narrow).toContain('[SOLO] approvals on');
   });
 
@@ -740,7 +737,7 @@ describe('lane snapshot feed (issue #88)', () => {
     expect(app.status.getState().model).toBe(MODEL);
     expect(app.status.getState().thinking).toBe('high');
     const before = app.render(100).join('\n');
-    expect(before).toContain(`model ${MODEL}`);
+    expect(before).toContain(`provider     ${MODEL}`);
     expect(app.status.render(100).join('\n')).toContain(`${MODEL} · high`);
 
     app.setModel('alt/m1', 'medium');
@@ -748,7 +745,7 @@ describe('lane snapshot feed (issue #88)', () => {
     expect(app.status.getState().model).toBe('alt/m1');
     expect(app.status.getState().thinking).toBe('medium');
     const doc = app.render(100).join('\n');
-    expect(doc).toContain('model alt/m1');
+    expect(doc).toContain('provider     alt/m1');
     expect(app.status.render(100).join('\n')).toContain('alt/m1 · medium');
     expect(doc).not.toContain(MODEL);
   });
@@ -1238,8 +1235,8 @@ describe('keybinding overrides in the app (issue #303)', () => {
 
   it('the key hints name the rebound key', () => {
     const frame = rebound().render(160).join('\n');
-    expect(frame).toContain('ctrl+g diff');
-    expect(frame).not.toContain('ctrl+o diff');
+    expect(frame).toContain('^G diff');
+    expect(frame).not.toContain('^O diff');
   });
 });
 
@@ -1265,7 +1262,7 @@ describe('lane activity on the footer (issue #150)', () => {
     expect(footer(ui)).toContain('⟳ retrying · attempt 2 — server overloaded');
     ui.applyPresentation(presentation());
     expect(footer(ui)).toBe('');
-    expect(ui.render(100).join('\n')).toContain('enter send');
+    expect(ui.render(100).join('\n')).toContain('⏎ send');
   });
 
   it('renders the compaction indicator (headless snapshot)', () => {

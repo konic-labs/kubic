@@ -1273,13 +1273,29 @@ a large workspace pays it (and the screen pauses) after every turn that used
   never `✓`. Calls are grouped per turn: a new turn starts a new group, and
   earlier turns fold into one `… N earlier calls in M turns` line above the
   live turn (calls beyond the row cap fold into `… N earlier calls`).
-- **The transcript**, which follows the end as the turn streams (your prompt
-  is echoed as `› …` the moment you submit, assistant prose renders as
-  markdown, and each tool call renders as `● name args` with its output
-  folded underneath `⎿`, and a context compaction shows a
-  `⟳ context compacted (reason)` marker with the summary underneath —
-  collapsed to the same five rows, `Ctrl-X` expands it). Its welcome block
-  carries the honest one-line lane notice.
+- **The transcript**, which follows the end as the turn streams, as blocks
+  (issue #455; `docs/ui/01-session.html`). Your prompt is a full-width block
+  with a red `▌` edge and `you · HH:MM:SS` on the right (it shows the moment
+  you submit, before the lane commits it); assistant prose renders as
+  markdown behind a `◆` mark. Each tool call is one card: a header with its
+  state (`●` green done, red failed; the accent spinner and
+  `running · 3.00s` while it runs; `◆ … waiting for approval` while an
+  approval holds it), the tool name, its target (the command or path) and,
+  on the right, the outcome (`✓ exit 0` / `✕ exit 1`, `truncated` when the
+  output was clipped) and the duration; then up to five body lines behind a
+  `│` gutter — for a failure the error lines first, for a test run its tally
+  (`tests 4 · pass 3 · fail 1`) — and a `└ +35 lines   ^X expand` footer.
+  The shell record's `[bash exit …]` head, its `--- stdout ---` /
+  `--- stderr ---` markers and the exec layer's
+  `[kubic: N leading chars dropped …]` notice never show: stderr lines follow
+  stdout, and an expanded card's footer names the full-output file. A
+  successful workspace read (`read`, `ls`, `find`, `grep`, `git_status`,
+  `git_log`, `git_show`, `git_diff`) folds to one line
+  (`○ read  src/cart.js … 32 lines · 3ms`); a failed one is a full card.
+  `Ctrl-X` expands every card and wraps its lines in full. A context
+  compaction is a `─── compacted · auto ───` rule with the summary under it,
+  collapsed the same way. Its welcome block carries the honest one-line lane
+  notice.
 - **The notice row** above the editor — the "footer" the rest of this page
   refers to: a command's reply, a refusal, a turn's outcome
   (`cancelled`, `error: …`), the lane's retry or compaction activity, and,

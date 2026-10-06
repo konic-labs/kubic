@@ -117,21 +117,27 @@ function toolTranscript() {
 
 describe('transcript blocks', () => {
   it('renders prompt, prose, and each call with its output folded under it', () => {
-    expect(toolTranscript().render(60).map(plain)).toEqual([
-      '› list files',
+    // Issue #455 (01-B…E): the prompt block's edge, the prose mark, and a
+    // card per call with a gutter body and a footer naming what is hidden.
+    expect(
+      toolTranscript()
+        .render(60)
+        .map((line) => plain(line).trimEnd()),
+    ).toEqual([
+      ' ▌ list files',
       '',
-      '▪ Looking now.',
+      '  ◆ Looking now.',
       '',
-      '● bash ls',
-      '  ⎿  row 0',
-      '     row 1',
-      '     row 2',
-      '     row 3',
-      '     row 4',
-      '     … +4 lines (ctrl+x to expand)',
+      '  ● bash  ls',
+      '  │ row 0',
+      '  │ row 1',
+      '  │ row 2',
+      '  │ row 3',
+      '  │ row 4',
+      '  └ +4 lines   ^X expand',
       '',
-      '● read x.ts',
-      '  ⎿  no such file',
+      `  ● read  x.ts${' '.repeat(60 - 14 - 9)}✕ failed`,
+      '  │ no such file',
     ]);
     expect(TOOL_OUTPUT_PREVIEW_LINES).toBe(5);
   });
@@ -141,21 +147,21 @@ describe('transcript blocks', () => {
     expect(view.toggleExpanded()).toBe(true);
     const doc = view.render(60).join('\n');
     expect(doc).toContain('row 8');
-    expect(doc).not.toContain('to expand');
+    expect(doc).not.toContain('^X expand');
   });
 
   it('colours the call glyph by outcome under the Konic palette', () => {
     setTuiTheme(createTuiTheme('truecolor'));
     const lines = toolTranscript().render(60);
-    const ok = lines.find((l) => plain(l) === '● bash ls') ?? '';
-    const failed = lines.find((l) => plain(l) === '● read x.ts') ?? '';
+    const ok = lines.find((l) => plain(l).startsWith('  ● bash')) ?? '';
+    const failed = lines.find((l) => plain(l).startsWith('  ● read')) ?? '';
     expect(ok).toContain('38;2;94;214;140m●');
     expect(failed).toContain('38;2;255;107;94m●');
     for (const line of lines)
       expect(plain(line).length).toBeLessThanOrEqual(60);
   });
 
-  it('shows a pending call in amber until its output lands', () => {
+  it('shows a running call with the accent spinner until its output lands', () => {
     setTuiTheme(createTuiTheme('truecolor'));
     const view = createTranscriptView();
     view.applyLaneSnapshot(
@@ -163,7 +169,9 @@ describe('transcript blocks', () => {
       [{ id: 'c', kind: 'tool', markdown: 'tool bash', toolCallId: 'c' }],
       1,
     );
-    expect(view.render(40)[0]).toContain('38;2;255;181;71m●');
+    const head = view.render(40)[0] ?? '';
+    expect(head).toContain('38;2;255;0;77m');
+    expect(plain(head)).toContain('running');
   });
 
   it('truncates long lines to the width instead of wrapping tool output', () => {
@@ -189,7 +197,7 @@ describe('transcript blocks', () => {
     for (const line of lines)
       expect(plain(line).length).toBeLessThanOrEqual(30);
     expect(plain(lines[0] ?? '').endsWith('…')).toBe(true);
-    expect(plain(lines[2] ?? '')).toContain('lines clipped');
+    expect(plain(lines[2] ?? '')).toContain('wide lines cut');
   });
 });
 
@@ -204,7 +212,7 @@ describe('app chrome', () => {
     app.onSubmit(() => {});
     for (const ch of 'hello there') app.handleInput(ch);
     app.handleInput('\r');
-    expect(app.transcript.render(80)).toContain('› hello there');
+    expect(app.transcript.render(80)).toContain(' ▌ hello there');
     app.applyLaneEntries([
       {
         id: 'u1',
@@ -217,7 +225,7 @@ describe('app chrome', () => {
       },
     ]);
     const doc = app.transcript.render(80).join('\n');
-    expect(doc.split('› hello there')).toHaveLength(2);
+    expect(doc.split('▌ hello there')).toHaveLength(2);
   });
 
   it('shows the working indicator while busy and key hints when idle', () => {
@@ -384,14 +392,14 @@ describe('review fixes', () => {
     app.handleInput('\r');
     // A refresh that still only holds the OLD prompt must not clear the echo.
     app.applyLaneEntries([userEntry('u1', 1, 'again')]);
-    expect(app.transcript.render(80).join('\n').split('› again')).toHaveLength(
+    expect(app.transcript.render(80).join('\n').split('▌ again')).toHaveLength(
       3,
     );
     app.applyLaneEntries([
       userEntry('u1', 1, 'again'),
       userEntry('u2', 2, 'again'),
     ]);
-    expect(app.transcript.render(80).join('\n').split('› again')).toHaveLength(
+    expect(app.transcript.render(80).join('\n').split('▌ again')).toHaveLength(
       3,
     );
   });
@@ -443,7 +451,7 @@ describe('review fixes', () => {
     resolvers[0]?.([userRecord(1, 'stale')]);
     await older;
     const doc = app.transcript.render(80).join('\n');
-    expect(doc).toContain('› fresh');
+    expect(doc).toContain('▌ fresh');
     expect(doc).not.toContain('stale');
   });
 

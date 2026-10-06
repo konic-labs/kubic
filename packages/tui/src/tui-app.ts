@@ -121,6 +121,7 @@ import {
 import { tuiTheme, WORDMARK_GLYPH } from './theme.js';
 import {
   createTranscriptView,
+  type ToolCallState,
   type TranscriptEntry,
   type TranscriptView,
 } from './transcript.js';
@@ -787,6 +788,10 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       approvalSurface.usesInlineFallback(width)
         ? approvalSurface.renderInline(width)
         : undefined,
+    // Issue #455: the cards' duration, running clock and waiting state,
+    // and the expand key's real cap.
+    toolState: (toolCallId: string) => toolStateOf(toolCallId),
+    expandKey: () => keyCap(keys.label('transcript.expand')),
   });
   // Issue #227: the live model label (seed = the boot's model, replaced by
   // `/model`). The header, welcome block and status bar all read it, so one
@@ -1314,6 +1319,38 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const settleApproval = (): void => {
     syncOverlay();
   };
+  // Issue #455: what the presentation state says about each call — when the
+  // app first saw it, whether it still runs, and its duration once done.
+  // Kept across turns (the lane snapshot folds completed turns away).
+  const toolTimes = new Map<
+    string,
+    {
+      readonly seenAt: number;
+      readonly toolName: string;
+      readonly running: boolean;
+      readonly durationMs?: number;
+    }
+  >();
+  // The call an approval holds: the newest running call of the asking tool
+  // (solo runs one challenged call at a time).
+  const waitingToolCallId = (): string | undefined => {
+    const request = approvalSurface.pending();
+    if (request === undefined) return undefined;
+    let found: string | undefined;
+    for (const [id, time] of toolTimes) {
+      if (time.running && time.toolName === request.toolName) found = id;
+    }
+    return found;
+  };
+  const toolStateOf = (toolCallId: string): ToolCallState | undefined => {
+    const time = toolTimes.get(toolCallId);
+    if (time === undefined) return undefined;
+    return {
+      ...(time.durationMs === undefined ? {} : { durationMs: time.durationMs }),
+      ...(time.running ? { runningMs: Date.now() - time.seenAt } : {}),
+      ...(waitingToolCallId() === toolCallId ? { waiting: true } : {}),
+    };
+  };
   // Issue #454: the idle double-press quit. The notice row says so for the
   // window and clears itself when it lapses (a render is requested — no key
   // arrives to cause one).
@@ -1652,6 +1689,25 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
           },
         });
         transcript.setQueuedPrompts(lane.queued);
+        // Issue #455: the cards' facts. A call that left the snapshot while
+        // still marked running was cut off with its turn: it runs no more.
+        const live = new Set<string>();
+        for (const tool of lane.tools) {
+          live.add(tool.toolCallId);
+          const known = toolTimes.get(tool.toolCallId);
+          const durationMs = tool.durationMs ?? known?.durationMs;
+          toolTimes.set(tool.toolCallId, {
+            seenAt: known?.seenAt ?? Date.now(),
+            toolName: tool.toolName,
+            running: tool.status === 'running',
+            ...(durationMs === undefined ? {} : { durationMs }),
+          });
+        }
+        for (const [id, time] of toolTimes) {
+          if (time.running && !live.has(id)) {
+            toolTimes.set(id, { ...time, running: false });
+          }
+        }
         // The diff panel follows the run: the newest call of the lane is
         // what "the current run's changes" means, so the panel's default
         // selection tracks it (an explicit setDiffToolCall still wins).
@@ -1879,6 +1935,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       transcript.setQueuedPrompts([]);
       tree.reset(undefined, sessionMode.current === 'solo');
       title = undefined;
+      toolTimes.clear();
       toolCells = 0;
       turnToolsBase = 0;
       turnRowsBase = 0;

@@ -128,8 +128,8 @@ describe('/new, /resume and /undo on the kubic tui path (issue #305)', () => {
     expect(fake.counts.stopped).toBe(1);
     // The layout at quit is the NEW session's: the old transcript is gone.
     const doc = lines.join('\n');
-    expect(doc).toContain('› second prompt');
-    expect(doc).not.toContain('› first prompt');
+    expect(doc).toContain('▌ second prompt');
+    expect(doc).not.toContain('▌ first prompt');
   });
 
   it('lists the store with /resume and loads the chosen transcript', {
@@ -181,7 +181,7 @@ describe('/new, /resume and /undo on the kubic tui path (issue #305)', () => {
     fake.feed('\x03');
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
-    expect(doc).toContain('› the first session prompt');
+    expect(doc).toContain('▌ the first session prompt');
     expect(doc).toContain('first answer');
   });
 

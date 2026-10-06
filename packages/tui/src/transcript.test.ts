@@ -10,6 +10,7 @@ import { bootScreen } from './screen.js';
 import { createTuiTheme, setTuiTheme } from './theme.js';
 import {
   createTranscriptView,
+  formatPromptTime,
   QUEUED_LABEL,
   replayTranscript,
   TOOL_OUTPUT_PREVIEW_LINES,
@@ -358,9 +359,10 @@ describe('expanded tool output wraps instead of clipping (issue #300)', () => {
     expect(doc).toContain('E');
     expect(doc).toContain('Z');
     expect(doc).not.toContain('…');
-    // Hanging indent: continuation rows align under the block's 5-column
-    // lead (`  ⎿  `).
-    expect(lines.some((line) => line.startsWith('     '))).toBe(true);
+    // Continuation rows stay behind the card's gutter (`  │ `, #455).
+    expect(
+      lines.filter((line) => line.startsWith('  │ ')).length,
+    ).toBeGreaterThan(1);
   });
 
   it('keeps the collapsed preview inside its row budget and says when clipped', () => {
@@ -375,13 +377,13 @@ describe('expanded tool output wraps instead of clipping (issue #300)', () => {
     }
     // The preview shows at most TOOL_OUTPUT_PREVIEW_LINES output rows plus
     // its hint row.
-    const previewRows = lines.filter((line) => /^\s*(⎿| {5})/.test(line));
+    const previewRows = lines.filter((line) => line.startsWith('  │ '));
     expect(previewRows.length).toBeLessThanOrEqual(
       TOOL_OUTPUT_PREVIEW_LINES + 1,
     );
     // The collapsed rows are clipped, and the hint says so instead of
     // pretending the text is complete.
-    expect(lines.join('\n')).toContain('clipped');
+    expect(lines.join('\n')).toContain('wide lines cut');
   });
 
   it('wraps the tool-call detail line when expanded', () => {
@@ -583,11 +585,12 @@ describe('compaction cells (issue #317)', () => {
 
   it('shows a compaction marker cell and its summary, collapsed', () => {
     const doc = view().render(100).join('\n');
-    expect(doc).toContain('context compacted (auto)');
+    // Issue #455: a fg2 rule names it (`── compacted · auto ──`).
+    expect(doc).toMatch(/─+ compacted · auto ─+/);
     expect(doc).toContain('summary line 0');
-    // Collapsed: the first rows plus the Ctrl-X hint, like tool output.
+    // Collapsed: the first rows plus the expand hint, like a tool card.
     expect(doc).not.toContain('summary line 11');
-    expect(doc).toContain('(ctrl+x to expand)');
+    expect(doc).toContain('^X expand');
   });
 
   it('expands the whole summary with Ctrl-X', () => {
@@ -661,5 +664,61 @@ describe('streamed assistant draft (issue #296)', () => {
     for (const line of doc) {
       expect(visibleWidth(line)).toBeLessThanOrEqual(80);
     }
+  });
+});
+
+describe('transcript blocks (issue #455; 01-B, 01-C)', () => {
+  const at = new Date(2026, 9, 6, 14, 1, 52).getTime();
+
+  it('draws the prompt block with its edge and time, prose with its mark', () => {
+    const view = createTranscriptView();
+    view.applyLaneSnapshot(
+      { laneId: 'l' },
+      [
+        {
+          id: 'u',
+          kind: 'prompt',
+          markdown: '› run npm test and fix the failing test',
+          timestamp: at,
+        },
+        { id: 't', kind: 'text', markdown: "I'll run the test suite first." },
+      ],
+      1,
+    );
+    const lines = view.render(80);
+    expect(formatPromptTime(at)).toBe('14:01:52');
+    const left = ' ▌ run npm test and fix the failing test';
+    const right = 'you · 14:01:52 ';
+    expect(lines[0]).toBe(
+      `${left}${' '.repeat(80 - visibleWidth(left) - visibleWidth(right))}${right}`,
+    );
+    expect(lines[1]).toBe('');
+    expect(lines[2]).toBe("  ◆ I'll run the test suite first.");
+  });
+
+  it('wraps a long prompt under the edge and leaves the time off without one', () => {
+    const view = createTranscriptView();
+    view.applyLaneSnapshot(
+      { laneId: 'l' },
+      [{ id: 'u', kind: 'prompt', markdown: `› ${'word '.repeat(20)}end` }],
+      1,
+    );
+    const lines = view.render(40);
+    expect(lines.length).toBeGreaterThan(1);
+    for (const line of lines) expect(line.startsWith(' ▌ ')).toBe(true);
+    expect(lines.join('\n')).not.toContain('you ·');
+  });
+
+  it('paints the prompt block on bg2 at colour', () => {
+    setTuiTheme(createTuiTheme('truecolor'));
+    const view = createTranscriptView();
+    view.applyLaneSnapshot(
+      { laneId: 'l' },
+      [{ id: 'u', kind: 'prompt', markdown: '› hi', timestamp: at }],
+      1,
+    );
+    const line = view.render(60)[0] ?? '';
+    expect(visibleWidth(line)).toBe(60);
+    expect(line).toContain('\u001b[48;2;');
   });
 });

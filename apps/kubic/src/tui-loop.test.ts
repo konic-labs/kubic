@@ -214,7 +214,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     fake.feed('\x03');
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
-    expect(doc).toContain('› say done');
+    expect(doc).toContain('▌ say done');
     expect(doc).toContain('all done, boss');
     expect(fake.counts.stopped).toBe(1);
     expect(fake.writes.join('')).toContain('?1049l');
@@ -455,8 +455,8 @@ describe('kubic tui prompt loop (issue #88)', () => {
     const doc = lines.join('\n');
     // Both prompts are in the transcript, and the model ran twice: the
     // queued follow-up really was delivered after settlement.
-    expect(doc).toContain('› first prompt');
-    expect(doc).toContain('› second prompt');
+    expect(doc).toContain('▌ first prompt');
+    expect(doc).toContain('▌ second prompt');
     expect(calls()).toBe(2);
   });
 
@@ -736,7 +736,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     // (laneEntryFor → entriesToCells → the render) in one assertion, so a
     // dropped join cannot stay green.
     const document = lines.join('\n');
-    expect(document).toContain('context compacted');
+    expect(document).toMatch(/─+ compacted(?: · \w+)? ─+/);
     expect(document).toContain('## Goal');
   });
 
@@ -1033,8 +1033,8 @@ describe('kubic tui prompt loop (issue #88)', () => {
     fake.feed('\x03');
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
-    expect(doc).toContain('› second prompt');
-    expect(doc).toContain('› third prompt');
+    expect(doc).toContain('▌ second prompt');
+    expect(doc).toContain('▌ third prompt');
     expect(calls()).toBe(3);
     // The quit document is the whole layout: the editor row shows the idle
     // key hints, never the working line — the queue waiting in the inbox did
@@ -1633,12 +1633,15 @@ describe('kubic tui prompt loop (issue #88)', () => {
     // Issue #453: the header above the transcript, the status line below.
     const order = [
       '[SOLO] approvals on',
-      '› a question',
+      '▌ a question',
       'answered',
       ' ready ',
     ].map((marker) => doc.indexOf(marker));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // Issue #455: the committed prompt carries its time through the whole
+    // production wire (laneEntryFor → entriesToCells → the prompt block).
+    expect(doc).toMatch(/▌ a question +you · \d\d:\d\d:\d\d/);
   });
 });
 

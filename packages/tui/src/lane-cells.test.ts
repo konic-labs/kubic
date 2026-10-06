@@ -436,3 +436,33 @@ describe('forkPickerRows (issue #332)', () => {
     expect(row?.label).toBe('#3  one two');
   });
 });
+
+describe('prompt timestamps (issue #455)', () => {
+  it('carries the message time onto the prompt cell, and only a real number', () => {
+    const at = Date.UTC(2026, 9, 6, 12, 1, 52);
+    const cells = entriesToCells([
+      {
+        id: 'u1',
+        seq: 1,
+        type: 'message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'fix the cart' }],
+          timestamp: at,
+        },
+      },
+      {
+        id: 'u2',
+        seq: 2,
+        type: 'message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'again' }],
+          timestamp: 'yesterday',
+        },
+      },
+    ]);
+    expect(cells[0]).toMatchObject({ kind: 'prompt', timestamp: at });
+    expect(cells[1]?.timestamp).toBeUndefined();
+  });
+});

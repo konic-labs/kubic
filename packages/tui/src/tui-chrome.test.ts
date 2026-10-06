@@ -160,3 +160,91 @@ describe('key-hint row (issue #453)', () => {
     ).toContain('@ file');
   });
 });
+
+describe('tool cards on the app (issue #455)', () => {
+  const call = (id: string) => ({
+    id: 'a1',
+    seq: 1,
+    type: 'message' as const,
+    message: {
+      role: 'assistant',
+      content: [
+        {
+          type: 'toolCall',
+          id,
+          name: 'bash',
+          arguments: { command: 'rm -rf dist' },
+        },
+      ],
+    },
+  });
+  const lanes = (status: 'running' | 'done', durationMs?: number) => ({
+    session: { sessionId: 's', mode: 'solo' as const, approvalsSkipped: false },
+    agents: new Map(),
+    lanes: new Map([
+      [
+        '01a1c0de-7a6b-4c1e-9f00-3d2a5e9cb6b8',
+        {
+          laneId: '01a1c0de-7a6b-4c1e-9f00-3d2a5e9cb6b8',
+          agentId: 'root',
+          status: 'running' as const,
+          tools: [
+            {
+              toolCallId: 'tc1',
+              toolName: 'bash',
+              status,
+              isError: false,
+              ...(durationMs === undefined ? {} : { durationMs }),
+            },
+          ],
+          queued: [],
+          compacting: false,
+        },
+      ],
+    ]),
+    workers: new Map(),
+    approvals: [],
+    usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+    connection: { status: 'connected' as const },
+  });
+
+  it('marks the call an approval holds, then shows its duration', async () => {
+    const app = seed();
+    app.applyLaneEntries([call('tc1')]);
+    app.applyPresentation(lanes('running'));
+    expect(app.transcript.render(100).join('\n')).toMatch(
+      /bash {2}rm -rf dist .*running/,
+    );
+    const decision = app.requestApproval({
+      key: 'bash:rm',
+      capability: 'destructive-shell',
+      toolName: 'bash',
+      summary: 'rm -rf dist',
+    });
+    expect(app.transcript.render(100).join('\n')).toContain('◆ bash');
+    expect(app.transcript.render(100).join('\n')).toContain(
+      'waiting for approval',
+    );
+    app.handleInput('\x1b');
+    await decision;
+    app.applyLaneEntries([
+      call('tc1'),
+      {
+        id: 'r1',
+        seq: 2,
+        type: 'message',
+        message: {
+          role: 'toolResult',
+          toolCallId: 'tc1',
+          content: [
+            { type: 'text', text: '[bash exit 0 (bash)]\n(no output)' },
+          ],
+        },
+      },
+    ]);
+    app.applyPresentation(lanes('done', 410));
+    const doc = app.transcript.render(100).join('\n');
+    expect(doc).toContain('✓ exit 0 · 410ms');
+    expect(doc).not.toContain('waiting');
+  });
+});

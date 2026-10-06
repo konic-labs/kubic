@@ -8,9 +8,11 @@
 // overscroll chain); this module owns the document: delta appends rebuild
 // the single Markdown child exactly once per entry and never clear it.
 import type { LaneImagePart } from '../../core/src/presentation.js';
+import { FOCUS_EDGE, PROSE } from '../../core/src/ui/glyphs.js';
 import { createAttachmentComponent } from './attachments.js';
 import { sanitizeLaneText } from './lane-cells.js';
 import { type TuiTheme, tuiTheme } from './theme.js';
+import { renderToolCard } from './tool-card.js';
 import type { Component } from './tui-boundary.js';
 import {
   Markdown,
@@ -20,6 +22,8 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from './tui-boundary.js';
+import { leftRight } from './ui/line.js';
+import { fillLine } from './ui/surface.js';
 
 // 'prompt' is the operator's own line; 'text' is assistant prose (rendered
 // as markdown); 'tool' is a call; 'output' is a call's result.
@@ -44,6 +48,9 @@ export interface TranscriptEntry {
   // Issue #338: images attached to this prompt (§16.8). Rendered under the
   // prompt text as the real image or the terminal placeholder.
   readonly images?: readonly LaneImagePart[];
+  // Issue #455: when the entry was committed (ms since the epoch) — the
+  // prompt block's `you · HH:MM:SS`.
+  readonly timestamp?: number;
 }
 
 export interface TranscriptDelta {
@@ -63,11 +70,22 @@ export interface LaneIdentity {
 export const TOOL_OUTPUT_PREVIEW_LINES = 5;
 
 const PROMPT_MARK = '›';
-const ASSISTANT_MARK = '▪';
-const TOOL_MARK = '●';
-const OUTPUT_ELBOW = '⎿';
-// Issue #317: the compaction marker row's glyph.
-const COMPACTION_MARK = '\u27f3';
+
+// Issue #455: what the composition root knows about a call that the
+// committed entries do not say — how long it took (or has been running) and
+// whether an approval holds it.
+export interface ToolCallState {
+  readonly durationMs?: number;
+  readonly runningMs?: number;
+  readonly waiting?: boolean;
+}
+
+/** Local `HH:MM:SS` for the prompt block. */
+export function formatPromptTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
 // Issue #334: the label in front of a queued follow-up's first line. Plain
 // ASCII, because it prefixes untrusted prompt text and must never be
 // confused with a committed prompt row (`›`).
@@ -141,6 +159,10 @@ class TranscriptDocument implements Component {
   stream: string | undefined;
   expanded = false;
   inline: ((width: number) => string[] | undefined) | undefined;
+  // Issue #455: per-call facts from the composition root, and the expand
+  // key's cap for the card footers.
+  toolState: ((toolCallId: string) => ToolCallState | undefined) | undefined;
+  expandKey: (() => string) | undefined;
   private readonly markdownCache = new Map<string, Markdown>();
   // Issue #298: the text each cached Markdown was built from, and the final
   // rendered lines of each cell. pi-tui's `setText` invalidates
@@ -271,7 +293,15 @@ class TranscriptDocument implements Component {
       switch (cell.kind) {
         case 'prompt': {
           gap();
-          this.renderPrompt(out, cell.markdown, w, theme, cell.images, cell.id);
+          this.renderPrompt(
+            out,
+            cell.markdown,
+            w,
+            theme,
+            cell.images,
+            cell.id,
+            cell.timestamp,
+          );
           break;
         }
         case 'tool': {
@@ -280,49 +310,25 @@ class TranscriptDocument implements Component {
             cell.toolCallId === undefined
               ? undefined
               : outputs.get(cell.toolCallId);
-          const glyph =
-            result === undefined
-              ? theme.warm(TOOL_MARK)
-              : result.isError === true
-                ? theme.error(TOOL_MARK)
-                : theme.success(TOOL_MARK);
-          const name = stripPrefix(cell.markdown, 'tool ');
-          const detail =
-            cell.detail === undefined ? '' : ` ${theme.muted(cell.detail)}`;
-          const callLine = `${glyph} ${theme.bold(name)}${detail}`;
-          if (!this.expanded) {
-            out.push(fit(callLine, w));
-          } else {
-            // Issue #300: expanded, the args summary wraps too (a long path
-            // or command is exactly what the operator opened this for), with
-            // the continuation rows indented under the call's 2-column lead.
-            const wrapped = wrapTextWithAnsi(callLine, Math.max(1, w - 2));
-            wrapped.forEach((row, index) => {
-              out.push(fit(index === 0 ? row : `  ${row}`, w));
-            });
-          }
-          if (result !== undefined) this.renderOutput(out, result, w, theme);
+          out.push(...this.card(cell, result, w, theme));
           break;
         }
         case 'compaction': {
-          // Issue #317: the marker names what happened; the summary follows,
-          // collapsed like tool output (Ctrl-X expands it).
+          // Issue #317/#455: a rule names what happened; the summary
+          // follows, collapsed like a card body (Ctrl-X expands it).
           gap();
-          const reason = cell.detail === undefined ? '' : ` (${cell.detail})`;
+          const label = ` compacted${cell.detail === undefined ? '' : ` · ${cell.detail}`} `;
+          const side = Math.max(2, Math.floor((w - visibleWidth(label)) / 2));
+          const rest = Math.max(0, w - side - visibleWidth(label));
           out.push(
             fit(
-              theme.accentBold(`${COMPACTION_MARK} context compacted${reason}`),
+              theme.ui.fg('fg2')(
+                `${'─'.repeat(side)}${label}${'─'.repeat(rest)}`,
+              ),
               w,
             ),
           );
-          this.renderBlock(
-            out,
-            cell.markdown.split('\n'),
-            w,
-            theme.muted,
-            '  ',
-            '  ',
-          );
+          this.renderBlock(out, cell.markdown.split('\n'), w, theme);
           break;
         }
         case 'output': {
@@ -331,7 +337,8 @@ class TranscriptDocument implements Component {
           if (cell.toolCallId !== undefined && called.has(cell.toolCallId)) {
             break;
           }
-          this.renderOutput(out, cell, w, theme);
+          gap();
+          out.push(...this.card(undefined, cell, w, theme));
           break;
         }
         default: {
@@ -344,6 +351,7 @@ class TranscriptDocument implements Component {
               theme,
               cell.images,
               cell.id,
+              cell.timestamp,
             );
             break;
           }
@@ -353,7 +361,7 @@ class TranscriptDocument implements Component {
             out.push(...cached);
             break;
           }
-          const body = this.markdown(cell, theme).render(Math.max(1, w - 2));
+          const body = this.markdown(cell, theme).render(Math.max(1, w - 4));
           const lines: string[] = [];
           let first = true;
           for (const raw of body) {
@@ -361,10 +369,10 @@ class TranscriptDocument implements Component {
             // row's length is its text (the alt-screen clears the rest).
             const line = raw.replace(/ +$/, '');
             if (first && line.trim() !== '') {
-              lines.push(fit(`${theme.accent(ASSISTANT_MARK)} ${line}`, w));
+              lines.push(fit(`  ${theme.ui.fg('fg1')(PROSE)} ${line}`, w));
               first = false;
             } else {
-              lines.push(fit(`  ${line}`, w));
+              lines.push(fit(line === '' ? '' : `    ${line}`, w));
             }
           }
           this.storeLines(cell, w, theme, lines);
@@ -378,13 +386,13 @@ class TranscriptDocument implements Component {
       // arrives. Plain text, not markdown — the committed entry is the one
       // markdown rebuild per entry — and dim, because it is not committed.
       gap();
-      const lines = wrapTextWithAnsi(this.stream, Math.max(1, w - 2));
+      const lines = wrapTextWithAnsi(this.stream, Math.max(1, w - 4));
       lines.forEach((line, index) => {
         out.push(
           fit(
             index === 0
-              ? `${theme.accent(ASSISTANT_MARK)} ${theme.dim(line)}`
-              : `  ${theme.dim(line)}`,
+              ? `  ${theme.ui.fg('fg1')(PROSE)} ${theme.dim(line)}`
+              : `    ${theme.dim(line)}`,
             w,
           ),
         );
@@ -408,6 +416,9 @@ class TranscriptDocument implements Component {
     return out;
   }
 
+  // Issue #455 (01-B): the operator's own turn — a full-width bg2 block
+  // with the accent edge, the text fg0 bold, and `you · HH:MM:SS` on the
+  // right when the entry carries its time.
   private renderPrompt(
     out: string[],
     markdown: string,
@@ -415,14 +426,60 @@ class TranscriptDocument implements Component {
     theme: TuiTheme,
     images?: readonly LaneImagePart[],
     cellId?: string,
+    timestamp?: number,
   ): void {
+    const ui = theme.ui;
     const text = stripPrefix(markdown, `${PROMPT_MARK} `);
-    const lines = wrapTextWithAnsi(text, Math.max(1, width - 2));
+    const stamp =
+      timestamp === undefined ? '' : `you · ${formatPromptTime(timestamp)}`;
+    const edge = ui.fg('accent')(` ${FOCUS_EDGE} `);
+    const body = ui.style({ fg: 'fg0', bold: true });
+    const room = Math.max(
+      1,
+      width - 3 - (stamp === '' ? 1 : visibleWidth(stamp) + 2),
+    );
+    const lines = text === '' ? [''] : wrapTextWithAnsi(text, room);
     lines.forEach((line, index) => {
-      const mark = index === 0 ? theme.accentBold(PROMPT_MARK) : ' ';
-      out.push(fit(`${mark} ${theme.prompt(line)}`, width));
+      const left = `${edge}${body(line)}`;
+      const row =
+        index === 0 && stamp !== ''
+          ? leftRight(left, `${ui.fg('fg2')(stamp)} `, width)
+          : left;
+      out.push(fillLine(ui, row, width, 'bg2'));
     });
     this.renderImages(out, images, width, theme, cellId ?? '');
+  }
+
+  // Issue #455 (01-D/E): a call and its result as one card.
+  private card(
+    call: TranscriptEntry | undefined,
+    result: TranscriptEntry | undefined,
+    width: number,
+    theme: TuiTheme,
+  ): string[] {
+    const toolCallId = call?.toolCallId ?? result?.toolCallId;
+    const state =
+      toolCallId === undefined ? undefined : this.toolState?.(toolCallId);
+    return renderToolCard(
+      theme.ui,
+      {
+        name:
+          call === undefined ? 'result' : stripPrefix(call.markdown, 'tool '),
+        ...(call?.detail === undefined ? {} : { target: call.detail }),
+        ...(result === undefined ? {} : { output: result.markdown }),
+        ...(result?.isError === true ? { isError: true } : {}),
+        ...(state?.durationMs === undefined
+          ? {}
+          : { durationMs: state.durationMs }),
+        ...(state?.runningMs === undefined
+          ? {}
+          : { runningMs: state.runningMs }),
+        ...(state?.waiting === true ? { waiting: true } : {}),
+        expanded: this.expanded,
+        expandKey: this.expandKey?.() ?? '^X',
+      },
+      width,
+    );
   }
 
   // Issue #338: one attached image under the prompt text. Protocol lines are
@@ -448,67 +505,40 @@ class TranscriptDocument implements Component {
     });
   }
 
-  private renderOutput(
-    out: string[],
-    cell: TranscriptEntry,
-    width: number,
-    theme: TuiTheme,
-  ): void {
-    // Issue #300: expanded, every line WRAPS (the operator expands to read a
-    // whole diagnostic, so no character may be cut); collapsed, the preview
-    // stays compact and its hint says that the shown rows are clipped.
-    const plainLead = `  ${OUTPUT_ELBOW}  `;
-    this.renderBlock(
-      out,
-      cell.markdown.split('\n'),
-      width,
-      cell.isError === true ? theme.error : theme.muted,
-      `  ${theme.muted(OUTPUT_ELBOW)}  `,
-      ' '.repeat(plainLead.length),
-    );
-  }
-
-  // One collapsed/expanded text block: tool output (#300) and compaction
-  // summaries (#317) share the rule — collapsed shows the first rows and
-  // says what it hides, expanded wraps everything.
+  // A compaction summary (#317): collapsed shows the first rows behind a
+  // gutter and says what it hides; expanded wraps everything.
   private renderBlock(
     out: string[],
     lines: string[],
     width: number,
-    style: (text: string) => string,
-    lead: string,
-    indent: string,
+    theme: TuiTheme,
   ): void {
+    const ui = theme.ui;
+    const gutter = `  ${ui.fg('fg3')('│')} `;
+    const bodyWidth = Math.max(1, width - visibleWidth(gutter));
     const shown = this.expanded
       ? lines
       : lines.slice(0, TOOL_OUTPUT_PREVIEW_LINES);
     let clipped = false;
-    shown.forEach((line, index) => {
-      const rowLead = index === 0 ? lead : indent;
+    for (const line of shown) {
       if (this.expanded) {
-        const wrapped = wrapTextWithAnsi(
-          line,
-          Math.max(1, width - indent.length),
-        );
-        wrapped.forEach((row, rowIndex) => {
-          out.push(
-            fit(`${rowIndex === 0 ? rowLead : indent}${style(row)}`, width),
-          );
-        });
-        return;
+        for (const row of wrapTextWithAnsi(line, bodyWidth)) {
+          out.push(fit(`${gutter}${ui.fg('fg2')(row)}`, width));
+        }
+        continue;
       }
-      const rendered = `${rowLead}${style(line)}`;
-      if (visibleWidth(rendered) > width) clipped = true;
-      out.push(fit(rendered, width));
-    });
+      if (visibleWidth(line) > bodyWidth) clipped = true;
+      out.push(fit(`${gutter}${ui.fg('fg2')(line)}`, width));
+    }
     const hidden = lines.length - shown.length;
     if (hidden > 0 || clipped) {
       const parts: string[] = [];
-      if (hidden > 0) parts.push(`+${hidden} lines`);
-      if (clipped) parts.push('lines clipped');
+      if (hidden > 0) parts.push(`+${hidden} line${hidden === 1 ? '' : 's'}`);
+      if (clipped) parts.push('wide lines cut');
+      const key = this.expandKey?.() ?? '^X';
       out.push(
         fit(
-          `${indent}${tuiTheme().dim(`… ${parts.join(' · ')} (ctrl+x to expand)`)}`,
+          `  ${ui.fg('fg3')('└')} ${ui.fg('fg2')(parts.join(' · '))}${key === '' ? '' : `   ${ui.fg('fg1')(key)}${ui.fg('fg2')(' expand')}`}`,
           width,
         ),
       );
@@ -580,6 +610,10 @@ export interface TranscriptViewOptions {
   // event, so an always-on log retained a deep copy of every one (O(N·E)
   // cells, tool outputs up to 20k chars). Absent means no log at all.
   readonly ops?: boolean;
+  // Issue #455: per-call facts (duration, running clock, waiting on an
+  // approval) and the expand key's cap for the card footers.
+  readonly toolState?: (toolCallId: string) => ToolCallState | undefined;
+  readonly expandKey?: () => string;
 }
 
 // Issue #297: two cells are the same entry when every field the transcript
@@ -591,7 +625,8 @@ function sameCell(left: TranscriptEntry, right: TranscriptEntry): boolean {
     left.markdown === right.markdown &&
     left.detail === right.detail &&
     left.isError === right.isError &&
-    left.toolCallId === right.toolCallId
+    left.toolCallId === right.toolCallId &&
+    left.timestamp === right.timestamp
   );
 }
 
@@ -600,6 +635,8 @@ export function createTranscriptView(
 ): TranscriptView {
   const document = new TranscriptDocument();
   document.inline = options.inline;
+  document.toolState = options.toolState;
+  document.expandKey = options.expandKey;
   const scroll = new ScrollView(document, {
     follow: 'end',
     primary: true,

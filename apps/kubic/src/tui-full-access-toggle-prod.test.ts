@@ -184,7 +184,7 @@ describe('the TUI full-access toggle (issue #309)', () => {
     expect(postureRows(workspace)).toHaveLength(0);
     // The dialog is modal: those keys never reached the editor either, so
     // no prompt was submitted while it was up.
-    expect(fake.output()).not.toContain('› yes');
+    expect(fake.output()).not.toContain('▌ yes');
 
     // Esc cancels: still enforced, nothing written.
     fake.inject('\u001b');

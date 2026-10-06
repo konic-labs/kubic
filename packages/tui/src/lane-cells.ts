@@ -371,12 +371,21 @@ function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
     kind: TranscriptEntryKind,
     markdown: string,
     extra: Partial<
-      Pick<TranscriptEntry, 'detail' | 'isError' | 'toolCallId' | 'images'>
+      Pick<
+        TranscriptEntry,
+        'detail' | 'isError' | 'toolCallId' | 'images' | 'timestamp'
+      >
     > = {},
   ): void => {
     if (markdown === '') return;
     cells.push({ id: `${id}:${key}`, kind, markdown, ...extra });
   };
+  // Issue #455: Pi stamps every message; the prompt block shows the time.
+  const stamp =
+    typeof entry.message.timestamp === 'number' &&
+    Number.isFinite(entry.message.timestamp)
+      ? { timestamp: entry.message.timestamp }
+      : {};
   if (role === ROLE_USER) {
     // Issue #338: an attached image is part of the prompt, not text. A
     // prompt cell with images and no text (an image-only submit) still
@@ -398,7 +407,7 @@ function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
           ? PROMPT_PREFIX
           : ''
         : `${PROMPT_PREFIX}${text}`,
-      hasImages ? { images } : {},
+      { ...(hasImages ? { images } : {}), ...stamp },
     );
     return cells;
   }

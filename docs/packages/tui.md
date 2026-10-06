@@ -126,12 +126,18 @@ notice from its seed (`workspace`, `clock`, `laneNotice`) and
   assistant message streams live (issue #296): `setStream(text)` renders a
   plain draft after the committed cells while `message-delta` events arrive,
   and the committed entry replaces it (clearing the draft — the text is
-  never rendered twice); a rebase snapshot also clears it. Tool output is
-  collapsed to `TOOL_OUTPUT_PREVIEW_LINES` rows (cut at the width, with a
-  hint naming hidden or clipped rows); Ctrl-X expands it, and then every
-  output line and the tool call's args summary wrap with a hanging indent
-  instead of being cut (issue #300). A `pi.compaction` entry renders as its
-  own `compaction` cell — a `⟳ context compacted (reason)` marker plus the
+  never rendered twice); a rebase snapshot also clears it. Since issue #455
+  a prompt renders as a bg2 block with the accent `▌` edge and its
+  `timestamp`, prose behind `◆`, and each call with its result as a card
+  (`tool-card.ts`: `renderToolCard`, `parseShellText` for the bash record and
+  the exec spill notice, `testSummary`; successful workspace reads in
+  `READ_TOOLS` fold to one `○` line). Cards show `CARD_PREVIEW_LINES` body
+  lines (cut at the width, with a `└` footer naming hidden or cut rows);
+  Ctrl-X expands them, and then every line and a too-long target wrap
+  instead of being cut (issue #300). Per-call facts the entries do not carry
+  (duration, running clock, waiting on an approval) come from the app through
+  `TranscriptViewOptions.toolState`. A `pi.compaction` entry renders as its
+  own `compaction` cell — a `── compacted · reason ──` rule plus the
   summary (pi-durable's preamble/`<summary>` wrapper stripped, collapsed to
   the same preview budget and expanded by Ctrl-X); a `pi.reset` handoff
   renders as text, and no `branch_summary` kind exists in 1.0 (branching

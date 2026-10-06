@@ -2470,6 +2470,7 @@ export function laneEntryFor(entry: EntryRecord): LaneEntryLike | undefined {
         content?: unknown;
         isError?: unknown;
         toolCallId?: unknown;
+        timestamp?: unknown;
       }
     | undefined;
   if (message === undefined) return undefined;
@@ -2489,6 +2490,10 @@ export function laneEntryFor(entry: EntryRecord): LaneEntryLike | undefined {
       ...(message.isError === true ? { isError: true } : {}),
       ...(typeof message.toolCallId === 'string' && message.toolCallId !== ''
         ? { toolCallId: message.toolCallId }
+        : {}),
+      // Issue #455: the prompt block's `you · HH:MM:SS`.
+      ...(typeof message.timestamp === 'number'
+        ? { timestamp: message.timestamp }
         : {}),
     },
   };

@@ -592,7 +592,7 @@ describe('queued follow-ups and steers while a turn runs (issue #334)', () => {
     expect(submitted).toEqual(['also run the tests']);
     // A queued prompt is NOT echoed as a pending turn: the queued row is the
     // feedback (the lane's inbox drives it).
-    expect(ui.render(100).join('\n')).not.toContain('› also run the tests');
+    expect(ui.render(100).join('\n')).not.toContain('▌ also run the tests');
     ui.applyPresentation(presentation({ queued: ['also run the tests'] }));
     const doc = ui.render(100).join('\n');
     expect(doc).toContain('queued: also run the tests');
@@ -606,7 +606,7 @@ describe('queued follow-ups and steers while a turn runs (issue #334)', () => {
     ui.onSubmit(() => 'accepted');
     for (const ch of 'first') ui.handleInput(ch);
     ui.handleInput('\r');
-    expect(ui.render(100).join('\n')).toContain('› first');
+    expect(ui.render(100).join('\n')).toContain('▌ first');
     const refused = app();
     refused.setEditorFooter('error: an orchestrator run is in flight');
     refused.onSubmit(() => 'refused');
@@ -616,7 +616,7 @@ describe('queued follow-ups and steers while a turn runs (issue #334)', () => {
     // No pending echo in the transcript (the editor's own `›` caret shows the
     // restored draft below).
     expect(refused.transcript.render(100).join('\n')).not.toContain(
-      '› dropped',
+      '▌ dropped',
     );
     expect(doc).toContain('error: an orchestrator run is in flight');
     // Issue #334 (review): a refused prompt never eats the draft — Pi's
@@ -649,7 +649,7 @@ describe('queued follow-ups and steers while a turn runs (issue #334)', () => {
     ui.setPendingEcho('queued prompt');
     const doc = ui.render(100).join('\n');
     expect(doc).not.toContain('queued: queued prompt');
-    expect(doc).toContain('› queued prompt');
+    expect(doc).toContain('▌ queued prompt');
   });
 
   it('Alt+Enter hands the draft to the loop as a steer and clears it', () => {
@@ -700,7 +700,7 @@ describe('lane snapshot feed (issue #88)', () => {
       },
     ]);
     const doc = app.render(100).join('\n');
-    expect(doc).toContain('› fix it');
+    expect(doc).toContain('▌ fix it');
     expect(doc).toContain('done and dusted');
   });
 
@@ -1183,12 +1183,12 @@ describe('app-level wiring that no test executed (issue #320)', () => {
     for (const ch of 'zzz echo me') ui.handleInput(ch);
     ui.handleInput('\r');
     // The prompt is echoed while the lane works (#88).
-    expect(ui.render(100).join('\n')).toContain('› zzz echo me');
+    expect(ui.render(100).join('\n')).toContain('▌ zzz echo me');
     // The turn ends without committing the entry (an abort, or a settle with
     // no commit): the echo must not outlive the turn it belongs to.
     ui.setBusy(false);
     const doc = ui.render(100).join('\n');
-    expect(doc).not.toContain('› zzz echo me');
+    expect(doc).not.toContain('▌ zzz echo me');
     expect(doc).not.toContain('zzz echo me');
   });
 

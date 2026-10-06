@@ -783,10 +783,15 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       });
       for (const note of assembled.notes) view.logger.info(note);
       if (fauxProviderActive(process.env)) view.logger.warn(FAUX_NOTICE);
+      const pin = runtimeModelPin(cliConfig);
       return runModelsCommand(options, {
         ...view,
         models: assembled.models,
         providers: assembled.providers,
+        // Issue #449: the configured pin is the default the view marks.
+        ...(pin === undefined
+          ? {}
+          : { defaultModel: `${pin.provider}/${pin.id}` }),
       });
     },
     skills: (options, cliConfig) => {

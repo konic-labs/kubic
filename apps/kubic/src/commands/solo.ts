@@ -417,6 +417,8 @@ function registerModels(program: Command, ctx: CommandContext): void {
   program
     .command('models')
     .description('list the model catalog or resolve one model')
+    .argument('[provider]', 'list one provider in full')
+    .option('--all', 'include providers without a configured key')
     .option('--json', 'print the catalog as one JSON document')
     .option(
       '--resolve <provider/id>',
@@ -424,12 +426,19 @@ function registerModels(program: Command, ctx: CommandContext): void {
     )
     .addHelpText(
       'after',
-      examples(['kubic models', 'kubic models --resolve faux/echo']),
+      examples([
+        'kubic models',
+        'kubic models anthropic',
+        'kubic models --all',
+        'kubic models --resolve faux/echo',
+      ]),
     )
-    .action(async (opts) => {
+    .action(async (provider, opts) => {
       ctx.setExitCode(
         await ctx.runners.models(
           {
+            ...(provider === undefined ? {} : { provider }),
+            ...(opts.all === true ? { all: true } : {}),
             ...(opts.json === true ? { json: true } : {}),
             ...(opts.resolve === undefined ? {} : { resolve: opts.resolve }),
           },

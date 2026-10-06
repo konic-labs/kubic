@@ -2023,7 +2023,7 @@ composition paths therefore capture a **baseline** when the lane boots and
 `kubic status` names it in the summary. `--json` keeps the raw entries (the
 `unattributed` flag is on each entry there).
 
-## `kubic models [--json] [--resolve <provider/id>]`
+## `kubic models [provider] [--all] [--json] [--resolve <provider/id>]`
 
 Catalog readout over Pi's **built-in providers** (the generated catalogue:
 `anthropic`, `openai`, `google`, `amazon-bedrock`, `openrouter`, …) plus
@@ -2051,7 +2051,9 @@ and a `warn:` line names it.
 
 | Flag | Meaning |
 | --- | --- |
-| (none) | A `PROVIDER  MODEL  THINKING  IN $/1M  OUT $/1M` table, one row per model of every **usable** provider (plain aligned columns off a terminal, the kit table on an interactive colour terminal), then `info: <n> built-in providers not configured (set their env key): …` on stderr for the rest. With nothing usable, stdout stays empty and stderr says `info: no usable providers (set a built-in provider's env key, e.g. ANTHROPIC_API_KEY, or add models.json)`. Exits 0. |
+| (none) | Off a terminal: a `PROVIDER  MODEL  THINKING  IN $/1M  OUT $/1M` table (plain aligned columns), one row per model of every **usable** provider, then `info: <n> built-in providers not configured (set their env key): …` on stderr for the rest. On an interactive colour terminal (issue #449): the catalogue view — a `MODEL  CONTEXT  THINKING  INPUT  IN $/1M  OUT $/1M  KEY` kit table grouped by provider, the default model marked `● <provider/id>  default` (the configured pin, else the model a run would pick), every provider with more than 8 models folded to its first 3 rows and a `<provider>/… N more  kubic models <provider>` line, one `○ N providers without a key  kubic models --all` line, the `keys: <provider> ← <source>` line, and `set a default: kubic setup`. With nothing usable, stdout stays empty and stderr says `info: no usable providers (set a built-in provider's env key, e.g. ANTHROPIC_API_KEY, or add models.json)`. Exits 0. |
+| `[provider]` | List one provider in full (no folding), configured or not; `--json` is scoped to it too. An unknown provider is a usage error: `error: unknown provider "<id>" (known: …)` on stderr, exit 2. |
+| `--all` | Include the providers without a configured key (their KEY cell reads `—`; off a terminal their rows join the plain table and the `not configured` note is dropped). |
 | `--json` | Every registered provider, usable or not, as one pretty-printed JSON document: `id`, `name`, `source` (`built-in`, `testing` or the `models.json` path), `usable`, `auth` (the auth source Pi reported, when configured) and `models` (`id`, `name`, `thinking`, `inputCost`, `outputCost`, `cacheReadCost`, `cacheWriteCost`, `input` modalities). Exits 0. |
 | `--resolve <provider/id>` | Print `selected <provider>/<id> (thinking: …)` for any registered model, built-in or custom, configured or not; a resolution failure prints `error: …` on stderr and exits 1. |
 
@@ -2062,8 +2064,8 @@ configured. A built-in with no key is never picked implicitly; with nothing
 usable the run exits 6 (`provider_probe_failed`). Pin the model you mean,
 e.g. `[model] provider = "anthropic"`, `id = "claude-sonnet-4-6"`.
 
-Usage errors (unknown option, `--resolve` without a value, an operand)
-exit 2 on stderr. `--help`/`-h` prints the generated help and exits 0.
+Usage errors (unknown option, `--resolve` without a value, an unknown
+provider) exit 2 on stderr. `--help`/`-h` prints the generated help and exits 0.
 
 ## `kubic config [--json] [--model <provider/id>] [--thinking <level>]`
 

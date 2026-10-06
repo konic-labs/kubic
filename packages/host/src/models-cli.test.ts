@@ -153,3 +153,60 @@ describe('kubic models (issue #20, slice C)', () => {
     expect(faux.models.getModel('faux', 'echo')?.id).toBe('echo');
   });
 });
+
+// Issue #449: `kubic models <provider>` and `--all`.
+describe('kubic models provider filter (issue #449)', () => {
+  function registry() {
+    const models = createModels();
+    models.setProvider(fauxProvider().provider);
+    return models;
+  }
+
+  it('refuses an unknown provider as a usage error naming the known ones', async () => {
+    const lines: string[] = [];
+    const code = await runModelsCommand(
+      { provider: 'nope' },
+      { models: registry(), out: (l: string) => lines.push(l) },
+    );
+    expect(code).toBe(2);
+    expect(lines.join('\n')).toMatch(/unknown provider "nope" \(known: faux/);
+  });
+
+  it('lists only the named provider, in the plain table off a terminal', async () => {
+    const lines: string[] = [];
+    const code = await runModelsCommand(
+      { provider: 'faux' },
+      { models: registry(), out: (l: string) => lines.push(l) },
+    );
+    expect(code).toBe(0);
+    expect(lines[0]).toMatch(/^PROVIDER\s+MODEL/);
+    expect(lines.slice(1).every((line) => line.startsWith('faux'))).toBe(true);
+  });
+
+  it('scopes --json to the named provider', async () => {
+    const lines: string[] = [];
+    await runModelsCommand(
+      { provider: 'faux', json: true },
+      { models: registry(), out: (l: string) => lines.push(l) },
+    );
+    const doc = JSON.parse(lines.join('\n')) as { id: string }[];
+    expect(doc.map((provider) => provider.id)).toEqual(['faux']);
+  });
+
+  it('renders the catalogue view when fancy and marks the pinned default', async () => {
+    const lines: string[] = [];
+    const models = registry();
+    const first = models.getModels('faux')[0];
+    await runModelsCommand(
+      {},
+      {
+        models,
+        fancy: true,
+        defaultModel: `faux/${first?.id}`,
+        out: (l: string) => lines.push(l),
+      },
+    );
+    expect(lines.join('\n')).toContain(`● faux/${first?.id}  default`);
+    expect(lines.at(-1)).toBe('set a default: kubic setup');
+  });
+});

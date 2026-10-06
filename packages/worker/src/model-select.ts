@@ -10,6 +10,7 @@
 // + `pi.agent` (issue #225), never a sidecar — attach restores it from
 // the storage, so save/loadThinkingLevel were deleted (issue #216).
 
+import { suggest } from '../../core/src/suggest.js';
 import { isThinkingLevel, THINKING_LEVELS } from './models-config.js';
 import {
   clampThinkingLevel,
@@ -47,14 +48,23 @@ export function selectModel(
   const pick = (sel: ModelSelection, origin: string): AnyModel => {
     const provider = models.getProvider(sel.provider);
     if (provider === undefined) {
+      // Issue #450: name the closest registered provider, if any.
+      const [close] = suggest(
+        sel.provider,
+        models.getProviders().map((candidate) => candidate.id),
+      );
       throw new ModelSelectError(
-        `unknown provider '${sel.provider}' (${origin})`,
+        `unknown provider '${sel.provider}' (${origin})${close === undefined ? '' : `; did you mean '${close}'?`}`,
       );
     }
     const model = models.getModel(sel.provider, sel.id);
     if (model === undefined) {
+      const [close] = suggest(
+        sel.id,
+        models.getModels(sel.provider).map((candidate) => candidate.id),
+      );
       throw new ModelSelectError(
-        `unknown model '${sel.id}' on provider '${sel.provider}' (${origin})`,
+        `unknown model '${sel.id}' on provider '${sel.provider}' (${origin})${close === undefined ? '' : `; did you mean '${close}'?`}`,
       );
     }
     return model as AnyModel;

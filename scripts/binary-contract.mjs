@@ -142,6 +142,14 @@ export function unknownPromptHint(word) {
   return `hint: to run it as a prompt: kubic run -p '${word}'`;
 }
 
+// Issue #450: the usage error for an unknown command (plain, on stderr) and
+// the hint that closes it.
+export function unknownCommandError(word) {
+  return `error: unknown command '${word}'`;
+}
+export const UNKNOWN_COMMAND_HELP_HINT =
+  'hint: kubic --help lists the commands';
+
 function lines(stdout) {
   return stdout.split('\n').filter((line) => line.trim() !== '');
 }
@@ -388,9 +396,9 @@ export function binaryContract({
   }
 
   // The seam is internal-only (issue #128): without the contract's own env
-  // gate, `kubic __crash-probe` is just an unknown command — the root usage
-  // line, exit 2 (usage, issue #372), nothing on stderr — never an injected
-  // crash.
+  // gate, `kubic __crash-probe` is just an unknown command — exit 2 (usage,
+  // issue #372), the usage error on stderr with no prompt hint and nothing
+  // on stdout (issue #450) — never an injected crash.
   const ungated = run(['__crash-probe']);
   const ungatedFailed = probeProblems('kubic __crash-probe (ungated)', ungated);
   if (ungatedFailed.length > 0) {
@@ -401,21 +409,22 @@ export function binaryContract({
         `\`kubic __crash-probe\` without the env gate exited ${ungated.code} (expected ${USAGE_EXIT} — unknown command)`,
       );
     }
-    if (ungated.stdout.trimEnd() !== ROOT_HELP_TEXT) {
+    if (ungated.stdout !== '') {
       problems.push(
-        `\`kubic __crash-probe\` without the env gate printed ${JSON.stringify(ungated.stdout.trimEnd())} — expected the root usage line (the seam must stay internal-only)`,
+        `\`kubic __crash-probe\` without the env gate printed ${JSON.stringify(ungated.stdout)} on stdout — expected nothing (the seam must stay internal-only)`,
       );
     }
-    if (ungated.stderr !== '') {
+    const expectedUngated = `${unknownCommandError('__crash-probe')}\n${UNKNOWN_COMMAND_HELP_HINT}\n`;
+    if (ungated.stderr !== expectedUngated) {
       problems.push(
-        `\`kubic __crash-probe\` without the env gate wrote ${JSON.stringify(ungated.stderr)} to stderr — expected silence`,
+        `\`kubic __crash-probe\` without the env gate wrote ${JSON.stringify(ungated.stderr)} to stderr — expected exactly ${JSON.stringify(expectedUngated)}`,
       );
     }
   }
 
   // Issue #372: an unknown command is a usage error, not a task failure —
-  // exit 2 with the root usage line on stdout and nothing on stderr.
-  // Issue #268 (L-D7): a word-shaped token also names the prompt form.
+  // exit 2. Issue #450: the error and its hints go to stderr and stdout stays
+  // empty. Issue #268 (L-D7): a word-shaped token also names the prompt form.
   const unknown = run(['nosuch-command']);
   const unknownFailed = probeProblems('kubic nosuch-command', unknown);
   if (unknownFailed.length > 0) {
@@ -426,15 +435,15 @@ export function binaryContract({
         `\`kubic nosuch-command\` exited ${unknown.code} (expected ${USAGE_EXIT} — unknown command is a usage error, §78)`,
       );
     }
-    const expectedUnknown = `${ROOT_HELP_TEXT}\n${unknownPromptHint('nosuch-command')}`;
-    if (unknown.stdout.trimEnd() !== expectedUnknown) {
+    if (unknown.stdout !== '') {
       problems.push(
-        `\`kubic nosuch-command\` printed ${JSON.stringify(unknown.stdout.trimEnd())} — expected the root usage line and the prompt hint`,
+        `\`kubic nosuch-command\` printed ${JSON.stringify(unknown.stdout)} on stdout — expected an empty stdout (a usage error is stderr-only)`,
       );
     }
-    if (unknown.stderr !== '') {
+    const expectedUnknown = `${unknownCommandError('nosuch-command')}\n${unknownPromptHint('nosuch-command')}\n${UNKNOWN_COMMAND_HELP_HINT}\n`;
+    if (unknown.stderr !== expectedUnknown) {
       problems.push(
-        `\`kubic nosuch-command\` wrote ${JSON.stringify(unknown.stderr)} to stderr — expected silence (the usage line is stdout-only)`,
+        `\`kubic nosuch-command\` wrote ${JSON.stringify(unknown.stderr)} to stderr — expected the error line, the prompt hint and the help hint ${JSON.stringify(expectedUnknown)}`,
       );
     }
   }
@@ -973,7 +982,7 @@ if (import.meta.main) {
       throw CONTRACT_VIOLATION;
     }
     console.log(
-      `binary contract OK: ${expectedLine} (exit 0); --help/-h exit 0 with the root help; bare kubic exit 1 (same text); an unknown command exits ${USAGE_EXIT} with the prompt hint; the bare multi-word prompt runs like \`kubic run -p\` (completed on faux); orchestrate/clean outside a git repo exit ${WORKSPACE_EXIT}; models/doctor --json keep stdout to one document with the models.json receipt on stderr; a refused config exits 1 with the run envelope under --json and stderr-only otherwise; stubbed old node hits the named guard (exit 1, stderr-only) and the 22.19 floor passes; injected failure prints one \`error:\` line (stack only under KUBIC_DEBUG=1); doctor exit ${DOCTOR_PROVIDER_EXIT} ${JSON.stringify(PROVIDER_DOWN_LINE)} with the five embedded role presets reported as builtin (issue #203); provider-less run exit ${RUN_PROVIDER_EXIT} with session:/journal:/usage:/trajectory: refs; orchestrate on faux through a symlinked bin exits 0 with one completed envelope (issue #179)`,
+      `binary contract OK: ${expectedLine} (exit 0); --help/-h exit 0 with the root help; bare kubic exit 1 (same text); an unknown command exits ${USAGE_EXIT} with the error and hints on stderr; the bare multi-word prompt runs like \`kubic run -p\` (completed on faux); orchestrate/clean outside a git repo exit ${WORKSPACE_EXIT}; models/doctor --json keep stdout to one document with the models.json receipt on stderr; a refused config exits 1 with the run envelope under --json and stderr-only otherwise; stubbed old node hits the named guard (exit 1, stderr-only) and the 22.19 floor passes; injected failure prints one \`error:\` line (stack only under KUBIC_DEBUG=1); doctor exit ${DOCTOR_PROVIDER_EXIT} ${JSON.stringify(PROVIDER_DOWN_LINE)} with the five embedded role presets reported as builtin (issue #203); provider-less run exit ${RUN_PROVIDER_EXIT} with session:/journal:/usage:/trajectory: refs; orchestrate on faux through a symlinked bin exits 0 with one completed envelope (issue #179)`,
     );
   } catch (error) {
     // The violation marker carries no information the user has not already

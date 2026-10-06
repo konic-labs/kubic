@@ -54,7 +54,8 @@ enterprise model — the manager injects no role-default pin, strips the
 operator's `KUBIC_MODEL` from the child env, and names the enterprise model's
 provider in the credential preflight. A refusal of an unknown provider/model names
 the input that carried the pin: `--model`, `KUBIC_MODEL`, `[model] in
-<layer> config`, or `role model`.
+<layer> config`, or `role model` — and, when a registered provider or
+model id is close, ends with `; did you mean '<id>'?` (issue #450).
 
 ### Project trust
 

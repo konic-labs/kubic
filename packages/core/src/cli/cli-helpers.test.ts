@@ -150,16 +150,22 @@ describe('logger', () => {
     expect(on.chunks).toEqual(['debug: shown\n']);
   });
 
-  it('colours the prefix only with a coloured theme', () => {
+  it('uses status marks with a coloured theme (issue #450)', () => {
     const chunks: string[] = [];
+    const theme = createCliTheme('truecolor');
     const logger = createLogger({
       write: (chunk) => chunks.push(chunk),
-      theme: createCliTheme('truecolor'),
+      theme,
     });
     logger.error('x');
+    logger.warn('y');
+    logger.info('z');
+    logger.success('w');
+    expect(chunks[0]).toBe(`${theme.ui.fg('err')('✕')} x\n`);
+    expect(chunks[1]).toBe(`${theme.ui.fg('warn')('▲')} y\n`);
+    expect(chunks[2]).toBe(`${theme.ui.fg('info')('ℹ')} z\n`);
+    expect(chunks[3]).toBe(`${theme.ui.fg('ok')('✓')} w\n`);
     expect(chunks[0]).toContain(ESC);
-    expect(chunks[0]).toContain('error:');
-    expect(chunks[0]?.endsWith(' x\n')).toBe(true);
   });
 
   it('createLineLogger writes whole lines to a line channel (no trailing newline)', () => {

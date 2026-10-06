@@ -84,10 +84,15 @@ new literals.
   the program prints `error: <message>` on stderr and exits with the code.
 - Anything else thrown reaches the root catch-all: one `error: <message>`
   line, exit 1, the stack only with `KUBIC_DEBUG=1`.
-- An unknown top-level command or root option prints the root help to
-  stdout and exits 2 (a usage error, issue #372); a bare `kubic` off a TTY
-  prints the identical line and exits 1 (POSIX usage-on-no-args); a bare
-  `kubic` on a TTY opens the TUI.
+- An unknown top-level command or root option is a usage error (exit 2,
+  issue #372) reported on stderr with a did-you-mean or prompt hint (issue
+  #450); a bare `kubic` off a TTY prints the root help and exits 1 (POSIX
+  usage-on-no-args); a bare `kubic` on a TTY opens the TUI.
+- **Errors on a terminal** (issue #450): the logger's level prefixes become
+  status marks on a colour stderr (`✕`, `▲`, `ℹ`, `✓`; plain `error:` /
+  `warn:` / `info:` / `ok:` words otherwise), commander usage errors are an
+  `errorBlock`, and name lookups use `suggest()` (`packages/core/src/suggest.ts`)
+  for a "did you mean" hint.
 
 ## Output rules
 

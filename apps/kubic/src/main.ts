@@ -67,6 +67,8 @@ try {
     isInteractive: interactive,
     // Issue #446: the root and subcommand help are coloured on a TTY.
     helpTheme: () => themeFor(process.stdout),
+    // Issue #450: usage errors are an error block on a colour stderr.
+    errorTheme: () => themeFor(process.stderr),
     // Issue #228 (§35.1): the interactive trust question for `kubic tui` /
     // bare `kubic`. The resolver persists the answer under `~/.kubic/` and
     // hands it back to this invocation's config load; a non-TTY caller keeps

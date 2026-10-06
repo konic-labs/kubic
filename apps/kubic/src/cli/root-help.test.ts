@@ -111,3 +111,37 @@ describe('subcommand help styling (issue #446)', () => {
     );
   });
 });
+
+describe('usage errors on a colour terminal (issue #450)', () => {
+  it('are an error block on a coloured stderr, plain otherwise', async () => {
+    const run = async (level: 'none' | 'truecolor') => {
+      const err: string[] = [];
+      const channels = {
+        out: () => {},
+        err: (line: string) => err.push(line),
+      };
+      const program = createKubicProgram(channels, {
+        versionLine: 'kubic 1.2.3 (license: MIT)',
+        rootHelp: ROOT_HELP,
+        errorTheme: createCliTheme(level),
+      });
+      registerSoloCommands(program, contextFor());
+      const code = await runKubicProgram(
+        program,
+        ['doctor', '--bogus'],
+        channels,
+        { code: () => 0 },
+      );
+      return { code, text: err.join('\n') };
+    };
+    const plain = await run('none');
+    expect(plain.code).toBe(2);
+    expect(plain.text).toBe("error: unknown option '--bogus'");
+    const rich = await run('truecolor');
+    expect(rich.code).toBe(2);
+    const theme = createCliTheme('truecolor');
+    expect(rich.text).toContain(theme.ui.fg('err')('✕'));
+    expect(rich.text).toContain("unknown option '--bogus'");
+    expect(rich.text).toContain(theme.ui.fg('fg1')('--help'));
+  });
+});

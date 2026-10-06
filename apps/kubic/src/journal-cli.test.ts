@@ -1285,7 +1285,8 @@ describe('journal CLI presentation (themes, tables)', () => {
       },
     );
     expect(errs).toHaveLength(1);
-    expect(errs[0]?.startsWith(COLOR.accent('info:'))).toBe(true);
+    // Issue #450: a colour terminal shows the level as a status mark.
+    expect(errs[0]?.startsWith(COLOR.ui.fg('info')('ℹ'))).toBe(true);
   });
 });
 

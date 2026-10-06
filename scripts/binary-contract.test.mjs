@@ -28,6 +28,8 @@ import {
   MODELS_RECEIPT_PREFIX,
   nodeGuardLine,
   ROOT_HELP_TEXT,
+  UNKNOWN_COMMAND_HELP_HINT,
+  unknownCommandError,
   unknownPromptHint,
 } from './binary-contract.mjs';
 
@@ -67,14 +69,14 @@ function bareOut(line = ROOT_HELP_TEXT) {
   return { code: 1, stdout: `${line}\n`, stderr: '', error: null };
 }
 
-// An unknown command (issue #372, hint per issue #268/L-D7): the root usage
-// line plus the prompt hint on stdout, exit 2 — a usage error, not
-// commander's own stderr message.
+// An unknown command (issue #372, hint per issue #268/L-D7, stderr per issue
+// #450): exit 2, nothing on stdout, the error line, the prompt hint and the
+// help hint on stderr.
 function unknownOut() {
   return {
     code: 2,
-    stdout: `${ROOT_HELP_TEXT}\n${unknownPromptHint('nosuch-command')}\n`,
-    stderr: '',
+    stdout: '',
+    stderr: `${unknownCommandError('nosuch-command')}\n${unknownPromptHint('nosuch-command')}\n${UNKNOWN_COMMAND_HELP_HINT}\n`,
     error: null,
   };
 }
@@ -82,7 +84,12 @@ function unknownOut() {
 // The internal crash probe without its env gate (issue #128): an unknown
 // command with NO prompt hint — the seam is not a user surface (issue #268).
 function usageOnlyOut() {
-  return { code: 2, stdout: `${ROOT_HELP_TEXT}\n`, stderr: '', error: null };
+  return {
+    code: 2,
+    stdout: '',
+    stderr: `${unknownCommandError('__crash-probe')}\n${UNKNOWN_COMMAND_HELP_HINT}\n`,
+    error: null,
+  };
 }
 
 // The headline bare prompt (issue #268/L-D7): a multi-word argv token runs
@@ -560,7 +567,8 @@ describe('binary contract failure probes (issue #128)', () => {
 
   it('fails when the seam fires without the env gate (internal-only breach)', () => {
     const result = contractWith({ ungatedCrash: crashOut() });
-    assert.equal(result.problems.length, 3);
+    // Exit code and stderr; stdout is empty either way (issue #450).
+    assert.equal(result.problems.length, 2);
     for (const problem of result.problems) {
       assert.match(problem, /without the env gate/);
     }
@@ -575,26 +583,29 @@ describe('binary contract unknown-command probe (issue #372)', () => {
     assert.match(result.problems[0], /exited 1 \(expected 2/);
   });
 
-  it('fails when the unknown-command path writes to stderr', () => {
+  it('fails when the unknown-command path writes to stdout (issue #450)', () => {
     const result = contractWith({
-      unknown: {
-        ...unknownOut(),
-        stderr: "error: unknown command 'nosuch-command'\n",
-      },
+      unknown: { ...unknownOut(), stdout: `${ROOT_HELP_TEXT}\n` },
     });
     assert.equal(result.problems.length, 1);
-    assert.match(result.problems[0], /expected silence/);
+    assert.match(result.problems[0], /expected an empty stdout/);
   });
 
-  it('fails when the unknown-command path drops the root usage line', () => {
-    const result = contractWith({ unknown: { ...unknownOut(), stdout: '' } });
+  it('fails when the unknown-command path drops the error line', () => {
+    const result = contractWith({ unknown: { ...unknownOut(), stderr: '' } });
     assert.equal(result.problems.length, 1);
-    assert.match(result.problems[0], /expected the root usage line/);
+    assert.match(
+      result.problems[0],
+      /expected the error line, the prompt hint/,
+    );
   });
 
   it('fails when the unknown-command path drops the prompt hint', () => {
     const result = contractWith({
-      unknown: { ...unknownOut(), stdout: `${ROOT_HELP_TEXT}\n` },
+      unknown: {
+        ...unknownOut(),
+        stderr: `${unknownCommandError('nosuch-command')}\n${UNKNOWN_COMMAND_HELP_HINT}\n`,
+      },
     });
     assert.equal(result.problems.length, 1);
     assert.match(result.problems[0], /prompt hint/);

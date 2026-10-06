@@ -9,6 +9,7 @@
 // the documented deps shapes the root wires (clean {env,out,err}, cost
 // {loadRows,out}, audit {loadRecords,loadSecrets,out}, export {readFile,out})
 // and the eval runSuite refusal message, verbatim.
+
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,6 +22,7 @@ import {
   it,
   vi,
 } from 'vitest';
+import { createCliTheme } from '../../../packages/core/src/cli/theme.js';
 import { RUNTIME_EXCLUDE_ENTRIES } from '../../../packages/exec/src/runtime-exclude.js';
 import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
 import {
@@ -303,8 +305,9 @@ describe('dispatch routing (issue #135)', () => {
       2,
     );
     expect(h.lines).toEqual([
-      ROOT_HELP,
+      "error: unknown command 'definitely-not-a-command'",
       "hint: to run it as a prompt: kubic run -p 'definitely-not-a-command'",
+      'hint: kubic --help lists the commands',
     ]);
     expect(h.calls).toEqual([]);
   });
@@ -334,8 +337,9 @@ describe('dispatch routing (issue #135)', () => {
     const h = harness();
     expect(await dispatchCommand('nosuch', [], h.deps)).toBe(2);
     expect(h.lines).toEqual([
-      ROOT_HELP,
+      "error: unknown command 'nosuch'",
       "hint: to run it as a prompt: kubic run -p 'nosuch'",
+      'hint: kubic --help lists the commands',
     ]);
     expect(h.calls).toEqual([]);
   });
@@ -345,7 +349,10 @@ describe('dispatch routing (issue #135)', () => {
     // hint would name a command that exits 2 again.
     const h = harness();
     expect(await dispatchCommand('', [], h.deps)).toBe(2);
-    expect(h.lines).toEqual([ROOT_HELP]);
+    expect(h.lines).toEqual([
+      "error: unknown command ''",
+      'hint: kubic --help lists the commands',
+    ]);
     expect(h.calls).toEqual([]);
   });
 });
@@ -484,7 +491,10 @@ describe('front door (issue #128 behavior, moved)', () => {
     delete process.env.__KUBIC_CONTRACT_CRASH_PROBE;
     const h = harness();
     expect(await dispatchCommand('__crash-probe', [], h.deps)).toBe(2);
-    expect(h.lines).toEqual([ROOT_HELP]);
+    expect(h.lines).toEqual([
+      "error: unknown command '__crash-probe'",
+      'hint: kubic --help lists the commands',
+    ]);
     expect(h.calls).toEqual([]);
   });
 
@@ -492,16 +502,50 @@ describe('front door (issue #128 behavior, moved)', () => {
     for (const command of ['--bogus', '-x']) {
       const h = harness();
       expect(await dispatchCommand(command, [], h.deps), command).toBe(2);
-      expect(h.lines, command).toEqual([ROOT_HELP]);
+      expect(h.lines, command).toEqual([
+        `error: unknown option '${command}'`,
+        'hint: kubic --help lists the commands and options',
+      ]);
       expect(h.calls, command).toEqual([]);
     }
-    // A word-shaped token gets the L-D7 hint; a flag-shaped one does not.
+    // `help` and `version` point at the real flags (issue #450), never at
+    // the prompt form; a typo names the closest command.
     const help = harness();
     expect(await dispatchCommand('help', [], help.deps)).toBe(2);
     expect(help.lines).toEqual([
-      ROOT_HELP,
-      "hint: to run it as a prompt: kubic run -p 'help'",
+      "error: unknown command 'help'",
+      'hint: kubic --help lists the commands',
     ]);
+    const version = harness();
+    expect(await dispatchCommand('version', [], version.deps)).toBe(2);
+    expect(version.lines).toEqual([
+      "error: unknown command 'version'",
+      'hint: kubic --version prints the version',
+      'hint: kubic --help lists the commands',
+    ]);
+    const typo = harness();
+    expect(await dispatchCommand('stauts', [], typo.deps)).toBe(2);
+    expect(typo.lines).toEqual([
+      "error: unknown command 'stauts'",
+      'hint: did you mean kubic status?',
+      'hint: kubic --help lists the commands',
+    ]);
+  });
+
+  it('renders a usage error as an error block on a colour terminal (issue #450)', async () => {
+    const h = harness();
+    const theme = createCliTheme('truecolor');
+    expect(
+      await dispatchCommand('stauts', [], {
+        ...h.deps,
+        errorTheme: () => theme,
+      }),
+    ).toBe(2);
+    expect(h.lines[0]).toBe(
+      `${theme.ui.fg('err')('✕')} ${theme.ui.style({ fg: 'err', bold: true })('unknown command')} ${theme.ui.fg('fg0')('stauts')}`,
+    );
+    expect(h.lines[1]).toContain(theme.ui.fg('fg1')('kubic status'));
+    expect(h.lines.at(-1)).toBe(`  ${theme.ui.fg('fg3')('exit 2 · usage')}`);
   });
 
   it('root options after the command reach the command (positional options)', async () => {

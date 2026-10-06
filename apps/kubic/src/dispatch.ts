@@ -15,9 +15,11 @@ import {
   EXIT_FAILED,
   EXIT_USAGE,
 } from '../../../packages/core/src/cli/exit-codes.js';
+import { errorBlock } from '../../../packages/core/src/cli/kit.js';
 import { formatJson } from '../../../packages/core/src/cli/output.js';
 import type { CliTheme } from '../../../packages/core/src/cli/theme.js';
 import { formatVersionLine } from '../../../packages/core/src/license.js';
+import { suggest } from '../../../packages/core/src/suggest.js';
 import { refusedOrchestrateEnvelope } from '../../../packages/host/src/orchestrate-cli.js';
 import {
   buildConfiguredSinks,
@@ -251,6 +253,9 @@ export interface DispatchDeps {
   // The stdout theme for the help (issue #446): coloured on a TTY, the
   // identity otherwise. Absent means plain (the fakes in dispatch.test.ts).
   readonly helpTheme?: () => CliTheme;
+  // Issue #450: the stderr theme for a usage error — the error block on a
+  // colour terminal, `error:`/`hint:` lines otherwise. Absent means plain.
+  readonly errorTheme?: () => CliTheme;
   // §78/§80 "interactive by default": true when stdin AND stdout are a TTY.
   // Only consulted for the bare invocation; absent means non-interactive.
   readonly isInteractive?: () => boolean;
@@ -270,6 +275,57 @@ const BARE_ORCHESTRATOR_FLAG = '--orchestrator';
 // Issue #295: the bare model pin, `--model <provider/id>` /
 // `--model=<provider/id>`.
 const BARE_MODEL_FLAG = '--model';
+
+// Words that are root flags, not commands (issue #450): their hint points at
+// the flag instead of the prompt form ('' = only the closing help hint).
+const FLAG_WORD_HINTS: ReadonlyMap<string, string> = new Map([
+  ['help', ''],
+  ['version', '`kubic --version` prints the version'],
+]);
+
+// Issue #450 (06-F): an unknown command or root option names what was typed,
+// the closest command when one is near (`kubic stauts` → `status`), the
+// prompt form for a word nothing resembles (#268), and `kubic --help`. The
+// internal crash probe gets no prompt hint (it is not a user surface).
+function reportUnknownCommand(command: string, deps: DispatchDeps): void {
+  const err = deps.err ?? deps.out;
+  const option = command.startsWith('-');
+  const hints: string[] = [];
+  const flagWord = FLAG_WORD_HINTS.get(command);
+  if (flagWord !== undefined) {
+    if (flagWord !== '') hints.push(flagWord);
+  } else if (!option) {
+    const [close] = suggest(command, [...COMMAND_NAMES]);
+    if (close !== undefined) {
+      hints.push(`did you mean \`kubic ${close}\`?`);
+    } else if (command !== '' && command !== CRASH_PROBE) {
+      hints.push(
+        `to run it as a prompt: \`kubic run -p ${shellQuote(command)}\``,
+      );
+    }
+  }
+  hints.push(
+    option
+      ? '`kubic --help` lists the commands and options'
+      : '`kubic --help` lists the commands',
+  );
+  const message = option ? 'unknown option' : 'unknown command';
+  const theme = deps.errorTheme?.();
+  if (theme?.enabled === true) {
+    for (const line of errorBlock(theme, {
+      message,
+      subject: command,
+      hints,
+      exitCode: EXIT_USAGE,
+      code: 'usage',
+    })) {
+      err(line);
+    }
+    return;
+  }
+  err(`error: ${message} '${command}'`);
+  for (const hint of hints) err(`hint: ${hint.replaceAll('`', '')}`);
+}
 
 export async function dispatchCommand(
   requested: string | undefined,
@@ -427,28 +483,19 @@ export async function dispatchCommand(
       command === BARE_ORCHESTRATOR_FLAG ||
       command === BARE_MODEL_FLAG ||
       command.startsWith(`${BARE_MODEL_FLAG}=`);
-    deps.out(rootHelp);
-    // Issue #268 (L-D7): a single-word token stays an unknown command
-    // (#372) — the hint names the prompt form for exactly that word. The
-    // internal crash probe stays hint-free (it is not a user surface).
-    if (
-      !bareOffTty &&
-      command !== undefined &&
-      command !== '' &&
-      command !== CRASH_PROBE &&
-      !command.startsWith('-')
-    ) {
-      deps.out(
-        `hint: to run it as a prompt: kubic run -p ${shellQuote(command)}`,
-      );
+    if (bareOffTty) {
+      deps.out(rootHelp);
+      return EXIT_FAILED;
     }
-    return bareOffTty ? EXIT_FAILED : EXIT_USAGE;
+    reportUnknownCommand(command ?? '', deps);
+    return EXIT_USAGE;
   }
   const io = { out: deps.out, err: deps.err ?? deps.out };
   const program = createKubicProgram(io, {
     versionLine: formatVersionLine(deps.version()),
     rootHelp,
     ...(helpTheme === undefined ? {} : { helpTheme }),
+    ...(deps.errorTheme === undefined ? {} : { errorTheme: deps.errorTheme() }),
   });
   let exitCode = 0;
   const ctx: CommandContext = {

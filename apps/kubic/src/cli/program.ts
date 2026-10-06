@@ -30,6 +30,7 @@ import {
   CliUsageError,
   exitCodeForParseError,
 } from '../../../../packages/core/src/cli/exit-codes.js';
+import { errorBlock } from '../../../../packages/core/src/cli/kit.js';
 import type { CliTheme } from '../../../../packages/core/src/cli/theme.js';
 import { shellQuote } from '../../../../packages/host/src/run-cli.js';
 import type { KubicProgram } from './context.js';
@@ -49,6 +50,9 @@ export interface ProgramOptions {
   // styled (titles, terms) through commander's style hooks; absent or plain
   // keeps commander's text byte-for-byte.
   readonly helpTheme?: CliTheme;
+  // Issue #450: the stderr theme. When it is coloured, a usage error
+  // (unknown option, missing value) is an error block; plain otherwise.
+  readonly errorTheme?: CliTheme;
 }
 
 // commander hands whole chunks ending in '\n'; the line channels add their
@@ -93,7 +97,19 @@ export function createKubicProgram(
     .configureOutput({
       writeOut: toLines(io.out),
       writeErr: toLines(io.err),
-      outputError: (message, write) => write(message),
+      outputError: (message, write) => {
+        const theme = options.errorTheme;
+        if (theme === undefined || !theme.enabled) {
+          write(message);
+          return;
+        }
+        const text = message.trimEnd().replace(/^error: /u, '');
+        const lines = errorBlock(theme, {
+          message: text,
+          hints: ['`--help` lists the options'],
+        });
+        write(`${lines.join('\n')}\n`);
+      },
       // Help on stdout keeps its styles only when the stdout theme is
       // coloured; help written to stderr (a usage error) is always plain.
       getOutHasColors: () => options.helpTheme?.enabled === true,

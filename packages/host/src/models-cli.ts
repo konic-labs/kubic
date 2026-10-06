@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
+import { suggest } from '../../core/src/suggest.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { parseModelFlag, selectModel } from '../../worker/src/model-select.js';
 import {
@@ -572,10 +573,12 @@ export async function runModelsCommand(
     options.provider !== undefined &&
     !catalog.some((provider) => provider.id === options.provider)
   ) {
+    const ids = catalog.map((provider) => provider.id);
+    const [close] = suggest(options.provider, ids);
     log.error(
-      `unknown provider ${JSON.stringify(options.provider)} (known: ${catalog
-        .map((provider) => provider.id)
-        .join(', ')})`,
+      close === undefined
+        ? `unknown provider ${JSON.stringify(options.provider)} (known: ${ids.join(', ')})`
+        : `unknown provider ${JSON.stringify(options.provider)}; did you mean '${close}'?`,
     );
     return 2;
   }

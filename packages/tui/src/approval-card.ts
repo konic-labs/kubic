@@ -13,14 +13,14 @@ import type { UiTheme } from '../../core/src/ui/style.js';
 import type { ApprovalAction, ApprovalViewRequest } from './approval-view.js';
 import { keyCap } from './chrome.js';
 import type { CellDisplay } from './transcript.js';
-import { visibleWidth, wrapTextWithAnsi } from './tui-boundary.js';
+import { visibleWidth } from './tui-boundary.js';
 import {
   type DiffRow,
   parseDisplayDiff,
   renderDiffRows,
 } from './ui/diff-block.js';
 import { frameLines } from './ui/frame.js';
-import { fitLine, leftRight } from './ui/line.js';
+import { fitLine, leftRight, wrapStyled } from './ui/line.js';
 import { badge } from './ui/marks.js';
 
 /** Diff rows a collapsed preview shows (the page key shows all). */
@@ -311,7 +311,7 @@ export function renderApprovalCard(
     let row = '';
     for (const part of set) {
       const pieces =
-        visibleWidth(part) > keyRoom ? wrapTextWithAnsi(part, keyRoom) : [part];
+        visibleWidth(part) > keyRoom ? wrapStyled(part, keyRoom) : [part];
       for (const piece of pieces) {
         if (row === '') {
           row = piece;

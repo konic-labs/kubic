@@ -13,7 +13,11 @@ import {
   statusMark,
 } from '../../core/src/cli/kit.js';
 import type { CliTheme } from '../../core/src/cli/theme.js';
-import { truncateVisible, visibleWidth } from '../../core/src/cli/width.js';
+import {
+  truncateVisible,
+  visibleWidth,
+  wrapVisible,
+} from '../../core/src/cli/width.js';
 import type { DoctorCheck } from './doctor.js';
 
 const LABEL_WIDTH = 12;
@@ -175,10 +179,16 @@ export function renderDoctorGrouped(
     failed === 0 ? ui.fg('fg2')('0 failed') : ui.fg('err')(`${failed} failed`),
     skipped === 0 ? undefined : ui.fg('fg2')(`${skipped} skipped`),
   ].filter((part) => part !== undefined);
-  const lines: string[] = [
-    `${brandHeading(theme, 'doctor')} ${ui.fg('fg2')('·')} ${totals.join(ui.fg('fg2')(' · '))}`,
-    '',
-  ];
+  // Issue #468: a narrow terminal takes the totals on their own line.
+  const heading = `${brandHeading(theme, 'doctor')} ${ui.fg('fg2')('·')} ${totals.join(ui.fg('fg2')(' · '))}`;
+  const lines: string[] =
+    visibleWidth(heading) <= columns
+      ? [heading, '']
+      : [
+          brandHeading(theme, 'doctor'),
+          truncateVisible(totals.join(ui.fg('fg2')(' · ')), columns),
+          '',
+        ];
 
   for (const group of GROUP_ORDER) {
     const members = checks.filter((check) => doctorGroup(check.id) === group);
@@ -204,9 +214,17 @@ export function renderDoctorGrouped(
       if (check.status === 'pass' || honest.includes(check)) continue;
       const mark = statusMark(theme, MARK[check.status]);
       if (check.status === 'fail') {
-        rows.push(
-          `${mark} ${ui.style({ fg: 'err', bold: true })(check.id)} ${ui.fg('fg0')(check.detail)}`,
+        // A failure reads whole: its detail wraps under it, never cut
+        // (issue #468: it used to run past the terminal's edge).
+        const [first = '', ...rest] = wrapVisible(
+          `${check.id} ${check.detail}`,
+          Math.max(1, room - 2),
         );
+        const id = first.startsWith(check.id)
+          ? `${ui.style({ fg: 'err', bold: true })(check.id)}${ui.fg('fg0')(first.slice(check.id.length))}`
+          : ui.fg('fg0')(first);
+        rows.push(`${mark} ${id}`);
+        for (const more of rest) rows.push(`  ${ui.fg('fg0')(more)}`);
         continue;
       }
       rows.push(
@@ -240,12 +258,15 @@ export function renderDoctorGrouped(
       : warnings > 0
         ? `${warnings} warning${warnings === 1 ? '' : 's'}, nothing blocking`
         : 'all clear';
-  lines.push(
-    hintLine(
-      theme,
-      `${verdict} · \`kubic doctor --verbose\` for the full report`,
-      0,
-    ),
-  );
+  const footer = `${verdict} · \`kubic doctor --verbose\` for the full report`;
+  // Issue #468: too wide for the terminal, the pointer takes its own line.
+  if (visibleWidth(hintLine(theme, footer, 0)) <= columns) {
+    lines.push(hintLine(theme, footer, 0));
+  } else {
+    lines.push(
+      hintLine(theme, verdict, 0),
+      hintLine(theme, '`kubic doctor --verbose` for the full report', 0),
+    );
+  }
   return lines;
 }

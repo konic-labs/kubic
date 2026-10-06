@@ -230,3 +230,46 @@ export function reassertBackground(
 export function stripStyles(text: string): string {
   return text.replace(SGR_SEQUENCE, '');
 }
+
+// Issue #468: what a rendered line leaves set at its end — each SGR
+// attribute still on (`intensity`, `italic`, `underline`, `inverse`,
+// `strike`, `fg`, `bg`) and an OSC 8 hyperlink still open. Empty means the
+// line closes everything it opens, so nothing bleeds into the next one.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching OSC 8 escapes is the point
+const HYPERLINK = /\u001b\]8;[^;]*;([^\u0007\u001b]*)(?:\u0007|\u001b\\)/g;
+
+export function openStyles(line: string): string[] {
+  if (!line.includes('\u001b')) return [];
+  const on = new Set<string>();
+  for (const match of line.matchAll(SGR_SEQUENCE)) {
+    const params = (match[1] ?? '').split(';');
+    if (params.length === 1 && params[0] === '') params[0] = '0';
+    for (let index = 0; index < params.length; index += 1) {
+      const code = Number(params[index]);
+      if (code === 0) on.clear();
+      else if (code === 1 || code === 2) on.add('intensity');
+      else if (code === 22) on.delete('intensity');
+      else if (code === 3) on.add('italic');
+      else if (code === 23) on.delete('italic');
+      else if (code === 4) on.add('underline');
+      else if (code === 24) on.delete('underline');
+      else if (code === 7) on.add('inverse');
+      else if (code === 27) on.delete('inverse');
+      else if (code === 9) on.add('strike');
+      else if (code === 29) on.delete('strike');
+      else if (code === 38 || code === 48) {
+        on.add(code === 38 ? 'fg' : 'bg');
+        index += params[index + 1] === '5' ? 2 : 4;
+      } else if (code === 39) on.delete('fg');
+      else if (code === 49) on.delete('bg');
+      else if ((code >= 30 && code <= 37) || (code >= 90 && code <= 97)) {
+        on.add('fg');
+      } else if ((code >= 40 && code <= 47) || (code >= 100 && code <= 107)) {
+        on.add('bg');
+      }
+    }
+  }
+  let link = false;
+  for (const match of line.matchAll(HYPERLINK)) link = (match[1] ?? '') !== '';
+  return [...on, ...(link ? ['hyperlink'] : [])];
+}

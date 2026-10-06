@@ -16,13 +16,13 @@ import { FAIL, OK, TOOL, WARN } from '../../core/src/ui/glyphs.js';
 import type { Style, UiTheme } from '../../core/src/ui/style.js';
 import { spinnerFrame } from './theme.js';
 import type { CellDisplay } from './transcript.js';
-import { visibleWidth, wrapTextWithAnsi } from './tui-boundary.js';
+import { visibleWidth } from './tui-boundary.js';
 import {
   type DiffRow,
   parseDisplayDiff,
   renderDiffRows,
 } from './ui/diff-block.js';
-import { fitLine, leftRight } from './ui/line.js';
+import { fitLine, leftRight, wrapStyled } from './ui/line.js';
 
 /** Collapsed cards show at most this many body lines. */
 export const CARD_PREVIEW_LINES = 5;
@@ -364,7 +364,7 @@ export function renderToolCard(
     // Expanded, a target too long for the header wraps under it (#300):
     // the operator expanded to read exactly that command or path.
     out.push(leftRight(name, right, w));
-    for (const row of wrapTextWithAnsi(card.target ?? '', bodyWidth)) {
+    for (const row of wrapStyled(card.target ?? '', bodyWidth)) {
       out.push(fitLine(`${gutter}${ui.fg('fg1')(row)}`, w));
     }
   } else {
@@ -403,7 +403,7 @@ export function renderToolCard(
           }));
   if (card.expanded) {
     for (const line of lines) {
-      for (const row of wrapTextWithAnsi(line.text, bodyWidth)) {
+      for (const row of wrapStyled(line.text, bodyWidth)) {
         out.push(fitLine(`${gutter}${line.style(row)}`, w));
       }
     }

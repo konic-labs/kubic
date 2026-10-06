@@ -162,13 +162,12 @@ import {
   parseKey,
   ScrollView,
   truncateToWidth,
-  wrapTextWithAnsi,
 } from './tui-boundary.js';
 import { CLIPBOARD_MAX_BYTES, copySize, formatSize } from './ui/clipboard.js';
 import { dimFrame } from './ui/dim.js';
 import { fileUrl } from './ui/file-links.js';
 import { renderKeyHintRow } from './ui/key-hints.js';
-import { leftRight } from './ui/line.js';
+import { leftRight, wrapStyled } from './ui/line.js';
 import {
   formatAge,
   formatContextWindow,
@@ -846,7 +845,7 @@ class NoticeRow implements Component {
         : theme.muted(this.footer);
       // Wrapped, not cut: an error report is the text an operator most
       // needs whole. Capped at two rows.
-      const wrapped = wrapTextWithAnsi(styled, Math.max(1, width - 1));
+      const wrapped = wrapStyled(styled, Math.max(1, width - 1));
       const shown = wrapped.slice(0, FOOTER_MAX_ROWS);
       if (wrapped.length > FOOTER_MAX_ROWS) {
         const last = shown.length - 1;

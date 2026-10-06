@@ -83,7 +83,7 @@ export const DARK_PALETTE: Palette = {
   bg3: '#22222a',
   fg0: '#ececf1',
   fg1: '#a3a3ae',
-  fg2: '#6a6a75',
+  fg2: '#6e6e79',
   fg3: '#3c3c45',
   accent: '#ff004d',
   accentBg: '#2a0612',

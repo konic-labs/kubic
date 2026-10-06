@@ -90,3 +90,38 @@ export function truncateVisible(text: string, width: number): string {
   }
   return `${out}…${styled ? '\u001b[0m' : ''}`;
 }
+
+/**
+ * Issue #468: plain text as rows of at most `width` cells — broken at spaces
+ * where one fits, a word longer than a row cut where the row ends. Never
+ * drops a character (a failure's detail must read whole).
+ */
+export function wrapVisible(text: string, width: number): string[] {
+  const room = Math.max(1, Math.floor(width));
+  const rows: string[] = [];
+  let row = '';
+  for (const word of text.split(/\s+/).filter((part) => part !== '')) {
+    let rest = word;
+    while (rest !== '') {
+      const joined = row === '' ? rest : `${row} ${rest}`;
+      if (visibleWidth(joined) <= room) {
+        row = joined;
+        rest = '';
+      } else if (row !== '') {
+        rows.push(row);
+        row = '';
+      } else {
+        // A word wider than the row: cut it where the row ends.
+        let cut = '';
+        for (const ch of rest) {
+          if (visibleWidth(cut + ch) > room) break;
+          cut += ch;
+        }
+        rows.push(cut);
+        rest = rest.slice(cut.length);
+      }
+    }
+  }
+  if (row !== '') rows.push(row);
+  return rows.length === 0 ? [''] : rows;
+}

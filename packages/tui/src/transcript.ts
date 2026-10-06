@@ -7,6 +7,7 @@
 // The ScrollView owns follow state (follow:'end', primary nearest,
 // overscroll chain); this module owns the document: delta appends rebuild
 // the single Markdown child exactly once per entry and never clear it.
+
 import type { LaneImagePart } from '../../core/src/presentation.js';
 import { FOCUS_EDGE, PROSE } from '../../core/src/ui/glyphs.js';
 import { createAttachmentComponent } from './attachments.js';
@@ -21,11 +22,10 @@ import {
   ScrollView,
   truncateToWidth,
   visibleWidth,
-  wrapTextWithAnsi,
 } from './tui-boundary.js';
 import { linkFileReferences } from './ui/file-links.js';
 import { highlightCode } from './ui/highlight.js';
-import { leftRight } from './ui/line.js';
+import { closeOpenStyles, leftRight, wrapStyled } from './ui/line.js';
 import { fillLine } from './ui/surface.js';
 
 // 'prompt' is the operator's own line; 'text' is assistant prose (rendered
@@ -477,9 +477,7 @@ class TranscriptDocument implements Component {
     const welcome =
       typeof this.welcome === 'function' ? this.welcome(w) : this.welcome;
     const out: string[] = welcome.flatMap((line) =>
-      line === ''
-        ? ['']
-        : wrapTextWithAnsi(line, w).map((part) => fit(part, w)),
+      line === '' ? [''] : wrapStyled(line, w).map((part) => fit(part, w)),
     );
     const outputs = new Map<string, TranscriptEntry>();
     for (const cell of this.cells) {
@@ -501,6 +499,11 @@ class TranscriptDocument implements Component {
     for (const cell of this.cells) {
       const before = out.length;
       const info = this.renderCell(cell, out, w, theme, outputs, called, gap);
+      // Issue #468: no style a cell opens (a wrapped code row's colour, say)
+      // bleeds past the row it was drawn on.
+      for (let row = before; row < out.length; row += 1) {
+        out[row] = closeOpenStyles(out[row] ?? '');
+      }
       if (info === undefined || out.length === before) continue;
       // The gap row (if one was pushed) belongs to no block.
       const firstRow = out[before] === '' ? before + 1 : before;
@@ -527,7 +530,7 @@ class TranscriptDocument implements Component {
       // arrives. Plain text, not markdown — the committed entry is the one
       // markdown rebuild per entry — and dim, because it is not committed.
       gap();
-      const lines = wrapTextWithAnsi(this.stream, Math.max(1, w - 4));
+      const lines = wrapStyled(this.stream, Math.max(1, w - 4));
       lines.forEach((line, index) => {
         out.push(
           fit(
@@ -715,7 +718,7 @@ class TranscriptDocument implements Component {
       () => {},
       true,
     );
-    return out;
+    return out.map(closeOpenStyles);
   }
 
   // Issue #455 (01-B): the operator's own turn — a full-width bg2 block
@@ -740,7 +743,7 @@ class TranscriptDocument implements Component {
       1,
       width - 3 - (stamp === '' ? 1 : visibleWidth(stamp) + 2),
     );
-    const lines = text === '' ? [''] : wrapTextWithAnsi(text, room);
+    const lines = text === '' ? [''] : wrapStyled(text, room);
     lines.forEach((line, index) => {
       const left = `${edge}${body(line)}`;
       const row =
@@ -772,7 +775,7 @@ class TranscriptDocument implements Component {
       const gutter = `  ${ui.fg('fg3')('│')} `;
       const room = Math.max(1, width - 4);
       for (const line of cell.markdown.split('\n')) {
-        for (const row of wrapTextWithAnsi(line, room)) {
+        for (const row of wrapStyled(line, room)) {
           out.push(fit(`${gutter}${muted(row)}`, width));
         }
       }
@@ -862,7 +865,7 @@ class TranscriptDocument implements Component {
     let clipped = false;
     for (const line of shown) {
       if (expanded) {
-        for (const row of wrapTextWithAnsi(line, bodyWidth)) {
+        for (const row of wrapStyled(line, bodyWidth)) {
           out.push(fit(`${gutter}${ui.fg('fg2')(row)}`, width));
         }
         continue;

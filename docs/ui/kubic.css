@@ -14,7 +14,7 @@
   /* text: primary → faint */
   --fg0: #ececf1;
   --fg1: #a3a3ae;
-  --fg2: #6a6a75;
+  --fg2: #6e6e79;
   --fg3: #3c3c45;
   /* brand: konic red, used for focus + identity only */
   --acc: #ff004d;
@@ -35,6 +35,35 @@
 
   --cell-h: 18px;
   --font: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* The light palette (packages/core/src/ui/tokens.ts LIGHT_PALETTE; issue
+   #468). `:root[data-theme="light"]` swaps a whole page; `.theme-light`
+   swaps one mock window. Values meet the contrast targets the palette tests
+   pin (fg0 ≥ 7:1, fg1 ≥ 4.5:1, fg2 ≥ 3:1 on every surface). */
+:root[data-theme="light"],
+.theme-light {
+  --bg0: #ffffff;
+  --bg1: #f3f3f6;
+  --bg2: #ebebf0;
+  --bg3: #dfdfe7;
+  --fg0: #18181b;
+  --fg1: #3f3f46;
+  --fg2: #63636e;
+  --fg3: #a1a1aa;
+  --acc: #d0003f;
+  --acc-bg: #ffe5ec;
+  --ok: #15803d;
+  --ok-bg: #e6f6ec;
+  --warn: #a35200;
+  --warn-bg: #fff3df;
+  --err: #c0261b;
+  --err-bg: #fdecea;
+  --info: #1d4ed8;
+  --add: #166534;
+  --add-bg: #dcfce7;
+  --del: #9f1239;
+  --del-bg: #ffe4e6;
 }
 
 * {
@@ -150,7 +179,7 @@ body {
   background: #141418;
   border-bottom: 1px solid #222228;
   font: 11px var(--font);
-  color: #6a6a75;
+  color: #6e6e79;
 }
 .win .bar i {
   width: 10px;
@@ -439,7 +468,7 @@ body {
 }
 .cap {
   font: 11px var(--font);
-  color: #6a6a75;
+  color: #6e6e79;
   margin: 0 0 6px;
   text-transform: uppercase;
   letter-spacing: 0.1em;

@@ -1,6 +1,13 @@
 // The grouped root help and styled subcommand help (issue #446; 06-A).
+
 import { describe, expect, it } from 'vitest';
 import { createCliTheme } from '../../../../packages/core/src/cli/theme.js';
+import { openStyles } from '../../../../packages/core/src/ui/style.js';
+import {
+  DARK_PALETTE,
+  LIGHT_PALETTE,
+  TERMINAL_PALETTE,
+} from '../../../../packages/core/src/ui/tokens.js';
 import { registerSoloCommands } from '../commands/solo.js';
 import type { CliConfigResult } from '../config-runtime.js';
 import { COMMAND_NAMES } from '../dispatch.js';
@@ -143,5 +150,32 @@ describe('usage errors on a colour terminal (issue #450)', () => {
     expect(rich.text).toContain(theme.ui.fg('err')('✕'));
     expect(rich.text).toContain("unknown option '--bogus'");
     expect(rich.text).toContain(theme.ui.fg('fg1')('--help'));
+  });
+});
+
+// Issue #468: the root help in every palette and colour level — no escape
+// at depth none, and no line leaves a style open.
+describe('root help render matrix (issue #468)', () => {
+  it('closes every style it opens, in every palette and level', () => {
+    const failures: string[] = [];
+    for (const [name, palette] of [
+      ['dark', DARK_PALETTE],
+      ['light', LIGHT_PALETTE],
+      ['terminal', TERMINAL_PALETTE],
+    ] as const) {
+      for (const level of ['truecolor', '256', '16', 'none'] as const) {
+        renderRootHelp(createCliTheme(level, palette, name))
+          .split('\n')
+          .forEach((line, index) => {
+            const where = `${name}/${level} line ${index}`;
+            if (level === 'none' && line.includes('\u001b')) {
+              failures.push(`${where}: escape at depth none`);
+            }
+            const open = openStyles(line);
+            if (open.length > 0) failures.push(`${where}: ${open.join(', ')}`);
+          });
+      }
+    }
+    expect(failures).toEqual([]);
   });
 });

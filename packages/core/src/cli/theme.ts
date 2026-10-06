@@ -8,7 +8,7 @@
 
 import { type ColorLevel, detectColorLevel } from '../ui/color.js';
 import { createUiTheme, type Style, type UiTheme } from '../ui/style.js';
-import { DARK_PALETTE } from '../ui/tokens.js';
+import { DARK_PALETTE, type Palette } from '../ui/tokens.js';
 
 export type { ColorLevel } from '../ui/color.js';
 export { detectColorLevel } from '../ui/color.js';
@@ -33,8 +33,14 @@ export interface CliTheme {
   readonly code: Style;
 }
 
-export function createCliTheme(level: ColorLevel): CliTheme {
-  const ui = createUiTheme(DARK_PALETTE, level, 'dark');
+// Issue #468: the palette is the design's dark brand unless one is named
+// (the CLI render matrix runs every palette).
+export function createCliTheme(
+  level: ColorLevel,
+  palette: Palette = DARK_PALETTE,
+  name = palette === DARK_PALETTE ? 'dark' : 'custom',
+): CliTheme {
+  const ui = createUiTheme(palette, level, name);
   return {
     level,
     enabled: ui.enabled,

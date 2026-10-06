@@ -54,7 +54,7 @@ backgrounds.
 | `bg3` | `#22222a` | Selected row |
 | `fg0` | `#ececf1` | Primary text |
 | `fg1` | `#a3a3ae` | Secondary text, targets, keys in hints |
-| `fg2` | `#6a6a75` | Muted: labels, durations, hint words |
+| `fg2` | `#6e6e79` | Muted: labels, durations, hint words |
 | `fg3` | `#3c3c45` | Faint: rules, gutters, line numbers |
 | `accent` | `#ff004d` | Konic red: brand, caret, focus edge, matches |
 | `accentBg` | `#2a0612` | Accent surface |
@@ -133,6 +133,14 @@ grey reads worse than none) and `bg3` selection uses bright black.
 
 ## Not designed yet
 
-Light-theme mockups, the diff/journal panels and very narrow terminals
-(< 80 columns) are specified in their issues and checked by the quality
-matrix (#468) rather than drawn here.
+The diff/journal panels and an inline (non-full-screen) TUI variant.
+
+Since drawn or checked: the light theme has its own token set and a light
+mock in `index.html` (`:root[data-theme="light"]` / `.theme-light` in
+`kubic.css`, the values of `LIGHT_PALETTE`), and the render matrix (#468:
+`packages/tui/src/ui/matrix.test.ts`, the CLI matrices in core, host and
+apps) renders every surface in the dark, light and terminal palettes at
+truecolor, 256, 16 and no colour, from 60 to 140 columns: no line overflows,
+none leaks a style, and the full-width surfaces paint their whole row. At 16
+colours surfaces drop their backgrounds except the selection (bright black);
+badges keep inverse video.

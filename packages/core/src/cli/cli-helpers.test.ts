@@ -103,7 +103,7 @@ describe('theme', () => {
     expect(rich.accent('x')).toBe(`${ESC}[38;2;255;0;77mx${ESC}[39m`);
     expect(rich.success('x')).toContain('38;2;94;214;140');
     expect(rich.warning('x')).toContain('38;2;255;181;71');
-    expect(rich.muted('x')).toContain('38;2;106;106;117');
+    expect(rich.muted('x')).toContain('38;2;110;110;121');
     expect(rich.code('x')).toContain('38;2;236;236;241');
     expect(rich.bold('x')).toBe(`${ESC}[1mx${ESC}[22m`);
     expect(rich.dim('x')).toBe(`${ESC}[2mx${ESC}[22m`);

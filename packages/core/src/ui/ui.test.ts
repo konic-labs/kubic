@@ -105,6 +105,23 @@ describe('palettes', () => {
       );
       expect(contrastRatio(palette.fg0, palette.bg2)).toBeGreaterThanOrEqual(7);
     });
+    // Issue #468: the text the new surfaces put on their own backgrounds —
+    // the header and status line (bg1), a selected row (bg3) and the
+    // approval card (warnBg).
+    it(`${name}: text keeps its contrast on the surfaces`, () => {
+      for (const surface of ['bg1', 'bg3', 'warnBg'] as const) {
+        const bg = palette[surface];
+        expect(contrastRatio(palette.fg0, bg)).toBeGreaterThanOrEqual(7);
+        expect(contrastRatio(palette.fg1, bg)).toBeGreaterThanOrEqual(4.5);
+        expect(contrastRatio(palette.fg2, bg)).toBeGreaterThanOrEqual(3);
+        expect(contrastRatio(palette.accent, bg)).toBeGreaterThanOrEqual(3);
+      }
+      for (const role of ['ok', 'warn', 'err', 'info', 'add', 'del'] as const) {
+        expect(
+          contrastRatio(palette[role], palette.bg0),
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    });
     it(`${name}: diff colours read on their surfaces`, () => {
       expect(contrastRatio(palette.add, palette.addBg)).toBeGreaterThanOrEqual(
         4.5,

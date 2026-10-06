@@ -8,8 +8,8 @@
 // terminal, then exit 6. Pure over a UiTheme.
 
 import type { UiTheme } from '../../core/src/ui/style.js';
-import { visibleWidth, wrapTextWithAnsi } from './tui-boundary.js';
-import { leftRight } from './ui/line.js';
+import { visibleWidth } from './tui-boundary.js';
+import { leftRight, wrapStyled } from './ui/line.js';
 import { sectionLabel } from './ui/marks.js';
 
 export type PreflightMark = 'ok' | 'warn' | 'err' | 'info';
@@ -90,7 +90,7 @@ function row(
   ].join('  ');
   const head = `${INDENT}${ui.fg(role)(glyph)} ${ui.fg('fg1')(label.padEnd(LABEL))} `;
   const room = Math.max(10, width - HANGING.length);
-  return wrapTextWithAnsi(text, room).map((line, index) =>
+  return wrapStyled(text, room).map((line, index) =>
     index === 0 ? `${head}${line}` : `${HANGING}${line}`,
   );
 }
@@ -238,7 +238,7 @@ export function renderPreflight(
   // Wrapped rows fit; the start rows and the wordmark may be wider than a
   // very narrow screen, so every line is held to the width.
   return lines.map((line) =>
-    visibleWidth(line) <= w ? line : (wrapTextWithAnsi(line, w)[0] ?? ''),
+    visibleWidth(line) <= w ? line : (wrapStyled(line, w)[0] ?? ''),
   );
 }
 

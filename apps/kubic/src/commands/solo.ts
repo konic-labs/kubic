@@ -360,6 +360,10 @@ function registerDoctor(program: Command, ctx: CommandContext): void {
     )
     .option('--json', 'print one JSON report')
     .option(
+      '--verbose',
+      'print every check in full (the default on a terminal is a grouped summary)',
+    )
+    .option(
       '--session <id>',
       'check one session (its installed posture and full-access state)',
     )
@@ -367,6 +371,7 @@ function registerDoctor(program: Command, ctx: CommandContext): void {
       'after',
       examples([
         'kubic doctor',
+        'kubic doctor --verbose',
         'kubic doctor --skip node,license:kubic --json',
       ]),
     )
@@ -376,6 +381,7 @@ function registerDoctor(program: Command, ctx: CommandContext): void {
           {
             skip: opts.skip,
             ...(opts.json === true ? { json: true } : {}),
+            ...(opts.verbose === true ? { verbose: true } : {}),
             ...(opts.session === undefined ? {} : { session: opts.session }),
           },
           ctx.config,

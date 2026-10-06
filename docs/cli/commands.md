@@ -2093,7 +2093,7 @@ project skills. The help, the interactive prompt and the grant output all
 say so. Exit 0 on success; a corrupt store is named and exits 1; a path that
 is not a directory, or `--list` combined with `--revoke`/a path, exits 2.
 
-## `kubic doctor [--skip <id[,id…]>]... [--json]`
+## `kubic doctor [--skip <id[,id…]>]... [--json] [--verbose]`
 
 Health readout — see [doctor and debug](doctor-and-debug.md).
 
@@ -2101,10 +2101,12 @@ Health readout — see [doctor and debug](doctor-and-debug.md).
 | --- | --- |
 | `--skip <id[,id…]>` | Mark checks skipped (comma-separated, repeatable). An id that matches no check exits 2 (`error: unknown check "<id>"` on stderr); `--skip` without a value exits 2. |
 | `--json` | Emit `{ok, exitCode, checks}` as one pretty-printed JSON document instead of human lines. Same exit code either way. |
+| `--verbose` | On an interactive colour terminal, print every check in full instead of the grouped summary (issue #448). Off a terminal the full report always prints. |
 
-Human lines keep the `STATUS id (reason): detail` shape; on a colour
-terminal the status is coloured (pass green, warn amber, fail red, skip
-grey). Unknown options exit 2. Full exit-code contract is on the
+On an interactive colour terminal the default is a grouped summary (issue
+#448; see [doctor and debug](doctor-and-debug.md)). The full report keeps the
+`STATUS id (reason): detail` shape; on a colour terminal the status is
+coloured (pass green, warn amber, fail red, skip grey). Unknown options exit 2. Full exit-code contract is on the
 [exit-codes page](exit-codes.md).
 
 The `limit:resources` line (issue #163, §82) states which per-agent limits a

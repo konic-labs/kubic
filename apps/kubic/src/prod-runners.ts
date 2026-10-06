@@ -1088,6 +1088,10 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       };
       return runDoctorCommand(options, {
         ...view,
+        // Issue #448: the grouped summary packs into the terminal's width.
+        ...(process.stdout.columns === undefined
+          ? {}
+          : { columns: process.stdout.columns }),
         probeProviders: () => providerProbesOf(assembled),
         checkDeps: () => [
           {

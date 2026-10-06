@@ -906,3 +906,39 @@ describe('audit sink checks (issue #286)', () => {
     expect(check?.detail).toContain('sink probe blew up');
   });
 });
+
+// Issue #448: the grouped summary on an interactive terminal, the full
+// report behind --verbose, and the full report everywhere else.
+describe('doctor rendering modes (issue #448)', () => {
+  it('prints the grouped summary when the output is fancy', async () => {
+    const lines: string[] = [];
+    const code = await runDoctorCommand(
+      {},
+      { ...cleanDeps((line: string) => lines.push(line)), fancy: true },
+    );
+    expect(code).toBe(0);
+    expect(lines[0]).toMatch(/^■ kubic doctor · \d+ checks/);
+    expect(lines.some((line) => line.startsWith('PASS '))).toBe(false);
+    expect(lines.at(-1)).toContain('kubic doctor --verbose');
+  });
+
+  it('prints every check in full with --verbose', async () => {
+    const lines: string[] = [];
+    await runDoctorCommand(
+      { verbose: true },
+      { ...cleanDeps((line: string) => lines.push(line)), fancy: true },
+    );
+    expect(lines.some((line) => line.startsWith('PASS '))).toBe(true);
+    expect(lines[0]).not.toMatch(/^■/);
+  });
+
+  it('keeps the full report off a terminal', async () => {
+    const lines: string[] = [];
+    await runDoctorCommand(
+      {},
+      cleanDeps((line: string) => lines.push(line)),
+    );
+    expect(lines.some((line) => line.startsWith('PASS '))).toBe(true);
+    expect(lines.some((line) => line.startsWith('■'))).toBe(false);
+  });
+});

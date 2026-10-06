@@ -11,7 +11,9 @@ import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
 import type { KubicLaneEvent } from '../../../packages/worker/src/lane/events.js';
 import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
+import { entriesToTranscript } from '../../../packages/worker/src/lane/transcript.js';
 import {
+  BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
@@ -127,6 +129,85 @@ describe('tui budget bar wiring (issue #285)', () => {
       expect(app.render(120).join('\n')).toContain('budget tools 2/1');
     } finally {
       await boot.close?.();
+    }
+  });
+});
+
+describe('a resumed TUI session keeps its tool-call count (issue #440)', () => {
+  it('the boot reads the committed calls, the gate refuses past the cap and the bar continues', async () => {
+    const workspace = tmpRoot('kubic-tui-budget-resume-ws-');
+    const target = join(workspace, 'note.txt');
+    writeFileSync(target, 'hello\n');
+    const cwd = tmpRoot('kubic-tui-budget-resume-cwd-');
+    const sessionsRoot = tmpRoot();
+    const extensions = await loadExtensionStartup('tui', cwd, {
+      options: prodExtensionStartupOptions(cwd, { maxToolCalls: 3 }),
+    });
+    const bootWith = (sessionId: string | undefined, reads: number) => {
+      const faux = fauxProvider({ provider: 'fx', models: [{ id: 'a' }] });
+      faux.setResponses([
+        ...Array.from({ length: reads }, () =>
+          fauxToolUse([fauxToolCall('read', { path: target })]),
+        ),
+        fauxAssistantMessage('done'),
+      ]);
+      const models = createModels();
+      models.setProvider(faux.provider);
+      return bootTuiLane(sessionId, {
+        sessionsRoot,
+        models,
+        env: new NodeExecutionEnv(workspace),
+        extensions,
+      });
+    };
+    const appFor = () =>
+      createTuiApp({
+        sessionId: 's1',
+        model: 'fx/a',
+        mode: 'solo',
+        approvalsSkipped: false,
+        budgetLimits: { maxToolCalls: 3 },
+      });
+    // The first boot spends two of the three calls.
+    const first = await bootWith(undefined, 2);
+    try {
+      if (first.loop === undefined) throw new Error('no loop');
+      await new TuiTurnRunner(appFor(), first.loop, 'fx/a').run('read twice');
+    } finally {
+      await first.close?.();
+    }
+    const resumed = await bootWith(first.sessionId, 2);
+    try {
+      const loop = resumed.loop;
+      if (loop === undefined) throw new Error('no loop');
+      expect(resumed.toolCalls).toBe(2);
+      const app = appFor();
+      const runner = new TuiTurnRunner(
+        app,
+        loop,
+        'fx/a',
+        undefined,
+        undefined,
+        [],
+        undefined,
+        undefined,
+        resumed.toolCalls,
+      );
+      await runner.run('read twice more');
+      // The third call overall ran; the fourth reached the gate and was
+      // refused, and the bar counts on from the session's two.
+      const results = entriesToTranscript(
+        await loop.entries(BACKGROUND_CONTEXT),
+      ).filter((item) => item.kind === 'tool-result');
+      expect(results.map((item) => item.isError)).toEqual([
+        false,
+        false,
+        false,
+        true,
+      ]);
+      expect(app.status.getState().budget?.toolCalls).toBe(4);
+    } finally {
+      await resumed.close?.();
     }
   });
 });

@@ -184,6 +184,30 @@ describe('child run budget enforcement (issue #208)', () => {
     });
   });
 
+  it('meter continues from what a resumed session already spent (issue #440)', () => {
+    const meter = createRunBudgetMeter(
+      { maxToolCalls: 3, maxTokens: 100 },
+      { toolCalls: 2, tokens: 90 },
+    );
+    expect(meter.usage()).toMatchObject({ toolCalls: 2, tokens: 90 });
+    expect(meter.nextToolCall()).toBeUndefined();
+    expect(meter.nextToolCall()).toEqual({
+      status: 'budget_exhausted',
+      limit: 'toolCalls',
+    });
+    const tokens = createRunBudgetMeter({ maxTokens: 100 }, { tokens: 90 });
+    expect(tokens.recordUsage({ tokens: 10 })).toEqual({
+      status: 'budget_exhausted',
+      limit: 'tokens',
+    });
+    expect(() => createRunBudgetMeter({}, { toolCalls: -1 })).toThrow(
+      /toolCalls/,
+    );
+    expect(() => createRunBudgetMeter({}, { costUsd: Number.NaN })).toThrow(
+      /costUsd/,
+    );
+  });
+
   it('meter enforces nothing when no budget is configured', () => {
     const meter = createRunBudgetMeter({});
     for (let i = 0; i < 50; i += 1) {

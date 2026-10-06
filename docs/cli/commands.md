@@ -115,7 +115,7 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | `--dangerously-skip-approvals` | Full access for **this run's session only** (§41.4): challenged calls run without an ask. It is recorded in the session's `posture.json` and as one `posture:full-access` row in the audit ledger (session id and command), never in config, and a `warning: full-access approvals skipped for session <id> …` line goes to stderr. Each challenged call the posture waives is recorded under its own capability (`trigger:<capability>`, posture `full-access`), one record per capability; an untriggered call is neither audited nor marked challenged (issue #234). A later `kubic run --session <id>` on that session warns again on stderr. |
 | `--tools <a,b,...>` | §40.1 mechanism 1 (issue #273): narrow the run's tool set to these tools — comma-separated and repeatable (`--tools read,ls --tools grep`). The selection can only **narrow**: it is intersected with the permission classes, any `--role` set and the enterprise tool gate. An unknown name is refused by name; a tool the classes forbid (`--tools write` under `filesystem = "read"`) is refused with the §40.3 reason — both exit 2 before any lane boots. |
 | `--no-tools` | The empty tool set (a chat-only run). Mutually exclusive with `--tools` — both at once exits 2 naming both. |
-| `--budget <dims>` | Opt-in §71 solo budget (issue #283): bare dimensions only, reusing orchestrate's grammar without agent scoping — `maxToolCalls=1,maxCostUsd=0.5` (dimensions: `maxTokens`, `maxCostUsd`, `maxRuntimeMs`, `maxToolCalls`; each a positive number, `maxRuntimeMs` at most `2147483647`). Anything shaped like an agent clause (`worker-1:…`, any `;`) is refused naming the flag, as is an unknown dimension. The limits ride into the first-party bundle the run boots with: a refused tool call past `maxToolCalls` trips the run guard mid-turn, and a settled turn whose billed tokens/cost breach their bound, ends `budget_exhausted` (exit 3) with the limit named (`extension budget exhausted: <limit> limit breached …`). Absent means no limits — never defaults — and orchestrator worker children keep their own `KUBIC_BUDGET` path (issue #208), not this flag. While set, the TUI status bar burns the limits down (`budget tools 3/10 · $0.12/$0.50`, issue #285) and the settled trajectory records them (schema v1.2 `budget` block). |
+| `--budget <dims>` | Opt-in §71 solo budget (issue #283): bare dimensions only, reusing orchestrate's grammar without agent scoping — `maxToolCalls=1,maxCostUsd=0.5` (dimensions: `maxTokens`, `maxCostUsd`, `maxRuntimeMs`, `maxToolCalls`; each a positive number, `maxRuntimeMs` at most `2147483647`). Anything shaped like an agent clause (`worker-1:…`, any `;`) is refused naming the flag, as is an unknown dimension. The limits ride into the first-party bundle the run boots with: a refused tool call past `maxToolCalls` trips the run guard mid-turn, and a settled turn whose billed tokens/cost breach their bound, ends `budget_exhausted` (exit 3) with the limit named (`extension budget exhausted: <limit> limit breached …`). The limits cover the session, not one boot: a run that resumes one with `--session <id>` counts the tool calls and spend it already committed (issue #440), so a resume never restarts the allowance. Absent means no limits — never defaults — and orchestrator worker children keep their own `KUBIC_BUDGET` path (issue #208), not this flag. While set, the TUI status bar burns the limits down (`budget tools 3/10 · $0.12/$0.50`, issue #285) and the settled trajectory records them (schema v1.2 `budget` block). |
 | `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs — `usage` also carries the run's `input`, `output`, `cacheRead`, `cacheWrite`, `costUsd` and `toolCalls` once a session exists —, `model` — the `provider/id` the lane actually ran, present once a lane booted —, `approvals.posture` — `approvals` or `full-access` — once the lane is installed, `mode` — the §19 mode the run resolved (`autonomous` with `--autonomous`, else `interactive`) —, optional `error`, and — on a classified failure — `failure: {code, remedy, strategy}`, the §52 code with its retry remedy and strategy, issue #155) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
 
 **Skill paths the `read` tool may open (§29.3, issue #173).** Every skill
@@ -184,7 +184,9 @@ absolute path. The file holds the session's latest settled run; a resumed
 - the git base revision (`no-vcs` outside a git checkout) and branch
 - the used tool environment (`toolSpawnEnv`, so no secrets)
 - a result with a §52 `failureCategory` on every non-completed status
-- the §71 budget when the run was budgeted (`budget: {limits, usage?,
+- the §71 budget when the run was budgeted, by `--budget` or by a worker
+  child's `KUBIC_BUDGET` (under both, each dimension records the tighter
+  bound; issue #440) (`budget: {limits, usage?,
   exhausted?}` — schema v1.2, wholly optional on read so older records and
   older readers keep working; a budgeted trajectory replays and evals like
   any other, the block is evidence of the original bound, never a second
@@ -635,7 +637,10 @@ can produce one):
   including attempts a policy guard blocks or the approval router denies —
   and `maxTokens` / `maxCostUsd` from its own usage roll-up; the run ends
   `BUDGET_EXHAUSTED` (**exit 3**) naming the `limit=` that tripped, and that
-  worker cannot make another tool call. `maxRuntimeMs` is the manager's
+  worker cannot make another tool call. A worker's budget covers its whole
+  session: a worker that `--resume` runs again continues from the tool calls
+  and spend its session already committed, and its trajectory records the
+  budget block and the breach like a solo run's (issue #440). `maxRuntimeMs` is the manager's
   wall-clock watchdog: a worker that outlives it is killed and the run reports
   `limit=wallClock` — distinct from the child's own `--timeout`. A worker
   cannot raise its own budget: a self-raise is refused and audited. On an
@@ -1011,7 +1016,7 @@ on stderr before the screen opens. A `--tools`/`--no-tools` selection
 (§40.1, issue #273) follows the same rule: an unknown name or one the
 permission classes forbid is refused with the §40.3 reason before the
 alt-screen (exit 2), `--no-tools` is the empty set, and the two are
-mutually exclusive. `--budget <dims>` (issue #283) takes the same bare-dimensions grammar as `kubic run`'s and loads the bundle with those limits: an over-budget call is refused as a tool error naming the limit (`extension budget exhausted: <limit> limit breached …`) — the lane keeps running, there is no terminus. Absent means no gate. Lane boot failure exits 5 on a missing
+mutually exclusive. `--budget <dims>` (issue #283) takes the same bare-dimensions grammar as `kubic run`'s and loads the bundle with those limits: an over-budget call is refused as a tool error naming the limit (`extension budget exhausted: <limit> limit breached …`) — the lane keeps running, there is no terminus. A resumed session (`--session`, `/resume`) continues its committed tool calls on the gate and on the status bar (issue #440). Absent means no gate. Lane boot failure exits 5 on a missing
 session, 6 with no provider available, 1 otherwise, each with one
 `error: …` line on stderr (never stdout) before the screen opens. The
 `--session` model rule is the same as `kubic run`'s (issue #148; issue

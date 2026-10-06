@@ -215,6 +215,26 @@ export async function readSessionUsage(
   );
 }
 
+// A session's tool calls: one per committed tool result, the count a run's
+// `--json` usage reports (issue #185).
+function toolCallsOf(items: ReturnType<typeof entriesToTranscript>): number {
+  let count = 0;
+  for (const item of items) if (item.kind === 'tool-result') count += 1;
+  return count;
+}
+
+// Issue #440 (§71): the tool calls a session already committed, read from
+// its own open storage. A resumed run seeds its `maxToolCalls` gate and
+// meter from this, so the allowance spans the session, not one boot.
+export async function readSessionToolCalls(
+  storage: Storage,
+  context: Context,
+): Promise<number> {
+  return toolCallsOf(
+    entriesToTranscript(await readSessionEntries(storage, context)),
+  );
+}
+
 // The session's totals over every bucket it holds.
 export function totalSessionUsage(
   rows: readonly SessionUsageRow[],
@@ -496,10 +516,9 @@ export async function readSessionRunUsage(
     const items = entriesToTranscript(
       await readSessionEntries(storage, BACKGROUND_CONTEXT),
     );
-    let toolCalls = 0;
+    const toolCalls = toolCallsOf(items);
     let model: string | undefined;
     for (const item of items) {
-      if (item.kind === 'tool-result') toolCalls += 1;
       if (
         item.kind === 'assistant' &&
         item.provider !== undefined &&

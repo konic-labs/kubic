@@ -266,14 +266,23 @@ export interface RunBudgetMeter {
   }) => BudgetTermination | undefined;
 }
 
+// Issue #440: what a resumed session already spent. The meter continues from
+// it, so a resume never restarts the allowance.
+export interface RunBudgetPrior {
+  tokens?: number;
+  costUsd?: number;
+  toolCalls?: number;
+}
+
 export function createRunBudgetMeter(
   budget: OrchestratorBudget,
+  prior: RunBudgetPrior = {},
 ): RunBudgetMeter {
   const usage: BudgetUsage = {
-    tokens: 0,
-    costUsd: 0,
+    tokens: assertSpend('tokens', prior.tokens),
+    costUsd: assertSpend('costUsd', prior.costUsd),
     runtimeMs: 0,
-    toolCalls: 0,
+    toolCalls: assertSpend('toolCalls', prior.toolCalls),
     retries: 0,
   };
   const exhausted = (): BudgetTermination | undefined =>
@@ -390,8 +399,9 @@ export function budgetBlockReason(termination: BudgetTermination): string {
 export function createRunBudgetEnforcer(
   budget: OrchestratorBudget,
   onBreach: (termination: BudgetTermination) => void,
+  prior: RunBudgetPrior = {},
 ): RunBudgetEnforcer {
-  const meter = createRunBudgetMeter(budget);
+  const meter = createRunBudgetMeter(budget, prior);
   let breached: BudgetTermination | undefined;
   const stop = (termination: BudgetTermination): { block: string } => {
     if (breached === undefined) {

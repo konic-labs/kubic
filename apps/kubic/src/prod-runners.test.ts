@@ -39,6 +39,7 @@ import {
 } from '../../../packages/host/src/policy/audit-ledger.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import { buildTrajectoryExport } from '../../../packages/trajectory/src/export.js';
+import { parseFactLine } from '../../../packages/worker/src/lifecycle/facts.js';
 import {
   type WorkerRow,
   writeWorkerRows,
@@ -764,6 +765,45 @@ describe('kubic workers refuses owner-derived state paths (issue #437)', () => {
     expect(lines.join('\n')).not.toContain('tok=');
   });
 
+  it('inspect reads the task, change summary and tool count from the run record (issue #464)', async () => {
+    const { orchDir } = evilRepo('prod-inspect-464-', 'orchestrate:run-9');
+    writeFileSync(
+      join(orchDir, 'run-9.json'),
+      JSON.stringify({
+        prompt: 'the whole objective',
+        plan: [
+          {
+            agentId: 'w9',
+            step: 1,
+            total: 1,
+            prompt: 'x',
+            task: 'Fix the cart total',
+          },
+        ],
+        records: [
+          {
+            agentId: 'w9',
+            branch: 'kubic/run-9/w9',
+            hunks: [
+              {
+                path: 'src/cart.js',
+                hunk: '--- a/src/cart.js\n+++ b/src/cart.js\n@@ -1 +1,2 @@\n-a\n+b\n+c\n',
+              },
+              { path: 'bad', hunk: 7 },
+            ],
+            result: { metrics: { inputTokens: 10, toolCalls: 4 } },
+          },
+        ],
+      }),
+    );
+    const { lines, r } = runners();
+    expect(await r.workers({ command: 'inspect', id: 'w9' }, noConfig)).toBe(0);
+    const text = lines.join('\n');
+    expect(text).toContain('task: Fix the cart total');
+    expect(text).toContain('changes: 1 file +2 −1');
+    expect(text).toContain('tools: 4 calls');
+  });
+
   it('inspect does not read it either', async () => {
     const { dir } = evilRepo('prod-ownerescape-', 'orchestrate:../decoy');
     writeFileSync(join(dir, '.kubic', 'decoy.json'), metricsFile('w9'));
@@ -1008,6 +1048,54 @@ describe('kubic run projections (prod wiring)', () => {
     expect(
       journalEntries(journalIdOf(lines)).map((entry) => entry.path),
     ).toEqual(['in-scope.txt']);
+  });
+
+  it('an orchestrator worker reports its tool calls as fact lines on stdout (issue #464)', async () => {
+    const { config, project } = trustedProjectConfig('');
+    vi.stubEnv('KUBIC_PROVIDER', 'faux');
+    vi.stubEnv('KUBIC_NO_NOTICE', '1');
+    vi.stubEnv('KUBIC_WORKER_ID', 'w-464');
+    vi.spyOn(process, 'cwd').mockReturnValue(project);
+    const written: string[] = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      written.push(String(chunk));
+      return true;
+    });
+    const { r } = runners();
+    const code = await r.run(
+      { prompt: 'faux:tool bash {"command":"echo ok"}', json: true },
+      config,
+    );
+    expect(code).toBe(0);
+    const facts = written
+      .join('')
+      .split('\n')
+      .map((line) => parseFactLine(line))
+      .filter((fact) => fact !== undefined);
+    expect(facts.map((fact) => `${fact.tool}:${fact.state}`)).toEqual([
+      'bash:running',
+      'bash:done',
+    ]);
+    expect(facts[0]?.target).toBe('echo ok');
+  });
+
+  it('a plain run prints no fact lines (issue #464)', async () => {
+    const { config, project } = trustedProjectConfig('');
+    vi.stubEnv('KUBIC_PROVIDER', 'faux');
+    vi.stubEnv('KUBIC_NO_NOTICE', '1');
+    vi.stubEnv('KUBIC_WORKER_ID', '');
+    vi.spyOn(process, 'cwd').mockReturnValue(project);
+    const written: string[] = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      written.push(String(chunk));
+      return true;
+    });
+    const { r } = runners();
+    await r.run(
+      { prompt: 'faux:tool bash {"command":"echo ok"}', json: true },
+      config,
+    );
+    expect(written.join('')).not.toContain('KUBIC_WORKER_FACT');
   });
 
   it('attributes the run journal to the configured agent name', async () => {

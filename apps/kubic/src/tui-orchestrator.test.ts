@@ -602,7 +602,13 @@ describe('createProdTuiOrchestrator (issue #327)', () => {
       runCommand: async () => 0,
     });
     await drive.run('go');
-    expect(attached).toBe(mergeSeat);
+    // The decider is the TUI seat (issue #464 wraps it to mark the worker
+    // awaiting while it asks): its answer is the run's, and it is asked.
+    const decide = attached as typeof mergeSeat;
+    expect(await decide({ agentId: 'worker-1', branch: 'kubic/s/w' })).toEqual({
+      verdict: 'approve',
+    });
+    expect(asked).toEqual(['worker-1@kubic/s/w']);
   });
 
   it('tells the run it has no --yes flag, so a merge refusal never names one (issue #327)', async () => {

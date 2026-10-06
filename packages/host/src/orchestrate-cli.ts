@@ -32,6 +32,7 @@ import type { PermissionClasses } from '../../agents/src/policy.js';
 import { createLineLogger } from '../../core/src/cli/logger.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
+import type { WorkerToolActivity } from '../../core/src/presentation.js';
 import type { SessionHandle } from '../../worker/src/lane/session-store.js';
 import type { MutableModels } from '../../worker/src/pi-boundary.js';
 import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
@@ -148,6 +149,11 @@ import {
   buildParallelTreeLine,
   buildParallelWorkersExtra,
 } from './orchestrator/parallel/visibility.js';
+import {
+  createRunPhaseTracker,
+  type RunPhaseEvent,
+  type RunPhaseTracker,
+} from './orchestrator/run-phases.js';
 import type {
   TaskArtifact,
   TaskTransfer,
@@ -454,6 +460,39 @@ export interface WorkerRunOutput {
    * to the merge telemetry's diff leg.
    */
   diffMs?: number;
+}
+
+/** Issue #464: the longest task title a worker row shows. */
+export const WORKER_TASK_TITLE_MAX = 60;
+
+// A worker's task title (issue #464; docs/ui 04-C): the first non-empty
+// line of its task, whitespace collapsed, at most WORKER_TASK_TITLE_MAX.
+export function workerTaskTitle(text: string): string {
+  const line =
+    text
+      .split('\n')
+      .map((row) => row.replace(/\s+/g, ' ').trim())
+      .find((row) => row !== '') ?? '';
+  return line.length <= WORKER_TASK_TITLE_MAX
+    ? line
+    : `${line.slice(0, WORKER_TASK_TITLE_MAX - 1)}…`;
+}
+
+// Issue #464: a worker's task as its run recorded it — a lane mint's own
+// task (its plan step), else the run's objective. Stored state is
+// untrusted JSON: a step task that is not a string is ignored.
+export function workerTaskOf(
+  state: { readonly prompt: string; readonly plan?: readonly unknown[] },
+  agentId: string,
+): string {
+  for (const step of state.plan ?? []) {
+    if (typeof step !== 'object' || step === null) continue;
+    const entry = step as { agentId?: unknown; task?: unknown };
+    if (entry.agentId === agentId && typeof entry.task === 'string') {
+      return entry.task;
+    }
+  }
+  return state.prompt;
 }
 
 function runOutputOf(output: MergedHunk[] | WorkerRunOutput): WorkerRunOutput {
@@ -1017,6 +1056,14 @@ export interface WorkerSpawnInfo {
   /** §67 task resources (issue #170): the `--skill` values this worker gets. */
   skills?: string[];
   /**
+   * Issue #464: where the worker's live tool facts go (its child reports
+   * them on stdout as it runs). Set by an observer of the run (the TUI's
+   * orchestrator view); absent means nobody follows them.
+   */
+  onActivity?: (fact: WorkerToolActivity) => void;
+  /** Issue #464: the one-line task the worker is shown under. */
+  task?: string;
+  /**
    * Issue #196 (§40.2/§41.1): the assigned role's resolved classes and
    * approval obligations — the spawn writes them into the task resources
    * (the child merges the classes with its own config, most restrictive
@@ -1188,6 +1235,9 @@ export interface OrchestrateCommandDeps {
   errTheme?: CliTheme;
   debug?: (line: string) => void;
   now?: () => number;
+  // Issue #464 (docs/ui 04-B): each phase transition of the run, as it
+  // happens — the TUI's orchestrator view folds them into its timeline.
+  onPhase?: (event: RunPhaseEvent) => void;
   isGitRepo: () => boolean | Promise<boolean>;
   // Issue #144: the run names the owning session and whether it is a
   // --resume, so the worktree is scoped to this session and an existing
@@ -1985,6 +2035,24 @@ export async function runOrchestrateCommand(
   options: OrchestrateCliOptions,
   deps: OrchestrateCommandDeps,
 ): Promise<number> {
+  // Issue #464: the phases are reported around the run, so every exit —
+  // a refusal, a failure, a throw — settles whatever phase was running.
+  const phases = createRunPhaseTracker(deps.onPhase, deps.now ?? Date.now);
+  let code: number = RUN_EXIT_FAILED;
+  try {
+    code = await orchestrate(options, deps, phases);
+    return code;
+  } finally {
+    phases.settle(code === 0);
+  }
+}
+
+async function orchestrate(
+  options: OrchestrateCliOptions,
+  deps: OrchestrateCommandDeps,
+  phases: RunPhaseTracker,
+): Promise<number> {
+  phases.start('plan');
   const now = deps.now ?? Date.now;
   const debug = deps.debug ?? (() => undefined);
   const parsed = parsedFrom(options);
@@ -2709,6 +2777,13 @@ export async function runOrchestrateCommand(
   // role here, so `spawnRoleInfo` (session linkage, worker rows) and the
   // role registry resolve a minted id exactly like a planned one. Declared
   // before `spawnRoleInfo` — the preflight below already reads it.
+  // Issue #464: the title a worker is shown under — the task its lane
+  // mint was spawned for, else the run's objective (the template plan
+  // hands every worker the whole objective).
+  const taskInfo = (agentId: string): { task?: string } => {
+    const title = workerTaskTitle(workerTaskOf(state, agentId));
+    return title === '' ? {} : { task: title };
+  };
   const laneSpawnRoles = new Map<
     string,
     Pick<
@@ -3443,6 +3518,12 @@ export async function runOrchestrateCommand(
   const resumedCompleted = new Set<string>();
   // §61 worktree creation duration per agent (issue #158).
   const worktreeMsByAgent = new Map<string, number>();
+  // Issue #464: the template plan is settled; its workers start now. (The
+  // manager lane plans as it drives: its first spawn is the transition.)
+  if (!laneMode) {
+    phases.finish('plan');
+    phases.start('implement');
+  }
   for (const agentId of state.pending) {
     // Issue #277: a worker beyond the cap whose ask the user REFUSED fails
     // before any worktree is created, with the denial as its result — the
@@ -3652,6 +3733,7 @@ export async function runOrchestrateCommand(
             // a tool — absence, never approval. Absent means no role
             // document exists for this worker, so nothing is narrowed.
             ...spawnRoleInfo(agentId, rolePlan),
+            ...taskInfo(agentId),
             // §67 task resources (issue #170): the run's `--skill` values reach
             // every worker (the STORED ones on a resume), and the run resolves
             // them against its own cwd.
@@ -4221,6 +4303,7 @@ export async function runOrchestrateCommand(
       return saveFailure;
     }
   }
+  if (!laneMode) phases.finish('implement');
   // Every pending worker settled: enqueue the candidates in AGENT order, so
   // the merge order is deterministic whatever the settle order was (issue
   // #206) and the write-ahead intent still travels with one candidate at a
@@ -4419,6 +4502,8 @@ export async function runOrchestrateCommand(
       // Issue #188 (§70): the verdict lands in the run's map and the
       // persisted record together, so mid-drive saves already carry it.
       recordVerdict: (agentId, verdict) => {
+        // Issue #464: the lane's first verdict starts the review phase.
+        phases.start('review');
         reviewVerdicts.set(agentId, verdict);
         state = {
           ...state,
@@ -4471,6 +4556,9 @@ export async function runOrchestrateCommand(
       // escalation rung overrides the pin, so the recorded ref is what
       // the child runs — never the role default it did not run.
       onSpawned: (agentId, role, task, model) => {
+        // Issue #464: the lane's first spawn ends its planning.
+        phases.finish('plan');
+        phases.start('implement');
         const spec = routerDeps.resolveRole(role);
         laneSpawnRoles.set(agentId, {
           role,
@@ -4499,6 +4587,7 @@ export async function runOrchestrateCommand(
           total: 1,
           prompt: composeWorkerPrompt(spec?.promptText ?? '', task),
           role,
+          task,
         });
         state = { ...state, plan };
       },
@@ -4606,6 +4695,7 @@ export async function runOrchestrateCommand(
               ? {}
               : { worktreeMs: worktreeMsByAgent.get(agentId) as number }),
             ...spawnRoleInfo(agentId, rolePlan),
+            ...taskInfo(agentId),
             ...(effectiveSkills.length === 0
               ? {}
               : { skills: [...effectiveSkills], skillsCwd: process.cwd() }),
@@ -5113,6 +5203,11 @@ export async function runOrchestrateCommand(
           partial(),
         );
       }
+      // Issue #464: the drive is over — whatever it planned, implemented
+      // and reviewed is done (a phase it never ran is skipped on success).
+      phases.finish('plan');
+      phases.finish('implement');
+      phases.finish('review');
     } finally {
       laneSettleHook = undefined;
       // Fail-fast hygiene (issue #431, L-D34): a drive that died on an
@@ -5275,6 +5370,9 @@ export async function runOrchestrateCommand(
   // pre-merge guard → prove the manager trace write-free → merge →
   // attribute → record. Each merge is atomic per candidate and recorded
   // before the next dequeues, so a kill between merges resumes cleanly.
+  // Issue #464: a run without a review step skips it on the timeline.
+  phases.skip('review');
+  phases.start('merge');
   let candidate = queue.dequeue();
   while (candidate !== undefined) {
     const { agentId } = candidate;

@@ -690,6 +690,28 @@ the same generation `kubic workers` shows (issue #383). Registry rows persist to
 `kubic workers` reads them back — one shared record, never a fresh empty
 registry.
 
+### Live tool facts (issue #464: `facts.ts`)
+
+A worker reports its tool calls on the same stdout as the readiness marker
+and the final `--json` report: one `KUBIC_WORKER_FACT <json>` line per tool
+start and end (`apps/kubic/src/worker-facts.ts` writes them when
+`KUBIC_WORKER_ID` is set; an ordinary `kubic run` prints none). A fact
+carries the call id, the tool, the one-line argument summary the progress
+lines print, the state (`running`, `done`, `error`), an outcome (`+3 −1`,
+`exit 1`, `new file, 2 lines`) and, for an edit or write, the display diff
+(at most 20 KB) — every text through the worker's secret redactor
+(`redactSecrets`, the one approval summaries use), never the raw arguments.
+
+`spawnWorker`'s `onFact` follows the stream for the whole run: only complete
+lines past the last one read, located through the snapshot's `dropped`
+count, so output past the 10 MiB stream cap is followed without missing or
+repeating a line. Each line parses closed world (an unknown key, a wrong type
+or an over-bound field refuses the line), and the stdout the run reads its
+report and diagnostics from has the fact lines taken out. `batchFacts`
+bounds the rate: the first fact after a quiet interval goes out at once, the
+rest leave together at most once per 100 ms per worker, and the batch is
+flushed when the worker ends.
+
 Failure taxonomy on that path: a worker that never becomes ready is
 terminal `SPAWN_FAILED` and the run reports the §78 code `spawn_failed`
 (the §52 code `process_spawn_failed`); a worker that ran and failed keeps

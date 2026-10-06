@@ -2719,6 +2719,10 @@ export async function orchestrateDepsWithDefaults(
           shell: shellForWorktree(worktree.path),
           registry: workerRegistry,
           debug: (line) => debug(line),
+          // Issue #464: the child's live tool facts reach the run's observer.
+          ...(info?.onActivity === undefined
+            ? {}
+            : { onFact: info.onActivity }),
           // §82 (issue #163): the probes are LAUNCHER deps (they sample the
           // running child), wired only when a limit is configured — a limit
           // with no probe is not enforced, and `kubic doctor` says so.

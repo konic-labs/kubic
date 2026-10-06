@@ -16,6 +16,7 @@
 //     stdio prompt. The deps are built lazily: a session that never toggles
 //     into orchestrator mode pays nothing.
 
+import type { WorkerToolActivity } from '../../../packages/core/src/presentation.js';
 import type {
   ApprovalRequest,
   ApprovalVerdict,
@@ -33,10 +34,15 @@ import type {
   WorkerAskSeat,
   WorkerQuestionSeat,
 } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
+import { diffStatOfHunks } from '../../../packages/host/src/orchestrator/diff-stat.js';
 import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import type { EffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
-import type { WorkerProjectionEvent } from '../../../packages/host/src/presentation/projector.js';
+import type { OrchestratorProjectionEvent } from '../../../packages/host/src/presentation/projector.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
+import {
+  batchFacts,
+  type FactBatchOptions,
+} from '../../../packages/worker/src/lifecycle/facts.js';
 import {
   type OrchestrateRunOptions,
   orchestrateDepsWithDefaults,
@@ -217,8 +223,15 @@ export function createProdTuiOrchestrator(
   const now = options.now ?? Date.now;
   let lastStamp = 0;
   // Issue #342: the orchestrator view's feed — one listener, registered by
-  // the TUI loop; every turn's workers report through it.
-  let onWorker: ((event: WorkerProjectionEvent) => void) | undefined;
+  // the TUI loop; every turn's workers (and, #464, its phases) report
+  // through it.
+  let onWorker: ((event: OrchestratorProjectionEvent) => void) | undefined;
+  const feed = (event: OrchestratorProjectionEvent): void => {
+    onWorker?.(event);
+  };
+  // Issue #464: a worker waiting on the operator shows it on its row.
+  const seat =
+    options.seat === undefined ? undefined : observeAsks(options.seat, feed);
   // Issue #154: the late-bound question seat (the app's dialog).
   let questionSeat: WorkerQuestionSeat | undefined;
   const nextSessionId = (): string => {
@@ -244,16 +257,17 @@ export function createProdTuiOrchestrator(
           out: report,
           err: options.err ?? report,
           debug: options.debug ?? report,
-          ...(options.seat === undefined
-            ? {}
-            : { approvalsSeat: options.seat }),
+          ...(seat === undefined ? {} : { approvalsSeat: seat }),
           // Issue #154: worker questions reach the TUI dialog; with no seat
           // bound yet they go unanswered (the worker's bound names them).
           questionSeat: (question, signal) =>
             questionSeat === undefined
               ? Promise.resolve(undefined)
               : questionSeat(question, signal),
-          mergeApproval: options.mergeSeat ?? denyMergeClosed,
+          mergeApproval: observeMergeAsks(
+            options.mergeSeat ?? denyMergeClosed,
+            feed,
+          ),
           // No `--yes` in the TUI: a merge refusal must not name it.
           yesHint: false,
           ...(options.projectTrust === undefined
@@ -298,7 +312,7 @@ export function createProdTuiOrchestrator(
         });
         const code = await runCommand(
           { prompt: objective, session: nextSessionId() },
-          observeWorkers(deps, (event) => onWorker?.(event)),
+          observeWorkers(deps, feed),
         );
         return code === 0
           ? { status: 'completed' }
@@ -320,14 +334,22 @@ export function createProdTuiOrchestrator(
 // start (role, worktree, model, generation — a replacement of the same agent
 // is the next generation) and its end (the result's status and spend), the
 // facts the orchestrator view renders. The run itself is untouched.
+// Issue #464 adds the dashboard's facts: the worker's task, its live tool
+// calls (batched — at most one update per interval per worker, the batch
+// flushed before the end), its change summary, and the run's phases.
 export function observeWorkers(
   deps: OrchestrateCommandDeps,
-  emit: (event: WorkerProjectionEvent) => void,
+  emit: (event: OrchestratorProjectionEvent) => void,
+  options: { readonly batch?: FactBatchOptions } = {},
 ): OrchestrateCommandDeps {
   const generations = new Map<string, number>();
   const runWorker = deps.runWorker;
   return {
     ...deps,
+    onPhase: (event) => {
+      deps.onPhase?.(event);
+      emit({ type: 'run-phase', ...event });
+    },
     runWorker: async (agentId, worktree, prompt, info) => {
       const generation = (generations.get(agentId) ?? 0) + 1;
       generations.set(agentId, generation);
@@ -339,10 +361,27 @@ export function observeWorkers(
         workspace: worktree.path,
         ...(info?.role === undefined ? {} : { role: info.role }),
         ...(info?.modelRef === undefined ? {} : { model: info.modelRef }),
+        ...(info?.task === undefined ? {} : { task: info.task }),
       });
+      const batch = batchFacts(
+        (facts) => emit({ type: 'worker-update', workerId: agentId, facts }),
+        options.batch,
+      );
+      const observed =
+        info === undefined
+          ? undefined
+          : {
+              ...info,
+              onActivity: (fact: WorkerToolActivity) => {
+                info.onActivity?.(fact);
+                batch.push(fact);
+              },
+            };
       try {
-        const output = await runWorker(agentId, worktree, prompt, info);
-        const result = Array.isArray(output) ? undefined : output.result;
+        const output = await runWorker(agentId, worktree, prompt, observed);
+        batch.flush();
+        const run = Array.isArray(output) ? { hunks: output } : output;
+        const result = run.result;
         emit({
           type: 'worker-update',
           workerId: agentId,
@@ -356,12 +395,61 @@ export function observeWorkers(
                   ? {}
                   : { costUsd: result.metrics.costUsd }),
               }),
+          diffStat: diffStatOfHunks(run.hunks),
         });
         return output;
       } catch (error) {
+        batch.flush();
         emit({ type: 'worker-update', workerId: agentId, status: 'failed' });
         throw error;
       }
     },
+  };
+}
+
+// Issue #464 (docs/ui 04-C): a worker's approval ask marks its row as
+// waiting on the operator until the ask settles, however it settles.
+export function observeAsks(
+  seat: WorkerAskSeat,
+  emit: (event: OrchestratorProjectionEvent) => void,
+): WorkerAskSeat {
+  return async (request, signal) => {
+    emit({
+      type: 'worker-update',
+      workerId: request.agentId,
+      awaiting: { approvalKey: request.key, summary: request.summary },
+    });
+    try {
+      return await seat(request, signal);
+    } finally {
+      emit({
+        type: 'worker-update',
+        workerId: request.agentId,
+        awaiting: null,
+      });
+    }
+  };
+}
+
+// The merge gate's ask waits on the operator too (the worker's branch is
+// ready to land).
+export function observeMergeAsks(
+  seat: NonNullable<OrchestrateRunOptions['mergeApproval']>,
+  emit: (event: OrchestratorProjectionEvent) => void,
+): NonNullable<OrchestrateRunOptions['mergeApproval']> {
+  return async (input) => {
+    emit({
+      type: 'worker-update',
+      workerId: input.agentId,
+      awaiting: {
+        approvalKey: `merge:${input.branch}`,
+        summary: `merge ${input.branch}`,
+      },
+    });
+    try {
+      return await seat(input);
+    } finally {
+      emit({ type: 'worker-update', workerId: input.agentId, awaiting: null });
+    }
   };
 }

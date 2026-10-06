@@ -6,16 +6,21 @@
 // kubic.worker.startup span (§49.3, §61). No marker in time → terminal
 // SPAWN_FAILED, never a half-live worker.
 
+import type { WorkerToolActivity } from '../../../core/src/presentation.js';
 import type {
   ProcessHandle,
   Provenance,
   SpawnOptions,
 } from '../../../exec/src/env.js';
 import { buildSpawnEnv, redactEnvForLog } from './env.js';
+import { createFactScanner, stripFactLines } from './facts.js';
 import { StaleGenerationError } from './replace.js';
 import type { ProcessStatus } from './status.js';
 
 export const READY_PREFIX = 'KUBIC_WORKER_READY';
+
+// The header the exec accumulator puts on a settled stream it capped.
+const TRUNCATED_STREAM_PREFIX = '[kubic: output truncated';
 
 export function readyMarker(workerId: string): string {
   return `${READY_PREFIX} ${workerId}`;
@@ -81,6 +86,10 @@ export interface SpawnWorkerDeps {
   // Receives the redacted spawn debug line (see spawnDebugLine): secrets
   // are redacted by default, so wiring this to §50 output is safe.
   onDebug?: (line: string) => void;
+  // Issue #464: the tool facts the child reports on stdout (facts.ts), in
+  // order, as they arrive. Absent means stdout is not followed past the
+  // readiness marker at all.
+  onFact?: (fact: WorkerToolActivity) => void;
 }
 
 export class SpawnFailedError extends Error {
@@ -239,6 +248,9 @@ export function spawnWorker(
     if (text.includes(marker)) return undefined;
     return text.slice(-(marker.length - 1));
   };
+  const onFact = deps?.onFact;
+  const scanFacts =
+    onFact === undefined ? undefined : createFactScanner(onFact);
   let handle: ProcessHandle;
   try {
     handle = shell.spawn(request.cmd, request.args, {
@@ -248,6 +260,9 @@ export function spawnWorker(
         ? {}
         : { killGraceMs: request.killGraceMs }),
       onUpdate: (snapshot) => {
+        // Issue #464: the fact scanner follows stdout for the whole run
+        // (complete new lines only, located by the dropped count).
+        scanFacts?.(snapshot.stdout, snapshot.dropped?.stdout ?? 0);
         if (worker.status !== 'spawning') return;
         // A trimmed accumulator tail reads shorter than what was scanned:
         // rescan it whole (bounded by the stream cap) rather than slicing
@@ -319,11 +334,22 @@ export function spawnWorker(
         failSpawn('process exited before readiness marker');
       }
     }
+    // The settled stream may hold lines no update delivered yet — unless
+    // it was capped: a truncated stream carries a header, so its offsets
+    // are not the stream's (every line reached an update by then anyway).
+    if (
+      scanFacts !== undefined &&
+      !result.stdout.startsWith(TRUNCATED_STREAM_PREFIX)
+    ) {
+      scanFacts(result.stdout);
+    }
     return {
       exitCode: result.exitCode,
       signal: result.signal ?? null,
       forced: result.forced === true,
-      stdout: result.stdout,
+      // Issue #464: fact lines are protocol — the report and the
+      // diagnostics the run reads never carry them.
+      stdout: stripFactLines(result.stdout),
       stderr: result.stderr,
     };
   };

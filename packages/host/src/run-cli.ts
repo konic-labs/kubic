@@ -331,6 +331,10 @@ export interface RunProgressSink {
   receipt(result: HeadlessRunResult, exitCode: number): void;
 }
 
+// Issue #464: the tool half of a progress sink — what an orchestrator
+// worker reports to its manager as each tool call starts and ends.
+export type RunToolSink = Pick<RunProgressSink, 'toolStart' | 'toolEnd'>;
+
 export interface RunCommandDeps extends CliIo {
   run: (
     prompt: string,
@@ -367,6 +371,8 @@ export interface RunCommandDeps extends CliIo {
       noTools?: boolean;
       // Issue #447: live progress on an interactive terminal.
       progress?: RunProgressSink;
+      // Issue #464: an orchestrator worker's live tool facts.
+      toolFacts?: RunToolSink;
     },
   ) => Promise<HeadlessRunResult>;
   persist?: (result: HeadlessRunResult) => Promise<void> | void;
@@ -374,6 +380,9 @@ export interface RunCommandDeps extends CliIo {
   // Issue #447: the interactive-terminal progress sink. Present only when
   // stdout AND stderr are a coloured TTY and the run is not `--json`.
   progress?: () => RunProgressSink;
+  // Issue #464: the tool-fact sink of a run that is an orchestrator worker
+  // (the manager follows them on the child's stdout, `--json` or not).
+  toolFacts?: () => RunToolSink;
 }
 
 // Session ids are path segments under the sessions root: accept only
@@ -647,6 +656,7 @@ export async function runRunCommand(
   void deps.onScreenMount;
   const skills = options.skills ?? [];
   const progress = options.json === true ? undefined : deps.progress?.();
+  const toolFacts = deps.toolFacts?.();
   let result: HeadlessRunResult;
   try {
     result = await deps.run(options.prompt, {
@@ -671,6 +681,7 @@ export async function runRunCommand(
         : { tools: [...options.tools] }),
       ...(options.noTools === true ? { noTools: true } : {}),
       ...(progress === undefined ? {} : { progress }),
+      ...(toolFacts === undefined ? {} : { toolFacts }),
     });
     await deps.persist?.(result);
   } catch (error) {

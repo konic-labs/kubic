@@ -399,6 +399,12 @@ export interface ManagerPlanStep {
    * on resume so follow-ups keep the mint's role narrowing.
    */
   role?: string;
+  /**
+   * The task the lane minted this step for (issue #464): what the worker
+   * is shown under (`prompt` composes it with the role text). Lane-path
+   * steps only; stored state is untrusted, so readers check its type.
+   */
+  task?: string;
 }
 
 function planPrompt(

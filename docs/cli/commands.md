@@ -2385,7 +2385,13 @@ gone), the run's stored budget for the worker (`worker …`, `shared …`, or
 live usage accrues inside the worker session, which `kubic cost` reads), and
 approvals (`1 ask pending (worker is waiting)` when the agent state is
 `waiting`, with the newest §60 decision for the worker session when any).
-`--json` prints the same facets as one object. An unknown id exits 1
+When the run's own record knows them, three more lines follow: `task: …`
+(the task the worker was spawned for, else the run's objective — at most
+60 columns), `changes: N files +A −R` (counted from the worker's stored
+per-file diff, so it still reads after the merge) and `tools: N calls`
+(once the worker settled). Unknown facts print nothing rather than a zero.
+`--json` prints the same facets as one object (`task`, `toolCount` and
+`diffStat: { files, added, removed }` when known). An unknown id exits 1
 (`code=no_such_worker`).
 
 ### `kubic workers terminate <id> [--generation <n>] [--json]`

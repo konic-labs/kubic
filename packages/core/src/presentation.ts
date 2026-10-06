@@ -26,6 +26,24 @@ export interface LaneImagePart {
   readonly bytes?: number;
 }
 
+// Issue #464: an orchestrator run's phases, as the dashboard's timeline
+// shows them (docs/ui 04-B). A phase the plan does not run is `skipped`.
+export const RUN_PHASES = [
+  'plan',
+  'implement',
+  'review',
+  'merge',
+  'verify',
+] as const;
+
+export type RunPhase = (typeof RUN_PHASES)[number];
+
+export interface RunPhaseState {
+  readonly phase: RunPhase;
+  readonly state: 'running' | 'done' | 'failed' | 'skipped';
+  readonly at: number;
+}
+
 export interface SessionSnapshot {
   sessionId: string;
   // Issue #333 (§66): the live session's replicated facts.
@@ -33,6 +51,8 @@ export interface SessionSnapshot {
   thinking?: string;
   mode: 'solo' | 'orchestrator';
   approvalsSkipped: boolean;
+  // Issue #464: the current orchestrator run's phases, in order.
+  runPhases?: readonly RunPhaseState[];
 }
 
 // §41/§66: an agent's budget burn-down, as replicated.
@@ -80,6 +100,26 @@ export interface LaneSnapshot {
   retrying?: { attempt: number; error?: string };
 }
 
+// Issue #464: one tool call of a worker, as its process reported it — the
+// tool, a redacted summary of its arguments and outcome (never the raw
+// arguments), and for an edit or write the display diff, bounded.
+export interface WorkerToolActivity {
+  readonly id: string;
+  readonly tool: string;
+  readonly target?: string;
+  readonly state: 'running' | 'done' | 'error';
+  readonly outcome?: string;
+  readonly diff?: { readonly text: string; readonly firstChangedLine?: number };
+  readonly at: number;
+}
+
+// Issue #464: what a worker's changes add up to.
+export interface WorkerDiffStat {
+  readonly files: number;
+  readonly added: number;
+  readonly removed: number;
+}
+
 export interface WorkerSummary {
   workerId: string;
   role?: string;
@@ -94,6 +134,15 @@ export interface WorkerSummary {
   inputTokens?: number;
   outputTokens?: number;
   costUsd?: number;
+  // Issue #464 (docs/ui 04-C, 04-D): the worker's task (its assignment's
+  // first line), its latest tool call, how many it made, the last eight,
+  // its change summary, and the approval it waits on.
+  task?: string;
+  activity?: WorkerToolActivity;
+  toolCount?: number;
+  recentTools?: readonly WorkerToolActivity[];
+  diffStat?: WorkerDiffStat;
+  awaiting?: { readonly approvalKey: string; readonly summary: string };
 }
 
 export interface ApprovalRequest {

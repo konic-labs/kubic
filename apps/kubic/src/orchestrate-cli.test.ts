@@ -4002,6 +4002,52 @@ describe('orchestrate manager lane (issue #431)', () => {
     expect(envelope.mergeOrder).toEqual([]);
   });
 
+  it('reports the lane run phases: its first spawn ends planning, its first verdict starts review (issue #464)', async () => {
+    const phases: string[] = [];
+    const world = laneWorld(
+      [
+        toolTurn('spawn_agent', { role: 'implementer', task: 'do alpha' }),
+        toolTurn('wait_for_agent', { agentId: 'worker-1' }),
+        toolTurn('collect_result', { agentId: 'worker-1' }),
+        toolTurn('review_verdict', { agentId: 'worker-1', verdict: 'accept' }),
+        toolTurn('workspace_diff', { agentId: 'worker-1' }),
+        toolTurn('workspace_apply', { agentId: 'worker-1' }),
+        toolTurn('workspace_merge', {}),
+        fauxAssistantMessage('reviewed and merged'),
+      ],
+      { onPhase: (event) => phases.push(`${event.phase}:${event.state}`) },
+    );
+    const tasks: Array<string | undefined> = [];
+    const runWorker = world.deps.runWorker;
+    world.deps.runWorker = (agentId, worktree, prompt, info) => {
+      tasks.push(info?.task);
+      return runWorker(agentId, worktree, prompt, info);
+    };
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'ship alpha',
+        agents: ['alpha'],
+        json: true,
+        session: 'lane-phases',
+      },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    // The mint's own task is its title (never the run objective).
+    expect(tasks).toEqual(['do alpha']);
+    expect(phases).toEqual([
+      'plan:running',
+      'plan:done',
+      'implement:running',
+      'review:running',
+      'implement:done',
+      'review:done',
+      'merge:running',
+      'merge:done',
+      'verify:skipped',
+    ]);
+  });
+
   it('a failing tester routes debugger then tester again with the handoff (issue #188)', async () => {
     // S2b acceptance 1: the tester's TESTS fail (completed, failing
     // rows — a crashed worker takes the #169 path instead), the manager

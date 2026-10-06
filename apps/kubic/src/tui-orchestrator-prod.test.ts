@@ -27,6 +27,10 @@ import {
   type GitSandbox,
 } from '../../../packages/exec/src/test-support/git-sandbox.js';
 import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
+import {
+  type OrchestratorProjectionEvent,
+  PresentationProjector,
+} from '../../../packages/host/src/presentation/projector.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
 import { orchestrateDepsWithDefaults } from './orchestrate-run.js';
 import {
@@ -40,6 +44,22 @@ const WORKER_FIXTURE = `
 import { writeFileSync } from 'node:fs';
 writeFileSync((process.env.KUBIC_WORKER_ID ?? 'worker') + '.txt', 'work\\n');
 process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
+const a = process.argv;
+process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10));
+process.exit(0);
+`;
+
+// Issue #464: the same child, reporting its one tool call as fact lines the
+// way a real worker's `kubic run` does (worker-facts.ts), between the
+// readiness marker and the report.
+const FACT_FIXTURE = `
+import { writeFileSync } from 'node:fs';
+const id = process.env.KUBIC_WORKER_ID ?? 'worker';
+process.stdout.write('KUBIC_WORKER_READY ' + id + '\\n');
+const fact = (state, extra) => process.stdout.write('KUBIC_WORKER_FACT ' + JSON.stringify({ id: 'c1', tool: 'write', target: id + '.txt', state, at: Date.now(), ...extra }) + '\\n');
+fact('running', {});
+writeFileSync(id + '.txt', 'work\\n');
+fact('done', { outcome: 'new file, 1 line', diff: { text: '+1 work', firstChangedLine: 1 } });
 const a = process.argv;
 process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10));
 process.exit(0);
@@ -124,10 +144,11 @@ function driveFor(
   root: string,
   reports: string[],
   extra: Partial<Parameters<typeof createProdTuiOrchestrator>[0]> = {},
+  child: string = WORKER_FIXTURE,
 ) {
   const fixtureDir = scratch('kubic-tui-orch-327-child-');
   const fixture = join(fixtureDir, 'worker-child.mjs');
-  writeFileSync(fixture, WORKER_FIXTURE);
+  writeFileSync(fixture, child);
   const sessionsRoot = scratch('kubic-tui-orch-327-sessions-');
   return createProdTuiOrchestrator({
     sessionId: 'tui-1',
@@ -229,5 +250,69 @@ describe('the TUI orchestrator lane on the prod run path (issue #327)', () => {
     expect(git(root, ['ls-tree', '-r', '--name-only', 'HEAD'])).not.toContain(
       'worker-1.txt',
     );
+  });
+});
+
+describe('the orchestrator view feed on the prod run path (issue #464)', () => {
+  it('carries the phases, each worker task, its tool facts, its diff stat and its merge wait', async () => {
+    const root = initRepo();
+    const reports: string[] = [];
+    const drive = driveFor(
+      root,
+      reports,
+      { mergeSeat: async () => ({ verdict: 'approve' }) },
+      FACT_FIXTURE,
+    );
+    const events: OrchestratorProjectionEvent[] = [];
+    drive.watchWorkers?.((event) => events.push(event));
+    const outcome = await drive.run('add the cart total');
+    expect(outcome, reports.join('\n')).toEqual({ status: 'completed' });
+    expect(
+      events
+        .filter((event) => event.type === 'run-phase')
+        .map((event) =>
+          'phase' in event ? `${event.phase}:${event.state}` : '',
+        ),
+    ).toEqual([
+      'plan:running',
+      'plan:done',
+      'implement:running',
+      'implement:done',
+      'review:skipped',
+      'merge:running',
+      'merge:done',
+      'verify:skipped',
+    ]);
+    const projector = new PresentationProjector({
+      sessionId: 'tui-1',
+      mode: 'orchestrator',
+      approvalsSkipped: false,
+    });
+    for (const event of events) projector.applyOrchestrator(event);
+    for (const id of ['worker-1', 'worker-2']) {
+      const worker = projector.state().workers.get(id);
+      expect(worker?.task).toBe('add the cart total');
+      expect(worker?.toolCount).toBe(1);
+      expect(worker?.activity).toMatchObject({
+        tool: 'write',
+        target: `${id}.txt`,
+        state: 'done',
+        outcome: 'new file, 1 line',
+        diff: { text: '+1 work', firstChangedLine: 1 },
+      });
+      expect(worker?.diffStat).toEqual({ files: 1, added: 1, removed: 0 });
+      // The merge ask was open, and is settled now.
+      expect(worker?.awaiting).toBeUndefined();
+    }
+    expect(
+      events.some(
+        (event) =>
+          event.type === 'worker-update' &&
+          'awaiting' in event &&
+          event.awaiting?.approvalKey.startsWith('merge:') === true,
+      ),
+    ).toBe(true);
+    // The fact lines are protocol: the run's report never shows them.
+    expect(reports.join('\n')).not.toContain('KUBIC_WORKER_FACT');
   });
 });

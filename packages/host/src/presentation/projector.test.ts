@@ -371,3 +371,181 @@ describe('the snapshot usage ledger (issue #333 review)', () => {
     });
   });
 });
+
+describe('worker activity (issue #464)', () => {
+  it('folds the task, the latest tool, the count and a bounded ring', () => {
+    const projector = new PresentationProjector(SEED);
+    projector.applyWorker({
+      type: 'worker-start',
+      workerId: 'w',
+      task: 'Fix the cart total',
+    });
+    for (let i = 0; i < 10; i += 1) {
+      projector.applyWorker({
+        type: 'worker-update',
+        workerId: 'w',
+        facts: [
+          {
+            id: `c${i}`,
+            tool: 'read',
+            target: `f${i}.ts`,
+            state: 'running',
+            at: i,
+          },
+        ],
+      });
+      projector.applyWorker({
+        type: 'worker-update',
+        workerId: 'w',
+        facts: [
+          {
+            id: `c${i}`,
+            tool: 'read',
+            target: `f${i}.ts`,
+            state: 'done',
+            outcome: '12 lines',
+            at: i + 0.5,
+          },
+        ],
+      });
+    }
+    const worker = projector.state().workers.get('w');
+    expect(worker?.task).toBe('Fix the cart total');
+    expect(worker?.toolCount).toBe(10);
+    expect(worker?.activity).toMatchObject({
+      tool: 'read',
+      target: 'f9.ts',
+      state: 'done',
+      outcome: '12 lines',
+    });
+    // The ring keeps the last eight calls, each once, in order.
+    expect(worker?.recentTools?.map((tool) => tool.target)).toEqual(
+      Array.from({ length: 8 }, (_, i) => `f${i + 2}.ts`),
+    );
+    expect(worker?.recentTools?.every((tool) => tool.state === 'done')).toBe(
+      true,
+    );
+  });
+
+  it('bounds a diff the preview keeps', () => {
+    const projector = new PresentationProjector(SEED);
+    projector.applyWorker({
+      type: 'worker-update',
+      workerId: 'w',
+      facts: [
+        {
+          id: 'e1',
+          tool: 'edit',
+          target: 'src/cart.js',
+          state: 'done',
+          diff: { text: '+1 x\n'.repeat(10_000), firstChangedLine: 1 },
+          at: 1,
+        },
+      ],
+    });
+    const diff =
+      projector.state().workers.get('w')?.recentTools?.[0]?.diff?.text ?? '';
+    expect(diff.length).toBeLessThanOrEqual(20 * 1024);
+    expect(diff.length).toBeGreaterThan(0);
+  });
+
+  it('sets and clears what a worker waits on, and records its diff stat', () => {
+    const projector = new PresentationProjector(SEED);
+    projector.applyWorker({
+      type: 'worker-update',
+      workerId: 'w',
+      awaiting: { approvalKey: 'k1', summary: 'bash rm -rf dist' },
+    });
+    expect(projector.state().workers.get('w')?.awaiting).toEqual({
+      approvalKey: 'k1',
+      summary: 'bash rm -rf dist',
+    });
+    projector.applyWorker({
+      type: 'worker-update',
+      workerId: 'w',
+      awaiting: null,
+      diffStat: { files: 2, added: 14, removed: 3 },
+    });
+    const worker = projector.state().workers.get('w');
+    expect(worker?.awaiting).toBeUndefined();
+    expect(worker?.diffStat).toEqual({ files: 2, added: 14, removed: 3 });
+  });
+
+  it('folds run phases into the session, a new plan starting a new run', () => {
+    const projector = new PresentationProjector(SEED);
+    projector.applyRunPhase({
+      type: 'run-phase',
+      phase: 'plan',
+      state: 'running',
+      at: 1,
+    });
+    projector.applyRunPhase({
+      type: 'run-phase',
+      phase: 'plan',
+      state: 'done',
+      at: 2,
+    });
+    projector.applyRunPhase({
+      type: 'run-phase',
+      phase: 'implement',
+      state: 'running',
+      at: 3,
+    });
+    expect(projector.state().session.runPhases).toEqual([
+      { phase: 'plan', state: 'done', at: 2 },
+      { phase: 'implement', state: 'running', at: 3 },
+    ]);
+    // Reported out of order (a skip after the merge started): run order.
+    projector.applyRunPhase({
+      type: 'run-phase',
+      phase: 'merge',
+      state: 'running',
+      at: 4,
+    });
+    projector.applyRunPhase({
+      type: 'run-phase',
+      phase: 'review',
+      state: 'skipped',
+      at: 5,
+    });
+    expect(
+      projector.state().session.runPhases?.map((phase) => phase.phase),
+    ).toEqual(['plan', 'implement', 'review', 'merge']);
+    projector.applyRunPhase({
+      type: 'run-phase',
+      phase: 'plan',
+      state: 'running',
+      at: 9,
+    });
+    expect(projector.state().session.runPhases).toEqual([
+      { phase: 'plan', state: 'running', at: 9 },
+    ]);
+  });
+
+  it('folds a batch of facts in order, one call replacing its earlier state', () => {
+    const projector = new PresentationProjector(SEED);
+    projector.applyWorker({
+      type: 'worker-update',
+      workerId: 'w',
+      facts: [
+        { id: 'a', tool: 'bash', target: 'npm test', state: 'running', at: 1 },
+        { id: 'b', tool: 'read', target: 'cart.js', state: 'running', at: 2 },
+        {
+          id: 'a',
+          tool: 'bash',
+          target: 'npm test',
+          state: 'error',
+          outcome: 'exit 1',
+          at: 3,
+        },
+      ],
+    });
+    const worker = projector.state().workers.get('w');
+    expect(worker?.toolCount).toBe(2);
+    expect(worker?.activity).toMatchObject({ id: 'a', state: 'error' });
+    expect(worker?.recentTools?.map((tool) => [tool.id, tool.state])).toEqual([
+      ['a', 'error'],
+      ['b', 'running'],
+    ]);
+  });
+});

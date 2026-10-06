@@ -58,7 +58,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 // A tool result's `details` (pi-durable EntryRecord: the message is the
 // first model message; the coarse lane shape carries `message`).
-function resultDetails(entry: unknown): Record<string, unknown> | undefined {
+export function resultDetails(
+  entry: unknown,
+): Record<string, unknown> | undefined {
   if (!isRecord(entry)) return undefined;
   const model = entry.model;
   const message =

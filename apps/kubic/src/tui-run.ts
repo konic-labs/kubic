@@ -110,8 +110,8 @@ import {
   isToolAllowedByEnterprise,
 } from '../../../packages/host/src/policy/enterprise.js';
 import {
+  type OrchestratorProjectionEvent,
   PresentationProjector,
-  type WorkerProjectionEvent,
 } from '../../../packages/host/src/presentation/projector.js';
 import { findProjectRoot } from '../../../packages/host/src/project-root.js';
 import { providerKeyHints } from '../../../packages/host/src/provider-key-hints.js';
@@ -588,8 +588,11 @@ export interface TuiOrchestratorRun {
   abort?: () => Promise<void> | void;
   // Issue #342 (§18): per-worker facts (start with role, worktree, model and
   // generation; the final status and spend from the worker's result) for the
-  // orchestrator view. The loop registers one listener.
-  watchWorkers?: (listener: (event: WorkerProjectionEvent) => void) => void;
+  // orchestrator view — and (#464) the workers' live activity and the run's
+  // phases. The loop registers one listener.
+  watchWorkers?: (
+    listener: (event: OrchestratorProjectionEvent) => void,
+  ) => void;
   // Issue #154 (§14.2): the seat that answers a worker's free-text question —
   // the loop binds the app's dialog once the app exists.
   setQuestionSeat?: (
@@ -3283,10 +3286,11 @@ export class TuiTurnRunner {
   // session facts and fed every lane event the subscription delivers.
   private readonly projector: PresentationProjector;
 
-  // Issue #342: an orchestrator worker fact, folded into the same projector
-  // the lane events feed, so the tree shows it on the next frame.
-  applyWorker(event: WorkerProjectionEvent): void {
-    this.projector.applyWorker(event);
+  // Issue #342: an orchestrator worker fact (#464: or a run phase), folded
+  // into the same projector the lane events feed, so the tree shows it on
+  // the next frame.
+  applyWorker(event: OrchestratorProjectionEvent): void {
+    this.projector.applyOrchestrator(event);
     this.app.applyPresentation(this.projector.state());
     this.onUpdate?.();
   }

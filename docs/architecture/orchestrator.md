@@ -309,6 +309,31 @@ shape (verdicts annotate the report, never the graph) and the §49.1
 trajectory stays admission-scoped (parallel conc/queue/wakeups only): the
 envelope is the loop's record, not a new trajectory kind.
 
+## What the orchestrator view sees (issue #464)
+
+The TUI's orchestrator view folds two live feeds into its presentation state
+(`WorkerSummary`, `SessionSnapshot.runPhases`; see
+[core](../packages/core.md)):
+
+- **Run phases.** `runOrchestrateCommand` reports each transition through
+  `onPhase`: `plan` from the start, `implement` once the template plan is
+  settled (or at the manager lane's first spawn), `review` at the lane's
+  first verdict, `merge` when the merge queue starts. A phase the run has no
+  step for is `skipped` (the template path has no review; no run has a
+  `verify` step yet), and whatever is running when the run fails is
+  `failed`. A new plan starts a new timeline.
+- **Worker facts.** Each worker is shown under a task title (the task its
+  lane mint was spawned for, else the run's objective), its live tool calls
+  (the child's `KUBIC_WORKER_FACT` lines — see
+  [worker](../packages/worker.md#live-tool-facts-issue-464-factsts) —
+  batched to at most ten updates a second per worker), the last eight of
+  them, its change summary when it settles (counted from the per-file diff
+  the merge reads) and, while a worker ask or its merge gate waits on you,
+  what it waits on.
+
+`kubic workers inspect` prints the task, the change summary and the tool
+count from the run's own record (see [commands](../cli/commands.md)).
+
 ## Worker lifecycle: crash and replacement
 
 A worker that dies crash-class (signal-killed, or an unclassified non-zero

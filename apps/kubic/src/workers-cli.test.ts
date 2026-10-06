@@ -378,6 +378,38 @@ describe('kubic workers inspect (issue #167)', () => {
     expect(parsed.usageHint).toBe('kubic cost --session run-1-w-1');
   });
 
+  it('adds the task, the change summary and the tool count when known (issue #464)', async () => {
+    const run = () => ({
+      pendingApproval: false,
+      task: 'Fix the cart total',
+      toolCount: 12,
+      diffStat: { files: 2, added: 14, removed: 3 },
+    });
+    const lines: string[] = [];
+    expect(
+      await runWorkerInspectCommand('w-1', {}, inspectDeps(lines, [], { run })),
+    ).toBe(0);
+    const text = lines.join('\n');
+    expect(text).toContain('task: Fix the cart total');
+    expect(text).toContain('changes: 2 files +14 −3');
+    expect(text).toContain('tools: 12 calls');
+    const json: string[] = [];
+    await runWorkerInspectCommand(
+      'w-1',
+      { json: true },
+      inspectDeps(json, [], { run }),
+    );
+    expect(JSON.parse(json.join('\n'))).toMatchObject({
+      task: 'Fix the cart total',
+      toolCount: 12,
+      diffStat: { files: 2, added: 14, removed: 3 },
+    });
+    // Unknown stays absent — never an invented zero.
+    const bare: string[] = [];
+    await runWorkerInspectCommand('w-1', {}, inspectDeps(bare, []));
+    expect(bare.join('\n')).not.toMatch(/^(task|changes|tools):/m);
+  });
+
   it('an unknown id exits 1 with the documented code', async () => {
     const lines: string[] = [];
     const errs: string[] = [];

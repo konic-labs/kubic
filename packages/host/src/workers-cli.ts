@@ -16,6 +16,7 @@ import { createLineLogger } from '../../core/src/cli/logger.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable, type TableColumn } from '../../core/src/cli/table.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
+import type { WorkerDiffStat } from '../../core/src/presentation.js';
 import { commandOwnsSession } from '../../worker/src/lifecycle/orphans.js';
 import {
   AGENT_STATUSES,
@@ -455,6 +456,12 @@ export interface WorkerRunView {
   pendingApproval: boolean;
   /** The newest §60 decision for the worker session, when any. */
   lastDecision?: string;
+  /** Issue #464: the worker's task title, from the run's own record. */
+  task?: string;
+  /** Issue #464: the tool calls the worker made, once it settled. */
+  toolCount?: number;
+  /** Issue #464: what the worker's branch changes, once it settled. */
+  diffStat?: WorkerDiffStat;
 }
 
 export interface WorkerInspectDeps {
@@ -553,6 +560,9 @@ export async function runWorkerInspectCommand(
         resources: row.resources,
         pid: row.pid,
         startupMs: row.startupMs,
+        ...(run?.task === undefined ? {} : { task: run.task }),
+        ...(run?.toolCount === undefined ? {} : { toolCount: run.toolCount }),
+        ...(run?.diffStat === undefined ? {} : { diffStat: run.diffStat }),
         ...(worktree === undefined ? {} : { worktree }),
         ...(run?.budget === undefined ? {} : { budget: run.budget }),
         ...(run?.usage === undefined ? {} : { usage: run.usage }),
@@ -594,11 +604,21 @@ export async function runWorkerInspectCommand(
       { fancy: deps.fancy === true, theme },
     ),
   );
+  if (run?.task !== undefined) deps.out(`task: ${run.task}`);
   deps.out(
     worktree === undefined
       ? 'worktree: not found'
       : `worktree: ${worktree.path} (${worktree.branch}, ${worktree.clean ? 'clean' : `dirty: ${worktree.changed} files`})`,
   );
+  if (run?.diffStat !== undefined) {
+    const { files, added, removed } = run.diffStat;
+    deps.out(
+      `changes: ${files} file${files === 1 ? '' : 's'} +${added} −${removed}`,
+    );
+  }
+  if (run?.toolCount !== undefined) {
+    deps.out(`tools: ${run.toolCount} call${run.toolCount === 1 ? '' : 's'}`);
+  }
   const budget =
     run?.budget?.worker !== undefined
       ? `worker ${renderSpec(run.budget.worker)}`

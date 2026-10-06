@@ -28,6 +28,7 @@ export const DEFAULT_WORKER_CANCEL_GRACE_MS = 10_000;
 // the exec FakeExecutionEnv satisfies WorkerShell directly).
 
 import type { TaskResources } from '../../../agents/src/task.js';
+import type { WorkerToolActivity } from '../../../core/src/presentation.js';
 import type { Provenance } from '../../../exec/src/env.js';
 import type { FailureCode } from '../lane/failures.js';
 import { classifyFailure } from '../lane/failures.js';
@@ -144,6 +145,11 @@ export interface LaunchWorkerDeps {
   resourceProbes?: ResourceProbes;
   /** Resource poll cadence; the default is one second. */
   resourcePollMs?: number;
+  /**
+   * Issue #464: the tool facts the child reports (lifecycle/facts.ts), in
+   * order as they arrive. Absent means nobody follows them.
+   */
+  onFact?: (fact: WorkerToolActivity) => void;
 }
 
 export interface WorkerFailure {
@@ -316,6 +322,7 @@ export function launchWorker(
     clock,
     getLiveGeneration: () => registry.get(request.workerId)?.generation,
     onDebug: deps.debug,
+    ...(deps.onFact === undefined ? {} : { onFact: deps.onFact }),
     onStartup: (startupMs) => {
       // The marker landed: the §13 handshake is complete (starting →
       // running is asserted, never skipped) and the §49.3 startup latency is

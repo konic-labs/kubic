@@ -130,7 +130,10 @@ import {
   type SelectedRole,
   selectRole,
 } from '../../../packages/host/src/roles/roles-boot.js';
-import type { RunProgressSink } from '../../../packages/host/src/run-cli.js';
+import type {
+  RunProgressSink,
+  RunToolSink,
+} from '../../../packages/host/src/run-cli.js';
 import {
   DEFAULT_RUN_TIMEOUT_MS,
   type HeadlessRunResult,
@@ -278,6 +281,9 @@ export interface HeadlessRunOptions {
   // solo notice, one line per tool call). Absent: today's stderr warning
   // block and no progress output.
   progress?: RunProgressSink;
+  // Issue #464: an orchestrator worker's tool facts (its manager follows
+  // them on stdout). Absent outside a worker.
+  toolFacts?: RunToolSink;
 }
 
 export interface HeadlessRunDeps {
@@ -2327,20 +2333,24 @@ async function runHeadlessPromptImpl(
         const activity = laneActivityDebugLine(event);
         if (activity !== undefined) debug?.(activity);
         if (event.type === 'tool-start') {
-          options.progress?.toolStart({
+          const start = {
             toolCallId: event.toolCallId,
             toolName: event.toolName,
             args: event.args,
-          });
+          };
+          options.progress?.toolStart(start);
+          options.toolFacts?.toolStart(start);
           return;
         }
         if (event.type === 'tool-end') {
-          options.progress?.toolEnd({
+          const end = {
             toolCallId: event.toolCallId,
             toolName: event.toolName,
             isError: event.isError,
             ...(event.entry === undefined ? {} : { entry: event.entry }),
-          });
+          };
+          options.progress?.toolEnd(end);
+          options.toolFacts?.toolEnd(end);
           return;
         }
         if (event.type !== 'usage') return;

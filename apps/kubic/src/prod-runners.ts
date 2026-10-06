@@ -1,4 +1,5 @@
 import { createSocket } from 'node:dgram';
+import type { WorkerDiffStat } from '../../../packages/core/src/presentation.js';
 
 // Production wiring for the command dispatch (issue #135): one runner per
 // command in the if-chain, built from the same objects `main()` built
@@ -85,7 +86,10 @@ import {
   ORCHESTRATE_DEFAULT_AGENTS,
   type OrchestrateCliOptions,
   runOrchestrateCommand,
+  workerTaskOf,
+  workerTaskTitle,
 } from '../../../packages/host/src/orchestrate-cli.js';
+import { diffStatOfHunks } from '../../../packages/host/src/orchestrator/diff-stat.js';
 import {
   cleanDepsWithDefaults,
   runCleanCommand,
@@ -195,6 +199,7 @@ import {
   type TuiDepsInput,
   tuiDepsWithDefaults,
 } from './tui-run.js';
+import { createWorkerToolFacts } from './worker-facts.js';
 
 // The two channels the root wired: `kubic` output on stdout, diagnostics
 // (workers/orchestrate debug lines, the TUI extension receipt) on stderr.
@@ -704,7 +709,58 @@ function prodInspectRun(repoRoot: string, row: WorkerListRow): WorkerRunView {
     view.usage = usage;
     view.usageHint = undefined;
   }
+  // Issue #464: the task title, the change summary and the settled tool
+  // count — all from the run's own record, like the usage above.
+  const task = prodTaskOf(state, row.workerId);
+  if (task !== undefined) view.task = task;
+  const diffStat = prodDiffStatOf(state, row.workerId);
+  if (diffStat !== undefined) view.diffStat = diffStat;
+  if (usage?.toolCalls !== undefined) view.toolCount = usage.toolCalls;
   return view;
+}
+
+// Issue #464: the worker's task title as its run recorded it (the run
+// state is untrusted JSON: anything malformed reads as unknown).
+function prodTaskOf(state: unknown, workerId: string): string | undefined {
+  const value = state as { prompt?: unknown; plan?: unknown };
+  if (typeof value.prompt !== 'string') return undefined;
+  const title = workerTaskTitle(
+    workerTaskOf(
+      {
+        prompt: value.prompt,
+        ...(Array.isArray(value.plan) ? { plan: value.plan } : {}),
+      },
+      workerId,
+    ),
+  );
+  return title === '' ? undefined : title;
+}
+
+// Issue #464: the change summary from the worker's stored record — the
+// same per-file hunks the run merged (or holds for the merge).
+function prodDiffStatOf(
+  state: unknown,
+  workerId: string,
+): WorkerDiffStat | undefined {
+  const records = state as { records?: unknown; completed?: unknown };
+  const candidates = [
+    ...(Array.isArray(records.records) ? records.records : []),
+    ...(Array.isArray(records.completed) ? records.completed : []),
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'object' || candidate === null) continue;
+    const entry = candidate as { agentId?: unknown; hunks?: unknown };
+    if (entry.agentId !== workerId || !Array.isArray(entry.hunks)) continue;
+    const hunks = entry.hunks.filter(
+      (hunk): hunk is { path: string; hunk: string } =>
+        typeof hunk === 'object' &&
+        hunk !== null &&
+        typeof (hunk as { path?: unknown }).path === 'string' &&
+        typeof (hunk as { hunk?: unknown }).hunk === 'string',
+    );
+    return diffStatOfHunks(hunks);
+  }
+  return undefined;
 }
 
 export function createProdRunners(io: ProdRunnerIo): ProdRunners {
@@ -897,6 +953,17 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         ...presentation(out, debug, options.json === true),
         run: (prompt, options) =>
           runHeadlessPrompt(prompt, options, prodRunDeps(cliConfig)),
+        // Issue #464: an orchestrator worker (`kubic orchestrate` launches
+        // it with KUBIC_WORKER_ID) reports its tool calls on stdout, where
+        // its manager follows them; an ordinary run prints nothing extra.
+        ...((process.env.KUBIC_WORKER_ID ?? '') === ''
+          ? {}
+          : {
+              toolFacts: () =>
+                createWorkerToolFacts((line) => {
+                  process.stdout.write(`${line}\n`);
+                }),
+            }),
         // Issue #447: live progress only when the whole run is on an
         // interactive colour terminal (stdout AND stderr) and not --json;
         // a redirected stdout keeps the plain lines scripts read.

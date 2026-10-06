@@ -706,6 +706,48 @@ describe('child output caps (issue #121)', () => {
     }
   });
 
+  // Issue #464: past the cap a snapshot keeps its length while its head
+  // moves; the dropped count says where it starts, so a reader following
+  // the stream (the worker fact scanner) never misses or repeats output.
+  it('says how much of each stream a live snapshot dropped', async () => {
+    const { env } = makeNodeEnv();
+    const positions: Array<{ end: number; text: string; dropped: number }> = [];
+    const handle = env.shell.spawn(
+      process.execPath,
+      [
+        '-e',
+        `let i = 0; const t = setInterval(() => { process.stdout.write('line ' + i + '\\n'); if (++i === 200) clearInterval(t); }, 1);`,
+      ],
+      {
+        provenance: PROV,
+        maxOutputBytes: 300,
+        onUpdate: (snapshot) => {
+          if (snapshot.exitCode !== null) return;
+          const dropped = snapshot.dropped?.stdout ?? 0;
+          positions.push({
+            end: dropped + snapshot.stdout.length,
+            text: snapshot.stdout,
+            dropped,
+          });
+        },
+      },
+    );
+    await handle.wait();
+    const last = positions.at(-1);
+    expect(last?.dropped ?? 0).toBeGreaterThan(0);
+    // The stream position only grows, and the kept text is the true tail of
+    // everything written up to it.
+    const written = Array.from({ length: 200 }, (_, i) => `line ${i}\n`).join(
+      '',
+    );
+    for (let i = 0; i < positions.length; i += 1) {
+      const at = positions[i];
+      if (at === undefined) continue;
+      expect(written.slice(at.dropped, at.end)).toBe(at.text);
+      if (i > 0) expect(at.end).toBeGreaterThan(positions[i - 1]?.end ?? 0);
+    }
+  });
+
   it('leaves under-cap output byte-identical with no header', async () => {
     const { env } = makeNodeEnv();
     const handle = env.shell.spawn('echo', ['tiny'], { provenance: PROV });

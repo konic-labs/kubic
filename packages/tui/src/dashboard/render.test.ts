@@ -17,8 +17,10 @@ import {
   renderDashboardBody,
   renderDashboardFooter,
   renderDashboardHeader,
+  renderDispatchBox,
   renderTimeline,
   renderWorkerList,
+  workerViewLines,
 } from './render.js';
 import { type DashboardLimits, dashboardModel } from './state.js';
 
@@ -413,5 +415,65 @@ describe('dashboard run budget (issue #465)', () => {
       '3:10',
       '1:02:05',
     ]);
+  });
+});
+
+describe('dispatch box and worker view (issue #466)', () => {
+  it('frames the box and names who a message goes to', () => {
+    const lines = renderDispatchBox(
+      plain,
+      {
+        mode: 'message',
+        text: '',
+        focused: false,
+        role: 'implementer',
+        target: 'worker-2',
+      },
+      80,
+    );
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toMatch(/^ ┌─ dispatch ─+┐ $/);
+    expect(lines[1]).toContain(
+      '› message worker-2, or ^N to dispatch a new worker',
+    );
+    for (const line of lines) expect(visibleWidth(line)).toBe(80);
+  });
+
+  it('titles a new worker by its role and keeps a long draft in view', () => {
+    const lines = renderDispatchBox(
+      plain,
+      { mode: 'new', text: 'x'.repeat(200), focused: true, role: 'tester' },
+      60,
+    );
+    expect(lines[0]).toContain('new tester worker');
+    expect(lines[1]).toContain('› …');
+    expect(lines[1]).toContain('▏');
+    for (const line of lines) expect(visibleWidth(line)).toBe(60);
+  });
+
+  it('lists the facts, every call and where the rest lives', () => {
+    const found = live().workers.find(
+      (entry) => entry.worker.workerId === 'worker-2',
+    );
+    if (found === undefined) throw new Error('fixture worker missing');
+    const row = {
+      ...found,
+      worker: {
+        ...found.worker,
+        recentTools: [
+          {
+            id: 'c',
+            tool: 'edit',
+            target: 'src/cart.js',
+            state: 'done' as const,
+            at: 1,
+          },
+        ],
+      },
+    };
+    const lines = workerViewLines(row, () => ['  ● edit  src/cart.js'], 80);
+    expect(lines[0]).toBe('task: cart clear()');
+    expect(lines).toContain('  ● edit  src/cart.js');
+    expect(lines.at(-1)).toBe('more: kubic workers inspect worker-2');
   });
 });

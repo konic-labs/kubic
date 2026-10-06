@@ -150,6 +150,10 @@ export interface WorkerSummary {
   // (epoch ms) — the dashboard's elapsed column.
   startedAt?: number;
   endedAt?: number;
+  // Issue #466: the settled worker's own summary line, and why it failed
+  // (the preview's last rows).
+  summary?: string;
+  failure?: string;
 }
 
 export interface ApprovalRequest {

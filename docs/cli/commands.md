@@ -1507,17 +1507,33 @@ place of the tree, the transcript, the status line and the editor:
   launched yet). Each row is `<worker id> <task> <elapsed>` with a second line
   — the latest tool call and the tool count while it works, the change
   (`+a −r · N files`), tools and tokens once it settled. The list takes 50
-  columns (40% under 120 columns) beside the selected worker's facts (role,
-  model, generation, worktree); under 100 columns it is the whole width. A
-  list taller than the screen scrolls with the selection and says what it
+  columns (40% under 120 columns); under 100 columns it is the whole width.
+  A list taller than the screen scrolls with the selection and says what it
   hides;
+- the live preview of the selected worker beside the list (issue #466; 04-D):
+  who it is (task, worktree, role, model, generation), its last eight tool
+  calls drawn as the very cards a solo session draws — an edit as its diff
+  block, a running call with its clock, newest at the bottom — then, once it
+  settled, how it ended (its change and its own summary line, or why it
+  failed), and its budget when it has a limit;
 - the run budget: the run's tokens, cost and elapsed time — as gauges
   (amber at 80%, red at 100%) against the run's limits when it has them, plain
-  `no limits · …` otherwise (an interactive run sets none).
+  `no limits · …` otherwise (an interactive run sets none);
+- the dispatch box (issue #466; 04-F): `m` types a message to the selected
+  worker, `^N` the task of a new worker. `⏎` sends, `Esc` leaves the box
+  (the draft stays), `↑↓` move the target, `^N` switches between the two,
+  and for a new worker `tab` cycles its role (implementer, tester, reviewer,
+  debugger, planner). A message goes through the orchestrator's own path —
+  interactive runs use the template plan, whose workers have no inbox, so it
+  is refused with that reason and the draft stays (`^N` sends it as a new
+  worker's task instead). A new worker is a run of its own (`--agents
+  <role>-1:<role>`), so it starts once the run in flight settled. `⏎` on an
+  empty box opens the worker.
 
 Keys on the dashboard: `↑↓` (or `k j`) select a worker (group labels are
-skipped; the first worker waiting on you is selected first), `⏎` opens its
-facts in full, `a` opens the approval card of the oldest ask waiting on you
+skipped; the first worker waiting on you is selected first), `⏎` opens the
+full worker view — its facts and every recent call as a card, with `kubic
+workers inspect <id>` for the rest (`esc` back), `a` opens the approval card of the oldest ask waiting on you
 (asks wait in AWAITING YOU instead of taking the keys; the card arms when it
 appears, so a key pressed with the `a` cannot answer it, and after one answer
 the dashboard has the keys again), `x` stops the selected running worker
@@ -1529,7 +1545,8 @@ the selected worker's change in its worktree since its branch left yours
 role or task as you type (`⏎` keeps the filter, `Esc` clears it), and `tab`
 switches to the manager transcript — the report, and the editor for the next
 objective; on an empty editor `tab` comes back. Before the first objective,
-orchestrator mode opens on that manager view.
+orchestrator mode opens on that manager view. A new run replaces the last
+run's workers on the dashboard.
 
 **Retries and compaction on the footer** (issue #150; §20.6, §27.1): while
 the harness waits to retry a transient model error the footer under the

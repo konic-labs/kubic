@@ -26,7 +26,18 @@ export type DashboardIntent =
   | { readonly kind: 'answer' }
   | { readonly kind: 'stop'; readonly workerId: string }
   | { readonly kind: 'retry'; readonly workerId: string }
-  | { readonly kind: 'diff'; readonly workerId: string };
+  | { readonly kind: 'diff'; readonly workerId: string }
+  // Issue #466: the dispatch box sent its text — to the selected worker, or
+  // as the task of a new worker of a role.
+  | {
+      readonly kind: 'message';
+      readonly workerId: string;
+      readonly text: string;
+    }
+  | { readonly kind: 'dispatch'; readonly text: string; readonly role: string };
+
+/** Issue #466: what the dispatch box sends its text as. */
+export type DispatchMode = 'message' | 'new';
 
 export interface DashboardKey {
   readonly data: string;
@@ -46,8 +57,10 @@ const EMPTY_STATE: KubicPresentationState = {
   connection: { status: 'connected' },
 };
 
+// Text a key (or a burst of typing, delivered as one chunk) inserts: no
+// control character anywhere in it.
 function printable(data: string): boolean {
-  return [...data].length === 1 && data >= ' ' && data !== '\u007f';
+  return data !== '' && [...data].every((ch) => ch >= ' ' && ch !== '\u007f');
 }
 
 /** A run's objective as its header shows it: the first line that says something. */
@@ -71,6 +84,28 @@ export class DashboardView {
   runTask: string | undefined;
   /** A run has started in this session (the dashboard has something). */
   hasRun = false;
+  /** Issue #466: the dispatch box — its mode, its draft, whether it types. */
+  dispatchMode: DispatchMode = 'message';
+  dispatchText = '';
+  dispatchFocused = false;
+  /** The roles `tab` cycles a new worker through, and the current one. */
+  roles: readonly string[] = ['implementer'];
+  roleIndex = 0;
+
+  get role(): string {
+    return (
+      this.roles[this.roleIndex % Math.max(1, this.roles.length)] ??
+      'implementer'
+    );
+  }
+
+  /** The dispatch box's text went out: the next one starts empty, as a
+   *  message. */
+  dispatchSent(): void {
+    this.dispatchText = '';
+    this.dispatchFocused = false;
+    this.dispatchMode = 'message';
+  }
 
   /** A new objective went to the manager: its run is what the dashboard shows. */
   startRun(prompt: string): void {
@@ -91,6 +126,9 @@ export class DashboardView {
     this.answering = false;
     this.runTask = undefined;
     this.hasRun = false;
+    this.dispatchMode = 'message';
+    this.dispatchText = '';
+    this.dispatchFocused = false;
   }
 
   model(
@@ -110,9 +148,72 @@ export class DashboardView {
     });
   }
 
+  // Issue #466: one key while the dispatch box types.
+  private dispatchKey(
+    key: DashboardKey,
+    model: DashboardModel,
+  ): DashboardIntent {
+    const render = { kind: 'render' } as const;
+    const selected = resolveSelection(model, this.selected);
+    if (key.action === 'app.cancel') {
+      this.dispatchFocused = false;
+      return render;
+    }
+    if (key.keyId === 'enter') {
+      const text = this.dispatchText.trim();
+      if (text === '') {
+        this.dispatchFocused = false;
+        return selected === undefined
+          ? { kind: 'hint', text: 'no worker selected' }
+          : { kind: 'open', workerId: selected };
+      }
+      if (this.dispatchMode === 'new') {
+        return { kind: 'dispatch', text, role: this.role };
+      }
+      return selected === undefined
+        ? {
+            kind: 'hint',
+            text: 'no worker to message — ^N dispatches a new one',
+          }
+        : { kind: 'message', workerId: selected, text };
+    }
+    if (key.keyId === 'backspace') {
+      this.dispatchText = [...this.dispatchText].slice(0, -1).join('');
+      return render;
+    }
+    if (key.keyId === 'ctrl+u') {
+      this.dispatchText = '';
+      return render;
+    }
+    if (key.keyId === 'ctrl+n') {
+      this.dispatchMode = this.dispatchMode === 'new' ? 'message' : 'new';
+      return render;
+    }
+    if (key.keyId === 'tab') {
+      if (this.dispatchMode === 'new') {
+        this.roleIndex = (this.roleIndex + 1) % Math.max(1, this.roles.length);
+      }
+      return render;
+    }
+    if (key.keyId === 'up' || key.keyId === 'down') {
+      this.selected = moveSelection(
+        model,
+        selected,
+        key.keyId === 'up' ? -1 : 1,
+      );
+      return render;
+    }
+    if (key.action === undefined && printable(key.data)) {
+      this.dispatchText += key.data;
+      return render;
+    }
+    return { kind: 'pass' };
+  }
+
   /** One key on the dashboard (no overlay or card above it). */
   handleKey(key: DashboardKey, model: DashboardModel): DashboardIntent {
     const render = { kind: 'render' } as const;
+    if (this.dispatchFocused) return this.dispatchKey(key, model);
     if (this.filtering) {
       if (key.action === 'app.cancel') {
         this.filtering = false;
@@ -132,6 +233,13 @@ export class DashboardView {
         return render;
       }
       return { kind: 'pass' };
+    }
+    // Issue #466: `m` types a message to the selected worker, `^N` the
+    // task of a new one.
+    if (key.data === 'm' || key.keyId === 'ctrl+n') {
+      this.dispatchMode = key.data === 'm' ? 'message' : 'new';
+      this.dispatchFocused = true;
+      return render;
     }
     const selected = resolveSelection(model, this.selected);
     if (key.keyId === 'up' || key.data === 'k') {

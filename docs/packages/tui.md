@@ -254,16 +254,24 @@ notice from its seed (`workspace`, `clock`, `laneNotice`) and
   (04-E gauges), `workerInspectorLines` (`⏎`) and `renderWorkerDiff` (`^O`,
   sanitized rows).
 - `view.ts` — `DashboardView`: which view orchestrator mode shows
-  (`dashboard` / `manager`), the selection, the `/` filter and whether the
-  approval card is open over the dashboard; `handleKey` turns a key into an
-  intent (`open`, `answer`, `stop`, `retry`, `diff`, a footer hint, or
-  `pass` for a global key) that the app carries out.
+  (`dashboard` / `manager`), the selection, the `/` filter, the dispatch box
+  (mode, draft, focus, the role `tab` cycles) and whether the approval card
+  is open over the dashboard; `handleKey` turns a key into an intent
+  (`open`, `answer`, `stop`, `retry`, `diff`, `message`, `dispatch`, a footer
+  hint, or `pass` for a global key) that the app carries out.
+- `preview.ts` (issue #466) — `previewCells` turns a worker's recent calls
+  into transcript cells; `WorkerPreview` renders them with a private
+  `TranscriptView` (the solo transcript's own cards and diff blocks);
+  `renderWorkerPreview` lays out the side column: meta rows, the newest cards
+  that fit, the settle line and the worker budget. `render.ts` adds
+  `renderDispatchBox` and `workerViewLines` (the full worker view).
 
 The app shows the dashboard from the first objective handed to the manager;
 an ask that arrives meanwhile waits (the card is not on screen and takes no
 keys) until `a`, which re-arms the card (#315) before it takes a key. Stop,
-retry and the worktree diff come from the composition root
-(`setWorkerActionHandler`, the `workerDiff` seed).
+retry, message, dispatch and the worktree diff come from the composition
+root (`setWorkerActionHandler` with a `TuiWorkerAction`, the `workerDiff` and
+`dispatchRoles` seeds).
 
 ### Presentation state
 

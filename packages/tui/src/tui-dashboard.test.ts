@@ -84,6 +84,7 @@ function setup(
       workerId: string;
       workspace: string;
     }) => Promise<string | undefined>;
+    dispatchRoles?: readonly string[];
   } = {},
 ) {
   // The real arming rule (#315) on a fake clock, so the re-arm on `a` is
@@ -156,9 +157,12 @@ describe('the orchestrator dashboard in the app (issue #465)', () => {
   it('selects by worker and acts on the selection', () => {
     const { app, submit, frame } = setup();
     const actions: string[] = [];
-    app.setWorkerActionHandler((action, workerId) => {
-      actions.push(`${action}:${workerId}`);
-      return `${action === 'stop' ? 'stopping' : 'retrying'} ${workerId}`;
+    app.setWorkerActionHandler((action) => {
+      if (action.kind !== 'stop' && action.kind !== 'retry') return undefined;
+      actions.push(`${action.kind}:${action.workerId}`);
+      return {
+        footer: `${action.kind === 'stop' ? 'stopping' : 'retrying'} ${action.workerId}`,
+      };
     });
     submit('go');
     app.applyPresentation(presentation(WORKERS));
@@ -295,5 +299,135 @@ describe('the orchestrator dashboard in the app (issue #465)', () => {
     clock = 5_450;
     app.handleInput('a');
     await expect(verdict).resolves.toMatchObject({ approved: true });
+  });
+});
+
+describe('the dashboard preview and dispatch box (issue #466)', () => {
+  it("shows the selected worker's recent calls beside the list", () => {
+    const { app, submit, frame } = setup();
+    submit('go');
+    app.applyPresentation(
+      presentation([
+        {
+          ...(WORKERS[0] as WorkerSummary),
+          recentTools: [
+            {
+              id: 'c1',
+              tool: 'read',
+              target: 'src/cart.js',
+              state: 'done',
+              at: 1,
+            },
+            {
+              id: 'c2',
+              tool: 'bash',
+              target: 'npm test',
+              state: 'running',
+              at: 2,
+            },
+          ],
+        },
+        WORKERS[1] as WorkerSummary,
+      ]),
+    );
+    const text = frame();
+    expect(text).toMatch(/│ worker-1 · cart clear\(\)/);
+    expect(text).toMatch(/│ +[○●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✓] read {2}src\/cart\.js/);
+    expect(text).toContain('npm test');
+    expect(text).toContain('┌─ dispatch');
+    expect(text).toContain(
+      '› message worker-1, or ^N to dispatch a new worker',
+    );
+  });
+
+  it('messages the selected worker, and keeps the draft when it is refused', () => {
+    const { app, submit, frame } = setup();
+    const sent: string[] = [];
+    app.setWorkerActionHandler((action) => {
+      if (action.kind !== 'message') return undefined;
+      sent.push(`${action.workerId}:${action.text}`);
+      return { footer: 'message: worker-1 cannot take messages', sent: false };
+    });
+    submit('go');
+    app.applyPresentation(presentation(WORKERS));
+    app.handleInput('m');
+    expect(frame()).toContain('⏎ send');
+    for (const ch of 'use clear()') app.handleInput(ch);
+    app.handleInput('\r');
+    expect(sent).toEqual(['worker-1:use clear()']);
+    const text = frame();
+    expect(text).toContain('message: worker-1 cannot take messages');
+    expect(text).toContain('› use clear()');
+  });
+
+  it('^N dispatches a new worker of the chosen role as a new run', () => {
+    const { app, submit, frame } = setup({
+      dispatchRoles: ['implementer', 'tester'],
+    });
+    const dispatched: string[] = [];
+    app.setWorkerActionHandler((action) => {
+      if (action.kind !== 'dispatch') return undefined;
+      dispatched.push(`${action.role}:${action.text}`);
+      return { footer: `dispatching a new ${action.role}…`, sent: true };
+    });
+    submit('first objective');
+    app.applyPresentation(presentation(WORKERS));
+    app.handleInput('\u000e');
+    app.handleInput('\t');
+    expect(frame()).toContain('new tester worker');
+    for (const ch of 'cover clear()') app.handleInput(ch);
+    app.handleInput('\r');
+    expect(dispatched).toEqual(['tester:cover clear()']);
+    const text = frame();
+    expect(text).toContain('[ORCHESTRATE]  cover clear()');
+    expect(text).toContain('dispatching a new tester…');
+    expect(text).toContain('› message');
+  });
+
+  it('refuses a dispatch while a run is in flight, keeping the draft', () => {
+    const { app, submit, frame } = setup();
+    let called = false;
+    app.setWorkerActionHandler(() => {
+      called = true;
+      return { footer: 'x', sent: true };
+    });
+    submit('go');
+    app.setBusy(true);
+    app.applyPresentation(presentation(WORKERS));
+    app.handleInput('\u000e');
+    for (const ch of 'more') app.handleInput(ch);
+    app.handleInput('\r');
+    expect(called).toBe(false);
+    expect(frame()).toContain(
+      'dispatch: a new worker starts once this run settles',
+    );
+    expect(frame()).toContain('› more');
+  });
+
+  it('opens the full worker view on enter, with its calls and where the rest lives', () => {
+    const { app, submit, overlay } = setup();
+    submit('go');
+    app.applyPresentation(
+      presentation([
+        {
+          ...(WORKERS[0] as WorkerSummary),
+          recentTools: [
+            {
+              id: 'c1',
+              tool: 'read',
+              target: 'src/cart.js',
+              state: 'done',
+              at: 1,
+            },
+          ],
+        },
+      ]),
+    );
+    app.handleInput('\r');
+    const text = overlay();
+    expect(text).toContain('┌─ worker-1');
+    expect(text).toContain('last 1 tool call:');
+    expect(text).toContain('read');
+    expect(text).toContain('more: kubic workers inspect worker-1');
   });
 });

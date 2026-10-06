@@ -549,6 +549,71 @@ describe('worker activity (issue #464)', () => {
     expect(worker?.endedAt).toBeUndefined();
   });
 
+  it('keeps the settle summary and failure, cleared by a new generation (issue #466)', () => {
+    const projector = new PresentationProjector(SEED);
+    projector.applyWorker({
+      type: 'worker-start',
+      workerId: 'w',
+      startedAt: 1,
+    });
+    projector.applyWorker({
+      type: 'worker-update',
+      workerId: 'w',
+      status: 'failed',
+      summary: 'half done',
+      failure: 'tests still fail',
+    });
+    expect(projector.state().workers.get('w')).toMatchObject({
+      summary: 'half done',
+      failure: 'tests still fail',
+    });
+    projector.applyWorker({
+      type: 'worker-start',
+      workerId: 'w',
+      startedAt: 9,
+    });
+    const worker = projector.state().workers.get('w');
+    expect(worker?.summary).toBeUndefined();
+    expect(worker?.failure).toBeUndefined();
+  });
+
+  it("a new run's plan replaces the last run's workers (issue #466)", () => {
+    const projector = new PresentationProjector(SEED);
+    projector.applyRunPhase({
+      type: 'run-phase',
+      phase: 'plan',
+      state: 'running',
+      at: 1,
+    });
+    projector.applyWorker({
+      type: 'worker-update',
+      workerId: 'old',
+      status: 'completed',
+      facts: [{ id: 'c1', tool: 'read', state: 'done', at: 1 }],
+    });
+    projector.applyRunPhase({
+      type: 'run-phase',
+      phase: 'plan',
+      state: 'done',
+      at: 2,
+    });
+    expect(projector.state().workers.has('old')).toBe(true);
+    projector.applyRunPhase({
+      type: 'run-phase',
+      phase: 'plan',
+      state: 'running',
+      at: 3,
+    });
+    expect(projector.state().workers.size).toBe(0);
+    projector.applyWorker({
+      type: 'worker-update',
+      workerId: 'old',
+      facts: [{ id: 'c1', tool: 'read', state: 'done', at: 4 }],
+    });
+    // The tool count starts over with the new run.
+    expect(projector.state().workers.get('old')?.toolCount).toBe(1);
+  });
+
   it('folds a batch of facts in order, one call replacing its earlier state', () => {
     const projector = new PresentationProjector(SEED);
     projector.applyWorker({

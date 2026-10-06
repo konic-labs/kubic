@@ -81,6 +81,7 @@ describe('observeWorkers (issue #342)', () => {
       costUsd: 0.0123,
       diffStat: { files: 0, added: 0, removed: 0 },
       endedAt: 5,
+      summary: 'done',
     });
     expect(events[2]).toMatchObject({ type: 'worker-start', generation: 2 });
   });
@@ -102,6 +103,7 @@ describe('observeWorkers (issue #342)', () => {
       workerId: 'beta',
       status: 'failed',
       endedAt: 7,
+      failure: 'spawn exploded',
     });
   });
 });

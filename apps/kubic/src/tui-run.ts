@@ -121,6 +121,7 @@ import {
   rolePromptFor,
   selectRole,
 } from '../../../packages/host/src/roles/roles-boot.js';
+import { BUILTIN_ROLE_NAMES } from '../../../packages/host/src/roles/roles-data.js';
 import {
   mapCaughtErrorToTerminus,
   RUN_EXIT_FAILED,
@@ -542,6 +543,15 @@ function terminusOfFailure(reason: string): RunTerminusKind {
 // in the conversation's inbox (`followUp`) or joins the running work with a
 // steer (`steer`); `onSubmitted` reports the admitted submission's id the
 // moment the harness takes it, so the loop can key its `queued: …` rows.
+// Issue #466: the order `tab` cycles a dispatched worker's role through.
+const DISPATCH_ROLE_ORDER: readonly string[] = [
+  'implementer',
+  'tester',
+  'reviewer',
+  'debugger',
+  'planner',
+];
+
 export interface TuiTurnOptions {
   whenBusy?: 'followUp' | 'steer';
   onSubmitted?: (submissionId: string, state: 'placed' | 'queued') => void;
@@ -550,6 +560,9 @@ export interface TuiTurnOptions {
   // Issue #465: an orchestrator turn that resumes the last run (the
   // dashboard's `r`) instead of starting one for the prompt.
   resume?: boolean;
+  // Issue #466: the run's workers as `--agents` entries (`<id>:<role>`) —
+  // the dashboard's `^N` dispatches one worker of a chosen role.
+  agents?: readonly string[];
 }
 
 // One turn's driver, whichever lane owns it (issue #327): the solo
@@ -584,8 +597,18 @@ export interface TuiOrchestratorRun {
     objective: string,
     report?: (line: string) => void,
     // Issue #465: resume the last run (its failed workers run again).
-    options?: { readonly resume?: boolean },
+    // Issue #466: or run exactly these workers (`--agents` entries).
+    options?: {
+      readonly resume?: boolean;
+      readonly agents?: readonly string[];
+    },
   ): Promise<TuiTurnOutcome>;
+  // Issue #466: a message for one worker of the run; the answer says
+  // whether it went out and, when not, why.
+  messageWorker?: (
+    workerId: string,
+    text: string,
+  ) => { readonly sent: boolean; readonly footer: string };
   // Issue #465: stop one worker of the run in flight through the run's own
   // lifecycle (the `kubic workers terminate` reap); false when no run holds
   // it.
@@ -648,7 +671,14 @@ export class TuiOrchestratorTurn implements TuiTurnDriver {
       .run(
         prompt,
         this.onReport,
-        options?.resume === true ? { resume: true } : undefined,
+        options?.resume === true || options?.agents !== undefined
+          ? {
+              ...(options.resume === true ? { resume: true } : {}),
+              ...(options.agents === undefined
+                ? {}
+                : { agents: options.agents }),
+            }
+          : undefined,
       )
       .finally(() => {
         if (this.running === running) this.running = undefined;
@@ -4328,6 +4358,11 @@ export async function runTuiCommand(
     // Issue #463: block mode's copies — OSC 52 on the terminal the screen
     // runs on (through tmux's passthrough when inside it); refused on a
     // terminal known to drop it, so a copy is never claimed falsely.
+    // Issue #466: the roles the dashboard's `^N` offers a new worker, in
+    // the order a task usually needs them (the implementer is the default).
+    dispatchRoles: DISPATCH_ROLE_ORDER.filter((role) =>
+      (BUILTIN_ROLE_NAMES as readonly string[]).includes(role),
+    ),
     // Issue #465: `^O` on the dashboard — the worker's worktree against
     // the branch it left (the header's branch, read with the workspace).
     ...(deps.readWorkerDiff === undefined
@@ -6675,20 +6710,49 @@ export async function runTuiCommand(
       // live run's own lifecycle (the `kubic workers terminate` reap); a
       // retry resumes the last run as a turn of its own, so its failed
       // workers run again.
-      app.setWorkerActionHandler((action, workerId) => {
-        if (action === 'stop') {
-          return boot.orchestrator?.stopWorker?.(workerId) === true
-            ? `stopping ${workerId}…`
-            : `stop: no run in flight holds ${workerId}`;
+      app.setWorkerActionHandler((action) => {
+        switch (action.kind) {
+          case 'stop':
+            return {
+              footer:
+                boot.orchestrator?.stopWorker?.(action.workerId) === true
+                  ? `stopping ${action.workerId}…`
+                  : `stop: no run in flight holds ${action.workerId}`,
+            };
+          // Issue #466: a message goes through the orchestrator's own path,
+          // which says whether the worker can take one.
+          case 'message':
+            return (
+              boot.orchestrator?.messageWorker?.(
+                action.workerId,
+                action.text,
+              ) ?? {
+                sent: false,
+                footer: `message: ${action.workerId} cannot take messages here`,
+              }
+            );
+          default:
+            break;
         }
         if (activeTurn?.isRunning() === true) {
-          return 'retry: wait for the run to settle';
+          return { footer: `${action.kind}: wait for the run to settle` };
         }
         if (orchestratorTurn === undefined) {
-          return 'retry: this session has no orchestrator';
+          return { footer: `${action.kind}: this session has no orchestrator` };
         }
-        startTurn(orchestratorTurn, '', { resume: true });
-        return 'retry: resuming the run — its failed workers run again';
+        if (action.kind === 'retry') {
+          startTurn(orchestratorTurn, '', { resume: true });
+          return {
+            footer: 'retry: resuming the run — its failed workers run again',
+            sent: true,
+          };
+        }
+        if (action.kind !== 'dispatch') return undefined;
+        // Issue #466 (`^N`): a new run of one worker of the chosen role.
+        startTurn(orchestratorTurn, action.text, {
+          agents: [`${action.role}-1:${action.role}`],
+        });
+        return { footer: `dispatching a new ${action.role}…`, sent: true };
       });
       // The steer key's own entry point (the key router is defined above).
       submitForLoop = submitPrompt;

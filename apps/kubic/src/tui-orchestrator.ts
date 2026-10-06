@@ -252,6 +252,15 @@ export function createProdTuiOrchestrator(
       void Promise.resolve(cancel(workerId)).catch(() => undefined);
       return true;
     },
+    // Issue #466: a worker of the template plan has no inbox — only the
+    // model-driven manager lane can send one a follow-up (`send_to_agent`),
+    // and interactive runs stay on the template plan (L-D34).
+    messageWorker(workerId) {
+      return {
+        sent: false,
+        footer: `message: ${workerId} cannot take messages — interactive runs use the template plan, which has no worker inbox (^N dispatches a new worker)`,
+      };
+    },
     setQuestionSeat(seat) {
       questionSeat = seat;
     },
@@ -333,7 +342,15 @@ export function createProdTuiOrchestrator(
         let code: number;
         try {
           code = await runCommand(
-            resume ? { resume: true, session } : { prompt: objective, session },
+            resume
+              ? { resume: true, session }
+              : {
+                  prompt: objective,
+                  session,
+                  ...(runOptions?.agents === undefined
+                    ? {}
+                    : { agents: [...runOptions.agents] }),
+                },
             observeWorkers(deps, feed),
           );
         } finally {
@@ -425,10 +442,17 @@ export function observeWorkers(
         batch.flush();
         const run = Array.isArray(output) ? { hunks: output } : output;
         const result = run.result;
+        const summary = firstLine(result?.summary);
+        const failure =
+          result === undefined || result.status === 'completed'
+            ? undefined
+            : firstLine(result.error?.message);
         emit({
           type: 'worker-update',
           workerId: agentId,
           status: result?.status ?? 'completed',
+          ...(summary === undefined ? {} : { summary }),
+          ...(failure === undefined ? {} : { failure }),
           ...(result === undefined
             ? {}
             : {
@@ -444,16 +468,30 @@ export function observeWorkers(
         return output;
       } catch (error) {
         batch.flush();
+        const failure = firstLine(
+          error instanceof Error ? error.message : String(error),
+        );
         emit({
           type: 'worker-update',
           workerId: agentId,
           status: 'failed',
           endedAt: now(),
+          ...(failure === undefined ? {} : { failure }),
         });
         throw error;
       }
     },
   };
+}
+
+// Issue #466: one line of a worker's own text for the preview, bounded.
+function firstLine(text: string | undefined): string | undefined {
+  const line = text
+    ?.split('\n')
+    .map((row) => row.trim())
+    .find((row) => row !== '');
+  if (line === undefined) return undefined;
+  return line.length <= 200 ? line : `${line.slice(0, 199)}…`;
 }
 
 // Issue #464 (docs/ui 04-C): a worker's approval ask marks its row as

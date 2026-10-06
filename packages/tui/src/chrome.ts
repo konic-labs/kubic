@@ -182,7 +182,10 @@ export type HintContext =
   | 'blocks'
   // Issue #465: the orchestrator dashboard, and its `/` filter.
   | 'dashboard'
-  | 'filter';
+  | 'filter'
+  // Issue #466: the dashboard's dispatch box, messaging or new-worker.
+  | 'dispatch'
+  | 'dispatchNew';
 
 export interface HintSetOptions {
   /** Whether a busy turn takes follow-ups (the solo lane's inbox). */
@@ -262,6 +265,8 @@ export function keyHintSet(
         ['↑↓', 'select'],
         ['⏎', 'open'],
         ['a', 'answer awaiting'],
+        ['m', 'message'],
+        ['^N', 'new worker'],
         ['x', 'stop'],
         ['r', 'retry'],
         ...bound('panel.diff', 'diff'),
@@ -269,6 +274,18 @@ export function keyHintSet(
         ['tab', 'manager'],
       ],
       ...quitHint(),
+    };
+  }
+  if (context === 'dispatch' || context === 'dispatchNew') {
+    return {
+      hints: [
+        ['⏎', 'send'],
+        ['↑↓', 'worker'],
+        ...(context === 'dispatchNew'
+          ? [['tab', 'role'] as const, ['^N', 'message instead'] as const]
+          : [['^N', 'new worker instead'] as const]),
+      ],
+      right: ['esc', 'back'],
     };
   }
   if (context === 'filter') {

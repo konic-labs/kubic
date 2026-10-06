@@ -77,12 +77,15 @@ import {
   sessionTitle,
   shortSessionId,
 } from './chrome.js';
+import { renderWorkerPreview, WorkerPreview } from './dashboard/preview.js';
 import {
   renderDashboardBody,
   renderDashboardFooter,
   renderDashboardHeader,
+  renderDispatchBox,
   renderWorkerDiff,
   workerInspectorLines,
+  workerViewLines,
 } from './dashboard/render.js';
 import { type DashboardModel, resolveSelection } from './dashboard/state.js';
 import { type DashboardIntent, DashboardView } from './dashboard/view.js';
@@ -165,7 +168,7 @@ import { CLIPBOARD_MAX_BYTES, copySize, formatSize } from './ui/clipboard.js';
 import { dimFrame } from './ui/dim.js';
 import { fileUrl } from './ui/file-links.js';
 import { renderKeyHintRow } from './ui/key-hints.js';
-import { fitLine, leftRight } from './ui/line.js';
+import { leftRight } from './ui/line.js';
 import {
   formatAge,
   formatContextWindow,
@@ -335,6 +338,9 @@ export interface TuiAppSeed {
     readonly workerId: string;
     readonly workspace: string;
   }) => Promise<string | undefined>;
+  // Issue #466: the roles the dashboard's `^N` offers a new worker (`tab`
+  // cycles them), the first being the default.
+  readonly dispatchRoles?: readonly string[];
   // Issue #458: the project's absolute root; with `listFiles`, file
   // references in answers link to `file://<root>/<path>`.
   readonly fileRoot?: string;
@@ -413,6 +419,23 @@ function keyIdOf(data: string): string | undefined {
     // editor (parseKey throws on sequences it does not recognise).
     return undefined;
   }
+}
+
+// Issue #465/#466: what the orchestrator dashboard asks the loop to do —
+// stop or retry a worker, message one, or dispatch a new one — and the
+// loop's answer: the footer's word on it, and whether it went out.
+export type TuiWorkerAction =
+  | { readonly kind: 'stop' | 'retry'; readonly workerId: string }
+  | {
+      readonly kind: 'message';
+      readonly workerId: string;
+      readonly text: string;
+    }
+  | { readonly kind: 'dispatch'; readonly text: string; readonly role: string };
+
+export interface TuiWorkerActionResult {
+  readonly footer: string;
+  readonly sent?: boolean;
 }
 
 // The keys handleInput claims before the editor live in the keybinding
@@ -716,11 +739,11 @@ export interface TuiApp {
   // Issue #342 (§16.5 AgentInspector): open the capturing inspector for one
   // worker node; false when there is no such worker or no room for it.
   inspectWorker(workerId: string): boolean;
-  // Issue #465: the orchestrator dashboard's stop / retry, carried out by
-  // the loop; the answer is the footer's word on it.
+  // Issue #465/#466: the orchestrator dashboard's stop / retry / message /
+  // dispatch, carried out by the loop.
   setWorkerActionHandler(
     handler:
-      | ((action: 'stop' | 'retry', workerId: string) => string | undefined)
+      | ((action: TuiWorkerAction) => TuiWorkerActionResult | undefined)
       | undefined,
   ): void;
   // Issue #465: what orchestrator mode shows (the dashboard, or the manager
@@ -1205,8 +1228,14 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const dashboard = new DashboardView();
   let presentation: KubicPresentationState | undefined;
   let workerActionHandler:
-    | ((action: 'stop' | 'retry', workerId: string) => string | undefined)
+    | ((action: TuiWorkerAction) => TuiWorkerActionResult | undefined)
     | undefined;
+  // Issue #466: the roles a new worker can take, and the selected worker's
+  // live preview (its cards drawn by a private transcript).
+  if (seed.dispatchRoles !== undefined && seed.dispatchRoles.length > 0) {
+    dashboard.roles = seed.dispatchRoles;
+  }
+  const preview = new WorkerPreview();
   const dashboardShown = (): boolean =>
     sessionMode.current === 'orchestrator' && dashboard.view === 'dashboard';
   const dashboardModelNow = (): DashboardModel =>
@@ -1223,7 +1252,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const dashboardRows = (width: number): number => {
     const rows = overlayHost?.terminal?.rows ?? 40;
     const card = cardVisible() ? editorSlot.render(width).length : 0;
-    return Math.max(4, rows - 4 - noticeRow.render(width).length - card);
+    // The header, the footer's rule and budget, the dispatch box (3) and
+    // the hint row stay on screen with it.
+    return Math.max(4, rows - 7 - noticeRow.render(width).length - card);
   };
   const root = buildLayoutRoot({
     header: lineComponent((width) =>
@@ -1263,18 +1294,44 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         render: (width: number): string[] => {
           const model = dashboardModelNow();
           const selected = resolveSelection(model, dashboard.selected);
-          return renderDashboardBody(tuiTheme().ui, model, {
+          const ui = tuiTheme().ui;
+          return renderDashboardBody(ui, model, {
             ...(selected === undefined ? {} : { selected }),
             width,
             maxRows: dashboardRows(width),
             spinner: spinnerFrame(Date.now()),
+            // Issue #466: the selected worker's live preview.
+            side: (row, sideWidth, rows) =>
+              renderWorkerPreview(ui, row, {
+                width: sideWidth,
+                maxRows: rows,
+                cards: (worker, cardWidth) => preview.cards(worker, cardWidth),
+              }),
           });
         },
         invalidate: (): void => {},
       },
       footer: {
-        render: (width: number): string[] =>
-          renderDashboardFooter(tuiTheme().ui, dashboardModelNow(), width),
+        render: (width: number): string[] => {
+          const ui = tuiTheme().ui;
+          const model = dashboardModelNow();
+          const target = resolveSelection(model, dashboard.selected);
+          return [
+            ...renderDashboardFooter(ui, model, width),
+            // Issue #466 (04-F): the dispatch box.
+            ...renderDispatchBox(
+              ui,
+              {
+                mode: dashboard.dispatchMode,
+                text: dashboard.dispatchText,
+                focused: dashboard.dispatchFocused,
+                role: dashboard.role,
+                ...(target === undefined ? {} : { target }),
+              },
+              width,
+            ),
+          ];
+        },
         invalidate: (): void => {},
       },
       isShown: dashboardShown,
@@ -2076,15 +2133,21 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         noticeRow.setFooter(intent.text);
         break;
       case 'open': {
+        // Issue #466: the full worker view — its facts and every recent
+        // call as a card.
         const row = model.workers.find(
           (entry) => entry.worker.workerId === intent.workerId,
         );
         if (row !== undefined) {
-          const facts = workerInspectorLines(row).map(sanitizeLaneText);
           openViewer(
             sanitizeLaneText(intent.workerId),
-            (width) => facts.map((line) => fitLine(line, width)),
-            () => copyText(facts.join('\n')),
+            (width) =>
+              workerViewLines(
+                row,
+                (cardWidth) => preview.cards(row.worker, cardWidth),
+                width,
+              ).map(sanitizeLaneText),
+            () => copyText(workerInspectorLines(row).join('\n')),
           );
         }
         break;
@@ -2106,10 +2169,38 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       case 'stop':
       case 'retry':
         noticeRow.setFooter(
-          workerActionHandler?.(intent.kind, intent.workerId) ??
-            `${intent.kind}: not available in this session`,
+          workerActionHandler?.({
+            kind: intent.kind,
+            workerId: intent.workerId,
+          })?.footer ?? `${intent.kind}: not available in this session`,
         );
         break;
+      // Issue #466: the dispatch box.
+      case 'message': {
+        const answer = workerActionHandler?.(intent);
+        if (answer?.sent === true) dashboard.dispatchSent();
+        noticeRow.setFooter(
+          answer?.footer ?? 'message: not available in this session',
+        );
+        break;
+      }
+      case 'dispatch': {
+        if (busy) {
+          noticeRow.setFooter(
+            'dispatch: a new worker starts once this run settles',
+          );
+          break;
+        }
+        const answer = workerActionHandler?.(intent);
+        if (answer?.sent === true) {
+          dashboard.dispatchSent();
+          dashboard.startRun(intent.text);
+        }
+        noticeRow.setFooter(
+          answer?.footer ?? 'dispatch: not available in this session',
+        );
+        break;
+      }
       case 'diff':
         openWorkerDiff(intent.workerId, model);
         break;
@@ -2267,7 +2358,12 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       return 'overlay';
     }
     // Issue #465: the dashboard names its own keys.
-    if (dashboardShown()) return dashboard.filtering ? 'filter' : 'dashboard';
+    if (dashboardShown()) {
+      if (dashboard.dispatchFocused) {
+        return dashboard.dispatchMode === 'new' ? 'dispatchNew' : 'dispatch';
+      }
+      return dashboard.filtering ? 'filter' : 'dashboard';
+    }
     return busy ? 'working' : 'idle';
   };
   return {

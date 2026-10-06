@@ -19,6 +19,7 @@ import type { UiTheme } from '../../../core/src/ui/style.js';
 import type { TokenRole } from '../../../core/src/ui/tokens.js';
 import { sanitizeLaneText } from '../lane-cells.js';
 import { visibleWidth } from '../tui-boundary.js';
+import { frameInnerWidth, frameLines } from '../ui/frame.js';
 import { exactWidth, fitLine, leftRight } from '../ui/line.js';
 import { badge, gauge, rule, sectionLabel } from '../ui/marks.js';
 import { fillLine } from '../ui/surface.js';
@@ -421,6 +422,15 @@ export function renderDashboardBody(
     readonly width: number;
     readonly maxRows: number;
     readonly spinner: string;
+    /**
+     * Issue #466: the side column for the selected worker (the live
+     * preview). Absent draws its facts only.
+     */
+    readonly side?: (
+      row: DashboardWorker | undefined,
+      width: number,
+      rows: number,
+    ) => string[];
   },
 ): string[] {
   const width = Math.max(0, Math.floor(options.width));
@@ -438,11 +448,13 @@ export function renderDashboardBody(
   ];
   if (listWidth === width) return [...head, ...list];
   const sideWidth = width - listWidth - 1;
-  const side = renderWorkerMeta(
-    ui,
-    model.workers.find((row) => row.worker.workerId === options.selected),
-    sideWidth,
+  const selectedRow = model.workers.find(
+    (row) => row.worker.workerId === options.selected,
   );
+  const side =
+    options.side === undefined
+      ? renderWorkerMeta(ui, selectedRow, sideWidth)
+      : options.side(selectedRow, sideWidth, rows);
   const height = Math.max(list.length, side.length);
   const divider = ui.fg('fg3')('│');
   return [
@@ -609,4 +621,63 @@ export function renderWorkerDiff(
     if (body && raw.startsWith('-')) return ui.fg('del')(row);
     return ui.fg(body ? 'fg1' : 'fg2')(row);
   });
+}
+
+/** Issue #466 (04-F): the dispatch box — message the selected worker, or
+ * (`^N`) give a new worker of the chosen role its task. */
+export function renderDispatchBox(
+  ui: UiTheme,
+  state: {
+    readonly mode: 'message' | 'new';
+    readonly text: string;
+    readonly focused: boolean;
+    readonly role: string;
+    readonly target?: string;
+  },
+  width: number,
+): string[] {
+  const w = Math.max(6, Math.floor(width));
+  const inner = frameInnerWidth(w - 2);
+  const title = state.mode === 'new' ? `new ${state.role} worker` : 'dispatch';
+  const prompt = ui.style({ fg: 'accent', bold: true })('› ');
+  const placeholder =
+    state.mode === 'new'
+      ? `the task for a new ${state.role} worker · tab role · ^N message`
+      : `message ${state.target ?? 'the selected worker'}, or ^N to dispatch a new worker`;
+  const body =
+    state.text === ''
+      ? `${prompt}${state.focused ? ui.fg('accent')('▏') : ''}${ui.style({ fg: 'fg2', italic: true })(placeholder)}`
+      : `${prompt}${ui.fg('fg0')(state.text)}${state.focused ? ui.fg('accent')('▏') : ''}`;
+  // The newest text stays in view: a long draft scrolls left.
+  const shown =
+    visibleWidth(body) <= inner
+      ? body
+      : `${prompt}…${ui.fg('fg0')(state.text.slice(-(inner - 4)))}${state.focused ? ui.fg('accent')('▏') : ''}`;
+  return frameLines(ui, [shown], w - 2, {
+    title,
+    color: state.focused ? 'accent' : 'fg3',
+  }).map((line) => ` ${line} `);
+}
+
+/**
+ * Issue #466: the full worker view (`⏎`): its facts, then every recent
+ * call as a card, then where the rest lives.
+ */
+export function workerViewLines(
+  row: DashboardWorker,
+  cards: (width: number) => string[],
+  width: number,
+): string[] {
+  const w = Math.max(1, Math.floor(width));
+  const tools = (row.worker.recentTools ?? []).length;
+  return [
+    ...workerInspectorLines(row).map((line) => fitLine(line, w)),
+    '',
+    tools === 0
+      ? 'no tool calls yet'
+      : `last ${tools} tool call${tools === 1 ? '' : 's'}:`,
+    ...(tools === 0 ? [] : cards(w)),
+    '',
+    fitLine(`more: kubic workers inspect ${row.worker.workerId}`, w),
+  ];
 }

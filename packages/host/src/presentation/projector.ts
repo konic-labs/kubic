@@ -65,6 +65,9 @@ export interface WorkerProjectionEvent {
   // settle's.
   readonly startedAt?: number;
   readonly endedAt?: number;
+  // Issue #466: the settle's summary line and failure reason.
+  readonly summary?: string;
+  readonly failure?: string;
   readonly diffStat?: WorkerDiffStat;
   readonly awaiting?: {
     readonly approvalKey: string;
@@ -384,10 +387,19 @@ export class PresentationProjector {
             ? undefined
             : (event.awaiting ?? previous?.awaiting),
         startedAt: event.startedAt ?? previous?.startedAt,
+        // A new generation starts unsettled: no end, summary or failure.
         endedAt:
           event.type === 'worker-start'
             ? event.endedAt
             : (event.endedAt ?? previous?.endedAt),
+        summary:
+          event.type === 'worker-start'
+            ? event.summary
+            : (event.summary ?? previous?.summary),
+        failure:
+          event.type === 'worker-start'
+            ? event.failure
+            : (event.failure ?? previous?.failure),
       };
       for (const fact of event.facts ?? []) this.foldTool(next, fact);
       workers.set(event.workerId, next);
@@ -448,6 +460,11 @@ export class PresentationProjector {
     const phases = (fresh ? [] : previous).filter(
       (phase) => phase.phase !== event.phase,
     );
+    // Issue #466: a new run's workers replace the last run's.
+    if (fresh) {
+      this.seenTools.clear();
+      this.current = { ...this.current, workers: new Map() };
+    }
     const startedAt = event.state === 'running' ? event.at : earlier?.startedAt;
     phases.push({
       phase: event.phase,

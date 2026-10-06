@@ -158,3 +158,81 @@ describe('the dashboard view (issue #465)', () => {
     ).toEqual({ kind: 'hint', text: 'no worker selected' });
   });
 });
+
+describe('the dispatch box keys (issue #466)', () => {
+  it('`m` types a message to the selected worker; enter sends it', () => {
+    const { view, press } = setup();
+    press('m');
+    expect(view.dispatchFocused).toBe(true);
+    for (const ch of 'use the new API') press(ch);
+    // Arrows still move the target.
+    press('\u001b[B', 'down');
+    expect(press('\r', 'enter')).toEqual({
+      kind: 'message',
+      workerId: 'worker-3',
+      text: 'use the new API',
+    });
+    // The text stays until the app says it went out.
+    expect(view.dispatchText).toBe('use the new API');
+    view.dispatchSent();
+    expect(view.dispatchText).toBe('');
+    expect(view.dispatchFocused).toBe(false);
+  });
+
+  it('^N types the task of a new worker; tab cycles its role', () => {
+    const { view, press } = setup();
+    view.roles = ['implementer', 'tester', 'reviewer'];
+    press('\u000e', 'ctrl+n');
+    expect(view.dispatchMode).toBe('new');
+    press('\t', 'tab');
+    expect(view.role).toBe('tester');
+    for (const ch of 'cover clear()') press(ch);
+    expect(press('\r', 'enter')).toEqual({
+      kind: 'dispatch',
+      text: 'cover clear()',
+      role: 'tester',
+    });
+    // ^N again switches back to messaging.
+    press('\u000e', 'ctrl+n');
+    expect(view.dispatchMode).toBe('message');
+  });
+
+  it('enter on an empty box opens the worker; esc leaves the box', () => {
+    const { view, press } = setup();
+    press('m');
+    expect(press('\r', 'enter')).toEqual({
+      kind: 'open',
+      workerId: 'worker-2',
+    });
+    expect(view.dispatchFocused).toBe(false);
+    press('m');
+    press('x');
+    press('\u007f', 'backspace');
+    press('y');
+    press('\u001b', 'escape', 'app.cancel');
+    expect(view.dispatchFocused).toBe(false);
+    // Typed letters went to the box, not to the worker keys.
+    expect(view.dispatchText).toBe('y');
+  });
+
+  it('`m` types into the filter while it is open', () => {
+    const { view, press } = setup();
+    press('/');
+    press('m');
+    expect(view.filter).toBe('m');
+    expect(view.dispatchFocused).toBe(false);
+  });
+});
+
+describe('typed bursts (issue #466)', () => {
+  it('takes a chunk of typing into the box and the filter whole', () => {
+    const { view, press } = setup();
+    press('m');
+    press('use clear()');
+    expect(view.dispatchText).toBe('use clear()');
+    press('\u001b', 'escape', 'app.cancel');
+    press('/');
+    press('docs');
+    expect(view.filter).toBe('docs');
+  });
+});

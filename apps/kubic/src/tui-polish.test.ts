@@ -149,7 +149,7 @@ describe('transcript blocks', () => {
     const ok = lines.find((l) => plain(l) === '● bash ls') ?? '';
     const failed = lines.find((l) => plain(l) === '● read x.ts') ?? '';
     expect(ok).toContain('38;2;94;214;140m●');
-    expect(failed).toContain('38;2;255;42;31m●');
+    expect(failed).toContain('38;2;255;107;94m●');
     for (const line of lines)
       expect(plain(line).length).toBeLessThanOrEqual(60);
   });
@@ -162,7 +162,7 @@ describe('transcript blocks', () => {
       [{ id: 'c', kind: 'tool', markdown: 'tool bash', toolCallId: 'c' }],
       1,
     );
-    expect(view.render(40)[0]).toContain('38;2;255;122;46m●');
+    expect(view.render(40)[0]).toContain('38;2;255;181;71m●');
   });
 
   it('truncates long lines to the width instead of wrapping tool output', () => {

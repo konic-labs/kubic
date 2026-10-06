@@ -175,10 +175,9 @@ import type {
   StatusUsageRow,
 } from '../../../packages/tui/src/status-bar.js';
 import {
-  builtinThemeColors,
+  builtinThemePalette,
   type ColorLevel,
-  createThemeFromColors,
-  createTuiTheme,
+  createThemeFromPalette,
   detectColorLevel,
   isThemeBuiltin,
   parseThemeJson,
@@ -983,7 +982,7 @@ export interface TuiRunDeps {
   // parsed and ignored.
   modes?: { readonly orchestrator: boolean };
   // Issue #304 (§16.9): the config `[ui] theme` reference — a built-in name
-  // (`default`, `dark`, `light`) or a path to a JSON theme file, resolved
+  // (`default`, `dark`, `light`, `terminal`) or a path to a JSON theme file, resolved
   // and validated before the alt-screen opens.
   theme?: string;
   // Issue #303 (§16.9): the keybindings file; default
@@ -3537,19 +3536,19 @@ export class TuiTurnRunner {
 }
 
 // Issue #304 (§16.9): the `[ui] theme` reference → the active theme. A
-// built-in name (`default`, `dark`, `light`) needs no file; anything else is
-// a JSON theme path, read through the exec bridge and validated against the
-// schema. Every failure is a `ThemeError` naming the reference, so the boot
-// can report it before the screen opens.
+// built-in name (`default`, `dark`, `light`, `terminal` — issue #444) needs
+// no file; anything else is a JSON theme path, read through the exec bridge
+// and validated against the schema (v2 token roles, or the v1 seven keys).
+// Every failure is a `ThemeError` naming the reference, so the boot can
+// report it before the screen opens.
 export function resolveTuiTheme(
   ref: string | undefined,
   level: ColorLevel,
   files: FileBridge,
 ): TuiTheme {
   if (ref === undefined || ref === '' || isThemeBuiltin(ref)) {
-    return ref === 'light'
-      ? createThemeFromColors(builtinThemeColors('light'), level)
-      : createTuiTheme(level);
+    const name = ref === undefined || ref === '' ? 'dark' : ref;
+    return createThemeFromPalette(builtinThemePalette(name), level, name);
   }
   let text: string;
   try {
@@ -3573,7 +3572,7 @@ export function resolveTuiTheme(
     const detail = error instanceof Error ? error.message : String(error);
     throw new ThemeError(`theme '${ref}': cannot read (${detail})`);
   }
-  return createThemeFromColors(parseThemeJson(text, ref), level);
+  return createThemeFromPalette(parseThemeJson(text, ref), level, ref);
 }
 
 // Issue #276: the session's persisted mode toggle, or nothing when the

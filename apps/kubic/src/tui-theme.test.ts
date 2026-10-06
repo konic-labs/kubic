@@ -90,7 +90,7 @@ describe('resolveTuiTheme (issue #304)', () => {
 
   it('selects the built-in light palette by name', () => {
     const light = resolveTuiTheme('light', 'truecolor', bridgeFor(tmpRoot()));
-    expect(light.accent('x')).toBe('\u001b[38;2;196;0;56mx\u001b[39m');
+    expect(light.accent('x')).toBe('\u001b[38;2;208;0;63mx\u001b[39m');
   });
 
   it('reads and validates a JSON theme file', () => {

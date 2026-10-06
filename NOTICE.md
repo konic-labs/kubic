@@ -20,12 +20,12 @@ licence text under `node_modules/@earendil-works/*/`.
 
 ## CLI stack (runtime dependencies)
 
-The non-TUI command line is built on these MIT-licensed packages, declared
+The non-TUI command line is built on these MIT-licensed packages (colour is
+Kubic's own style engine, `packages/core/src/ui`), declared
 with exact pins in the root `package.json` (the manifest that owns the
 `kubic` bin and the `dist/` build):
 
 - `commander` and `@commander-js/extra-typings` — argv parsing, commands, help
-- `chalk` — terminal colour
 - `consola` — leveled logging
 - `cli-table3` — tables
 - `@clack/prompts` — interactive prompts and spinners

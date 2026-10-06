@@ -32,6 +32,25 @@ TUI-side analogue of the worker Pi boundary.
 | `views.ts`, `components.ts` | Pointer | View assembly lives in `layout.ts` / `*-view.ts` / `tui-app.ts` (#23–#28); no shared or aggregated module |
 | `index.ts` | Pointer | No barrel — import per-module paths (`tui-boundary.js` seam + views); `tui/` stays presentation-only |
 
+## UI kit (`packages/tui/src/ui`, EPIC N)
+
+Pure render helpers every new surface is drawn with (issue #452), over the
+shared design tokens (`packages/core/src/ui`, `docs/ui/README.md`): each takes
+a `UiTheme` (`tuiTheme().ui`) and returns strings — plain text at colour
+depth `none`, so snapshots stay readable.
+
+| Module | Helpers |
+| --- | --- |
+| `ui/line.ts` | `fitLine` (cut with `…`, plain text stays escape-free), `padTo`, `exactWidth`, `leftRight` (right part keeps its room) |
+| `ui/surface.ts` | `fillLine` / `surfaceLines`: a background role edge to edge, kept through nested styles |
+| `ui/frame.ts` | `frameLines` (`┌─┐` box, heavy `┏┃┗` card or bare rules; title and right label in the top rule), `frameInnerWidth` |
+| `ui/marks.ts` | `badge` (inverse mode/accent/waiting/ok/error cells, `[TEXT]` without colour; `key` caps), `gauge` (warn at 80%, err at 100%), `sectionLabel`, `rule` |
+| `ui/key-hints.ts` | `renderKeyHintRow`: keys fg1, labels fg2, whole hints dropped from the end when narrow, a right-aligned hint |
+| `ui/match.ts` | `fuzzyPositions` (contiguous run, else word starts) and `highlightPositions` |
+
+Widths always come from Pi's grapheme-aware helpers through
+`tui-boundary.ts`, never `string.length`.
+
 ## Contracts
 
 ### Layout (`layout.ts`, §16.2)

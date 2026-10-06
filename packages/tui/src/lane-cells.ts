@@ -55,6 +55,14 @@ function textOf(part: unknown): string | undefined {
   return typeof part.text === 'string' ? part.text : undefined;
 }
 
+// Issue #457: a reasoning part (Pi ThinkingContent). A redacted one carries
+// only an opaque signature, so it has nothing to show.
+function thinkingOf(part: unknown): string | undefined {
+  if (!isRecord(part) || part.type !== 'thinking') return undefined;
+  if (part.redacted === true) return undefined;
+  return typeof part.thinking === 'string' ? part.thinking : undefined;
+}
+
 function nameOf(part: unknown): string | undefined {
   if (!isRecord(part)) return undefined;
   if (part.type !== 'toolCall') return undefined;
@@ -495,6 +503,16 @@ function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
   }
   if (role === ROLE_ASSISTANT) {
     parts.forEach((part, index) => {
+      const thinking = thinkingOf(part);
+      if (thinking !== undefined) {
+        push(
+          `thinking:${index}`,
+          'thinking',
+          sanitizeLaneText(thinking).trim(),
+          stamp,
+        );
+        return;
+      }
       const text = textOf(part);
       if (text !== undefined) {
         push(

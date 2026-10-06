@@ -5,6 +5,8 @@
 // text plus follow/pinned offsets across batches.
 import { afterEach, describe, expect, it } from 'vitest';
 import { fakeTerminal } from '../../../test/fake-terminal.js';
+import { createUiTheme } from '../../core/src/ui/style.js';
+import { DARK_PALETTE } from '../../core/src/ui/tokens.js';
 import { buildLayoutRoot } from './layout.js';
 import { bootScreen } from './screen.js';
 import { createTuiTheme, setTuiTheme } from './theme.js';
@@ -12,6 +14,7 @@ import {
   createTranscriptView,
   formatPromptTime,
   QUEUED_LABEL,
+  renderReceipt,
   replayTranscript,
   TOOL_OUTPUT_PREVIEW_LINES,
 } from './transcript.js';
@@ -20,6 +23,8 @@ import { Text, visibleWidth } from './tui-boundary.js';
 afterEach(() => {
   setTuiTheme(createTuiTheme('none'));
 });
+
+const plainUi = createUiTheme(DARK_PALETTE, 'none');
 
 describe('transcript view (issue #23, slice A)', () => {
   it('appends a text delta and shows it in a headless snapshot', () => {
@@ -720,5 +725,84 @@ describe('transcript blocks (issue #455; 01-B, 01-C)', () => {
     const line = view.render(60)[0] ?? '';
     expect(visibleWidth(line)).toBe(60);
     expect(line).toContain('\u001b[48;2;');
+  });
+});
+
+describe('thinking and turn receipts (issue #457; 01-F, 01-J)', () => {
+  const thought =
+    'addItem overwrites qty instead of adding to it. The fix is a +=.';
+
+  it('collapses thinking to its first sentence with the expand key', () => {
+    const view = createTranscriptView();
+    view.applyLaneSnapshot(
+      { laneId: 'l' },
+      [{ id: 't', kind: 'thinking', markdown: thought, durationMs: 4100 }],
+      1,
+    );
+    const [line] = view.render(120);
+    const left =
+      '  ⋯ thought for 4.1s — addItem overwrites qty instead of adding to it.';
+    expect(line).toBe(
+      `${left}${' '.repeat(120 - visibleWidth(left) - 10)}^X expand `,
+    );
+    // Narrow: the key goes first, the sentence is cut.
+    const [narrow] = view.render(60);
+    expect(visibleWidth(narrow ?? '')).toBeLessThanOrEqual(60);
+    expect(narrow).not.toContain('^X');
+    // Expanded: every word, behind the gutter.
+    view.toggleExpanded();
+    const open = view.render(60);
+    expect(open[0]).toBe('  ⋯ thought for 4.1s');
+    expect(
+      open
+        .slice(1)
+        .map((row) => row.slice(4))
+        .join(' '),
+    ).toContain('The fix is a +=.');
+    for (const row of open.slice(1)) expect(row.startsWith('  │ ')).toBe(true);
+  });
+
+  it('says "thinking" when the time was not measured', () => {
+    const view = createTranscriptView();
+    view.applyLaneSnapshot(
+      { laneId: 'l' },
+      [{ id: 't', kind: 'thinking', markdown: 'Plan first' }],
+      1,
+    );
+    expect(view.render(80)[0]).toContain('⋯ thinking — Plan first');
+  });
+
+  it('renders the receipt kinds', () => {
+    const base = { elapsedMs: 18_400, tools: 4, costUsd: 0.031, diffKey: '^O' };
+    const success = renderReceipt(
+      plainUi,
+      { outcome: 'completed', ...base, files: 1, added: 1, removed: 1 },
+      100,
+    );
+    const left = '  ✓ turn 18.4s · 4 tools · 1 file +1 −1 · $0.031';
+    const right = '^O review diff   /undo revert ';
+    expect(success).toBe(
+      `${left}${' '.repeat(100 - visibleWidth(left) - visibleWidth(right))}${right}`,
+    );
+    expect(
+      renderReceipt(plainUi, { outcome: 'completed', ...base, files: 0 }, 100),
+    ).toBe('  ✓ turn 18.4s · 4 tools · $0.031');
+    expect(
+      renderReceipt(
+        plainUi,
+        { outcome: 'failed', ...base, files: 0, detail: 'provider exploded' },
+        100,
+      ),
+    ).toBe('  ✕ turn failed · 18.4s · provider exploded');
+    expect(
+      renderReceipt(plainUi, { outcome: 'cancelled', ...base, files: 0 }, 100),
+    ).toBe('  ○ turn cancelled · 18.4s');
+    // Narrow: the right part drops first.
+    const narrow = renderReceipt(
+      plainUi,
+      { outcome: 'completed', ...base, files: 1, added: 1, removed: 1 },
+      60,
+    );
+    expect(narrow).toBe(left);
   });
 });

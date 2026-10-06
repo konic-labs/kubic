@@ -1300,6 +1300,16 @@ a large workspace pays it (and the screen pauses) after every turn that used
   replaces a text file shows the diff. The diff rides the tool result's
   details, so the model never pays for it; a session recorded before it
   shows the op's own count instead (`✓ 2 replacements`).
+  The model's reasoning shows as one line, `⋯ thought for 4.1s — <its first
+  sentence>` (issue #457; the time is the response's generation time,
+  measured for turns that arrive while the TUI watches — a resumed
+  session's older reasoning reads `⋯ thinking — …`); `Ctrl-X` shows all of
+  it. Every settled solo turn ends with a receipt:
+  `✓ turn 18.4s · 4 tools · 1 file +1 −1 · $0.031` with
+  `^O review diff   /undo revert` when it changed files (counted from the
+  journal rows the turn recorded), or `✕ turn failed · 2.1s · <reason>` /
+  `○ turn cancelled · 0.8s`. Receipts are drawn by this TUI process only —
+  they are not written to the session.
   `Ctrl-X` expands every card and wraps its lines in full. A context
   compaction is a `─── compacted · auto ───` rule with the summary under it,
   collapsed the same way. Its welcome block carries the honest one-line lane

@@ -5800,6 +5800,8 @@ export async function runTuiCommand(
       ): void => {
         activeTurn = driver;
         inFlightTurns += 1;
+        // Issue #457: the receipt counts this turn from its submission.
+        const startedAt = Date.now();
         app.setBusy(true);
         startSpinner();
         screen?.render();
@@ -5839,7 +5841,12 @@ export async function runTuiCommand(
             // turn clears the notice row (the trust statement lives in the
             // welcome block and behind `/safety`), a cancelled or failed one
             // keeps its own report there.
-            app.setTurnOutcome(outcome.status);
+            app.setTurnOutcome(outcome.status, {
+              startedAt,
+              ...(outcome.detail === undefined
+                ? {}
+                : { detail: outcome.detail }),
+            });
             footer = footerForOutcome(outcome);
             if (outcome.status === 'cancelled' && droppedOnCancel > 0) {
               footer = `${footer} · dropped ${droppedOnCancel} queued prompt${droppedOnCancel === 1 ? '' : 's'}`;
@@ -5851,7 +5858,7 @@ export async function runTuiCommand(
           .catch((error: unknown) => {
             const message =
               error instanceof Error ? error.message : String(error);
-            app.setTurnOutcome('failed');
+            app.setTurnOutcome('failed', { startedAt, detail: message });
             footer = `error: ${message}`;
           })
           .finally(() => {

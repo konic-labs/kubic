@@ -124,6 +124,7 @@ import {
   type ToolCallState,
   type TranscriptEntry,
   type TranscriptView,
+  type TurnReceipt,
 } from './transcript.js';
 import {
   AgentTreeView,
@@ -161,6 +162,42 @@ export const QUIT_ARM_MS = 2000;
 // orchestrator lane's no-queue variant.
 export const QUEUE_PLACEHOLDER = 'type to queue — sent when this turn ends';
 export const RUN_PLACEHOLDER = 'the run is working — wait for it to finish';
+
+// Issue #457: a thinking cell's generation time is measured only for entries
+// this app saw arrive live, and only when the gap is plausible (a resumed
+// session's old entries would otherwise read as hours of thought).
+export const THINKING_MEASURE_MAX_MS = 10 * 60_000;
+
+// Issue #457: lines added and removed across a turn's journal rows — a
+// multiset count (exact for the usual in-place edit), nothing when the
+// content is unknown on both sides.
+export function journalLineCounts(
+  rows: ReadonlyArray<JournalChangeLike>,
+): { readonly added: number; readonly removed: number } | undefined {
+  let added = 0;
+  let removed = 0;
+  let known = false;
+  for (const row of rows) {
+    if (row.before === null && row.after === null) continue;
+    known = true;
+    // A final newline ends the last line; it is not an empty line.
+    const lines = (text: string | null): string[] =>
+      text === null || text === ''
+        ? []
+        : (text.endsWith('\n') ? text.slice(0, -1) : text).split('\n');
+    const before = lines(row.before);
+    const after = lines(row.after);
+    const pool = new Map<string, number>();
+    for (const line of before) pool.set(line, (pool.get(line) ?? 0) + 1);
+    for (const line of after) {
+      const left = pool.get(line) ?? 0;
+      if (left > 0) pool.set(line, left - 1);
+      else added += 1;
+    }
+    for (const left of pool.values()) removed += left;
+  }
+  return known ? { added, removed } : undefined;
+}
 
 import {
   DiffPanel,
@@ -451,7 +488,12 @@ export interface TuiApp {
   // reads `cancelling…` until the turn settles; a failed turn reads `error`
   // until the next one starts.
   setCancelling(cancelling: boolean): void;
-  setTurnOutcome(outcome: 'completed' | 'cancelled' | 'failed'): void;
+  // Issue #457: the settled turn's start (submission) and failure text feed
+  // its receipt; a solo turn ends with one.
+  setTurnOutcome(
+    outcome: 'completed' | 'cancelled' | 'failed',
+    info?: { readonly startedAt?: number; readonly detail?: string },
+  ): void;
   // Issue #453: the header's project / branch / dirty count.
   setWorkspace(workspace: TuiWorkspace): void;
   // Issue #334: the echo row for a prompt whose turn has STARTED but whose
@@ -1351,6 +1393,44 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       ...(waitingToolCallId() === toolCallId ? { waiting: true } : {}),
     };
   };
+  // Issue #457: thinking times (null: seen in loaded history, unmeasured),
+  // the receipts of turns settled in this process, and what they count from.
+  const thinkingTimes = new Map<string, number | null>();
+  let historyPending = true;
+  let receipts: Array<{
+    readonly afterPrompts: number;
+    readonly cell: TranscriptEntry;
+  }> = [];
+  let receiptCount = 0;
+  let lastLaneCells: TranscriptEntry[] = [];
+  let receiptBase = { at: Date.now(), rows: 0 };
+  let journalRows: ReadonlyArray<JournalChangeLike> = [];
+  // A receipt sits before the first prompt committed after its turn settled
+  // — a late entry event can never push it above the turn's own answer.
+  const withReceipts = (cells: TranscriptEntry[]): TranscriptEntry[] => {
+    if (receipts.length === 0) return cells;
+    const out: TranscriptEntry[] = [];
+    let prompts = 0;
+    let next = 0;
+    for (const cell of cells) {
+      if (cell.kind === 'prompt') {
+        prompts += 1;
+        while (
+          next < receipts.length &&
+          (receipts[next]?.afterPrompts ?? 0) < prompts
+        ) {
+          out.push((receipts[next] as { cell: TranscriptEntry }).cell);
+          next += 1;
+        }
+      }
+      out.push(cell);
+    }
+    while (next < receipts.length) {
+      out.push((receipts[next] as { cell: TranscriptEntry }).cell);
+      next += 1;
+    }
+    return out;
+  };
   // Issue #454: the idle double-press quit. The notice row says so for the
   // window and clears itself when it lapses (a render is requested — no key
   // arrives to cause one).
@@ -1726,8 +1806,31 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // The revision counter makes every apply a fresh snapshot: the
       // transcript replaces its cells instead of appending duplicates.
       revision += 1;
-      const cells = entriesToCells(entries);
-      transcript.applyLaneSnapshot({ laneId: sessionId }, cells, revision);
+      const now = Date.now();
+      const cells = entriesToCells(entries).map((cell) => {
+        if (cell.kind !== 'thinking') return cell;
+        let time = thinkingTimes.get(cell.id);
+        if (time === undefined) {
+          const gap =
+            cell.timestamp === undefined ? undefined : now - cell.timestamp;
+          time =
+            !historyPending &&
+            gap !== undefined &&
+            gap >= 0 &&
+            gap < THINKING_MEASURE_MAX_MS
+              ? gap
+              : null;
+          thinkingTimes.set(cell.id, time);
+        }
+        return time === null ? cell : { ...cell, durationMs: time };
+      });
+      historyPending = false;
+      lastLaneCells = cells;
+      transcript.applyLaneSnapshot(
+        { laneId: sessionId },
+        withReceipts(cells),
+        revision,
+      );
       // Issue #327: a solo lane snapshot is the session's own transcript, so
       // the orchestrator report stops being it — and the command notices
       // with it (review fix: a stale notice list must never be re-applied by
@@ -1806,6 +1909,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       submitHandler = handler;
     },
     setBusy: (next: boolean): void => {
+      if (next && !busy) {
+        receiptBase = { at: Date.now(), rows: status.getState().rows.length };
+      }
       busy = next;
       // Issue #453: a settled turn ends any cancel; a new one clears the
       // last turn's error.
@@ -1844,9 +1950,50 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     setCancelling: (next: boolean): void => {
       cancelling = busy && next;
     },
-    setTurnOutcome: (outcome): void => {
+    setTurnOutcome: (outcome, info = {}): void => {
       failed = outcome === 'failed';
       cancelling = false;
+      // Issue #457 (01-J): a solo turn ends with its receipt.
+      if (sessionMode.current !== 'solo') return;
+      const now = Date.now();
+      const start = Math.max(info.startedAt ?? receiptBase.at, receiptBase.at);
+      const rows = status.getState().rows;
+      const changed = journalRows.filter((row) => row.timestamp >= start);
+      const files = new Set(changed.map((row) => row.path)).size;
+      const counts = journalLineCounts(changed);
+      const detail = info.detail?.split('\n', 1)[0]?.trim();
+      const receipt: TurnReceipt = {
+        outcome,
+        elapsedMs: Math.max(0, now - start),
+        tools: [...toolTimes.values()].filter((time) => time.seenAt >= start)
+          .length,
+        files,
+        ...(counts === undefined ? {} : counts),
+        costUsd: rows
+          .slice(receiptBase.rows)
+          .reduce((sum, row) => sum + row.usage.cost.total, 0),
+        ...(detail === undefined || detail === ''
+          ? {}
+          : { detail: sanitizeLaneText(detail) }),
+        diffKey: keyCap(keys.label('panel.diff')),
+      };
+      receiptCount += 1;
+      receipts.push({
+        afterPrompts: promptCells,
+        cell: {
+          id: `${sessionId}:receipt:${receiptCount}`,
+          kind: 'receipt',
+          markdown: '',
+          receipt,
+        },
+      });
+      receiptBase = { at: now, rows: rows.length };
+      revision += 1;
+      transcript.applyLaneSnapshot(
+        { laneId: sessionId },
+        withReceipts(lastLaneCells),
+        revision,
+      );
     },
     setWorkspace: (next: TuiWorkspace): void => {
       workspace = cleanWorkspace(next);
@@ -1936,6 +2083,12 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       tree.reset(undefined, sessionMode.current === 'solo');
       title = undefined;
       toolTimes.clear();
+      thinkingTimes.clear();
+      historyPending = true;
+      receipts = [];
+      lastLaneCells = [];
+      journalRows = [];
+      receiptBase = { at: Date.now(), rows: options.usage?.length ?? 0 };
       toolCells = 0;
       turnToolsBase = 0;
       turnRowsBase = 0;
@@ -1979,6 +2132,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       pendingAttachments = count;
     },
     setJournalChanges: (rows: ReadonlyArray<JournalChangeLike>): void => {
+      journalRows = rows;
       diffPanel.setChanges(rows);
       journalPanel.setChanges(rows);
       status.setState({ ...status.getState(), journalChanges: rows.length });

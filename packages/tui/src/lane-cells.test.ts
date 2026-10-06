@@ -526,3 +526,37 @@ describe('file-change display records (issue #456)', () => {
     ).toBeUndefined();
   });
 });
+
+describe('thinking cells (issue #457)', () => {
+  const assistant = (content: unknown[]) => ({
+    id: 'a1',
+    seq: 2,
+    type: 'message',
+    message: { role: 'assistant', content, timestamp: 1000 },
+  });
+
+  it('turns a thinking part into a thinking cell before the answer', () => {
+    const cells = entriesToCells([
+      assistant([
+        { type: 'thinking', thinking: 'addItem overwrites qty. Check it.' },
+        { type: 'text', text: 'Fixed.' },
+      ]),
+    ]);
+    expect(cells.map((cell) => [cell.kind, cell.markdown])).toEqual([
+      ['thinking', 'addItem overwrites qty. Check it.'],
+      ['text', 'Fixed.'],
+    ]);
+    expect(cells[0]?.timestamp).toBe(1000);
+  });
+
+  it('drops redacted and empty thinking', () => {
+    const cells = entriesToCells([
+      assistant([
+        { type: 'thinking', thinking: '', thinkingSignature: 'x' },
+        { type: 'thinking', thinking: 'secret', redacted: true },
+        { type: 'text', text: 'ok' },
+      ]),
+    ]);
+    expect(cells.map((cell) => cell.kind)).toEqual(['text']);
+  });
+});

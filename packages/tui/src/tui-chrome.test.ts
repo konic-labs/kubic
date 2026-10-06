@@ -248,3 +248,95 @@ describe('tool cards on the app (issue #455)', () => {
     expect(doc).not.toContain('waiting');
   });
 });
+
+describe('turn receipts and thinking time on the app (issue #457)', () => {
+  const user = (id: string, seq: number, text: string) => ({
+    id,
+    seq,
+    type: 'message' as const,
+    message: { role: 'user', content: [{ type: 'text', text }] },
+  });
+  const answer = (
+    id: string,
+    seq: number,
+    text: string,
+    timestamp?: number,
+  ) => ({
+    id,
+    seq,
+    type: 'message' as const,
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'Weigh it. Then act.' },
+        { type: 'text', text },
+      ],
+      ...(timestamp === undefined ? {} : { timestamp }),
+    },
+  });
+
+  it('ends a solo turn with its receipt, before the next prompt', () => {
+    const app = seed();
+    app.setBusy(true);
+    app.applyLaneEntries([user('u1', 1, 'first'), answer('a1', 2, 'one')]);
+    app.setJournalChanges([
+      {
+        path: 'src/cart.js',
+        op: 'edit',
+        agentId: 'root',
+        toolCallId: 'tc1',
+        sessionId: 's',
+        timestamp: Date.now(),
+        unattributed: false,
+        reversible: true,
+        before: 'a\nqty = qty\nb',
+        after: 'a\nqty += qty\nb',
+      },
+    ]);
+    app.setTurnOutcome('completed', { startedAt: Date.now() - 1000 });
+    app.setBusy(false);
+    let doc = app.transcript.render(120).join('\n');
+    expect(doc).toMatch(
+      /✓ turn \d+\.\ds · 1 file \+1 −1 · \$0\.000 +\^O review diff {3}\/undo revert/,
+    );
+    // The next turn's prompt lands after the receipt; a late entry of the
+    // settled turn would still sit above it.
+    app.setBusy(true);
+    app.applyLaneEntries([
+      user('u1', 1, 'first'),
+      answer('a1', 2, 'one'),
+      user('u2', 3, 'second'),
+    ]);
+    doc = app.transcript.render(120).join('\n');
+    expect(doc.indexOf('✓ turn')).toBeGreaterThan(doc.indexOf('one'));
+    expect(doc.indexOf('✓ turn')).toBeLessThan(doc.indexOf('second'));
+    app.setTurnOutcome('failed', { detail: 'provider exploded\nstack' });
+    expect(app.transcript.render(120).join('\n')).toContain('✕ turn failed · ');
+    expect(app.transcript.render(120).join('\n')).toContain(
+      '· provider exploded',
+    );
+  });
+
+  it('writes no receipt for an orchestrator run', () => {
+    const app = seed({ mode: 'orchestrator' });
+    app.setBusy(true);
+    app.setTurnOutcome('completed');
+    expect(app.transcript.render(100).join('\n')).not.toContain('✓ turn');
+  });
+
+  it('times thinking only for entries that arrive live', () => {
+    const app = seed();
+    // Loaded history (the first snapshot): no measured time.
+    app.applyLaneEntries([answer('a0', 1, 'old', Date.now() - 5000)]);
+    expect(app.transcript.render(100).join('\n')).toContain(
+      '⋯ thinking — Weigh it.',
+    );
+    app.applyLaneEntries([
+      answer('a0', 1, 'old', Date.now() - 5000),
+      answer('a1', 2, 'new', Date.now() - 4100),
+    ]);
+    expect(app.transcript.render(100).join('\n')).toMatch(
+      /⋯ thought for 4\.\ds — Weigh it\./,
+    );
+  });
+});

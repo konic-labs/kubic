@@ -12,7 +12,7 @@ import { FOCUS_EDGE, PROSE } from '../../core/src/ui/glyphs.js';
 import { createAttachmentComponent } from './attachments.js';
 import { sanitizeLaneText } from './lane-cells.js';
 import { type TuiTheme, tuiTheme } from './theme.js';
-import { renderToolCard } from './tool-card.js';
+import { formatToolDuration, renderToolCard } from './tool-card.js';
 import type { Component } from './tui-boundary.js';
 import {
   Markdown,
@@ -33,7 +33,26 @@ export type TranscriptEntryKind =
   | 'tool'
   | 'output'
   // Issue #317: a compaction summary the lane placed in the branch.
-  | 'compaction';
+  | 'compaction'
+  // Issue #457: the model's reasoning (Pi ThinkingContent), collapsed.
+  | 'thinking'
+  // Issue #457: a settled turn's one-line receipt (UI only, never stored).
+  | 'receipt';
+
+// Issue #457: what a settled turn did — the receipt cell's data.
+export interface TurnReceipt {
+  readonly outcome: 'completed' | 'cancelled' | 'failed';
+  readonly elapsedMs: number;
+  readonly tools: number;
+  readonly files: number;
+  readonly added?: number;
+  readonly removed?: number;
+  readonly costUsd: number;
+  /** The failure's own text (first line). */
+  readonly detail?: string;
+  /** The diff panel key's cap (`^O`); empty hides the hint. */
+  readonly diffKey?: string;
+}
 
 // Issue #456: a file change's display record (the inline diff, or a new
 // file's size and first lines) — a structural mirror of the worker's
@@ -72,6 +91,10 @@ export interface TranscriptEntry {
   readonly timestamp?: number;
   // Issue #456: a tool output's display record (edit/write).
   readonly display?: CellDisplay;
+  // Issue #457: a thinking cell's measured generation time.
+  readonly durationMs?: number;
+  // Issue #457: a receipt cell's data.
+  readonly receipt?: TurnReceipt;
 }
 
 function displayKey(display: CellDisplay | undefined): string {
@@ -98,6 +121,71 @@ export interface LaneIdentity {
 export const TOOL_OUTPUT_PREVIEW_LINES = 5;
 
 const PROMPT_MARK = '›';
+const THINKING_MARK = '⋯';
+
+/** `4.1s`, `1:05`. */
+export function formatThinkingTime(ms: number): string {
+  const value = Math.max(0, ms);
+  if (value < 60_000) return `${(value / 1000).toFixed(1)}s`;
+  return formatToolDuration(value);
+}
+
+/** The reasoning's first sentence, on one line. */
+export function firstSentence(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const end = /[.!?](?:\s|$)/u.exec(flat);
+  return end === null ? flat : flat.slice(0, end.index + 1);
+}
+
+/**
+ * Issue #457 (01-J): `✓ turn 18.4s · 4 tools · 1 file +1 −1 · $0.031` with
+ * `^O review diff   /undo revert` on the right when files changed; the
+ * right part drops first on a narrow terminal.
+ */
+export function renderReceipt(
+  ui: TuiTheme['ui'],
+  receipt: TurnReceipt,
+  width: number,
+): string {
+  const time = formatThinkingTime(receipt.elapsedMs);
+  if (receipt.outcome !== 'completed') {
+    const failed = receipt.outcome === 'failed';
+    const head = failed
+      ? `${ui.fg('err')('✕')} ${ui.fg('fg1')(`turn failed · ${time}`)}`
+      : `${ui.fg('fg2')('○')} ${ui.fg('fg1')(`turn cancelled · ${time}`)}`;
+    const detail =
+      receipt.detail === undefined || receipt.detail === ''
+        ? ''
+        : ui.fg('fg2')(` · ${receipt.detail}`);
+    return fit(`  ${head}${detail}`, width);
+  }
+  const parts = [`turn ${time}`];
+  if (receipt.tools > 0) {
+    parts.push(`${receipt.tools} tool${receipt.tools === 1 ? '' : 's'}`);
+  }
+  let files = '';
+  if (receipt.files > 0) {
+    files = ` · ${receipt.files} file${receipt.files === 1 ? '' : 's'}`;
+  }
+  const counts =
+    receipt.files > 0 &&
+    receipt.added !== undefined &&
+    receipt.removed !== undefined
+      ? ` ${ui.fg('add')(`+${receipt.added}`)} ${ui.fg('del')(`−${receipt.removed}`)}`
+      : '';
+  const cost = ui.fg('fg1')(
+    ` · $${receipt.costUsd < 1 ? receipt.costUsd.toFixed(3) : receipt.costUsd.toFixed(2)}`,
+  );
+  const left = `  ${ui.fg('ok')('✓')} ${ui.fg('fg1')(`${parts.join(' · ')}${files}`)}${counts}${cost}`;
+  const diffKey = receipt.diffKey ?? '';
+  const right =
+    receipt.files === 0
+      ? ''
+      : `${diffKey === '' ? '' : `${ui.fg('fg1')(diffKey)}${ui.fg('fg2')(' review diff')}   `}${ui.fg('fg1')('/undo')}${ui.fg('fg2')(' revert')} `;
+  return right !== '' && visibleWidth(left) + 2 + visibleWidth(right) <= width
+    ? leftRight(left, right, width)
+    : fit(left, width);
+}
 
 // Issue #455: what the composition root knows about a call that the
 // committed entries do not say — how long it took (or has been running) and
@@ -359,6 +447,17 @@ class TranscriptDocument implements Component {
           this.renderBlock(out, cell.markdown.split('\n'), w, theme);
           break;
         }
+        case 'thinking': {
+          gap();
+          out.push(...this.thinking(cell, w, theme));
+          break;
+        }
+        case 'receipt': {
+          if (cell.receipt === undefined) break;
+          gap();
+          out.push(renderReceipt(theme.ui, cell.receipt, w));
+          break;
+        }
         case 'output': {
           // Paired outputs render under their call; an orphan (no call in
           // view) renders on its own.
@@ -476,6 +575,42 @@ class TranscriptDocument implements Component {
       out.push(fillLine(ui, row, width, 'bg2'));
     });
     this.renderImages(out, images, width, theme, cellId ?? '');
+  }
+
+  // Issue #457 (01-F): reasoning collapses to its first sentence; ^X shows
+  // all of it, italic, behind the gutter.
+  private thinking(
+    cell: TranscriptEntry,
+    width: number,
+    theme: TuiTheme,
+  ): string[] {
+    const ui = theme.ui;
+    const muted = ui.style({ fg: 'fg2', italic: true });
+    const label =
+      cell.durationMs === undefined
+        ? 'thinking'
+        : `thought for ${formatThinkingTime(cell.durationMs)}`;
+    const mark = `  ${ui.fg('fg2')(THINKING_MARK)} `;
+    if (this.expanded) {
+      const out = [fit(`${mark}${ui.fg('fg2')(label)}`, width)];
+      const gutter = `  ${ui.fg('fg3')('│')} `;
+      const room = Math.max(1, width - 4);
+      for (const line of cell.markdown.split('\n')) {
+        for (const row of wrapTextWithAnsi(line, room)) {
+          out.push(fit(`${gutter}${muted(row)}`, width));
+        }
+      }
+      return out;
+    }
+    const first = firstSentence(cell.markdown);
+    const key = this.expandKey?.() ?? '^X';
+    const left = `${mark}${muted(first === '' ? label : `${label} — ${first}`)}`;
+    const right = key === '' ? '' : `${ui.fg('fg3')(`${key} expand`)} `;
+    return [
+      right !== '' && visibleWidth(left) + 2 + visibleWidth(right) <= width
+        ? leftRight(left, right, width)
+        : fit(left, width),
+    ];
   }
 
   // Issue #455 (01-D/E): a call and its result as one card.
@@ -656,7 +791,9 @@ function sameCell(left: TranscriptEntry, right: TranscriptEntry): boolean {
     left.isError === right.isError &&
     left.toolCallId === right.toolCallId &&
     left.timestamp === right.timestamp &&
-    displayKey(left.display) === displayKey(right.display)
+    displayKey(left.display) === displayKey(right.display) &&
+    left.durationMs === right.durationMs &&
+    left.receipt === right.receipt
   );
 }
 

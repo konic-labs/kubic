@@ -117,6 +117,9 @@ function fauxLaneBoot(
     // The booted lane, for tests that read its transcript (the /compact
     // acceptance counts pi.compaction entries).
     onBoot?: (solo: SoloLane) => void;
+    // Issue #457: hand the session journal to the TUI (its panels and the
+    // turn receipt read it).
+    exposeJournal?: boolean;
   } = {},
 ): TuiRunDeps['bootLane'] {
   return async (sessionId?: string) => {
@@ -130,6 +133,7 @@ function fauxLaneBoot(
     if (provider === undefined) throw new Error('no provider registered');
     const model = models.getModels(provider.id)[0];
     if (model === undefined) throw new Error('no model registered');
+    const journal = new FileJournalStore(join(root, id, 'journal'));
     const solo = await bootSoloLane({
       session,
       models,
@@ -137,7 +141,7 @@ function fauxLaneBoot(
       env: new FakeExecutionEnv({}),
       sessionId: id,
       agentId: 'root',
-      journal: new FileJournalStore(join(root, id, 'journal')),
+      journal,
       ...(options.compaction === undefined
         ? {}
         : { compaction: options.compaction }),
@@ -147,6 +151,7 @@ function fauxLaneBoot(
     return {
       sessionId: id,
       model: `${provider.id}/${model.id}`,
+      ...(options.exposeJournal === true ? { journal } : {}),
       loop: soloTuiLoop(solo),
       close: async () => {
         await solo.close(context);
@@ -1745,5 +1750,41 @@ describe('the header facts on the live loop (issue #453)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// Issue #457 (01-J): every settled solo turn ends with its receipt — the
+// whole production wire: the turn's tool call, the journal row its write
+// recorded, and the receipt the settlement appends.
+describe('the turn receipt on the live loop (issue #457)', () => {
+  it('counts the tools, the file and its lines of a write turn', async () => {
+    const root = tmpRoot();
+    const fake = fakeTerminal(120);
+    const { models } = fauxModels([
+      [
+        fauxText('writing'),
+        fauxToolCall('write', { path: 'notes.md', content: 'one\ntwo\n' }),
+      ],
+      'written',
+    ]);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: () => {},
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models, { exposeJournal: true }),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'write the notes') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() =>
+      /✓ turn \d+\.\ds · 1 tool · 1 file \+2 −0 · \$0\.000/.test(
+        fake.writes.join(''),
+      ),
+    );
+    fake.feed('\x04');
+    expect(await pending).toBe(0);
   });
 });

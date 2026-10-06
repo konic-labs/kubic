@@ -121,7 +121,10 @@ notice from its seed (`workspace`, `clock`, `laneNotice`) and
   its prompt size (`StatusSummary.contextTokens`) — warning-coloured at or
   above `StatusBarState.compactionThreshold`.
 - **Transcript** (`transcript.ts`): `TranscriptEntryKind` is
-  `prompt|text|tool|output|compaction`; `TranscriptView` applies snapshot/delta ops
+  `prompt|text|tool|output|compaction|thinking|receipt` (#457: a `thinking`
+  cell collapses to `⋯ thought for 4.1s — <first sentence>`; a `receipt` cell
+  is the app's per-turn `TurnReceipt`, merged before the next committed
+  prompt and never stored); `TranscriptView` applies snapshot/delta ops
   (`TranscriptOp`) and replays via `replayTranscript`. The in-flight
   assistant message streams live (issue #296): `setStream(text)` renders a
   plain draft after the committed cells while `message-delta` events arrive,

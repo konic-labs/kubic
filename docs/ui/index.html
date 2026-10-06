@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kubic design system</title>
+<link rel="stylesheet" href="kubic.css">
+</head>
+<body>
+<div class="page">
+  <nav class="nav"><a class="on" href="index.html">system</a><a href="01-session.html">01 session</a><a href="02-approval.html">02 approval</a><a href="03-palette.html">03 palette</a><a href="04-orchestrator.html">04 orchestrator</a><a href="05-welcome.html">05 first launch</a><a href="06-cli.html">06 cli</a></nav>
+  <h1><b>■</b> Kubic — terminal design, v0.1</h1>
+  <p class="sub">Draft for review. Every screen is drawn on a real character grid (one row = one terminal line, colours per cell), so what you approve here can be built 1:1 on pi-tui. Comment by note id, e.g. "01-D: …".</p>
+
+  <h2>Principles</h2>
+  <div class="principles">
+    <div><b>One hot colour</b>Konic red means identity and focus only: the logo, the caret, the selected row, your prompt edge. Status uses its own colours.</div>
+    <div><b>Surfaces, not lines</b>Hierarchy comes from three background levels and three text levels. Rules are faint; boxes are rare.</div>
+    <div><b>Every block earns its row</b>No permanent banners. Headers, status and key hints are one row each; tool output shows the useful slice.</div>
+    <div><b>Say the state</b>Waiting, working, failed, done each have one glyph and one colour, used the same way in the TUI, the dashboard and the CLI.</div>
+    <div><b>Keys follow focus</b>The hint row shows only what works right now. Esc backs out; it never quits.</div>
+    <div><b>Plain when piped</b>Colour, spinners and boxes are a TTY layer. --json, pipes and NO_COLOR get the stable text the contract pins.</div>
+  </div>
+
+  <h2>Colour tokens (dark)</h2>
+  <div class="swatches">
+    <div class="sw"><div style="background:#0a0a0c"></div><p><b>bg0 canvas</b>#0a0a0c</p></div>
+    <div class="sw"><div style="background:#111115"></div><p><b>bg1 bars</b>#111115</p></div>
+    <div class="sw"><div style="background:#18181e"></div><p><b>bg2 raised</b>#18181e</p></div>
+    <div class="sw"><div style="background:#22222a"></div><p><b>bg3 selected</b>#22222a</p></div>
+    <div class="sw"><div style="background:#ececf1"></div><p><b>fg0 primary</b>#ececf1</p></div>
+    <div class="sw"><div style="background:#a3a3ae"></div><p><b>fg1 secondary</b>#a3a3ae</p></div>
+    <div class="sw"><div style="background:#6a6a75"></div><p><b>fg2 muted</b>#6a6a75</p></div>
+    <div class="sw"><div style="background:#3c3c45"></div><p><b>fg3 faint / rules</b>#3c3c45</p></div>
+    <div class="sw"><div style="background:#ff004d"></div><p><b>accent · konic red</b>#ff004d</p></div>
+    <div class="sw"><div style="background:#5ed68c"></div><p><b>ok</b>#5ed68c</p></div>
+    <div class="sw"><div style="background:#ffb547"></div><p><b>warn · waiting</b>#ffb547</p></div>
+    <div class="sw"><div style="background:#ff6b5e"></div><p><b>error</b>#ff6b5e</p></div>
+    <div class="sw"><div style="background:#7fb4ff"></div><p><b>info · links</b>#7fb4ff</p></div>
+    <div class="sw"><div style="background:#0e2617"></div><p><b>diff add bg</b>#0e2617 / #7ee2a0</p></div>
+    <div class="sw"><div style="background:#2d0e15"></div><p><b>diff del bg</b>#2d0e15 / #ff8f9c</p></div>
+  </div>
+  <div class="open"><b>Open:</b> error (#ff6b5e, coral) sits close to Konic red. I kept it warmer and always paired with ✕ so the two never get confused. Alternative: make the accent the only red and show errors in amber-red with a filled badge.</div>
+
+  <h2>Glyphs</h2>
+  <div class="glyphs">
+    ■ <span>brand mark</span><br>
+    ▌ <span>focus edge (your prompt, selected row)</span><br>
+    ◆ <span>assistant prose / waiting (amber)</span><br>
+    ● <span>tool call, coloured by result</span><br>
+    ○ <span>collapsed / queued / not set</span><br>
+    ⠋⠙⠹⠸ <span>working (braille spinner)</span><br>
+    ⋯ <span>thinking, collapsed</span><br>
+    ✓ ✕ ▲ <span>ok · failed · warning</span><br>
+    │ └ <span>tool-card gutter and footer</span><br>
+    ┏ ┃ ┗ <span>blocking card (approval)</span><br>
+    ━━━ <span>gauges and the run timeline</span><br>
+    ⏎ ⇧ ^ <span>keys in hints</span>
+  </div>
+
+  <h2>Screens</h2>
+  <div class="cards">
+    <a class="card" href="01-session.html"><b>01 · Solo session</b><small>Transcript as blocks: prompts, tool cards, inline diffs, thinking, receipt; editor, status line, key hints. Idle and mid-turn.</small></a>
+    <a class="card" href="02-approval.html"><b>02 · Approval cards</b><small>Inline blocking cards for a risky shell command and a file edit with diff preview.</small></a>
+    <a class="card" href="03-palette.html"><b>03 · Palette &amp; pickers</b><small>^P fuzzy palette over commands, models, sessions, files; the bare /model picker.</small></a>
+    <a class="card" href="04-orchestrator.html"><b>04 · Orchestrator</b><small>Run timeline, workers grouped by state, live peek, budget gauges, dispatch.</small></a>
+    <a class="card" href="05-welcome.html"><b>05 · First launch</b><small>Wordmark + preflight checks, inline trust question, recent sessions; the no-key state.</small></a>
+    <a class="card" href="06-cli.html"><b>06 · CLI</b><small>Grouped help, streaming run, doctor summary, models table, first-run setup, errors.</small></a>
+  </div>
+
+  <h2>Not designed yet</h2>
+  <p class="sub">Light theme · block mode (esc: select a block, copy, full-screen viewer) · diff/journal panels · session picker (/resume) · narrow terminals (&lt; 100 cols) · inline (non-full-screen) TUI variant.</p>
+</div>
+</body>
+</html>

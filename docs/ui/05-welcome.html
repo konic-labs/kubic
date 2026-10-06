@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>05 · First launch — Kubic design</title>
+<link rel="stylesheet" href="kubic.css">
+</head>
+<body>
+<div class="page">
+  <nav class="nav"><a href="index.html">← system</a><a href="01-session.html">01 session</a><a href="02-approval.html">02 approval</a><a href="03-palette.html">03 palette</a><a href="04-orchestrator.html">04 orchestrator</a><a class="on" href="05-welcome.html">05 first launch</a><a href="06-cli.html">06 cli</a></nav>
+  <h1><b>05</b> First launch &amp; empty state</h1>
+  <p class="sub">The welcome screen is a preflight check, not a wall of shortcuts. It disappears after your first prompt. Second frame: what happens when no provider key is set.</p>
+
+  <div class="win"><div class="bar"><i></i><i></i><i></i><span>kubic — first launch</span></div>
+  <div class="term fixed" style="--rows:34">
+    <div class="l b1"><span class="acc bd"> ■ KUBIC </span><span class="f3"> │ </span><span class="f0">kubic-playground</span><span class="f2">  ⎇ </span><span class="f1">main</span><span class="sp"></span><span class="inv-f bd"> SOLO </span><span class="f2"> approvals </span><span class="ok">on</span><span class="f2">  </span></div>
+    <div class="l"> </div>
+    <div class="l"> </div>
+    <div class="l"><span class="acc bd">    █▄▀ █ █ █▄▄ █ █▀▀</span></div>
+    <div class="l"><span class="acc bd">    █ █ █▄█ █▄█ █ █▄▄</span><span class="f2">    0.1.0 · terminal coding agent by </span><span class="f1">Konic</span></div>
+    <div class="l"> </div>
+    <div class="l"> </div>
+    <div class="l"><span class="f2 sb">    PREFLIGHT</span></div>
+    <div class="l"><span class="ok">    ✓ </span><span class="f2">provider     </span><span class="f0">anthropic/claude-sonnet-5-5</span><span class="f2">  key from ANTHROPIC_API_KEY</span></div>
+    <div class="l"><span class="ok">    ✓ </span><span class="f2">project      </span><span class="f0">~/Desktop/kubic-playground</span><span class="f2">  git main · clean</span></div>
+    <div class="l bwarn"><span class="warn">    ◆ </span><span class="f2">trust        </span><span class="f0">.kubic/config.toml found</span><span class="f2"> — load project config?   </span><span class="inv-f bd"> y </span><span class="f1"> yes  </span><span class="b3 f0 bd"> n </span><span class="f1"> not now  </span><span class="b3 f0 bd"> v </span><span class="f1"> view file</span><span class="sp"></span></div>
+    <div class="l"><span class="ok">    ✓ </span><span class="f2">journal      </span><span class="f0">on</span><span class="f2">  every change is recorded; </span><span class="f1">/undo</span><span class="f2"> reverts a turn</span></div>
+    <div class="l"><span class="f1">    ○ </span><span class="f2">isolation    </span><span class="f0">none in solo</span><span class="f2">  runs with your user's authority; approvals are the control  </span><span class="f1">/safety</span></div>
+    <div class="l"> </div>
+    <div class="l"> </div>
+    <div class="l"><span class="f2 sb">    START</span></div>
+    <div class="l"><span class="f1">    ⏎  </span><span class="f0">describe a task below</span><span class="f2">        e.g. "run npm test and fix the failing test"</span></div>
+    <div class="l"><span class="f1">    /  </span><span class="f2">commands     </span><span class="f1">@  </span><span class="f2">attach a file     </span><span class="f1">^P </span><span class="f2">palette     </span><span class="f1">^G </span><span class="f2">orchestrator mode     </span><span class="f1">?  </span><span class="f2">all keys</span></div>
+    <div class="l"> </div>
+    <div class="l"> </div>
+    <div class="l"><span class="f2 sb">    RECENT IN THIS PROJECT</span></div>
+    <div class="l"><span class="f1">    cart-fix        </span><span class="f2">2m ago   </span><span class="f1">run npm test and fix the failing test</span><span class="f2">           4 turns · $0.03</span></div>
+    <div class="l"><span class="f1">    title-case      </span><span class="f2">1d ago   </span><span class="f1">implement titleCase in src/format.js</span><span class="f2">            2 turns · $0.01</span></div>
+    <div class="l"><span class="f2">    /resume to open one</span></div>
+    <div class="grow"></div>
+    <div class="l f3"><span> ┌</span><span class="fill"></span><span>┐ </span></div>
+    <div class="l"><span> </span><span class="v f3"></span><span class="acc bd"> › </span><span class="cur"> </span><span class="sp"></span><span class="f3">@ file  / cmd </span><span class="v f3"></span><span> </span></div>
+    <div class="l f3"><span> └</span><span class="fill"></span><span>┘ </span></div>
+    <div class="l b1"><span class="ok"> ● </span><span class="f1">claude-sonnet-5-5</span><span class="f2"> · high</span><span class="f3">  │  </span><span class="f2">ctx </span><span class="f3">━━━━━━━━━━</span><span class="f1"> 0%</span><span class="f3">  │  </span><span class="f1">$0.00</span><span class="sp"></span><span class="ok">ready </span></div>
+    <div class="l"><span class="f1"> ⏎</span><span class="f2"> send   </span><span class="f1">⇧⏎</span><span class="f2"> newline   </span><span class="f1">/</span><span class="f2"> commands   </span><span class="f1">@</span><span class="f2"> file   </span><span class="f1">^P</span><span class="f2"> palette</span><span class="sp"></span><span class="f1">^C ^C</span><span class="f2"> quit </span></div>
+  </div></div>
+
+  <h2>No provider key (printed to the terminal, then exit 6)</h2>
+  <div class="win"><div class="term" style="--cols:100">
+    <div class="l"><span class="f2">$ </span><span class="f0">kubic</span></div>
+    <div class="l"> </div>
+    <div class="l"><span class="f2 sb">    PREFLIGHT</span></div>
+    <div class="l berr"><span class="err">    ✕ </span><span class="f2">provider     </span><span class="f0">no model provider has a key</span><span class="sp"></span></div>
+    <div class="l"><span class="f2">                   set one, then start kubic again:</span></div>
+    <div class="l"><span class="f1">                   export ANTHROPIC_API_KEY=…     </span><span class="f2">anthropic</span></div>
+    <div class="l"><span class="f1">                   export OPENAI_API_KEY=…        </span><span class="f2">openai</span></div>
+    <div class="l"><span class="f1">                   export OPENROUTER_API_KEY=…    </span><span class="f2">many models through one key</span></div>
+    <div class="l"><span class="f2">                   or add a local model in </span><span class="f1">~/.kubic/models/models.json</span></div>
+    <div class="l"><span class="f2">                   or try it without a model: </span><span class="f1">KUBIC_PROVIDER=faux kubic</span></div>
+    <div class="l"><span class="ok">    ✓ </span><span class="f2">project      </span><span class="f0">~/Desktop/kubic-playground</span><span class="f2">  git main · clean</span></div>
+    <div class="l"> </div>
+    <div class="l"><span class="f3">    exit 6 · provider_probe_failed</span></div>
+  </div></div>
+
+  <h2>Notes</h2>
+  <ul class="notes">
+    <li><b>05-A</b>Wordmark: two rows of half-block glyphs in Konic red. Works in any terminal font; no large ASCII banner.</li>
+    <li><b>05-B</b>Preflight answers "can I start?" in five lines: provider, project, trust, journal, isolation.</li>
+    <li><b>05-C</b>Only when a project config exists. The question is asked just before the screen opens (the config must be decided before the agent boots), as a one-key prompt; this row then shows the decision.</li>
+    <li><b>05-D</b>The honest isolation note stays, but as one calm line with a <code>/safety</code> link instead of a permanent two-line footer.</li>
+    <li><b>05-E</b>Only five keys are shown up front; <code>?</code> lists the rest.</li>
+    <li><b>05-F</b>A missing key is a red check with the exact fix, printed to the terminal so the <code>export</code> lines stay in your scrollback; then kubic exits with code 6. A running process never sees a key exported in another shell, so there is no "re-check" key.</li>
+  </ul>
+</div>
+</body>
+</html>

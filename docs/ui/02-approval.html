@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>02 · Approval cards — Kubic design</title>
+<link rel="stylesheet" href="kubic.css">
+</head>
+<body>
+<div class="page">
+  <nav class="nav"><a href="index.html">← system</a><a href="01-session.html">01 session</a><a class="on" href="02-approval.html">02 approval</a><a href="03-palette.html">03 palette</a><a href="04-orchestrator.html">04 orchestrator</a><a href="05-welcome.html">05 first launch</a><a href="06-cli.html">06 cli</a></nav>
+  <h1><b>02</b> Approval cards</h1>
+  <p class="sub">Approvals are inline, blocking cards that take over the editor slot — never a modal that hides the transcript. One key answers. Two variants: a risky shell command and a file edit.</p>
+
+  <div class="win"><div class="bar"><i></i><i></i><i></i><span>kubic — approval: shell</span></div>
+  <div class="term fixed" style="--rows:24">
+    <div class="l b1"><span class="acc bd"> ■ KUBIC </span><span class="f3"> │ </span><span class="f0">kubic-playground</span><span class="f2">  ⎇ </span><span class="f1">main</span><span class="sp"></span><span class="inv-warn bd"> 1 WAITING </span><span class="f3"> │ </span><span class="inv-f bd"> SOLO </span><span class="f2"> approvals </span><span class="ok">on</span><span class="f2">  </span></div>
+    <div class="l"> </div>
+    <div class="l"><span class="f1">  ◆ </span><span class="f0">The build output is stale. I'll clear dist and rebuild.</span></div>
+    <div class="l"> </div>
+    <div class="l"><span class="warn">  ◆ </span><span class="f0 sb">bash</span><span class="f2">  </span><span class="f1">rm -rf dist &amp;&amp; npm run build</span><span class="sp"></span><span class="warn">waiting for you</span><span class="f2"> · 0:08 </span></div>
+    <div class="grow"></div>
+    <!-- card -->
+    <div class="l"><span class="warn"> ┏━</span><span class="inv-warn bd"> APPROVAL </span><span class="warn">━</span><span class="warn bd"> bash </span><span class="warn fill dbl"></span><span class="f2"> 1 of 1 </span><span class="warn">━━</span></div>
+    <div class="l bwarn"><span> </span><span class="V warn"></span><span class="f2">  $ </span><span class="f0 bd">rm -rf dist</span><span class="f0"> &amp;&amp; npm run build</span></div>
+    <div class="l bwarn"><span> </span><span class="V warn"></span></div>
+    <div class="l bwarn"><span> </span><span class="V warn"></span><span class="warn">  ▲ destructive    </span><span class="f1">rm -rf deletes a directory tree</span></div>
+    <div class="l bwarn"><span> </span><span class="V warn"></span><span class="warn">  ▲ network        </span><span class="f1">policy is network=none; npm run build may fetch packages</span></div>
+    <div class="l bwarn"><span> </span><span class="V warn"></span><span class="f2">  ○ cwd            </span><span class="f1">~/Desktop/kubic-playground</span><span class="f2"> · deletions are journaled, </span><span class="f1">/undo</span><span class="f2"> restores them</span></div>
+    <div class="l bwarn"><span> </span><span class="V warn"></span></div>
+    <div class="l bwarn"><span> </span><span class="V warn"></span><span>  </span><span class="inv-f bd"> a </span><span class="f0"> allow once   </span><span class="b3 f0 bd"> s </span><span class="f1"> allow for session   </span><span class="b3 f0 bd"> e </span><span class="f1"> edit command   </span><span class="b3 f0 bd"> d </span><span class="f1"> deny   </span><span class="b3 f0 bd"> ? </span><span class="f1"> explain</span><span class="sp"></span><span class="f2">esc = deny  </span></div>
+    <div class="l"><span class="warn"> ┗</span><span class="warn fill dbl"></span><span class="warn">━━</span></div>
+    <div class="l b1"><span class="warn"> ◆ </span><span class="f1">claude-sonnet-5-5</span><span class="f2"> · high</span><span class="f3">  │  </span><span class="f2">ctx </span><span class="f0">━━━━</span><span class="f3">━━━━━━</span><span class="f1"> 41%</span><span class="f3">  │  </span><span class="f1">$0.044</span><span class="sp"></span><span class="warn">needs approval </span></div>
+    <div class="l"><span class="f1"> a</span><span class="f2"> allow   </span><span class="f1">s</span><span class="f2"> session   </span><span class="f1">e</span><span class="f2"> edit   </span><span class="f1">d</span><span class="f2"> deny   </span><span class="f1">?</span><span class="f2"> explain   </span><span class="f1">PgUp</span><span class="f2"> read transcript</span><span class="sp"></span><span class="f1">^C ^C</span><span class="f2"> quit </span></div>
+  </div></div>
+
+  <h2>Edit approval with diff preview</h2>
+  <div class="win"><div class="term fixed" style="--rows:17">
+    <div class="l"><span class="warn"> ┏━</span><span class="inv-warn bd"> APPROVAL </span><span class="warn">━</span><span class="warn bd"> edit </span><span class="f0">src/cart.js </span><span class="add">+4</span><span class="f2"> </span><span class="del">−0 </span><span class="warn fill dbl"></span><span class="f2"> 1 of 2 </span><span class="warn">━━</span></div>
+    <div class="l bwarn"><span> </span><span class="V warn"></span><span class="f3">   20 </span><span class="f2">  </span><span class="f1">  return cart;</span></div>
+    <div class="l bwarn"><span> </span><span class="V warn"></span><span class="f3">   21 </span><span class="f2">  </span><span class="f1">}</span></div>
+    <div class="l"><span> </span><span class="V warn"></span><span class="badd rest"><span class="add">   22 + </span></span></div>
+    <div class="l"><span> </span><span class="V warn"></span><span class="badd rest"><span class="add">   23 + export function clear(cart) {</span></span></div>
+    <div class="l"><span> </span><span class="V warn"></span><span class="badd rest"><span class="add">   24 +   cart.items = [];</span></span></div>
+    <div class="l"><span> </span><span class="V warn"></span><span class="badd rest"><span class="add">   25 +   return cart;</span></span></div>
+    <div class="l"><span> </span><span class="V warn"></span><span class="badd rest"><span class="add">   26 + }</span></span></div>
+    <div class="l bwarn"><span> </span><span class="V warn"></span></div>
+    <div class="l bwarn"><span> </span><span class="V warn"></span><span class="f2">  next: </span><span class="f1">edit test/cart.test.js </span><span class="add">+7</span></div>
+    <div class="l bwarn"><span> </span><span class="V warn"></span></div>
+    <div class="l bwarn"><span> </span><span class="V warn"></span><span>  </span><span class="inv-f bd"> a </span><span class="f0"> allow   </span><span class="b3 f0 bd"> A </span><span class="f1"> allow all edits this turn   </span><span class="b3 f0 bd"> d </span><span class="f1"> deny   </span><span class="b3 f0 bd"> v </span><span class="f1"> full diff   </span><span class="b3 f0 bd"> c </span><span class="f1"> deny + comment</span><span class="sp"></span><span class="f2">esc = deny  </span></div>
+    <div class="l"><span class="warn"> ┗</span><span class="warn fill dbl"></span><span class="warn">━━</span></div>
+    <div class="grow"></div>
+    <div class="l b1"><span class="warn"> ◆ </span><span class="f1">claude-sonnet-5-5</span><span class="f3">  │  </span><span class="f1">$0.051</span><span class="sp"></span><span class="warn">2 approvals queued </span></div>
+  </div></div>
+
+  <h2>Notes</h2>
+  <ul class="notes">
+    <li><b>02-A</b>The card replaces the editor slot, so the transcript above stays readable (PgUp scrolls it).</li>
+    <li><b>02-B</b>Amber is the colour of "waiting for you" everywhere: header badge, tool dot, card frame, status text.</li>
+    <li><b>02-C</b>Each reason the policy flagged the call gets its own row (destructive, network, outside workspace…), in plain language.</li>
+    <li><b>02-D</b>Single-key answers; the default for Esc/⏎ is the safe one (deny) and says so.</li>
+    <li><b>02-E</b>Edits preview the diff inside the card and show what comes next ("1 of 2").</li>
+    <li><b>02-F</b>"Deny + comment" sends the reason back to the model, so it can adjust instead of retrying blindly.</li>
+  </ul>
+</div>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # `@kubic/core`
 
-> Design ref: EPIC A scaffold; contracts from design §3.1.
+> EPIC A scaffold: the shared contracts every package builds on.
 > Owner: issue
 > [#63](https://github.com/konic-labs/kubic/issues/63).
 > Source: `packages/core/src` (read-only — this page quotes it, never moves it).

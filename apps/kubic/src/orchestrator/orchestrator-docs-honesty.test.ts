@@ -18,8 +18,8 @@ import { createGitSandbox } from '../../../../packages/exec/src/test-support/git
 const repoRoot = join(import.meta.dirname, '..', '..', '..', '..');
 
 // Every tracked markdown file. `git ls-files` is the source (never a plain
-// directory walk: gitignored trees such as docs/design/ legitimately describe
-// intent). Under Stryker the suite runs from a gitignored sandbox copy
+// directory walk: gitignored trees such as pi/ are not this repo's docs).
+// Under Stryker the suite runs from a gitignored sandbox copy
 // (.stryker-tmp/sandbox-*/) where git lists nothing; Stryker copies only
 // non-ignored files there, so a walk that skips the gitignored trees IS the
 // tracked set. The non-empty guard below keeps both paths honest.
@@ -28,7 +28,6 @@ const GITIGNORED_TREES = new Set([
   '.stryker-tmp',
   'coverage',
   'dist',
-  'docs/design',
   'node_modules',
   'pi',
   'reports',

@@ -1,6 +1,6 @@
 # CLI commands
 
-> Design ref: §84 flows; `apps/kubic/src/main.ts` is the composition root.
+> `apps/kubic/src/main.ts` is the composition root.
 > Every command and flag below was verified live against its
 > `run*Command` implementation (exit codes included) — nothing here is
 > documented from memory. Behaviour operators see only; package
@@ -86,8 +86,7 @@ root help, exit 1.
 **The headline prompt form** (issue #268, §17): a single argv token that
 contains whitespace is a prompt — `kubic "fix the authentication bug"` is
 exactly `kubic run -p "fix the authentication bug"`, headless in both modes
-(no alt-screen; the spec's TUI-first-turn variant is deliberately not
-shipped, see [design drift](../design-drift.md)). Trailing flags pass
+(no alt-screen). Trailing flags pass
 through (`kubic "do x" --json`). A **single-word** token has no whitespace
 to tell it from a typo'd command, so it stays an unknown command (exit 2)
 with the hint above (L-D7). Solo mode runs in-process with your user authority: no
@@ -718,9 +717,7 @@ The default agent set is **two** (`worker-1,worker-2`, D12) and they run
 configured by `[orchestrator].maxWorkers`, overridden per run by
 `--concurrency <n>`) and starts them together, each in its own worktree and
 process. Workers past the cap wait in the `ParallelScheduler`'s FIFO queue —
-starvation-safe — and start when a settled worker releases its slot. §45's
-"default concurrency is 4" is that admitted cap. The design reconciliation is
-recorded in [design drift](../design-drift.md).
+starvation-safe — and start when a settled worker releases its slot.
 
 **Requesting more workers than the cap asks** (issue #277; §41.1). On a run
 with a user attached (a TTY, or the TUI's own approval card) `--agents` naming more

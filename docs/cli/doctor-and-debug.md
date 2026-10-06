@@ -1,6 +1,6 @@
 # Doctor and debug
 
-> Design ref: `kubic doctor` diagnostics (`packages/host/src/doctor.ts`,
+> `kubic doctor` diagnostics (`packages/host/src/doctor.ts`,
 > issue #29; honest-limits registration in
 > `packages/host/src/limits/doctor-limits.ts`, issue #58).
 > Presentation only: providers are listed, never dialled (faux-only
@@ -150,7 +150,7 @@ The §50 vocabulary is eight line classes (`[policy]`, `[worker]`,
   spend stays on the status bar; the boot's `[session]`/`[policy]` lines
   and the per-response `[model]` line go to the (currently unwired)
   debug sink a test boot injects.
-- **Dropped by design** (see [design drift](../design-drift.md)): the
+- **Dropped on purpose**: the
   `(0 leaked handles)` count (nothing ever measured it) and `[tool]
   allowed` verdict lines (admission is enforced by the policy
   interceptor, which reports on the approval surface).

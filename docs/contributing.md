@@ -15,7 +15,7 @@ Every issue, every wave, no freelancing:
 
 - **LC0 Scope** — `gh issue view <n> --comments`, then
   `gh issue develop <n> --checkout` (`feat/issue-<n>-<slug>`). Read the
-  issue's Design ref / Acceptance / Dependencies fully. If the approach
+  issue's Goal / Acceptance / Dependencies fully. If the approach
   is genuinely unknowable upfront, spike first and throw it away.
 - **LC1 TDD** — one acceptance checkbox at a time: failing test → watch
   it fail → minimal code → watch it pass → refactor. Runner is vitest
@@ -64,8 +64,8 @@ Every issue, every wave, no freelancing:
   (no `^`/`~`) pins on all `@earendil-works/*` deps.
 - **Dep direction** — the TUI package must never import `host`/`worker`
   implementation (contracts from `core` only), enforced by lint.
-- **Issue body contract** — `## Design ref`, `## Goal`, `## Scope`
-  (in/out), `## Acceptance criteria` (checkboxes), `## Dependencies`.
+- **Issue body contract** — `## Goal`, `## Scope` (in/out),
+  `## Acceptance criteria` (checkboxes), `## Dependencies`.
 - **`pi/` is read-only reference** — never build, modify, lint, or test
   anything under `pi/`; it is gitignored upstream material, not Kubic.
   The clone to work against is upstream Pi tag **`v1.0.2`** (the version

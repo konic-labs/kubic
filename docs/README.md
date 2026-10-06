@@ -23,8 +23,8 @@ build on.
 
 ## Page index and owners
 
-`stub` pages hold their headings and design refs so links resolve; their
-owner issue replaces the stub notice with content.
+`stub` pages hold their headings so links resolve; their owner issue
+replaces the stub notice with content.
 
 ### Architecture (owner: #62)
 
@@ -61,7 +61,6 @@ owner issue replaces the stub notice with content.
 | [doctor-and-debug.md](cli/doctor-and-debug.md) | `kubic doctor` diagnostics and debugging |
 | [contributing.md](contributing.md) | Contributor workflow (LC0–LC6) |
 | [contributing-cli.md](contributing-cli.md) | Building CLI commands: commander registry, exit codes, `--json`, output helpers |
-| [design-drift.md](design-drift.md) | Design-vs-shipped reconciliation: what the design says, what the tree does, who owns each gap |
 
 ## Standards
 
@@ -77,18 +76,17 @@ owner issue replaces the stub notice with content.
    must pass; it runs in CI via `npm test`. External URLs and
    same-page anchors are exempt.
 4. **Honest limits, stated plainly.** Solo mode has no isolation and
-   docs must never imply otherwise (design §59.1).
+   docs must never imply otherwise.
 5. **Contracts quoted exactly.** Package pages mirror
    `packages/*/src` type definitions field-for-field; dep-direction
    claims must match `scripts/dep-lint.mjs`.
-6. **Stubs stay linked.** A stub page keeps its headings, design refs,
-   and back-link to this index so the tree never has dead ends.
+6. **Stubs stay linked.** A stub page keeps its headings and back-link
+   to this index so the tree never has dead ends.
 
 ## Contributing a docs page (#62–#64 path)
 
 1. Pick up the stub for your area from the index above.
-2. Replace the stub notice with content, keeping the page's headings
-   and design-ref section.
+2. Replace the stub notice with content, keeping the page's headings.
 3. Update this index only if you add or rename a page (content edits
    need no index change).
 4. Run `node scripts/check-docs-links.mjs` and the package checks in

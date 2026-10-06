@@ -1,6 +1,6 @@
 # `@kubic/eval`
 
-> Design ref: eval harness; source: `packages/eval/COMMUNITY.md`
+> Eval harness; source: `packages/eval/COMMUNITY.md`
 > (quoted, not copied).
 > Owner: issue
 > [#63](https://github.com/konic-labs/kubic/issues/63).

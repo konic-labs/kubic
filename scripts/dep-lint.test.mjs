@@ -616,7 +616,7 @@ describe('dep-lint (issue #2)', () => {
 
   it('allows worker importing agents: recorded drift (issue #369)', () => {
     // Beyond the §64 diagram's `worker ──▶ exec, core`: the lane builds on
-    // agents roles/policy/task contracts (design-drift item 17).
+    // agents roles/policy/task contracts.
     const dir = fixtureTree({
       'packages/worker/src/lane/policy.ts': `import type { PermissionClasses } from '../../../agents/src/policy.js';\n`,
     });

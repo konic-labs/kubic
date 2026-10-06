@@ -1,6 +1,6 @@
 # `@kubic/agents`
 
-> Design ref: agent definitions over the Pi harness.
+> Agent definitions over the Pi harness.
 > Owner: issue
 > [#63](https://github.com/konic-labs/kubic/issues/63).
 > Source: `packages/agents/src` (read-only — this page quotes it, never moves it).

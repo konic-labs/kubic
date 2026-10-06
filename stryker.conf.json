@@ -43,7 +43,6 @@
   ],
   "ignorePatterns": [
     "pi/**",
-    "docs/design/**",
     "dist/**",
     "reports/**",
     ".beads/**",

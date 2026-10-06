@@ -26,7 +26,6 @@
   "mutate": ["scripts/dep-lint.mjs", "scripts/check-pinned-deps.mjs"],
   "ignorePatterns": [
     "pi/**",
-    "docs/design/**",
     "dist/**",
     "reports/**",
     ".beads/**",

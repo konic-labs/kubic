@@ -1,7 +1,6 @@
 # Orchestrator mode
 
-> Design ref: §5.2, §9.2, §44, §41.1, §45, §59.1 honest limits. Owner:
-> issue [#95](https://github.com/konic-labs/kubic/issues/95).
+> Owner: issue [#95](https://github.com/konic-labs/kubic/issues/95).
 > **Delegation model as shipped (issue #103, 2026-09-25; roles wired by
 > #104, per-worker approvals by #105):** the CLI process is the manager, and
 > its root lane registers the §40 toolset and authors the plan whose steps
@@ -391,9 +390,7 @@ passing `--yes` — never asks.
 
 The cap resolves in one place (`resolveMaxConcurrency`): `--concurrency <n>` for
 this run, else an explicit limits cap, else the configured
-`[orchestrator].maxWorkers`, else the shipped four. §45 says four concurrent
-subagents and D12 is amended to two; see
-[design drift](../design-drift.md) for the reconciliation.
+`[orchestrator].maxWorkers`, else the shipped four.
 
 Admission judges what the run knows. Each spawn carries the worker's
 **provider**, taken from its role's model pin — so per-provider caps are live

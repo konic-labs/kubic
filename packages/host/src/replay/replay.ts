@@ -1,9 +1,8 @@
 // `kubic replay` at a declared determinism tier (issue #52; §47,
 // §47.1 tiers, §72 pins, §78 exit codes).
 //
-// The four §47 invocations (repo has no design-doc copy of §47 — the
-// mapping below follows the issue's Design ref flags --model,
-// --workspace/--worktree, --diff-against and the
+// The four invocations (the mapping below follows issue #52's flags
+// --model, --workspace/--worktree, --diff-against and the
 // exact/different-model/different-worktree/compare/regression list):
 //   exact               `kubic replay traj.json` (Recorded, log-only —
 //                       never re-executes, so it never collides with the

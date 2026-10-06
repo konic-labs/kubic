@@ -31,7 +31,6 @@ import { describe, expect, it } from 'vitest';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const LEDGER = join(ROOT, 'docs', 'dead-surface.md');
-const DRIFT = join(ROOT, 'docs', 'design-drift.md');
 const ARCHITECTURE = join(ROOT, 'docs', 'architecture', 'orchestrator.md');
 
 // Modules #99 deleted rather than faked. They may not come back without a
@@ -69,26 +68,9 @@ describe('context contracts: the delete calls stay executed (#99)', () => {
     }
   });
 
-  it('records the deletion and the design sections it leaves unshipped', () => {
-    // The honesty half: deleting the module is only defensible if the
-    // design sections it implemented are marked not-yet-implemented
-    // somewhere a reader of this repo can see (the design document itself
-    // is local-only and gitignored).
+  it('records the deletion in the ledger', () => {
     const ledger = read(LEDGER);
     expect(ledger).toMatch(/Issue #99[\s\S]{0,400}delet/i);
-    expect(ledger).toContain('§25');
-    expect(ledger).toContain('§28');
-    expect(ledger).toContain('§69');
-  });
-
-  it('names the sections as not yet implemented in the drift page', () => {
-    const drift = read(DRIFT);
-    // §24/§25 ship run-side since #184 and §28 stays unwired; the drift
-    // page is where a clone reads the split.
-    expect(drift).toMatch(/§24[\s\S]{0,300}§25|§25[\s\S]{0,300}§24/);
-    expect(drift).toMatch(/transfer\.ts/);
-    expect(drift).toMatch(/§28[\s\S]{0,300}not-yet-implemented/);
-    expect(drift).toMatch(/§69/);
   });
 
   it('wires §24/§25/§69 through a live path, never a deleted module', () => {

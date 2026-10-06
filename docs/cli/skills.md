@@ -1,6 +1,6 @@
 # Skills
 
-> Design ref: §29 (skills discovery, gating and prompt injection).
+> Skills discovery, gating and prompt injection.
 > Implementation: `packages/agents/src/skills/skills.ts` (the loader),
 > `packages/host/src/skills-boot.ts` (lane boot + listing summary),
 > `packages/host/src/skills-cli.ts` (`kubic skills`),

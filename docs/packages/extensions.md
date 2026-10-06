@@ -1,6 +1,6 @@
 # `@kubic/extensions`
 
-> Design ref: bundle facade over library layers; source:
+> Bundle facade over library layers; source:
 > `packages/extensions/FACETS.md` (quoted, not copied).
 > Owner: issue
 > [#63](https://github.com/konic-labs/kubic/issues/63).

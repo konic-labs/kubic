@@ -3,6 +3,7 @@
 // render functions only (no terminal, no network).
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderHeader } from '../../../packages/tui/src/chrome.js';
+import { renderWorkingLine } from '../../../packages/tui/src/editor-frame.js';
 import { sanitizeLaneText } from '../../../packages/tui/src/lane-cells.js';
 import {
   buildLayoutRoot,
@@ -31,7 +32,6 @@ import {
 import {
   createTuiApp,
   renderKeyHints,
-  renderWorkingLine,
 } from '../../../packages/tui/src/tui-app.js';
 import { Text, visibleWidth } from '../../../packages/tui/src/tui-boundary.js';
 import { fakeTerminal } from '../../../test/fake-terminal.js';
@@ -230,11 +230,11 @@ describe('app chrome', () => {
     expect(app.render(100).at(-1)).toContain('⏎ send');
     app.setBusy(true);
     expect(app.busyElapsedMs()).toBeGreaterThanOrEqual(0);
-    // Issue #453: the working line sits on the notice row above the editor;
-    // the hint row switches to the keys that act on a running turn.
+    // Issue #453/#454: the working line sits on the notice row above the
+    // editor; the hint row switches to the keys that act on a running turn.
     const rows = app.render(100);
     expect(rows.join('\n')).toMatch(
-      /working… \ds · enter queues · alt\+enter steers · ctrl\+c cancels/,
+      /Working · 0:0\d .*esc interrupt {3}⏎ queue a message/,
     );
     expect(rows.at(-1)).toContain('esc interrupt');
     expect(rows.at(-2)?.endsWith(' working ')).toBe(true);
@@ -250,9 +250,7 @@ describe('app chrome', () => {
       approvalsSkipped: false,
     });
     solo.setBusy(true);
-    expect(solo.render(100).join('\n')).toContain(
-      'enter queues · alt+enter steers',
-    );
+    expect(solo.render(100).join('\n')).toContain('⏎ queue a message');
     const orchestrator = createTuiApp({
       sessionId: 's',
       model: 'faux/m',
@@ -261,13 +259,21 @@ describe('app chrome', () => {
     });
     orchestrator.setBusy(true);
     const line =
-      orchestrator.render(100).find((row) => row.includes('working…')) ?? '';
+      orchestrator.render(100).find((row) => row.includes('Working')) ?? '';
     // The orchestrator lane has no inbox and refuses both keys: naming them
     // would promise a queue that does not exist.
-    expect(line).toMatch(/working… \ds · ctrl\+c cancels/);
-    expect(line).not.toContain('enter queues');
-    expect(plain(renderWorkingLine(1500, 80, { queues: false }))).toBe(
-      `${spinnerFrame(1500)} working… 1s · ctrl+c cancels`,
+    expect(line).toMatch(/Working · 0:0\d/);
+    expect(line).not.toContain('queue');
+    expect(
+      plain(
+        renderWorkingLine(
+          tuiTheme().ui,
+          { elapsedMs: 1500, queues: false },
+          80,
+        ),
+      ),
+    ).toBe(
+      ` ${spinnerFrame(1500)} Working · 0:01${' '.repeat(80 - 17 - 14)}esc interrupt `,
     );
   });
 
@@ -307,9 +313,13 @@ describe('app chrome', () => {
     );
     expect(renderHeader(tuiTheme().ui, info, 20)).toBe(' ■ KUBIC     [SOLO] ');
     expect(renderKeyHints(20)).toBe('enter send');
-    expect(plain(renderWorkingLine(1500, 80))).toBe(
-      `${spinnerFrame(1500)} working… 1s · enter queues · alt+enter steers · ctrl+c cancels`,
+    const working = renderWorkingLine(
+      tuiTheme().ui,
+      { elapsedMs: 1500, queues: true },
+      80,
     );
+    expect(visibleWidth(working)).toBe(80);
+    expect(plain(working)).toContain('esc interrupt   ⏎ queue a message ');
   });
 });
 

@@ -173,6 +173,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     await waitFor(() => fake.frame.includes('from alt'));
 
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(sessionId).not.toBe('');
@@ -210,7 +211,8 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     for (const ch of '/model alt/m1') fake.feed(ch);
     fake.feed('\x1b\r');
     await waitFor(() => fake.frame.includes('model: alt/m1'));
-    fake.feed('\x03');
+    // Ctrl-D quits on the empty editor and leaves the notice row as it was.
+    fake.feed('\x04');
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
     expect(doc).toContain('switched');
@@ -264,6 +266,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
       fake.writes.slice(mark).join('').includes('thinking: off'),
     );
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     // The status line carries the live level, not the boot one.
     expect(lines.join('\n')).toMatch(/● \S+ · off/);
@@ -302,6 +305,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     fake.feed('\u001b[B');
     fake.feed('\r');
     await waitFor(() => fake.frame.includes('model: faux/small (switched)'));
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(lines.join('\n')).toContain('faux/small');
@@ -345,6 +349,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
       fake.writes.slice(mark).join('').includes('thinking: off'),
     );
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
   });
 
@@ -373,6 +378,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     await waitFor(() => fake.frame.includes('faux/big (current)'));
     fake.feed('\u001b');
     await waitFor(() => fake.frame.includes('(picker cancelled)'));
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     // Still the boot model.
@@ -420,6 +426,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     await waitFor(() => fake.frame.includes('from faux'));
 
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(lines.join('\n')).toContain('[SOLO] approvals on');
   });
@@ -466,6 +473,7 @@ describe('tui audit identity (issue #227, criterion 4)', () => {
     await waitFor(() => fake.frame.includes('Approval required'));
     fake.feed('d'); // deny: the command never runs, the decision is audited
     await waitFor(() => fake.frame.includes('after deny'));
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
 

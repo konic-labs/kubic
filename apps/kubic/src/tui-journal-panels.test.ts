@@ -162,7 +162,7 @@ describe('tool entries share the sweep turn numbering (issue #436)', () => {
     for (const sweep of sweepEntries) {
       if (sweep.turn !== undefined) expect(sweep.turn).toBe(1);
     }
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 
@@ -190,7 +190,7 @@ describe('tool entries share the sweep turn numbering (issue #436)', () => {
     expect(code).toBe(0);
     // The write entry carries the first turn; the stat line names it.
     expect(lines.some((line) => /t\.txt .*turn 1/.test(line))).toBe(true);
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 });
@@ -208,7 +208,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () 
     await waitFor(() => fake.since(mark).includes('hello.txt'));
     expect(fake.since(mark)).toContain('+hi there');
     expect(fake.since(mark)).not.toContain('no changes');
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 
@@ -229,7 +229,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () 
         fake.since(mark).includes('alpha.txt') &&
         fake.since(mark).includes('beta.txt'),
     );
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 
@@ -246,7 +246,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () 
     fake.feed('\x0f');
     await waitFor(() => fake.since(mark).includes('kept.txt'));
     expect(fake.since(mark)).not.toContain('no changes');
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 
@@ -281,7 +281,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () 
     // what it is (unattributed: the sweep cannot know which call wrote it).
     expect(fake.since(mark)).toContain('+++ b/shellfile.txt');
     expect(fake.since(mark)).toContain('unattributed, non-reversible');
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 
@@ -328,7 +328,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () 
     // The next file-tool turn does not inherit the shell flag.
     await submit(fake, 'write again', 'wrote again');
     expect(sweeps).toBe(1);
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 
@@ -359,7 +359,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () 
     const mark = fake.mark();
     fake.feed('\x12');
     await waitFor(() => fake.since(mark).includes('no changes'));
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 
@@ -417,7 +417,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () 
     expect(reads).toBeGreaterThan(atBoot);
     expect(fake.since(0)).not.toContain('slept');
     await waitFor(() => fake.since(0).includes('slept'));
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 
@@ -438,7 +438,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () 
       { journalFeedError: (error) => failures.push(error) },
     );
     await submit(fake, 'write hello', 'wrote it');
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
     expect(failures).toEqual([]);
   });
@@ -469,7 +469,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () 
     const mark = fake.mark();
     fake.feed('\x12');
     await waitFor(() => fake.since(mark).includes('earlier.txt'));
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 
@@ -501,7 +501,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () 
     fake.feed('\x12');
     await waitFor(() => fake.since(mark).includes('name.txt'));
     expect(fake.since(mark)).not.toContain('evil\x1b[2J');
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 });
@@ -609,7 +609,7 @@ describe('per-turn reconciliation in the TUI (issue #374)', () => {
       ['one.txt', 1],
       ['two.txt', 2],
     ]);
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
     expect(
       sweptEntries(sessionsRoot).some((entry) => entry.path === 'mine.txt'),
@@ -627,7 +627,7 @@ describe('per-turn reconciliation in the TUI (issue #374)', () => {
     await waitFor(() => sweptEntries(sessionsRoot).length === 1);
     // An edit after the last turn settled, before the quit.
     writeFileSync(join(workspace, 'after.txt'), 'operator\n');
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
     expect(sweptEntries(sessionsRoot).map((entry) => entry.path)).toEqual([
       'made.txt',

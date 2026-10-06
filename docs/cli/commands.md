@@ -1282,10 +1282,17 @@ a large workspace pays it (and the screen pauses) after every turn that used
   carries the honest one-line lane notice.
 - **The notice row** above the editor — the "footer" the rest of this page
   refers to: a command's reply, a refusal, a turn's outcome
-  (`cancelled`, `error: …`), the lane's retry or compaction activity, and the
-  `working… 3s` line while a turn runs. It takes no row when it has nothing
-  to say, and wraps to at most two rows.
-- **The editor.**
+  (`cancelled`, `error: …`), the lane's retry or compaction activity, and,
+  while a turn runs, the working line `⠹ Working · 0:12 · ↑ 9.2k ↓ 640 tok ·
+  3 tools … esc interrupt   ⏎ queue a message` (tokens once a usage row
+  reported them; the orchestrator lane, which queues nothing, leaves out the
+  queue key). It takes no row when it has nothing to say, and wraps to at
+  most two rows.
+- **The editor**, framed (issue #454): `┌─…─┐`, `│ › <draft>   @ file  / cmd │`,
+  `└─…─┘`. The caret is the only red on screen while you type; the box grows
+  with a multi-line draft (Pi's `↑ 3 more` scroll markers stay in its rules)
+  and the `/`-command and `@`-file completions open below it. Mid-turn it is
+  a queue box: `› type to queue — sent when this turn ends`.
 - **The status line** (one row): `● <model> · <thinking>  │  ctx ━━━━──────
   31% of 200k  │  $0.031  │  journal 2 changes  │  budget …` with the turn's
   state word on the right — `ready`, `working` (the mark becomes the
@@ -1303,10 +1310,10 @@ a large workspace pays it (and the screen pauses) after every turn that used
 - **The key-hint row**: the keys that act right now, read from the key
   bindings (a rebound action shows its real key; an unbound one is not
   hinted). Idle: `⏎ send  ^J newline  / commands  @ file  ^P palette  ^O
-  diff  ^R journal … ^C quit` (`⇧⏎ newline` on terminals that report
+  diff  ^R journal … ^C ^C quit` (`⇧⏎ newline` on terminals that report
   Shift+Enter, `@ file` when file mentions are available). While a turn
   runs: `esc interrupt  ⏎ queue  alt+⏎ steer  ^X expand output  ^P palette
-  … ^C cancel` (no queue or steer on the orchestrator lane). With an
+  … ^C ^C quit` (no queue or steer on the orchestrator lane). With an
   approval pending: its allow and deny keys. With a picker or dialog open:
   `↑↓ move  ⏎ select  esc cancel`.
 
@@ -1361,8 +1368,8 @@ the built-in palette; see `[ui] theme` under
 | `Ctrl-S` | Approval overlay: **allow for the session** — after the arming delay and the quiet period, and only while the overlay can show the whole command; never a bare letter. Latched in `<session>/approvals.json`; identical calls in this session are not asked again (also after re-attach). |
 | `d`, `Esc` | Approval overlay: **deny** the challenged call. `Esc` acts at once (the only immediate action), `d` after the arming delay. A denial latches for the session like `Ctrl-S`, so the same operation is refused without asking again. |
 | `v` | Approval overlay: show the next page of a command too tall for the dialog (never decides). |
-| `Ctrl-C` | Cancel the in-flight turn; while idle, quit. **A composed draft is never discarded**: idle with text in the editor the first press clears the draft (footer `ctrl+c: draft cleared — press ctrl+c again on an empty draft to quit`) and the session stays — the second press, on the empty draft, quits. A second `Ctrl-C` during a turn also quits. **Cancelling clears the queue**: the abort withdraws every queued follow-up, and the footer names the count (`cancelled · dropped 2 queued prompts`). A prompt queued after a *failed* run stays in the inbox and is placed by the next submit (pi-durable's own rule). During an **orchestrator** run (which cannot be cancelled from the TUI) it quits directly — the manager's signal guard reaps its live workers as the process exits. |
-| `Esc` | Quit on an **empty** draft (while no approval is pending — during an approval it denies). With text in the editor the first `Esc` clears the draft instead (footer `esc: draft cleared — press esc again on an empty draft to quit`) and keeps the session; only the second press quits. While a turn runs it goes through the same cancel-first path as `Ctrl-C`: the turn aborts, the session stays, and the draft is kept. Quitting mid-turn aborts and drains the run like `Ctrl-C`, so queued follow-ups go with it. |
+| `Ctrl-C` | **Interrupt** the in-flight turn and keep the session; a second press while the interrupt drains quits. Idle, **a composed draft is never discarded**: the first press clears it (`^C: draft cleared`); on an empty editor a press shows `press ^C again to quit` on the notice row for 2 s, and a second press inside that window quits (issue #454). **Cancelling clears the queue**: the abort withdraws every queued follow-up, and the footer names the count (`cancelled · dropped 2 queued prompts`). A prompt queued after a *failed* run stays in the inbox and is placed by the next submit (pi-durable's own rule). During an **orchestrator** run (which cannot be cancelled from the TUI) it quits directly — the manager's signal guard reaps its live workers as the process exits. |
+| `Esc` | **Never quits** (issue #454). It closes the editor's dropdown or an open picker or dialog; during a turn it **interrupts** it like the first `Ctrl-C` — the session and the draft stay, and a second `Esc` while the interrupt drains does nothing (an orchestrator run, which cannot be interrupted here, says so on the footer). Idle on an empty editor it does nothing yet (block mode, #463). While an approval is pending it denies. For a one-press quit key, bind `app.exit` in `~/.kubic/keybindings.json`. |
 | `Ctrl-D` | Quit on an empty draft; while typing it stays delete-forward. |
 | `PageUp` / `PageDown` | Scroll the transcript one page (pi-tui's alt-screen binding; the editor does not see these keys). |
 | `Home` / `End` | Scroll the transcript to its top / bottom — which is why they do not move the editor's cursor: `Ctrl-A` / `Ctrl-E` move to the line start / end instead. |
@@ -1414,7 +1421,7 @@ default action loses that key (`keybinding: ctrl+g now runs panel.diff
 unbound` when nothing is left). Two user bindings on one key are a conflict —
 the first action in the table below keeps it and both are named. Approval
 keys conflict only with each other (the approval owns the keys while it
-shows, which is why `Esc` can be both the global quit and the approval deny).
+shows, which is why `Esc` can be both the global cancel and the approval deny).
 **A broken file refuses the boot** (`error: keybindings '<file>': …`, exit 2,
 nothing opens): invalid JSON, an unknown action, a malformed key id, or a
 file that is not a regular file or is over 64 KB. A missing file means the
@@ -1422,8 +1429,9 @@ shipped bindings.
 
 | Action | Default keys | What it does |
 |---|---|---|
-| `app.interrupt` | `ctrl+c` | cancel the running turn; idle: clear the draft, then quit |
-| `app.exit` | `escape` | quit on an empty draft (clears a draft first) |
+| `app.interrupt` | `ctrl+c` | interrupt the running turn; idle: clear the draft, then press twice to quit |
+| `app.cancel` | `escape` | close the open dropdown or overlay; else interrupt the running turn — never quits |
+| `app.exit` | unbound | quit on an empty draft (clears a draft first); bind a key to get a one-press quit |
 | `app.eof` | `ctrl+d` | quit on an empty draft; delete-forward while typing |
 | `app.palette` | `ctrl+p` | open the command palette |
 | `session.mode` | `ctrl+g` | switch solo / orchestrator between turns |

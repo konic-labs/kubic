@@ -145,10 +145,10 @@ describe('key-hint row (issue #453)', () => {
   it('switches between idle and working sets', () => {
     const app = seed();
     expect(app.render(100).at(-1)).toMatch(/^ ⏎ send {3}\^J newline/);
-    expect(app.render(100).at(-1)?.endsWith(' ^C quit ')).toBe(true);
+    expect(app.render(100).at(-1)?.endsWith(' ^C ^C quit ')).toBe(true);
     app.setBusy(true);
     expect(app.render(100).at(-1)).toMatch(/^ esc interrupt {3}⏎ queue/);
-    expect(app.render(100).at(-1)?.endsWith(' ^C cancel ')).toBe(true);
+    expect(app.render(100).at(-1)?.endsWith(' ^C ^C quit ')).toBe(true);
   });
 
   it('names the file key only when @-mentions complete files', () => {

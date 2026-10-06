@@ -134,6 +134,7 @@ describe('orchestrator entry: mode resolution (issue #327)', () => {
     expect(frame).toContain('[ORCHESTRATOR] approvals on');
     expect(frame).toContain('faux/test · off');
     terminal.feed('\x03');
+    terminal.feed('\x03');
     expect(await pending).toBe(0);
   });
 
@@ -148,6 +149,7 @@ describe('orchestrator entry: mode resolution (issue #327)', () => {
     expect(frame).toContain('[ORCHESTRATOR] approvals on');
     expect(frame).toContain('faux/test · off');
     terminal.feed('\x03');
+    terminal.feed('\x03');
     expect(await pending).toBe(0);
   });
 
@@ -160,6 +162,7 @@ describe('orchestrator entry: mode resolution (issue #327)', () => {
     await waitFor(() => flagged.started === 1);
     expect(flagged.writes.join('')).toContain('[ORCHESTRATOR] approvals on');
     flagged.feed('\x03');
+    flagged.feed('\x03');
     await run;
 
     const plain = fakeTerminal(100);
@@ -171,6 +174,7 @@ describe('orchestrator entry: mode resolution (issue #327)', () => {
     const frame = plain.writes.join('');
     expect(frame).toContain('[SOLO] approvals on');
     expect(frame).not.toContain('[ORCHESTRATOR]');
+    plain.feed('\x03');
     plain.feed('\x03');
     await solo;
   });
@@ -207,6 +211,7 @@ describe('orchestrator entry: the non-git refusal (issue #327)', () => {
     const terminal = fakeTerminal(100);
     const pending = runTuiCommand({}, deps(terminal, { isGitRepo: probe }));
     await waitFor(() => terminal.started === 1);
+    terminal.feed('\x03');
     terminal.feed('\x03');
     expect(await pending).toBe(0);
     expect(probe).not.toHaveBeenCalled();
@@ -404,6 +409,7 @@ describe('orchestrator cancellation is honest (issue #327)', () => {
     terminal.feed('long task');
     terminal.feed('\r');
     await waitFor(() => started);
+    terminal.feed('\x03');
     terminal.feed('\x03');
     expect(await pending).toBe(0);
     expect(terminal.stopped).toBe(1);
@@ -751,6 +757,7 @@ describe('/safety in orchestrator mode (issue #453)', () => {
     // A local read: nothing reached the lane or the manager.
     expect(admitted).toEqual([]);
     expect(drive.objectives).toEqual([]);
+    terminal.feed('\x03');
     terminal.feed('\x03');
     expect(await pending).toBe(0);
   });

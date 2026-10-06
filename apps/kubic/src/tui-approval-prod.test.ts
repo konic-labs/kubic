@@ -185,6 +185,7 @@ describe('allow once is not a session approval (issue #231)', () => {
     fake.feed('a');
     await waitFor(() => fake.frame.includes('both calls done'));
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(asks).toBe(2);
   });
@@ -227,6 +228,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     // Issue #453: the solo tree row opens on Ctrl-T.
     fake.feed('\x14');
     // Quit cleanly (criterion 6): restore + exit 0.
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
@@ -271,6 +273,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     expect(lines).toEqual([]);
     // Now a clean quit (criterion 6).
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(fake.frame).toContain('?1049l');
@@ -299,6 +302,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       },
     );
     await waitFor(() => fake.counts.started === 1);
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
@@ -338,8 +342,9 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     // own timeout and no frame is left showing a request nobody can answer.
     fake.feed('\x03');
     await waitFor(() => fake.frame.includes('cancelled'));
-    // A second press, with nothing running, is the quit. Screen restores and
-    // the process exits 0 (criterion 6).
+    // Idle again: a double press is the quit (issue #454). Screen restores
+    // and the process exits 0 (criterion 6).
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
@@ -375,6 +380,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     expect(fake.frame).toContain('destructive-shell');
     fake.feed('a');
     await waitFor(() => fake.frame.includes('narrow done'));
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
@@ -423,6 +429,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     fake.feed('a');
     await waitFor(() => fake.frame.includes('armed turn done'));
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
   });
 
@@ -469,6 +476,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     expect(fake.frame).not.toContain('summary: ');
     fake.feed('d');
     await waitFor(() => fake.frame.includes('padded turn done'));
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
   });

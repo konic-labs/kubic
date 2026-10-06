@@ -141,6 +141,7 @@ describe('the TUI full-access toggle (issue #309)', () => {
     ]);
 
     fake.inject('\u0003');
+    fake.inject('\u0003');
     expect(await pending).toBe(0);
   });
 
@@ -191,6 +192,7 @@ describe('the TUI full-access toggle (issue #309)', () => {
     expect(fake.output()).toContain('[SOLO] approvals on');
     expect(postureRows(workspace)).toHaveLength(0);
 
+    fake.inject('\u0003');
     fake.inject('\u0003');
     expect(await pending).toBe(0);
   });
@@ -283,6 +285,7 @@ describe('the TUI full-access toggle (issue #309)', () => {
       'posture:approvals',
     ]);
     fake.inject('\u0003');
+    fake.inject('\u0003');
     expect(await pending).toBe(0);
   });
 
@@ -339,6 +342,7 @@ describe('the TUI full-access toggle (issue #309)', () => {
     fake.inject('\u001b');
     await waitFor(() => fake.output().includes('denied'));
     expect(postureRows(workspace)).toHaveLength(0);
+    fake.inject('\u0003');
     fake.inject('\u0003');
     expect(await pending).toBe(0);
   });

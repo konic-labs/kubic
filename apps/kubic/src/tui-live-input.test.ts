@@ -167,8 +167,9 @@ describe('idle input repaints (issue #274)', () => {
     const mark = fake.mark();
     fake.feed('a');
     await waitFor(() => fake.since(mark).includes('a'), RENDER_TICK_STEPS);
-    // Issue #302: the draft is on screen, so the first Ctrl-C only clears
-    // it; the second press quits.
+    // Issue #302/#454: the draft is on screen, so the first Ctrl-C only
+    // clears it; the double press after it quits.
+    fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
@@ -182,7 +183,7 @@ describe('idle input repaints (issue #274)', () => {
       () => fake.since(mark).includes('no changes'),
       RENDER_TICK_STEPS,
     );
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 
@@ -194,7 +195,7 @@ describe('idle input repaints (issue #274)', () => {
       () => fake.since(mark).includes('no changes'),
       RENDER_TICK_STEPS,
     );
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 
@@ -231,7 +232,7 @@ describe('idle input repaints (issue #274)', () => {
     mark = fake.mark();
     fake.feed('\x18');
     await waitFor(() => fake.since(mark).includes('row-9'), RENDER_TICK_STEPS);
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 
@@ -256,7 +257,7 @@ describe('idle input repaints (issue #274)', () => {
     await waitFor(() => fake.since(mark).length > 0, RENDER_TICK_STEPS);
     expect(fake.since(mark)).not.toContain('Approval required');
     expect(await verdict).toMatchObject({ approved: true });
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 });
@@ -285,8 +286,13 @@ describe('Kitty key releases on the live loop (issue #306)', () => {
     release();
     await waitFor(() => fake.since(0).includes('cancelled'));
     expect(fake.counts.stopped).toBe(0);
-    fake.feed('\x1b[27u');
-    fake.feed('\x1b[27;1:3u');
+    // Idle (issue #454): the press arms the quit, its release must not
+    // complete it, and the second press quits.
+    fake.feed('\x1b[99;5u');
+    fake.feed('\x1b[99;5:3u');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fake.counts.stopped).toBe(0);
+    fake.feed('\x1b[99;5u');
     expect(await exit).toBe(0);
     expect(fake.counts.stopped).toBe(1);
   });

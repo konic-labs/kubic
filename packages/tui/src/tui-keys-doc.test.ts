@@ -157,9 +157,11 @@ describe('the keybindings file is documented from the registry (issue #303)', ()
     const section = tuiSection();
     expect(section).toContain('~/.kubic/keybindings.json');
     for (const action of KEY_ACTION_IDS) {
-      const keys = DEFAULT_KEY_REGISTRY.keysFor(action)
-        .map((key) => `\`${key}\``)
-        .join(', ');
+      // An action with no default key (app.exit since #454) says so.
+      const keys =
+        DEFAULT_KEY_REGISTRY.keysFor(action)
+          .map((key) => `\`${key}\``)
+          .join(', ') || 'unbound';
       expect(section).toContain(`| \`${action}\` | ${keys} |`);
     }
   });

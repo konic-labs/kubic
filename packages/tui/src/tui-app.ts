@@ -33,11 +33,12 @@
 //   Ctrl-O           toggle the diff panel (this run's changes)
 //   Ctrl-R           toggle the journal panel (the whole session)
 //   Ctrl-X           expand / collapse every tool output block
-//   Ctrl-C           cancel the in-flight turn; quit when idle (a second
-//                    Ctrl-C during a turn also quits)
+//   Ctrl-C           interrupt the in-flight turn; idle: clear the draft,
+//                    then press twice within 2 s to quit (issue #454)
 //   Alt+Enter        steer the running turn with the draft (submits it when
 //                    idle; issue #334)
-//   Esc              quit
+//   Esc              close the dropdown or overlay, else interrupt the
+//                    running turn — never quits (issue #454)
 //   Ctrl-D           quit on an empty draft (delete-forward while typing)
 //
 // Issue #453 (EPIC N; docs/ui 01-A/L/M) cut the chrome to three one-row
@@ -72,11 +73,18 @@ import {
 } from './approval-view.js';
 import {
   type HintContext,
+  keyCap,
   keyHintSet,
   renderHeader,
   sessionTitle,
   shortSessionId,
 } from './chrome.js';
+import {
+  EDITOR_FRAME_CELLS,
+  frameEditorLines,
+  renderWorkingLine,
+  type WorkingInfo,
+} from './editor-frame.js';
 import { PromptEditor } from './editor-view.js';
 import {
   CombinedAutocomplete,
@@ -110,12 +118,7 @@ import {
   type StatusUsageRow,
   summarizeStatusRows,
 } from './status-bar.js';
-import {
-  formatElapsed,
-  spinnerFrame,
-  tuiTheme,
-  WORDMARK_GLYPH,
-} from './theme.js';
+import { tuiTheme, WORDMARK_GLYPH } from './theme.js';
 import {
   createTranscriptView,
   type TranscriptEntry,
@@ -148,6 +151,15 @@ import { renderKeyHintRow } from './ui/key-hints.js';
 
 // The editor footer wraps to at most this many rows.
 export const FOOTER_MAX_ROWS = 2;
+
+// Issue #454: an idle, empty Ctrl-C arms the quit for this long; a second
+// press inside the window quits.
+export const QUIT_ARM_MS = 2000;
+
+// Issue #454: the queue box's prompt mid-turn (solo lane), and the
+// orchestrator lane's no-queue variant.
+export const QUEUE_PLACEHOLDER = 'type to queue — sent when this turn ends';
+export const RUN_PLACEHOLDER = 'the run is working — wait for it to finish';
 
 import {
   DiffPanel,
@@ -264,6 +276,9 @@ export interface TuiInputResult {
   // Issue #309: Alt+A toggles full access for this session (the loop owns
   // the confirmation, the posture write and the indicator).
   readonly fullAccess?: boolean;
+  // Issue #454: Esc during a turn — interrupt it, and never quit (a second
+  // Esc while the interrupt drains is a no-op, unlike Ctrl-C).
+  readonly interrupt?: boolean;
 }
 
 // Issue #334: what the loop did with a submitted prompt. `queued` means the
@@ -603,27 +618,6 @@ export function renderKeyHints(
   return line;
 }
 
-// The working indicator: spinner, elapsed time and the cancel key.
-// One line under the editor while a turn runs: the elapsed clock plus the
-// keys that still act. Enter and Alt+Enter are named for the SOLO lane
-// because they are the two ways to keep talking to a busy turn (#334); the
-// orchestrator lane has no inbox and refuses both, so its working line keeps
-// the Ctrl-C hint alone. Ctrl-C keeps its shipped meaning throughout (first
-// cancels, second quits).
-export function renderWorkingLine(
-  elapsedMs: number,
-  width: number,
-  options: { queues?: boolean } = {},
-): string {
-  const theme = tuiTheme();
-  const tail =
-    options.queues === false
-      ? `${formatElapsed(elapsedMs)} · ctrl+c cancels`
-      : `${formatElapsed(elapsedMs)} · enter queues · alt+enter steers · ctrl+c cancels`;
-  const line = `${theme.warm(spinnerFrame(elapsedMs))} ${theme.warm('working…')} ${theme.muted(tail)}`;
-  return truncateToWidth(line, Math.max(0, width), '…');
-}
-
 // The welcome block at the top of the transcript: what this is, where it
 // runs, and the solo notice in full.
 export function welcomeLines(info: {
@@ -677,9 +671,10 @@ export function laneActivityLine(lane: {
 // explicit footer (a turn outcome, a command's reply, an error), the working
 // line while a turn runs — else nothing, and the row takes no space.
 class NoticeRow implements Component {
-  // Issue #334: the busy line names the keys that act on a running turn,
-  // which differ by lane (the orchestrator lane queues nothing).
-  private readonly mode: () => StatusMode;
+  // Issue #454: the working line's facts — the keys that act (which differ
+  // by lane: the orchestrator lane queues nothing, #334), this turn's
+  // tokens and tool calls.
+  private readonly working: () => Omit<WorkingInfo, 'elapsedMs'>;
   private footer = '';
   // Issue #150: the lane's transient activity (a retry backoff, a
   // compaction). It outranks every other notice while it lasts — it is the
@@ -687,13 +682,17 @@ class NoticeRow implements Component {
   private activity = '';
   busySince: number | undefined;
 
-  constructor(mode: () => StatusMode) {
-    this.mode = mode;
+  constructor(working: () => Omit<WorkingInfo, 'elapsedMs'>) {
+    this.working = working;
     this.busySince = undefined;
   }
 
   setFooter(text: string): void {
     this.footer = sanitizeLaneText(text);
+  }
+
+  footerText(): string {
+    return this.footer;
   }
 
   setActivity(text: string | undefined): void {
@@ -703,8 +702,9 @@ class NoticeRow implements Component {
   render(width: number): string[] {
     const theme = tuiTheme();
     const w = Math.max(0, width);
+    // One cell of indent lines the text up with the editor box below.
     if (this.activity !== '') {
-      return [truncateToWidth(theme.warning(this.activity), w, '…')];
+      return [truncateToWidth(` ${theme.warning(this.activity)}`, w, '…')];
     }
     if (this.footer !== '') {
       const styled = this.footer.startsWith('error')
@@ -712,19 +712,21 @@ class NoticeRow implements Component {
         : theme.muted(this.footer);
       // Wrapped, not cut: an error report is the text an operator most
       // needs whole. Capped at two rows.
-      const wrapped = wrapTextWithAnsi(styled, Math.max(1, width));
+      const wrapped = wrapTextWithAnsi(styled, Math.max(1, width - 1));
       const shown = wrapped.slice(0, FOOTER_MAX_ROWS);
       if (wrapped.length > FOOTER_MAX_ROWS) {
         const last = shown.length - 1;
-        shown[last] = truncateToWidth(`${shown[last] ?? ''} …`, w, '…');
+        shown[last] = truncateToWidth(`${shown[last] ?? ''} …`, w - 1, '…');
       }
-      return shown.map((line) => truncateToWidth(line, w, '…'));
+      return shown.map((line) => truncateToWidth(` ${line}`, w, '…'));
     }
     if (this.busySince !== undefined) {
       return [
-        renderWorkingLine(Date.now() - this.busySince, width, {
-          queues: this.mode() === 'solo',
-        }),
+        renderWorkingLine(
+          theme.ui,
+          { ...this.working(), elapsedMs: Date.now() - this.busySince },
+          width,
+        ),
       ];
     }
     return [];
@@ -880,7 +882,49 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
           new FileMentionAutocomplete(seed.listFiles),
         ]),
   );
-  const noticeRow = new NoticeRow(() => sessionMode.current);
+  // Issue #454: this turn's facts for the working line — the usage rows and
+  // tool cells that arrived since the turn started.
+  let turnRowsBase = 0;
+  let toolCells = 0;
+  let turnToolsBase = 0;
+  const noticeRow = new NoticeRow(() => {
+    const rows = status.getState().rows.slice(turnRowsBase);
+    let input = 0;
+    let output = 0;
+    for (const row of rows) {
+      input += row.usage.input + row.usage.cacheRead + row.usage.cacheWrite;
+      output += row.usage.output;
+    }
+    return {
+      queues: sessionMode.current === 'solo',
+      ...(rows.length === 0 ? {} : { input, output }),
+      tools: toolCells - turnToolsBase,
+      interruptKey: keyCap(keys.label('app.cancel')),
+    };
+  });
+  // Issue #454: Pi's editor inside the kit's box (editor-frame.ts).
+  const editorSlot: Component = {
+    render: (width: number): string[] => {
+      const inner = width - EDITOR_FRAME_CELLS;
+      return frameEditorLines(
+        tuiTheme().ui,
+        editor.render(inner >= 1 ? inner : Math.max(1, width)),
+        width,
+        {
+          busy,
+          empty: editor.getText() === '',
+          hint: seed.listFiles === undefined ? '/ cmd' : '@ file  / cmd',
+          placeholder:
+            sessionMode.current === 'solo'
+              ? QUEUE_PLACEHOLDER
+              : RUN_PLACEHOLDER,
+        },
+      );
+    },
+    invalidate: (): void => {
+      editor.invalidate();
+    },
+  };
   // Issue #96 — the panel row. Both panels stay mounted and keep their rows;
   // the layout hides the row entirely while the mode is 'closed', so a
   // keypress never leaves blank space behind.
@@ -969,7 +1013,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     transcript: transcript.component,
     panel: { component: panelScroll, isOpen: () => mode !== 'closed' },
     notice: noticeRow,
-    editor,
+    editor: editorSlot,
     status,
     hints: lineComponent((width) => {
       const set = keyHintSet(hintContext(), keys, {
@@ -1270,6 +1314,32 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const settleApproval = (): void => {
     syncOverlay();
   };
+  // Issue #454: the idle double-press quit. The notice row says so for the
+  // window and clears itself when it lapses (a render is requested — no key
+  // arrives to cause one).
+  let quitArmedUntil = 0;
+  let quitArmTimer: ReturnType<typeof setTimeout> | undefined;
+  let quitArmText = '';
+  const disarmQuit = (): void => {
+    quitArmedUntil = 0;
+    if (quitArmTimer !== undefined) clearTimeout(quitArmTimer);
+    quitArmTimer = undefined;
+  };
+  const quitArmed = (): boolean => Date.now() < quitArmedUntil;
+  const armQuit = (key: string): void => {
+    disarmQuit();
+    quitArmedUntil = Date.now() + QUIT_ARM_MS;
+    quitArmText = `press ${key} again to quit`;
+    noticeRow.setFooter(quitArmText);
+    quitArmTimer = setTimeout(() => {
+      quitArmTimer = undefined;
+      quitArmedUntil = 0;
+      if (noticeRow.footerText() !== quitArmText) return;
+      noticeRow.setFooter('');
+      overlayHost?.requestRender?.();
+    }, QUIT_ARM_MS);
+    quitArmTimer.unref?.();
+  };
   // Issue #453: what the status line's state word and the key-hint row
   // follow. An approval outranks everything: it is what the turn waits on.
   const turnState = (): StatusTurnState => {
@@ -1370,7 +1440,11 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       if (confirmOverlay !== undefined) {
         if (keyId === confirmOverlay.options.confirmKey) {
           closeConfirm('confirm');
-        } else if (action === 'app.exit' || action === 'app.interrupt') {
+        } else if (
+          action === 'app.cancel' ||
+          action === 'app.exit' ||
+          action === 'app.interrupt'
+        ) {
           closeConfirm('cancel');
         }
         return { quit: false, consumed: true, cancel: false };
@@ -1385,46 +1459,78 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         closeModelPicker(true);
       }
       if (modelPicker !== undefined) {
-        if (action === 'app.exit' || action === 'app.interrupt') {
+        if (
+          action === 'app.cancel' ||
+          action === 'app.exit' ||
+          action === 'app.interrupt'
+        ) {
           closeModelPicker(true);
           return { quit: false, consumed: true, cancel: false };
         }
         modelPicker.list.handleInput(data);
         return { quit: false, consumed: true, cancel: false };
       }
-      // Issue #302: Esc and Ctrl-C share one path. Both are classified as
-      // cancel (the root decides: a running turn aborts and the session
-      // stays; idle it exits), and NEITHER throws away a composed draft —
-      // the first press clears it, a second press on the empty draft quits.
-      // A pending approval is denied first: nobody is left waiting on a
-      // verdict that can no longer arrive (the turn would otherwise hang to
-      // the lane's timeout).
-      const cancelOrClearDraft = (): TuiInputResult => {
-        if (approvalSurface.isShowing()) {
-          approvalSurface.cancelPending();
-          settleApproval();
-        }
-        if (!busy && editor.getText() !== '') {
-          editor.setText('');
-          const key = keys.label(
-            action === 'app.exit' ? 'app.exit' : 'app.interrupt',
-          );
-          noticeRow.setFooter(
-            `${key}: draft cleared — press ${key} again on an empty draft to quit`,
-          );
-          return { quit: false, consumed: true, cancel: false };
-        }
-        // Idle Esc keeps its shipped classification (quit, not cancel);
-        // Ctrl-C is always a cancel and a BUSY Esc is one too, which is what
-        // makes the root abort the turn instead of exiting.
-        return {
-          quit: true,
-          consumed: true,
-          cancel: action === 'app.interrupt' || busy,
-        };
+      const consumed: TuiInputResult = {
+        quit: false,
+        consumed: true,
+        cancel: false,
       };
-      if (action === 'app.interrupt' || action === 'app.exit') {
-        return cancelOrClearDraft();
+      // A pending approval is denied first by every cancel-class key: nobody
+      // is left waiting on a verdict that can no longer arrive (the turn
+      // would otherwise hang to the lane's timeout).
+      const denyPending = (): void => {
+        if (!approvalSurface.isShowing()) return;
+        approvalSurface.cancelPending();
+        settleApproval();
+      };
+      // Issue #454: Esc never quits. It closes the editor's dropdown (the
+      // overlays above close themselves), interrupts a running turn — the
+      // root makes the same cancel as a first Ctrl-C — and does nothing on
+      // an idle editor (block mode, #463, lives there).
+      if (action === 'app.cancel') {
+        denyPending();
+        if (editor.isShowingAutocomplete()) {
+          editor.handleInput(data);
+          return consumed;
+        }
+        if (busy) {
+          return { quit: false, consumed: true, cancel: true, interrupt: true };
+        }
+        return consumed;
+      }
+      // Issue #454: Ctrl-C interrupts a running turn (a second press while
+      // it drains quits — the root's rule); idle, it clears a draft, then
+      // arms: a second press within QUIT_ARM_MS quits.
+      if (action === 'app.interrupt') {
+        denyPending();
+        if (busy) return { quit: true, consumed: true, cancel: true };
+        const key = keyCap(keys.label('app.interrupt'));
+        if (editor.getText() !== '') {
+          editor.setText('');
+          disarmQuit();
+          noticeRow.setFooter(`${key}: draft cleared`);
+          return consumed;
+        }
+        if (quitArmed()) {
+          disarmQuit();
+          return { quit: true, consumed: true, cancel: true };
+        }
+        armQuit(key);
+        return consumed;
+      }
+      // An operator-bound quit key (app.exit has no default since #454): a
+      // composed draft is cleared first (#302), an empty editor quits.
+      if (action === 'app.exit') {
+        denyPending();
+        if (editor.getText() !== '') {
+          editor.setText('');
+          const key = keyCap(keys.label('app.exit'));
+          noticeRow.setFooter(
+            `${key}: draft cleared — press ${key} again to quit`,
+          );
+          return consumed;
+        }
+        return quit();
       }
       if (action === 'app.eof') {
         // Ctrl-D quits only on an empty draft — the shell convention. While
@@ -1576,6 +1682,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // prompt cell (counted, not matched by text: an identical resubmit
       // must not clear on the previous turn's cell).
       promptCells = cells.filter((cell) => cell.kind === 'prompt').length;
+      toolCells = cells.filter((cell) => cell.kind === 'tool').length;
       if (title === undefined) {
         const first = cells
           .filter((cell) => cell.kind === 'prompt')
@@ -1648,6 +1755,11 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // last turn's error.
       cancelling = false;
       if (next) failed = false;
+      if (next) {
+        turnRowsBase = status.getState().rows.length;
+        turnToolsBase = toolCells;
+      }
+      disarmQuit();
       // Issue #334: the editor stays ENABLED through a turn. Enter is no
       // longer a silent no-op while the lane works: the loop submits it as
       // a follow-up into the conversation's inbox, and Alt+Enter steers.
@@ -1767,6 +1879,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       transcript.setQueuedPrompts([]);
       tree.reset(undefined, sessionMode.current === 'solo');
       title = undefined;
+      toolCells = 0;
+      turnToolsBase = 0;
+      turnRowsBase = 0;
       failed = false;
       cancelling = false;
       mode = 'closed';

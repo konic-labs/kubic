@@ -237,6 +237,7 @@ describe('kubic tui rejects a bad theme at boot (issue #304)', () => {
     // The global the views read is the configured theme while the run is up.
     expect(tuiTheme().accent('x')).toBe('\u001b[38;2;38;139;210mx\u001b[39m');
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await exit).toBe(0);
   });
 });

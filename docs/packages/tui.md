@@ -74,6 +74,19 @@ VStack root, rows in order (issue #453 order; optional slots in italics):
 snapshot test); `renderLayout(root, width)` renders headless (pure, no
 terminal). Slots are `Component`s; this module owns arrangement only.
 
+### Editor frame (`editor-frame.ts`, issue #454)
+
+`frameEditorLines(ui, lines, width, options)` closes Pi's editor into the
+kit box (`┌─┐ │ › … │ └─┘`): the editor renders at
+`width - EDITOR_FRAME_CELLS`, its two rules are found by `RULE_MARK` (a
+zero-width APC marker the editor theme puts on them, stripped by the frame),
+autocomplete rows stay below the box, and `CURSOR_MARKER` passes through.
+Idle, the caret is accent bold and the first line carries the `@ file  / cmd`
+hint while it fits; mid-turn it is a queue box (fg2 caret, italic
+placeholder). `renderWorkingLine(ui, info, width)` is the line above it while
+a turn runs (`⠹ Working · 0:12 · ↑ 9.2k ↓ 640 tok · 3 tools … esc interrupt
+⏎ queue a message`).
+
 ### Chrome (`chrome.ts`, issue #453)
 
 `renderHeader(ui, info, width)` is the one-row header

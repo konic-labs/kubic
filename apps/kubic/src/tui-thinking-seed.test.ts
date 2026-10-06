@@ -108,6 +108,7 @@ describe('kubic tui seeds the thinking indicator from the boot (issue #225)', ()
     expect(boots[0]?.thinking).toBe('high');
     expect(fake.writes.join('')).toContain('faux/deep · high');
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await exit).toBe(0);
   });
 });

@@ -35,11 +35,21 @@ export const KEY_ACTIONS = {
   'app.interrupt': {
     scope: 'global',
     keys: ['ctrl+c'],
-    description: 'cancel the running turn; idle: clear the draft, then quit',
+    description:
+      'interrupt the running turn; idle: clear the draft, then press twice to quit',
   },
-  'app.exit': {
+  // Issue #454: Esc never quits. It closes what is open, interrupts a
+  // running turn, and (idle, empty editor) enters block mode.
+  'app.cancel': {
     scope: 'global',
     keys: ['escape'],
+    description:
+      'close the open dropdown or overlay; else interrupt the running turn',
+  },
+  // Issue #454: unbound by default (Esc used to quit); still bindable.
+  'app.exit': {
+    scope: 'global',
+    keys: [],
     description: 'quit on an empty draft (clears a draft first)',
   },
   'app.eof': {

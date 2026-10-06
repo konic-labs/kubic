@@ -193,6 +193,11 @@ export function keyHintSet(
     const cap = keyCap(keys.label(action));
     return cap === '' ? [] : [[cap, label]];
   };
+  // Issue #454: quitting is a double press of the interrupt key.
+  const quitHint = (): { right?: KeyHint } => {
+    const cap = keyCap(keys.label('app.interrupt'));
+    return cap === '' ? {} : { right: [`${cap} ${cap}`, 'quit'] };
+  };
   if (context === 'approval') {
     return {
       hints: [
@@ -215,14 +220,14 @@ export function keyHintSet(
     const queues = options.queues !== false;
     return {
       hints: [
-        ...bound('app.exit', 'interrupt'),
+        ...bound('app.cancel', 'interrupt'),
         ...(queues
           ? [['⏎', 'queue'] as const, ...bound('prompt.steer', 'steer')]
           : []),
         ...bound('transcript.expand', 'expand output'),
         ...bound('app.palette', 'palette'),
       ],
-      ...withRight(bound('app.interrupt', 'cancel')),
+      ...quitHint(),
     };
   }
   return {
@@ -235,11 +240,6 @@ export function keyHintSet(
       ...bound('panel.diff', 'diff'),
       ...bound('panel.journal', 'journal'),
     ],
-    ...withRight(bound('app.interrupt', 'quit')),
+    ...quitHint(),
   };
-}
-
-function withRight(hint: KeyHint[]): { right?: KeyHint } {
-  const first = hint[0];
-  return first === undefined ? {} : { right: first };
 }

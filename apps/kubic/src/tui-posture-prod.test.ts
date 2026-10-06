@@ -83,7 +83,7 @@ async function firstFrame(
     await new Promise((resolve) => setTimeout(resolve, 2));
   }
   const frame = fake.writes.join('');
-  fake.feed('\x1b');
+  fake.feed('\x04');
   expect(await exit).toBe(0);
   return frame;
 }

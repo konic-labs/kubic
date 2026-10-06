@@ -14,7 +14,7 @@ import type {
   ApprovalViewRequest,
 } from './approval-view.js';
 import { createKeyRegistry } from './keybindings.js';
-import { createTuiApp, seedFromPresentation } from './tui-app.js';
+import { createTuiApp, QUIT_ARM_MS, seedFromPresentation } from './tui-app.js';
 
 const SESSION = 'sess-1';
 const MODEL = 'test-model';
@@ -144,35 +144,64 @@ describe('tui app root (issue #75)', () => {
     expect(app.render(100).join('\n')).toContain('● read');
   });
 
-  it('quits on Ctrl-C and passes other keys through', () => {
-    const app = createTuiApp({
-      sessionId: SESSION,
-      model: MODEL,
-      mode: 'solo',
-      approvalsSkipped: false,
-    });
-    expect(app.handleInput('\x03')).toEqual({
-      quit: true,
-      consumed: true,
-      cancel: true,
-    });
-    // Any other key is neither a quit nor a cancel: it reaches the draft.
-    expect(app.handleInput('x')).toMatchObject({ quit: false, cancel: false });
-    expect(app.editor.getText()).toBe('x');
+  // Issue #454: the key model — Esc never quits, Ctrl-C clears a draft and
+  // then quits on a double press within QUIT_ARM_MS, Ctrl-D quits on an
+  // empty editor.
+  const CONSUMED = { quit: false, consumed: true, cancel: false };
+
+  it('arms on an idle Ctrl-C and quits on the second press (issue #454)', () => {
+    vi.useFakeTimers();
+    try {
+      const app = createTuiApp({
+        sessionId: SESSION,
+        model: MODEL,
+        mode: 'solo',
+        approvalsSkipped: false,
+      });
+      expect(app.handleInput('\x03')).toEqual(CONSUMED);
+      expect(app.render(100).join('\n')).toContain('press ^C again to quit');
+      vi.advanceTimersByTime(QUIT_ARM_MS - 1);
+      expect(app.handleInput('\x03')).toEqual({
+        quit: true,
+        consumed: true,
+        cancel: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it('quits on Esc and on Ctrl-D with an empty draft', () => {
+  it('disarms after the window and clears the notice (issue #454)', () => {
+    vi.useFakeTimers();
+    try {
+      const app = createTuiApp({
+        sessionId: SESSION,
+        model: MODEL,
+        mode: 'solo',
+        approvalsSkipped: false,
+      });
+      app.handleInput('\x03');
+      vi.advanceTimersByTime(QUIT_ARM_MS);
+      expect(app.render(100).join('\n')).not.toContain('again to quit');
+      // A lapsed arm starts over: the next press arms again.
+      expect(app.handleInput('\x03')).toEqual(CONSUMED);
+      // Any other key still reaches the draft.
+      expect(app.handleInput('x')).toEqual(CONSUMED);
+      expect(app.editor.getText()).toBe('x');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never quits on Esc; Ctrl-D quits on an empty draft', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
       mode: 'solo',
       approvalsSkipped: false,
     });
-    expect(app.handleInput('\x1b')).toEqual({
-      quit: true,
-      consumed: true,
-      cancel: false,
-    });
+    expect(app.handleInput('\x1b')).toEqual(CONSUMED);
+    expect(app.handleInput('\x1b')).toEqual(CONSUMED);
     expect(app.handleInput('\x04')).toEqual({
       quit: true,
       consumed: true,
@@ -180,7 +209,7 @@ describe('tui app root (issue #75)', () => {
     });
   });
 
-  it('clears a composed draft on Esc before quitting (issue #302)', () => {
+  it('keeps a composed draft on Esc (issue #302, #454)', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
@@ -188,24 +217,12 @@ describe('tui app root (issue #75)', () => {
       approvalsSkipped: false,
     });
     for (const ch of 'hello') app.handleInput(ch);
+    expect(app.handleInput('\x1b')).toEqual(CONSUMED);
+    expect(app.handleInput('\x1b')).toEqual(CONSUMED);
     expect(app.editor.getText()).toBe('hello');
-    // The first Esc clears the draft — one press must never throw away a
-    // composed prompt — and the session stays.
-    expect(app.handleInput('\x1b')).toEqual({
-      quit: false,
-      consumed: true,
-      cancel: false,
-    });
-    expect(app.editor.getText()).toBe('');
-    // Only a second Esc, on the now-empty draft, quits.
-    expect(app.handleInput('\x1b')).toEqual({
-      quit: true,
-      consumed: true,
-      cancel: false,
-    });
   });
 
-  it('clears a composed draft on idle Ctrl-C before quitting (issue #302)', () => {
+  it('clears a composed draft on idle Ctrl-C before arming (issue #302)', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
@@ -213,12 +230,11 @@ describe('tui app root (issue #75)', () => {
       approvalsSkipped: false,
     });
     for (const ch of 'hi') app.handleInput(ch);
-    expect(app.handleInput('\x03')).toEqual({
-      quit: false,
-      consumed: true,
-      cancel: false,
-    });
+    expect(app.handleInput('\x03')).toEqual(CONSUMED);
     expect(app.editor.getText()).toBe('');
+    expect(app.render(100).join('\n')).toContain('^C: draft cleared');
+    // The empty editor now arms; only the press after that quits.
+    expect(app.handleInput('\x03')).toEqual(CONSUMED);
     expect(app.handleInput('\x03')).toEqual({
       quit: true,
       consumed: true,
@@ -226,7 +242,7 @@ describe('tui app root (issue #75)', () => {
     });
   });
 
-  it('routes Esc through the cancel-first path while a turn runs (issue #302)', () => {
+  it('interrupts a running turn on Esc without quitting (issue #454)', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
@@ -235,12 +251,55 @@ describe('tui app root (issue #75)', () => {
     });
     app.setBusy(true);
     for (const ch of 'queued thought') app.handleInput(ch);
-    // Busy: Esc is a cancel, exactly like Ctrl-C — the root aborts the turn
-    // and keeps the session, so the draft is NOT silently dropped either.
+    // Busy: Esc is an interrupt — the root aborts the turn and keeps the
+    // session; the draft stays for the next turn.
     expect(app.handleInput('\x1b')).toEqual({
+      quit: false,
+      consumed: true,
+      cancel: true,
+      interrupt: true,
+    });
+    expect(app.editor.getText()).toBe('queued thought');
+    // Ctrl-C during a turn keeps its cancel-then-quit classification.
+    expect(app.handleInput('\x03')).toEqual({
       quit: true,
       consumed: true,
       cancel: true,
+    });
+  });
+
+  it('closes the editor dropdown on Esc before anything else (issue #454)', () => {
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+    const showing = vi
+      .spyOn(app.editor, 'isShowingAutocomplete')
+      .mockReturnValue(true);
+    const forwarded = vi.spyOn(app.editor, 'handleInput');
+    app.setBusy(true);
+    expect(app.handleInput('\x1b')).toEqual(CONSUMED);
+    expect(forwarded).toHaveBeenCalledWith('\x1b');
+    showing.mockRestore();
+  });
+
+  it('still quits through an operator-bound app.exit key', () => {
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+      keys: createKeyRegistry({ 'app.exit': ['ctrl+q'] }),
+    });
+    for (const ch of 'draft') app.handleInput(ch);
+    expect(app.handleInput('\x11')).toEqual(CONSUMED);
+    expect(app.editor.getText()).toBe('');
+    expect(app.handleInput('\x11')).toEqual({
+      quit: true,
+      consumed: true,
+      cancel: false,
     });
   });
 
@@ -554,7 +613,11 @@ describe('queued follow-ups and steers while a turn runs (issue #334)', () => {
     for (const ch of 'dropped') refused.handleInput(ch);
     refused.handleInput('\r');
     const doc = refused.render(100).join('\n');
-    expect(doc).not.toContain('› dropped');
+    // No pending echo in the transcript (the editor's own `›` caret shows the
+    // restored draft below).
+    expect(refused.transcript.render(100).join('\n')).not.toContain(
+      '› dropped',
+    );
     expect(doc).toContain('error: an orchestrator run is in flight');
     // Issue #334 (review): a refused prompt never eats the draft — Pi's
     // editor cleared it before onSubmit fired, so it is put back.
@@ -1204,7 +1267,7 @@ describe('lane activity on the footer (issue #150)', () => {
     const ui = app();
     ui.applyPresentation(presentation({ compacting: true }));
     expect(footer(ui).trimEnd()).toMatchInlineSnapshot(
-      `"⟳ compacting context…"`,
+      `" ⟳ compacting context…"`,
     );
   });
 });

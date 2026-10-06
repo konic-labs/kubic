@@ -85,6 +85,7 @@ describe('retry activity on the kubic tui footer (issue #150)', () => {
     );
     await waitFor(() => fake.frame.includes('recovered'));
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     // The document printed on quit is the whole layout, editor row included:
     // the retry line is gone once the retry settled.

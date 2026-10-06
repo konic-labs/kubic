@@ -160,6 +160,7 @@ describe('kubic tui --session after a crash (issue #147)', () => {
       "model: session keeps its own model 'faux/a'",
     );
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
   });
 });

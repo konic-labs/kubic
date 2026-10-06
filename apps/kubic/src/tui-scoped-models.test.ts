@@ -203,6 +203,7 @@ describe('scoped role set on the TUI lane (issue #255)', () => {
       fake.writes.join('').includes("role 'reviewer' allows local/* only"),
     );
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
   });
 
@@ -229,6 +230,7 @@ describe('scoped role set on the TUI lane (issue #255)', () => {
         .join('')
         .includes('no role on this lane — every registered model is allowed'),
     );
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
   });

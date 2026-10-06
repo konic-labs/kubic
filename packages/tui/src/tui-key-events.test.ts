@@ -44,12 +44,25 @@ describe('key-release events are presses only once (issue #306)', () => {
 
   it('the Ctrl-C release after a cancel press is neither a quit nor a cancel', () => {
     const target = app();
+    target.setBusy(true);
     expect(target.handleInput(press(cp('c')))).toEqual({
       quit: true,
       consumed: true,
       cancel: true,
     });
     expect(target.handleInput(release(cp('c')))).toEqual(NOT_QUIT);
+  });
+
+  it('an idle Ctrl-C release never counts as the second press (issue #454)', () => {
+    const target = app();
+    // The press arms the double-press quit; its key-up must not complete it.
+    expect(target.handleInput(press(cp('c')))).toEqual(NOT_QUIT);
+    expect(target.handleInput(release(cp('c')))).toEqual(NOT_QUIT);
+    expect(target.handleInput(press(cp('c')))).toEqual({
+      quit: true,
+      consumed: true,
+      cancel: true,
+    });
   });
 
   it('an Esc press denies a shown approval and its release does not quit', async () => {
@@ -171,6 +184,7 @@ describe('key-release events are presses only once (issue #306)', () => {
     const target = app();
     expect(target.handleInput('\x0f')).toEqual(NOT_QUIT);
     expect(target.panelMode()).toBe('diff');
+    expect(target.handleInput('\x03')).toEqual(NOT_QUIT);
     expect(target.handleInput('\x03')).toEqual({
       quit: true,
       consumed: true,

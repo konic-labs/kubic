@@ -242,6 +242,7 @@ describe('kubic tui: the audit row names the model the lane runs (issues #148, #
     fake.feed('d');
     await waitFor(() => fake.frame.includes('after deny'));
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     const record = readAuditLedger(auditLedgerDir(workspace)).find(
       (r) => r.what === 'tool:bash',
@@ -275,6 +276,7 @@ describe('kubic tui: the audit row names the model the lane runs (issues #148, #
     await waitFor(() => fake.frame.includes('Approval required'));
     fake.feed('d');
     await waitFor(() => fake.frame.includes('after deny'));
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     const record = readAuditLedger(auditLedgerDir(workspace)).find(

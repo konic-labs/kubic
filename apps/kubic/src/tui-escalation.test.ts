@@ -327,6 +327,7 @@ describe('configured ladder on the TUI lane (issue #210)', () => {
         .includes('escalation: local/a → local/b (/model local/b)'),
     );
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
   });
 

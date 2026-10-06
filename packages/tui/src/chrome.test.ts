@@ -166,7 +166,7 @@ describe('key-hint sets (01-M)', () => {
         ['^O', 'diff'],
         ['^R', 'journal'],
       ],
-      right: ['^C', 'quit'],
+      right: ['^C ^C', 'quit'],
     });
     const rich = keyHintSet('idle', DEFAULT_KEY_REGISTRY, {
       files: true,
@@ -189,7 +189,7 @@ describe('key-hint sets (01-M)', () => {
         ['^X', 'expand output'],
         ['^P', 'palette'],
       ],
-      right: ['^C', 'cancel'],
+      right: ['^C ^C', 'quit'],
     });
     const orchestrator = keyHintSet('working', DEFAULT_KEY_REGISTRY, {
       queues: false,

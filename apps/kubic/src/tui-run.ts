@@ -4842,6 +4842,61 @@ export async function runTuiCommand(
         }
         return { consume: true };
       }
+      // The interrupt both keys share: Ctrl-C's first press during a turn
+      // and Esc (issue #454). The footer is set synchronously so the
+      // cancellation is visible on the very next frame — the abort itself is
+      // async.
+      const interruptTurn = (running: TuiTurnDriver): void => {
+        // Issue #334: the queue is pi-durable's, and the abort withdraws
+        // every queued input with it (`conversation.abort()`). Count what
+        // goes so the cancelled turns' footers can say it, instead of the
+        // prompts silently vanishing.
+        droppedOnCancel = queuedCount();
+        app.setEditorFooter('cancelling…');
+        app.setCancelling(true);
+        screen?.render();
+        void running
+          .cancel()
+          .then((accepted) => {
+            if (stopped) return;
+            // A refused abort must never be silent: without this the
+            // operator presses the key, the lane refuses (requestLaneAbort
+            // throws LaneDriveError), and the screen shows nothing — a
+            // no-op key with no explanation. The loop keeps running.
+            if (!accepted) {
+              droppedOnCancel = 0;
+              app.setCancelling(false);
+              app.setEditorFooter('cancel failed — turn still running');
+            }
+            screen?.render();
+          })
+          .catch((error: unknown) => {
+            if (stopped) return;
+            app.setCancelling(false);
+            app.setEditorFooter(
+              `cancel failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            screen?.render();
+          });
+      };
+      // Issue #454: Esc interrupts a running turn and never quits — a second
+      // Esc while the interrupt drains does nothing, and a lane that cannot
+      // cancel says so instead of quitting.
+      if (routed.interrupt === true) {
+        const running = activeTurn;
+        if (running?.isRunning() === true) {
+          if (!running.canCancel()) {
+            app.setEditorFooter(
+              `this run cannot be interrupted here — press ${keys.label('app.interrupt')} twice to quit`,
+            );
+          } else if (!running.isCancelling()) {
+            interruptTurn(running);
+            return { consume: true };
+          }
+        }
+        screen?.update();
+        return { consume: true };
+      }
       if (routed.quit) {
         if (routed.cancel && activeTurn?.isRunning()) {
           // Issue #327: a lane that cannot cancel never fakes it — Ctrl-C
@@ -4854,41 +4909,9 @@ export async function runTuiCommand(
           // Ctrl-C during a turn. The first one cancels the operation and
           // keeps the session alive; a second one (while the cancellation is
           // still draining) quits, which is the contract docs/cli/commands.md
-          // ships. The footer is set synchronously so the cancellation is
-          // visible on the very next frame — the abort itself is async.
+          // ships.
           if (!activeTurn.isCancelling()) {
-            const cancelling = activeTurn;
-            // Issue #334: the queue is pi-durable's, and the abort withdraws
-            // every queued input with it (`conversation.abort()`). Count what
-            // goes so the cancelled turns' footers can say it, instead of
-            // the prompts silently vanishing.
-            droppedOnCancel = queuedCount();
-            app.setEditorFooter('cancelling…');
-            app.setCancelling(true);
-            screen?.render();
-            void cancelling
-              .cancel()
-              .then((accepted) => {
-                if (stopped) return;
-                // A refused abort must never be silent: without this the
-                // operator presses Ctrl-C, the lane refuses (requestLaneAbort
-                // throws LaneDriveError), and the screen shows nothing —
-                // a no-op key with no explanation. The loop keeps running.
-                if (!accepted) {
-                  droppedOnCancel = 0;
-                  app.setCancelling(false);
-                  app.setEditorFooter('cancel failed — turn still running');
-                }
-                screen?.render();
-              })
-              .catch((error: unknown) => {
-                if (stopped) return;
-                app.setCancelling(false);
-                app.setEditorFooter(
-                  `cancel failed: ${error instanceof Error ? error.message : String(error)}`,
-                );
-                screen?.render();
-              });
+            interruptTurn(activeTurn);
             return { consume: true };
           }
         }

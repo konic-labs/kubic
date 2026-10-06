@@ -287,7 +287,7 @@ describe('terminal restore on every exit path (issue #313)', () => {
   it('the normal quit drains stdin before the terminal stops', async () => {
     const run = start(viewerBoot([]));
     await waitFor(() => run.fake.counts.started === 1);
-    run.fake.feed('\x1b');
+    run.fake.feed('\x04');
     expect(await run.exit).toBe(0);
     const drain = run.log.indexOf('DRAIN');
     expect(drain).toBeGreaterThanOrEqual(0);
@@ -311,6 +311,7 @@ describe('terminal restore on every exit path (issue #313)', () => {
     );
     await waitFor(() => fake.counts.started === 1);
     expect(process.listenerCount('SIGTERM')).toBe((before[1] ?? 0) + 1);
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
     expect(names.map((name) => process.listenerCount(name))).toEqual(before);
@@ -358,7 +359,7 @@ describe('the final document reaches the main screen (issue #314)', () => {
     await waitFor(() => settled);
     // Let the settlement paint land before quitting.
     await new Promise((resolve) => setTimeout(resolve, 20));
-    run.fake.feed('\x1b');
+    run.fake.feed('\x04');
     expect(await run.exit).toBe(0);
     const exitAlt = run.log.findIndex(
       (entry) => entry.startsWith('TERM:') && entry.includes('?1049l'),

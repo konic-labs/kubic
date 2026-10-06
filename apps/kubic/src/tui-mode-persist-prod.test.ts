@@ -69,7 +69,7 @@ describe('persisted session mode (issue #276)', () => {
     await waitFor(() => first.fake.counts.started === 1);
     first.fake.feed('\x07');
     await waitFor(() => first.fake.frame.includes('orchestrator'));
-    first.fake.feed('\x1b');
+    first.fake.feed('\x04');
     expect(await first.exit).toBe(0);
     const [id] = readdirSync(sessionsRoot).filter((e) => !e.startsWith('.'));
     expect(
@@ -81,14 +81,14 @@ describe('persisted session mode (issue #276)', () => {
     // Reattach: the status bar starts in orchestrator mode.
     const again = open(id);
     await waitFor(() => again.fake.counts.started === 1);
-    again.fake.feed('\x1b');
+    again.fake.feed('\x04');
     expect(await again.exit).toBe(0);
     expect(again.lines.join('\n')).toContain('orchestrator');
 
     // A fresh session (no saved toggle, no config default) starts solo.
     const fresh = open();
     await waitFor(() => fresh.fake.counts.started === 1);
-    fresh.fake.feed('\x1b');
+    fresh.fake.feed('\x04');
     expect(await fresh.exit).toBe(0);
     expect(fresh.lines.join('\n')).not.toContain('orchestrator');
   });

@@ -225,7 +225,9 @@ describe('a light theme on the status bar (issue #304)', () => {
     expect(markdownThemeFor(theme).heading('x')).toBe(
       '\u001b[1;38;2;208;0;63mx\u001b[22;39m',
     );
-    expect(editorTheme().borderColor('x')).toBe(
+    // Issue #454: the editor's autocomplete list takes the palette (its
+    // rules only carry the frame's marker).
+    expect(editorTheme().selectList.selectedPrefix('x')).toBe(
       '\u001b[38;2;208;0;63mx\u001b[39m',
     );
   });

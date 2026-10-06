@@ -418,6 +418,7 @@ describe('kubic tui parses the parity flags (issue #113)', () => {
     );
     await waitFor(() => fake.counts.started === 1);
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(captured).toEqual({
       role: 'planner',

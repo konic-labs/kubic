@@ -277,7 +277,7 @@ describe('the TUI consumes [modes] orchestrator (issue #327)', () => {
     await waitFor(() => fake.counts.started === 1);
     expect(fake.writes.join('')).toContain('[ORCHESTRATOR] approvals on');
     expect(fake.writes.join('')).toContain('faux/m · off');
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 
@@ -300,7 +300,7 @@ describe('the TUI consumes [modes] orchestrator (issue #327)', () => {
     const exit = runTuiCommand({}, deps);
     await waitFor(() => fake.counts.started === 1);
     expect(fake.writes.join('')).toContain('[SOLO] approvals on');
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 });
@@ -373,7 +373,7 @@ describe('the TUI selects the pinned model (issue #295)', () => {
     );
     const exit = runTuiCommand({}, deps);
     await waitFor(() => fake.writes.join('').includes('fx/b'));
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
     const doc = lines.join('\n');
     // The welcome block (`model fx/b`) and the status line both name the
@@ -393,7 +393,7 @@ describe('the TUI selects the pinned model (issue #295)', () => {
     );
     const exit = runTuiCommand({}, deps);
     await waitFor(() => fake.counts.started === 1);
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
     expect(lines.join('\n')).toContain('fx/b');
     expect(lines.join('\n')).not.toContain('fx/a');

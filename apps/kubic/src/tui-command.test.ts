@@ -63,8 +63,9 @@ describe('kubic tui (issue #75)', () => {
     );
     await waitFor(() => terminal.started === 1);
     input('T');
-    // Issue #302: with the draft on screen the first Ctrl-C clears it and
-    // the second one quits.
+    // Issue #302/#454: with the draft on screen the first Ctrl-C clears it;
+    // the double press after it quits.
+    input('\x03');
     input('\x03');
     input('\x03');
     const code = await pending;
@@ -107,6 +108,7 @@ describe('kubic tui (issue #75)', () => {
     );
     await waitFor(() => terminal.started === 1);
     input('\x03');
+    input('\x03');
     expect(await pending).toBe(0);
     expect(seen).toEqual(['abc']);
   });
@@ -122,6 +124,7 @@ describe('kubic tui (issue #75)', () => {
       deps(terminal, { out: (l) => lines.push(l) }),
     );
     await waitFor(() => terminal.started === 1);
+    input('\x03');
     input('\x03');
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
@@ -239,6 +242,7 @@ describe('kubic tui colour isolation (issue #319)', () => {
     );
     await waitFor(() => terminal.started === 1);
     input('\x03');
+    input('\x03');
     expect(await pending).toBe(0);
     expect(lines.join('\n')).toContain('[SOLO] approvals on');
     // No Konic palette colour reached the document (truecolor SGR 38;2).
@@ -256,6 +260,7 @@ describe('kubic tui colour isolation (issue #319)', () => {
     );
     await waitFor(() => terminal.started === 1);
     expect(tuiTheme().level).toBe('truecolor');
+    input('\x03');
     input('\x03');
     expect(await pending).toBe(0);
     expect(tuiTheme().level).toBe('none');
@@ -295,6 +300,7 @@ describe('kubic tui keybindings file (issue #303)', () => {
       }),
     );
     await waitFor(() => terminal.started === 1);
+    input('\x03');
     input('\x03');
     expect(await pending).toBe(0);
     expect(errors).toContain(

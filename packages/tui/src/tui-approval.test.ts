@@ -102,7 +102,7 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
     });
   });
 
-  it('leaves Esc as quit when nothing is pending', () => {
+  it('leaves Esc a harmless no-op when nothing is pending (issue #454)', () => {
     const app = createTuiApp({
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
@@ -111,7 +111,7 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
       approvalsSkipped: false,
     });
     expect(app.handleInput('\u001b')).toEqual({
-      quit: true,
+      quit: false,
       consumed: true,
       cancel: false,
     });

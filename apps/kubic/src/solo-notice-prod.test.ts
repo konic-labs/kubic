@@ -358,6 +358,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     const frame = fake.writes.join('');
     expect(frame).toContain(soloTuiLine());
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     // The restored main screen renders the same live root, so the operator
     // reads the same line after quitting as in the alt-screen.
@@ -379,6 +380,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     const frame = fake.writes.join('');
     expect(frame).toContain(FAUX_FOOTER);
     expect(frame).toContain(soloTuiLine());
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
   });
@@ -420,6 +422,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     );
     expect(second).toContain('there is no containment');
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     // The final document keeps the badge and the welcome block's line.
     expect(lines.join('\n')).toContain('[SOLO] approvals on');
@@ -444,6 +447,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     );
     await waitFor(() => fake.started() === 1);
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.writes.join('')).not.toContain('no isolation');
     expect(lines.join('\n')).not.toContain('no isolation');
@@ -466,6 +470,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
       },
     );
     await waitFor(() => fake.started() === 1);
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.writes.join('')).not.toContain('no isolation');

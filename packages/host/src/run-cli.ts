@@ -8,6 +8,7 @@
 // flows through the injected persist hook identically for text and
 // --json output.
 
+import { BUDGET_DIMENSIONS, type RunMode } from '../../agents/src/budget.js';
 import {
   EXIT_APPROVAL,
   EXIT_BUDGET,
@@ -21,6 +22,7 @@ import {
 import {
   type ClassifiedFailure,
   classifyFailure,
+  type RetryDecision,
 } from '../../worker/src/lane/failures.js';
 import type { OperationErrorLike } from '../../worker/src/lane/settle.js';
 import {
@@ -203,6 +205,13 @@ export function failureForTerminus(
   }
 }
 
+// Issue #209 review: the chooser's decision plus the executor's report —
+// whether the retry happened. Retried-then-failed carries retried: true;
+// decided-to-retry-but-compaction-refused and abandoned carry false.
+export interface RetryRecord extends RetryDecision {
+  retried: boolean;
+}
+
 export interface HeadlessRunResult {
   terminus: RunTerminusKind;
   summary: string;
@@ -215,6 +224,9 @@ export interface HeadlessRunResult {
   // strategy) — the precise half the terminus cannot carry. Absent on
   // termini with no §52 code (`timeout`, `cancelled`, `usage`).
   failure?: ClassifiedFailure;
+  // Issue #209: the retry decision when the lane made one (solo overflow
+  // recovery) — strategy, reason and notBefore, also on success.
+  retry?: RetryRecord;
   // Issue #280: the interrupt that ended the run, present exactly when the
   // terminus is `cancelled`; the exit code is 128+signo from it.
   signal?: string;
@@ -226,6 +238,17 @@ export interface HeadlessRunResult {
   // The approval posture the lane ran under (issue #308): 'full-access'
   // when the session skips approvals. Absent when no lane was installed.
   posture?: 'approvals' | 'full-access';
+  // The run's §19 mode (issue #278): explicit `--autonomous` or off by
+  // default. Absent when no session was ever created (same bound as
+  // posture — the mode is read from the session record).
+  mode?: RunMode;
+  // The §71 budget breach that ended the run (issue #285): the
+  // worker-facet limit name (`tokens` | `cost` | `toolCalls` |
+  // `wallClock`), with the measured spend and the bound when the breach
+  // site knew them (a post-turn ledger breach does; a mid-turn gate trip
+  // names the limit only). Present exactly on `budget_exhausted` runs
+  // that tripped a configured solo budget.
+  budgetBreach?: { limit: string; used?: number; max?: number };
 }
 
 export interface RunUsage {
@@ -249,6 +272,9 @@ export interface RunEnvelope {
   model?: string;
   // Issue #308: scripted callers detect a full-access session here.
   approvals?: { posture: 'approvals' | 'full-access' };
+  // Issue #278 (§19): the §19 mode the run resolved; the status already
+  // names the stop condition that ended it.
+  mode?: RunMode;
   error?: { kind: string; message: string };
   // Issue #155: the §52 failure code, remedy and retry strategy, additive.
   failure?: ClassifiedFailure;
@@ -274,6 +300,7 @@ export function buildRunEnvelope(
     ...(result.posture === undefined
       ? {}
       : { approvals: { posture: result.posture } }),
+    ...(result.mode === undefined ? {} : { mode: result.mode }),
     ...(result.error === undefined ? {} : { error: result.error }),
     ...(failure === undefined ? {} : { failure }),
   };
@@ -294,11 +321,22 @@ export interface RunCommandDeps extends CliIo {
       // §12.1 role selection (issue #99): forwarded to the runner, which
       // loads `.kubic/roles/<name>.md` and fails closed on a refusal.
       role?: string;
+      // Issue #183 (§29.4): the explicit skill to invoke — forwarded to
+      // the runner, which expands it against the booted (gated-visible)
+      // skills and fails the run on an unknown name.
+      invokeSkill?: string;
       // §50 debug channel (issue #98): a boolean request is forwarded to the
       // runner, which owns the sink (stderr in prod). Never gates the run.
       debug?: boolean;
       // §41.4 (issue #308): forwarded to the runner's one enable path.
       dangerouslySkipApprovals?: boolean;
+      // §19 (issue #278): explicit autonomous mode, recorded in session
+      // metadata and the §60 audit trail, driving RunMode.
+      autonomous?: boolean;
+      // §71 (issue #283): the opt-in solo budget, parsed by the
+      // registrar — forwarded to the runner, which builds the bundle
+      // with it. Absent means no limits, never defaults.
+      budget?: SoloBudgetLimits;
       // §40.1 mechanism 1 (issue #273): the per-invocation tool selection.
       tools?: readonly string[];
       noTools?: boolean;
@@ -336,10 +374,16 @@ export interface RunCommandOptions {
   readonly role?: string;
   readonly skills?: readonly string[];
   readonly noSkills?: boolean;
+  // Issue #183 (§29.4): invoke one explicit skill first (run only).
+  readonly invokeSkill?: string;
   readonly debug?: boolean;
   readonly json?: boolean;
   // §41.4 (issue #308): session-scoped full access for this run's session.
   readonly dangerouslySkipApprovals?: boolean;
+  // §19 (issue #278): explicit autonomous mode (off by default).
+  readonly autonomous?: boolean;
+  // §71 (issue #283): the opt-in solo budget (never defaulted).
+  readonly budget?: SoloBudgetLimits;
   // §40.1 mechanism 1 (issue #273): `--tools <a,b>` / `--no-tools`.
   readonly tools?: readonly string[];
   readonly noTools?: boolean;
@@ -373,6 +417,69 @@ export function parseRunTimeout(value: string): number {
 // `--max-turns <n>`: a positive integer.
 export function parseRunMaxTurns(value: string): number {
   return positiveInt(value);
+}
+
+// `--budget <dims>` (issue #283; §71): the opt-in solo budget, reusing
+// orchestrate's dimension grammar (`maxToolCalls=10,maxCostUsd=0.5`) but
+// WITHOUT agent scoping — a solo run has one lane, so an `agent:` clause
+// is a usage error naming the flag. No defaults: absence leaves the key
+// out upstream. Host never imports the extensions package (structural
+// boundary, like doctor's posture), so this returns the structural shape
+// and the composition root maps it onto the bundle's `BudgetLimits`.
+export interface SoloBudgetLimits {
+  maxTokens?: number;
+  maxCostUsd?: number;
+  maxRuntimeMs?: number;
+  maxToolCalls?: number;
+}
+
+export function parseSoloBudget(value: string): SoloBudgetLimits {
+  // Bare dims only — no `agent:` clauses, no `;` separators: a solo run
+  // has one lane, so anything agent-shaped is refused naming the flag.
+  // Same dimension/positivity/ceiling rules as orchestrate's grammar.
+  const dims: Record<string, number> = {};
+  for (const part of value.split(',')) {
+    const trimmed = part.trim();
+    if (trimmed.length === 0) {
+      throw new RunArgumentError(
+        `--budget ${JSON.stringify(value)}: need dims like maxToolCalls=10,maxCostUsd=0.5`,
+      );
+    }
+    const equals = trimmed.indexOf('=');
+    if (equals <= 0) {
+      throw new RunArgumentError(
+        `--budget ${JSON.stringify(value)}: need dims like maxToolCalls=10,maxCostUsd=0.5`,
+      );
+    }
+    const name = trimmed.slice(0, equals).trim();
+    const amount = Number(trimmed.slice(equals + 1));
+    if (
+      !BUDGET_DIMENSIONS.includes(name) ||
+      !Number.isFinite(amount) ||
+      !(amount > 0) ||
+      (name === 'maxRuntimeMs' && amount > MAX_RUN_TIMEOUT_MS)
+    ) {
+      throw new RunArgumentError(
+        `--budget ${JSON.stringify(value)}: need dims like maxToolCalls=10,maxCostUsd=0.5`,
+      );
+    }
+    dims[name] = amount;
+  }
+  if (Object.keys(dims).length === 0) {
+    throw new RunArgumentError(
+      `--budget ${JSON.stringify(value)}: need dims like maxToolCalls=10,maxCostUsd=0.5`,
+    );
+  }
+  return {
+    ...(dims.maxTokens === undefined ? {} : { maxTokens: dims.maxTokens }),
+    ...(dims.maxCostUsd === undefined ? {} : { maxCostUsd: dims.maxCostUsd }),
+    ...(dims.maxRuntimeMs === undefined
+      ? {}
+      : { maxRuntimeMs: dims.maxRuntimeMs }),
+    ...(dims.maxToolCalls === undefined
+      ? {}
+      : { maxToolCalls: dims.maxToolCalls }),
+  };
 }
 
 // `--session <id>` (and every other session-id argument): a path segment
@@ -516,12 +623,18 @@ export async function runRunCommand(
       timeoutMs: options.timeoutMs,
       maxTurns: options.maxTurns,
       ...(options.role === undefined ? {} : { role: options.role }),
+      // Issue #183 (§29.4): the explicit skill invocation travels with
+      // the run into the headless lane.
+      ...(options.invokeSkill === undefined
+        ? {}
+        : { invokeSkill: options.invokeSkill }),
       ...(options.noSkills === true ? { noSkills: true } : {}),
       ...(skills.length === 0 ? {} : { skills: [...skills] }),
       ...(options.debug === true ? { debug: true } : {}),
       ...(options.dangerouslySkipApprovals === true
         ? { dangerouslySkipApprovals: true }
         : {}),
+      ...(options.budget === undefined ? {} : { budget: options.budget }),
       ...(options.tools === undefined || options.tools.length === 0
         ? {}
         : { tools: [...options.tools] }),

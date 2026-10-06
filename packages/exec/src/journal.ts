@@ -22,9 +22,32 @@ import {
   withFileLocked,
 } from './file-bridge.js';
 import { type IgnoreRule, isIgnored, parseIgnoreFile } from './ignore.js';
+import {
+  captureHeadState,
+  type GitBaseline,
+  type GitCommand,
+  type HeadState,
+  readGitBlob,
+  sameHeadState,
+} from './journal-git.js';
+
+// Issue #378: undo/status display the marker's from→to through this hub.
+export type { HeadState } from './journal-git.js';
+
 import { tightenStateDir } from './lock-file.js';
 
-export type JournalOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
+export type JournalOp =
+  | 'write'
+  | 'edit'
+  | 'create'
+  | 'delete'
+  | 'rename'
+  // Issue #378: not a file change — a HEAD-move marker the sweep appends
+  // when the run moved git HEAD (`checkout`, `reset`, `stash`). Carries
+  // `headFrom`/`headTo`, never content; every file-content consumer
+  // (diff, restore, staleness) skips it, while undo treats it as a barrier
+  // (`--force` to cross) and status/log surface it.
+  | 'marker';
 
 // Above this many bytes of new content, the after-side is stored as a
 // line delta instead of a full blob. The before-blob is always kept whole:
@@ -116,12 +139,27 @@ export interface JournalEntryInput {
   timestamp: number;
   unattributed?: boolean;
   /**
-   * Issue #374 (§42.1): the interactive turn a reconciliation sweep entry
-   * belongs to — 1 for the session's first prompt in this process. Absent on
-   * tool-journaled entries (their toolCallId already attributes them) and on
-   * every entry written before the field existed.
+   * Issue #374 (§42.1): the interactive turn the entry belongs to — 1 for
+   * the session's first prompt in this process. Reconciliation sweep
+   * entries carry the turn they swept; tool-journaled entries carry the
+   * turn in flight when the call ran (issue #436; TUI only — headless
+   * runs are turn-less). Absent on every entry written before the field
+   * existed.
    */
   turn?: number;
+  /**
+   * Issue #335: the tool that journaled the entry (`write`, `edit`) —
+   * recorded at interception from the op name. Absent on reconciliation
+   * finds (no tool ran) and on every entry written before the field
+   * existed; `diff --stat` and `--json` render it when present.
+   */
+  toolName?: string;
+  /**
+   * Issue #378: set only on `op: 'marker'` entries — the HEAD state before
+   * and after the move the sweep observed. Absent on every file entry.
+   */
+  headFrom?: HeadState;
+  headTo?: HeadState;
 }
 
 export interface JournalIndexRead {
@@ -168,6 +206,8 @@ export interface JournalEntry {
   unattributed?: boolean;
   /** Issue #374: see JournalEntryInput.turn. */
   turn?: number;
+  /** Issue #335: see JournalEntryInput.toolName. */
+  toolName?: string;
   /** True when the delta was encoded against '' (reconciliation entries with
    *  no before-blob). Absent on pre-schema entries — see readAfter fallback. */
   deltaBaseEmpty?: boolean;
@@ -179,6 +219,9 @@ export interface JournalEntry {
   beforeOmitted?: boolean;
   /** The observed size in bytes of an afterOmitted entry's file. */
   afterBytes?: number;
+  /** Issue #378: see JournalEntryInput.headFrom/headTo. */
+  headFrom?: HeadState;
+  headTo?: HeadState;
 }
 
 export interface RetentionPolicy {
@@ -611,6 +654,12 @@ export class FileJournalStore {
       timestamp: input.timestamp,
       ...(input.unattributed === true ? { unattributed: true } : {}),
       ...(input.turn === undefined ? {} : { turn: input.turn }),
+      // Issue #335: the intercepting tool's name — carried like `turn` so
+      // pre-schema index lines (no such key) keep reading as before.
+      ...(input.toolName === undefined ? {} : { toolName: input.toolName }),
+      // Issue #378: the marker's from→to — data only, no blobs.
+      ...(input.headFrom === undefined ? {} : { headFrom: input.headFrom }),
+      ...(input.headTo === undefined ? {} : { headTo: input.headTo }),
       // Issue #111: record the base the delta was actually encoded against
       // (append computed it as `input.before ?? ''`), so readAfter never has
       // to guess. Exactly the reconcile/create shape: no before-content.
@@ -1357,6 +1406,27 @@ export interface BaselineOptions {
    * a boot capture has none, and an unlistable directory contributes nothing.
    */
   previous?: Baseline;
+  /**
+   * Issue #371: boot-time index blob OIDs for stat-clean tracked files
+   * (see `journal-git.ts` `captureGitBaseline`). Absent or null outside git
+   * repositories (fail-open) — the sweep then records exactly today's
+   * hash-only shape. Carried on the walk options so the run lifecycle can
+   * pass it through; `captureBaseline` itself ignores it.
+   */
+  gitBaseline?: GitBaseline | null;
+  /**
+   * Issue #371: seam for the object-store reads (tests script it;
+   * production spawns `git cat-file`). Issue #378 reuses it for the
+   * sweep's HEAD-state comparison.
+   */
+  gitRun?: GitCommand;
+  /**
+   * Issue #378: HEAD state at boot (`captureHeadState`). When present, the
+   * sweep compares it against the current state and appends one `marker`
+   * entry per observed move. Absent or null outside git repositories
+   * (fail-open) — no marker, no error.
+   */
+  headBaseline?: HeadState | null;
 }
 
 // §35 out-of-scope paths (issue #115): an entry excludes the path itself and
@@ -1886,11 +1956,36 @@ function regularFileStillThere(
   }
 }
 
+// Issue #371: the pre-image for a sweep find from the git object store.
+// The OID was recorded at boot for a file clean against the index, and the
+// object store is content-addressed, so the bytes are exactly the boot
+// content — but only a pre-image matching the boot baseline hash may be
+// journaled as one. A mismatch (a racy index update between the OID capture
+// and the walk, clean/smudge filters, CRLF checkout) keeps today's hash-only
+// shape rather than restoring the wrong content. Binary content (a lossy
+// utf-8 decode) and pre-images above the sweep content bound are likewise
+// hash-only — the same bound the after-side obeys on the run's exit path.
+function gitBeforeContent(
+  root: string,
+  relPath: string,
+  expected: string,
+  options: BaselineOptions,
+): string | null {
+  const oid = options.gitBaseline?.[relPath];
+  if (oid === undefined) return null;
+  const bytes = readGitBlob(root, oid, MAX_SWEEP_CONTENT_BYTES, options.gitRun);
+  if (bytes === null) return null;
+  const text = decodeLossless(bytes);
+  if (text === null) return null;
+  return sha256Hex(text) === expected ? text : null;
+}
+
 // End-of-run sweep: whatever moved without interception gets an
 // unattributed entry — sed -i, npm install fallout, formatters, builds.
-// Before-content is unknowable for these (the baseline holds hashes, not
-// copies), so beforeHash is recorded but no before-blob exists: undo of
-// unattributed entries is reported non-reversible by the next issue's CLI.
+// Before-content comes from the git object store when the path was clean
+// against the index at boot (issue #371); otherwise the baseline holds
+// hashes, not copies, so beforeHash is recorded but no before-blob exists:
+// undo of those unattributed entries is reported non-reversible.
 export function reconcile(
   store: FileJournalStore,
   baseline: Baseline,
@@ -1913,6 +2008,9 @@ export function reconcile(
   // `null` = expected absent.
   const sinceStart = new Map<string, string | null>();
   for (const e of entriesSinceRunStart(store.entries(), ctx.runStart)) {
+    // Issue #378: markers are not file state — they never define a path's
+    // expected content (their empty path must not become a lookup key).
+    if (e.op === 'marker') continue;
     // Tools journal `args.path` verbatim (absolute or './'-prefixed), while
     // the walk keys are root-relative: normalize before keying, and drop a
     // path outside the root — it is never a sweep candidate.
@@ -1932,16 +2030,30 @@ export function reconcile(
   const record = (input: {
     path: string;
     op: JournalEntryInput['op'];
+    before: string | null;
     beforeHash: string | null;
     after: string | null;
     afterHash?: string;
     afterOmitted?: boolean;
     afterBytes?: number;
   }): void => {
+    // Issue #371: the sweep's byte delta, computed when both sides are
+    // known — a create grows from absent (0), a delete shrinks to it, and a
+    // write is the difference. Unknown stays 0, exactly today's shape.
+    const beforeLen =
+      input.before === null
+        ? input.op === 'create'
+          ? 0
+          : null
+        : Buffer.byteLength(input.before, 'utf8');
+    const afterLen =
+      input.after === null
+        ? (input.afterBytes ?? (input.op === 'delete' ? 0 : null))
+        : Buffer.byteLength(input.after, 'utf8');
     store.append({
       path: input.path,
       op: input.op,
-      before: null,
+      before: input.before,
       beforeHash: input.beforeHash,
       after: input.after,
       ...(input.afterHash === undefined ? {} : { afterHash: input.afterHash }),
@@ -1949,7 +2061,8 @@ export function reconcile(
       ...(input.afterBytes === undefined
         ? {}
         : { afterBytes: input.afterBytes }),
-      bytesDelta: 0,
+      bytesDelta:
+        beforeLen !== null && afterLen !== null ? afterLen - beforeLen : 0,
       sessionId: ctx.sessionId,
       agentId: ctx.agentId,
       toolCallId: null,
@@ -2001,9 +2114,17 @@ export function reconcile(
         after = null;
       }
     }
+    // Issue #371: a path a tool journaled this run keeps the tool chain —
+    // its before-side is the tool's after-content (issue #341), never the
+    // boot blob — and a create has no pre-image by definition.
+    const before =
+      expected === null || sinceStart.has(relPath)
+        ? null
+        : gitBeforeContent(root, relPath, expected, options);
     record({
       path: relPath,
       op: expected === null ? 'create' : 'write',
+      before,
       beforeHash: expected,
       after,
       // The hash-only shape: the walk hash keeps dedupe and undo staleness
@@ -2038,9 +2159,51 @@ export function reconcile(
     record({
       path: relPath,
       op: 'delete',
+      // Issue #371: the same tool-chain rule in the delete direction — a
+      // path journaled this run unwinds through its entries, never the boot
+      // blob.
+      before: sinceStart.has(relPath)
+        ? null
+        : gitBeforeContent(root, relPath, expected, options),
       beforeHash: expected,
       after: null,
     });
+  }
+  // Issue #378: the HEAD-move marker. Compared after the file loops so the
+  // marker is the sweep's newest entry — `undo --step` (which never targets
+  // markers) still lands on the latest file entry. One marker per observed
+  // move: a repeat sweep of an unchanged HEAD appends nothing.
+  const headBaseline = options.headBaseline;
+  if (headBaseline !== undefined && headBaseline !== null) {
+    const currentHead = captureHeadState(root, options.gitRun);
+    if (currentHead !== null && !sameHeadState(headBaseline, currentHead)) {
+      const known = entriesSinceRunStart(store.entries(), ctx.runStart).some(
+        (e) =>
+          e.op === 'marker' &&
+          e.headFrom !== undefined &&
+          e.headTo !== undefined &&
+          sameHeadState(e.headFrom, headBaseline) &&
+          sameHeadState(e.headTo, currentHead),
+      );
+      if (!known) {
+        store.append({
+          path: '',
+          op: 'marker',
+          before: null,
+          after: null,
+          bytesDelta: 0,
+          headFrom: headBaseline,
+          headTo: currentHead,
+          sessionId: ctx.sessionId,
+          agentId: ctx.agentId,
+          toolCallId: null,
+          timestamp: ctx.timestamp,
+          unattributed: true,
+          ...(ctx.turn === undefined ? {} : { turn: ctx.turn }),
+        });
+        added++;
+      }
+    }
   }
   return added;
 }

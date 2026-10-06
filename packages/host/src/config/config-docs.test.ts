@@ -75,6 +75,12 @@ describe('configuration docs parse against the implementation (issue #90)', () =
   it('loads the documented example through the runtime entry point', () => {
     const files = {
       '/repo/.kubic/config.toml': readFileSync(EXAMPLE, 'utf8'),
+      // The example's systemPromptFile resolves against its own directory:
+      // the sibling fixture travels with it, like a user's copy would.
+      '/repo/.kubic/SYSTEM.md': readFileSync(
+        join(dirname(EXAMPLE), 'SYSTEM.md'),
+        'utf8',
+      ),
     };
     const bridge: Pick<FileBridge, 'exists' | 'readTextFile'> = {
       exists: (path: string): boolean => path in files,
@@ -99,6 +105,11 @@ describe('configuration docs parse against the implementation (issue #90)', () =
     expect(runtime.journal.retentionDays).toBe(30);
     expect(runtime.journal.maxAgeMs).toBe(30 * 86_400_000);
     expect(runtime.modes.solo).toBe(true);
+    // The example's prompt augmentation resolves and reads: the effective
+    // path reports, the contents reach the lane projection.
+    expect(runtime.systemPromptFile?.path).toBe('/repo/.kubic/SYSTEM.md');
+    expect(runtime.systemPromptFile?.source).toBe('project');
+    expect(runtime.systemPromptFile?.contents).toContain('short, technical');
   });
 
   it('documents exactly the keys the parser accepts and the runtime maps', () => {
@@ -140,6 +151,44 @@ describe('configuration docs parse against the implementation (issue #90)', () =
     // The `config` command and its machine-readable mode are documented.
     expect(page).toContain('kubic config');
     expect(page).toContain('--json');
+  });
+
+  it('names every §63 key in design-drift.md (issue #240)', () => {
+    // The §63 inventory, in the design's own spellings. Each must occur in
+    // the drift record with a disposition (shipped-as / intentionally not
+    // implemented / pending) — deleting a row, or adding a key to the
+    // parser without recording it, fails here. (New keys added to §63
+    // itself need a conscious inventory edit: the design document is
+    // local-only, so no test can see its future.)
+    const inventory = [
+      'system_prompt_file',
+      'auto_compact',
+      'reserve_tokens',
+      'autonomous',
+      'skip_approvals',
+      'max_pending_ms',
+      'retention_days',
+      'max_size_mb',
+      'exclude',
+      'budget',
+      'tool_policy',
+      'max_concurrent',
+      'worktree_root',
+      'retain_worktrees',
+      'renderer',
+      'show_agent_tree',
+      'show_cost_status',
+      'telemetry',
+      'store',
+      'thinking',
+    ];
+    const drift = readFileSync(
+      join(REPO_ROOT, 'docs', 'design-drift.md'),
+      'utf8',
+    );
+    for (const key of inventory) {
+      expect(drift, key).toContain(key);
+    }
   });
 
   it('keeps every key-effect entry meaningful', () => {
@@ -221,6 +270,11 @@ describe('configuration docs parse against the implementation (issue #90)', () =
     mkdirSync(join(repo, '.kubic'));
     const configPath = join(repo, '.kubic', 'config.toml');
     writeFileSync(configPath, readFileSync(EXAMPLE, 'utf8'));
+    // The example's systemPromptFile is a live key: its sibling travels.
+    writeFileSync(
+      join(repo, '.kubic', 'SYSTEM.md'),
+      readFileSync(join(dirname(EXAMPLE), 'SYSTEM.md'), 'utf8'),
+    );
     const inputs = {
       bridge: createNodeFileBridge(repo),
       home: join(repo, 'home'),

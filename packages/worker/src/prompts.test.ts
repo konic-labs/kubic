@@ -1,7 +1,7 @@
 // Cache-preserving prompts + model affinity (issue #33).
 // RED: prompts.ts does not exist yet — every test below must fail first.
 import { describe, expect, it, vi } from 'vitest';
-import { createLadder } from './model-select.js';
+import type { EscalationLadder } from './model-select.js';
 
 describe('prompt assembly byte-stability (issue #33, rule 1-3)', () => {
   it('identical turns assemble byte-identical prompts despite shuffled inputs', async () => {
@@ -36,40 +36,6 @@ describe('prompt assembly byte-stability (issue #33, rule 1-3)', () => {
   });
 });
 
-describe('append-only turns (issue #33, rule 4)', () => {
-  it('turn content appends as suffix; prefix bytes are untouched', async () => {
-    const { appendTurnContent, assembleSystemPrompt } = await import(
-      './prompts.js'
-    );
-    const prefix = assembleSystemPrompt({
-      role: 'r',
-      cwd: '/w',
-      toolNames: ['bash'],
-      metadata: {},
-    });
-    const full = appendTurnContent(prefix, 'turn 7 user text');
-    expect(full.slice(0, prefix.length)).toBe(prefix);
-    expect(full.slice(prefix.length)).toContain('turn 7 user text');
-  });
-});
-
-describe('lane lifecycle (issue #33, rule 5)', () => {
-  it('continuation reuses the lane; re-spawn for continuation is rejected', async () => {
-    const { LaneRegistry } = await import('./prompts.js');
-    const registry = new LaneRegistry();
-    registry.spawn({ sessionId: 's1', lane: 'main', modelId: 'faux/a' });
-    expect(registry.continuation('s1', 'main').modelId).toBe('faux/a');
-    expect(() =>
-      registry.spawn({ sessionId: 's1', lane: 'main', modelId: 'faux/b' }),
-    ).toThrow(/re-spawn/);
-    // The rejected re-spawn never overwrote the live binding.
-    expect(registry.continuation('s1', 'main').modelId).toBe('faux/a');
-    expect(() => registry.continuation('nope', 'main')).toThrow(
-      /no active lane/,
-    );
-  });
-});
-
 describe('model affinity (issue #33, rule 6)', () => {
   it('N turns resolve to 1 pinned model id; mixed ids are rejected', async () => {
     const { assertSingleModelId, pinModelForTask, taskModelForTurn } =
@@ -87,7 +53,11 @@ describe('model affinity (issue #33, rule 6)', () => {
     const { escalatePinnedModel, pinModelForTask } = await import(
       './prompts.js'
     );
-    const ladder = createLadder(['faux/a', 'faux/b']);
+    const ladder: EscalationLadder = {
+      steps: ['faux/a', 'faux/b'],
+      maxEscalations: 2,
+      record: [],
+    };
     const sink = vi.fn();
     const { affinity, event } = escalatePinnedModel(
       pinModelForTask('task-1', 'faux/a'),

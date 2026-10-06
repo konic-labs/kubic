@@ -18,8 +18,12 @@ import {
   parseRunMaxTurns,
   parseRunTimeout,
   parseSessionIdArg,
+  parseSoloBudget,
 } from '../../../../packages/host/src/run-cli.js';
-import { parseModelFlag } from '../../../../packages/worker/src/model-select.js';
+import {
+  parseModelFlag,
+  parseThinkingFlag,
+} from '../../../../packages/worker/src/model-select.js';
 import type { CommandContext, CommandRegistrar } from '../cli/context.js';
 
 // The `--model` help (issue #227; §38.1): one sentence per behaviour the
@@ -28,6 +32,12 @@ const MODEL_FLAG_HELP =
   'override the model for this invocation (provider/id; beats env and file, never a frozen enterprise key)';
 const MODEL_FLAG_HELP_REPORT =
   'report the config as if this model were passed (provider/id; the cli layer)';
+// The `--thinking` help (issue #225; §38.3): one sentence per behaviour the
+// flag actually has, no promise the cli layer does not keep.
+const THINKING_FLAG_HELP =
+  'override the thinking level for this invocation (beats env and file, never a frozen enterprise key)';
+const THINKING_FLAG_HELP_REPORT =
+  'report the config as if this level were passed (the cli layer)';
 
 // A host value rule as a commander argument parser: its refusal becomes
 // commander's `option '…' argument '…' is invalid. <reason>` (exit 2).
@@ -150,7 +160,13 @@ function registerRun(program: Command, ctx: CommandContext): void {
       'turn bound (positive integer)',
       rule(parseRunMaxTurns),
     )
+    .option(
+      '--budget <dims>',
+      'opt-in §71 budget (e.g. maxToolCalls=10,maxCostUsd=0.5,maxRuntimeMs=60000); a breach ends the run budget_exhausted',
+      rule(parseSoloBudget),
+    )
     .option('--model <provider/id>', MODEL_FLAG_HELP, rule(parseModelFlag))
+    .option('--thinking <level>', THINKING_FLAG_HELP, rule(parseThinkingFlag))
     .option('--role <name>', 'boot as the role in .kubic/roles/<name>.md')
     .option(
       '--skill <path>',
@@ -159,7 +175,17 @@ function registerRun(program: Command, ctx: CommandContext): void {
       [] as string[],
     )
     .option('--no-skills', 'disable layered skill discovery')
+    // Issue #183 (§29.4): invoke one explicit skill — hidden skills
+    // included — as the turn prompt (run only; the TUI uses /skill:).
+    .option(
+      '--invoke-skill <name>',
+      'invoke one explicit skill first, its content as the turn prompt with -p/positional text as instructions',
+    )
     .option('--debug', 'emit lane/tool span lines on stderr')
+    .option(
+      '--autonomous',
+      'run to completion without stopping for input (§19; recorded in the session and audit)',
+    )
     .option('--json', 'print one JSON envelope line instead of text')
     .option(
       '--dangerously-skip-approvals',
@@ -225,10 +251,17 @@ function registerRun(program: Command, ctx: CommandContext): void {
             ...(opts.session === undefined ? {} : { session: opts.session }),
             ...(opts.timeout === undefined ? {} : { timeoutMs: opts.timeout }),
             ...(opts.maxTurns === undefined ? {} : { maxTurns: opts.maxTurns }),
+            ...(opts.budget === undefined ? {} : { budget: opts.budget }),
             ...(opts.role === undefined ? {} : { role: opts.role }),
             ...(opts.skill.length === 0 ? {} : { skills: opts.skill }),
+            // Issue #183 (§29.4): the explicit skill invocation travels to
+            // the runner, which expands it against the booted skills.
+            ...(opts.invokeSkill === undefined
+              ? {}
+              : { invokeSkill: opts.invokeSkill }),
             ...(opts.skills === false ? { noSkills: true } : {}),
             ...(opts.debug === true ? { debug: true } : {}),
+            ...(opts.autonomous === true ? { autonomous: true } : {}),
             ...(opts.json === true ? { json: true } : {}),
             ...(opts.dangerouslySkipApprovals === true
               ? { dangerouslySkipApprovals: true }
@@ -252,6 +285,7 @@ function registerTui(program: Command, ctx: CommandContext): void {
       rule(parseSessionIdArg),
     )
     .option('--model <provider/id>', MODEL_FLAG_HELP, rule(parseModelFlag))
+    .option('--thinking <level>', THINKING_FLAG_HELP, rule(parseThinkingFlag))
     .option('--role <name>', 'boot as the role in .kubic/roles/<name>.md')
     .option(
       '--skill <path>',
@@ -260,6 +294,11 @@ function registerTui(program: Command, ctx: CommandContext): void {
       [] as string[],
     )
     .option('--no-skills', 'disable layered skill discovery')
+    .option(
+      '--budget <dims>',
+      'opt-in §71 budget (e.g. maxToolCalls=10,maxCostUsd=0.5,maxRuntimeMs=60000); a breach ends the run budget_exhausted',
+      rule(parseSoloBudget),
+    )
     .option(
       '--orchestrator',
       'start in orchestrator mode (delegation is opt-in; needs a git repository)',
@@ -294,6 +333,7 @@ function registerTui(program: Command, ctx: CommandContext): void {
             ...(opts.role === undefined ? {} : { role: opts.role }),
             ...(opts.skill.length === 0 ? {} : { skills: opts.skill }),
             ...(opts.skills === false ? { noSkills: true } : {}),
+            ...(opts.budget === undefined ? {} : { budget: opts.budget }),
             ...(opts.model === undefined ? {} : { model: opts.model }),
             ...(opts.orchestrator === true ? { orchestrator: true } : {}),
             ...(opts.dangerouslySkipApprovals === true
@@ -319,6 +359,10 @@ function registerDoctor(program: Command, ctx: CommandContext): void {
       [] as string[],
     )
     .option('--json', 'print one JSON report')
+    .option(
+      '--session <id>',
+      'check one session (its installed posture and full-access state)',
+    )
     .addHelpText(
       'after',
       examples([
@@ -331,6 +375,30 @@ function registerDoctor(program: Command, ctx: CommandContext): void {
         await ctx.runners.doctor(
           {
             skip: opts.skip,
+            ...(opts.json === true ? { json: true } : {}),
+            ...(opts.session === undefined ? {} : { session: opts.session }),
+          },
+          ctx.config,
+        ),
+      );
+    });
+}
+
+function registerSkills(program: Command, ctx: CommandContext): void {
+  program
+    .command('skills')
+    .description('list discovered skills and why any were left out')
+    .option('--role <name>', 'gate the listing as the lane would for this role')
+    .option('--json', 'print the listing as one JSON array')
+    .addHelpText(
+      'after',
+      examples(['kubic skills', 'kubic skills --role reviewer --json']),
+    )
+    .action(async (opts) => {
+      ctx.setExitCode(
+        await ctx.runners.skills(
+          {
+            ...(opts.role === undefined ? {} : { role: opts.role }),
             ...(opts.json === true ? { json: true } : {}),
           },
           ctx.config,
@@ -376,6 +444,11 @@ function registerConfig(program: Command, ctx: CommandContext): void {
       '--model <provider/id>',
       MODEL_FLAG_HELP_REPORT,
       rule(parseModelFlag),
+    )
+    .option(
+      '--thinking <level>',
+      THINKING_FLAG_HELP_REPORT,
+      rule(parseThinkingFlag),
     )
     .action(async (opts) => {
       ctx.setExitCode(
@@ -481,10 +554,16 @@ function registerSessions(program: Command, ctx: CommandContext): void {
     .command('list')
     .description('list the recorded sessions')
     .option('--json', 'print one JSON array')
+    .option(
+      '--parent <id>',
+      'show only the children of one orchestrate run',
+      rule(parseSessionIdArg),
+    )
     .action(async (opts) => {
       await run({
         command: 'list',
         ...(opts.json === true ? { json: true } : {}),
+        ...(opts.parent === undefined ? {} : { parent: opts.parent }),
       });
     });
   sessions
@@ -500,12 +579,14 @@ function registerSessions(program: Command, ctx: CommandContext): void {
       '--ids',
       'prefix each line with its entry id (for `sessions fork --at`)',
     )
+    .option('--json', 'print the raw tail entries as JSON (untruncated)')
     .action(async (id, opts) => {
       await run({
         command: 'attach',
         id,
         ...(opts.tail === undefined ? {} : { tail: opts.tail }),
         ...(opts.ids === true ? { ids: true } : {}),
+        ...(opts.json === true ? { json: true } : {}),
       });
     });
   sessions
@@ -588,6 +669,7 @@ export const registerSoloCommands: CommandRegistrar = (program, ctx) => {
   registerTui(program, ctx);
   registerReattach(program, ctx);
   registerDoctor(program, ctx);
+  registerSkills(program, ctx);
   registerModels(program, ctx);
   registerConfig(program, ctx);
   registerTrust(program, ctx);

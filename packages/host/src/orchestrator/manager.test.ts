@@ -14,7 +14,6 @@ import {
   formatModeIndicator,
   MANAGER_ALLOWLIST,
   MANAGER_EXIT_WORKSPACE_UNAVAILABLE,
-  MANAGER_TRADE_DOC,
   ManagerPolicyBlockedError,
   ManagerToolsetError,
   parseOrchestratorToggle,
@@ -27,7 +26,6 @@ import {
   setOrchestratorToggle,
   validateWorkspaceApply,
   validateWorkspaceDiff,
-  validateWorkspaceMerge,
 } from './manager.js';
 
 describe('manager allowlist (issue #40)', () => {
@@ -43,6 +41,8 @@ describe('manager allowlist (issue #40)', () => {
         'workspace_diff',
         'workspace_apply',
         'workspace_merge',
+        // §70 (issue #188): the reviewer verdict routes the merge call.
+        'review_verdict',
         'ask_user',
         // §43.1: read-only git inspection for the manager, separate from its
         // merge capability (issue #205).
@@ -51,7 +51,7 @@ describe('manager allowlist (issue #40)', () => {
         'git_log',
       ].sort(),
     );
-    expect(MANAGER_ALLOWLIST).toHaveLength(13);
+    expect(MANAGER_ALLOWLIST).toHaveLength(14);
   });
 
   it('accepts the three read-only git tools and refuses every mutating one (issue #205)', () => {
@@ -169,26 +169,6 @@ describe('manager workspace contracts (issue #40)', () => {
       }),
     ).toThrow(/policy block/);
   });
-
-  it('validates merge (source required) and blocks inline authoring', () => {
-    expect(
-      validateWorkspaceMerge({
-        worktree: '/repo/.kubic/wt/a',
-        source: 'agent-1',
-      }).valid,
-    ).toBe(true);
-    expect(
-      validateWorkspaceMerge({ worktree: '/repo/.kubic/wt/a', source: '' })
-        .valid,
-    ).toBe(false);
-    expect(() =>
-      validateWorkspaceMerge({
-        worktree: '/repo/.kubic/wt/a',
-        source: 'agent-1',
-        contents: 'authored text',
-      }),
-    ).toThrow(/policy block/);
-  });
 });
 
 describe('orchestrator toggle, indicator, session, audit (issue #40)', () => {
@@ -282,14 +262,6 @@ describe('faux manager delegation (issue #40)', () => {
     ).toThrow(ManagerPolicyBlockedError);
     expect(spy.calls).toEqual(['spawn_agent']);
     expect(spy.execCalls).toEqual([]);
-  });
-});
-
-describe('manager trade doc (issue #40)', () => {
-  it('ships a single-paragraph trade statement', () => {
-    expect(typeof MANAGER_TRADE_DOC).toBe('string');
-    expect(MANAGER_TRADE_DOC.trim().length).toBeGreaterThan(80);
-    expect(MANAGER_TRADE_DOC).not.toMatch(/\n/);
   });
 });
 

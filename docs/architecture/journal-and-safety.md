@@ -55,7 +55,14 @@ are written tmp+rename in the target's own directory, so a crash never
 leaves a half-written file visible under its real name, but their bytes are
 not fsynced before the rename. Directory-entry durability of the *first*
 creation of a file is out of scope — rename durability is what the journal
-claims, and `durable: false` opts out of all of it. Undo is part of the record, not
+claims, and `durable: false` opts out of all of it. Turn attribution (issue #436): every entry may carry the interactive turn
+it belongs to. Reconciliation sweep entries carry the turn they swept;
+tool-journaled entries (write/edit interception) carry the turn in flight
+when the call ran — sampled per call from the TUI's live counter, so both
+share one numbering. Headless runs (`kubic run`) are turn-less by design:
+pi-durable exposes no numeric turn, so their entries carry no `turn`
+field at all — never null, never zero — as do entries written before the
+field existed. Undo is part of the record, not
 an exit from it: every successful `kubic undo` appends its own inverse
 entry (attributed `kubic-undo`, the pre-undo content as its before, the
 restored content as its after), so `diff` and `log` describe the world
@@ -67,11 +74,28 @@ records no before-content, so it is reported non-reversible and cannot
 itself be undone. Review the record, revert a step or a path, check
 status and history; entries the
 journal cannot reconstruct (recorded hash, no retrievable pre-image)
-are reported as non-reversible rather than guessed at. Changes the sweep
+are reported as non-reversible rather than guessed at. In a git repository
+the sweep can reconstruct more: at baseline it records the index blob OID
+of every tracked file clean against the index (two metadata calls, no blob
+reads), and at sweep it reads the pre-image of a changed or deleted tracked
+file back from the object store — so a bash `rm`, `sed -i`, formatter or
+`git checkout -- .` on a committed file undoes exactly like a tool edit.
+Only clean files qualify (restoring a committed version over uncommitted
+work would destroy it), and the pre-image must hash to the baseline digest
+— a mismatch, a binary file, or a pre-image above 4 MiB keeps the hash-only
+shape. Untracked files and non-repositories are unchanged. Changes the sweep
 captures are bounded the same way: a changed file above 4 MiB — or one whose
 utf-8 decode would be lossy (binary content) — is recorded hash-only
 (`changed, N bytes`; `diff` shows a size-only line), never as a mangled or
-unbounded blob. Retention
+unbounded blob. A HEAD move mid-run is marked, not silently absorbed
+(issue #378): the baseline also records HEAD sha, branch and stash count
+(three metadata calls), and a sweep that finds them changed appends one
+`marker` entry (`head-moved <branch>@<sha> -> <branch>@<sha>`) instead of
+letting a `checkout`/`reset`/`stash` read as hundreds of ordinary file
+changes. `kubic status` warns per move, `kubic log` lists the marker, and
+`kubic undo` refuses to restore entries from before the move without
+`--force` — their pre-move content does not belong on the moved HEAD —
+while entries journaled after the move restore normally. Retention
 bounds keep growth finite: a size cap — the whole store, index plus blobs,
 configurable as `[journal] maxBytes` — is enforced on every append, with
 opt-in age pruning. An entry whose own content cannot fit the cap is
@@ -153,6 +177,23 @@ that decide them:
   posture. The refusal itself is appended to the audit ledger.
 - The journal still skips `.kubic/`, so an approved `kubic-state-write` is not
   reversible with `kubic undo` — which is why it is never auto-approved.
+- **Repo hooks never run on host git, and `.git/` writes always ask
+  (issues #363, #428).** Every host-side git invocation (status, stage,
+  commit, merge, abort) runs with `-c core.hooksPath=/dev/null
+  -c core.fsmonitor=false`, and host-side commits add `--no-verify`
+  through the single `hostGitArgs` choke point — a hook planted in a
+  worker tree cannot execute during the orchestrator's commit or merge,
+  even when `.git/config` itself was tampered with (the `-c` flags beat
+  file config; the subcommand is found past any leading global option,
+  so `--no-pager`/`-C` never shed the flag). Any write tool call or bash redirect/tee/cp target under
+  the workspace's OWN `.git/` or any ANCESTOR's (a worker's worktree sits
+  under the repo, so the shared main-checkout `.git/` is covered) raises
+  the always-ask `kubic-state-write` capability, and so does a
+  config-mutating `git config` in bash (`--get`/`--list`/single-name reads
+  stay quiet). The run snapshots `.git/config` and `.git/hooks` at start
+  and reports drift after each worker settle and each merge, so tampering
+  that bypassed the tools (e.g. `git config core.hooksPath …` typed at
+  the shell) is still named in the run log.
 
 ## Tool process environment (§3.8)
 

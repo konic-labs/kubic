@@ -22,10 +22,12 @@ import {
   createNodeFileBridge,
   type FileBridge,
 } from '../../../exec/src/file-bridge.js';
+import { processStartTimeOf } from '../../../exec/src/lock-file.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
   createRegistry,
+  fauxAssistantMessage,
   Harness,
   UserEntry,
 } from '../pi-boundary.js';
@@ -37,6 +39,7 @@ import {
   listSessions,
   openSessionStore,
   readSessionMetadata,
+  releaseSessionLock,
   SessionAttachError,
   SessionFormatError,
   type SessionHandle,
@@ -44,6 +47,8 @@ import {
   SessionLockError,
   sessionsTouchingWorkspace,
 } from './session-store.js';
+import { bootFauxLane } from './test-harness.js';
+import { readSessionEntries } from './transcript.js';
 
 const openSessions: SessionHandle[] = [];
 const scratchDirs: string[] = [];
@@ -161,13 +166,43 @@ describe('pi-durable session storage (issue #392)', () => {
       await createSession(store, { cwd: '/work' }, BACKGROUND_CONTEXT),
     );
     expect(session.meta.cwd).toBe('/work');
-    expect(session.id.length).toBeGreaterThan(0);
+    // The id gate session-store.ts enforces (isSessionId): uuidv7 passes
+    // it, so a generator regression fails here instead of at attach.
+    expect(session.id).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(Date.parse(session.meta.createdAt)).toBeGreaterThanOrEqual(before);
     expect(session.dir).toBe(join(root, session.id));
     // The durable storage is on disk under <root>/<id>/ — and the Kubic lock
     // lives in the same directory, which the JSONL backend tolerates.
     expect(existsSync(join(session.dir, 'main.jsonl'))).toBe(true);
     expect(existsSync(join(session.dir, 'lock.json'))).toBe(true);
+    // The storage opens with its identity commit: the first JSONL line is
+    // the format-1 commit creating the kubic.session document (the cwd
+    // itself rides session.json, pinned exact in the header below).
+    const firstLine = readFileSync(
+      join(session.dir, 'main.jsonl'),
+      'utf8',
+    ).split('\n')[0] as string;
+    const first = JSON.parse(firstLine) as {
+      format: number;
+      type: string;
+      seq: number;
+      writes: Array<{ record: { kind: string } }>;
+    };
+    expect(first).toMatchObject({ format: 1, type: 'commit', seq: 1 });
+    expect(
+      first.writes.some((write) => write.record.kind === 'kubic.session'),
+    ).toBe(true);
+    // Issue #278 (§19): the run's mode rides the session metadata when
+    // given, and stays absent otherwise (off by default).
+    const withMode = track(
+      await createSession(
+        store,
+        { cwd: '/work', mode: 'autonomous' },
+        BACKGROUND_CONTEXT,
+      ),
+    );
+    expect(withMode.meta.mode).toBe('autonomous');
+    expect(session.meta.mode).toBeUndefined();
     // The listing header: the projection listSessions reads without opening
     // a live session's storage.
     expect(readHeader(root, session.id)).toEqual({
@@ -180,6 +215,32 @@ describe('pi-durable session storage (issue #392)', () => {
     expect(
       await readSessionMetadata(session.storage, BACKGROUND_CONTEXT),
     ).toEqual(session.meta);
+  });
+
+  it('a restored entry deep-equals the committed one across an attach', async () => {
+    // One faux turn commits entries to <root>/<id>/main.jsonl; after
+    // cleanup the lock is gone, so a fresh attach reopens the same dir
+    // and must read back byte-identical entries.
+    const root = tmpRoot();
+    const lane = await bootFauxLane({
+      storage: 'jsonl',
+      root,
+      responses: [fauxAssistantMessage('hello')],
+    });
+    const id = lane.sessionId;
+    await lane.run('say hi');
+    const committed = await readSessionEntries(
+      lane.session.storage,
+      BACKGROUND_CONTEXT,
+    );
+    expect(committed.length).toBeGreaterThan(0);
+    await lane.cleanup();
+    const attached = track(
+      await attachSession(storeFor(root), id, BACKGROUND_CONTEXT),
+    );
+    expect(
+      await readSessionEntries(attached.storage, BACKGROUND_CONTEXT),
+    ).toEqual(committed);
   });
 
   it('records a declared workspace beside the cwd', async () => {
@@ -624,10 +685,15 @@ describe('session lock primitive (issue #118)', () => {
     }) as never);
   }
 
-  function readLock(dir: string): { pid?: unknown; startedAt?: unknown } {
+  function readLock(dir: string): {
+    pid?: unknown;
+    startedAt?: unknown;
+    nonce?: unknown;
+  } {
     return JSON.parse(readFileSync(join(dir, 'lock.json'), 'utf8')) as {
       pid?: unknown;
       startedAt?: unknown;
+      nonce?: unknown;
     };
   }
 
@@ -657,21 +723,137 @@ describe('session lock primitive (issue #118)', () => {
     }
   });
 
-  it('steals a day-old lock even when its pid looks alive (pid reuse)', () => {
+  it('does not steal a 48h-old lock whose holder pid is alive (issue #145)', () => {
     const dir = lockDir();
-    writeFileSync(
-      join(dir, 'lock.json'),
-      JSON.stringify({ pid: FAKE_PID, startedAt: Date.now() - DAY_MS - 1 }),
-    );
-    // Liveness stubbed ALIVE: only the age arm can make this lock stale
-    // (the dead-pid arm is covered by the same-day crash-recovery case).
+    // A legacy-shaped lock (no procStart): a long TUI session's holder is
+    // alive, so the 24h age rule must not take it.
+    const fixture = JSON.stringify({
+      pid: FAKE_PID,
+      startedAt: Date.now() - 48 * DAY_MS,
+    });
+    writeFileSync(join(dir, 'lock.json'), fixture);
     const kill = stubKill(true);
     try {
-      acquireSessionLock(dir, 'sess-b');
+      let caught: unknown;
+      try {
+        acquireSessionLock(dir, 'sess-b');
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(SessionLockError);
+      expect((caught as Error).message).toContain(String(FAKE_PID));
     } finally {
       kill.mockRestore();
     }
-    expect(readLock(dir).pid).toBe(process.pid);
+    // The live holder's lock is untouched: no steal, no clobber.
+    expect(readFileSync(join(dir, 'lock.json'), 'utf8')).toBe(fixture);
+  });
+
+  it('does not steal a 48h-old lock whose recorded process start still matches (issue #145)', () => {
+    const dir = lockDir();
+    const procStart = processStartTimeOf(process.pid);
+    const fixture = JSON.stringify({
+      pid: process.pid,
+      startedAt: Date.now() - 48 * DAY_MS,
+      ...(procStart === undefined ? {} : { procStart }),
+    });
+    writeFileSync(join(dir, 'lock.json'), fixture);
+    // No kill stub: process.pid is really alive, so only the process-start
+    // match (or the pid-only fallback where the reader is unavailable) can
+    // refuse this acquire.
+    let caught: unknown;
+    try {
+      acquireSessionLock(dir, 'sess-b2');
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(SessionLockError);
+    expect(readFileSync(join(dir, 'lock.json'), 'utf8')).toBe(fixture);
+  });
+
+  (processStartTimeOf(process.pid) === undefined ? it.skip : it)(
+    'steals a lock whose pid is alive but whose process start moved (pid reuse, issue #145)',
+    () => {
+      const dir = lockDir();
+      // Our own pid is alive, but epoch-1 is not when this process started:
+      // the pid number was recycled by a younger process.
+      writeFileSync(
+        join(dir, 'lock.json'),
+        JSON.stringify({
+          pid: process.pid,
+          startedAt: Date.now(),
+          procStart: 1,
+        }),
+      );
+      acquireSessionLock(dir, 'sess-reuse');
+      const taken = JSON.parse(
+        readFileSync(join(dir, 'lock.json'), 'utf8'),
+      ) as {
+        pid?: unknown;
+        procStart?: unknown;
+      };
+      expect(taken.pid).toBe(process.pid);
+      expect(taken.procStart).not.toBe(1);
+    },
+  );
+
+  it('a simulated concurrent stale takeover leaves exactly one owner (issue #145)', () => {
+    const dir = lockDir();
+    writeFileSync(
+      join(dir, 'lock.json'),
+      JSON.stringify({ pid: FAKE_PID, startedAt: Date.now() }),
+    );
+    // Racer A arrives first: the holder is dead, so A steals and owns.
+    let kill = stubKill(false);
+    try {
+      acquireSessionLock(dir, 'sess-race');
+    } finally {
+      kill.mockRestore();
+    }
+    const owned = readFileSync(join(dir, 'lock.json'), 'utf8');
+    expect((JSON.parse(owned) as { pid?: unknown }).pid).toBe(process.pid);
+    // Racer B arrives after: the holder (A, this process) is alive, so B
+    // is refused and A's lock is byte-identical — exactly one owner.
+    kill = stubKill(true);
+    try {
+      let caught: unknown;
+      try {
+        acquireSessionLock(dir, 'sess-race');
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(SessionLockError);
+    } finally {
+      kill.mockRestore();
+    }
+    expect(readFileSync(join(dir, 'lock.json'), 'utf8')).toBe(owned);
+  });
+
+  it("release does not remove another process's lock (issue #145)", () => {
+    const dir = lockDir();
+    const fixture = JSON.stringify({ pid: FAKE_PID, startedAt: Date.now() });
+    writeFileSync(join(dir, 'lock.json'), fixture);
+    const kill = stubKill(true);
+    try {
+      releaseSessionLock(dir);
+    } finally {
+      kill.mockRestore();
+    }
+    expect(readFileSync(join(dir, 'lock.json'), 'utf8')).toBe(fixture);
+  });
+
+  it('a stale release cannot remove a re-acquired lock (#424)', () => {
+    const dir = lockDir();
+    const first = acquireSessionLock(dir, 'sess-nonce');
+    releaseSessionLock(dir, first);
+    expect(existsSync(join(dir, 'lock.json'))).toBe(false);
+    const second = acquireSessionLock(dir, 'sess-nonce');
+    expect(second).not.toBe(first);
+    // The stale handle's release names the old nonce: no-op.
+    releaseSessionLock(dir, first);
+    expect(readLock(dir)).toMatchObject({ pid: process.pid, nonce: second });
+    releaseSessionLock(dir, second);
+    expect(existsSync(join(dir, 'lock.json'))).toBe(false);
   });
 
   it('treats a torn lock.json as a stale candidate and steals it', () => {
@@ -799,6 +981,30 @@ describe('session locking wiring (issue #118)', () => {
     }
   });
 
+  it("a refused attach leaves the live holder's lock alone (issue #145)", async () => {
+    const root = tmpRoot();
+    const store = storeFor(root);
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    const id = session.id;
+    await session.release(BACKGROUND_CONTEXT);
+    const fixture = JSON.stringify({ pid: FAKE_PID, startedAt: Date.now() });
+    writeFileSync(join(root, id, 'lock.json'), fixture);
+    const kill = stubKill(true);
+    try {
+      await expect(
+        attachSession(store, id, BACKGROUND_CONTEXT),
+      ).rejects.toBeInstanceOf(SessionLockError);
+    } finally {
+      kill.mockRestore();
+    }
+    // The refusal must not delete (or rewrite) the live holder's lock.
+    expect(readFileSync(join(root, id, 'lock.json'), 'utf8')).toBe(fixture);
+  });
+
   it('steals a crashed holder lock on attach (same-day dead pid)', async () => {
     const root = tmpRoot();
     const store = storeFor(root);
@@ -871,6 +1077,85 @@ describe('session state permissions (issue #361)', () => {
       await session.release(BACKGROUND_CONTEXT);
     },
   );
+
+  describe('session ancestry (issue #164)', () => {
+    it('records parentSessionId, role and agentId on the worker session', async () => {
+      const root = tmpRoot();
+      const store = storeFor(root);
+      const parent = track(
+        await createSession(store, { cwd: '/repo' }, BACKGROUND_CONTEXT),
+      );
+      await parent.release(BACKGROUND_CONTEXT);
+      const worker = track(
+        await createSession(
+          store,
+          {
+            cwd: '/repo/.kubic/wt/aaa',
+            parentSessionId: parent.id,
+            role: 'implementer',
+            agentId: 'aaa',
+          },
+          BACKGROUND_CONTEXT,
+        ),
+      );
+      expect(worker.meta.parentSessionId).toBe(parent.id);
+      expect(worker.meta.role).toBe('implementer');
+      expect(worker.meta.agentId).toBe('aaa');
+      // The durable document carries the same linkage.
+      expect(
+        await readSessionMetadata(worker.storage, BACKGROUND_CONTEXT),
+      ).toEqual(worker.meta);
+      await worker.release(BACKGROUND_CONTEXT);
+      // The listing header carries it too, so listSessions surfaces the
+      // tree without opening any storage.
+      const listed = await listSessions(store, BACKGROUND_CONTEXT);
+      const child = listed.find((entry) => entry.id === worker.id);
+      expect(child?.meta?.parentSessionId).toBe(parent.id);
+      expect(child?.meta?.role).toBe('implementer');
+      expect(child?.meta?.agentId).toBe('aaa');
+    });
+
+    it('keeps child metadata free of parent transcript references', async () => {
+      const root = tmpRoot();
+      const store = storeFor(root);
+      const parent = track(
+        await createSession(store, { cwd: '/repo' }, BACKGROUND_CONTEXT),
+      );
+      await parent.release(BACKGROUND_CONTEXT);
+      const worker = track(
+        await createSession(
+          store,
+          {
+            cwd: '/repo/.kubic/wt/aaa',
+            parentSessionId: parent.id,
+            role: 'implementer',
+            agentId: 'aaa',
+          },
+          BACKGROUND_CONTEXT,
+        ),
+      );
+      await worker.release(BACKGROUND_CONTEXT);
+      const header = readHeader(root, worker.id);
+      for (const key of Object.keys(header)) {
+        expect(key).not.toMatch(/transcript|message|history|entries/i);
+      }
+      const value = JSON.stringify(header);
+      expect(value).not.toContain('user:');
+      expect(value).not.toContain('assistant:');
+    });
+
+    it('refuses a parentSessionId outside the session id alphabet', async () => {
+      const root = tmpRoot();
+      const store = storeFor(root);
+      await expect(
+        createSession(
+          store,
+          { cwd: '/work', parentSessionId: '../evil' },
+          BACKGROUND_CONTEXT,
+        ),
+      ).rejects.toThrow(SessionIdError);
+    });
+  });
 
   it.skipIf(process.platform === 'win32')(
     'tightens an existing loose session directory when the lock is taken',

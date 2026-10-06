@@ -873,3 +873,137 @@ describe('credential-access detector (issue #275)', () => {
     ).toEqual(['credentials']);
   });
 });
+
+describe('git-dir writes raise kubic-state-write (issue #363)', () => {
+  // RED first: written before the isGitDirTarget check landed in
+  // detectTriggers — each of these returned [] on the unpatched detector.
+  const ctx = triggerContext();
+  it('raises for write/edit paths under .git/', () => {
+    expect(
+      detectTriggers('write', { path: '.git/hooks/pre-commit' }, ctx),
+    ).toEqual(['kubic-state-write']);
+    expect(detectTriggers('edit', { path: '.git/config' }, ctx)).toEqual([
+      'kubic-state-write',
+    ]);
+  });
+
+  it('raises for bash redirects, tee and cp targets under .git/', () => {
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'echo evil > .git/hooks/pre-commit' },
+        ctx,
+      ),
+    ).toEqual(['kubic-state-write']);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'cat payload | tee .git/hooks/post-checkout' },
+        ctx,
+      ),
+    ).toEqual(['kubic-state-write']);
+    expect(
+      detectTriggers('bash', { command: 'cp hook.sh .git/hooks/x' }, ctx),
+    ).toEqual(['kubic-state-write']);
+  });
+
+  it('raises for removing or moving hooks away (tampering by deletion)', () => {
+    expect(
+      detectTriggers('bash', { command: 'rm .git/hooks/pre-commit' }, ctx),
+    ).toEqual(['kubic-state-write']);
+  });
+
+  it('stays quiet for normal files and .gitignore-adjacent names', () => {
+    expect(detectTriggers('write', { path: 'src/index.ts' }, ctx)).toEqual([]);
+    expect(detectTriggers('write', { path: '.gitignore' }, ctx)).toEqual([]);
+    expect(
+      detectTriggers('bash', { command: 'echo x > src/out.txt' }, ctx),
+    ).toEqual([]);
+  });
+});
+
+describe('git config mutation raises kubic-state-write (issue #428)', () => {
+  // RED first: `git config core.hooksPath …` mutates .git/config with no
+  // file-write target, so no approval fired at all.
+  const ctx = triggerContext();
+  it('raises for git config sets, unsets and adds', () => {
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'git config core.hooksPath /tmp/hooks' },
+        ctx,
+      ),
+    ).toEqual(['kubic-state-write']);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'git -C repo config --global user.name worker' },
+        ctx,
+      ),
+    ).toEqual(['kubic-state-write']);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'git config --unset core.fsmonitor' },
+        ctx,
+      ),
+    ).toEqual(['kubic-state-write']);
+    expect(
+      detectTriggers('bash', { command: 'git config --add a.b c' }, ctx),
+    ).toEqual(['kubic-state-write']);
+  });
+
+  it('stays quiet for git config reads', () => {
+    expect(
+      detectTriggers('bash', { command: 'git config --get user.name' }, ctx),
+    ).toEqual([]);
+    expect(
+      detectTriggers('bash', { command: 'git config --list' }, ctx),
+    ).toEqual([]);
+    expect(
+      detectTriggers('bash', { command: 'git config user.name' }, ctx),
+    ).toEqual([]);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'git config --global --get user.email' },
+        ctx,
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe('git argv bypass spellings (issue #435)', () => {
+  // RED first: attached short options, display-modifier writes and the
+  // push detector's twin miss all slipped past the #428 guards.
+  const ctx = triggerContext();
+  it.each([
+    'git -C/tmp/repo config core.hooksPath /dev/null',
+    'git -cuser.name=x config a.b c',
+    'git -C/tmp/repo config --add a.b c',
+    'git config --show-origin a.b c',
+    'git config --show-scope a.b c',
+    'git config --show-origin --add a.b c',
+  ])('raises for config write %s', (command) => {
+    expect(detectTriggers('bash', { command }, ctx)).toEqual([
+      'kubic-state-write',
+    ]);
+  });
+
+  it.each([
+    'git -C/tmp/repo config core.hooksPath',
+    'git -cuser.name=x --get a.b',
+    'git config --show-origin --get a.b',
+    'git config --show-origin a.b',
+  ])('stays quiet for config read %s', (command) => {
+    expect(detectTriggers('bash', { command }, ctx)).toEqual([]);
+  });
+
+  it.each([
+    'git -C/tmp/repo push origin main',
+    'git -cuser.name=x push',
+    'git --git-dir=/tmp/repo/.git push',
+  ])('raises git-push for %s', (command) => {
+    expect(detectTriggers('bash', { command }, ctx)).toEqual(['git-push']);
+  });
+});

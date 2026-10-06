@@ -80,11 +80,16 @@ import {
 } from './lane-cells.js';
 import { buildLayoutRoot, type Viewport } from './layout.js';
 import { QuestionView, type WorkerQuestionLike } from './question-view.js';
-import { SlashCommandAutocomplete } from './slash-commands.js';
+import {
+  SLASH_COMMANDS,
+  SlashCommandAutocomplete,
+  skillCommandSpecs,
+} from './slash-commands.js';
 import {
   formatStatusCost,
   StatusBar,
   type StatusBarState,
+  type StatusBudgetLimits,
   type StatusMode,
   type StatusUsageRow,
   summarizeStatusRows,
@@ -165,6 +170,11 @@ export interface TuiAppSeed {
   // window — the context gauge then stays off.
   readonly contextWindow?: number;
   readonly compactionThreshold?: number;
+  // Issue #285 (§71): the opt-in solo budget limits the boot started
+  // with. Static for the boot — the burn-down arrives via setBudgetSpend —
+  // so the limits (never the spend) are on the bar from the first frame.
+  // Absent means the run is unbounded and the bar stays silent.
+  readonly budgetLimits?: StatusBudgetLimits;
   // Issue #303 (§16.6/§16.9): the keybinding registry — defaults plus the
   // user's ~/.kubic/keybindings.json overrides, resolved by the composition
   // root. Every key the app claims ahead of the editor is looked up here.
@@ -172,6 +182,10 @@ export interface TuiAppSeed {
   // Issue #336: the workspace files `@` mentions complete from — the
   // composition root's gitignore-aware walk. Absent: slash commands only.
   readonly listFiles?: () => readonly string[];
+  // Issue #183 (§29.4): the booted (gated-visible, hidden included) skill
+  // names — the composition root threads them so `/skill:<prefix>`
+  // completes to `/skill:<name>`. Absent means no per-skill rows.
+  readonly skillNames?: readonly string[];
   // Issue #276: told of every real session-mode change (Ctrl-G, /tree…), so
   // the composition root persists it with the session.
   readonly onModeChange?: (mode: StatusMode) => void;
@@ -368,6 +382,11 @@ export interface TuiApp {
     contextWindow?: number;
     compactionThreshold?: number;
   }): void;
+  // Issue #285 (§71): the attempt count the boot feeds in — the §71
+  // gate's own counter, which a tool-start names even when the gate
+  // refuses the call. A no-op without seeded limits: an unbounded run
+  // never grows a budget segment.
+  setBudgetSpend(toolCalls: number): void;
   // Issue #327: orchestrator report lines (the manager-lane run's own
   // output) rendered as transcript text. Presentation only: the report
   // never drives state, and a solo lane snapshot replaces it.
@@ -799,6 +818,11 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     ...(seed.compactionThreshold === undefined
       ? {}
       : { compactionThreshold: seed.compactionThreshold }),
+    // Issue #285 (§71): limits on the bar from the first frame; the
+    // spend half starts at zero and setBudgetSpend moves it.
+    ...(seed.budgetLimits === undefined
+      ? {}
+      : { budget: { limits: seed.budgetLimits, toolCalls: 0 } }),
   };
   const status = new StatusBar(barState);
   // The live model label the header, welcome block and status bar show; one
@@ -825,11 +849,18 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // path still parses and dispatches.
   // Issue #305 + #336: one provider for the editor's single slot — the
   // slash commands, then the @-file mentions when a file source exists.
+  // Issue #183: the boot's skill names ride the same command provider as
+  // per-skill `/skill:<name>` rows, so `/skill:<prefix>` completes.
+  const skillSpecs = skillCommandSpecs(seed.skillNames ?? []);
+  const commandProvider = new SlashCommandAutocomplete([
+    ...SLASH_COMMANDS,
+    ...skillSpecs,
+  ]);
   editor.setAutocomplete(
     seed.listFiles === undefined
-      ? new SlashCommandAutocomplete()
+      ? commandProvider
       : new CombinedAutocomplete([
-          new SlashCommandAutocomplete(),
+          commandProvider,
           new FileMentionAutocomplete(seed.listFiles),
         ]),
   );
@@ -1493,6 +1524,14 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         ...status.getState(),
         contextWindow: limits.contextWindow,
         compactionThreshold: limits.compactionThreshold,
+      });
+    },
+    setBudgetSpend: (toolCalls: number): void => {
+      const current = status.getState();
+      if (current.budget === undefined) return;
+      status.setState({
+        ...current,
+        budget: { ...current.budget, toolCalls },
       });
     },
     appendReport: (lines: ReadonlyArray<string>): void => {

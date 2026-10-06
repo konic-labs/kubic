@@ -103,6 +103,14 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     ['kubic cost', 'kubic cost --session 3f2a --json'],
   )
     .option('--session <id>', 'read only this session ([A-Za-z0-9_-])')
+    .option(
+      '--all',
+      'include sessions from every project (default: this project only)',
+    )
+    .option(
+      '--by <level>',
+      'group rows: request|agent|session|project (default agent)',
+    )
     .option('--json', JSON_HELP)
     .action(async (options) => done(await runners.cost(options, config)));
 

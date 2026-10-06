@@ -24,6 +24,10 @@ import {
   SOLO_DEFAULTS,
   validateClasses,
 } from '../../../packages/agents/src/policy.js';
+import {
+  expandSkillInvocation,
+  type LoadedSkill,
+} from '../../../packages/agents/src/skills/skills.js';
 import type { LaneImagePart } from '../../../packages/core/src/presentation.js';
 import {
   type FileSystem,
@@ -44,6 +48,9 @@ import {
   applyUndo,
   planUndo,
 } from '../../../packages/exec/src/journal-undo.js';
+import { createSecretCommandRunner } from '../../../packages/exec/src/secret-runner.js';
+import { budgetToolGate } from '../../../packages/extensions/src/runtime.js';
+import type { BundleLoad } from '../../../packages/extensions/src/startup.js';
 import {
   type ApprovalRequest,
   type ApprovalVerdict,
@@ -54,8 +61,13 @@ import {
   type SessionFullAccessGrant,
   type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
+import type { RoleModelEntry } from '../../../packages/host/src/config/config.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
-import type { RuntimeOrchestrator } from '../../../packages/host/src/config/runtime.js';
+import type {
+  RuntimeEscalation,
+  RuntimeOrchestrator,
+  RuntimeThinking,
+} from '../../../packages/host/src/config/runtime.js';
 import {
   FAUX_FOOTER,
   FAUX_MODEL_ID,
@@ -76,6 +88,10 @@ import {
   type SessionUsageRow,
 } from '../../../packages/host/src/ops/cost/cost-cli.js';
 import {
+  TurnSpans,
+  type TurnSpansSink,
+} from '../../../packages/host/src/ops/perf/run-spans.js';
+import {
   buildOrchestratorRefusal,
   parseOrchestratorToggle,
   resolveOrchestratorMode,
@@ -83,6 +99,7 @@ import {
   setOrchestratorToggle,
 } from '../../../packages/host/src/orchestrator/manager.js';
 import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
+import { resolveRunBaseRevision } from '../../../packages/host/src/policy/audit-ledger.js';
 import {
   type EffectivePolicy,
   hasModelPolicy,
@@ -94,7 +111,9 @@ import {
   PresentationProjector,
   type WorkerProjectionEvent,
 } from '../../../packages/host/src/presentation/projector.js';
+import { findProjectRoot } from '../../../packages/host/src/project-root.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
+import { effectiveRoleClasses } from '../../../packages/host/src/roles/resolver.js';
 import {
   rolePromptFor,
   selectRole,
@@ -108,9 +127,16 @@ import {
   RUN_EXIT_WORKSPACE_UNAVAILABLE,
   type RunTerminusKind,
   SESSION_ID_PATTERN,
+  type SoloBudgetLimits,
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
-import { bootSkills } from '../../../packages/host/src/skills-boot.js';
+import type { SkippedSkill } from '../../../packages/host/src/skills-boot.js';
+import {
+  bootSkills,
+  describeSkillSkips,
+} from '../../../packages/host/src/skills-boot.js';
+import type { DebugSink } from '../../../packages/host/src/spans.js';
+import { hookErrorLine, modelLine } from '../../../packages/host/src/spans.js';
 import type { RunOutcome } from '../../../packages/host/src/trajectory/run-trajectory.js';
 import { createApprovalSurface } from '../../../packages/tui/src/approval-surface.js';
 import {
@@ -205,9 +231,12 @@ import {
   forkSession,
   listSessions,
   openSessionStore,
+  readSessionMetadata,
 } from '../../../packages/worker/src/lane/session-store.js';
 import {
   bootSoloLane,
+  escalateSoloModel,
+  type SoloCompactionOptions,
   type SoloLane,
 } from '../../../packages/worker/src/lane/solo.js';
 import {
@@ -221,6 +250,7 @@ import {
   type TurnOutcome,
   turnLaneRecord,
 } from '../../../packages/worker/src/lane/turn.js';
+import type { EscalationLadder } from '../../../packages/worker/src/model-select.js';
 import {
   type AnyModel,
   clampThinking,
@@ -244,16 +274,40 @@ import {
   type MutableModels,
   type SubmissionId,
 } from '../../../packages/worker/src/pi-boundary.js';
+import type { ModelEscalationEvent } from '../../../packages/worker/src/prompts.js';
 import {
+  resolveStreamOptions,
+  type StreamTuningTables,
+} from '../../../packages/worker/src/stream-options.js';
+import {
+  AUTO_ESCALATION_TOOL_FAILURES,
+  createAutoEscalation,
+  formatEscalationRow,
+  markAutoEscalated,
+  nextLadderRung,
+  noteAutoEscalationTurn,
+  resetAutoEscalation,
+  shouldAutoEscalate,
+  toTrajectoryEscalation,
+} from './auto-escalation.js';
+import {
+  resolveLaneLadder,
+  resolveRoleThinking,
+  roleModelScope,
   type runtimeLaneDeps,
   selectModelUnderPolicy,
 } from './config-runtime.js';
-import { assistantSummary, NO_ASSISTANT_TEXT_SUMMARY } from './headless-run.js';
+import {
+  assistantSummary,
+  composePromptSections,
+  NO_ASSISTANT_TEXT_SUMMARY,
+} from './headless-run.js';
 import {
   hasExplicitModelSelection,
   roleModelSelection,
 } from './model-projection.js';
 import { persistRunTrajectory } from './run-trajectory.js';
+import { formatScopedModels } from './scoped-models.js';
 import {
   createProdTuiOrchestrator,
   mergeSeatFromAnswer,
@@ -346,6 +400,10 @@ export interface TuiLaneLoop {
   switchModel?: (
     model: { provider: string; modelId: string },
     context: Context,
+    // Issue #210 (§38.4): the reason the climb records — `/model <ref>`
+    // by default, the operator's words after `/escalate <ref>`. Absent
+    // on the plain switch path, which records nothing.
+    reason?: string,
   ) => Promise<string>;
   /** The live model label (provider/id) — the status bar and usage rows. */
   model?: (context: Context) => Promise<string>;
@@ -389,6 +447,10 @@ export interface TuiLaneLoop {
   // <sessions-root>/<id>/trajectory.json here. Absent (injected test loops)
   // means no trajectory; a failure never changes the turn's outcome.
   recordTurn?: (turn: TuiTurnRecord) => Promise<void> | void;
+  // Issue #210 (slice 5): the transcript rows for climbs recorded since
+  // the last drain. The runner drains this after every settled turn so
+  // each climb is reported once; absent means this boot records no climbs.
+  drainEscalationRows?: () => string[];
 }
 
 // Issue #328: one row of the model picker's catalog (the lane's `listModels`
@@ -712,6 +774,11 @@ export interface TuiLaneBoot {
   // changes (tagged with `turn`) and an edit made between prompts is absorbed
   // instead of attributed to the agent. Safe to call when nothing changed.
   rebaseline?: (turn: number) => void;
+  // Issue #436: install the interactive turn supplier — the loop's live
+  // counter, sampled per tool call so tool-journaled entries share the
+  // sweep numbering. Installed post-boot (the counter lives in the loop,
+  // not the boot); unset means turn-less entries, like headless runs.
+  setCurrentTurnSupplier?: (supplier: () => number | undefined) => void;
   // Issue #336: the workspace's files for `@` mentions, workspace-relative —
   // the gitignore-aware, bounded walk the find/grep tools use.
   listFiles?: () => readonly string[];
@@ -733,6 +800,17 @@ export interface TuiLaneBoot {
   // the existing #75 tests omit it — the loop then runs as the viewer shell,
   // which keeps the screen/restore contract testable on its own.
   loop?: TuiLaneLoop;
+  // Issue #290: per-turn spans. The runner forwards the turn's run/tool
+  // events to `turns`; a settled turn's artifact lines go through `write`.
+  // Absent (injected boots, the orchestrator-lane switch) means no spans —
+  // the turn works exactly as before.
+  turnSpans?: TurnSpansSink;
+  // Issue #246: the §50 debug sink for the boot's session/role lines and
+  // the turn's fault and token lines (threaded to the runner below).
+  // Absent (prod: `kubic tui` has no --debug flag yet) means the lines
+  // are dropped — except the fault, which always lands as a transcript
+  // notice because the TUI has no other failure channel.
+  debug?: DebugSink;
   // Issue #147: the outcome line for a turn a crashed process left open on
   // this session (durably aborted at boot). Shown in the editor footer from
   // the first render; absent when nothing was pending.
@@ -741,6 +819,16 @@ export interface TuiLaneBoot {
   // stored model differs from the selection (kept or switched). Shown in
   // the footer from the first render alongside any pending-op notice.
   modelNotice?: string;
+  // Issue #225 (§38.3, review): the lane's committed thinking level, read
+  // back from the agent document after boot — `runTuiCommand` seeds the
+  // status bar from this, so the first frame shows the level the lane
+  // actually runs (never the seed default). Absent (injected boots) means
+  // the seed default.
+  thinking?: string;
+  // Issue #255 (§38.2): the role's resolved allowed set for
+  // `/scoped-models` — the loop reports it as a local read. Absent (no
+  // role, or an injected boot) means unconstrained.
+  scopedModels?: { role: string; models: RoleModelEntry[] | undefined };
   // Issue #308 (§41.4): the approval posture the lane was installed with —
   // true seeds the status bar's OFF indicator from the first frame.
   fullAccess?: boolean;
@@ -775,6 +863,16 @@ export interface TuiLaneBoot {
   // so the status bar's gauge can render from the first committed request.
   // Absent when the catalog does not know the window.
   contextLimits?: ContextLimits;
+  // Issue #183 (§29.4): explicit skill invocation — the booted
+  // (gated-visible, hidden included, withheld excluded) skill names for
+  // `/skill:` completion, with the expander that resolves a name plus the
+  // operator's instructions to turn-prompt text. The expander throws the
+  // named unknown-skill error; absent (injected viewer boots) means
+  // `/skill:` refuses by name.
+  skillInvocation?: {
+    names: string[];
+    invoke: (name: string, instructions?: string) => string;
+  };
 }
 
 // Issue #347: a model's context window and the token level at which the solo
@@ -984,9 +1082,20 @@ export interface TuiRunOptions {
   // intersected with the classes/role/enterprise sets, never widening.
   toolSelection?: string[];
   noTools?: boolean;
+  // §71 (issue #283): the loaded first-party bundle (limits ride from
+  // the opt-in `--budget` at dispatch). Present means the lane composes
+  // the extension budget gate — an over-budget call is refused as a
+  // tool error, never a silent pass. Absent means no gate (historical).
+  extensions?: BundleLoad;
   // Issue #86: the config layer's own record of where the classes came from
   // ('default' when nothing configured them). Absent means 'default'.
   policySource?: 'config' | 'default';
+  // Issue #246: the §50 debug sink for the boot's session/role lines
+  // (threaded to the runner for its fault and token lines). A test seam:
+  // prod `kubic tui` passes none (`tui` has no --debug flag yet), so the
+  // lines are dropped there — the fault notice still renders (it does not
+  // need the sink).
+  debug?: DebugSink;
   // Issue #230: the config `[approvals]` policy — the same projection
   // `kubic run` installs. Absent means the documented defaults.
   approvals?: SoloApprovalConfig;
@@ -1014,12 +1123,38 @@ export interface TuiRunOptions {
     cwd?: string;
     trusted?: boolean;
     trustProject?: (dir: string) => boolean;
+    // Issue #237 (§29.2): the config `skills` projection — resolved at
+    // load, loaded with source 'settings'. Absent means none configured.
+    settingsSkills?: string[];
   };
   noSkills?: boolean;
   skillsList?: string[];
+  // Issue #177: where an unresolvable explicit --skill warns. `kubic tui`
+  // projects the err channel here (with the boot's `warning: ` prefix);
+  // tests pass a collector. Absent means silent.
+  warn?: (line: string) => void;
   role?: string;
-  roles?: { cwd?: string; layers?: RoleLayerInput[] };
+  roles?: {
+    cwd?: string;
+    layers?: RoleLayerInput[];
+    // Issue #430 (§33, L-D27): project trust for the repo documents —
+    // same projection as `kubic run`. Absent both means untrusted.
+    trusted?: boolean;
+    trustProject?: (dir: string) => boolean;
+    // Issue #241 (§35): the home directory whose `.kubic/roles` layer
+    // under the project documents — same projection as `kubic run`.
+    // Absent means no global source.
+    homeDir?: string;
+  };
   journalRetention?: JournalRetention;
+  // [agent] systemPromptFile contents (issue #240): the same projection
+  // `kubic run` threads, so the interactive lane assembles the same
+  // prompt. Absent means the lane assembles its prompt unchanged.
+  systemPromptSection?: string;
+  // §27.1 (issue #239): the `[session]` compaction policy — the same
+  // projection `kubic run` threads, so the interactive lane compacts under
+  // config, not the lane defaults. Absent means #399's own defaults.
+  compaction?: SoloCompactionOptions;
   // §35 out-of-scope paths (issue #115): the same projection `kubic run`
   // threads, so a declared directory is excluded from this lane's §42.5
   // baseline and sweep too. Absent means the mechanism's own skips only.
@@ -1043,6 +1178,11 @@ export interface TuiRunOptions {
   // first-available; an explicit pin selects the model and makes a resumed
   // session switch (the #148 rule), absent means the default pick.
   model?: ModelSelection;
+  // §37.4 request options (issue #257): the merged `[model]` tuning plus
+  // every `[roles.<name>]` table that sets a key (runtimeStreamTuning) —
+  // the same projection `kubic run` consumes. The boot resolves them
+  // against `--role` into `settings.stream`. Absent means untuned.
+  streamTuning?: StreamTuningTables;
   // §58 enterprise policy (issue #288): the same EffectivePolicy the
   // headless runner gates with — the interactive lane is not the
   // unprotected one.
@@ -1051,6 +1191,16 @@ export interface TuiRunOptions {
   // — the session override (`/model`, the same level as `--model`, §38.1)
   // cannot leave it, exactly as the flag cannot.
   modelPinFrozen?: boolean;
+  // §38.3 thinking level (issue #225): the effective level with its source
+  // (`--thinking` > `KUBIC_MODEL_THINKING` > file layers), from the SAME
+  // runtimeThinking projection `kubic run` consumes. The boot resolves it
+  // against the session's stored level and the role default and clamps it
+  // to the effective model — a clamp is never silent.
+  thinking?: RuntimeThinking;
+  // The merged `[model]` ladder (issue #210; §38.4), from the same
+  // projection. The boot climbs the role's own rungs first
+  // (`resolveLaneLadder`); absent means escalation is unconfigured.
+  escalate?: RuntimeEscalation;
   // Issue #327: the config `[orchestrator]` projection (worktree parent and
   // worker cap) the interactive drive hands the manager lane, and the
   // approval snapshot a delegated conflict resolver runs under.
@@ -1170,6 +1320,17 @@ export async function bootTuiLane(
       ? await createSession(store, { cwd: process.cwd() }, context)
       : await attachSession(store, sessionId, context);
   const id = session.id;
+  // Issue #246: the §50 [session] line names the session and its #164
+  // parent. Best-effort: a fresh or torn session simply has no parent,
+  // and a failed read is never a boot failure.
+  try {
+    const meta = await readSessionMetadata(session.storage, context);
+    options.debug?.(
+      `[session] id=${id} parent=${meta?.parentSessionId ?? 'none'}`,
+    );
+  } catch {
+    // A failed metadata read is not a boot failure.
+  }
   // Issue #346: the session's committed spend, read from its own `pi.usage`
   // ledger (#400's reader — the same numbers `kubic cost` prints) BEFORE the
   // lane adopts the storage. Best-effort: a torn or foreign usage document
@@ -1256,10 +1417,15 @@ export async function bootTuiLane(
       // Reported below by the loop's own surfaces; the boot stands.
     }
     // Request-time provider keys, audited per use (issue #359, §36.1).
+    // `!command` secret refs (issue #224) execute in the run's workspace
+    // through the production runner — rerun per request.
     const keyResolver = createLedgerModelKeyResolver({
       workspace: options.env?.cwd ?? process.cwd(),
       role: 'root',
       sessionId: () => id,
+      runCommand: createSecretCommandRunner({
+        cwd: options.env?.cwd ?? process.cwd(),
+      }),
     });
     const assembled =
       options.models === undefined
@@ -1302,20 +1468,52 @@ export async function bootTuiLane(
       if (options.role === undefined) return undefined;
       const rolesCwd = options.roles?.cwd ?? process.cwd();
       const rolesBridge = createNodeFileBridge(rolesCwd);
+      // Issue #229: role documents resolve at the project root, so
+      // `--role` from a subdirectory finds `<root>/.kubic/roles/*.md`.
       const selected = selectRole({
         bridge: rolesBridge,
         cwd: rolesCwd,
         role: options.role,
+        projectRoot: findProjectRoot(rolesBridge, rolesCwd, homedir()),
         ...(options.roles?.layers === undefined
           ? {}
           : { layers: options.roles.layers }),
+        // Issue #430 (§33, L-D27): trust-gated like `kubic run` — the
+        // `roles` projection already carries the config load's check.
+        ...(options.roles?.trusted === undefined
+          ? {}
+          : { trusted: options.roles.trusted }),
+        ...(options.roles?.trustProject === undefined
+          ? {}
+          : { trustProject: options.roles.trustProject }),
+        // Issue #241 (§35): the global `~/.kubic/roles` layer under the
+        // project documents — same projection as `kubic run`.
+        ...(options.roles?.homeDir === undefined
+          ? {}
+          : { home: options.roles.homeDir }),
         ...(enterprisePolicy === undefined
           ? {}
           : { toolPolicy: enterprisePolicy }),
       });
       const promptText = rolePromptFor(selected.doc, selected.markdown);
-      return { resolved: selected.resolved, prompt: promptText };
+      // Issue #181 (§29.4): the document's `skills` list travels with the
+      // resolved role for the skill gate.
+      return {
+        resolved: selected.resolved,
+        prompt: promptText,
+        docSkills: selected.doc.skills,
+      };
     })();
+    // Issue #246: the §50 [policy] line names the resolved role — or the
+    // default the boot runs as when no --role was given (mirrors the
+    // headless runner's line).
+    if (selectedRole === undefined) {
+      options.debug?.(`[policy] role=solo (default)`);
+    } else {
+      options.debug?.(
+        `[policy] role=${selectedRole.resolved.name} tools=${selectedRole.resolved.tools.join(',')}`,
+      );
+    }
     const roleBoot: { rolePrompt?: string; toolAllowlist?: string[] } =
       selectedRole === undefined
         ? {}
@@ -1344,6 +1542,9 @@ export async function bootTuiLane(
         roleSelection,
         assembled?.fallbackProviders,
         enterprisePolicy,
+        // The role's allowed set (issue #255; §38.2): the same gate
+        // `kubic run` applies, so a scoped role boots in-set on both.
+        roleModelScope(selectedRole?.resolved),
       );
     })();
     const explicitModel = hasExplicitModelSelection({
@@ -1357,9 +1558,61 @@ export async function bootTuiLane(
     // the policy is installed before the lane exists, so it reads this at
     // record time instead of freezing the pre-boot pick.
     let liveModelRef = `${model.provider}/${model.id}`;
+    // The run's escalation ladder (issue #210; §38.4): the role's own
+    // rungs win over the merged `[model]` ones (`resolveLaneLadder`),
+    // and the record lives here — one ladder object per boot, so every
+    // explicit climb and the single auto climb (slice 4) draw from the
+    // same budget. Undefined when nothing configured a ladder: the
+    // `/model` switch keeps its existing path.
+    const laneLadderSteps = resolveLaneLadder(
+      options.escalate,
+      selectedRole?.resolved.escalate,
+    );
+    const laneLadder: EscalationLadder | undefined =
+      laneLadderSteps === undefined
+        ? undefined
+        : {
+            steps: [...laneLadderSteps.steps],
+            maxEscalations: laneLadderSteps.maxEscalations,
+            record: [],
+          };
+    // The climbs this run recorded (issue #210): the sink every
+    // escalateSoloModel call reports to — the trajectory event and the
+    // transcript line (slice 5) read them from here.
+    const escalationEvents: ModelEscalationEvent[] = [];
+    // The single automatic trigger's streak (issue #210, slice 4):
+    // consecutive tool-failure turns climb one rung, once per run.
+    const autoEscalation = createAutoEscalation();
+    // Transcript rows already reported (issue #210, slice 5): the drain
+    // below reports each recorded climb once, however many turns settle.
+    let reportedEscalations = 0;
     const env = options.env ?? new NodeExecutionEnv(process.cwd());
+    // §60 audit identity (issue #282): the base revision this run started
+    // from — captured once here, `none` outside git — and the thinking
+    // level the lane runs, re-pointed after boot and on every change.
+    const runBase = await resolveRunBaseRevision(env.cwd, (cmd, args) =>
+      env.shell
+        .spawn(cmd, args, {
+          provenance: {
+            sessionId: id,
+            agentId: options.agentId ?? 'root',
+            toolCallId: 'tui:base-revision',
+            turnId: 0,
+            operation: 'tui',
+          },
+        })
+        .wait(),
+    );
+    let liveThinkingRef: string | undefined;
     // The loaded skill names, for the §46 trajectory's resources (#383).
     let skillNames: string[] = [];
+    // Issue #183 (§29.4): the invocable skills (admitted + gate-passed,
+    // hidden included, withheld excluded), so `/skill:` expands and
+    // completes against the boot's gated set — never the raw load.
+    let bootedSkillList: LoadedSkill[] = [];
+    // Issue #238: the skills the loader met but did not load — the TUI
+    // used to drop these lines; they now ride the boot notices once.
+    let skillSkips: SkippedSkill[] = [];
     // Installed policy (issue #86): `kubic tui` drives the same solo lane as
     // `kubic run`, so it installs the same policy — one derivation
     // (host/approvals.installSoloPolicy), which is also what `doctor`
@@ -1380,7 +1633,25 @@ export async function bootTuiLane(
       options.policy ??
       installSoloPolicy({
         workspace: env.cwd,
-        ...(options.classes === undefined ? {} : { classes: options.classes }),
+        // Issue #196 (§40.2/§41.1): the lane enforces the most
+        // restrictive merge of the config classes and the role's, and
+        // the role's approval obligations challenge on the triggers.
+        // No role means the config (or the lane default).
+        ...(selectedRole === undefined
+          ? {
+              ...(options.classes === undefined
+                ? {}
+                : { classes: options.classes }),
+            }
+          : {
+              classes: effectiveRoleClasses(
+                { ...SOLO_DEFAULTS, ...options.classes },
+                selectedRole.resolved.classes,
+              ),
+              ...(selectedRole.resolved.requires.length === 0
+                ? {}
+                : { requires: selectedRole.resolved.requires }),
+            }),
         source: options.policySource ?? 'default',
         ...(options.approvals ?? {}),
         sessionDir: join(root, id),
@@ -1390,6 +1661,10 @@ export async function bootTuiLane(
         // session and the model the lane runs on, like `kubic run`'s.
         sessionId: id,
         model: () => liveModelRef,
+        // Issue #282: the thinking level at record time, and the base
+        // revision captured above.
+        thinking: () => liveThinkingRef,
+        base: runBase,
         // The answer seat (issue #96): with the overlay's surface attached,
         // `kubic tui` is the command that can actually collect a verdict on a
         // challenged call instead of refusing it unseen. Injected policies
@@ -1400,16 +1675,80 @@ export async function bootTuiLane(
     // runtime, or the role's default) switches a resumed session whose
     // stored model differs; the default pick keeps the session's own model.
     const modelNotices: string[] = [];
+    // Issue #436: the turn cell the loop's counter fills post-boot via
+    // setCurrentTurnSupplier. Unwired (undefined) reads turn-less, so a
+    // boot without a loop behaves like a headless run.
+    const turnCell: { supplier?: () => number | undefined } = {};
+    // §37.4 request options (issue #257): the merged `[model]` tuning with
+    // `--role` layered over it becomes this lane's `settings.stream` — the
+    // same resolution `kubic run` performs.
+    const stream = resolveStreamOptions(
+      options.streamTuning?.model,
+      options.role === undefined
+        ? undefined
+        : options.streamTuning?.roles?.[options.role],
+    );
+    // Issue #225 (§38.3): the same request shape as `kubic run` — a
+    // per-run source is the override, a file-layer source the config
+    // default, and the role default loses to the session's stored level.
+    // A clamp joins the model notices: it names the model, the request
+    // and the level applied, and the footer line says the same thing.
+    const requestThinking = options.thinking;
+    // A matching set entry's thinking wins over the flat role default
+    // (issue #255; §38.2) — resolved against the SELECTED model.
+    const roleThinking = resolveRoleThinking(
+      selectedRole?.resolved,
+      model.provider,
+      model.id,
+    );
     const booted = await bootSoloLane({
       session,
       models,
       model,
       modelPolicy: explicitModel ? 'selected' : 'stored',
       onModelNotice: (line) => modelNotices.push(line),
+      onThinkingNotice: (line) => modelNotices.push(line),
+      ...(requestThinking === undefined && roleThinking === undefined
+        ? {}
+        : {
+            thinking: {
+              ...(requestThinking === undefined
+                ? {}
+                : requestThinking.source === 'cli' ||
+                    requestThinking.source === 'env' ||
+                    requestThinking.source === 'enterprise'
+                  ? {
+                      override: {
+                        level: requestThinking.level,
+                        source: requestThinking.source,
+                      },
+                    }
+                  : {
+                      config: {
+                        level: requestThinking.level,
+                        source: requestThinking.source,
+                      },
+                    }),
+              ...(roleThinking === undefined ? {} : { role: roleThinking }),
+            },
+          }),
+      // Issue #210 (§38.4/affinity): the session id pins the boot model
+      // for the task — escalateSoloModel is the only path off it, so an
+      // off-ladder `/model` target refuses instead of silently switching.
+      taskId: id,
       env,
       sessionId: id,
       agentId: options.agentId ?? 'root',
+      // §27.1 (issue #239): the configured compaction policy — absent
+      // means #399's own defaults.
+      ...(options.compaction === undefined
+        ? {}
+        : { compaction: options.compaction }),
       journal,
+      // §37.4 (issue #257): an untuned boot omits `stream` — the provider
+      // defaults stand, never an invented Kubic one.
+      ...(stream === undefined ? {} : { settings: { stream } }),
+      currentTurn: () => turnCell.supplier?.(),
       // Issue #113 (§29.3): skills discovery at boot, same as the headless
       // runner — the <skills> block lands on the interactive lane too. A
       // loader refusal is never fatal (skills are context, never a gate);
@@ -1435,17 +1774,44 @@ export async function bootTuiLane(
           ...(options.skillsList === undefined
             ? {}
             : { cliSkills: options.skillsList }),
+          // Issue #237 (§29.2): the config `skills` projection loads
+          // with source 'settings'.
+          ...(options.skills?.settingsSkills === undefined
+            ? {}
+            : { settingsSkills: options.skills.settingsSkills }),
+          // Issue #181 (§29.4): the injected set depends on the resolved
+          // role and the installed classes — withheld skills never reach
+          // the prompt, with the reason on the debug sink.
+          ...(selectedRole === undefined
+            ? {}
+            : { role: selectedRole.resolved.name }),
+          ...(selectedRole?.docSkills === undefined
+            ? {}
+            : { roleSkills: selectedRole.docSkills }),
+          classes: installed.classes,
+          // Issue #177: an unresolvable explicit --skill warns on the
+          // boot's warn channel — never only on this debug sink the TUI
+          // drops — so a typo cannot read as a loaded skill.
+          ...(options.warn === undefined ? {} : { warn: options.warn }),
           log: () => {
             // TUI: no debug footer on the alt-screen; loader lines are
             // intentionally dropped (the block itself is observable).
           },
         });
         skillNames = skills.skills.map((skill) => skill.name);
+        bootedSkillList = skills.invocable;
+        skillSkips = skills.skipped;
 
         return {
-          ...(skills.block === undefined
-            ? {}
-            : { promptSections: [skills.block] }),
+          // Issue #240: the system prompt file section lands ahead of the
+          // skills block — same composition `kubic run` uses.
+          ...(() => {
+            const sections = composePromptSections(
+              options.systemPromptSection,
+              skills.block,
+            );
+            return sections === undefined ? {} : { promptSections: sections };
+          })(),
           // Issue #173: the advertised skills outside the cwd stay readable.
           ...(skills.readRoots.length === 0
             ? {}
@@ -1468,9 +1834,21 @@ export async function bootTuiLane(
       policy: {
         classes: installed.classes,
         interceptors: installed.interceptors,
-        ...(installed.contributions.length === 0
+        ...(installed.contributions.length === 0 &&
+        options.extensions === undefined
           ? {}
-          : { contributions: installed.contributions }),
+          : {
+              contributions: [
+                ...installed.contributions,
+                // Issue #283 (§71): the opt-in budget binds the
+                // interactive lane too — refusal, not terminus: the
+                // model sees the refusal as a tool error and the
+                // operator watches it happen.
+                ...(options.extensions === undefined
+                  ? []
+                  : [budgetToolGate(options.extensions)]),
+              ],
+            }),
         // §58 enterprise tool gate (issue #288): the same active-tools /
         // prompt-tools intersection the headless lane installs.
         ...(toolGate === undefined ? {} : { toolAllowed: toolGate }),
@@ -1483,6 +1861,11 @@ export async function bootTuiLane(
     {
       const running = await liveModelOf(booted, context);
       liveModelRef = `${running.provider}/${running.id}`;
+      // Issue #282: the thinking level the lane actually runs (pi-durable
+      // defaults an unset level to `off`, the same answer `/thinking`
+      // reports) — the §60 rows name this, and the switches below keep it.
+      liveThinkingRef =
+        (await booted.conversation.agent(context)).thinkingLevel ?? 'off';
     }
     killRemaining = (): void => {
       // D1: every bash group is keyed by the conversation id, so the quit's
@@ -1524,9 +1907,45 @@ export async function bootTuiLane(
     // usage rows the turn runner records and the #347 context gauge all
     // read this.
     const runningModel = await liveModelOf(solo, context);
+    // Issue #225 (§38.3, review): the thinking level the lane actually
+    // runs — read back from the committed agent document, exactly the
+    // value whose clamp (or keep) the boot notices already reported. The
+    // seed below shows this from the first frame; a stale seed would
+    // disagree with the lane until the first turn's refresh.
+    const runningThinking =
+      (await solo.conversation.agent(context)).thinkingLevel ?? 'off';
     return {
       sessionId: id,
       model: `${runningModel.provider}/${runningModel.id}`,
+      // Issue #246: the injected §50 sink, threaded to the turn runner
+      // for its fault and token lines (absent in prod — no --debug flag).
+      debug: options.debug,
+      // Issue #290: per-turn spans next to the headless artifact — the
+      // session's spans.jsonl carries one run span per TUI turn plus its
+      // tool spans. Best-effort: telemetry never fails a turn or a boot.
+      turnSpans: {
+        turns: new TurnSpans(id),
+        write: (artifact: string): void => {
+          try {
+            bridge.appendFile(join(id, 'spans.jsonl'), artifact);
+          } catch {
+            // A failed artifact write is not a turn failure.
+          }
+        },
+      },
+      thinking: runningThinking,
+      // Issue #255 (§38.2): the resolved set travels on the boot so the
+      // `/scoped-models` case (a different closure) can report it.
+      scopedModels:
+        selectedRole === undefined
+          ? undefined
+          : {
+              role: selectedRole.resolved.name,
+              models:
+                selectedRole.resolved.models === undefined
+                  ? undefined
+                  : [...selectedRole.resolved.models],
+            },
       // Issue #347: the gauge needs the running model's window; a catalog
       // that does not know it yields none and the gauge stays off.
       contextLimits: contextLimitsOf(
@@ -1570,7 +1989,21 @@ export async function bootTuiLane(
       rebaseline: (turn: number) => {
         reconciliation?.rebaseline(turn);
       },
+      // Issue #436: the lane samples this cell per tool call (through
+      // SoloBootOptions.currentTurn) — installing the loop's counter here
+      // keeps tool entries on the sweep numbering without touching boot.
+      setCurrentTurnSupplier: (supplier: () => number | undefined) => {
+        turnCell.supplier = supplier;
+      },
       listFiles: workspaceFileLister(env),
+      // Issue #183 (§29.4): explicit skill invocation over the invocable
+      // set — hidden skills included, withheld skills excluded (their
+      // names resolve unknown, and completion never lists them).
+      skillInvocation: {
+        names: bootedSkillList.map((skill) => skill.name),
+        invoke: (name: string, instructions?: string) =>
+          expandSkillInvocation(bootedSkillList, name, instructions),
+      },
       forkAt: async (at: number) =>
         (await forkSession(store, id, { at }, context)).id,
       ...savedModeOf(bridge, join(root, id, 'mode.json')),
@@ -1599,11 +2032,21 @@ export async function bootTuiLane(
         : { pendingNotice: pendingNotices.join('; ') }),
       fullAccess,
       usageRows,
-      ...(fullAccess
-        ? {
-            notices: [fullAccessGrant?.warning ?? fullAccessInForceWarning(id)],
-          }
-        : {}),
+      // Issue #238: the loader lines the TUI used to drop — skipped
+      // skills as one boot notice (warning on stderr before the
+      // alt-screen opens, via the runner below). A clean boot stays
+      // silent: `describeSkillSkips` is undefined when nothing was
+      // skipped.
+      ...((): { notices?: string[] } => {
+        const skillSkipNotice = describeSkillSkips(skillSkips);
+        const notices = [
+          ...(fullAccess
+            ? [fullAccessGrant?.warning ?? fullAccessInForceWarning(id)]
+            : []),
+          ...(skillSkipNotice === undefined ? [] : [skillSkipNotice]),
+        ];
+        return notices.length === 0 ? {} : { notices };
+      })(),
       approvalsSkipped: installed.approvalsSkipped,
       // Issue #327: the orchestrator lane a Ctrl-G switch submits to — the
       // same manager-lane path `kubic orchestrate` runs, with the TUI's
@@ -1641,6 +2084,13 @@ export async function bootTuiLane(
         ...(options.roles?.layers === undefined
           ? {}
           : { roleLayers: options.roles.layers }),
+        // The config `skills` projection (issue #237, §29.2): the drive
+        // forwards it into the manager lane, so workers spawned from
+        // `kubic tui` load the settings skills exactly like CLI-spawned
+        // workers do — "every orchestrator worker's child".
+        ...(options.skills?.settingsSkills === undefined
+          ? {}
+          : { settingsSkills: options.skills.settingsSkills }),
         // The lane's current model (issue #202): read at each delegation, so
         // a `/model` switch is the model the workers inherit — the same
         // §38.1 `parentModel` `kubic orchestrate` passes from its resolved
@@ -1685,7 +2135,7 @@ export async function bootTuiLane(
         // boot's own: a switch outside `allowed_models`/`allowed_providers`
         // is refused with the same named error before the lane is touched,
         // so the live model stays put.
-        switchModel: async (selection, loopContext) => {
+        switchModel: async (selection, loopContext, reason) => {
           // §35.1/§38.1 (issue #295): `/model` is the session override, and a
           // frozen enterprise `[model]` cannot be overridden by it — refused
           // by name before the catalog or the conversation is touched. Naming
@@ -1705,7 +2155,30 @@ export async function bootTuiLane(
             undefined,
             undefined,
             enterprisePolicy,
+            // Escalation outside the role's set is refused (issue #255;
+            // §38.2): the live model stays put, like the enterprise gate.
+            roleModelScope(selectedRole?.resolved),
           );
+          // Issue #210 (§38.4): with a ladder configured the switch climbs
+          // it through escalateSoloModel — one-way, budget-bounded,
+          // recorded — so an off-ladder target, a down-step, or an
+          // exhausted budget refuses by name with the live model untouched.
+          // Naming the live model is a no-op pass down the plain path
+          // (no budget burned, no event); without a ladder the plain path
+          // below runs exactly as before. After a climb, control falls
+          // through to the #328 re-clamp below, which commits the thinking
+          // level for the NEW model in the same switch.
+          const requested = `${selection.provider}/${selection.modelId}`;
+          if (laneLadder !== undefined && requested !== liveModelRef) {
+            await escalateSoloModel(
+              booted,
+              laneLadder,
+              requested,
+              reason ?? `/model ${requested}`,
+              loopContext,
+              (event) => escalationEvents.push(event),
+            );
+          }
           // Issue #328 review: a switch re-clamps the thinking level to the
           // NEW model's ladder and commits both in one change, so the stored
           // level, the `/thinking` report, the cycle key and the status bar
@@ -1728,6 +2201,13 @@ export async function bootTuiLane(
           // compaction reserve, which follows the current model live).
           const live = await liveModelOf(booted, loopContext);
           liveModelRef = `${live.provider}/${live.id}`;
+          // Issue #282: the switch committed a re-clamped level with the
+          // model — the §60 rows follow it.
+          liveThinkingRef = effective;
+          // Issue #210 (slice 4): an explicit climb moves the auto
+          // trigger's streak out from under it — restart the count on
+          // the new model without spending the single auto slot.
+          resetAutoEscalation(autoEscalation);
           return liveModelRef;
         },
         model: async (loopContext) => {
@@ -1755,7 +2235,10 @@ export async function bootTuiLane(
             loopContext,
           );
           const agent = await booted.conversation.agent(loopContext);
-          return agent.thinkingLevel ?? effective;
+          // Issue #282: the §60 rows name the committed level.
+          const committed = agent.thinkingLevel ?? effective;
+          liveThinkingRef = committed;
+          return committed;
         },
         supportedThinking: async (loopContext) => {
           const live = await liveModelOf(booted, loopContext);
@@ -1805,7 +2288,43 @@ export async function bootTuiLane(
           // The live model can have moved since boot (`/model`), so the
           // trajectory records what the lane actually runs — the same read
           // the returned `model` and the status bar use.
-          const live = await liveModelOf(booted, context);
+          let live = await liveModelOf(booted, context);
+          // Issue #210 (slice 4): the single automatic trigger — N
+          // consecutive tool-failure turns climb one rung, once per run,
+          // never back. Runs before the trajectory persist so the
+          // settling turn's own record already carries the climb.
+          noteAutoEscalationTurn(
+            autoEscalation,
+            turn.turn?.kind === 'failed' ? turn.turn.reason : undefined,
+          );
+          if (laneLadder !== undefined && shouldAutoEscalate(autoEscalation)) {
+            const next = nextLadderRung(
+              laneLadder.steps,
+              `${live.provider}/${live.id}`,
+            );
+            if (next !== undefined) {
+              try {
+                await escalateSoloModel(
+                  booted,
+                  laneLadder,
+                  next,
+                  `${AUTO_ESCALATION_TOOL_FAILURES} consecutive tool failures`,
+                  context,
+                  (event) => escalationEvents.push(event),
+                );
+                markAutoEscalated(autoEscalation);
+                // The climb moved the lane: the trajectory below names
+                // what the lane runs now, not what ran the settled turn.
+                live = await liveModelOf(booted, context);
+              } catch {
+                // Best-effort: a refused climb (the shared budget burned
+                // by explicit climbs since the streak started) leaves the
+                // run intact; the next tool-failure retries while the
+                // streak holds. escalateSoloModel validates before it
+                // mutates, so a refusal records nothing.
+              }
+            }
+          }
           persistRunTrajectory({
             sessionsRoot: root,
             sessionId: id,
@@ -1819,7 +2338,28 @@ export async function bootTuiLane(
             startedAt: turn.startedAt,
             endedAt: Date.now(),
             outcome: tuiTurnOutcome(turn, entriesToTranscript(entries)),
+            // Issue #210 (slice 5): every climb this run recorded —
+            // explicit and automatic — lands on the trajectory, oldest
+            // first. The file is overwritten per settled turn, so the
+            // full sink ships every time, never a delta.
+            ...(escalationEvents.length === 0
+              ? {}
+              : {
+                  escalations: escalationEvents.map((event) =>
+                    toTrajectoryEscalation(event, null),
+                  ),
+                }),
           });
+        },
+        // Issue #210 (slice 5): the transcript rows for recorded climbs.
+        // The runner drains this after every settled turn — each climb is
+        // reported once, however many turns settle afterwards.
+        drainEscalationRows: () => {
+          const rows = escalationEvents
+            .slice(reportedEscalations)
+            .map((event) => formatEscalationRow(event));
+          reportedEscalations = escalationEvents.length;
+          return rows;
         },
       },
       close,
@@ -1955,6 +2495,10 @@ function normalizeMessageContent(content: unknown): unknown[] | undefined {
 export type TuiDepsInput = {
   out: (line: string) => void;
   err?: (line: string) => void;
+  // Issue #283 (§71): the loaded first-party bundle for the boot's
+  // budget gate. Per-invocation, NOT config (outside TuiConfigProjection
+  // on purpose — the #294 by-name rule governs config keys only).
+  extensions?: BundleLoad;
 } & TuiConfigProjection;
 
 // The config projections `kubic tui` consumes (issues #86, #90, #113, #115,
@@ -1996,6 +2540,16 @@ export type TuiConfigProjection = {
   // defaults (and, for the snapshot, no delegation of conflicts).
   orchestratorRuntime?: RuntimeOrchestrator;
   approvalPolicy?: ApprovalSnapshot;
+  // Issue #239 (§27.1): the `[session]` compaction policy, from the same
+  // projection `kubic run` consumes — the interactive lane compacts under
+  // the configured policy, not the lane defaults. Absent means #399's own
+  // defaults.
+  compaction?: SoloCompactionOptions;
+  // Issue #240 ([agent] systemPromptFile): the file text the runtime read
+  // at load, from the same projection `kubic run` consumes — the
+  // interactive lane assembles the same prompt. Absent means the lane
+  // assembles its prompt unchanged.
+  systemPromptSection?: string;
   // Issue #327: the config `[modes]` projection (issue #90's runtime load).
   // Consumed by runTuiCommand: `orchestrator = true` starts the session in
   // orchestrator mode; the flag still beats it.
@@ -2012,6 +2566,8 @@ export type TuiConfigProjection = {
     cwd?: string;
     trusted?: boolean;
     trustProject?: (dir: string) => boolean;
+    // Issue #237 (§29.2): the config `skills` projection.
+    settingsSkills?: string[];
   };
   // Issue #228 (§35.1): the same check gates the project models.json on
   // this lane's assembled catalog.
@@ -2047,10 +2603,21 @@ export function tuiBootOptions(
     policy: provided.policy,
     journalRetention: provided.journalRetention,
     reconcileOutOfScope: provided.reconcileOutOfScope,
+    // Issue #239: the `[session]` compaction policy `kubic run` threads.
+    compaction: provided.compaction,
+    // Issue #240: the `[agent] systemPromptFile` text `kubic run` threads.
+    systemPromptSection: provided.systemPromptSection,
     // Issue #294: `[agent].name` (journal and reconciliation attribution)
     // and the `[roles.<name>]` layers `--role` merges under the document.
     agentId: provided.agentId,
     roles: provided.roles,
+    // Issue #225 (§38.3): the effective thinking level with its source
+    // (`--thinking` > `KUBIC_MODEL_THINKING` > file layers) — the lane
+    // resolves it against the session's stored level and the role default.
+    thinking: provided.thinking,
+    // Issue #210 (§38.4): the merged `[model]` ladder — the lane climbs
+    // the role's own rungs first.
+    escalate: provided.escalate,
     model: provided.model,
     // §58 enterprise policy (issue #288): the role-grant, model and tool
     // gates of the interactive boot all read this one object.
@@ -2068,9 +2635,25 @@ export function tuiBootOptions(
     skills: provided.skills,
     trustProject: provided.trustProject,
   } satisfies Record<keyof TuiConfigProjection, unknown>;
+  // Issue #283 (§71): per-invocation, not config — forwarded outside
+  // the TuiConfigProjection table above on purpose, so the #294 by-name
+  // rule keeps governing config keys only.
+  const invocation = definedOnly({ extensions: provided.extensions });
   const projection = definedOnly(forwarded);
   return {
     ...projection,
+    ...invocation,
+    // Issue #177: the err channel for unresolvable explicit --skill
+    // values, with the boot's `warning: ` prefix. Outside `forwarded`
+    // (issue #294's table): warn is a channel, not a config projection.
+    // Absent err means a silent boot.
+    ...(provided.err === undefined
+      ? {}
+      : {
+          warn: (line: string): void => {
+            provided.err?.(`warning: ${line}`);
+          },
+        }),
     ...(answer === undefined ? {} : { answer }),
     ...(flags?.role === undefined ? {} : { role: flags.role }),
     ...(flags?.noSkills === undefined ? {} : { noSkills: flags.noSkills }),
@@ -2227,6 +2810,12 @@ interface TuiRunState {
   submissionId?: string;
 }
 
+// Issue #290: the key a turn's spans hang on — the placed submission ids
+// the harness names on both `run-start` and `run-end`.
+function turnKey(inputs: readonly SubmissionId[]): string {
+  return inputs.map((input) => String(input)).join(',');
+}
+
 export class TuiTurnRunner {
   private readonly app: TuiApp;
   private readonly loop: TuiLaneLoop;
@@ -2265,6 +2854,19 @@ export class TuiTurnRunner {
   // requests a journal read on tool-end).
   private readonly onLaneEvent: ((event: KubicLaneEvent) => void) | undefined;
 
+  // Issue #290: per-turn spans (absent means the turn records none).
+  private readonly spans: TurnSpansSink | undefined;
+
+  // Issue #246: the §50 debug sink (absent means lines are dropped,
+  // except the fault notice which always renders).
+  private readonly debug: DebugSink | undefined;
+
+  // Issue #285 (§71): the attempt count feeding the bar's budget
+  // segment. Every `tool-start` names an attempt — the slot goes running
+  // before the tool wrappers (including the §71 gate) execute — so a
+  // gate-refused call counts exactly like the gate counted it.
+  private budgetToolCalls = 0;
+
   constructor(
     app: TuiApp,
     loop: TuiLaneLoop,
@@ -2275,6 +2877,11 @@ export class TuiTurnRunner {
     // event APPENDS to it instead of replacing the bar with the new row
     // alone (a resumed session's earlier turns are not re-emitted).
     usageRows: ReadonlyArray<StatusUsageRow> = [],
+    // Issue #290: per-turn spans; absent means the turn records none.
+    spans?: TurnSpansSink,
+    // Issue #246: the §50 debug sink; absent drops the lines (the fault
+    // notice below still renders — it does not need the sink).
+    debug?: DebugSink,
   ) {
     this.app = app;
     this.loop = loop;
@@ -2282,6 +2889,8 @@ export class TuiTurnRunner {
     this.onUpdate = onUpdate;
     this.onLaneEvent = onLaneEvent;
     this.usageRows = [...usageRows];
+    this.spans = spans;
+    this.debug = debug;
     this.projector = new PresentationProjector(app.presentationSeed());
   }
 
@@ -2313,7 +2922,12 @@ export class TuiTurnRunner {
   // Issue #227: `/model provider/id`. The loop owns the lane-side switch
   // (catalog resolution, conversation.configure, read-back); this runner
   // keeps the model the app's status bar and every later header names.
-  async switchModel(selection: ModelSelection): Promise<string> {
+  // Issue #210: the reason rides to the loop for the escalation event —
+  // `/model` passes none, `/escalate` the operator's words.
+  async switchModel(
+    selection: ModelSelection,
+    reason?: string,
+  ): Promise<string> {
     const switchModel = this.loop.switchModel;
     if (switchModel === undefined) {
       throw new Error('this session has no live lane to switch');
@@ -2321,6 +2935,7 @@ export class TuiTurnRunner {
     const label = await switchModel(
       { provider: selection.provider, modelId: selection.id },
       this.loop.context,
+      reason,
     );
     this.model = label;
     // Issue #328 review: the switch re-clamped the level in the lane, so the
@@ -2432,6 +3047,8 @@ export class TuiTurnRunner {
       // failed run) counts as work in flight from this moment (#334).
       this.markPlaced();
       this.markPlacedInputs(event.inputs);
+      // Issue #290: the turn's run span opens on placement.
+      this.spans?.turns.startRun(turnKey(event.inputs));
     }
     if (event.type === 'snapshot') {
       // REPLACE semantics (D2): the attach snapshot is the transcript.
@@ -2453,6 +3070,9 @@ export class TuiTurnRunner {
     if (event.type === 'usage') {
       // The row names the provider/model that answered (#287); the status
       // bar reads tokens + cost only.
+      // Issue #246: the same row feeds the §50 [model] token line (sink
+      // only — the status bar already shows the spend, so the transcript
+      // stays quiet).
       this.usageRows.push({
         model: event.row.model,
         provider: event.row.provider,
@@ -2465,6 +3085,14 @@ export class TuiTurnRunner {
           : { toolCallId: event.row.toolCallId }),
       });
       this.app.setUsage([...this.usageRows]);
+      this.debug?.(
+        modelLine(
+          event.row.usage.input,
+          event.row.usage.output,
+          event.row.usage.cacheRead,
+          `${event.row.provider}/${event.row.model}`,
+        ),
+      );
       // Issue #296: the committed assistant entry is here. Clear the draft
       // FIRST — `clearStream` paints nothing, so no frame can show the text
       // vanishing — and fold second, because the fold's own paint is the one
@@ -2480,10 +3108,48 @@ export class TuiTurnRunner {
       this.foldLaneEntries([event.entry]);
       return;
     }
+    if (event.type === 'tool-start') {
+      // Issue #290: the turn's tool span opens with the call.
+      this.spans?.turns.startTool(event.toolCallId, event.toolName);
+      // Issue #285 (§71): the bar's burn-down follows the gate's own
+      // counter (a no-op here when the run is unbounded).
+      this.budgetToolCalls += 1;
+      this.app.setBudgetSpend(this.budgetToolCalls);
+    }
+    if (event.type === 'fault') {
+      // Issue #246: a faulted harness task (pi-durable `task_failed` —
+      // Pi 1.0 has no `handler_error` event) is the §50 handler_error
+      // line. It rides the debug sink when one is attached, and it ALWAYS
+      // lands as a transcript notice: the TUI has no --debug channel, so
+      // a silent sink would swallow an extension/hook failure whole.
+      const line = hookErrorLine(event.code, event.message);
+      this.debug?.(line);
+      this.app.appendNotice([line]);
+    }
     if (event.type === 'tool-end' && event.entry !== undefined) {
       // A tool result that faulted or was orphaned has no entry: the tree
       // already shows the error, and the transcript has nothing to append.
       this.foldLaneEntries([event.entry]);
+    }
+    if (event.type === 'tool-end') {
+      // Issue #290: entry or not, the call settled — a faulted or orphaned
+      // call has no entry but its span still closes.
+      this.spans?.turns.endTool(event.toolCallId, event.isError);
+    }
+    if (event.type === 'run-end') {
+      // Issue #290: the turn settled — flush its artifact (run span plus
+      // its tool spans). Telemetry never fails a turn.
+      const spans = this.spans;
+      if (spans !== undefined) {
+        const artifact = spans.turns.endRun(turnKey(event.inputs));
+        if (artifact !== undefined) {
+          try {
+            spans.write(artifact);
+          } catch {
+            // A failed artifact write is not a turn failure.
+          }
+        }
+      }
     }
   };
 
@@ -2696,6 +3362,14 @@ export class TuiTurnRunner {
     } catch {
       // The trajectory observes the turn; it never changes its outcome.
     }
+    // Issue #210 (slice 5): report recorded climbs — explicit or
+    // automatic — as transcript rows, each exactly once. The drain is
+    // idempotent, so a turn settling right after a switch reports the
+    // row even when the switch already drained it (then: nothing new).
+    for (const row of this.loop.drainEscalationRows?.() ?? []) {
+      this.app.appendNotice([row]);
+    }
+
     return outcome;
   }
 
@@ -3000,6 +3674,36 @@ export const PASTE_IDLE_MS = 150;
 // still refusing a path that would be read whole for no reason.
 export const THEME_MAX_BYTES = 64 * 1024;
 
+export const SKILL_COMMAND_USAGE = 'usage: /skill:<name> [instructions]';
+
+export type TuiSkillInvokeCommand =
+  | {
+      readonly kind: 'invoke';
+      readonly name: string;
+      readonly instructions: string;
+    }
+  | { readonly kind: 'invalid'; readonly message: string };
+
+// Explicit skill invocation (issue #183, §29.4): `/skill:<name>` names the
+// skill, the rest is the operator's instructions. The registry owns the
+// static `skill` entry for discovery; this parser owns the colon form the
+// registry cannot enumerate. A bare `/skill` (or an empty name) is the
+// usage error; anything else is not a skill command at all.
+export function parseSkillInvokeCommand(
+  prompt: string,
+): TuiSkillInvokeCommand | undefined {
+  const trimmed = prompt.trim();
+  if (trimmed !== '/skill' && !trimmed.startsWith('/skill:')) {
+    return undefined;
+  }
+  const rest = trimmed === '/skill' ? '' : trimmed.slice('/skill:'.length);
+  const space = rest.search(/\s/);
+  const name = (space === -1 ? rest : rest.slice(0, space)).trim();
+  const instructions = space === -1 ? '' : rest.slice(space + 1).trim();
+  if (name === '') return { kind: 'invalid', message: SKILL_COMMAND_USAGE };
+  return { kind: 'invoke', name, instructions };
+}
+
 export function parseImageCommand(prompt: string): TuiImageCommand | undefined {
   const trimmed = prompt.trim();
   if (trimmed !== '/image' && !trimmed.startsWith('/image ')) {
@@ -3080,6 +3784,43 @@ export function parseModelCommand(prompt: string): TuiModelCommand | undefined {
   }
 }
 
+// The `/escalate` command of the interactive loop (issue #210; §38.4): an
+// explicit climb with a recorded reason. Unlike `/model` (the session
+// override, which climbs silently), `/escalate` names WHY in the
+// escalation event — the trajectory row and the transcript line carry it.
+// A bare `/escalate` is a usage refusal, not a report: reporting the
+// ladder is `/scoped-models`' successor's job, not this command's.
+export type TuiEscalateCommand =
+  | { kind: 'switch'; selection: ModelSelection; reason: string | undefined }
+  | { kind: 'invalid'; message: string };
+
+export function parseEscalateCommand(
+  prompt: string,
+): TuiEscalateCommand | undefined {
+  if (prompt !== '/escalate' && !prompt.startsWith('/escalate '))
+    return undefined;
+  const argument =
+    prompt === '/escalate' ? '' : prompt.slice('/escalate '.length).trim();
+  if (argument === '') {
+    return {
+      kind: 'invalid',
+      message: 'usage: /escalate <provider/id> [reason]',
+    };
+  }
+  const space = argument.search(/\s/);
+  const ref = space === -1 ? argument : argument.slice(0, space);
+  const reason =
+    space === -1 ? undefined : argument.slice(space).trim() || undefined;
+  try {
+    return { kind: 'switch', selection: parseModelFlag(ref), reason };
+  } catch (error) {
+    return {
+      kind: 'invalid',
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 // The `/compact [instructions]` command of the interactive loop (#330;
 // §27.2). `undefined` means the draft is a prompt, not the command; the
 // focus is the instructions Pi hands the summarizer (verbatim, via
@@ -3148,6 +3889,8 @@ export interface TuiCommandOptions {
   // lane's tool set; `--no-tools` is the empty set. Mutually exclusive.
   readonly tools?: readonly string[];
   readonly noTools?: boolean;
+  // §71 (issue #283): the opt-in solo budget (never defaulted).
+  readonly budget?: SoloBudgetLimits;
 }
 
 export async function runTuiCommand(
@@ -3257,6 +4000,10 @@ export async function runTuiCommand(
   let boot: TuiLaneBoot;
   try {
     boot = await deps.bootLane(sessionId, surface.seat, flags);
+    // Issue #436: tool-journaled entries share the sweep numbering — the
+    // supplier reads the live counter, so creating it before the `let`
+    // below executes is safe (it is only ever invoked during turns).
+    boot.setCurrentTurnSupplier?.(() => reconcileTurn);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     (deps.err ?? deps.out)(`error: ${message}`);
@@ -3301,9 +4048,19 @@ export async function runTuiCommand(
   const app = createTuiApp({
     sessionId: boot.sessionId,
     model: boot.model,
+    // Issue #225 (§38.3, review): the bar shows the lane's committed level
+    // from the first frame — never the seed default the lane already moved
+    // past (a clamped resume would otherwise read 'off' until Alt+T or a
+    // turn refreshed it). Absent on injected boots means that default.
+    thinking: boot.thinking ?? 'off',
     approvalSurface: surface,
     keys,
     ...(boot.listFiles === undefined ? {} : { listFiles: boot.listFiles }),
+    // Issue #183 (§29.4): the boot's skill names complete `/skill:` in the
+    // editor's popup.
+    ...(boot.skillInvocation === undefined
+      ? {}
+      : { skillNames: boot.skillInvocation.names }),
     // Issue #307/#327: the session mode comes from the resolution above —
     // never a literal, so the indicator and the submit routing cannot
     // disagree with what the entry actually selected. The approvals half
@@ -3318,6 +4075,10 @@ export async function runTuiCommand(
     ...(boot.contextLimits?.compactionThreshold === undefined
       ? {}
       : { compactionThreshold: boot.contextLimits.compactionThreshold }),
+    // Issue #285 (§71): the opt-in budget limits ride the bar from the
+    // first frame; the attempt half arrives via setBudgetSpend as
+    // tool-start events land. Absent means unbounded (silent bar).
+    ...(options.budget === undefined ? {} : { budgetLimits: options.budget }),
   });
   // Issue #346: the resumed session's committed spend is on the bar from the
   // first frame, not only after the next turn's usage event.
@@ -3505,6 +4266,8 @@ export async function runTuiCommand(
         }
       },
       boot.usageRows,
+      boot.turnSpans,
+      boot.debug,
     );
     // Issue #333 (review round 2): EVERY runner gets the loop's in-place queue
     // map, not just the initial one — `/new` and `/resume` rebuild the runner
@@ -4096,6 +4859,22 @@ export async function runTuiCommand(
         }
         switchModelTo(command.selection);
       };
+      // Issue #210 (§38.4): `/escalate <ref> [reason]` — the explicit
+      // climb. Same busy guard and switch path as `/model`; the reason
+      // travels to the loop so the escalation event names it.
+      const handleEscalateCommand = (command: TuiEscalateCommand): void => {
+        if (turn === undefined) {
+          app.setEditorFooter('model switch needs the solo lane');
+          if (!stopped) screen?.render();
+          return;
+        }
+        if (command.kind === 'invalid') {
+          app.setEditorFooter(`escalation failed: ${command.message}`);
+          if (!stopped) screen?.render();
+          return;
+        }
+        switchModelTo(command.selection, command.reason);
+      };
       // Issue #305: `/new` and `/resume` swap the session under the running
       // TUI. The next lane boots FIRST (a failed boot keeps the session the
       // operator was in), the previous one closes, and every lane-bound
@@ -4110,6 +4889,9 @@ export async function runTuiCommand(
       // Every lane-bound object and session-scoped surface follows the boot.
       const adoptBoot = async (next: TuiLaneBoot): Promise<void> => {
         boot = next;
+        // Issue #436: every re-boot (session switch, fork) gets the live
+        // counter too — a fresh boot's cell starts unwired.
+        next.setCurrentTurnSupplier?.(() => reconcileTurn);
         activeTurn = undefined;
         inFlightTurns = 0;
         droppedOnCancel = 0;
@@ -4429,6 +5211,20 @@ export async function runTuiCommand(
             if (!stopped) screen?.render();
             return 'accepted';
           }
+          case 'scoped-models': {
+            // The role's resolved allowed set (issue #255; §38.2): a
+            // local read like `/session` — the loop reports, nothing is
+            // sent, and a bare inspection never mutates the transcript
+            // beyond the report row.
+            const report = formatScopedModels(
+              boot.scopedModels?.role,
+              boot.scopedModels?.models,
+            );
+            app.appendNotice([report]);
+            app.setEditorFooter(report);
+            if (!stopped) screen?.render();
+            return 'accepted';
+          }
           case 'approvals': {
             const argument = command.argument.trim().toLowerCase();
             if (argument === '') {
@@ -4536,7 +5332,12 @@ export async function runTuiCommand(
 
       // Issue #227/#328: one switch path for `/model <id>` and the picker's
       // Enter — the same footer wording and the same refusal text.
-      const switchModelTo = (selection: ModelSelection): void => {
+      // Issue #210 adds the reason: `/escalate <id> [reason]` records it
+      // in the escalation event; `/model` passes none (a silent climb).
+      const switchModelTo = (
+        selection: ModelSelection,
+        reason?: string,
+      ): void => {
         if (turn === undefined) {
           app.setEditorFooter('model switch needs the solo lane');
           if (!stopped) screen?.render();
@@ -4547,9 +5348,15 @@ export async function runTuiCommand(
         );
         if (!stopped) screen?.render();
         void turn
-          .switchModel(selection)
+          .switchModel(selection, reason)
           .then(async (label) => {
             if (stopped) return;
+            // Issue #210 (slice 5): the climb just recorded reports its
+            // transcript row now — not on the next settled turn. The
+            // drain is idempotent, so the turn drain later finds nothing.
+            for (const row of boot.loop?.drainEscalationRows?.() ?? []) {
+              app.appendNotice([row]);
+            }
             // Issue #338: the new model may not accept images (§16.8). The
             // attachments were validated against the OLD model, so they are
             // dropped rather than sent to a model that cannot take them.
@@ -4955,10 +5762,47 @@ export async function runTuiCommand(
         // prompt. It runs through the same busy/cancel wrapper as a turn, so
         // the spinner shows and Ctrl-C aborts it; the command text itself
         // never reaches the model or the transcript.
+        // Issue #183 (§29.4): `/skill:<name> [instructions]` expands to
+        // the skill content plus instructions and submits AS the prompt —
+        // the mode, busy and attachment rules below apply unchanged. An
+        // unknown name refuses locally by name (withheld skills resolve
+        // unknown too, so the refusal never leaks their existence) and
+        // never reaches the model.
+        const skillCommand = parseSkillInvokeCommand(prompt);
+        if (skillCommand !== undefined) {
+          if (skillCommand.kind === 'invalid') {
+            app.setEditorFooter(SKILL_COMMAND_USAGE);
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
+          const invocation = boot.skillInvocation;
+          if (invocation === undefined) {
+            app.setEditorFooter(
+              'skill: explicit invocation is unavailable in this session',
+            );
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
+          try {
+            prompt = invocation.invoke(
+              skillCommand.name,
+              skillCommand.instructions,
+            );
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            app.setEditorFooter(`skill: ${message}`);
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
+        }
         // Issue #305: a slash command is never a prompt. An unknown one is
         // refused locally — it must not reach the model — and the registry's
-        // own commands dispatch below.
-        const slashCommand = parseSlashCommand(prompt);
+        // own commands dispatch below. Issue #183: an expanded skill is
+        // already a prompt, never a command — parsing it again would let a
+        // skill body starting with `/` hijack the submit.
+        const slashCommand =
+          skillCommand !== undefined ? undefined : parseSlashCommand(prompt);
         if (
           slashCommand !== undefined &&
           !SLASH_COMMAND_NAMES.has(slashCommand.name)
@@ -4969,7 +5813,10 @@ export async function runTuiCommand(
           if (!stopped) screen?.render();
           return 'refused';
         }
-        const compactCommand = parseTuiCompactCommand(prompt);
+        const compactCommand =
+          skillCommand !== undefined
+            ? undefined
+            : parseTuiCompactCommand(prompt);
         if (compactCommand !== undefined) {
           const lane = boot.loop;
           // The session's own transcript is the SOLO lane's; in orchestrator
@@ -5008,8 +5855,10 @@ export async function runTuiCommand(
           return 'accepted';
         }
         // Issue #328: `/thinking <level>` — same busy rule as `/model`: a
-        // live switch never races a run.
-        const thinkingCommand = parseThinkingCommand(prompt);
+        // live switch never races a run. Issue #183: skipped for an expanded
+        // skill (a prompt, never a command).
+        const thinkingCommand =
+          skillCommand !== undefined ? undefined : parseThinkingCommand(prompt);
         if (thinkingCommand !== undefined) {
           if (busy) {
             app.setEditorFooter(
@@ -5021,7 +5870,10 @@ export async function runTuiCommand(
           handleThinkingCommand(thinkingCommand);
           return 'accepted';
         }
-        const modelCommand = parseModelCommand(prompt);
+        // Issue #183: skipped for an expanded skill (a prompt, never a
+        // command).
+        const modelCommand =
+          skillCommand !== undefined ? undefined : parseModelCommand(prompt);
         if (modelCommand !== undefined) {
           // A live switch is a conversation.configure: it never races a run.
           if (busy) {
@@ -5032,6 +5884,21 @@ export async function runTuiCommand(
             return 'refused';
           }
           handleModelCommand(modelCommand);
+          return 'accepted';
+        }
+        // Issue #210 (§38.4): `/escalate <ref> [reason]` climbs the same
+        // ladder as `/model` — the busy guard matches, since the climb is
+        // a conversation.configure too.
+        const escalateCommand = parseEscalateCommand(prompt);
+        if (escalateCommand !== undefined) {
+          if (busy) {
+            app.setEditorFooter(
+              'escalation: finish the current turn before climbing',
+            );
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
+          handleEscalateCommand(escalateCommand);
           return 'accepted';
         }
         // Issue #327: the NEXT submit goes to the lane the session mode

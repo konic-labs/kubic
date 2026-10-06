@@ -14,7 +14,9 @@ import {
 } from '../pi-boundary.js';
 import {
   attachSession,
+  createSession,
   forkSession,
+  listSessions,
   openSessionStore,
   readSessionMetadata,
   SessionLockError,
@@ -192,5 +194,44 @@ describe('kubic sessions fork: the store (issue #265)', () => {
     } finally {
       await live.release(BACKGROUND_CONTEXT);
     }
+  });
+
+  it('a forked worker session stays in its run tree (issue #164)', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const parent = await createSession(
+      store,
+      { id: 'orch-1', cwd: '/repo' },
+      BACKGROUND_CONTEXT,
+    );
+    await parent.release(BACKGROUND_CONTEXT);
+    const worker = await createSession(
+      store,
+      {
+        id: 'orch-1-aaa',
+        cwd: '/repo/.kubic/wt/aaa',
+        parentSessionId: 'orch-1',
+        role: 'implementer',
+        agentId: 'aaa',
+      },
+      BACKGROUND_CONTEXT,
+    );
+    await worker.release(BACKGROUND_CONTEXT);
+    const forked = await forkSession(
+      store,
+      'orch-1-aaa',
+      { id: 'orch-1-aaa-fork', tree: true },
+      BACKGROUND_CONTEXT,
+    );
+    expect(forked.id).toBe('orch-1-aaa-fork');
+    // The listing header agrees with the copied document before any attach.
+    const listed = await listSessions(store, BACKGROUND_CONTEXT);
+    expect(
+      listed.find((entry) => entry.id === 'orch-1-aaa-fork')?.meta,
+    ).toMatchObject({
+      parentSessionId: 'orch-1',
+      role: 'implementer',
+      agentId: 'aaa',
+    });
   });
 });

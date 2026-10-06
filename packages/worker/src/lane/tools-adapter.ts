@@ -77,6 +77,10 @@ export interface KubicToolContext {
   // record every mutation. Wired by the lane in slice D; absent in tests
   // and journal-free contexts.
   journal?: FileJournalStore;
+  // Interactive turn supplier (issue #436): the lane installs its boot
+  // option here; the adapter samples it per call into `OpContext.turn`.
+  // A supplier returning `undefined` writes no field (unwired cell).
+  currentTurn?: () => number | undefined;
   // Session-scoped spill sink (issue #182): when set, a bash stream clipped
   // for the model's context window is written here in full and the result
   // names the path. Wired by the lane from its session directory; absent in
@@ -313,6 +317,9 @@ export function kubicToolsToPiTools(
           // their call.
           toolCallId: api.callId,
           journal: context.journal,
+          // Issue #436: sampled per call, so the entry shares the
+          // numbering of the turn in flight — never a boot-time snapshot.
+          turn: context.currentTurn?.(),
           spill: context.spill,
           signal: callContext.abortSignal,
           trackHandle: (kill) =>

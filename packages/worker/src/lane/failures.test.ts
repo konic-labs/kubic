@@ -25,22 +25,153 @@ describe('failure taxonomy (issue #14, slice C)', () => {
     );
   });
 
-  it('gives every code a remedy', () => {
-    for (const kind of [
+  // Remedy table keyed by code (issue #219): every branch names its exact
+  // code, remedy and strategy — a wrong mapping fails here, not in a
+  // trajectory review.
+  it.each([
+    [
       'model',
+      '429 rate limited',
+      'provider_transient',
+      'Provider capacity/rate limit; retry unchanged after notBefore.',
+      'retry_same',
+    ],
+    [
+      'model',
+      'tool crashed',
+      'tool_failed',
+      'Tool execution failed; inspect stderr, then retry or switch tools.',
+      'retry_same',
+    ],
+    [
+      'model',
+      'refused',
+      'model_refused',
+      'The model refused the task; reframe the objective or escalate to the user.',
+      'escalate',
+    ],
+    [
+      'model',
+      'weird boom',
+      'model_failed',
+      'Inspect the model error; transient model errors retry unchanged.',
+      'retry_same',
+    ],
+    [
       'provider',
+      'no models available',
+      'provider_auth',
+      'No provider/model is configured; register a provider (kubic models) or set KUBIC_MODEL, then rerun.',
+      'abandon',
+    ],
+    [
+      'provider',
+      'invalid key',
+      'provider_auth',
+      'Fix provider credentials, then retry.',
+      'abandon',
+    ],
+    [
+      'provider',
+      'socket hang up',
+      'provider_transient',
+      'Transient provider error; retry unchanged after notBefore.',
+      'retry_same',
+    ],
+    [
       'tool',
+      'invalid arguments',
+      'tool_invalid_args',
+      'The model must fix the arguments; retry lets it correct itself.',
+      'retry_same',
+    ],
+    [
+      'tool',
+      'timed out',
+      'tool_timeout',
+      'Tool timed out; retry unchanged with a longer timeout.',
+      'retry_same',
+    ],
+    [
+      'tool',
+      'unknown_tool',
+      'tool_unavailable',
+      'The tool is unavailable; retry with a different tool.',
+      'retry_with_different_tool',
+    ],
+    [
+      'tool',
+      'boom',
+      'tool_failed',
+      'Tool execution failed; inspect stderr, then retry or switch tools.',
+      'retry_same',
+    ],
+    [
       'process',
+      'spawn ENOENT',
+      'process_spawn_failed',
+      'The process never started; fix the environment, then retry.',
+      'retry_same',
+    ],
+    [
+      'process',
+      'segfault',
+      'process_crashed',
+      'The process crashed mid-run; retry unchanged from the checkpoint.',
+      'retry_same',
+    ],
+    [
       'workspace',
+      'disk full',
+      'workspace_failed',
+      'Workspace failure (worktree, merge, disk); needs human attention.',
+      'escalate',
+    ],
+    [
       'context',
+      'context polluted',
+      'context_polluted',
+      'Context is polluted; escalate with the record. The follow-up retry_with_new_agent is chosen by the operator after escalation, not spent here.',
+      'escalate',
+    ],
+    [
+      'context',
+      'overflow',
+      'context_overflow',
+      'Context overflowed; compact first, then retry once.',
+      'retry_with_new_context',
+    ],
+    [
       'budget',
+      'spent',
+      'budget_exhausted',
+      'Budget exhausted; raise the budget or narrow the task. Never retry.',
+      'abandon',
+    ],
+    [
       'approval',
-    ] as const) {
-      const failure = classifyFailure(kind, 'something broke', '');
-      expect(failure.remedy.length).toBeGreaterThan(0);
-      expect(failure.strategy.length).toBeGreaterThan(0);
-    }
-  });
+      'denied by user',
+      'approval_denied',
+      'The user denied the action; do not retry without a new proposal.',
+      'abandon',
+    ],
+    [
+      'approval',
+      'timed out',
+      'approval_timed_out',
+      'Approval timed out; escalate for human attention.',
+      'escalate',
+    ],
+  ] as const)(
+    '%s / %s classifies exactly',
+    (kind, code, expectedCode, expectedRemedy, expectedStrategy) => {
+      expect(classifyFailure(kind, code, '')).toEqual({
+        code: expectedCode,
+        remedy: expectedRemedy,
+        strategy: expectedStrategy,
+      });
+    },
+  );
 
   it('routes transient provider errors to retry_same with notBefore', () => {
     const failure = classifyFailure('provider', '429 rate limited', '');
@@ -146,5 +277,48 @@ describe('generic model errors keep the detail domain (issue #155)', () => {
       classifyFailure('model', 'model_error', 'the model produced nothing')
         .code,
     ).toBe('model_failed');
+  });
+});
+
+describe('retry budget attempts and cost (issue #209)', () => {
+  it('abandons the third failure with maxAttempts=2, naming the retry budget', () => {
+    const retries = new RetryBudget(2);
+    const failure = classifyFailure('provider', '500 upstream', '');
+    expect(chooseRetry(failure, {}, retries).decision).toBe('retry_same');
+    expect(chooseRetry(failure, {}, retries).decision).toBe('retry_same');
+    const third = chooseRetry(failure, {}, retries);
+    expect(third.decision).toBe('abandon');
+    expect(third.reason).toContain('retry budget');
+  });
+
+  it('abandons when reported retry spend reaches maxCostUsd', () => {
+    const retries = new RetryBudget(10, 1);
+    const failure = classifyFailure('provider', '500 upstream', '');
+    const first = chooseRetry(failure, { costUsd: 0.4 }, retries);
+    expect(first.decision).toBe('retry_same');
+    const second = chooseRetry(failure, { costUsd: 1.0 }, retries);
+    expect(second.decision).toBe('abandon');
+    expect(second.reason).toContain('retry budget');
+  });
+
+  it('never spends budget on abandon or escalate', () => {
+    const retries = new RetryBudget(1);
+    const denied = classifyFailure('approval', 'denied', 'user denied');
+    expect(chooseRetry(denied, {}, retries).decision).toBe('abandon');
+    const polluted = classifyFailure('context', 'polluted', 'polluted context');
+    expect(chooseRetry(polluted, {}, retries).decision).toBe('escalate');
+    // The single attempt is still available: nothing was spent above.
+    const transient = classifyFailure('provider', '500 upstream', '');
+    expect(chooseRetry(transient, {}, retries).decision).toBe('retry_same');
+  });
+
+  it('routes context overflow to compact-then-retry, not escalation', () => {
+    const out = classifyFailure(
+      'context',
+      'context_overflow',
+      'too many tokens',
+    );
+    expect(out.code).toBe('context_overflow');
+    expect(out.strategy).toBe('retry_with_new_context');
   });
 });

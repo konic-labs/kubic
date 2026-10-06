@@ -8,7 +8,7 @@
 //   2. the merge gate's shipped decider is a readline over the stdin/stderr
 //      the TUI owns — under the TUI the merge ask must reach the approval
 //      surface's seat, and the readline must never open.
-import { execFileSync } from 'node:child_process';
+
 import {
   existsSync,
   mkdtempSync,
@@ -21,6 +21,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../../packages/exec/src/test-support/git-sandbox.js';
 import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
 import { orchestrateDepsWithDefaults } from './orchestrate-run.js';
@@ -50,14 +55,22 @@ function scratch(prefix: string): string {
 }
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   while (restores.length > 0) restores.pop()?.();
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
+// The test's git driver (issue #420): one injected sandbox per test, so
+// the setup spawns and the production git the TUI run shells share the
+// scrubbed view. Repos keep their own scratch dirs; only the env is shared.
+let driver: GitSandbox | undefined;
+
 function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' });
+  driver ??= createGitSandbox({ injectProcessEnv: true });
+  return driver.git(args, { cwd });
 }
 
 function initRepo(): string {

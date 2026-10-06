@@ -1,5 +1,5 @@
 // MCP refusal + ACP edge-only stance (issue #38) — RED first.
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -44,6 +44,65 @@ describe('MCP stance (issue #38)', () => {
     }
   });
 });
+
+describe('MCP arrival requirements (§33, issue #254)', () => {
+  it('records the three settled §33 requirements', () => {
+    expect(MCP_ARRIVAL_REQUIREMENTS).toHaveLength(3);
+    expect(MCP_ARRIVAL_REQUIREMENTS[0]).toMatch(/tool policy/);
+    expect(MCP_ARRIVAL_REQUIREMENTS[1]).toMatch(/worker process/);
+    expect(MCP_ARRIVAL_REQUIREMENTS[2]).toMatch(/policy conflict/);
+  });
+
+  it('names every requirement in the [mcp] refusal', () => {
+    let message = '';
+    try {
+      assertNoMcpConfig({ mcp: {} });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toMatch(/\[mcp\]/);
+    for (const req of MCP_ARRIVAL_REQUIREMENTS) {
+      expect(message).toContain(req);
+    }
+  });
+});
+
+// The §33 settled text lives in the gitignored design doc (present in the
+// main checkout, absent in worktrees): skip there, never fail there.
+const OVERVIEW = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  '..',
+  '..',
+  'docs',
+  'design',
+  'kubic-overview.md',
+);
+
+describe.skipIf(!existsSync(OVERVIEW))(
+  '§33 design cross-check (issue #254)',
+  () => {
+    it('the constant tracks the settled §33 bullets', () => {
+      const text = readFileSync(OVERVIEW, 'utf8');
+      const start = text.indexOf('# 33. MCP');
+      const end = text.indexOf('# 34.');
+      expect(start).toBeGreaterThanOrEqual(0);
+      expect(end).toBeGreaterThan(start);
+      const section = text.slice(start, end);
+      // The three settled phrases, each paired with the requirement entry
+      // that carries it into the [mcp] refusal.
+      const phrases = ['tool policy', 'worker process', 'policy conflict'];
+      for (const phrase of phrases) {
+        expect(section).toContain(phrase);
+      }
+      expect(MCP_ARRIVAL_REQUIREMENTS).toHaveLength(phrases.length);
+      MCP_ARRIVAL_REQUIREMENTS.forEach((req, i) => {
+        expect(req).toContain(phrases[i] as string);
+      });
+    });
+  },
+);
 
 describe('ACP edge-only (issue #38)', () => {
   it('defines ACP types at the host edge', () => {

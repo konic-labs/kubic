@@ -28,27 +28,32 @@ import {
   createCliTheme,
 } from '../../../../core/src/cli/theme.js';
 import type { ExecutionEnv, Provenance } from '../../../../exec/src/env.js';
-import {
-  createNodeFileBridge,
-  liveLockHolder,
-} from '../../../../exec/src/file-bridge.js';
-import {
-  DEFAULT_JOURNAL_MAX_BYTES,
-  FileJournalStore,
-  journalMutationLockPath,
-} from '../../../../exec/src/journal.js';
+import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
+import { DEFAULT_JOURNAL_MAX_BYTES } from '../../../../exec/src/journal.js';
 import {
   commandOwnsSession,
   isLiveWorkerRow,
   killProcessGroup,
 } from '../../../../worker/src/lifecycle/orphans.js';
 import { workersListFromRepo } from '../../../../worker/src/lifecycle/rows.js';
-import { resolveRepoRuntimeRoot } from '../../policy/audit-ledger.js';
+import {
+  appendToLedger,
+  auditLedgerDirFor,
+  resolveRepoRuntimeRoot,
+  worktreeRemoveAudit,
+} from '../../policy/audit-ledger.js';
 import { SESSION_ID_PATTERN } from '../../run-cli.js';
 import {
   approvalsSessionDir,
   removeSessionApprovalsState,
 } from '../approvals/worker-asks.js';
+import {
+  defaultPruneJournal,
+  type JournalPruneResult,
+  type JournalScope,
+  listPrunableSessionJournals,
+  noopPrune,
+} from './clean-journal.js';
 import {
   isSpawnedWorktreePath,
   isSpawnedWorktreeShape,
@@ -70,6 +75,7 @@ import {
 } from './naming.js';
 import {
   deleteSpawnedBranch,
+  isBranchMerged,
   pruneWorktrees,
   removeWorktree,
 } from './remove.js';
@@ -93,26 +99,16 @@ export interface CleanOptions {
   maxAgeMs?: number;
   maxBytes?: number;
   sessionId?: string;
+  // Issue #367: prune session journals recorded for workspaces other than
+  // this one too. Without it only this workspace's sessions (plus the
+  // legacy store) are visited.
+  allSessions?: boolean;
 }
 
 export interface CleanPlan {
   worktrees: { path: string; branch: string | null }[];
   branches: string[];
   journal: { maxAgeMs?: number; maxBytes?: number };
-}
-
-export interface JournalPruneResult {
-  entries: number;
-  bytes: number;
-  // Issue #348: bytes the kept journal is still over the retention bound by,
-  // when the newest entry alone cannot fit — it is never dropped, so the
-  // excess is reported instead of deleted. 0 means the bound holds.
-  overBound: number;
-  // Issue #337: the pid holding the journal's mutation lock, when the prune
-  // was skipped because a writer is live. Pruning under a live run can drop
-  // entries it just appended and delete blobs it just wrote, so the pass
-  // steps aside and says who it stepped aside for.
-  lockedBy?: number;
 }
 
 export interface CleanDeps {
@@ -143,7 +139,11 @@ export interface CleanDeps {
   pruneJournal?: (
     policy: { maxAgeMs?: number; maxBytes?: number },
     repoRoot: string,
-  ) => JournalPruneResult;
+    scope?: JournalScope,
+  ) => Promise<JournalPruneResult>;
+  // Issue #367: the sessions root the journal pass walks (defaults to the
+  // user's sessions dir). A seam so tests never touch the real one.
+  sessionsRoot?: string;
   sessionAgents?: (sessionId: string, repoRoot: string) => string[] | undefined;
   /** Workers whose process is still running, by agent id → pid (§51). A
    *  live worker's worktree is never disposed without --force. Defaults to
@@ -324,25 +324,6 @@ function sessionStorePath(repoRoot: string, sessionId: string): string {
   return join(repoRoot, '.kubic', 'orchestrator', `${sessionId}.json`);
 }
 
-function defaultPruneJournal(
-  policy: { maxAgeMs?: number; maxBytes?: number },
-  repoRoot: string,
-): JournalPruneResult {
-  const dir = join(repoRoot, '.kubic', 'journal');
-  // Issue #337: a live writer holds the journal's mutation lock for the
-  // length of one mutation, but `kubic clean --journal` is a destructive
-  // pass over the whole store — under a live run it can drop entries the run
-  // just appended and delete blobs it just wrote. It steps aside instead.
-  const holder = liveLockHolder(
-    journalMutationLockPath(join(dir, 'index.jsonl')),
-  );
-  if (holder !== undefined) {
-    return { entries: 0, bytes: 0, overBound: 0, lockedBy: holder };
-  }
-  const store = new FileJournalStore(dir);
-  return store.enforceRetention(policy);
-}
-
 // Prod deps for the composition root: the env is injected (host never
 // constructs the node binding itself), the session store and the journal
 // pruner are the real library paths.
@@ -353,6 +334,7 @@ export function cleanDepsWithDefaults(options: {
   theme?: CliTheme;
   errTheme?: CliTheme;
   worktreeRoot?: string;
+  sessionsRoot?: string;
 }): CleanDeps {
   return {
     env: options.env,
@@ -363,6 +345,9 @@ export function cleanDepsWithDefaults(options: {
     ...(options.worktreeRoot === undefined
       ? {}
       : { worktreeRoot: options.worktreeRoot }),
+    ...(options.sessionsRoot === undefined
+      ? {}
+      : { sessionsRoot: options.sessionsRoot }),
     sessionAgents: defaultSessionAgents,
     pruneJournal: defaultPruneJournal,
   };
@@ -385,10 +370,6 @@ async function defaultResolveRepoRoot(
   const root = done.stdout.trim();
   if (done.exitCode !== 0 || root.length === 0) return undefined;
   return root;
-}
-
-function noopPrune(): JournalPruneResult {
-  return { entries: 0, bytes: 0, overBound: 0 };
 }
 
 function messageOf(error: unknown): string {
@@ -565,6 +546,49 @@ export async function runCleanCommand(
 
   const planEmpty = plan.worktrees.length === 0 && plan.branches.length === 0;
 
+  // An unmerged spawned branch keeps its worktree too (issue #146): the
+  // probe runs before any removal, so a plain clean never half-disposes.
+  // Under --force there is nothing to probe — the delete escalates to -D.
+  // Defined ahead of the dry-run block, which reports the same refusal.
+  // One probe per branch per run: the dry-run lists attached branches twice
+  // (worktree row plus branch row), and a repeated `git merge-base` would
+  // be pure waste.
+  const probeCache = new Map<
+    string,
+    { target: string; message: string } | undefined
+  >();
+  const refuseUnmerged = async (
+    branch: string,
+    worktree: string | null,
+  ): Promise<{ target: string; message: string } | undefined> => {
+    if (options.force === true) return undefined;
+    if (probeCache.has(branch)) return probeCache.get(branch);
+    let refusal: { target: string; message: string } | undefined;
+    try {
+      if (!(await isBranchMerged(deps.env, repoRoot, branch))) {
+        refusal = {
+          target: branch,
+          message:
+            `refusing to delete unmerged branch ${branch}` +
+            (worktree === null ? '' : ` (worktree ${worktree} kept)`) +
+            ' — rerun with --force',
+        };
+      }
+    } catch (error) {
+      refusal = { target: branch, message: messageOf(error) };
+    }
+    probeCache.set(branch, refusal);
+    return refusal;
+  };
+
+  // Issue #367: the session journals the journal pass may prune —
+  // the named session, this workspace's sessions, or every session.
+  const journalScope: JournalScope = {
+    sessionsRoot: deps.sessionsRoot,
+    sessionId: options.sessionId,
+    allSessions: options.allSessions,
+  };
+
   if (options.dryRun === true) {
     // A session-scoped clean retires the session's state (and its approvals
     // directory) once nothing of it is left standing.
@@ -588,10 +612,31 @@ export async function runCleanCommand(
       deps.out(theme.muted('clean: nothing to prune'));
       return CLEAN_EXIT_OK;
     }
+    // Issue #146: an unmerged branch is reported, not planned (dry-run
+    // JSON still lists the plan; the text view marks each refusal).
+    const refused = new Set<string>();
     for (const item of plan.worktrees) {
+      if (item.branch !== null) {
+        const refusal = await refuseUnmerged(item.branch, item.path);
+        if (refusal !== undefined) {
+          refused.add(item.branch);
+          deps.out(
+            `${theme.warning('would refuse:')} unmerged branch ${item.branch} (rerun with --force)`,
+          );
+          continue;
+        }
+      }
       deps.out(`${theme.warning('would remove')} worktree ${item.path}`);
     }
     for (const branch of plan.branches) {
+      if (refused.has(branch)) continue;
+      const refusal = await refuseUnmerged(branch, null);
+      if (refusal !== undefined) {
+        deps.out(
+          `${theme.warning('would refuse:')} unmerged branch ${branch} (rerun with --force)`,
+        );
+        continue;
+      }
       deps.out(`${theme.warning('would delete')} branch ${branch}`);
     }
     if (wouldRetire && options.sessionId !== undefined) {
@@ -603,6 +648,14 @@ export async function runCleanCommand(
       deps.out(
         `${theme.warning('would prune')} journal entries outside the retention policy`,
       );
+      for (const visit of await listPrunableSessionJournals(
+        repoRoot,
+        journalScope,
+      )) {
+        deps.out(
+          `${theme.warning('would prune')} journal for session ${visit.sessionId}`,
+        );
+      }
     }
     deps.out(theme.muted('clean (dry run): nothing changed'));
     return CLEAN_EXIT_OK;
@@ -620,7 +673,10 @@ export async function runCleanCommand(
   const branchDeleter =
     deps.branchDeleter ??
     ((env, branch) =>
-      deleteSpawnedBranch(env, branch, { sessionId: options.sessionId }));
+      deleteSpawnedBranch(env, branch, {
+        sessionId: options.sessionId,
+        force: options.force === true,
+      }));
   const pruner =
     deps.pruner ??
     ((env) => pruneWorktrees(env, { sessionId: options.sessionId }));
@@ -666,9 +722,33 @@ export async function runCleanCommand(
       });
       continue;
     }
+    // Issue #146: probe merge state before touching the checkout — an
+    // unmerged branch keeps its worktree (a probe failure refuses too).
+    if (item.branch !== null) {
+      const refusal = await refuseUnmerged(item.branch, item.path);
+      if (refusal !== undefined) {
+        failures.push(refusal);
+        continue;
+      }
+    }
     try {
       await remover(deps.env, item.path, { force: options.force === true });
       removed.push(item);
+      // Every disposed tree lands one `worktree-remove` row in the repo's
+      // own §60 ledger (issue #284). appendToLedger never throws (it
+      // reports through onError), so the callback — not a try/catch — is
+      // what surfaces a failed append; the disposal never fails over it.
+      appendToLedger(
+        auditLedgerDirFor(repoRoot),
+        worktreeRemoveAudit({
+          sessionId: options.sessionId ?? 'cli',
+          path: item.path,
+          branch: item.branch,
+        }),
+        (message) => {
+          log.error(`audit: worktree-remove not recorded: ${message}`);
+        },
+      );
     } catch (error) {
       failures.push({ target: item.path, message: messageOf(error) });
       // Never half-dispose: a worktree that is still standing keeps its
@@ -689,6 +769,12 @@ export async function runCleanCommand(
   const covered = new Set(plan.worktrees.map((item) => item.branch));
   for (const branch of plan.branches) {
     if (covered.has(branch)) continue;
+    // Issue #146: a branch-only unmerged branch is refused, not deleted.
+    const refusal = await refuseUnmerged(branch, null);
+    if (refusal !== undefined) {
+      failures.push(refusal);
+      continue;
+    }
     try {
       await branchDeleter(deps.env, branch);
       deleted.push(branch);
@@ -744,7 +830,9 @@ export async function runCleanCommand(
       });
     }
   }
-  const journal = bounded ? pruneJournal(plan.journal, repoRoot) : noopPrune();
+  const journal = bounded
+    ? await pruneJournal(plan.journal, repoRoot, journalScope)
+    : noopPrune();
   const exitCode = failures.length > 0 ? CLEAN_EXIT_FAILURE : CLEAN_EXIT_OK;
 
   if (options.json === true) {
@@ -798,6 +886,21 @@ export async function runCleanCommand(
       deps.out(
         `journal: pruned ${journal.entries} entr(ies), freed ${journal.bytes} byte(s)${over}`,
       );
+    }
+    for (const session of journal.sessions ?? []) {
+      if (session.lockedBy !== undefined) {
+        deps.out(
+          `journal: prune skipped — session ${session.sessionId} journal is in use (pid ${session.lockedBy})`,
+        );
+      } else {
+        const sessionOver =
+          session.overBound > 0
+            ? `, over bound by ${session.overBound} byte(s) (newest entry kept)`
+            : '';
+        deps.out(
+          `journal: pruned ${session.entries} entr(ies), freed ${session.bytes} byte(s) for session ${session.sessionId}${sessionOver}`,
+        );
+      }
     }
   }
   return exitCode;

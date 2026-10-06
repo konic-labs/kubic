@@ -3,8 +3,12 @@
 // the eval runner's injected ensureCleanWorktree hook, which is sync — so
 // the probe shells `git status --porcelain` synchronously. Fail-closed: a
 // non-repo, a missing dir, or any git failure reads as NOT clean.
+//
+// Real git in sandboxed throwaway repos (issue #365): the repo setup runs
+// through the shared sandbox's scrubbed env, and the sandbox is activated
+// into process.env while the probe (which spawns git on the inherited
+// environment) runs.
 
-import { spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdtempSync,
@@ -20,55 +24,59 @@ import {
   isGitWorktreeClean,
   withDetachedCheckout,
 } from './git-clean.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from './test-support/git-sandbox.js';
 
 const roots: string[] = [];
 
 afterEach(() => {
+  disposeAllGitSandboxes();
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
 });
 
+// Plain temp dirs, for the fail-closed paths that never touch git.
 function tmpRoot(): string {
   const root = mkdtempSync(join(tmpdir(), 'git-clean-'));
   roots.push(root);
   return root;
 }
 
-function initRepo(dir: string): void {
-  const run = (args: string[]): void => {
-    const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
-    if (result.status !== 0) {
-      throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
-    }
-  };
-  run(['init']);
-  run(['config', 'user.email', 'test@example.com']);
-  run(['config', 'user.name', 'test']);
-  writeFileSync(join(dir, 'a.txt'), 'hello\n');
-  run(['add', 'a.txt']);
-  // No signing / hooks from the developer's global config.
-  run(['-c', 'commit.gpgsign=false', 'commit', '--no-verify', '-m', 'init']);
+// Activated: isGitWorktreeClean / withDetachedCheckout / gitHeadOf spawn git
+// on the inherited environment, so process.env itself must be the sandbox's
+// while they run; disposeAllGitSandboxes restores it afterwards.
+function initRepo(): GitSandbox {
+  const repo = createGitSandbox({
+    prefix: 'git-clean-',
+    injectProcessEnv: true,
+  });
+  writeFileSync(join(repo.path, 'a.txt'), 'hello\n');
+  repo.git(['add', 'a.txt']);
+  // No signing / hooks from the developer's global config (sandbox-local
+  // config pins both; --no-verify is belt and braces).
+  repo.git(['commit', '--no-verify', '-m', 'init']);
+  return repo;
 }
 
 describe('isGitWorktreeClean (issue #78)', () => {
   it('reads true on a clean repo', () => {
-    const dir = tmpRoot();
-    initRepo(dir);
-    expect(isGitWorktreeClean(dir)).toBe(true);
+    const repo = initRepo();
+    expect(isGitWorktreeClean(repo.path)).toBe(true);
   });
 
   it('reads false on a modified tracked file', () => {
-    const dir = tmpRoot();
-    initRepo(dir);
-    writeFileSync(join(dir, 'a.txt'), 'changed\n');
-    expect(isGitWorktreeClean(dir)).toBe(false);
+    const repo = initRepo();
+    writeFileSync(join(repo.path, 'a.txt'), 'changed\n');
+    expect(isGitWorktreeClean(repo.path)).toBe(false);
   });
 
   it('reads false on an untracked file alone', () => {
-    const dir = tmpRoot();
-    initRepo(dir);
-    writeFileSync(join(dir, 'new.txt'), 'untracked\n');
-    expect(isGitWorktreeClean(dir)).toBe(false);
+    const repo = initRepo();
+    writeFileSync(join(repo.path, 'new.txt'), 'untracked\n');
+    expect(isGitWorktreeClean(repo.path)).toBe(false);
   });
 
   it('fail-closes on a non-repo dir and a missing path', () => {
@@ -78,48 +86,48 @@ describe('isGitWorktreeClean (issue #78)', () => {
 });
 
 describe('withDetachedCheckout (issue #267): the verifier baseline', () => {
-  function worktreeCount(dir: string): number {
-    return spawnSync('git', ['worktree', 'list', '--porcelain'], {
-      cwd: dir,
-      encoding: 'utf8',
-    })
-      .stdout.split('\n')
+  function worktreeCount(repo: GitSandbox): number {
+    return repo
+      .git(['worktree', 'list', '--porcelain'])
+      .split('\n')
       .filter((line) => line.startsWith('worktree ')).length;
   }
 
   it('runs in a clean checkout of the revision, then removes it', async () => {
-    const dir = tmpRoot();
-    initRepo(dir);
-    const base = gitHeadOf(dir)?.revision as string;
+    const repo = initRepo();
+    const base = gitHeadOf(repo.path)?.revision as string;
     // The working tree moves on after the base commit.
-    writeFileSync(join(dir, 'a.txt'), 'changed\n');
+    writeFileSync(join(repo.path, 'a.txt'), 'changed\n');
     let seen: { content: string; path: string } | undefined;
-    const value = await withDetachedCheckout(dir, base, async (checkout) => {
-      seen = {
-        path: checkout,
-        content: readFileSync(join(checkout, 'a.txt'), 'utf8'),
-      };
-      expect(worktreeCount(dir)).toBe(2);
-      return 'done';
-    });
+    const value = await withDetachedCheckout(
+      repo.path,
+      base,
+      async (checkout) => {
+        seen = {
+          path: checkout,
+          content: readFileSync(join(checkout, 'a.txt'), 'utf8'),
+        };
+        expect(worktreeCount(repo)).toBe(2);
+        return 'done';
+      },
+    );
     expect(value).toBe('done');
     expect(seen?.content).toBe('hello\n');
     expect(existsSync(seen?.path as string)).toBe(false);
-    expect(worktreeCount(dir)).toBe(1);
+    expect(worktreeCount(repo)).toBe(1);
     // The caller's tree is untouched.
-    expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe('changed\n');
+    expect(readFileSync(join(repo.path, 'a.txt'), 'utf8')).toBe('changed\n');
   });
 
   it('removes the checkout even when the callback throws', async () => {
-    const dir = tmpRoot();
-    initRepo(dir);
-    const base = gitHeadOf(dir)?.revision as string;
+    const repo = initRepo();
+    const base = gitHeadOf(repo.path)?.revision as string;
     await expect(
-      withDetachedCheckout(dir, base, async () => {
+      withDetachedCheckout(repo.path, base, async () => {
         throw new Error('boom');
       }),
     ).rejects.toThrow('boom');
-    expect(worktreeCount(dir)).toBe(1);
+    expect(worktreeCount(repo)).toBe(1);
   });
 
   it('is null (callback never runs) outside a repo or for an unknown revision', async () => {
@@ -129,32 +137,28 @@ describe('withDetachedCheckout (issue #267): the verifier baseline', () => {
       return 1;
     };
     expect(await withDetachedCheckout(tmpRoot(), 'HEAD', run)).toBeNull();
-    const dir = tmpRoot();
-    initRepo(dir);
-    expect(await withDetachedCheckout(dir, 'f'.repeat(40), run)).toBeNull();
+    const repo = initRepo();
+    expect(
+      await withDetachedCheckout(repo.path, 'f'.repeat(40), run),
+    ).toBeNull();
     expect(ran).toBe(false);
-    expect(worktreeCount(dir)).toBe(1);
+    expect(worktreeCount(repo)).toBe(1);
   });
 });
 
 describe('gitHeadOf (issue #383): the §46 trajectory base revision', () => {
   it('names the HEAD sha and the current branch', () => {
-    const dir = tmpRoot();
-    initRepo(dir);
-    spawnSync('git', ['checkout', '-q', '-b', 'feature'], { cwd: dir });
-    const sha = spawnSync('git', ['rev-parse', 'HEAD'], {
-      cwd: dir,
-      encoding: 'utf8',
-    }).stdout.trim();
-    expect(gitHeadOf(dir)).toEqual({ revision: sha, branch: 'feature' });
+    const repo = initRepo();
+    repo.git(['checkout', '-q', '-b', 'feature']);
+    const sha = repo.git(['rev-parse', 'HEAD']).trim();
+    expect(gitHeadOf(repo.path)).toEqual({ revision: sha, branch: 'feature' });
   });
 
   it('names no branch on a detached HEAD', () => {
-    const dir = tmpRoot();
-    initRepo(dir);
-    spawnSync('git', ['checkout', '-q', '--detach'], { cwd: dir });
-    expect(gitHeadOf(dir)?.branch).toBeNull();
-    expect(gitHeadOf(dir)?.revision).toMatch(/^[0-9a-f]{40}$/);
+    const repo = initRepo();
+    repo.git(['checkout', '-q', '--detach']);
+    expect(gitHeadOf(repo.path)?.branch).toBeNull();
+    expect(gitHeadOf(repo.path)?.revision).toMatch(/^[0-9a-f]{40}$/);
   });
 
   it('is null outside a repository and on a missing path', () => {

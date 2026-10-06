@@ -63,6 +63,7 @@ describe('an absent roles directory is not an error (#99 wiring follow-up)', () 
     const loaded = loadRoles({
       cwd: root,
       bridge: createNodeFileBridge(root),
+      trusted: true,
     });
     expect(loaded.resolved.map((role) => role.name)).toEqual([
       'debugger',
@@ -85,6 +86,7 @@ describe('an absent roles directory is not an error (#99 wiring follow-up)', () 
     const checks = rolesDoctorProbe({
       cwd: root,
       bridge: createNodeFileBridge(root),
+      trusted: true,
     });
     expect(checks.filter((check) => check.status === 'fail')).toEqual([]);
     expect(checks.map((check) => check.id)).toEqual([
@@ -107,6 +109,7 @@ describe('an absent roles directory is not an error (#99 wiring follow-up)', () 
     const checks = rolesDoctorProbe({
       cwd: root,
       bridge: createNodeFileBridge(root),
+      trusted: true,
     });
     expect(checks.filter((check) => check.status === 'fail')).toEqual([]);
   });
@@ -120,6 +123,7 @@ describe('an absent roles directory is not an error (#99 wiring follow-up)', () 
     const checks = rolesDoctorProbe({
       cwd: root,
       bridge: createNodeFileBridge(root),
+      trusted: true,
     });
     const failing = checks.filter((check) => check.status === 'fail');
     expect(failing).toHaveLength(1);
@@ -131,6 +135,7 @@ describe('an absent roles directory is not an error (#99 wiring follow-up)', () 
     const loaded = loadRoles({
       cwd: root,
       bridge: createNodeFileBridge(root),
+      trusted: true,
     });
     // The repo document REPLACES its embedded preset; the other four presets
     // are still there, and the overridden one is reported as `repo`.
@@ -146,6 +151,7 @@ describe('an absent roles directory is not an error (#99 wiring follow-up)', () 
     const checks = rolesDoctorProbe({
       cwd: root,
       bridge: createNodeFileBridge(root),
+      trusted: true,
     });
     expect(checks.filter((check) => check.status === 'fail')).toEqual([]);
     expect(checks.find((check) => check.id === 'role:planner')?.detail).toMatch(
@@ -169,6 +175,7 @@ describe('an absent roles directory is not an error (#99 wiring follow-up)', () 
     const loaded = loadRoles({
       cwd: root,
       bridge: createNodeFileBridge(root),
+      trusted: true,
     });
     // Registered under the DECLARED name (`planner`), replacing its preset.
     expect(loaded.sources.planner).toBe('repo');
@@ -178,6 +185,7 @@ describe('an absent roles directory is not an error (#99 wiring follow-up)', () 
     const checks = rolesDoctorProbe({
       cwd: root,
       bridge: createNodeFileBridge(root),
+      trusted: true,
     });
     expect(checks.filter((check) => check.status === 'fail')).toEqual([]);
     expect(checks.find((check) => check.id === 'role:planner')?.detail).toMatch(
@@ -197,8 +205,8 @@ describe('an absent roles directory is not an error (#99 wiring follow-up)', () 
         return bridge.readTextFile(path);
       },
     };
-    expect(() => loadRoles({ cwd: root, bridge: broken })).toThrow(
-      /role document .*planner\.md is unreadable: EIO/,
-    );
+    expect(() =>
+      loadRoles({ cwd: root, bridge: broken, trusted: true }),
+    ).toThrow(/role document .*planner\.md is unreadable: EIO/);
   });
 });

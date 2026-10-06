@@ -171,6 +171,12 @@ describe('tapScope (issues #66, #72)', () => {
     ]);
   });
 
+  it('maps the same-named pin test to its SUT (issue #376)', () => {
+    assert.deepEqual(tapScope(['scripts/check-pinned-deps.test.mjs']), [
+      'scripts/check-pinned-deps.mjs',
+    ]);
+  });
+
   it('maps a config-wide script test to every tap SUT', () => {
     assert.deepEqual(tapScope(['scripts/pi-boundary.test.mjs']), [
       'scripts/dep-lint.mjs',

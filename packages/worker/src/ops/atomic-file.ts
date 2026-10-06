@@ -138,7 +138,7 @@ export function replaceFile(
   pre: PreImage,
   entry: Omit<
     JournalEntryInput,
-    'sessionId' | 'agentId' | 'toolCallId' | 'timestamp' | 'path'
+    'sessionId' | 'agentId' | 'toolCallId' | 'timestamp' | 'path' | 'turn'
   >,
 ): void {
   const write = writeTarget(ctx, opName, path);
@@ -150,7 +150,15 @@ export function replaceFile(
         sessionId: ctx.sessionId,
         agentId: ctx.agentId,
         toolCallId: ctx.toolCallId ?? null,
+        // Issue #335: the intercepting tool's name — `opName` is the
+        // literal 'write'/'edit' the call site passed, so both tools are
+        // covered here with no signature change.
+        toolName: opName,
         timestamp: Date.now(),
+        // Issue #436: a turn-less call (headless, tests) writes NO turn
+        // field at all — never null, never zero — matching the sweep
+        // entries' absent-on-old shape.
+        ...(ctx.turn === undefined ? {} : { turn: ctx.turn }),
       });
     } catch (error) {
       throw new OpError(

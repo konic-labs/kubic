@@ -13,8 +13,9 @@
 
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 // §67 (issue #191): the task and the capability grant travel together — the
 // manager builds and validates the task it hands a worker child.
 import {
@@ -31,6 +32,7 @@ import {
   createNodeFileBridge,
   type FileBridge,
 } from '../../../packages/exec/src/file-bridge.js';
+import { snapshotGitGuard } from '../../../packages/exec/src/git-guard-snapshot.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import type { PostureOptions } from '../../../packages/extensions/src/startup.js';
 import { enableSessionFullAccess } from '../../../packages/host/src/approvals.js';
@@ -48,6 +50,10 @@ import {
   assembleModels,
   modelsProjectRootFor,
 } from '../../../packages/host/src/models-cli.js';
+import {
+  RunSpans,
+  serializeSpanArtifact,
+} from '../../../packages/host/src/ops/perf/run-spans.js';
 import type {
   MergeApprovalVerdict,
   OrchestrateCommandDeps,
@@ -79,11 +85,13 @@ import {
   POSTURE_APPROVALS,
   POSTURE_FULL_ACCESS,
   type WorkerApprovalsRun,
+  type WorkerAskRouterOptions,
   type WorkerAskSeat,
   type WorkerQuestionSeat,
   workerQuestionSeatForRun,
   workerSeatForRun,
 } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
+import { QUESTION_UNANSWERED_CODE } from '../../../packages/host/src/orchestrator/approvals/worker-questions.js';
 import type { MergedHunk } from '../../../packages/host/src/orchestrator/merge/attribution.js';
 import type {
   ApprovalSnapshot,
@@ -100,6 +108,11 @@ import {
   worktreeMissingError,
 } from '../../../packages/host/src/orchestrator/worktree/errors.js';
 import {
+  diffGitGuardSnapshots,
+  withHostGitCommitGuard,
+  withHostGitGuard,
+} from '../../../packages/host/src/orchestrator/worktree/git-guard.js';
+import {
   branchForAgent,
   pathForAgent,
 } from '../../../packages/host/src/orchestrator/worktree/naming.js';
@@ -109,8 +122,13 @@ import {
   auditLedgerDirFor,
   mergeDecisionAudit,
   resolveRepoRuntimeRoot,
+  runStartAudit,
+  workerSpawnAudit,
+  workerTerminateAudit,
+  worktreeCreateAudit,
 } from '../../../packages/host/src/policy/audit-ledger.js';
 import type { EffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
+import { findProjectRoot } from '../../../packages/host/src/project-root.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
 import {
   planWorkerRoles,
@@ -127,6 +145,7 @@ import {
   createSession,
   openSessionStore,
   SessionAttachError,
+  SessionLockError,
 } from '../../../packages/worker/src/lane/session-store.js';
 import type { WorkerFailure } from '../../../packages/worker/src/lifecycle/launch.js';
 import { launchWorker } from '../../../packages/worker/src/lifecycle/launch.js';
@@ -151,6 +170,7 @@ import {
 import { allowlistedShell } from '../../../packages/worker/src/lifecycle/shell.js';
 import type { WorkerShell } from '../../../packages/worker/src/lifecycle/spawn.js';
 import { isTerminalAgentStatus } from '../../../packages/worker/src/lifecycle/status.js';
+import { callOperation } from '../../../packages/worker/src/ops/registry.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 import type {
   AgentResult,
@@ -242,6 +262,15 @@ export interface OrchestrateRunOptions {
    */
   roleLayers?: RoleLayerInput[];
   /**
+   * The config `skills` projection (issue #237, §29.2) — files or
+   * directories, already resolved against their declaring file at load.
+   * Every worker's child gets them the #170 way (task `resources.skills`
+   * + `--skill <abs>` argv), merged ahead of the run's `--skill` values
+   * so an explicit flag still wins a same-name conflict. Absent means the
+   * workers load only what the run was launched with.
+   */
+  settingsSkills?: string[];
+  /**
    * Where the §49.1 parallel trajectory records go (issue #106). Absent
    * defaults to `<repo>/.kubic/orchestrator/<session>.trajectory.jsonl`
    * (appended, best-effort — telemetry never fails a run).
@@ -254,6 +283,14 @@ export interface OrchestrateRunOptions {
   // Issue #154: presents worker questions (free text); default: a readline
   // prompt on a TTY, none headless.
   questionSeat?: WorkerQuestionSeat;
+  /**
+   * Presents the MANAGER's `ask_user` questions (issue #431). A caller
+   * that OWNS the terminal — the TUI, whose alt-screen and raw stdin a
+   * readline would corrupt — supplies its own seat here, used verbatim
+   * (the #327 merge-seat pattern). Absent keeps the shipped behaviour (a
+   * TTY is asked per question, a headless run denies closed).
+   */
+  askUserSeat?: OrchestrateCommandDeps['askUserSeat'];
   /**
    * The merge gate's decider (issue #327). A caller that OWNS the terminal —
    * the TUI, whose alt-screen and raw stdin a readline would corrupt —
@@ -300,6 +337,13 @@ export interface OrchestrateRunOptions {
    * model, so it decides which provider's key the worker is granted.
    */
   model?: { provider: string; id: string };
+  /**
+   * The `--manager-lane` flag, forwarded by the headless composition root
+   * (issue #431, L-D34). True opts this run into the model-driven manager
+   * lane; absent/false leaves the opt-in to `[orchestrator] manager`. The
+   * TUI never sets it (headless only until #439).
+   */
+  managerLane?: boolean;
   /**
    * A frozen enterprise `[model]` is the manager's effective pin (issue #295;
    * §35.1): every worker child runs the enterprise model whatever `KUBIC_MODEL`
@@ -442,6 +486,36 @@ function launchesView(
   };
 }
 
+// §60 ledger provenance for one worker ask (issue #282): the registry row
+// the spawn recorded — pid, generation — read at RECORD time, so a respawn
+// between two asks records the new generation; the per-worker resolved
+// thinking level (else the run's explicit level); the worktree base captured
+// at creation. A worker the registry never saw (a forged key) resolves
+// undefined, and the row keeps the honest 0/unknown fallback. Exported so
+// the wiring itself is what the ledger test drives, not a copy of it.
+export function askProvenanceForWorker(
+  registry: WorkerRegistry,
+  lookup: {
+    thinkingByAgent: ReadonlyMap<string, string>;
+    baseByAgent: ReadonlyMap<string, string>;
+    thinkingFallback?: string;
+  },
+): NonNullable<WorkerAskRouterOptions['provenanceFor']> {
+  return (request) => {
+    const row = registry.get(request.agentId);
+    if (row === undefined) return undefined;
+    const thinking =
+      lookup.thinkingByAgent.get(request.agentId) ?? lookup.thinkingFallback;
+    const base = lookup.baseByAgent.get(request.agentId);
+    return {
+      ...(row.pid === undefined ? {} : { pid: row.pid }),
+      generation: row.generation,
+      ...(thinking === undefined ? {} : { thinking }),
+      ...(base === undefined ? {} : { base }),
+    };
+  };
+}
+
 /**
  * §13 WAITING (issue #151): while the router holds an unanswered ask for a
  * worker, its row says WAITING; the answer (or the bound's denial) flips it
@@ -529,6 +603,33 @@ function provenanceFor(sessionId: string, agentId: string, tool: string) {
   };
 }
 
+/**
+ * Route host-side git argv through the guard (issue #363, #428): every
+ * invocation carries the hooksPath/fsmonitor overrides, and commits
+ * additionally carry `--no-verify` via `withHostGitCommitGuard`. This is
+ * the ONLY place host argv gains the commit flag — call sites pass plain
+ * argv, so no commit path can hand-roll (and forget) it. The subcommand
+ * is read past any leading global options (issue #435: `-c`/`-C` and the
+ * value-taking longs skip their argument, every other `-`/`--` word
+ * skips itself), so a `--no-pager` or `-C` commit keeps `--no-verify`.
+ */
+// Global options that take a separate value (issue #435): skipped with
+// their argument when hunting the subcommand.
+const HOST_GLOBAL_VALUE =
+  /^(-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)$/i;
+
+export function hostGitArgs(args: readonly string[]): string[] {
+  let index = 0;
+  while (index < args.length) {
+    const token = args[index] ?? '';
+    if (HOST_GLOBAL_VALUE.test(token)) index += 2;
+    else if (token.startsWith('-')) index += 1;
+    else break;
+  }
+  if (args[index] === 'commit') return withHostGitCommitGuard(args);
+  return withHostGitGuard(args);
+}
+
 async function runGit(
   cwd: string,
   args: string[],
@@ -536,16 +637,61 @@ async function runGit(
   agentId: string,
   tool: string,
 ): Promise<ShellResult> {
+  // Issue #363: every host-side git invocation runs with repo hooks and
+  // fsmonitor disabled — a hook planted in a worker tree never executes
+  // during the orchestrator's own status/stage/commit/merge/abort reads.
   const env = new NodeExecutionEnv(cwd);
   return env.shell
-    .spawn('git', args, { provenance: provenanceFor(sessionId, agentId, tool) })
+    .spawn('git', hostGitArgs(args), {
+      provenance: provenanceFor(sessionId, agentId, tool),
+    })
     .wait();
 }
 
+// Worker entry resolution (issue #179): the child `kubic run` is spawned
+// through the SAME bin wrapper that launched this manager. The wrapper is
+// located from this module's own import.meta.url — node's default ESM
+// resolution already follows symlinks to the real file, so argv[1] and the
+// cwd are never consulted: through a bin symlink named `kubic`
+// (node_modules/.bin, npm link, a global install) argv[1] has no .js
+// suffix and the cwd is the user's project, where the old fallback spawned
+// a nonexistent <cwd>/bin/kubic.js. Both shipped layouts carry
+// bin/kubic.js above this module (the repo root, in source and in dist).
+// The existence probe is injectable so unit tests pin the resolution
+// without touching the filesystem, argv, or cwd.
+export function resolveWorkerEntryScript(
+  moduleFilePath: string,
+  wrapperExists: (dir: string) => boolean = binWrapperExists,
+): string | undefined {
+  let dir = dirname(moduleFilePath);
+  for (let level = 0; level < 6; level++) {
+    if (wrapperExists(dir)) return join(dir, 'bin', 'kubic.js');
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return undefined;
+}
+
+// Existence probe through the exec FileBridge (I/O confinement, §9) —
+// the composition root never imports node:fs directly.
+function binWrapperExists(dir: string): boolean {
+  try {
+    createNodeFileBridge(dir).readTextFile(join('bin', 'kubic.js'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+let cachedEntryScript: string | undefined;
 function entryScript(): string {
-  const argv1 = process.argv[1];
-  if (typeof argv1 === 'string' && argv1.endsWith('.js')) return argv1;
-  return resolve(process.cwd(), 'bin', 'kubic.js');
+  // Last-resort fallback for an exotic layout with no bin wrapper above
+  // the module: the old cwd guess. Unreachable in both shipped layouts.
+  cachedEntryScript ??=
+    resolveWorkerEntryScript(fileURLToPath(import.meta.url)) ??
+    resolve(process.cwd(), 'bin', 'kubic.js');
+  return cachedEntryScript;
 }
 
 // Wall-clock bound handed to each child `kubic run` (issue #94). A worker
@@ -924,6 +1070,20 @@ function drawableText(text: string): string {
   return sanitizeReasonField(text.replace(/\r?\n/g, ' '));
 }
 
+// The §60 `worker-terminate` reason (issue #284): how the child process
+// ended. A wait that threw names the run failure (preferring the child's
+// own terminus) or the lifecycle failure — never a bare 'error' when a
+// code exists. A wait that settled is reasoned at the settle point.
+function terminateReasonOf(
+  error: unknown,
+  failure: { code: string } | undefined,
+): string {
+  if (error instanceof WorkerRunFailure) {
+    return error.approval?.code ?? error.code;
+  }
+  return failure?.code ?? 'error';
+}
+
 function workerRunError(
   agentId: string,
   done: { exitCode: number; stdout: string; stderr: string },
@@ -1133,6 +1293,12 @@ export async function orchestrateDepsWithDefaults(
   const maxWorkers = options.orchestrator?.maxWorkers;
   const excludeEntries = runtimeExcludeEntriesFor(worktreeRoot);
   const workerRegistry = options.registry ?? new WorkerRegistry();
+  // §60 audit provenance (issue #282): the per-worker thinking level the
+  // spawn resolved and the worktree base revision captured at creation.
+  // Read at RECORD time through the approvals hook below, so the maps may
+  // fill after the hook is built.
+  const thinkingByAgent = new Map<string, string>();
+  const baseByAgent = new Map<string, string>();
   // One registry for the whole invocation (issue #94): the orchestrator
   // writes rows here, `kubic workers` reads the same rows off disk, and a
   // caller can hand in a registry to observe a run from outside.
@@ -1197,6 +1363,12 @@ export async function orchestrateDepsWithDefaults(
   // id it carries is the run's own. The resolver seam below derives its own
   // session id from it rather than inventing one.
   let orchestratorSessionId: string | undefined;
+  // Issue #164: in-flight manager-session ensures by run id (see
+  // createWorkerSession) — concurrent spawns share one attach-or-create.
+  const managerSessionEnsured = new Map<string, Promise<void>>();
+  // Issue #431: unique invocation ids for the lane's git inspections, so
+  // the op registry can tell one `git_diff` from the next.
+  let gitInvocationCounter = 0;
   // Worktree creation time per agent, so a launch sample can assert the
   // §61 worktree budget alongside its own spawn/teardown legs.
   // §61 (issue #158): worktree creation duration and session attach duration
@@ -1224,6 +1396,14 @@ export async function orchestrateDepsWithDefaults(
     'repo-root',
   );
   const root = top.exitCode === 0 ? top.stdout.trim() : undefined;
+  // Issue #290: manager-side worker spans — one RunSpans for the run,
+  // one worker.start (+ nested startup) span per launch, appended per
+  // settled worker to <root>/.kubic/orchestrator/<session>.spans.jsonl.
+  // Shared across concurrent runWorker calls: span ids are unique per
+  // launch, so workers never share spans. The run's debug channel
+  // carries the span lines (issue #246), so `kubic orchestrate --debug`
+  // names each worker start and end.
+  const managerSpans = new RunSpans(Date.now, debug);
 
   const needRoot = (): string => {
     if (root === undefined) throw new Error('not a git repository');
@@ -1298,6 +1478,33 @@ export async function orchestrateDepsWithDefaults(
       // Intentionally swallowed — the named failure comes from the write path.
     }
   }
+
+  // Issue #363: baseline `.git/config` + `.git/hooks` before any worker
+  // runs. Verified after each worker settle and each merge — drift is
+  // reported on the run log (the worker journal already records the
+  // offending tool call; these lines name what it left behind). Best
+  // effort: an unreadable gitdir degrades to no baseline, never a failure.
+  let gitGuardBefore: ReturnType<typeof snapshotGitGuard> | undefined;
+  if (root !== undefined) {
+    try {
+      gitGuardBefore = snapshotGitGuard(root);
+    } catch {
+      gitGuardBefore = undefined;
+    }
+  }
+  const verifyGitGuard = (label: string): void => {
+    if (gitGuardBefore === undefined || root === undefined) return;
+    try {
+      for (const line of diffGitGuardSnapshots(
+        gitGuardBefore,
+        snapshotGitGuard(root),
+      )) {
+        debug(`${label}: ${line}`);
+      }
+    } catch {
+      // Best effort — reporting drift must never fail a settle.
+    }
+  };
 
   // Crash recovery (§51): a previous manager that died hard (SIGKILL,
   // crash past the signal guard) left rows claiming live workers. Reconcile
@@ -1616,6 +1823,110 @@ export async function orchestrateDepsWithDefaults(
     }
     return { grant: resolved.grant, refusal: undefined };
   };
+  // Issue #282: the worktree's base revision for the §60 rows — HEAD at
+  // creation (or at resume), best-effort. A failed probe keeps the honest
+  // unknown instead of failing the spawn.
+  const captureWorktreeBase = async (
+    agentId: string,
+    worktreePath: string,
+    ownerSession: string | undefined,
+  ): Promise<void> => {
+    try {
+      const head = await runGit(
+        worktreePath,
+        ['rev-parse', 'HEAD'],
+        ownerSession ?? 'cli',
+        agentId,
+        'worktree-base',
+      );
+      const sha = head.stdout.trim();
+      if (head.exitCode === 0 && sha !== '') baseByAgent.set(agentId, sha);
+    } catch (error) {
+      debug(
+        `audit: base revision probe failed for '${agentId}': ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
+  // §60 privileged-action rows (issue #284): one row per worker spawn /
+  // terminate and per worktree creation, with the same provenance block as
+  // the ask rows. Best-effort: a failed append surfaces on the debug
+  // channel (stderr) and never fails the run. The ledger is the repo
+  // runtime root's (issue #279), like the merge rows.
+  const appendPrivileged = (
+    record: ReturnType<typeof workerSpawnAudit>,
+    kind: string,
+  ): void => {
+    appendToLedger(auditLedgerDirFor(needRoot()), record, (message) =>
+      debug(`audit: ${kind} not recorded — ${message}`),
+    );
+  };
+  const privilegedPosture = (): string =>
+    approvalsActive?.fullAccessGrant() === undefined
+      ? POSTURE_APPROVALS
+      : POSTURE_FULL_ACCESS;
+  const workerLedgerBase = (input: {
+    agentId: string;
+    role: string;
+    worktree: string;
+    model?: string;
+    pid?: number;
+    generation: number;
+  }): {
+    sessionId: string;
+    agentId: string;
+    role: string;
+    worktree: string;
+    model?: string;
+    thinking?: string;
+    base?: string;
+    pid?: number;
+    generation: number;
+    posture: string;
+  } => {
+    const thinking = thinkingByAgent.get(input.agentId);
+    const base = baseByAgent.get(input.agentId);
+    return {
+      sessionId: orchestratorSessionId ?? 'orch',
+      agentId: input.agentId,
+      role: input.role,
+      worktree: input.worktree,
+      ...(input.model === undefined ? {} : { model: input.model }),
+      ...(thinking === undefined ? {} : { thinking }),
+      ...(base === undefined ? {} : { base }),
+      ...(input.pid === undefined ? {} : { pid: input.pid }),
+      generation: input.generation,
+      posture: privilegedPosture(),
+    };
+  };
+  const auditWorkerSpawn = (input: {
+    agentId: string;
+    role: string;
+    worktree: string;
+    model?: string;
+    pid?: number;
+    generation: number;
+  }): void => {
+    appendPrivileged(workerSpawnAudit(workerLedgerBase(input)), 'worker:spawn');
+  };
+  const auditWorkerTerminate = (input: {
+    agentId: string;
+    role: string;
+    worktree: string;
+    model?: string;
+    pid?: number;
+    generation: number;
+    reason: string;
+    result: 'ok' | 'error';
+  }): void => {
+    appendPrivileged(
+      workerTerminateAudit({
+        ...workerLedgerBase(input),
+        reason: input.reason,
+        result: input.result,
+      }),
+      'worker:terminate',
+    );
+  };
   return {
     out: options.out,
     err: options.err,
@@ -1638,7 +1949,7 @@ export async function orchestrateDepsWithDefaults(
     isGitRepo: () => root !== undefined,
     // §44.1 retained-worktree status (issue #106): the run retained these
     // worktrees as evidence, so the operator is told which of them are dirty
-    // and where. Real `git -C <path> status --porcelain=v1 -b` through the
+    // and where. Real `git -C <path> status --porcelain=v2 -z -b` through the
     // exec Shell seam, anchored to the repo root so a foreign path can never
     // be reported as a spawned worktree.
     worktreeStatus: async (path, options) => {
@@ -1649,6 +1960,130 @@ export async function orchestrateDepsWithDefaults(
         ...(repo === undefined ? {} : { repoRoot: repo }),
         ...(worktreeRoot === undefined ? {} : { worktreeRoot }),
       });
+    },
+    // Step 7 (issue #431): the manager lane's prod seams. The lane drives
+    // only under the L-D34 opt-in (`--manager-lane` or `[orchestrator]
+    // manager = "lane"`) AND a resolved manager model — the explicit
+    // `--model` pin, or the first model of the first deliverable fallback
+    // provider (already auth-filtered, so the lane never boots on a model
+    // it cannot call). Otherwise the run keeps the deterministic template
+    // path, and a debug note says why the lane stayed off.
+    managerLaneOptIn:
+      options.managerLane === true || options.orchestrator?.manager === 'lane',
+    managerModels: assembledModels.models,
+    ...(() => {
+      if (options.model !== undefined) {
+        return {
+          managerModel: {
+            provider: options.model.provider,
+            id: options.model.id,
+          },
+        };
+      }
+      if (fallbackProvider !== undefined) {
+        const first = assembledModels.models.getModels(fallbackProvider).at(0);
+        if (first !== undefined) {
+          return {
+            managerModel: { provider: fallbackProvider, id: first.id },
+          };
+        }
+      }
+      debug(
+        'manager lane off: no manager model resolved (no --model pin and no deliverable fallback provider) — the run keeps the template path',
+      );
+      return {};
+    })(),
+    // The manager conversation's session (issue #431): attach-or-create on
+    // the run's own session store, returned HELD — the router releases it
+    // after the lane closes, so a later `--resume` re-attaches.
+    openManagerSession: async (sessionId: string) => {
+      try {
+        return await attachSession(sessionStore, sessionId, BACKGROUND_CONTEXT);
+      } catch (error) {
+        if (!(error instanceof SessionAttachError)) throw error;
+        return await createSession(
+          sessionStore,
+          { id: sessionId, cwd: root ?? cwd },
+          BACKGROUND_CONTEXT,
+        );
+      }
+    },
+    // The manager's `ask_user` seat (issue #431): an injected seat wins
+    // (tests do), else a TTY run asks on the terminal and a headless run
+    // denies closed. The router races the seat against the ask bound, so
+    // an abandoned prompt resolves unanswered instead of hanging the turn.
+    askUserSeat:
+      options.askUserSeat ??
+      (process.stdin.isTTY === true
+        ? async (question: string) => {
+            const rl = createInterface({
+              input: process.stdin,
+              output: process.stderr,
+            });
+            try {
+              const answer: string = await new Promise((resolveAnswer) => {
+                rl.question(`manager asks: ${question}\n> `, resolveAnswer);
+                rl.on('close', () => resolveAnswer(''));
+              });
+              const text = answer.trim();
+              return text === ''
+                ? {
+                    answered: false as const,
+                    code: QUESTION_UNANSWERED_CODE,
+                    reason: 'no answer was typed (empty line)',
+                  }
+                : { answered: true as const, text };
+            } finally {
+              rl.close();
+            }
+          }
+        : async () => ({
+            answered: false as const,
+            code: QUESTION_UNANSWERED_CODE,
+            reason: 'no ask seat is wired for this run (headless)',
+          })),
+    // Read-only git inspection for the lane (issue #431): the three reader
+    // ops over the op registry, rooted at the repo the run orchestrates.
+    // Bounded at the adapter (32k); failures refuse by name, never raw.
+    inspectGit: async (tool, args) => {
+      const repoRoot = root ?? cwd;
+      const invocationId = `manager-git-${gitInvocationCounter++}`;
+      const outcome = await callOperation(
+        tool,
+        args,
+        {
+          invocationId,
+          operationId: 'manager',
+          turnId: 'manager',
+          keepEffectMemo: false,
+          getMemo: () => Promise.resolve(undefined),
+          setMemo: () => Promise.resolve(undefined),
+          memoOnce: (_name, candidate) => Promise.resolve(candidate),
+        },
+        {
+          env: new NodeExecutionEnv(repoRoot),
+          sessionId: orchestratorSessionId ?? 'orch',
+          agentId: 'manager',
+        },
+      );
+      if (!outcome.ok) {
+        throw new Error(
+          `${tool} failed: ${outcome.error?.message ?? outcome.error?.code ?? 'unknown error'}`,
+        );
+      }
+      const result = (outcome as { result?: unknown }).result as
+        | { status?: unknown; diff?: unknown; log?: unknown }
+        | undefined;
+      const text =
+        tool === 'git_status'
+          ? result?.status
+          : tool === 'git_diff'
+            ? result?.diff
+            : result?.log;
+      if (typeof text !== 'string') {
+        throw new Error(`${tool} returned no text`);
+      }
+      return text;
     },
     trajectoryEvent:
       options.trajectoryEvent ??
@@ -1691,6 +2126,12 @@ export async function orchestrateDepsWithDefaults(
       return planWorkerRoles({
         bridge: createNodeFileBridge(cwd),
         cwd,
+        // Issue #229: worker roles resolve at the manager's project
+        // root, not wherever the manager was launched from.
+        projectRoot: findProjectRoot(createNodeFileBridge(cwd), cwd, homedir()),
+        // Issue #241 (§35): the manager plans the same global roles the
+        // worker's own `kubic run --role` will resolve.
+        home: homedir(),
         agents,
         // §38.1 (#202): the manager's own effective model is the fallback
         // level under each role's `[roles.<r>].model`, and the run's explicit
@@ -1713,6 +2154,14 @@ export async function orchestrateDepsWithDefaults(
         ...(options.roleLayers === undefined
           ? {}
           : { layers: options.roleLayers }),
+        // Issue #430 (§33, L-D27): worker roles resolve under the same
+        // per-path trust check as the run — the manager refuses an
+        // untrusted root's overrides before any worktree exists. The
+        // KUBIC_TRUST_PROJECT opt-in travels to the children as env
+        // (issue #228), so a trusted manager keeps trusted workers.
+        ...(options.projectTrust === undefined
+          ? {}
+          : { trustProject: options.projectTrust }),
       });
     },
     // §36.3 credential preflight (issue #200): the same memoized lookup the
@@ -1755,6 +2204,25 @@ export async function orchestrateDepsWithDefaults(
         // child is spawned.
         worktreeMsByAgent.set(agentId, Date.now() - worktreeStarted);
         for (const warning of added.warnings) debug(`gap: ${warning.message}`);
+        // Issue #282: the worktree's base revision for the §60 rows — HEAD
+        // at creation, best-effort (a failed probe keeps the honest
+        // unknown rather than failing the spawn).
+        await captureWorktreeBase(agentId, added.path, ownerSession);
+        // §60 privileged-action row (issue #284): the fresh creation, with
+        // the base just captured above. A resumed tree is not a creation —
+        // it records nothing here.
+        const createdBase = baseByAgent.get(agentId);
+        appendPrivileged(
+          worktreeCreateAudit({
+            sessionId: ownerSession ?? orchestratorSessionId ?? 'cli',
+            agentId,
+            path: added.path,
+            branch: added.branch,
+            ...(createdBase === undefined ? {} : { base: createdBase }),
+            posture: privilegedPosture(),
+          }),
+          'worktree:create',
+        );
         return { path: added.path, branch: added.branch };
       } catch (error) {
         if (!isWorktreeError(error) || error.code !== 'already_exists') {
@@ -1789,6 +2257,8 @@ export async function orchestrateDepsWithDefaults(
         if (!present) throw worktreeMissingError(path, branch);
         debug(`worktree: resuming '${agentId}' in its own ${path}`);
         worktreeMsByAgent.set(agentId, Date.now() - worktreeStarted);
+        // Issue #282: a resumed tree's base is HEAD at resume time.
+        await captureWorktreeBase(agentId, path, ownerSession);
         return { path, branch };
       }
     },
@@ -1849,6 +2319,16 @@ export async function orchestrateDepsWithDefaults(
         // hang). `--yes` never replaces it (issue #323): the standing answer
         // is the merge gate's only.
         ...(optionsSeat === undefined ? {} : { seat: optionsSeat }),
+        // §60 audit provenance (issue #282): the registry row (pid,
+        // generation), the resolved thinking level and the worktree base —
+        // read at record time, so a respawn records the new generation.
+        provenanceFor: askProvenanceForWorker(workerRegistry, {
+          thinkingByAgent,
+          baseByAgent,
+          ...(thinkingOverride === undefined
+            ? {}
+            : { thinkingFallback: thinkingOverride }),
+        }),
         debug: (line) => debug(line),
       });
       approvalsActive = run;
@@ -1857,6 +2337,63 @@ export async function orchestrateDepsWithDefaults(
     },
     createWorkerSession: async (input) => {
       orchestratorSessionId = input.sessionId;
+      // Issue #164 (§22–§23): the spawnAgent parent-linkage rule, enforced
+      // where sessions are actually created — a worker session id that IS
+      // the run id would parent the tree to itself.
+      if (input.workerSessionId === input.sessionId) {
+        throw new Error(
+          `spawn failed for worker '${input.agentId}': sessionId must differ from parentSessionId (parent linkage)`,
+        );
+      }
+      // The manager session record: the tree root every worker session
+      // parents to. Attach-or-create (a resumed run reuses it); a record
+      // only, never booted — its cwd is the run's repo root. Spawns admit
+      // concurrently (#206), and the Kubic lock refuses even a same-process
+      // second attach, so concurrent ensures share ONE in-flight task:
+      // the winner attaches-or-creates while the rest await it, and a
+      // failure drops the entry so the next spawn retries instead of
+      // awaiting a rejected promise forever.
+      const live = managerSessionEnsured.get(input.sessionId);
+      if (live !== undefined) {
+        await live;
+      } else {
+        const task = (async (): Promise<void> => {
+          try {
+            const manager = await attachSession(
+              sessionStore,
+              input.sessionId,
+              BACKGROUND_CONTEXT,
+            );
+            await manager.release(BACKGROUND_CONTEXT);
+          } catch (error) {
+            // A live holder proves the record exists: on the lane path the
+            // manager conversation itself holds the run session (issue
+            // #431), so the ensure is already satisfied — never a spawn
+            // failure.
+            if (error instanceof SessionLockError) return;
+            if (!(error instanceof SessionAttachError)) throw error;
+            const manager = await createSession(
+              sessionStore,
+              {
+                id: input.sessionId,
+                cwd: root ?? cwd,
+                // Issue #278 (§19): the run's mode on the manager record.
+                mode: input.mode,
+              },
+              BACKGROUND_CONTEXT,
+            );
+            await manager.release(BACKGROUND_CONTEXT);
+          }
+        })();
+        managerSessionEnsured.set(input.sessionId, task);
+        try {
+          await task;
+        } finally {
+          if (managerSessionEnsured.get(input.sessionId) === task) {
+            managerSessionEnsured.delete(input.sessionId);
+          }
+        }
+      }
       // §61 (issue #158): time the create/attach leg — the sample's attachMs.
       const attachStartedAt = Date.now();
       // Create the worker's session before the child spawns (issue #85):
@@ -1911,7 +2448,15 @@ export async function orchestrateDepsWithDefaults(
       }
       const session = await createSession(
         sessionStore,
-        { id: input.workerSessionId, cwd: input.worktree.path },
+        {
+          id: input.workerSessionId,
+          cwd: input.worktree.path,
+          parentSessionId: input.sessionId,
+          ...(input.role === undefined ? {} : { role: input.role }),
+          agentId: input.agentId,
+          // Issue #278 (§19): the run's mode on the worker record.
+          mode: input.mode,
+        },
         BACKGROUND_CONTEXT,
       );
       const id = session.id;
@@ -1952,6 +2497,8 @@ export async function orchestrateDepsWithDefaults(
       // (the run's explicit `KUBIC_MODEL_THINKING`, else the role's default);
       // the manager's ambient value is the fallback.
       const thinking = info?.thinking ?? process.env.KUBIC_MODEL_THINKING;
+      // Issue #282: the resolved level for this worker's §60 rows.
+      if (thinking !== undefined) thinkingByAgent.set(agentId, thinking);
       // Issue #94: the worker starts through the lifecycle layer, never by
       // reaching for the exec Shell here. launchWorker refuses a stale
       // generation, registers the row `kubic workers` reads, builds the
@@ -1974,8 +2521,13 @@ export async function orchestrateDepsWithDefaults(
         info?.modelRef,
       );
       // §67 task resources (issue #170): the run's `--skill` values, resolved
-      // against the manager's cwd.
-      const skills = resolveSkillPaths(info?.skills, cwd);
+      // against the manager's cwd. Issue #237: the manager's own settings
+      // skills ride the same channel (already absolute from the config
+      // load), ahead of the run flags so explicit intent wins conflicts.
+      const skills = resolveSkillPaths(
+        [...(options.settingsSkills ?? []), ...(info?.skills ?? [])],
+        cwd,
+      );
       // §67 (issue #191): the task and the capability grant travel together.
       // The manager builds and VALIDATES the worker's task before the child
       // exists — a task whose worktree is not absolute or whose tool set is
@@ -2001,7 +2553,20 @@ export async function orchestrateDepsWithDefaults(
           toolNames: info.tools ?? [],
           ...(budgetForSpawn === undefined ? {} : { budget: budgetForSpawn }),
           ...(model === undefined ? {} : { model }),
-          ...(skills.length === 0 ? {} : { resources: { skills } }),
+          // Issue #196 (§40.2/§41.1): the role's classes and approval
+          // obligations ride the §67 resources channel with the skills
+          // (already absolute) — the child merges the classes with its
+          // own config, most restrictive wins, and challenges the
+          // requires on its triggers.
+          resources: {
+            ...(skills.length === 0 ? {} : { skills }),
+            ...(info.classes === undefined
+              ? {}
+              : { classes: { ...info.classes } }),
+            ...(info.requires === undefined || info.requires.length === 0
+              ? {}
+              : { requires: [...info.requires] }),
+          },
         });
         if (!built.valid) {
           throw new AgentTaskRefusedError(agentId, built.errors);
@@ -2169,6 +2734,51 @@ export async function orchestrateDepsWithDefaults(
         },
       );
       launchedByAgent.set(agentId, launched);
+      // Issue #290: the worker.start span (with its nested startup span)
+      // opens at launch — startup begins when the child is spawned.
+      const workerSpan = managerSpans.startWorker(workerSession);
+      // Issue #290: settle the worker's spans and append its artifact.
+      // The startup duration is the registry's startupMs (pinned by endAt,
+      // never a second wall-clock read); a launch that never became ready
+      // reports startupMs null and gets a zero-duration startup, with the
+      // failure on the worker.start span. Best-effort: telemetry never
+      // fails a worker.
+      const settleWorkerSpans = (error?: string): void => {
+        try {
+          managerSpans.endWorkerStartup(
+            workerSpan,
+            launched.perf().sample.startupMs ?? null,
+          );
+          managerSpans.endWorker(workerSpan, error);
+          if (root === undefined || orchestratorSessionId === undefined) return;
+          createNodeFileBridge(join(root, '.kubic', 'orchestrator')).appendFile(
+            `${orchestratorSessionId}.spans.jsonl`,
+            serializeSpanArtifact(
+              managerSpans.flushWorker(workerSpan),
+              workerSpan,
+              workerSession,
+            ),
+          );
+        } catch (spanError) {
+          debug(
+            `spans: could not record the worker span: ${spanError instanceof Error ? spanError.message : String(spanError)}`,
+          );
+        }
+      };
+      // §60 privileged-action row (issue #284): the spawn half of the
+      // spawn/terminate pair bracketing this child's process lifetime.
+      // Snapshot once — the terminate half below spreads this, so the two
+      // halves can never disagree about pid, generation or model.
+      const spawnPid = launched.pid ?? workerRegistry.get(agentId)?.pid;
+      const ledgerWorker = {
+        agentId,
+        role: info?.role ?? 'worker',
+        worktree: worktree.path,
+        ...(modelPin === undefined ? {} : { model: modelPin }),
+        ...(spawnPid === undefined ? {} : { pid: spawnPid }),
+        generation: launched.generation,
+      };
+      auditWorkerSpawn(ledgerWorker);
       // A cancel that arrived between the readiness check above and this
       // launch (issue #206): the handle exists now, so the kill lands instead
       // of waiting out the child's own bound. `throwIfCancelled` still turns
@@ -2268,12 +2878,31 @@ export async function orchestrateDepsWithDefaults(
               : await Promise.race([launched.wait(), wallClockExceeded]);
         } catch (error) {
           persistWorkerRowsNow();
+          // The process ended by kill (watchdog, cancel): the terminate
+          // half names the failure, and the throw below still carries it.
+          auditWorkerTerminate({
+            ...ledgerWorker,
+            reason: terminateReasonOf(error, launched.failure()),
+            result: 'error',
+          });
           throw error;
         } finally {
           if (wallClockWatchdog !== undefined) clearTimeout(wallClockWatchdog);
           untrack();
         }
         finished = done;
+        // The process ended: the terminate half. Later funnels (exit-code
+        // throw, settle throw) must not record again — one spawn, one
+        // terminate per child.
+        const endReason =
+          done.exitCode === 0 && launched.agentStatus() !== 'spawn_failed'
+            ? 'ok'
+            : (launched.failure()?.code ?? `exit-${done.exitCode}`);
+        auditWorkerTerminate({
+          ...ledgerWorker,
+          reason: endReason,
+          result: endReason === 'ok' ? 'ok' : 'error',
+        });
         throwIfCancelled(agentId);
         if (done.exitCode !== 0 || launched.agentStatus() === 'spawn_failed') {
           persistWorkerRowsNow();
@@ -2335,6 +2964,9 @@ export async function orchestrateDepsWithDefaults(
               `worker commit failed: ${commit.stderr.trim().slice(0, 200)}`,
             );
         }
+        // Issue #363: the worker just wrote through its worktree — surface
+        // any `.git/config` / `.git/hooks` drift before the merge runs.
+        verifyGitGuard(`worker '${agentId}' settle`);
         // §61 (issue #158): time the branch-diff read — the telemetry's
         // `diffMs` leg, measured where the work really happens.
         const diffStartedAt = Date.now();
@@ -2385,6 +3017,7 @@ export async function orchestrateDepsWithDefaults(
         }
         // The report validated: the agent is COMPLETED, not merely exited.
         launched.settleAgent('completed');
+        settleWorkerSpans();
         return {
           hunks,
           result: contract.result,
@@ -2406,6 +3039,9 @@ export async function orchestrateDepsWithDefaults(
             // The agent settled concurrently — its own verdict stands.
           }
         }
+        settleWorkerSpans(
+          error instanceof Error ? error.message : String(error),
+        );
         throw withResult(error);
       }
     },
@@ -2482,6 +3118,9 @@ export async function orchestrateDepsWithDefaults(
           `git merge ${worktree.branch} failed (exit ${merged.exitCode}): ${merged.stderr.trim().slice(0, 200)}`,
         );
       }
+      // Issue #363: the merge just touched the shared checkout — surface
+      // any `.git/config` / `.git/hooks` drift while it is still attributable.
+      verifyGitGuard(`merge '${agentId}'`);
     },
     prepareMerge: async (agentId: string): Promise<void> => {
       await ensureCleanMergeState(needRoot(), agentId);
@@ -2504,6 +3143,26 @@ export async function orchestrateDepsWithDefaults(
         'merge-check',
       );
       return done.exitCode === 0;
+    },
+    readBranchTip: async (
+      agentId: string,
+      worktree: OrchestrateWorktree,
+    ): Promise<string | undefined> => {
+      // Branch-tip probe (issue #429): HEAD of the worker's own checkout
+      // at settle, persisted with the completion so resume can tell a
+      // same-name rewrite apart. A failed probe is an unknown tip (the
+      // lane reuses on branch match), never a failed run.
+      void agentId;
+      const tipped = await runGit(
+        worktree.path,
+        ['rev-parse', 'HEAD'],
+        'cli',
+        'manager',
+        'tip-check',
+      );
+      if (tipped.exitCode !== 0) return undefined;
+      const sha = tipped.stdout.trim();
+      return sha.length > 0 ? sha : undefined;
     },
     // §45.2 conflict delegation (issue #106): the resolver is a REAL child
     // process, launched through the same lifecycle layer as every worker — the
@@ -2674,13 +3333,42 @@ export async function orchestrateDepsWithDefaults(
       );
       const untrack = trackLive(launched);
       persistWorkerRowsNow();
+      // §60 privileged-action rows (issue #284): the resolver is a
+      // delegated child too, so its process lifetime brackets the same
+      // spawn/terminate pair (no model pin: it inherits the ambient one).
+      const resolverPid =
+        launched.pid ?? workerRegistry.get(request.agentId)?.pid;
+      const ledgerResolver = {
+        agentId: request.agentId,
+        role: request.spec.role,
+        worktree: request.worktree.path,
+        ...(resolverPid === undefined ? {} : { pid: resolverPid }),
+        generation: launched.generation,
+      };
+      auditWorkerSpawn(ledgerResolver);
       let done: { exitCode: number; stdout: string; stderr: string };
       try {
         done = await launched.wait();
+      } catch (error) {
+        auditWorkerTerminate({
+          ...ledgerResolver,
+          reason: terminateReasonOf(error, launched.failure()),
+          result: 'error',
+        });
+        throw error;
       } finally {
         untrack();
         persistWorkerRowsNow();
       }
+      const resolverReason =
+        done.exitCode === 0 && launched.agentStatus() !== 'spawn_failed'
+          ? 'ok'
+          : (launched.failure()?.code ?? `exit-${done.exitCode}`);
+      auditWorkerTerminate({
+        ...ledgerResolver,
+        reason: resolverReason,
+        result: resolverReason === 'ok' ? 'ok' : 'error',
+      });
       throwIfCancelled(request.agentId);
       if (done.exitCode !== 0 || launched.agentStatus() === 'spawn_failed') {
         const failure = launched.failure();
@@ -2878,6 +3566,35 @@ export async function orchestrateDepsWithDefaults(
               : POSTURE_FULL_ACCESS,
         }),
         (message) => debug(`audit: merge decision not recorded — ${message}`),
+      );
+    },
+    // The run's start names the §19 mode in the §60 ledger (issue #278).
+    // Best-effort like every other row: a dead ledger never fails the run —
+    // and outside a repo there is no ledger dir at all (the §78 gate owns
+    // that refusal), so the root resolution itself is guarded, not just
+    // the append.
+    auditRunStart: (record): void => {
+      let dir: string;
+      try {
+        dir = auditLedgerDirFor(needRoot());
+      } catch (error) {
+        debug(
+          `audit: run start not recorded — ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return;
+      }
+      appendToLedger(
+        dir,
+        runStartAudit({
+          sessionId: record.sessionId,
+          command: `kubic ${record.command}`,
+          mode: record.mode,
+          runMode: record.runMode,
+          workspace: record.workspace,
+          posture: record.posture,
+          autonomous: record.autonomous,
+        }),
+        (message) => debug(`audit: run start not recorded — ${message}`),
       );
     },
     loadState: (sessionId: string): OrchestratorRunState | undefined => {

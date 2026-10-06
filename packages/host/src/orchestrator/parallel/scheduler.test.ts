@@ -367,6 +367,33 @@ describe('parallel budget updateUsage (issue #47 review)', () => {
   });
 });
 
+describe('parallel budget gate installation (issue #207)', () => {
+  it('setBudgetGate installs the aggregate gate on a live scheduler', () => {
+    const sched = new ParallelScheduler({ maxConcurrency: 8 });
+    expect(sched.requestSpawn(req('b1'), 'autonomous').outcome).toBe(
+      'admitted',
+    );
+    sched.setBudgetGate({ maxCostUsd: 5 });
+    sched.updateUsage({ costUsd: 10 });
+    const denied = sched.requestSpawn(req('b2'), 'interactive');
+    expect(denied.outcome).toBe('denied');
+    if (denied.outcome === 'denied') {
+      expect(denied.reason).toMatch(/budget cost gate/);
+    }
+  });
+
+  it('setBudgetGate validates eagerly and removes the override on undefined', () => {
+    const sched = new ParallelScheduler();
+    expect(() => sched.setBudgetGate({ maxCostUsd: 0 })).toThrow(/maxCostUsd/);
+    sched.setBudgetGate({ maxCostUsd: 5 });
+    sched.setBudgetGate(undefined);
+    sched.updateUsage({ costUsd: 10 });
+    expect(sched.requestSpawn(req('b1'), 'autonomous').outcome).toBe(
+      'admitted',
+    );
+  });
+});
+
 describe('parallel log sanitizing (issue #47 review)', () => {
   it('strips control characters from queue logs for a crafted agentId', () => {
     const logs: string[] = [];
@@ -472,5 +499,37 @@ describe('parallel log sanitizing (issue #47 review)', () => {
 
   it('sanitizeLogLine removes C0 controls and DEL', () => {
     expect(sanitizeLogLine('a\u001fb\u007fc')).toBe('abc');
+  });
+});
+
+describe('withdraw (issue #414 review)', () => {
+  it('withdraws a queued entry so a later drain never admits the ghost', () => {
+    const sched = new ParallelScheduler({ maxConcurrency: 1 });
+    expect(sched.requestSpawn(req('a1'), 'autonomous')).toMatchObject({
+      outcome: 'admitted',
+    });
+    expect(sched.requestSpawn(req('a2'), 'autonomous')).toMatchObject({
+      outcome: 'queued',
+    });
+    expect(sched.withdraw('a2')).toBe('withdrawn');
+    expect(sched.pendingIds()).toEqual([]);
+    // The freed slot goes to new work, never to the withdrawn ghost.
+    sched.complete('a1');
+    expect(sched.runningIds()).toEqual([]);
+    expect(sched.requestSpawn(req('a3'), 'autonomous')).toMatchObject({
+      outcome: 'admitted',
+    });
+  });
+
+  it('reports running when the entry was just admitted', () => {
+    const sched = new ParallelScheduler({ maxConcurrency: 1 });
+    sched.requestSpawn(req('a1'), 'autonomous');
+    expect(sched.withdraw('a1')).toBe('running');
+    expect(sched.runningIds()).toEqual(['a1']);
+  });
+
+  it('reports unknown for an id it never held', () => {
+    const sched = new ParallelScheduler();
+    expect(sched.withdraw('nobody')).toBe('unknown');
   });
 });

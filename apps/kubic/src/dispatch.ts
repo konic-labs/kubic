@@ -18,6 +18,10 @@ import {
 import { formatJson } from '../../../packages/core/src/cli/output.js';
 import { formatVersionLine } from '../../../packages/core/src/license.js';
 import { refusedOrchestrateEnvelope } from '../../../packages/host/src/orchestrate-cli.js';
+import {
+  buildConfiguredSinks,
+  setAuditSinks,
+} from '../../../packages/host/src/policy/audit-ledger.js';
 import { refusedReplayEnvelope } from '../../../packages/host/src/replay/replay.js';
 import {
   buildRunEnvelope,
@@ -27,6 +31,7 @@ import {
 import {
   type ModelSelection,
   parseModelFlag,
+  parseThinkingFlag,
 } from '../../../packages/worker/src/model-select.js';
 import type {
   CommandContext,
@@ -51,7 +56,7 @@ import {
 // (exit 2 — a usage error, issue #372). Every path is pinned by
 // scripts/binary-contract.mjs; they must never drift apart.
 export const ROOT_USAGE =
-  'usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
+  'usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | skills | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
 
 // The supported command names, read off the usage line so the routing
 // table and the listing can never drift apart (dispatch.test.ts also pins
@@ -103,6 +108,15 @@ const CLI_MODEL_COMMANDS: ReadonlySet<string> = new Set([
   'config',
 ]);
 
+// Issue #225 (§38.3): commands whose `--thinking <level>` is the `cli`
+// config layer — the same commands that own `--model`, read from the raw
+// argv for the same reason.
+const CLI_THINKING_COMMANDS: ReadonlySet<string> = new Set([
+  'run',
+  'tui',
+  'config',
+]);
+
 // The refused-config envelopes (issue #244), keyed by command: the same
 // `--json` shape the command itself prints — `run`'s compact one-liner (the
 // orchestrator reads a worker's last stdout line), orchestrate's and
@@ -124,12 +138,54 @@ function tryParseCliModel(value: string): ModelSelection | undefined {
   }
 }
 
+function tryParseCliThinking(value: string): string | undefined {
+  try {
+    return parseThinkingFlag(value);
+  } catch {
+    return undefined;
+  }
+}
+
 // Read the session model override exactly once, from the raw argv, for the
 // commands that own the flag. A `--` ends the scan (the rest are operands);
 // only well-formed `provider/id` values are forwarded — a malformed one is
 // left to commander, whose own option rule refuses it with exit 2 before any
 // runner runs. Later occurrences win, matching commander's repetition
 // behaviour, so the load sees the same value the parser will.
+// Read the session thinking override exactly once, from the raw argv, for
+// the commands that own the flag. Same contract as `cliModelFromArgs`: a
+// `--` ends the scan, only known levels are forwarded (a malformed one is
+// left to commander, whose own option rule refuses it with exit 2), and
+// later occurrences win. The prefix check spells the full flag name — the
+// single-parser gate (scripts/flag-parser-gate.test.mjs) forbids a bare
+// double-dash-prefix value guard, so the literal flag name is inlined.
+export function cliThinkingFromArgs(
+  command: string | undefined,
+  rest: readonly string[],
+): string | undefined {
+  if (command === undefined || !CLI_THINKING_COMMANDS.has(command)) {
+    return undefined;
+  }
+  let found: string | undefined;
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index] as string;
+    if (token === '--') break;
+    if (token === '--thinking') {
+      const value = rest[index + 1];
+      if (value !== undefined) {
+        const parsed = tryParseCliThinking(value);
+        if (parsed !== undefined) found = parsed;
+      }
+      continue;
+    }
+    if (token.startsWith('--thinking=')) {
+      const parsed = tryParseCliThinking(token.slice('--thinking='.length));
+      if (parsed !== undefined) found = parsed;
+    }
+  }
+  return found;
+}
+
 export function cliModelFromArgs(
   command: string | undefined,
   rest: readonly string[],
@@ -181,6 +237,7 @@ export interface DispatchDeps {
   // to the same load — never a post-load patch.
   readonly loadConfig: (options?: {
     model?: ModelSelection;
+    thinking?: string;
     projectTrusted?: boolean;
   }) => CliConfigResult;
   // The version half of `--version` (the license half is core's): the root
@@ -286,17 +343,23 @@ export async function dispatchCommand(
   // same load; the interactive trust answer (issue #228) is an explicit gate
   // on that same load.
   const cliModel = cliModelFromArgs(command, args);
+  // Issue #225 (§38.3): the `--thinking` override is the `cli` thinking
+  // layer of the same load — never a post-load patch (AGENTS.md Pitfalls).
+  const cliThinking = cliThinkingFromArgs(command, args);
   const cliConfig = deps.loadConfig(
-    cliModel === undefined && trust === undefined
+    cliModel === undefined && cliThinking === undefined && trust === undefined
       ? undefined
       : {
           ...(cliModel === undefined ? {} : { model: cliModel }),
+          ...(cliThinking === undefined ? {} : { thinking: cliThinking }),
           ...(trust === undefined ? {} : { projectTrusted: trust }),
         },
   );
-  // A refused config stops the agent-executing modes: they may not run on
-  // built-in defaults while the user believes their config file is in force.
-  // `config` and `doctor` still run so the named reason can be reported.
+  // A refused config stops every command that consumes it (issue #242):
+  // the agent-executing modes plus clean, policy, eval and benchmark may
+  // not run on built-in defaults while the user believes their config
+  // file is in force. The reporting commands still run so the named
+  // reason can be reported.
   const refusalExit = configRefusalExit(cliConfig, command);
   if (refusalExit !== undefined) {
     const reason = cliConfig.error ?? 'config refused';
@@ -312,6 +375,18 @@ export async function dispatchCommand(
       deps.out(envelope(reason, refusalExit));
     }
     return refusalExit;
+  }
+  // §58 configured audit sinks (issue #286): one build per process from
+  // the loaded `[[audit]]` tables — every command below fans its §60 rows
+  // out to these plus the mandatory repo ledger. An unbuildable table is
+  // named on stderr here (and fails its doctor check); it never stops the
+  // command, and the repo ledger still records everything.
+  if (cliConfig.runtime !== undefined) {
+    const built = buildConfiguredSinks(cliConfig.runtime.config.audit ?? []);
+    setAuditSinks(built.sinks);
+    for (const problem of built.problems) {
+      (deps.err ?? deps.out)(`warning: [[audit]] ${problem}`);
+    }
   }
   // Issue #91 (design §35, D34/D35): `.kubic/` runtime state must never
   // reach a user repo's commit path. Before either mode that creates it,

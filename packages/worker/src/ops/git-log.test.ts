@@ -1,7 +1,7 @@
 // Slice B: git log/show read ops (issue #19; §43.1).
 // RED: git_log/git_show do not exist yet.
 import { describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
+import { argvKey, FakeExecutionEnv } from '../../../exec/src/env.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
@@ -14,6 +14,11 @@ function ctx(
     sessionId: 's1',
     agentId: 'root',
   };
+}
+
+// Human form of the recorded argv, for exact-argv pins (issue #356).
+function argvOf(env: FakeExecutionEnv): string[] {
+  return env.calls.map((c) => `${c.cmd} ${c.args.join(' ')}`);
 }
 
 function inv(id: string): ToolInvocation {
@@ -29,18 +34,25 @@ def5678\u001fauthor two\u001f2026-09-02\u001fsecond commit
 
 describe('git log/show (issue #19, slice B)', () => {
   it('git_log parses entries with sha/author/date/message', async () => {
-    const out = await callOperation(
-      'git_log',
-      { max: 10 },
-      inv('a'),
-      ctx({
-        'git log --format=%H%x1f%an%x1f%ad%x1f%s --date=short -n 10': {
-          exitCode: 0,
-          stdout: LOG_OUT,
-          stderr: '',
-        },
-      }),
-    );
+    const env = new FakeExecutionEnv({
+      [argvKey(
+        'git',
+        'log',
+        '--format=%H%x1f%an%x1f%ad%x1f%s',
+        '--date=short',
+        '-n',
+        '10',
+      )]: {
+        exitCode: 0,
+        stdout: LOG_OUT,
+        stderr: '',
+      },
+    });
+    const out = await callOperation('git_log', { max: 10 }, inv('a'), {
+      env,
+      sessionId: 's1',
+      agentId: 'root',
+    });
     expect(out.ok).toBe(true);
     if (out.ok) {
       expect(out.result.entries).toEqual([
@@ -58,6 +70,9 @@ describe('git log/show (issue #19, slice B)', () => {
         },
       ]);
     }
+    expect(argvOf(env)).toEqual([
+      'git log --format=%H%x1f%an%x1f%ad%x1f%s --date=short -n 10',
+    ]);
   });
 
   it('git_show returns the patch for a ref', async () => {
@@ -66,7 +81,7 @@ describe('git log/show (issue #19, slice B)', () => {
       { ref: 'abc1234' },
       inv('b'),
       ctx({
-        'git show --format= --patch abc1234': {
+        [argvKey('git', 'show', '--format=', '--patch', 'abc1234')]: {
           exitCode: 0,
           stdout: 'diff --git a/x b/x\n',
           stderr: '',
@@ -83,7 +98,14 @@ describe('git log/show (issue #19, slice B)', () => {
       {},
       inv('c'),
       ctx({
-        'git log --format=%H%x1f%an%x1f%ad%x1f%s --date=short -n 20': {
+        [argvKey(
+          'git',
+          'log',
+          '--format=%H%x1f%an%x1f%ad%x1f%s',
+          '--date=short',
+          '-n',
+          '20',
+        )]: {
           exitCode: 128,
           stdout: '',
           stderr: 'fatal: not a git repository',

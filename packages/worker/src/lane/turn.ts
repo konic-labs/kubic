@@ -15,9 +15,16 @@
 // after a crash returns the SAME submission instead of prompting twice.
 
 import type { LaneImagePart } from '../../../core/src/presentation.js';
+import type { ManualCompactionOutcome } from '../compaction.js';
+import { runManualCompaction } from '../compaction.js';
 import type { Context, Submission } from '../pi-boundary.js';
 import { ConversationBusy } from '../pi-boundary.js';
-import type { FailureCode } from './failures.js';
+import type {
+  ClassifiedFailure,
+  FailureCode,
+  RetryDecision,
+} from './failures.js';
+import { chooseRetry, classifyFailure, RetryBudget } from './failures.js';
 import type {
   LaneTerminalStatus,
   OperationErrorLike,
@@ -239,4 +246,98 @@ export function turnLaneRecord(outcome: TurnOutcome): {
         },
       };
   }
+}
+
+// Solo context-overflow recovery (issue #209; §53 retry_with_new_context).
+// The harness owns blind retries (its durable generation retry, #395), so
+// the lane retries exactly one failure: context overflow, compacted first
+// (#399) and retried once on the fresh context. Every other failure passes
+// through untouched — stronger-model and new-agent decisions belong to #210
+// and #184, which consume `chooseRetry`'s outcome, never this wrapper.
+export interface SoloOverflowRecovery {
+  outcome: TurnOutcome;
+  retried: boolean;
+  decision?: RetryDecision;
+  compaction?: ManualCompactionOutcome;
+}
+
+export interface OverflowRecoveryOptions {
+  // Product-policy budget for the retry (default: exactly one retry).
+  // Construct from the orchestrator's RetryBudgetConfig ({maxAttempts,
+  // maxCostUsd}) wherever a retry policy runs — same field names.
+  retryBudget?: RetryBudget;
+  // Reporting hook: the caller records the decision on its worker result
+  // and trajectory/debug channel (the lane returns it too).
+  onRetryDecision?: (decision: RetryDecision) => void;
+}
+
+// The focus the recovery compaction carries: the summarizer keeps what the
+// single retry needs, verbatim like every manual focus (#82 rule 7).
+const OVERFLOW_RECOVERY_FOCUS =
+  'The context overflowed mid-run; keep what a single retry of the current task needs.';
+
+export async function recoverSoloOverflowTurn(
+  solo: SoloLane,
+  prompt: string,
+  failed: { reason: TurnFailureReason; error?: string },
+  options: RunTurnOptions,
+  recovery: OverflowRecoveryOptions = {},
+): Promise<SoloOverflowRecovery> {
+  const outcome: TurnOutcome = {
+    kind: 'failed',
+    reason: failed.reason,
+    ...(failed.error === undefined ? {} : { error: failed.error }),
+  };
+  if (failed.reason !== 'context_overflow') return { outcome, retried: false };
+  const classified: ClassifiedFailure = classifyFailure(
+    'context',
+    failed.reason,
+    failed.error ?? failed.reason,
+  );
+  const budget = recovery.retryBudget ?? new RetryBudget(1);
+  // Review #209: the solo path threads no measured spend ({}), so the
+  // maxCostUsd arm never binds here — correct for a single bounded retry.
+  // The cost arm binds where callers thread real spend (the orchestrator
+  // relaunch, #184); widening this site needs the usage plumbing first.
+  const decision = chooseRetry(classified, {}, budget);
+  recovery.onRetryDecision?.(decision);
+  if (decision.decision !== 'retry_with_new_context')
+    return { outcome, retried: false, decision };
+  // A compaction that did not cut (failed, aborted, orphaned, faulted)
+  // leaves the context that overflowed in place: retrying on it would
+  // re-overflow, so the run abandons with the original failure. `nothing`
+  // still retries — the overflow was already absorbed (background cut) and
+  // the context now fits.
+  const compaction = await runManualCompaction(
+    solo,
+    OVERFLOW_RECOVERY_FOCUS,
+    options.context,
+  );
+  if (compaction.status !== 'completed' && compaction.status !== 'nothing') {
+    return { outcome, retried: false, decision, compaction };
+  }
+  // A fresh request id: re-submitting the original would find the SAME
+  // submission (per-invocation idempotency, above), never a new turn.
+  const retried = await runTurn(solo, prompt, {
+    ...options,
+    requestId: `${options.requestId}:overflow-retry`,
+  });
+  return { outcome: retried, retried: true, decision, compaction };
+}
+
+// One turn with overflow recovery: a completed or non-overflow outcome
+// passes through exactly as `runTurn` reports it.
+export async function runTurnWithOverflowRecovery(
+  solo: SoloLane,
+  prompt: string,
+  options: RunTurnOptions & OverflowRecoveryOptions,
+): Promise<SoloOverflowRecovery> {
+  const outcome = await runTurn(solo, prompt, options);
+  if (outcome.kind !== 'failed' || outcome.reason !== 'context_overflow')
+    return { outcome, retried: false };
+  const { retryBudget, onRetryDecision } = options;
+  return recoverSoloOverflowTurn(solo, prompt, outcome, options, {
+    ...(retryBudget === undefined ? {} : { retryBudget }),
+    ...(onRetryDecision === undefined ? {} : { onRetryDecision }),
+  });
 }

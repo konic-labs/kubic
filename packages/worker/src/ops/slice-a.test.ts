@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
@@ -45,6 +45,15 @@ describe('operation registry (issue #13, slice A)', () => {
 });
 
 describe('read operation (issue #13, slice A)', () => {
+  it('reads through the ranged path when the seam offers readFileRange (issue #356)', async () => {
+    const c = ctx();
+    const ranged = vi.spyOn(c.env.fs, 'readFileRange');
+    const out = await callOperation('read', { path: 'a.txt' }, inv(), c);
+    expect(out.ok).toBe(true);
+    // The fake implements readFileRange, so even a plain read seeks in
+    // byte chunks instead of taking the whole-file fallback.
+    expect(ranged).toHaveBeenCalled();
+  });
   it('reads with offset/limit and reports totals', async () => {
     const out = await callOperation(
       'read',

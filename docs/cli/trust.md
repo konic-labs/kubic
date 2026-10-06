@@ -19,18 +19,21 @@ half-applied — and the refusal names the remedies:
 error: project-local config refused pre-trust: <path>/.kubic/config.toml — run 'kubic trust' to accept this project, or set KUBIC_TRUST_PROJECT=1 for this invocation
 ```
 
-The same gate covers the project `models.json` and ancestor project skills,
-so a repository cannot point a provider — and your API key — at its own URL
-either. The flip side is what a grant means: **one `yes` covers all three**.
+The same gate covers the project `models.json`, ancestor project skills,
+and the project role documents (issue #430), so a repository cannot point
+a provider — and your API key — at its own URL, nor inject lane instructions,
+either. The flip side is what a grant means: **one `yes` covers all four**.
 A trusted project's `models.json` may name any `*_API_KEY` (or `KUBIC_*`)
 variable as its provider's key, and that key — the real one, if you have it
 set — is sent to the provider URL the file names; trusted project skills
-are instructions the model follows. Grant trust only to a repository whose
-`models.json` and skills you would run yourself. Those consumers resolve their files by walking up to the repository
+and role documents are instructions the model follows. Grant trust only to
+a repository whose `models.json`, skills and roles you would run yourself.
+Those consumers resolve their files by walking up to the repository
 root, so the decision is checked against **the directory the file lives
 in**: a grant for `/repo` covers `/repo`'s committed `models.json` and
 skills even when a run starts in `/repo/pkg`, while a grant for `/repo/pkg`
-never reaches `/repo`. The decision is threaded to every consuming lane
+never reaches `/repo`. Outside a repository only the cwd itself is
+searched, and a user skill root is never reported as a project skill. The decision is threaded to every consuming lane
 (`run`, `tui`, `replay`, `models`, `doctor`, and orchestrate worker
 children).
 
@@ -50,7 +53,7 @@ project config is waiting there:
 $ kubic trust
 trusted project /Users/you/src/app (store: /Users/you/.kubic/trust.json)
 project config /Users/you/src/app/.kubic/config.toml will load
-this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills
+this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default), its project skills and its project role documents
 ```
 
 Exit codes: **0** recorded, revoked or listed; **1** an unreadable or
@@ -97,7 +100,7 @@ trust before the config load and before the alt-screen opens. When a
 project `config.toml` is present and no decision is recorded, it asks once:
 
 ```
-Trust project /Users/you/src/app? This lets the project's own files take effect for runs here: /Users/you/src/app/.kubic/config.toml (sets the model, approvals, permissions and journal retention), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills (instructions the model follows).
+Trust project /Users/you/src/app? This lets the project's own files take effect for runs here: /Users/you/src/app/.kubic/config.toml (sets the model, approvals, permissions and journal retention), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default), its project skills and its project role documents (instructions the model follows).
 ```
 
 (One line on screen — wrapped here for readability.)

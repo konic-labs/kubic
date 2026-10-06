@@ -8,10 +8,14 @@ import {
   AuditSinkError,
   appendAudit,
   createMemorySink,
+  createSyslogSink,
+  defaultSyslogSocketPath,
   emitAudit,
   FLOW_AUDIT_FIXTURE,
   type OrgAuditRecord,
+  parseSyslogTarget,
   queryAudits,
+  type SyslogTransport,
   sortAuditSinksSyslogFirst,
   toCredentialSentinel,
   WORKED_EXAMPLE_JSON,
@@ -425,5 +429,115 @@ describe('nested unknown keys (fix cycle 2)', () => {
     } as unknown as Omit<OrgAuditRecord, 'when'>;
     expect(() => emitAudit([sink], smuggled)).toThrow(AuditShapeError);
     expect(sink.records).toHaveLength(0);
+  });
+});
+
+// Syslog sink (issue #286; §58): one record → one RFC 5424 line over an
+// injectable transport. Faux-only: the fake transport captures lines, no
+// socket is ever opened.
+describe('syslog sink (issue #286)', () => {
+  function fakeTransport(): SyslogTransport & { lines: string[] } {
+    const lines: string[] = [];
+    return {
+      lines,
+      send: (line: string): void => {
+        lines.push(line);
+      },
+    };
+  }
+
+  function record(): OrgAuditRecord {
+    return { ...baseInput(), when: '2026-10-05T12:00:00.000Z' };
+  }
+
+  it('emits one RFC 5424 line whose MSG is the record JSON', () => {
+    const transport = fakeTransport();
+    const sink = createSyslogSink({ transport, hostname: 'web-1' });
+    expect(sink.kind).toBe('syslog');
+    sink.write(record());
+    expect(transport.lines).toHaveLength(1);
+    const line = transport.lines[0] ?? '';
+    // local0 (16) × 8 + info (6) = 134; the record timestamp, host, app,
+    // acting pid, and the record as the MSG.
+    expect(
+      line.startsWith('<134>1 2026-10-05T12:00:00.000Z web-1 kubic 1234 - - '),
+    ).toBe(true);
+    expect(JSON.parse(line.slice(line.indexOf('{')))).toMatchObject({
+      who: 'ege@example.com',
+      what: 'tool.call',
+    });
+  });
+
+  it('raises severity to warning for deny and error results', () => {
+    const transport = fakeTransport();
+    const sink = createSyslogSink({ transport, hostname: 'web-1' });
+    sink.write({ ...record(), result: 'deny' });
+    sink.write({ ...record(), result: 'error' });
+    expect(transport.lines[0]?.startsWith('<132>1')).toBe(true);
+    expect(transport.lines[1]?.startsWith('<132>1')).toBe(true);
+  });
+
+  it('honours facility names, numbers and the app name', () => {
+    const a = fakeTransport();
+    createSyslogSink({
+      transport: a,
+      facility: 'authpriv',
+      appName: 'kubic-worker',
+      hostname: 'web-1',
+    }).write(record());
+    // authpriv (10) × 8 + info (6) = 86.
+    expect(
+      a.lines[0]?.startsWith(
+        '<86>1 2026-10-05T12:00:00.000Z web-1 kubic-worker ',
+      ),
+    ).toBe(true);
+    const b = fakeTransport();
+    createSyslogSink({ transport: b, facility: 19, hostname: 'web-1' }).write(
+      record(),
+    );
+    // 19 × 8 + 6 = 158.
+    expect(b.lines[0]?.startsWith('<158>1')).toBe(true);
+  });
+
+  it('refuses an unknown facility by name', () => {
+    expect(() =>
+      createSyslogSink({
+        transport: fakeTransport(),
+        facility: 'carrier-pigeon',
+      }),
+    ).toThrow(/unknown syslog facility 'carrier-pigeon'/);
+    expect(() =>
+      createSyslogSink({ transport: fakeTransport(), facility: 99 }),
+    ).toThrow(/unknown syslog facility '99'/);
+  });
+
+  it('parses syslog targets: bare and unix: paths, host:port and bare hosts', () => {
+    expect(parseSyslogTarget(undefined)).toEqual({
+      kind: 'unix',
+      path: defaultSyslogSocketPath(),
+    });
+    expect(parseSyslogTarget('/dev/log')).toEqual({
+      kind: 'unix',
+      path: '/dev/log',
+    });
+    expect(parseSyslogTarget('unix:/var/run/syslog')).toEqual({
+      kind: 'unix',
+      path: '/var/run/syslog',
+    });
+    expect(parseSyslogTarget('loghost:514')).toEqual({
+      kind: 'udp',
+      host: 'loghost',
+      port: 514,
+    });
+    expect(parseSyslogTarget('loghost')).toEqual({
+      kind: 'udp',
+      host: 'loghost',
+      port: 514,
+    });
+    expect(() => parseSyslogTarget('loghost:notaport')).toThrow(
+      /invalid syslog target/,
+    );
+    expect(() => parseSyslogTarget('')).toThrow(/invalid syslog target/);
+    expect(() => parseSyslogTarget('   ')).toThrow(/invalid syslog target/);
   });
 });

@@ -1,9 +1,10 @@
 // Solo lane boot wiring on the durable harness (issues #82, #99, #143;
 // ported in #394): the registry install order (= hook order), the prompt
-// sections (role prompt, appended context blocks), the LaneRegistry
-// binding, and the HarnessSettings the boot hands over.
+// sections (role prompt, appended context blocks), and the
+// HarnessSettings the boot hands over.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
+import type { EscalationLadder } from '../model-select.js';
 import {
   BACKGROUND_CONTEXT,
   type Context,
@@ -216,7 +217,7 @@ describe('solo boot installs the extension stack in hook order (issues #208, #98
     ]);
     // The Kubic extension carries tools and the prompt section.
     const kubic = solo.registry.snapshot().extension('kubic');
-    expect(kubic?.tools).toHaveLength(15);
+    expect(kubic?.tools).toHaveLength(18);
     expect(kubic?.sections?.map((section) => section.key)).toEqual([
       SOLO_PROMPT_SECTION,
     ]);
@@ -277,22 +278,6 @@ describe('solo boot prompt sections (issues #82, #99)', () => {
   });
 });
 
-describe('solo boot binds the lane registry (issue #82, rule 5)', () => {
-  it('spawns the binding on boot and reuses it on continuation', async () => {
-    const { LaneRegistry } = await import('../prompts.js');
-    const registry = new LaneRegistry();
-    const first = await boot({ registry });
-    expect(first.binding).toMatchObject({
-      sessionId: 'sess-1',
-      lane: 'main',
-      modelId: 'faux/big',
-    });
-    expect(registry.continuation('sess-1', 'main').modelId).toBe('faux/big');
-    const second = await boot({ registry });
-    expect(second.binding?.modelId).toBe('faux/big');
-  });
-});
-
 describe('solo boot hands HarnessSettings compaction to #399 (issues #82, #399)', () => {
   it('passes the configured reserve and a live current-window getter', async () => {
     const { faux, models, big } = catalog();
@@ -320,7 +305,6 @@ describe('solo boot hands HarnessSettings compaction to #399 (issues #82, #399)'
   });
 
   it('the current-window getter follows an escalation (issue #82 rule 6)', async () => {
-    const { createLadder } = await import('../model-select.js');
     const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
     const solo = await bootSoloLane({
@@ -337,7 +321,11 @@ describe('solo boot hands HarnessSettings compaction to #399 (issues #82, #399)'
     const { escalateSoloModel } = await import('./solo.js');
     await escalateSoloModel(
       solo,
-      createLadder(['faux/big', 'faux/small'], { maxEscalations: 1 }),
+      {
+        steps: ['faux/big', 'faux/small'],
+        maxEscalations: 1,
+        record: [],
+      } satisfies EscalationLadder,
       'faux/small',
       'cheaper',
       BACKGROUND_CONTEXT,

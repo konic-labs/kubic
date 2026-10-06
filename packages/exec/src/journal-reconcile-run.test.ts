@@ -10,6 +10,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -17,13 +18,22 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { FileJournalStore, loadBaseline, sha256Hex } from './journal.js';
+import { diffEntries, renderDiff } from './journal-diff.js';
+import { loadGitBaseline } from './journal-git.js';
 import { beginReconciliation } from './journal-reconcile.js';
+import { applyUndo, planUndo } from './journal-undo.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from './test-support/git-sandbox.js';
 
 const NOW = 1_700_000_000_000;
 
 const roots: string[] = [];
 
 afterEach(() => {
+  disposeAllGitSandboxes();
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
 });
@@ -328,5 +338,249 @@ describe('per-turn rebaseline (issue #374)', () => {
     expect(store.entries().map((entry) => entry.path)).toEqual([
       'bash-made.txt',
     ]);
+  });
+});
+
+// Git pre-images end to end (issue #371): the sweep restores bash-made
+// changes to clean tracked files from the object store, through the
+// existing before-blob mechanism — `journal-undo.ts` needed no new path.
+//
+// Real git in sandboxed throwaway repos (issue #365): the repo setup runs
+// through the sandbox's scrubbed env, and the sandbox is activated into
+// process.env while the production code (which spawns git on the inherited
+// environment) runs.
+describe('git pre-images end to end (issue #371)', () => {
+  function gitRepo(): GitSandbox {
+    const repo = createGitSandbox({
+      prefix: 'journal-git-',
+      injectProcessEnv: true,
+    });
+    writeFileSync(join(repo.path, 'tracked.ts'), 'v1\n');
+    writeFileSync(join(repo.path, 'data.txt'), 'data\n');
+    repo.git(['add', 'tracked.ts', 'data.txt']);
+    repo.git(['commit', '--no-verify', '-m', 'init']);
+    return repo;
+  }
+
+  function begin(root: string, store: FileJournalStore) {
+    return beginReconciliation({
+      store,
+      root,
+      runId: 'sess-git',
+      sessionId: 'sess-git',
+      agentId: 'root',
+      now: () => NOW,
+    });
+  }
+
+  function journalStore(): FileJournalStore {
+    return new FileJournalStore(tmpRoot('j-git-'));
+  }
+
+  it('records blob OIDs for stat-clean tracked files without copying content', () => {
+    const repo = gitRepo();
+    const store = journalStore();
+    const run = begin(repo.path, store);
+    expect(Object.keys(run.gitBaseline ?? {}).sort()).toEqual([
+      'data.txt',
+      'tracked.ts',
+    ]);
+    for (const oid of Object.values(run.gitBaseline ?? {})) {
+      expect(oid).toMatch(/^[0-9a-f]{40}$/);
+    }
+    // The baseline is still a metadata walk: hashes plus OIDs, zero blobs.
+    expect(store.blobCount()).toBe(0);
+    expect(loadGitBaseline(dirname(store.indexPath), 'sess-git')).toEqual(
+      run.gitBaseline,
+    );
+    expect(run.sweep()).toBe(0);
+  });
+
+  it('a bash rm of a tracked file is restored byte-identically by undo', () => {
+    const repo = gitRepo();
+    const store = journalStore();
+    const run = begin(repo.path, store);
+    rmSync(join(repo.path, 'tracked.ts'));
+    expect(run.sweep()).toBe(1);
+    const plan = planUndo(store, {}, repo.path);
+    expect(plan.reversible).toBe(1);
+    expect(plan.nonReversible).toEqual([]);
+    const result = applyUndo(store, plan, repo.path, {});
+    expect(result.restored).toEqual(['tracked.ts']);
+    expect(result.skipped).toEqual([]);
+    expect(readFileSync(join(repo.path, 'tracked.ts'), 'utf8')).toBe('v1\n');
+  });
+
+  it('a bash sed -i on a tracked file is undoable, and diff shows before and after', () => {
+    const repo = gitRepo();
+    const store = journalStore();
+    const run = begin(repo.path, store);
+    // sed -i equivalent: bypasses Kubic ops entirely.
+    writeFileSync(join(repo.path, 'tracked.ts'), 'v2, longer\n');
+    expect(run.sweep()).toBe(1);
+    const entry = store.entries()[0];
+    if (entry === undefined) throw new Error('missing sweep entry');
+    expect(store.readBefore(entry)).toBe('v1\n');
+    expect(entry.bytesDelta).not.toBe(0);
+    const plan = planUndo(store, {}, repo.path);
+    expect(plan.reversible).toBe(1);
+    const text = renderDiff(diffEntries(store, {}));
+    expect(text).toContain('v1');
+    expect(text).toContain('v2, longer');
+    // Reversible — the badge is [unattributed] alone, never non-reversible.
+    expect(text).toContain('[unattributed]');
+    expect(text).not.toContain('non-reversible');
+    expect(applyUndo(store, plan, repo.path, {}).restored).toEqual([
+      'tracked.ts',
+    ]);
+    expect(readFileSync(join(repo.path, 'tracked.ts'), 'utf8')).toBe('v1\n');
+  });
+
+  it('an untracked file deleted by bash is still reported non-reversible', () => {
+    const repo = gitRepo();
+    writeFileSync(join(repo.path, 'scratch.txt'), 'doomed\n');
+    const store = journalStore();
+    const run = begin(repo.path, store);
+    rmSync(join(repo.path, 'scratch.txt'));
+    expect(run.sweep()).toBe(1);
+    const entry = store.entries()[0];
+    if (entry === undefined) throw new Error('missing sweep entry');
+    expect(entry.op).toBe('delete');
+    expect(store.readBefore(entry)).toBe(null);
+    expect(entry.bytesDelta).toBe(0);
+    const plan = planUndo(store, {}, repo.path);
+    expect(plan.reversible).toBe(0);
+    expect(plan.nonReversible).toEqual(['scratch.txt']);
+  });
+
+  it('a tracked file dirty at baseline is still non-reversible (no wrong pre-image)', () => {
+    const repo = gitRepo();
+    // Uncommitted work: the index OID is NOT this file's pre-image, so no
+    // OID may be recorded for it — restoring the committed version would
+    // destroy the operator's edit.
+    writeFileSync(join(repo.path, 'tracked.ts'), 'operator edit\n');
+    const store = journalStore();
+    const run = begin(repo.path, store);
+    expect(run.gitBaseline?.['tracked.ts']).toBe(undefined);
+    expect(run.gitBaseline?.['data.txt']).toMatch(/^[0-9a-f]{40}$/);
+    // Bash changes it again during the run.
+    writeFileSync(join(repo.path, 'tracked.ts'), 'agent bash edit\n');
+    expect(run.sweep()).toBe(1);
+    const entry = store.entries()[0];
+    if (entry === undefined) throw new Error('missing sweep entry');
+    expect(store.readBefore(entry)).toBe(null);
+    const plan = planUndo(store, {}, repo.path);
+    expect(plan.reversible).toBe(0);
+    expect(plan.nonReversible).toEqual(['tracked.ts']);
+  });
+});
+
+describe('HEAD-move markers end to end (issue #378)', () => {
+  function twoCommitRepo(): GitSandbox {
+    const repo = createGitSandbox({
+      prefix: 'journal-head-',
+      injectProcessEnv: true,
+    });
+    writeFileSync(join(repo.path, 'tracked.ts'), 'v1\n');
+    repo.git(['add', 'tracked.ts']);
+    repo.git(['commit', '--no-verify', '-m', 'one']);
+    writeFileSync(join(repo.path, 'tracked.ts'), 'v2\n');
+    repo.git(['add', 'tracked.ts']);
+    repo.git(['commit', '--no-verify', '-m', 'two']);
+    return repo;
+  }
+
+  function journalStore(): FileJournalStore {
+    return new FileJournalStore(tmpRoot('j-head-'));
+  }
+
+  it('a bash checkout -b plus reset --hard produces one head-moved marker', () => {
+    const repo = twoCommitRepo();
+    const store = journalStore();
+    const run = beginReconciliation({
+      store,
+      root: repo.path,
+      runId: 'sess-head',
+      sessionId: 'sess-head',
+      agentId: 'root',
+      now: () => NOW,
+    });
+    expect(run.headBaseline?.branch).toBe('main');
+    repo.git(['checkout', '-q', '-b', 'x']);
+    repo.git(['reset', '--hard', 'HEAD~1']);
+    const added = run.sweep();
+    const entries = store.entries();
+    const markers = entries.filter((e) => e.op === 'marker');
+    // Exactly one marker — the mass file change from the reset is ordinary
+    // unattributed entries beside it, never a second marker.
+    expect(markers).toHaveLength(1);
+    expect(added).toBe(entries.length);
+    const marker = markers[0];
+    expect(marker?.unattributed).toBe(true);
+    expect(marker?.headFrom?.branch).toBe('main');
+    expect(marker?.headTo?.branch).toBe('x');
+    expect(marker?.headFrom?.head).not.toBe(marker?.headTo?.head);
+    // The reset's file fallout is still journaled file by file.
+    expect(entries.some((e) => e.path === 'tracked.ts')).toBe(true);
+  });
+
+  it('a stash push during the run moves the marker too', () => {
+    const repo = twoCommitRepo();
+    const store = journalStore();
+    const run = beginReconciliation({
+      store,
+      root: repo.path,
+      runId: 'sess-stash',
+      sessionId: 'sess-stash',
+      agentId: 'root',
+      now: () => NOW,
+    });
+    expect(run.headBaseline?.stash).toBe(0);
+    writeFileSync(join(repo.path, 'tracked.ts'), 'uncommitted\n');
+    repo.git(['stash', 'push', '-m', 'w1']);
+    run.sweep();
+    const markers = store.entries().filter((e) => e.op === 'marker');
+    expect(markers).toHaveLength(1);
+    expect(markers[0]?.headFrom?.stash).toBe(0);
+    expect(markers[0]?.headTo?.stash).toBe(1);
+  });
+
+  it('no marker and no error outside a repo', () => {
+    const root = workspace();
+    const store = journalStore();
+    const run = beginReconciliation({
+      store,
+      root,
+      runId: 'sess-norepo',
+      sessionId: 'sess-norepo',
+      agentId: 'root',
+      now: () => NOW,
+    });
+    expect(run.headBaseline).toBe(null);
+    expect(run.gitBaseline).toBe(null);
+    writeFileSync(join(root, 'keep.txt'), 'v2-external\n');
+    expect(run.sweep()).toBe(1);
+    expect(store.entries().some((e) => e.op === 'marker')).toBe(false);
+  });
+});
+
+describe('sweep attribution (issue #364)', () => {
+  it('tags unattributed sweep entries with the run agent id', () => {
+    const root = workspace();
+    const store = new FileJournalStore(tmpRoot('j-agent-'));
+    const run = beginReconciliation({
+      store,
+      root,
+      runId: 'sess-worker-1',
+      sessionId: 'sess-worker-1',
+      agentId: 'worker-1',
+      now: () => NOW,
+    });
+    writeFileSync(join(root, 'keep.txt'), 'v2-external\n');
+    expect(run.sweep()).toBe(1);
+    const entries = store.entries();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.agentId).toBe('worker-1');
+    expect(entries[0]?.unattributed).toBe(true);
   });
 });

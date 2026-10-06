@@ -12,7 +12,7 @@
 // File access arrives as a FileBridge (exec-owned I/O confinement) — this
 // module never touches node:fs directly. Never imports worker impl.
 
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import {
   hasGitignoreMetacharacters,
@@ -56,12 +56,30 @@ export class BudgetKeyError extends ConfigError {
 
 export interface AgentConfig {
   name?: string;
+  // System prompt augmentation (issue #240; §63 `system_prompt_file`): a
+  // path whose contents the runtime appends to the assembled lane prompt.
+  // Resolved against the declaring config file's directory (`~` expands to
+  // the home directory); the project layer additionally requires trust
+  // and containment in the project root, enforced at load.
+  systemPromptFile?: string;
 }
 
 export interface ModelConfig {
   provider?: string;
   id?: string;
   thinking?: string;
+  // §37.4 request options (issue #257): per-provider request tuning Pi
+  // reads at every use (timeoutMs, maxRetries, maxRetryDelayMs,
+  // cacheRetention). Absent means the provider default; a `[roles.<n>]`
+  // table overrides each key it sets.
+  timeoutMs?: number;
+  maxRetries?: number;
+  maxRetryDelayMs?: number;
+  cacheRetention?: string;
+  /** Escalation ladder rungs (§38.4, issue #210): ordered concrete refs. */
+  escalate?: string[];
+  /** Escalation bound (§38.4, issue #210): climbs allowed per run. */
+  maxEscalations?: number;
 }
 
 export interface ModesConfig {
@@ -110,12 +128,39 @@ export interface JournalConfig {
 
 export interface RoleConfig {
   model?: string;
+  // §37.4 request options (issue #257): per-key overrides of the `[model]`
+  // tuning for lanes booted as this role.
+  timeoutMs?: number;
+  maxRetries?: number;
+  maxRetryDelayMs?: number;
+  cacheRetention?: string;
   tools?: string[];
+  // Issue #196 (§41.1): tool names that always require approval under
+  // this role — forwarded to the resolver layers like `tools`.
+  requires?: string[];
+  // §12.1/§63 per-role thinking default (issue #225): one of
+  // THINKING_LEVELS, below the session-persisted level and above
+  // `[model].thinking` in the lane's resolution.
+  thinking?: string;
+  // The per-role allowed model set (issue #255; §38.2): normalized
+  // entries (`provider/id` or `provider/*`, optional per-entry
+  // thinking). Absent or empty means all models.
+  models?: RoleModelEntry[];
+  // The per-role escalation ladder (issue #210; §38.4): ordered concrete
+  // rungs, winning over the `[model]` ladder for this role when set.
+  escalate?: string[];
 }
 
 export interface OrchestratorConfig {
   root?: string;
   maxWorkers?: number;
+  /**
+   * The delegation driver (issue #431, L-D34): `"lane"` routes
+   * `kubic orchestrate` through the model-driven manager lane (opt-in),
+   * `"template"` keeps the deterministic plan (default). Absent means the
+   * default — never an invented driver.
+   */
+  manager?: 'lane' | 'template';
 }
 
 export interface UiConfig {
@@ -131,6 +176,13 @@ export interface SessionConfig {
   // demands an explicit --keep-days rather than inventing a window; 0 also
   // means off (retention disabled, never "everything is old").
   retentionDays?: number;
+  // Compaction policy (issue #239; §27.1, §63): whether threshold
+  // compaction runs, the reserved-room tokens and the verbatim recent
+  // window the solo lane compacts under. Unset means the lane defaults
+  // (automatic, 16384 reserved, 20000 kept recent).
+  autoCompact?: boolean;
+  reserveTokens?: number;
+  keepRecentTokens?: number;
 }
 
 // §48 gate commands (issue #267): each runs as `sh -c <command>` in the
@@ -181,12 +233,13 @@ export interface PolicyConfig {
   agentPolicy?: PolicyAgentConfig;
 }
 
-// §58 `[[audit]]` (parsed here; sink construction is a named follow-up).
+// §58 `[[audit]]` (parsed here; built in policy/audit-ledger.ts).
 export interface AuditTableConfig {
   sink: string;
   level?: string;
   target?: string;
-  facility?: string;
+  // Review finding (issue #286): docs promise a name or a number 0–23.
+  facility?: string | number;
 }
 
 export interface KubicConfig {
@@ -197,6 +250,12 @@ export interface KubicConfig {
   permissions?: PermissionsConfig;
   journal?: JournalConfig;
   roles?: Record<string, RoleConfig>;
+  // Issue #237 (§29.2): a top-level `skills` array of files or
+  // directories — NOT a `[skills]` section. Entries are stored as written
+  // (relative stays relative); the config LOAD resolves each layer's
+  // entries against that layer's file directory, so a project config's
+  // relative entry anchors at the project, never the invoking cwd.
+  skills?: string[];
   orchestrator?: OrchestratorConfig;
   ui?: UiConfig;
   session?: SessionConfig;
@@ -242,8 +301,20 @@ export const EXAMPLE_TOML = `# Kubic canonical config example (issue #38; design
 # Committed to the repo: .kubic/config.toml + .kubic/roles/*.md
 # Never committed: sessions/ journal/ artifacts/ wt/ orchestrator/
 
+# Settings skills (issue #237; design §29.2): files or directories, resolved
+# against this file's directory — "./skills" names "<root>/.kubic/skills"
+# ("../skills" would name "<root>/skills").
+skills = ["./skills"]
+
 [agent]
 name = "kubic"
+# Prompt augmentation (design §63 system_prompt_file): the sibling SYSTEM.md
+# is read at load and appended to the assembled lane prompt (ahead of the
+# skills block) for run, tui, replay and worker children. Relative to this
+# file's directory; a leading ~/ expands to home. A project-layer path
+# additionally requires trust and containment in the project root; a missing
+# or unreadable file is a named ConfigError, never a silent skip.
+systemPromptFile = "SYSTEM.md"
 
 [model]
 provider = "local"
@@ -274,6 +345,7 @@ retentionDays = 30
 [roles.reviewer]
 model = "local/llama3"
 tools = ["read", "grep", "diff"]
+models = ["local/*", { id = "acme/big", thinking = "high" }]
 
 [roles.implementer]
 model = "local/llama3"
@@ -291,6 +363,13 @@ statusBar = true
 store = "jsonl"
 dir = ".kubic/sessions"
 retentionDays = 30
+# Compaction policy (§27.1): automatic threshold compaction, a 4000-token
+# reserved room and a 5000-token verbatim recent window on the run, tui
+# and worker lanes. All three are optional — unset means the lane defaults
+# (automatic, 16384 reserved, 20000 kept recent).
+autoCompact = true
+reserveTokens = 4000
+keepRecentTokens = 5000
 
 [verify]
 tests = "npm test"
@@ -459,11 +538,11 @@ function parseScalar(text: string, lineNo: number): unknown {
     if (inner === '') return [];
     return splitTopLevel(inner, lineNo).map((item) => {
       const value = parseScalar(item, lineNo);
-      if (
-        typeof value !== 'string' &&
-        typeof value !== 'number' &&
-        typeof value !== 'boolean'
-      ) {
+      // Inline-table elements are the per-entry shape some array keys
+      // validate themselves (issue #255 `[roles.*].models`); nested
+      // arrays stay unsupported, and every other array key still
+      // refuses tables through its own typed checker.
+      if (Array.isArray(value)) {
         throw new ConfigError(`line ${lineNo}: nested arrays are unsupported`);
       }
       return value;
@@ -880,6 +959,61 @@ export function checkJournalMaxBytes(value: unknown): number | undefined {
 // §45 worker cap (issue #133): a positive integer or nothing. A value that
 // could never admit a worker is refused here, by name — never clamped into
 // one silently. The scheduler's own validation stays as the second layer.
+// Session compaction policy (issue #239; §27.1): shared by the TOML parser
+// and the runtime projection, which re-checks because the programmatic
+// session/agent layers never pass through the parser. A non-boolean switch
+// and a non-positive-safe-integer token count are refused by key name —
+// fail closed, never a half-applied policy.
+export function checkSessionCompaction(
+  session: Record<string, unknown>,
+  keyPath: string,
+): Pick<SessionConfig, 'autoCompact' | 'reserveTokens' | 'keepRecentTokens'> {
+  const rawAuto = session.autoCompact;
+  if (rawAuto !== undefined && typeof rawAuto !== 'boolean') {
+    throw new ConfigError(`'${keyPath}': 'autoCompact' must be a boolean`);
+  }
+  const checkTokens = (
+    key: 'reserveTokens' | 'keepRecentTokens',
+  ): number | undefined => {
+    const value = session[key];
+    if (value === undefined) return undefined;
+    if (
+      typeof value !== 'number' ||
+      !Number.isSafeInteger(value) ||
+      value < 1
+    ) {
+      throw new ConfigError(
+        `'${keyPath}': '${key}' must be a positive integer`,
+      );
+    }
+    return value;
+  };
+  const autoCompact = rawAuto as boolean | undefined;
+  const reserveTokens = checkTokens('reserveTokens');
+  const keepRecentTokens = checkTokens('keepRecentTokens');
+  return {
+    ...(autoCompact === undefined ? {} : { autoCompact }),
+    ...(reserveTokens === undefined ? {} : { reserveTokens }),
+    ...(keepRecentTokens === undefined ? {} : { keepRecentTokens }),
+  };
+}
+
+// The delegation driver (issue #431, L-D34): exactly `"lane"` or
+// `"template"` — anything else is refused by name, never coerced into a
+// driver the operator did not ask for.
+export function checkOrchestratorManager(
+  value: unknown,
+  keyPath: string,
+): 'lane' | 'template' | undefined {
+  if (value === undefined) return undefined;
+  if (value !== 'lane' && value !== 'template') {
+    throw new ConfigError(
+      `'${keyPath}': 'manager' must be "lane" or "template"`,
+    );
+  }
+  return value;
+}
+
 export function checkOrchestratorMaxWorkers(
   value: unknown,
   keyPath: string,
@@ -891,6 +1025,65 @@ export function checkOrchestratorMaxWorkers(
     );
   }
   return value;
+}
+
+// §37.4 request options (issue #257): the four tuning keys `[model]` and
+// `[roles.<name>]` share. `timeoutMs` bounds one provider request (a
+// positive integer of milliseconds — 0 would refuse every request, so it is
+// refused by name); `maxRetries`/`maxRetryDelayMs` are non-negative
+// integers (0 disables retries / the delay cap — both real provider
+// meanings, never "unset"); `cacheRetention` names Pi's retention
+// vocabulary. Refused by name here so a malformed value never reaches the
+// lane; the runtime projection re-checks for the programmatic layers.
+export const STREAM_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
+
+export function checkModelStreamTuning(
+  record: Record<string, unknown>,
+  keyPath: string,
+): Pick<
+  ModelConfig,
+  'timeoutMs' | 'maxRetries' | 'maxRetryDelayMs' | 'cacheRetention'
+> {
+  const out: Pick<
+    ModelConfig,
+    'timeoutMs' | 'maxRetries' | 'maxRetryDelayMs' | 'cacheRetention'
+  > = {};
+  const timeoutMs = record.timeoutMs;
+  if (timeoutMs !== undefined) {
+    if (
+      typeof timeoutMs !== 'number' ||
+      !Number.isInteger(timeoutMs) ||
+      timeoutMs <= 0
+    ) {
+      throw new ConfigError(
+        `'${keyPath}': 'timeoutMs' must be a positive integer of milliseconds`,
+      );
+    }
+    out.timeoutMs = timeoutMs;
+  }
+  for (const key of ['maxRetries', 'maxRetryDelayMs'] as const) {
+    const value = record[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+      throw new ConfigError(
+        `'${keyPath}': '${key}' must be a non-negative integer`,
+      );
+    }
+    out[key] = value;
+  }
+  const cacheRetention = record.cacheRetention;
+  if (cacheRetention !== undefined) {
+    if (
+      typeof cacheRetention !== 'string' ||
+      !(STREAM_CACHE_RETENTIONS as readonly string[]).includes(cacheRetention)
+    ) {
+      throw new ConfigError(
+        `'${keyPath}': 'cacheRetention' must be one of ${STREAM_CACHE_RETENTIONS.join(', ')}`,
+      );
+    }
+    out.cacheRetention = cacheRetention;
+  }
+  return out;
 }
 
 // §12.1 per-role model pin (issue #133): a `provider/id` ref, never a bare
@@ -910,6 +1103,136 @@ export function checkRoleModelRef(
   if (slash <= 0 || slash === value.length - 1) {
     throw new ConfigError(
       `'${keyPath}': 'model' must be 'provider/id' (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
+// One scoped-model entry (issue #255; §38.2): the allowed-set member a
+// `[roles.*].models` array holds. String entries normalize to this shape
+// at parse, so every layer downstream matches one shape.
+export interface RoleModelEntry {
+  /** `provider/id` or `provider/*` — the `*` form matches the provider. */
+  id: string;
+  /** The thinking default when the lane selects this entry (optional). */
+  thinking?: string;
+}
+
+// The escalation ladder (issue #210; §38.4): ordered concrete
+// `provider/id` rungs — never wildcards (a rung names the exact model the
+// lane switches to, so one-way validation stays decidable) and never
+// empty strings. Refused by name per entry, like the scoped-model set.
+export function checkEscalationLadder(
+  value: unknown,
+  keyPath: string,
+): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new ConfigError(
+      `'${keyPath}': 'escalate' must be an array of 'provider/id' rungs`,
+    );
+  }
+  return value.map((entry, index) => {
+    const label = `'${keyPath}': 'escalate[${index}]'`;
+    if (typeof entry !== 'string') {
+      throw new ConfigError(
+        `${label} must be 'provider/id' (got ${JSON.stringify(entry)})`,
+      );
+    }
+    const slash = entry.indexOf('/');
+    if (slash <= 0 || slash === entry.length - 1 || entry.includes('*')) {
+      throw new ConfigError(
+        `${label} must be 'provider/id' (got ${JSON.stringify(entry)})`,
+      );
+    }
+    return entry;
+  });
+}
+
+export function checkMaxEscalations(
+  value: unknown,
+  keyPath: string,
+): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    throw new ConfigError(
+      `'${keyPath}': 'maxEscalations' must be a non-negative integer (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
+// The per-role allowed set (issue #255; §38.2): an array of `provider/id`
+// or `provider/*` refs, each optionally carrying per-entry thinking as a
+// table (`{ id, thinking? }`). An empty array parses (it means all
+// models). Refused by name per entry so a malformed set never reaches
+// selection; the runtime projection re-checks for programmatic layers.
+export function checkRoleModels(
+  value: unknown,
+  roleName: string,
+): RoleModelEntry[] | undefined {
+  if (value === undefined) return undefined;
+  const keyPath = `roles.${roleName}`;
+  if (!Array.isArray(value)) {
+    throw new ConfigError(
+      `'${keyPath}': 'models' must be an array of 'provider/id' or 'provider/*' entries`,
+    );
+  }
+  return value.map((entry, index) => {
+    const label = `'${keyPath}': 'models[${index}]'`;
+    if (typeof entry === 'string') {
+      return { id: checkRoleModelPattern(entry, label) };
+    }
+    if (!isRecord(entry)) {
+      throw new ConfigError(
+        `${label} must be 'provider/id' or 'provider/*' (got ${JSON.stringify(entry)})`,
+      );
+    }
+    checkNoUnknown(
+      entry,
+      new Set(['id', 'thinking']),
+      `${keyPath}.models[${index}]`,
+    );
+    const id = checkRoleModelPattern(
+      reqString(entry, 'id', `${keyPath}.models[${index}]`, false),
+      label,
+    );
+    const thinking = checkThinkingLevel(
+      reqString(entry, 'thinking', `${keyPath}.models[${index}]`, true),
+      `'${keyPath}': 'models[${index}].thinking'`,
+    );
+    return { id, ...(thinking === undefined ? {} : { thinking }) };
+  });
+}
+
+// One allowed-set member: `provider/id` exact, or `provider/*` for the
+// whole provider. The `*` is only meaningful as the whole id — anywhere
+// else it is a typo refused by name.
+function checkRoleModelPattern(value: string, label: string): string {
+  const slash = value.indexOf('/');
+  const star = value.indexOf('*');
+  if (
+    slash <= 0 ||
+    slash === value.length - 1 ||
+    (star >= 0 && (star !== value.length - 1 || !value.endsWith('/*')))
+  ) {
+    throw new ConfigError(
+      `${label} must be 'provider/id' or 'provider/*' (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+// One thinking-level rule for every spelling of it (issue #225): the
+// `[model]` and `[roles.*]` keys, KUBIC_MODEL_THINKING and --thinking all
+// refuse a value outside THINKING_LEVELS by the name the operator used.
+export function checkThinkingLevel(
+  value: string | undefined,
+  label: string,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (!(THINKING_LEVELS as readonly string[]).includes(value)) {
+    throw new ConfigError(
+      `${label} must be one of ${THINKING_LEVELS.join(', ')} (got ${JSON.stringify(value)})`,
     );
   }
   return value;
@@ -1111,7 +1434,23 @@ function parseAuditTables(raw: unknown): AuditTableConfig[] {
       );
     }
     const target = reqString(entry, 'target', path, true);
-    const facility = reqString(entry, 'facility', path, true);
+    // Review finding (issue #286): docs promise a name or a number
+    // 0–23, so a TOML number rides through as-is; a fractional or
+    // out-of-range number is refused here, by name.
+    const facilityRaw = entry.facility;
+    if (
+      facilityRaw !== undefined &&
+      typeof facilityRaw === 'number' &&
+      (!Number.isInteger(facilityRaw) || facilityRaw < 0 || facilityRaw > 23)
+    ) {
+      throw new ConfigError(
+        `'${path}': 'facility' must be a facility name or a number 0–23`,
+      );
+    }
+    const facility =
+      typeof facilityRaw === 'number'
+        ? facilityRaw
+        : reqString(entry, 'facility', path, true);
     return {
       sink,
       level,
@@ -1125,7 +1464,8 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
   assertNoMcpConfig(raw);
   assertNoBudgetKeys(raw);
   for (const key of Object.keys(raw)) {
-    if (!KNOWN_SECTIONS.has(key)) {
+    // Issue #237: `skills` is a top-level array key, not a section.
+    if (key !== 'skills' && !KNOWN_SECTIONS.has(key)) {
       throw new ConfigError(`unknown section '[${key}]'`);
     }
   }
@@ -1133,29 +1473,54 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
   const agent = raw.agent;
   if (agent !== undefined) {
     if (!isRecord(agent)) throw new ConfigError("'[agent]' must be a table");
-    checkNoUnknown(agent, new Set(['name']), 'agent');
+    checkNoUnknown(agent, new Set(['name', 'systemPromptFile']), 'agent');
     const name = reqString(agent, 'name', 'agent', true);
-    if (name !== undefined) config.agent = { name };
+    const systemPromptFile = reqString(
+      agent,
+      'systemPromptFile',
+      'agent',
+      true,
+    );
+    if (name !== undefined || systemPromptFile !== undefined) {
+      config.agent = {
+        ...(name === undefined ? {} : { name }),
+        ...(systemPromptFile === undefined ? {} : { systemPromptFile }),
+      };
+    }
   }
   const model = raw.model;
   if (model !== undefined) {
     if (!isRecord(model)) throw new ConfigError("'[model]' must be a table");
-    checkNoUnknown(model, new Set(['provider', 'id', 'thinking']), 'model');
+    checkNoUnknown(
+      model,
+      new Set([
+        'provider',
+        'id',
+        'thinking',
+        'timeoutMs',
+        'maxRetries',
+        'maxRetryDelayMs',
+        'cacheRetention',
+        'escalate',
+        'maxEscalations',
+      ]),
+      'model',
+    );
     const provider = reqString(model, 'provider', 'model', true);
     const id = reqString(model, 'id', 'model', true);
-    const thinking = reqString(model, 'thinking', 'model', true);
-    if (
-      thinking !== undefined &&
-      !(THINKING_LEVELS as readonly string[]).includes(thinking)
-    ) {
-      throw new ConfigError(
-        `'model': 'thinking' must be one of ${THINKING_LEVELS.join(', ')}`,
-      );
-    }
+    const thinking = checkThinkingLevel(
+      reqString(model, 'thinking', 'model', true),
+      "'model': 'thinking'",
+    );
+    const escalate = checkEscalationLadder(model.escalate, 'model');
+    const maxEscalations = checkMaxEscalations(model.maxEscalations, 'model');
     config.model = {
       ...(provider === undefined ? {} : { provider }),
       ...(id === undefined ? {} : { id }),
       ...(thinking === undefined ? {} : { thinking }),
+      ...checkModelStreamTuning(model, 'model'),
+      ...(escalate === undefined ? {} : { escalate }),
+      ...(maxEscalations === undefined ? {} : { maxEscalations }),
     };
   }
   const modes = raw.modes;
@@ -1263,12 +1628,39 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
       if (!isRecord(spec)) {
         throw new ConfigError(`'[roles.${name}]' must be a table`);
       }
-      checkNoUnknown(spec, new Set(['model', 'tools']), `roles.${name}`);
+      checkNoUnknown(
+        spec,
+        new Set([
+          'model',
+          'tools',
+          'requires',
+          'thinking',
+          'models',
+          'timeoutMs',
+          'maxRetries',
+          'maxRetryDelayMs',
+          'cacheRetention',
+          'escalate',
+        ]),
+        `roles.${name}`,
+      );
       const modelRef = checkRoleModelRef(spec.model, name);
       const tools = optStringArray(spec, 'tools', `roles.${name}`);
+      const requires = optStringArray(spec, 'requires', `roles.${name}`);
+      const thinking = checkThinkingLevel(
+        reqString(spec, 'thinking', `roles.${name}`, true),
+        `'roles.${name}': 'thinking'`,
+      );
+      const models = checkRoleModels(spec.models, name);
+      const escalate = checkEscalationLadder(spec.escalate, `roles.${name}`);
       parsed[name] = {
         ...(modelRef === undefined ? {} : { model: modelRef }),
         ...(tools === undefined ? {} : { tools }),
+        ...(requires === undefined ? {} : { requires }),
+        ...(thinking === undefined ? {} : { thinking }),
+        ...(models === undefined ? {} : { models }),
+        ...(escalate === undefined ? {} : { escalate }),
+        ...checkModelStreamTuning(spec, `roles.${name}`),
       };
     }
     config.roles = parsed;
@@ -1280,7 +1672,7 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
     }
     checkNoUnknown(
       orchestrator,
-      new Set(['root', 'maxWorkers']),
+      new Set(['root', 'maxWorkers', 'manager']),
       'orchestrator',
     );
     const root = checkOrchestratorRoot(orchestrator.root, 'orchestrator');
@@ -1288,9 +1680,14 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
       orchestrator.maxWorkers,
       'orchestrator',
     );
+    const manager = checkOrchestratorManager(
+      orchestrator.manager,
+      'orchestrator',
+    );
     config.orchestrator = {
       ...(root === undefined ? {} : { root }),
       ...(maxWorkers === undefined ? {} : { maxWorkers }),
+      ...(manager === undefined ? {} : { manager }),
     };
   }
   const ui = raw.ui;
@@ -1311,16 +1708,25 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
     }
     checkNoUnknown(
       session,
-      new Set(['store', 'dir', 'retentionDays']),
+      new Set([
+        'store',
+        'dir',
+        'retentionDays',
+        'autoCompact',
+        'reserveTokens',
+        'keepRecentTokens',
+      ]),
       'session',
     );
     const store = reqString(session, 'store', 'session', true);
     const dir = reqString(session, 'dir', 'session', true);
     const retentionDays = optNumber(session, 'retentionDays', 'session');
+    const compaction = checkSessionCompaction(session, 'session');
     config.session = {
       ...(store === undefined ? {} : { store }),
       ...(dir === undefined ? {} : { dir }),
       ...(retentionDays === undefined ? {} : { retentionDays }),
+      ...compaction,
     };
   }
   const verify = raw.verify;
@@ -1338,14 +1744,50 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
   if (audit !== undefined) {
     config.audit = parseAuditTables(audit);
   }
+  // Issue #237 (§29.2): `skills = [...]` — files or directories. Kept
+  // as written here; the load resolves relative entries against the
+  // declaring file's directory. A non-string entry names the layer.
+  const skills = raw.skills;
+  if (skills !== undefined) {
+    if (!Array.isArray(skills)) {
+      throw new ConfigError("'skills' must be an array of paths");
+    }
+    for (const entry of skills) {
+      if (typeof entry !== 'string') {
+        throw new ConfigError("'skills' entries must be strings");
+      }
+      if (entry.trim() === '') {
+        throw new ConfigError("'skills' entries must not be blank");
+      }
+    }
+    config.skills = [...skills];
+  }
   return config;
+}
+
+// Issue #237 (§29.2): resolve one layer's `skills` entries against the
+// directory of the config FILE that declared them — never the invoking
+// cwd. Absolute entries pass through; `~` and env vars are NOT expanded
+// (a config file is not a shell). Returns a copy; the input is untouched.
+export function resolveConfigSkills(
+  config: KubicConfig,
+  filePath: string,
+): KubicConfig {
+  if (config.skills === undefined) return config;
+  const dir = dirname(filePath);
+  return {
+    ...config,
+    skills: config.skills.map((entry) =>
+      isAbsolute(entry) ? entry : resolve(dir, entry),
+    ),
+  };
 }
 
 export function parseTomlConfig(text: string): KubicConfig {
   return toKubicConfig(parseTomlDocument(text));
 }
 
-function formatValue(value: unknown): string {
+function formatValue(value: unknown, inlineTables = false): string {
   if (typeof value === 'string') {
     return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\t/g, '\\t')}"`;
   }
@@ -1353,7 +1795,21 @@ function formatValue(value: unknown): string {
     return String(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map((item) => formatValue(item)).join(', ')}]`;
+    return `[${value.map((item) => formatValue(item, true)).join(', ')}]`;
+  }
+  // Inline tables (issue #255): the role `models` set carries `{ id,
+  // thinking? }` entries, and the canonical example pins them — they
+  // emit back in the same inline form so the example round-trips. Only
+  // array items take this branch: a bare nested table as a direct value
+  // stays refused (issue #69), exactly as before.
+  if (isRecord(value)) {
+    if (!inlineTables) {
+      throw new ConfigError('cannot serialize nested tables as values');
+    }
+    const pairs = Object.entries(value).map(
+      ([key, child]) => `${key} = ${formatValue(child, true)}`,
+    );
+    return `{ ${pairs.join(', ')} }`;
   }
   throw new ConfigError('cannot serialize nested tables as values');
 }
@@ -1391,6 +1847,14 @@ const POLICY_TOML_KEYS: ReadonlyArray<[PolicyFlatField, string]> = [
 
 export function serializeTomlConfig(config: KubicConfig): string {
   const lines: string[] = [];
+  // Issue #237: the top-level `skills` array serializes before the first
+  // table (TOML keys precede tables).
+  if (config.skills !== undefined) {
+    lines.push(
+      `skills = [${config.skills.map((entry) => JSON.stringify(entry)).join(', ')}]`,
+      '',
+    );
+  }
   if (config.agent !== undefined) {
     emitTable(lines, 'agent', config.agent as Record<string, unknown>);
   }
@@ -1658,7 +2122,11 @@ export function loadLayered(
     try {
       inputs.push({
         layer,
-        config: parseTomlConfig(bridge.readTextFile(path)),
+        // Issue #237: relative `skills` entries anchor at this file.
+        config: resolveConfigSkills(
+          parseTomlConfig(bridge.readTextFile(path)),
+          path,
+        ),
         ...(layer === 'project' ? { trusted: true as const } : {}),
       });
     } catch (error) {

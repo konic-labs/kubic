@@ -20,8 +20,8 @@
 // an unmeasurable kind is refused by name, never sampled.
 //
 // Every measurement is bounded and cleaned up (each created worktree is
-// removed in a finally), and the clock is injected so tests are
-// deterministic.
+// removed and its branch deleted, both exit codes checked), and the clock
+// is injected so tests are deterministic.
 
 import { join } from 'node:path';
 import type { ExecutionEnv } from '../../../../exec/src/env.js';
@@ -52,7 +52,9 @@ export interface MeasureRequest {
   samples: number;
   env: ExecutionEnv;
   // Worktree source only: the repo whose worktrees are measured. Defaults to
-  // the env's cwd.
+  // `git rev-parse --show-toplevel` from the env's cwd (issue #252), so a
+  // subdirectory run measures under the repo root; outside a repo the env's
+  // cwd is kept.
   repoRoot?: string;
   clock?: () => number;
   // Spawn source only: the argv to run per sample. Defaults to a trivial
@@ -88,6 +90,30 @@ function assertSampleCount(samples: number): void {
   }
 }
 
+// Issue #252: the repo a subdirectory run measures — `git rev-parse
+// --show-toplevel` through the injected shell (never the env cwd
+// directly). Undefined outside a repo (or when the seam cannot run git),
+// so the caller keeps the old env-cwd fallback there.
+async function gitToplevel(env: ExecutionEnv): Promise<string | undefined> {
+  try {
+    const probe = await env.shell
+      .spawn('git', ['rev-parse', '--show-toplevel'], {
+        provenance: {
+          sessionId: 'perf',
+          agentId: 'perf',
+          toolCallId: 'perf-toplevel',
+          turnId: 0,
+          operation: 'perf_measure_toplevel',
+        },
+      })
+      .wait();
+    const top = probe.stdout.trim();
+    return probe.exitCode === 0 && top !== '' ? top : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // One spawn sample: start the child and wait for it to exit. This is the
 // same shell seam the worker spawn path uses, so the measured ms is that
 // path's real cost, not a synthetic sleep.
@@ -106,12 +132,25 @@ async function measureSpawnOnce(
       operation: 'perf_measure_spawn',
     },
   });
-  await handle.wait();
+  // Issue #252: a failed spawn is a measurement error, not a timing — a
+  // sample of a command that never ran measures nothing.
+  const done = await handle.wait();
+  if (done.exitCode !== 0) {
+    throw new MeasureError(
+      `perf spawn command failed while measuring (exit ${done.exitCode}): ${done.stderr.trim().slice(0, 200)}`,
+    );
+  }
   return clock() - started;
 }
 
-// One worktree sample: add then remove, so the samples measure the same
-// cycle the §61 worktree budget governs and leave nothing behind.
+// One worktree sample: add then remove then delete the branch, so the
+// samples measure the same cycle the §61 worktree budget governs and leave
+// nothing behind (issue #252: `worktree remove` keeps the branch — without
+// the delete every sample leaked `kubic/perf-*` into the user's repo, where
+// `kubic clean` then listed it). The measured ms is the add side alone (§61
+// budgets the cold add); the remove and the delete are cleanup — both are
+// attempted and both exit codes are checked, so a failed cleanup is a
+// named measurement error instead of a silent leak.
 async function measureWorktreeOnce(
   env: ExecutionEnv,
   clock: () => number,
@@ -134,11 +173,30 @@ async function measureWorktreeOnce(
   });
   const added = await add.wait();
   if (added.exitCode !== 0) {
+    // A failed add can still leave the branch behind (branch created,
+    // checkout failed): best-effort delete, result ignored — the add
+    // error below is the report.
+    try {
+      await env.shell
+        .spawn('git', ['branch', '-D', branch], {
+          provenance: {
+            sessionId: 'perf',
+            agentId,
+            toolCallId: 'perf-worktree-cleanup',
+            turnId: 0,
+            operation: 'perf_measure_worktree_cleanup',
+          },
+        })
+        .wait();
+    } catch {
+      // Best-effort only: the add failure is the error that matters.
+    }
     throw new MeasureError(
       `git worktree add failed while measuring (exit ${added.exitCode}): ${added.stderr.trim().slice(0, 200)}`,
     );
   }
   const elapsed = clock() - started;
+  let removeFailed: string | undefined;
   try {
     const remove = env.shell.spawn(
       'git',
@@ -153,11 +211,36 @@ async function measureWorktreeOnce(
         },
       },
     );
-    await remove.wait();
-  } finally {
-    // The measured ms is the add side alone (§61 budgets the cold add); the
-    // remove is cleanup and must run even if it fails.
+    const removed = await remove.wait();
+    if (removed.exitCode !== 0) {
+      removeFailed = `git worktree remove --force failed while measuring (exit ${removed.exitCode}): ${removed.stderr.trim().slice(0, 200)}`;
+    }
+  } catch (error) {
+    removeFailed = `git worktree remove --force failed while measuring: ${error instanceof Error ? error.message : String(error)}`;
   }
+  // The branch delete is attempted even when the remove failed (cleanup
+  // attempted, per the contract) and its exit code is checked too.
+  let deleteFailed: string | undefined;
+  try {
+    const deleted = await env.shell
+      .spawn('git', ['branch', '-D', branch], {
+        provenance: {
+          sessionId: 'perf',
+          agentId,
+          toolCallId: 'perf-worktree-branch-delete',
+          turnId: 0,
+          operation: 'perf_measure_worktree_branch_delete',
+        },
+      })
+      .wait();
+    if (deleted.exitCode !== 0) {
+      deleteFailed = `git branch -D failed while measuring (exit ${deleted.exitCode}): ${deleted.stderr.trim().slice(0, 200)}`;
+    }
+  } catch (error) {
+    deleteFailed = `git branch -D failed while measuring: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  if (removeFailed !== undefined) throw new MeasureError(removeFailed);
+  if (deleteFailed !== undefined) throw new MeasureError(deleteFailed);
   return elapsed;
 }
 
@@ -219,7 +302,13 @@ export async function measureSamples(
     };
   }
   if (request.kind === 'worktree') {
-    const repoRoot = request.repoRoot ?? request.env.cwd;
+    // Issue #252: a subdirectory run measures the REPO's worktrees
+    // (`<toplevel>/.kubic/wt`), not `<subdir>/.kubic/wt` — resolved the way
+    // the writer resolves it, through the injected shell so tests stay
+    // hermetic. An explicit repoRoot still wins; outside a repo the env
+    // cwd is kept (same as before — nothing else could name the repo).
+    const repoRoot =
+      request.repoRoot ?? (await gitToplevel(request.env)) ?? request.env.cwd;
     const samplesMs: number[] = [];
     for (let i = 0; i < request.samples; i += 1) {
       samplesMs.push(

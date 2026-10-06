@@ -535,6 +535,94 @@ describe('dep-lint (issue #2)', () => {
     );
   });
 
+  it('flags tui importing the extensions package (issue #369)', () => {
+    const dir = fixtureTree({
+      'packages/tui/src/views.ts': `import { b } from '@kubic/extensions';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.ok(
+      violations.some((v) => v.from === 'tui' && v.to === 'extensions'),
+      `expected tui->extensions violation, got ${JSON.stringify(violations)}`,
+    );
+  });
+
+  it('flags tui reaching the app root relatively (issue #369)', () => {
+    const dir = fixtureTree({
+      'packages/tui/src/views.ts': `import { m } from '../../../apps/kubic/src/main.js';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.ok(
+      violations.some((v) => v.from === 'tui' && v.to === 'kubic'),
+      `expected tui->kubic violation, got ${JSON.stringify(violations)}`,
+    );
+  });
+
+  it('flags core importing the extensions package (issue #369)', () => {
+    const dir = fixtureTree({
+      'packages/core/src/session.ts': `import { b } from '@kubic/extensions';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.ok(
+      violations.some((v) => v.from === 'core' && v.to === 'extensions'),
+      `expected core->extensions violation, got ${JSON.stringify(violations)}`,
+    );
+  });
+
+  it('flags core reaching the app root relatively (issue #369)', () => {
+    const dir = fixtureTree({
+      'packages/core/src/session.ts': `import { m } from '../../../apps/kubic/src/main.js';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.ok(
+      violations.some((v) => v.from === 'core' && v.to === 'kubic'),
+      `expected core->kubic violation, got ${JSON.stringify(violations)}`,
+    );
+  });
+
+  it('still lets prod-path tests reach extensions but not the app root (issues #369, #387)', () => {
+    // Test scaffolding is exempt for the extensions facade only: host/tui
+    // prod-path tests wire the real builders from packages/extensions.
+    // Since #387 the composition root's behaviour tests live under
+    // apps/kubic, so a package test reaching the app root is a
+    // dependency inversion and fails the gate.
+    const dir = fixtureTree({
+      'packages/host/src/run-prod-path.test.ts': `import { b } from '@kubic/extensions';\n`,
+      'packages/tui/src/tui-command.test.ts': `import { b } from '@kubic/extensions';\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
+  it('flags a package test reaching the app root (issue #387)', () => {
+    const dir = fixtureTree({
+      'packages/host/src/run-prod-path.test.ts': `import { d } from '../../../apps/kubic/src/prod-runners.js';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.ok(
+      violations.some((v) => v.from === 'host' && v.to === 'kubic'),
+      `expected host->kubic violation, got ${JSON.stringify(violations)}`,
+    );
+  });
+
+  it('still flags an extensions test reaching the app root (issue #369)', () => {
+    const dir = fixtureTree({
+      'packages/extensions/src/e.test.ts': `import { m } from '../../../apps/kubic/src/main.js';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.ok(
+      violations.some((v) => v.from === 'extensions' && v.to === 'kubic'),
+      `expected extensions->kubic violation, got ${JSON.stringify(violations)}`,
+    );
+  });
+
+  it('allows worker importing agents: recorded drift (issue #369)', () => {
+    // Beyond the §64 diagram's `worker ──▶ exec, core`: the lane builds on
+    // agents roles/policy/task contracts (design-drift item 17).
+    const dir = fixtureTree({
+      'packages/worker/src/lane/policy.ts': `import type { PermissionClasses } from '../../../agents/src/policy.js';\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
   it('dep-lint module has no import side effects', async () => {
     const writes = [];
     const original = process.stdout.write.bind(process.stdout);

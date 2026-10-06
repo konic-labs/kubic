@@ -160,6 +160,7 @@ function roleLoaderFor(files: Record<string, string>) {
     planWorkerRoles({
       bridge: memBridge(files),
       cwd: REPO,
+      trusted: true,
       agents,
       // The explicit per-agent binding the run resolved (issue #178).
       ...(binding === undefined
@@ -219,10 +220,13 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
 
   it('stores the composed prompt per worker and replays it on --resume', async () => {
     const files = rolesFor(plannerDoc(), implementerDoc());
+    // Killed while `beta` runs (not while merging): `beta` keeps no
+    // completion, so the resume really re-runs it — with the stored prompt.
     const first = makeWorld({
       loadWorkerRoles: roleLoaderFor(files),
-      mergeBranch: (agentId: string) => {
+      runWorker: (agentId: string) => {
         if (agentId === 'beta') throw new Error('KILLED');
+        return [{ path: 'alpha.txt', hunk: '@@ +1 @@' }];
       },
     });
     expect(
@@ -237,14 +241,15 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
       ),
     ).toBe(1);
     const killed = first.saved[first.saved.length - 1] as OrchestratorRunState;
-    expect(killed.pending).toEqual(['beta']);
+    expect(killed.pending).toEqual(['alpha', 'beta']);
     // The stored plan carries the COMPOSED prompt (role text + step)…
     const storedBeta = killed.plan?.[1]?.prompt ?? '';
     expect(storedBeta).toContain('You are the implementer.');
     expect(storedBeta).toContain("Plan step 2 of 2 for agent 'beta'");
 
-    // …and a resume with no -p replays it verbatim, so the retried worker
-    // runs the same composed prompt it ran before the kill.
+    // …and a resume with no -p replays it as the prompt prefix, so the
+    // retried worker runs the same composed prompt it ran before the
+    // kill — with the §24 transfer block rendered after it (issue #184).
     const second = makeWorld({
       loadWorkerRoles: roleLoaderFor(files),
       loadState: () => structuredClone(killed),
@@ -256,7 +261,8 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
       ),
     ).toBe(0);
     expect(second.prompts).toHaveLength(1);
-    expect(second.prompts[0]?.prompt).toBe(storedBeta);
+    expect(second.prompts[0]?.prompt).toContain(storedBeta);
+    expect(second.prompts[0]?.prompt).toContain('Task:');
     expect(second.spawnInfo[0]?.info?.role).toBe('implementer');
   });
 

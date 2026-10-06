@@ -5,7 +5,13 @@
 // keys must equal operation names, and unknown tools fail with the exact
 // `unknown_tool` shape — never a bare throw.
 import { describe, expect, it } from 'vitest';
+import { BASH_RESULT_MAX_CHARS, BASH_RESULT_MAX_LINES } from './bash.js';
 import { OPERATIONS } from './registry.js';
+
+// Issue #190: the git read ops clip to the shared model cap; the pin is
+// built from the same constants as the descriptions so the bound cannot
+// drift from the contract.
+const GIT_CLIP = `Output clips to the shared model cap (last ${BASH_RESULT_MAX_LINES} lines, at most ${BASH_RESULT_MAX_CHARS} chars, tail-kept; truncated reports the cut and the full text is spilled when the lane provides a sink)`;
 
 const EXPECTED: Record<string, { description: string; replay: string }> = {
   read: {
@@ -15,7 +21,7 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
   },
   ls: {
     description:
-      'List one directory (not recursive): every entry with its kind and size. path defaults to the workspace root.',
+      'List one directory (not recursive): every entry with its kind and size, sorted by name, at most 500 entries (`truncated` says when more exist). path defaults to the workspace root.',
     replay: 'safe',
   },
   find: {
@@ -45,20 +51,19 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
   },
   git_status: {
     description:
-      'Structured working-tree status (branch or detached HEAD, ahead/behind, staged/unstaged/untracked, renames)',
+      'Structured working-tree status (branch or detached HEAD, ahead/behind, staged/unstaged/untracked, conflicts, renames)',
     replay: 'safe',
   },
   git_diff: {
-    description: 'Scoped diff of staged changes, a revision range, or a path',
+    description: `Scoped diff of staged changes, a revision range, or a path. ${GIT_CLIP}`,
     replay: 'safe',
   },
   git_log: {
-    description:
-      'Recent commits (sha, author, date, message), optionally only those touching path; max defaults to 20 and is capped at 100',
+    description: `Recent commits (sha, author, date, message), optionally only those touching path; max defaults to 20 and is capped at 100. ${GIT_CLIP}`,
     replay: 'safe',
   },
   git_show: {
-    description: 'Patch (diff) of a commit or other ref',
+    description: `Patch (diff) of a commit or other ref. ${GIT_CLIP}`,
     replay: 'safe',
   },
   git_stage: {
@@ -81,10 +86,23 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
       'Create a restorable stash point WITHOUT touching the tree (git stash create); restore with git stash apply <sha>',
     replay: 'never',
   },
+  git_merge: {
+    description:
+      'Merge a local branch into the current one (local refs only, never fetches); on conflict returns the conflicted paths and leaves the merge state for the resolver',
+    replay: 'never',
+  },
+  git_conflict_status: {
+    description: 'List paths with unresolved merge conflicts',
+    replay: 'safe',
+  },
+  git_worktree_list: {
+    description: 'List attached worktrees (path, branch, HEAD)',
+    replay: 'safe',
+  },
 };
 
 describe('operation tool contract (issue #67)', () => {
-  it('registers exactly the fifteen solo tools', () => {
+  it('registers exactly the eighteen solo tools', () => {
     expect(Object.keys(OPERATIONS).sort()).toEqual(
       Object.keys(EXPECTED).sort(),
     );
@@ -112,6 +130,7 @@ describe('operation tool contract (issue #67)', () => {
         'git_branch',
         'git_checkpoint',
         'git_commit',
+        'git_merge',
         'git_stage',
         'write',
       ].sort(),

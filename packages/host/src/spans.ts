@@ -26,6 +26,10 @@ export interface SpanRecord {
 
 export class SpanRecorder {
   private spans: SpanRecord[] = [];
+  // Issue #243: O(1) lookup by id. The array keeps insertion order for
+  // `trace()`; the map serves the per-span hot path (`end`, `get`) so a
+  // run with N spans costs O(N), not O(N^2).
+  private readonly byId = new Map<string, SpanRecord>();
   private seq = 0;
   private readonly clock: () => number;
 
@@ -36,21 +40,41 @@ export class SpanRecorder {
   start(name: SpanName, parentId?: string | null): string {
     const id = `span-${this.seq}`;
     this.seq += 1;
-    this.spans.push({
+    const record: SpanRecord = {
       id,
       name,
       parentId: parentId ?? null,
       startMs: this.clock(),
       endMs: null,
-    });
+    };
+    this.spans.push(record);
+    this.byId.set(id, record);
     return id;
   }
 
   end(id: string, error?: string): void {
-    const span = this.spans.find((entry) => entry.id === id);
+    const span = this.byId.get(id);
     if (span === undefined) throw new Error(`unknown span ${id}`);
     span.endMs = this.clock();
     if (error !== undefined) span.error = error;
+  }
+
+  // Issue #290: close a span at a measured-elsewhere end time. The
+  // manager-side startup span reports the registry's startupMs, not a
+  // second wall-clock read, so the artifact duration equals it exactly.
+  endAt(id: string, endMs: number, error?: string): void {
+    const span = this.byId.get(id);
+    if (span === undefined) throw new Error(`unknown span ${id}`);
+    span.endMs = endMs;
+    if (error !== undefined) span.error = error;
+  }
+
+  // Issue #243: read one span without copying the trace. The copy keeps
+  // the ledger tamper-proof: a reader mutating the return never rewrites
+  // a stored record (pinned by test).
+  get(id: string): SpanRecord | undefined {
+    const span = this.byId.get(id);
+    return span === undefined ? undefined : { ...span };
   }
 
   trace(): SpanRecord[] {
@@ -78,11 +102,13 @@ export class SpanRecorder {
   }
 }
 
-// --debug stderr vocabulary (§50): exactly 9 line classes —
+// --debug stderr vocabulary (§50): exactly 8 line classes —
 // [policy]/[worker]/[session]/[tool]/[model]/[agent] + [exit] +
-// [handles] + handler_error. Tool lines carry the in/out/cached phase;
+// handler_error. Tool lines carry the in/out/cached phase;
 // model lines carry in/out/cached token counts. Constructed with a sink
 // (stderr in prod, an array in tests) so TUI code never touches io here.
+// Issue #246: the `[handles]` class is dropped — nothing ever measured a
+// leak count, so the vocabulary carries no leak line.
 export const DEBUG_CLASSES = [
   '[policy]',
   '[worker]',
@@ -91,13 +117,29 @@ export const DEBUG_CLASSES = [
   '[model]',
   '[agent]',
   '[exit]',
-  '[handles]',
   'handler_error',
 ] as const;
 
 export type DebugSink = (line: string) => void;
 
 export type ToolPhase = 'in' | 'out' | 'cached';
+
+// Issue #246: the two line shapes other paths reuse without owning a
+// DebugLog — the methods below delegate to these, so the headless lane
+// sink and the TUI runner emit byte-identical lines.
+export function hookErrorLine(hook: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return `handler_error hook=${hook} error=${message} verdict=deny`;
+}
+
+export function modelLine(
+  input: number,
+  output: number,
+  cached: number,
+  detail: string,
+): string {
+  return `[model] in=${input} out=${output} cached=${cached} ${detail}`;
+}
 
 export class DebugLog {
   private readonly sink: DebugSink;
@@ -123,7 +165,7 @@ export class DebugLog {
   }
 
   model(input: number, output: number, cached: number, detail: string): void {
-    this.sink(`[model] in=${input} out=${output} cached=${cached} ${detail}`);
+    this.sink(modelLine(input, output, cached, detail));
   }
 
   agent(detail: string): void {
@@ -131,50 +173,11 @@ export class DebugLog {
   }
 
   hookError(hook: string, error: unknown): void {
-    const message = error instanceof Error ? error.message : String(error);
-    this.sink(`handler_error hook=${hook} error=${message} verdict=deny`);
+    this.sink(hookErrorLine(hook, error));
   }
 
   exit(code: number): void {
     this.sink(`[exit] code=${code} exited cleanly`);
-  }
-
-  handles(leaked: number): void {
-    this.sink(`[handles] ${leaked} leaked handles`);
-  }
-}
-
-// Hook execution (§50 handler_error): a throwing hook fails closed —
-// the error surfaces as a handler_error debug line AND on the
-// pi.harness.hook span, and the caller gets denied=true. There is no
-// allow-on-error path: per policy the run must not proceed on a hook
-// failure it cannot classify.
-export interface HookDeps {
-  debug: DebugLog;
-  recorder: SpanRecorder;
-}
-
-export interface HookResult {
-  ok: boolean;
-  denied: boolean;
-  error?: string;
-}
-
-export async function runHook(
-  name: string,
-  hook: () => void | Promise<void>,
-  deps: HookDeps,
-): Promise<HookResult> {
-  const id = deps.recorder.start('pi.harness.hook');
-  try {
-    await hook();
-    deps.recorder.end(id);
-    return { ok: true, denied: false };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    deps.debug.hookError(name, error);
-    deps.recorder.end(id, `handler_error hook=${name} error=${message}`);
-    return { ok: false, denied: true, error: message };
   }
 }
 

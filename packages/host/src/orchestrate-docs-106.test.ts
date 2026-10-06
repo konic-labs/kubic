@@ -10,10 +10,11 @@
 //     still the claim — raw matching would let it through), and
 //   - assert the file list is non-empty, so an absence scan cannot pass
 //     vacuously the way an earlier path bug let it.
-import { execFileSync } from 'node:child_process';
+
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { createGitSandbox } from '../../exec/src/test-support/git-sandbox.js';
 
 // packages/host/src/ → the repo root is three levels up. Pinned by the
 // non-empty file-list assertion below: a wrong depth would otherwise make
@@ -79,11 +80,16 @@ function markdownOnDisk(dir = ''): string[] {
 function trackedDocs(): string[] {
   let listed = '';
   try {
-    listed = execFileSync('git', ['ls-files', 'docs', 'README.md', '*.md'], {
-      cwd: ROOT,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
+    // The listing still scans the real checkout, but through the shared
+    // sandbox's scrubbed env (issue #420) — no developer config shapes it.
+    const sandbox = createGitSandbox();
+    try {
+      listed = sandbox.git(['ls-files', 'docs', 'README.md', '*.md'], {
+        cwd: ROOT,
+      });
+    } finally {
+      sandbox.cleanup();
+    }
   } catch {
     // Not a git checkout at all: fall through to the walk.
   }

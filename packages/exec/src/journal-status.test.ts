@@ -16,10 +16,16 @@ import {
   reconciliationSummary,
   renderLog,
 } from './journal-status.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+} from './test-support/git-sandbox.js';
 
 const roots: string[] = [];
 
 afterEach(() => {
+  // Sandbox disposal restores process.env when a repo was activated.
+  disposeAllGitSandboxes();
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
 });
@@ -174,6 +180,9 @@ describe('unattributed count (issue #87)', () => {
       unattributed: 0,
       corrupt: 0,
       corruptLines: 0,
+      // Issue #378: no moves in an empty journal — the field is always
+      // present so `--json` keeps a stable shape.
+      headMoves: [],
       repo: null,
     });
     expect(reconciliationSummary(empty)).toBe(
@@ -243,5 +252,105 @@ describe('corrupt count (issue #111)', () => {
     // before-blob exists by design, and that is not corruption.
     const status = journalStatus(seed(), tmpRoot('ws-'));
     expect(status.corrupt).toBe(0);
+  });
+});
+
+describe('HEAD-move markers in log + status (issue #378)', () => {
+  const MOVE_A = { head: 'a'.repeat(40), branch: 'main', stash: 0 };
+  const MOVE_B = { head: 'b'.repeat(40), branch: 'feature', stash: 0 };
+
+  function withMarker(): FileJournalStore {
+    const store = seed();
+    store.append({
+      path: '',
+      op: 'marker',
+      before: null,
+      after: null,
+      bytesDelta: 0,
+      headFrom: MOVE_A,
+      headTo: MOVE_B,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 1700000002000,
+      unattributed: true,
+    });
+    return store;
+  }
+
+  it('renders the marker as one greppable log line, never a diff hunk', () => {
+    const lines = renderLog(withMarker());
+    expect(lines).toHaveLength(3);
+    const marker = lines[2] ?? '';
+    expect(marker).toContain('marker');
+    expect(marker).toContain('head-moved');
+    expect(marker).toContain(`main@${'a'.repeat(12)}`);
+    expect(marker).toContain(`feature@${'b'.repeat(12)}`);
+  });
+
+  it('counts the marker as unattributed work and reports the move', () => {
+    const root = tmpRoot('ws-head-status-');
+    const status = journalStatus(withMarker(), root);
+    expect(status.entries).toBe(3);
+    expect(status.unattributed).toBe(2);
+    // The marker has nothing to restore: non-reversible, never corrupt.
+    expect(status.reversible + status.nonReversible).toBe(status.entries);
+    expect(status.corrupt).toBe(0);
+    expect(status.headMoves).toEqual([{ from: MOVE_A, to: MOVE_B }]);
+    expect(status.repo).toBe(null);
+  });
+});
+
+// Repo root, ahead/behind and conflicts on `kubic status` (issue #380).
+// RED first: RepoState is only branch and dirty.
+describe('status repo ahead/behind, root and conflicts (issue #380)', () => {
+  function commitFile(
+    repo: { path: string; git(args: readonly string[]): string },
+    name: string,
+    content: string,
+  ): void {
+    writeFileSync(join(repo.path, name), content);
+    repo.git(['add', '--', name]);
+    repo.git(['commit', '-q', '-m', `add ${name}`]);
+  }
+
+  it('reports the repo root and zero ahead/behind on a plain repo', () => {
+    const repo = createGitSandbox({ prefix: 'kubic-status-380-' });
+    repo.activate();
+    commitFile(repo, 'a.txt', 'one\n');
+    const state = journalStatus(seed(), repo.path).repo;
+    expect(state?.branch).toBe('main');
+    expect(state?.repoRoot).toBe(repo.path);
+    expect(state?.ahead).toBe(null);
+    expect(state?.behind).toBe(null);
+    expect(state?.conflicts).toEqual([]);
+  });
+
+  it('reports ahead/behind against a local upstream', () => {
+    const repo = createGitSandbox({ prefix: 'kubic-status-380-' });
+    repo.activate();
+    const origin = tmpRoot('origin-');
+    repo.git(['init', '--bare', '-q', origin]);
+    commitFile(repo, 'a.txt', 'one\n');
+    repo.git(['remote', 'add', 'origin', origin]);
+    repo.git(['push', '-qu', 'origin', 'main']);
+    commitFile(repo, 'b.txt', 'two\n');
+    const state = journalStatus(seed(), repo.path).repo;
+    expect(state?.ahead).toBe(1);
+    expect(state?.behind).toBe(0);
+  });
+
+  it('reports conflicted paths after a conflicting merge', () => {
+    const repo = createGitSandbox({ prefix: 'kubic-status-380-' });
+    repo.activate();
+    commitFile(repo, 'f.txt', 'base\n');
+    repo.git(['checkout', '-qb', 'feature']);
+    commitFile(repo, 'f.txt', 'theirs\n');
+    repo.git(['checkout', '-q', 'main']);
+    commitFile(repo, 'f.txt', 'ours\n');
+    repo.gitResult(['merge', 'feature']);
+    const state = journalStatus(seed(), repo.path).repo;
+    expect(state?.conflicts).toEqual(['f.txt']);
+    expect(state?.dirty).toBe(true);
   });
 });

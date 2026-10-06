@@ -7,10 +7,10 @@
 // (`.git/info/exclude`) so a user's committed `.gitignore` is never
 // dirtied, and `.kubic/` itself stays unignored so roles stay committable.
 //
-// These tests drive real git in scratch repositories (no mocks): the
+// These tests drive real git in sandboxed scratch repositories (issue
+// #365: scrubbed env, never the inherited one) with no mocks: the
 // assertions are the exact user-visible promise from the issue. Only
 // packages/exec may spawn processes and touch node:fs (§9).
-import { spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -31,68 +31,63 @@ import {
   RUNTIME_EXCLUDE_ENTRIES,
   RuntimeExcludeError,
 } from './runtime-exclude.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from './test-support/git-sandbox.js';
 
 const scratchDirs: string[] = [];
 
 afterEach(() => {
+  disposeAllGitSandboxes();
   for (const dir of scratchDirs.splice(0))
     rmSync(dir, { recursive: true, force: true });
 });
 
+// Plain temp dir, for the not-a-repo path that never touches git.
 function scratchDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   scratchDirs.push(dir);
   return dir;
 }
 
-function git(cwd: string, args: string[]): string {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
-  if (result.status !== 0) {
-    throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
-  }
-  return result.stdout;
-}
-
-function gitExit(cwd: string, args: string[]): number {
-  return spawnSync('git', args, { cwd, encoding: 'utf8' }).status ?? 1;
-}
-
-function isIgnored(cwd: string, path: string): boolean {
-  return gitExit(cwd, ['check-ignore', '-q', path]) === 0;
+function isIgnored(repo: GitSandbox, path: string): boolean {
+  return repo.gitResult(['check-ignore', '-q', path]).status === 0;
 }
 
 // A scratch repo with the committed half of the split already in place:
 // tracked role documents and config, exactly like a user repo that set
-// Kubic up before its first run.
-function roleScratchRepo(): string {
-  const dir = scratchDir('kubic-exclude-');
-  git(dir, ['init', '-q', '-b', 'main', '.']);
-  git(dir, ['config', 'user.email', 'test@example.com']);
-  git(dir, ['config', 'user.name', 'test']);
-  writeFileSync(join(dir, 'README.md'), '# scratch\n');
-  mkdirSync(join(dir, '.kubic', 'roles'), { recursive: true });
-  writeFileSync(join(dir, '.kubic', 'roles', 'reviewer.md'), '# reviewer\n');
+// Kubic up before its first run. Activated: ensureRuntimeExcludeRules
+// resolves the repo by spawning git on the inherited environment, so
+// process.env itself must be the sandbox's while it runs.
+function roleScratchRepo(): GitSandbox {
+  const repo = createGitSandbox({
+    prefix: 'kubic-exclude-',
+    injectProcessEnv: true,
+  });
+  writeFileSync(join(repo.path, 'README.md'), '# scratch\n');
+  mkdirSync(join(repo.path, '.kubic', 'roles'), { recursive: true });
   writeFileSync(
-    join(dir, '.kubic', 'config.toml'),
+    join(repo.path, '.kubic', 'roles', 'reviewer.md'),
+    '# reviewer\n',
+  );
+  writeFileSync(
+    join(repo.path, '.kubic', 'config.toml'),
     '[agent]\nname = "kubic"\n',
   );
-  git(dir, ['add', '.kubic', 'README.md']);
-  // No signing / hooks from the developer's global config.
-  git(dir, [
-    '-c',
-    'commit.gpgsign=false',
-    'commit',
-    '--no-verify',
-    '-qm',
-    'init',
-  ]);
-  return dir;
+  repo.git(['add', '.kubic', 'README.md']);
+  // No signing / hooks from the developer's global config (sandbox-local
+  // config pins both; --no-verify is belt and braces).
+  repo.git(['commit', '--no-verify', '-qm', 'init']);
+  return repo;
 }
 
 // What the first `kubic run` / `kubic orchestrate` leaves behind: journal
 // entries, orchestrator session state, agent worktrees, session scratch,
 // artifacts — at the exact paths the runtime uses.
-function createRuntimeState(dir: string): void {
+function createRuntimeState(repo: GitSandbox): void {
+  const dir = repo.path;
   for (const sub of ['journal', 'orchestrator', 'sessions', 'artifacts']) {
     mkdirSync(join(dir, '.kubic', sub), { recursive: true });
   }
@@ -100,7 +95,7 @@ function createRuntimeState(dir: string): void {
   writeFileSync(join(dir, '.kubic', 'orchestrator', 'orch-1.json'), '{}\n');
   writeFileSync(join(dir, '.kubic', 'sessions', 's1'), 'x\n');
   writeFileSync(join(dir, '.kubic', 'artifacts', 'out.txt'), 'x\n');
-  git(dir, [
+  repo.git([
     'worktree',
     'add',
     '-q',
@@ -110,8 +105,9 @@ function createRuntimeState(dir: string): void {
   ]);
 }
 
-function status(dir: string): string[] {
-  return git(dir, ['status', '--porcelain=v1'])
+function status(repo: GitSandbox): string[] {
+  return repo
+    .git(['status', '--porcelain=v1'])
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
@@ -141,13 +137,13 @@ describe('applyRuntimeExcludeBlock (issue #91)', () => {
 
 describe('ensureRuntimeExcludeRules (issue #91)', () => {
   it('writes the block into the repo-local exclude file', () => {
-    const dir = roleScratchRepo();
-    const result = ensureRuntimeExcludeRules({ cwd: dir });
+    const repo = roleScratchRepo();
+    const result = ensureRuntimeExcludeRules({ cwd: repo.path });
 
     expect(result.skipped).toBeUndefined();
     expect(result.changed).toBe(true);
     expect(realpathSync(result.path as string)).toBe(
-      realpathSync(join(dir, '.git', 'info', 'exclude')),
+      realpathSync(join(repo.path, '.git', 'info', 'exclude')),
     );
     expect(readFileSync(result.path as string, 'utf8')).toContain(
       RUNTIME_EXCLUDE_BEGIN,
@@ -155,42 +151,45 @@ describe('ensureRuntimeExcludeRules (issue #91)', () => {
   });
 
   it('keeps runtime state out of git status while roles stay trackable', () => {
-    const dir = roleScratchRepo();
-    ensureRuntimeExcludeRules({ cwd: dir });
-    createRuntimeState(dir);
+    const repo = roleScratchRepo();
+    ensureRuntimeExcludeRules({ cwd: repo.path });
+    createRuntimeState(repo);
 
     // The whole promise of the issue: nothing of Kubic's own state in the
     // user's commit path.
-    expect(status(dir)).toEqual([]);
+    expect(status(repo)).toEqual([]);
 
     // The committed half stays committable.
-    expect(isIgnored(dir, '.kubic/roles/reviewer.md')).toBe(false);
-    expect(isIgnored(dir, '.kubic/config.toml')).toBe(false);
-    expect(isIgnored(dir, '.kubic/roles/tester.md')).toBe(false);
-    writeFileSync(join(dir, '.kubic', 'roles', 'tester.md'), '# tester\n');
-    git(dir, ['add', '.kubic/roles/tester.md']);
-    expect(git(dir, ['status', '--porcelain=v1', '--', '.kubic/roles'])).toBe(
+    expect(isIgnored(repo, '.kubic/roles/reviewer.md')).toBe(false);
+    expect(isIgnored(repo, '.kubic/config.toml')).toBe(false);
+    expect(isIgnored(repo, '.kubic/roles/tester.md')).toBe(false);
+    writeFileSync(
+      join(repo.path, '.kubic', 'roles', 'tester.md'),
+      '# tester\n',
+    );
+    repo.git(['add', '.kubic/roles/tester.md']);
+    expect(repo.git(['status', '--porcelain=v1', '--', '.kubic/roles'])).toBe(
       'A  .kubic/roles/tester.md\n',
     );
   });
 
   it('is idempotent: a second call rewrites nothing', () => {
-    const dir = roleScratchRepo();
-    const first = ensureRuntimeExcludeRules({ cwd: dir });
+    const repo = roleScratchRepo();
+    const first = ensureRuntimeExcludeRules({ cwd: repo.path });
     const afterFirst = readFileSync(first.path as string, 'utf8');
 
-    const second = ensureRuntimeExcludeRules({ cwd: dir });
+    const second = ensureRuntimeExcludeRules({ cwd: repo.path });
 
     expect(second.changed).toBe(false);
     expect(readFileSync(second.path as string, 'utf8')).toBe(afterFirst);
   });
 
   it('preserves unrelated exclude entries', () => {
-    const dir = roleScratchRepo();
-    const file = join(dir, '.git', 'info', 'exclude');
+    const repo = roleScratchRepo();
+    const file = join(repo.path, '.git', 'info', 'exclude');
     writeFileSync(file, '# other tool\nscratch-notes/\n');
 
-    ensureRuntimeExcludeRules({ cwd: dir });
+    ensureRuntimeExcludeRules({ cwd: repo.path });
 
     const text = readFileSync(file, 'utf8');
     expect(text).toContain('# other tool');
@@ -199,8 +198,8 @@ describe('ensureRuntimeExcludeRules (issue #91)', () => {
   });
 
   it('re-syncs a stale managed block in place (no duplication)', () => {
-    const dir = roleScratchRepo();
-    const file = join(dir, '.git', 'info', 'exclude');
+    const repo = roleScratchRepo();
+    const file = join(repo.path, '.git', 'info', 'exclude');
     writeFileSync(
       file,
       [
@@ -214,7 +213,7 @@ describe('ensureRuntimeExcludeRules (issue #91)', () => {
       ].join('\n'),
     );
 
-    const result = ensureRuntimeExcludeRules({ cwd: dir });
+    const result = ensureRuntimeExcludeRules({ cwd: repo.path });
 
     expect(result.changed).toBe(true);
     const text = readFileSync(file, 'utf8');
@@ -235,10 +234,10 @@ describe('ensureRuntimeExcludeRules (issue #91)', () => {
   });
 
   it('writes the one shared file from a linked worktree', () => {
-    const dir = roleScratchRepo();
+    const repo = roleScratchRepo();
     // The orchestrator's own layout: the agent worktree lives under
     // .kubic/wt/ so no run-time path can ever surface.
-    git(dir, [
+    repo.git([
       'worktree',
       'add',
       '-q',
@@ -246,19 +245,19 @@ describe('ensureRuntimeExcludeRules (issue #91)', () => {
       '-b',
       'kubic/worker-1',
     ]);
-    mkdirSync(join(dir, '.kubic', 'wt'), { recursive: true });
-    const worktree = join(dir, '.kubic', 'wt', 'worker-1');
+    mkdirSync(join(repo.path, '.kubic', 'wt'), { recursive: true });
+    const worktree = join(repo.path, '.kubic', 'wt', 'worker-1');
 
     const result = ensureRuntimeExcludeRules({ cwd: worktree });
 
     expect(result.changed).toBe(true);
     expect(realpathSync(result.path as string)).toBe(
-      realpathSync(join(dir, '.git', 'info', 'exclude')),
+      realpathSync(join(repo.path, '.git', 'info', 'exclude')),
     );
     // One file per repository: the main checkout sees the rules too.
-    mkdirSync(join(dir, '.kubic', 'orchestrator'), { recursive: true });
-    writeFileSync(join(dir, '.kubic', 'orchestrator', 'x.json'), '{}\n');
-    expect(status(dir)).toEqual([]);
+    mkdirSync(join(repo.path, '.kubic', 'orchestrator'), { recursive: true });
+    writeFileSync(join(repo.path, '.kubic', 'orchestrator', 'x.json'), '{}\n');
+    expect(status(repo)).toEqual([]);
   });
 });
 
@@ -318,15 +317,15 @@ describe('refusing hostile exclude entries (issue #133 review)', () => {
   });
 
   it('never writes a metacharacter entry into the exclude file', () => {
-    const dir = roleScratchRepo();
+    const repo = roleScratchRepo();
     // First run: the shipped block lands.
-    ensureRuntimeExcludeRules({ cwd: dir });
-    const file = join(dir, '.git', 'info', 'exclude');
+    ensureRuntimeExcludeRules({ cwd: repo.path });
+    const file = join(repo.path, '.git', 'info', 'exclude');
     const before = readFileSync(file, 'utf8');
 
     // Second run with a wildcard entry: refused, nothing written.
     const result = ensureRuntimeExcludeRules({
-      cwd: dir,
+      cwd: repo.path,
       entries: ['.kubic/wt/', '*/'],
     });
     expect(result.skipped).toBe('unavailable');
@@ -335,21 +334,21 @@ describe('refusing hostile exclude entries (issue #133 review)', () => {
 
     // Ground truth: no `*/` rule is in force — a new file stays visible
     // and stageable.
-    writeFileSync(join(dir, 'src-new.txt'), 'x\n');
-    expect(isIgnored(dir, 'src-new.txt')).toBe(false);
-    expect(status(dir)).toEqual(['?? src-new.txt']);
+    writeFileSync(join(repo.path, 'src-new.txt'), 'x\n');
+    expect(isIgnored(repo, 'src-new.txt')).toBe(false);
+    expect(status(repo)).toEqual(['?? src-new.txt']);
   });
 
   it('never writes a hostile entry into the exclude file', () => {
-    const dir = roleScratchRepo();
+    const repo = roleScratchRepo();
     // First run: the shipped block lands.
-    ensureRuntimeExcludeRules({ cwd: dir });
-    const file = join(dir, '.git', 'info', 'exclude');
+    ensureRuntimeExcludeRules({ cwd: repo.path });
+    const file = join(repo.path, '.git', 'info', 'exclude');
     const before = readFileSync(file, 'utf8');
 
     // Second run with a hostile entry: refused, nothing written.
     const result = ensureRuntimeExcludeRules({
-      cwd: dir,
+      cwd: repo.path,
       entries: ['.kubic/wt/', 'x\n*.log\n!keep/'],
     });
     expect(result.skipped).toBe('unavailable');
@@ -357,8 +356,8 @@ describe('refusing hostile exclude entries (issue #133 review)', () => {
     expect(readFileSync(file, 'utf8')).toBe(before);
 
     // Ground truth: the injected patterns are not in force.
-    writeFileSync(join(dir, 'secret.log'), 'token=abc\n');
-    expect(isIgnored(dir, 'secret.log')).toBe(false);
-    expect(status(dir)).toEqual(['?? secret.log']);
+    writeFileSync(join(repo.path, 'secret.log'), 'token=abc\n');
+    expect(isIgnored(repo, 'secret.log')).toBe(false);
+    expect(status(repo)).toEqual(['?? secret.log']);
   });
 });

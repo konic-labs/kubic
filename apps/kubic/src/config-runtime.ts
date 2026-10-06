@@ -20,15 +20,18 @@ import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import type { JournalRetention } from '../../../packages/exec/src/journal.js';
 import {
+  gitSync,
   hasGitignoreMetacharacters,
   hasUnsafeCharacters,
   RUNTIME_EXCLUDE_ENTRIES,
 } from '../../../packages/exec/src/runtime-exclude.js';
 import type { SoloApprovalConfig } from '../../../packages/host/src/approvals.js';
+import type { RoleModelEntry } from '../../../packages/host/src/config/config.js';
 import {
   CONFIG_LAYERS,
   ConfigError,
   checkCommittedConfigHalfRoot,
+  checkModelStreamTuning,
   checkOrchestratorRootNoOp,
   checkOrchestratorRootShape,
 } from '../../../packages/host/src/config/config.js';
@@ -36,11 +39,14 @@ import {
   buildConfigDoctorInput,
   configDoctorProbe,
 } from '../../../packages/host/src/config/config-doctor.js';
+import type { RuntimeEscalation } from '../../../packages/host/src/config/runtime.js';
 import {
   checkWorkspaceIgnoreSplit,
+  compactionSummaryLine,
   effectiveConfigView,
   loadRuntimeConfig,
   type RuntimeConfig,
+  type RuntimeThinking,
   type RuntimeVerify,
 } from '../../../packages/host/src/config/runtime.js';
 import {
@@ -61,16 +67,26 @@ import {
   isModelAllowed,
   isProviderAllowed,
 } from '../../../packages/host/src/policy/enterprise.js';
+import { findProjectRoot } from '../../../packages/host/src/project-root.js';
 import type {
   RoleLayerInput,
   RoleLayerSpec,
 } from '../../../packages/host/src/roles/resolver.js';
+import {
+  roleModelAllowed,
+  roleModelEntry,
+} from '../../../packages/host/src/roles/resolver.js';
+import type { SoloCompactionOptions } from '../../../packages/worker/src/lane/solo.js';
 import {
   ModelSelectError,
   type ModelSelection,
   selectModel,
 } from '../../../packages/worker/src/model-select.js';
 import type { MutableModels } from '../../../packages/worker/src/pi-boundary.js';
+import type {
+  ModelStreamTuning,
+  StreamTuningTables,
+} from '../../../packages/worker/src/stream-options.js';
 import { selectionOrigin, withSelectionOrigin } from './model-projection.js';
 
 export interface CliConfigResult {
@@ -84,9 +100,22 @@ export interface CliConfigResult {
   // `kubic config` and by doctor: the five runtime prefixes must be ignored
   // and config.toml + roles/*.md must stay committable.
   ignoreSplit: { missing: string[]; checked: string[]; applicable: boolean };
+  // Issue #229 (§35.1): the project root every consumer resolves from —
+  // the nearest ancestor holding `.kubic/` (or the git top level), the cwd
+  // itself outside a repository. The trust report, the project layer and
+  // the ignore-split check below are all keyed to it, so a run from a
+  // subdirectory honours the same committed project as one from the root.
+  // Falls back to the cwd when the home cannot hold the store (the load is
+  // refused there anyway).
+  // Optional so hand-built fixtures (tests pinning a runtime without a
+  // load) keep compiling: `loadCliConfig` always sets it, and consumers
+  // fall back to their own cwd when it is absent.
+  projectRoot?: string;
   // Issue #228: the project trust state the load above was gated on — the
   // same report `kubic doctor` renders, `kubic config` counts and the TUI
   // prompt resolves, so they can never disagree about who accepted what.
+  // Keyed to the project root (issue #229): a grant for the root covers
+  // runs from its subdirectories, exactly like the models and skills roots.
   trust: ProjectTrustReport;
 }
 
@@ -103,6 +132,13 @@ export interface CliConfigOptions {
    * mutation that could bypass the freeze.
    */
   model?: ModelSelection;
+  /**
+   * The `--thinking` session override (issue #225; §38.3): the `cli` layer
+   * of the same ONE load, above `KUBIC_MODEL_THINKING` and the file
+   * layers. Same freeze rule as `--model` — an input to the load, never a
+   * post-load patch.
+   */
+  thinking?: string;
 }
 
 // The §35/§91 runtime exclude entries for a worktree parent (issue #133):
@@ -187,10 +223,19 @@ export function loadCliConfig(options: CliConfigOptions = {}): CliConfigResult {
   const home = options.home ?? homedir();
   const env = options.env ?? process.env;
   const bridge = createNodeFileBridge(cwd);
-  const ignoreSplit = checkWorkspaceIgnoreSplit(bridge, cwd);
+  // Issue #229: resolve the project root before anything is keyed — the
+  // trust report, the project layer and the ignore-split check all read
+  // the same root, so a subdirectory run honours the committed project.
+  const projectRoot = findProjectRoot(bridge, cwd, home);
+  // Issue #292: the checker resolves the toplevel and the exclude the way
+  // the writer does (`git rev-parse`), so linked worktrees (whose `.git`
+  // is a file) and subdirectories check the right files. The sync probe
+  // lives in exec behind the §9 I/O seam; a missing git binary just makes
+  // the check inapplicable.
+  const ignoreSplit = checkWorkspaceIgnoreSplit(bridge, projectRoot, gitSync);
   let stored: ProjectTrustReport;
   try {
-    stored = projectTrustReport({ home, cwd, env });
+    stored = projectTrustReport({ home, cwd: projectRoot, env });
   } catch (error) {
     // A home that cannot hold the store (empty or relative) is a named
     // refusal, not a crash: the trust boundary cannot be established, so no
@@ -199,23 +244,40 @@ export function loadCliConfig(options: CliConfigOptions = {}): CliConfigResult {
       runtime: undefined,
       error: message(error),
       ignoreSplit,
+      projectRoot: cwd,
       trust: NO_PROJECT_TRUST,
     };
   }
   const trusted = options.projectTrusted === true || stored.trusted;
   const trust = trusted === stored.trusted ? stored : { ...stored, trusted };
   try {
+    const cli =
+      options.model === undefined && options.thinking === undefined
+        ? undefined
+        : {
+            ...(options.model === undefined ? {} : { model: options.model }),
+            ...(options.thinking === undefined
+              ? {}
+              : { thinking: options.thinking }),
+          };
     const runtime = loadRuntimeConfig({
       bridge,
       home,
       cwd,
+      projectRoot,
       env,
-      ...(options.model === undefined ? {} : { cli: { model: options.model } }),
+      ...(cli === undefined ? {} : { cli }),
       projectTrusted: trusted,
     });
-    return { runtime, error: undefined, ignoreSplit, trust };
+    return { runtime, error: undefined, ignoreSplit, projectRoot, trust };
   } catch (error) {
-    return { runtime: undefined, error: message(error), ignoreSplit, trust };
+    return {
+      runtime: undefined,
+      error: message(error),
+      ignoreSplit,
+      projectRoot,
+      trust,
+    };
   }
 }
 
@@ -256,9 +318,13 @@ export async function resolveInteractiveProjectTrust(
   const cwd = deps.cwd ?? process.cwd();
   const store =
     deps.store ?? new ProjectTrustStore(projectTrustStorePath(home));
+  // Issue #229: ask about (and record) the project root, not the
+  // subdirectory — the config load keys its trust report there, so a grant
+  // recorded here is one the loader honours from any cwd under the root.
+  const root = findProjectRoot(createNodeFileBridge(cwd), cwd, home);
   const report = projectTrustReport({
     home,
-    cwd,
+    cwd: root,
     env: deps.env ?? process.env,
     store,
   });
@@ -277,7 +343,7 @@ export async function resolveInteractiveProjectTrust(
     `Trust project ${report.key}? This lets the project's own files take effect for runs here: ${report.configPath} (sets the model, approvals, permissions and journal retention), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills (instructions the model follows).`,
   );
   if (answer === null) return false;
-  store.set(cwd, answer);
+  store.set(root, answer);
   return answer;
 }
 
@@ -296,7 +362,12 @@ export function requireRuntimeConfig(result: CliConfigResult): RuntimeConfig {
 // (issue #228) is the repair path for a refusal: it must run in exactly the
 // repository whose project layer is refused, or the durable grant could
 // never be recorded.
-const CONFIG_REPORTING_COMMANDS = new Set(['config', 'doctor', 'trust']);
+const CONFIG_REPORTING_COMMANDS = new Set([
+  'config',
+  'doctor',
+  'skills',
+  'trust',
+]);
 
 // The modes that execute an agent under the configuration. They may not
 // proceed on defaults once the load was refused: silently running on
@@ -305,11 +376,26 @@ const CONFIG_REPORTING_COMMANDS = new Set(['config', 'doctor', 'trust']);
 // `replay` joins them (issue #114): its re-execution tiers run the agent
 // under the effective config exactly like `kubic run`, so a refused config
 // must stop them the same way.
-const CONFIG_CONSUMING_COMMANDS = new Set([
+// Exported so the dispatch gate-membership test pins it: a command whose
+// runner reads `result.runtime` must be listed here (issue #242). `clean`
+// reads the orchestrator root, `policy` reports the posture a run would
+// enforce, `attach`/`resume` boot the same lane as `tui`, and
+// `eval`/`benchmark` run agent lanes under the same projections — all fail
+// closed on a refused config instead of proceeding on built-in defaults.
+// The reporting commands (`config`, `doctor`, `trust`) must still run so
+// the named reason can surface; sessions/journal read only
+// `session.retentionDays` (undefined-safe: no invented window).
+export const CONFIG_CONSUMING_COMMANDS: ReadonlySet<string> = new Set([
   'run',
   'orchestrate',
   'tui',
+  'attach',
+  'resume',
   'replay',
+  'clean',
+  'policy',
+  'eval',
+  'benchmark',
 ]);
 
 // Exit code for a refused config on the given command, or undefined when the
@@ -447,12 +533,72 @@ function modelPolicyRefusal(provider: string, id: string): string {
 // and the implicit fallback pick only considers allowed providers. With no
 // model policy configured this is exactly `selectModel` — the selection
 // behaviour is byte-identical to before.
+// The role's allowed set as a selection gate (issue #255; §38.2): the
+// resolved role's name plus its set. Built once per boot/switch from
+// the resolved role; undefined (or an empty set) means unconstrained.
+export interface RoleModelScope {
+  role: string;
+  models: RoleModelEntry[] | undefined;
+}
+
+export function roleModelScope(
+  resolved: { name: string; models: RoleModelEntry[] | undefined } | undefined,
+): RoleModelScope | undefined {
+  if (
+    resolved === undefined ||
+    resolved.models === undefined ||
+    resolved.models.length === 0
+  ) {
+    return undefined;
+  }
+  return { role: resolved.name, models: resolved.models };
+}
+
+// The out-of-set refusal (issue #255): names the requested model, the
+// role, and the set — the operator pins an allowed model or widens the
+// set, never guesses which boundary fired.
+export function roleModelRefusal(
+  role: string,
+  provider: string,
+  id: string,
+  models: readonly RoleModelEntry[],
+): string {
+  const entries = models.map((entry) => entry.id).join(', ');
+  return `model '${provider}/${id}' refused: role '${role}' allows ${entries} only`;
+}
+
+// The role's thinking default for the SELECTED model (issue #255;
+// §38.2): a matching set entry's thinking wins over the flat role
+// default (specific beats general — otherwise per-entry thinking would
+// be dead config whenever the flat default is set); without a matching
+// entry the flat default stands, and without either there is none.
+export function resolveRoleThinking(
+  resolved:
+    | {
+        thinking: string | undefined;
+        models: readonly RoleModelEntry[] | undefined;
+      }
+    | undefined,
+  provider: string,
+  id: string,
+): string | undefined {
+  if (resolved === undefined) return undefined;
+  return (
+    roleModelEntry(resolved.models, provider, id)?.thinking ?? resolved.thinking
+  );
+}
+
 export function selectModelUnderPolicy(
   models: MutableModels,
   explicit: ModelSelection | undefined,
   configDefault: ModelSelection | undefined,
   fallbackProviders: readonly string[] | undefined,
   policy: EffectivePolicy | undefined,
+  // The role's allowed set (issue #255; §38.2): gates the explicit/role
+  // selection AND the final pick, exactly like the enterprise gate above
+  // — a run that would boot (or switch) outside its role's set refuses
+  // by name instead of silently running out-of-set.
+  roleScope?: RoleModelScope,
 ): ReturnType<typeof selectModel> {
   const gate =
     policy !== undefined && hasModelPolicy(policy) ? policy : undefined;
@@ -464,6 +610,30 @@ export function selectModelUnderPolicy(
       ) {
         throw new ModelSelectError(
           modelPolicyRefusal(selection.provider, selection.id),
+        );
+      }
+    }
+  }
+  const scopeModels = roleScope?.models;
+  const scope =
+    roleScope === undefined ||
+    scopeModels === undefined ||
+    scopeModels.length === 0
+      ? undefined
+      : { role: roleScope.role, models: scopeModels };
+  if (scope !== undefined) {
+    for (const selection of [explicit, configDefault]) {
+      if (
+        selection !== undefined &&
+        !roleModelAllowed(scope.models, selection.provider, selection.id)
+      ) {
+        throw new ModelSelectError(
+          roleModelRefusal(
+            scope.role,
+            selection.provider,
+            selection.id,
+            scope.models,
+          ),
         );
       }
     }
@@ -485,6 +655,14 @@ export function selectModelUnderPolicy(
   }
   if (gate !== undefined && !isModelAllowed(gate, picked.provider, picked.id)) {
     throw new ModelSelectError(modelPolicyRefusal(picked.provider, picked.id));
+  }
+  if (
+    scope !== undefined &&
+    !roleModelAllowed(scope.models, picked.provider, picked.id)
+  ) {
+    throw new ModelSelectError(
+      roleModelRefusal(scope.role, picked.provider, picked.id, scope.models),
+    );
   }
   return picked;
 }
@@ -576,19 +754,108 @@ export function runtimeRunDeps(result: CliConfigResult): {
 // two one-line consumers — `kubic run` (headless-run.ts) and `kubic tui`
 // (tui-run.ts) — so both entry points name the lane and layer the roles
 // identically. Absent means the shipped behaviour: agent id 'root', no
-// layers.
+// layers. Issue #225 adds the effective thinking level with its source, which
+// the lane resolves against the session's record and the role default.
 export function runtimeLaneDeps(result: CliConfigResult): {
   agentId?: string;
-  roles?: { layers: RoleLayerInput[] };
+  roles?: {
+    layers: RoleLayerInput[];
+    trustProject: ProjectTrustCheck;
+    homeDir?: string;
+  };
+  thinking?: RuntimeThinking;
+  /** The merged `[model]` ladder (issue #210; §38.4) — the lane climbs
+   * the role's own rungs first when the role names any. */
+  escalate?: RuntimeEscalation;
 } {
   const runtime = result.runtime;
   if (runtime === undefined) return {};
   const agentId = runtime.config.agent?.name;
   const layers = roleLayersFromConfig(runtime);
+  // Issue #430 (§33, L-D27): the repo role documents resolve under the
+  // same per-path trust check as the project models.json and skills — so
+  // `kubic run --role` and `kubic tui --role` load an untrusted root's
+  // documents never. The check folds the KUBIC_TRUST_PROJECT opt-in in.
+  const trustProject = projectTrustFor(result);
   return {
     ...(agentId === undefined ? {} : { agentId }),
-    ...(layers.length === 0 ? {} : { roles: { layers } }),
+    // Always present (even with no layers): the trust check travels on
+    // `roles` so callers never default to an untrusted load. Issue #241
+    // (§35): the home directory travels with it, so both lanes layer the
+    // global `~/.kubic/roles` under the project documents — absent (an
+    // empty home, tests and embeddings) means no global source.
+    roles: {
+      layers,
+      trustProject,
+      ...(result.trust.home === '' ? {} : { homeDir: result.trust.home }),
+    },
+    ...(runtime.thinking === undefined
+      ? {}
+      : { thinking: { ...runtime.thinking } }),
+    // No ladder, no field (issue #210): escalation stays opt-in — the
+    // lane climbs nothing it was never configured with.
+    ...(runtime.escalate === undefined
+      ? {}
+      : {
+          escalate: {
+            steps: [...runtime.escalate.steps],
+            maxEscalations: runtime.escalate.maxEscalations,
+          },
+        }),
   };
+}
+
+// The settings `skills` projection (issue #237, §29.2): the merged
+// top-level `skills` array, entries already resolved against their
+// declaring file's directory at load. Project-layer entries apply only
+// when the project root is trusted — the load refuses an untrusted
+// project file before reading, so a project-sourced list reaching here
+// is trusted by construction; the check is re-applied all the same, so a
+// hand-built runtime (tests, embeddings) never sneaks one past. Always
+// returns the key (possibly empty) so callers spread unconditionally.
+export function runtimeSkillsDeps(result: CliConfigResult): {
+  settingsSkills: string[];
+} {
+  const runtime = result.runtime;
+  const skills = runtime?.config.skills ?? [];
+  if (skills.length === 0) return { settingsSkills: [] };
+  if (runtime?.sources.skills === 'project') {
+    const root = result.projectRoot;
+    if (root === undefined || !projectTrustFor(result)(root)) {
+      return { settingsSkills: [] };
+    }
+  }
+  return { settingsSkills: [...skills] };
+}
+
+// The lane's escalation ladder (issue #210; §38.4): the role's own rungs
+// win outright when the role names any — even [] (the role opts out of
+// climbing) — and the `[model]` bound still caps the role's climbs. No
+// rungs anywhere means no ladder: escalation stays opt-in.
+export function resolveLaneLadder(
+  model: RuntimeEscalation | undefined,
+  role: readonly string[] | undefined,
+): RuntimeEscalation | undefined {
+  if (role !== undefined) {
+    return {
+      steps: [...role],
+      maxEscalations: model?.maxEscalations ?? role.length,
+    };
+  }
+  if (model === undefined) return undefined;
+  return { steps: [...model.steps], maxEscalations: model.maxEscalations };
+}
+
+// The effective thinking level (issue #225; §38.3) with its source — the
+// per-run override the run/tui lane boots with, resolved once at load
+// (`--thinking` > `KUBIC_MODEL_THINKING` > file layers, enterprise-frozen).
+// Undefined when nothing set a level: the lane then boots at the session's
+// persisted level, a role default, or Pi's 'off'.
+export function runtimeThinking(
+  result: CliConfigResult,
+): RuntimeThinking | undefined {
+  const thinking = result.runtime?.thinking;
+  return thinking === undefined ? undefined : { ...thinking };
 }
 
 // The config `[roles.<name>]` table as resolver layer inputs (issue #133):
@@ -610,17 +877,94 @@ export function roleLayersFromConfig(runtime: RuntimeConfig): RoleLayerInput[] {
       ) {
         spec.tools = [...entry.tools];
       }
+      // Issue #196 (§41.1): the layer's approval obligations travel like
+      // `tools` — the resolver unions them with the document's list.
+      if (
+        entry.requires !== undefined &&
+        runtime.sources[`roles.${name}.requires`] === layer
+      ) {
+        spec.requires = [...entry.requires];
+      }
       if (
         entry.model !== undefined &&
         runtime.sources[`roles.${name}.model`] === layer
       ) {
         spec.model = entry.model;
       }
+      // The allowed set rides the same provenance (issue #255; §38.2):
+      // the winning list travels on the layer that set it, copied so
+      // the resolver owns its merge input.
+      if (
+        entry.models !== undefined &&
+        runtime.sources[`roles.${name}.models`] === layer
+      ) {
+        spec.models = entry.models.map((modelEntry) => ({ ...modelEntry }));
+      }
+      // The ladder rides the same provenance (issue #210; §38.4): the
+      // winning rungs travel on the layer that set them, copied so the
+      // resolver owns its merge input.
+      if (
+        entry.escalate !== undefined &&
+        runtime.sources[`roles.${name}.escalate`] === layer
+      ) {
+        spec.escalate = [...entry.escalate];
+      }
+      if (
+        entry.thinking !== undefined &&
+        runtime.sources[`roles.${name}.thinking`] === layer
+      ) {
+        spec.thinking = entry.thinking;
+      }
       if (Object.keys(spec).length > 0) specs[name] = spec;
     }
     if (Object.keys(specs).length > 0) layers.push({ layer, roles: specs });
   }
   return layers;
+}
+
+// §37.4 request options (issue #257): the merged `[model]` tuning plus
+// every `[roles.<name>]` table that sets a key, re-checked here so the
+// programmatic session/agent layers (which bypass the TOML parser) cannot
+// hand the lane a malformed value. Undefined when nothing is tuned — the
+// run sites then omit `settings.stream` and the provider defaults stand.
+// The run sites resolve the tables against the run's role with
+// `resolveStreamOptions`, so each lane (solo or worker) carries its own
+// role's tuning on its own harness.
+export function runtimeStreamTuning(
+  result: CliConfigResult,
+): StreamTuningTables | undefined {
+  const runtime = result.runtime;
+  if (runtime === undefined) return undefined;
+  const toTuning = (
+    record: Record<string, unknown>,
+    keyPath: string,
+  ): ModelStreamTuning => {
+    const { cacheRetention, ...rest } = checkModelStreamTuning(record, keyPath);
+    return {
+      ...rest,
+      // Validated one line above against the same three literals Pi
+      // names, so the narrowing is exact, never a guess.
+      ...(cacheRetention === undefined
+        ? {}
+        : {
+            cacheRetention:
+              cacheRetention as ModelStreamTuning['cacheRetention'],
+          }),
+    };
+  };
+  const model = toTuning({ ...runtime.config.model }, 'model');
+  const roles: Record<string, ModelStreamTuning> = {};
+  for (const [name, spec] of Object.entries(runtime.config.roles ?? {})) {
+    const tuning = toTuning({ ...spec }, `roles.${name}`);
+    if (Object.keys(tuning).length > 0) roles[name] = tuning;
+  }
+  if (Object.keys(model).length === 0 && Object.keys(roles).length === 0) {
+    return undefined;
+  }
+  return {
+    ...(Object.keys(model).length === 0 ? {} : { model }),
+    ...(Object.keys(roles).length === 0 ? {} : { roles }),
+  };
 }
 
 // `kubic sessions prune`'s default keep-window (issue #119): the parsed
@@ -632,6 +976,45 @@ export function sessionRetentionDays(
   result: CliConfigResult,
 ): number | undefined {
   return result.runtime?.config.session?.retentionDays;
+}
+
+// The `[agent] systemPromptFile` contents `kubic run` boots with (issue
+// #240): the file text the runtime read at load. Undefined when no layer
+// declares the key (or the load was refused) — the lane assembles its
+// prompt unchanged. Worker children are `kubic run` processes loading the
+// same committed config, so they assemble the same prompt with no extra
+// wiring.
+export function runtimeSystemPromptSection(
+  result: CliConfigResult,
+): string | undefined {
+  return result.runtime?.systemPromptFile?.contents;
+}
+
+// The lane compaction options `kubic run` boots with (issue #239): the
+// configured `[session]` compaction keys over the SAME load every other
+// consumer uses. Undefined when config sets none (or the load was refused),
+// so the lane defaults apply — never an invented value. Orchestrator worker
+// children are `kubic run` processes in their worktree, loading the same
+// committed config themselves, so this projection IS their inheritance: no
+// extra env travels for it.
+export function runtimeCompactionDeps(
+  result: CliConfigResult,
+): SoloCompactionOptions | undefined {
+  const compaction = result.runtime?.compaction;
+  if (compaction === undefined) return undefined;
+  const { enabled, reserveTokens, keepRecentTokens } = compaction;
+  if (
+    enabled === undefined &&
+    reserveTokens === undefined &&
+    keepRecentTokens === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...(enabled === undefined ? {} : { enabled }),
+    ...(reserveTokens === undefined ? {} : { reserveTokens }),
+    ...(keepRecentTokens === undefined ? {} : { keepRecentTokens }),
+  };
 }
 
 // The manager lane's approval snapshot for the orchestrator path (issue #106,
@@ -707,6 +1090,9 @@ export function doctorConfigProbe(result: CliConfigResult): DepProbe {
       values: view.values,
       projectTrusted: view.projectTrusted,
       budgetsConfigured: view.budgets.configured,
+      // The effective reserve, from the same getter `kubic config` prints
+      // (issue #239) — doctor and the command cannot disagree.
+      compactionSummary: compactionSummaryLine(view.compaction),
       ignoreSplitMissing: missing,
       ignoreSplitApplicable: applicable,
       projectTrust: result.trust,

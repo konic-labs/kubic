@@ -280,3 +280,41 @@ describe('nested .gitignore in the baseline walk (issue #116)', () => {
     expect(baseline['pkg/sub/build/out.js']).toMatch(/^[0-9a-f]{64}$/);
   });
 });
+
+describe('gitignore dir rules at the walk (issue #353)', () => {
+  function dirRuleWorkspace(): string {
+    const root = tmpRoot('ws-dir-rules-');
+    writeFileSync(join(root, '.gitignore'), 'build/\n*.egg-info/\n');
+    // Narrowing half: a tracked script named `build` — the `build/` rule
+    // names a directory, so the file stays in the baseline.
+    writeFileSync(join(root, 'build'), '#!/bin/sh\necho hi\n');
+    // The rule still hides a real `build/` directory elsewhere.
+    mkdirSync(join(root, 'packages', 'foo', 'build'), { recursive: true });
+    writeFileSync(join(root, 'packages', 'foo', 'build', 'out.js'), 'built\n');
+    // Widening half: a glob dir rule hides the whole subtree, so its
+    // build churn is never hashed or journaled.
+    mkdirSync(join(root, 'pkg.egg-info'), { recursive: true });
+    writeFileSync(join(root, 'pkg.egg-info', 'PKG-INFO'), 'meta\n');
+    writeFileSync(join(root, 'keep.txt'), 'keep\n');
+    return root;
+  }
+
+  it('keeps a regular file named like a dirOnly rule in the baseline', () => {
+    const root = dirRuleWorkspace();
+    const baseline = captureBaseline(root);
+    expect(baseline.build).toBeDefined();
+    expect(baseline['packages/foo/build/out.js']).toBeUndefined();
+    expect(baseline['pkg.egg-info/PKG-INFO']).toBeUndefined();
+    expect(baseline['keep.txt']).toBeDefined();
+  });
+
+  it('hashes nothing under a glob dir rule, so the sweep journals no churn', () => {
+    const root = dirRuleWorkspace();
+    const baseline = captureBaseline(root);
+    expect(baseline['pkg.egg-info/PKG-INFO']).toBeUndefined();
+    expect(baseline['pkg.egg-info']).toBeUndefined();
+    const store = journalStore();
+    expect(reconcile(store, baseline, root, CTX)).toBe(0);
+    expect(store.entries()).toEqual([]);
+  });
+});

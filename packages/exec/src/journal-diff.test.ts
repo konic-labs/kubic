@@ -10,8 +10,10 @@ import {
   clipContent,
   DEFAULT_MAX_CONTENT_BYTES,
   diffEntries,
+  diffEntriesMany,
   type FileChange,
   renderDiff,
+  renderDiffStat,
   unifiedHunks,
 } from './journal-diff.js';
 
@@ -317,5 +319,150 @@ describe('corrupt journal content (issue #111)', () => {
     writeFileSync(join(dir, 'blobs', recorded.beforeHash ?? ''), 'tampered\n');
     const changes = diffEntries(store, {});
     expect(changes[0]?.corrupt).toBe(true);
+  });
+});
+
+describe('HEAD-move markers (issue #378)', () => {
+  it('never surfaces a marker as a diff hunk', () => {
+    const store = seed();
+    store.append({
+      path: '',
+      op: 'marker',
+      before: null,
+      after: null,
+      bytesDelta: 0,
+      headFrom: { head: 'a'.repeat(40), branch: 'main', stash: 0 },
+      headTo: { head: 'b'.repeat(40), branch: 'x', stash: 0 },
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 1700000002000,
+      unattributed: true,
+    });
+    const changes = diffEntries(store, {});
+    // Markers carry the empty path and `op: 'marker'` (a `FileOp` can never
+    // hold it) — either sighting would be a leaked hunk.
+    expect(changes.some((c) => c.path === '')).toBe(false);
+    expect(changes.map((c) => c.path).sort()).toEqual([
+      'a.txt',
+      'b.txt',
+      'c.txt',
+    ]);
+  });
+});
+
+describe('multi-store diff (issue #364)', () => {
+  function storeWith(
+    sessionId: string,
+    agentId: string,
+    path: string,
+    content: string,
+  ): FileJournalStore {
+    const store = new FileJournalStore(tmpRoot());
+    store.append({
+      path,
+      op: 'write',
+      before: null,
+      after: content,
+      bytesDelta: content.length,
+      sessionId,
+      agentId,
+      toolCallId: 't',
+      timestamp: 100,
+    });
+    return store;
+  }
+
+  it('reads blobs from each entry home store and never merges workers paths', () => {
+    const w1 = storeWith('orch-worker-1', 'worker-1', 'same.txt', 'one\n');
+    const w2 = storeWith('orch-worker-2', 'worker-2', 'same.txt', 'two\n');
+    const changes = diffEntriesMany([w1, w2], {});
+    expect(changes).toHaveLength(2);
+    expect(
+      changes.map((c) => [c.sessionId, c.agentId, c.after]).sort(),
+    ).toEqual([
+      ['orch-worker-1', 'worker-1', 'one\n'],
+      ['orch-worker-2', 'worker-2', 'two\n'],
+    ]);
+    // --agent selects one worker's changes across stores.
+    expect(
+      diffEntriesMany([w1, w2], { agent: 'worker-2' }).map((c) => c.path),
+    ).toEqual(['same.txt']);
+  });
+});
+
+describe('diff --stat (issue #335)', () => {
+  function change(over: Record<string, unknown>): FileChange {
+    return {
+      path: 'a.txt',
+      op: 'write',
+      agentId: 'root',
+      toolCallId: 't',
+      sessionId: 's',
+      timestamp: 1,
+      unattributed: false,
+      reversible: true,
+      before: 'one\ntwo\nthree\n',
+      after: 'one\nTWO\nthree\nfour\n',
+      corrupt: false,
+      afterOmitted: false,
+      ...over,
+    } as FileChange;
+  }
+
+  it('prints path, hunk-matching counts, tool and turn', () => {
+    const lines = renderDiffStat([
+      change({ path: 'src/auth/token.ts', toolName: 'edit', turn: 3 }),
+    ]);
+    // Exactly the hunk body below: -two -three +TWO +three +four.
+    expect(lines).toEqual(['src/auth/token.ts +3 -2 edit, turn 3']);
+  });
+
+  it('renders pre-schema entries with the op and no turn', () => {
+    const lines = renderDiffStat([
+      change({ path: 'old.txt', op: 'create' }),
+      change({ path: 'sweep.txt', unattributed: true }),
+    ]);
+    expect(lines).toEqual([
+      'old.txt +3 -2 create',
+      'sweep.txt +3 -2 reconciled',
+    ]);
+  });
+});
+
+describe('multi-store group readers (issue #364 review)', () => {
+  it("resolves the first entry's blobs through its own store", () => {
+    const first = new FileJournalStore(tmpRoot());
+    first.append({
+      path: 'p.txt',
+      op: 'write',
+      before: 'B1\n',
+      after: 'MID\n',
+      bytesDelta: 1,
+      sessionId: 's',
+      agentId: 'a1',
+      toolCallId: 't1',
+      timestamp: 100,
+    });
+    const second = new FileJournalStore(tmpRoot());
+    second.append({
+      path: 'p.txt',
+      op: 'write',
+      before: 'B2\n',
+      after: 'A2\n',
+      bytesDelta: 1,
+      sessionId: 's',
+      agentId: 'a1',
+      toolCallId: 't2',
+      timestamp: 200,
+    });
+    // Same session+path across two stores (the one-store-per-session
+    // invariant broken on purpose): before must come from the first
+    // entry's home store, after from the last entry's.
+    const changes = diffEntriesMany([first, second], {});
+    expect(changes).toHaveLength(1);
+    expect(changes[0]?.before).toBe('B1\n');
+    expect(changes[0]?.after).toBe('A2\n');
+    expect(changes[0]?.corrupt).toBe(false);
   });
 });

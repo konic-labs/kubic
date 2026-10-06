@@ -8,7 +8,13 @@
 // Zero network, zero real processes here: command execution is injected by
 // the host composition root (faux in tests). Never imports worker impl.
 
+import {
+  type SecretRef as CoreSecretRef,
+  SecretRefError as CoreSecretRefError,
+  parseSecretRef as parseCoreSecretRef,
+} from '../../../core/src/secret-refs.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
+import { SecretCommandError } from '../../../exec/src/secret-runner.js';
 
 export const REDACTED = '[REDACTED]';
 
@@ -19,37 +25,23 @@ export class SecretError extends Error {
   }
 }
 
-export type SecretRef =
-  | { kind: 'env'; name: string; raw: string }
-  | { kind: 'command'; argv: string[]; raw: string }
-  | { kind: 'literal'; value: string };
+export type SecretRef = CoreSecretRef;
 
-const ENV_REF = /^\$([A-Za-z_][A-Za-z0-9_]*)$/;
-
-// models.json secret forms: $ENV_VAR, !command args (no TTL — always
-// re-run), \$escaped / \!escaped literals, anything else literal.
-export function parseSecretRef(raw: unknown): SecretRef {
-  if (typeof raw !== 'string') {
-    throw new SecretError(
-      `secret ref must be a string (got ${raw === null ? 'null' : typeof raw})`,
-    );
+// The parse table lives in @kubic/core (issue #224) so the worker's
+// models.json parser shares it — same direction as secret-shapes.ts. Kept
+// as a same-path export so the host call sites, the tests and the
+// export-surface gate do not move; core refusals cross the package edge as
+// SecretError with the message intact (the name is pinned).
+export const parseSecretRef = (raw: unknown): SecretRef => {
+  try {
+    return parseCoreSecretRef(raw);
+  } catch (error) {
+    if (error instanceof CoreSecretRefError) {
+      throw new SecretError(error.message);
+    }
+    throw error;
   }
-  if (raw.startsWith('\\') && (raw[1] === '$' || raw[1] === '!')) {
-    return { kind: 'literal', value: raw.slice(1) };
-  }
-  const env = ENV_REF.exec(raw);
-  if (env) return { kind: 'env', name: env[1] as string, raw };
-  if (raw.startsWith('!')) {
-    const argv = raw
-      .slice(1)
-      .trim()
-      .split(/\s+/)
-      .filter((part) => part !== '');
-    if (argv.length === 0) throw new SecretError('empty !command secret ref');
-    return { kind: 'command', argv, raw };
-  }
-  return { kind: 'literal', value: raw };
-}
+};
 
 export interface SecretAuditEvent {
   ref: string;
@@ -108,11 +100,24 @@ export async function resolveSecretRef(
 // at every request (Pi calls it per request), emitting exactly one audit
 // event per use — ref, role, purpose, never the value. Every resolved value
 // is remembered in `live` so the persistence paths can redact it.
-export interface ModelKeyUse {
-  provider: string;
-  envVar: string;
-  readEnv: (name: string) => Promise<string | undefined>;
-}
+//
+// Issue #224 widens the use to a parsed secret ref: an explicit `$VAR` /
+// `!command` ref fails closed (a missing variable or failed command
+// rejects, naming it), while the legacy `apiKeyEnv` name keeps its pinned
+// skip — a missing variable leaves the provider unconfigured. The shapes
+// are told apart by field (`envVar` vs `ref`); a literal never reaches the
+// resolver (literals touch no env, runner, audit, or inventory).
+export type ModelKeyUse =
+  | {
+      provider: string;
+      envVar: string;
+      readEnv: (name: string) => Promise<string | undefined>;
+    }
+  | {
+      provider: string;
+      ref: SecretRef;
+      readEnv: (name: string) => Promise<string | undefined>;
+    };
 
 export interface ModelKeyResolver {
   resolve: (use: ModelKeyUse) => Promise<string | undefined>;
@@ -131,29 +136,105 @@ export function createModelKeyResolver(options: {
    * out and nothing scrubs or refuses on it.
    */
   identity?: () => readonly string[];
+  /**
+   * Runs a `!command` secret ref (issue #224): invoked with the parsed argv
+   * on every command-ref resolve — rerun per request, never cached. Absent,
+   * a command ref is a named refusal (fail closed, never a silent drop).
+   */
+  runCommand?: (argv: string[]) => string | Promise<string>;
 }): ModelKeyResolver {
   const live = new Set<string>();
+  const audit = (event: SecretAuditEvent, provider: string): void => {
+    options.audit({ ...event, provider });
+  };
+  const context = (provider: string): { role: string; purpose: string } => ({
+    role: options.role,
+    purpose: `model-request:${provider}`,
+  });
+  const base = {
+    runCommand: () => {
+      throw new SecretError('apiKeyEnv never runs a command');
+    },
+    ...(options.now === undefined ? {} : { now: options.now }),
+  };
   return {
     resolve: async (use) => {
-      const value = await use.readEnv(use.envVar);
-      if (value === undefined || value === '') return undefined;
-      // Registered BEFORE the audit event fires: a failure of that very
-      // append (an error message naming a path, a sink's own text) must
-      // already be redactable on the first use — not only from the second
-      // (issue #359).
-      live.add(value);
-      const resolved = await resolveSecretRef(
-        parseSecretRef(`$${use.envVar}`),
-        {
-          env: { [use.envVar]: value },
-          runCommand: () => {
-            throw new SecretError('apiKeyEnv never runs a command');
+      // The legacy name (pinned skip): a missing variable is not a use.
+      if ('envVar' in use) {
+        const value = await use.readEnv(use.envVar);
+        if (value === undefined || value === '') return undefined;
+        // Registered BEFORE the audit event fires: a failure of that very
+        // append (an error message naming a path, a sink's own text) must
+        // already be redactable on the first use — not only from the second
+        // (issue #359).
+        live.add(value);
+        return resolveSecretRef(
+          parseSecretRef(`$${use.envVar}`),
+          {
+            ...base,
+            env: { [use.envVar]: value },
+            audit: (event) => audit(event, use.provider),
           },
-          audit: (event) => options.audit({ ...event, provider: use.provider }),
-          ...(options.now === undefined ? {} : { now: options.now }),
-        },
-        { role: options.role, purpose: `model-request:${use.provider}` },
-      );
+          context(use.provider),
+        );
+      }
+      // Explicit refs fail closed instead (issue #224). Refusals name the
+      // provider as well as the ref: in a multi-provider run the error
+      // must say whose command or variable failed.
+      const ref = use.ref;
+      if (ref.kind === 'literal') {
+        throw new SecretError(
+          'model key resolution needs an env or command ref',
+        );
+      }
+      const fail = (message: string): SecretError =>
+        new SecretError(`provider '${use.provider}': ${message}`);
+      if (ref.kind === 'env') {
+        const value = await use.readEnv(ref.name);
+        if (value === undefined || value === '') {
+          throw fail(`missing env secret: ${ref.name}`);
+        }
+        live.add(value);
+        return resolveSecretRef(
+          ref,
+          {
+            ...base,
+            env: { [ref.name]: value },
+            audit: (event) => audit(event, use.provider),
+          },
+          context(use.provider),
+        );
+      }
+      const runCommand =
+        options.runCommand ??
+        (() => {
+          throw new SecretError('no secret-command runner');
+        });
+      let resolved: string;
+      try {
+        resolved = await resolveSecretRef(
+          ref,
+          {
+            ...base,
+            env: {},
+            runCommand,
+            audit: (event) => audit(event, use.provider),
+          },
+          context(use.provider),
+        );
+      } catch (error) {
+        // Runner failures carry their own message (naming the command) but
+        // no provider — without it a multi-provider run cannot say whose
+        // credential failed. SecretError refusals keep their name.
+        if (error instanceof SecretError || error instanceof SecretCommandError)
+          throw fail(error.message);
+        throw fail(
+          `secret command failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      // Post-add: the value is unknowable before the run. The audited event
+      // carries the ref, never the value, so nothing in it needs redacting.
+      live.add(resolved);
       return resolved;
     },
     live: () => {

@@ -24,6 +24,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -78,7 +79,7 @@ export const CONFIG_REFUSAL_KEY = 'bogus_key';
 // `kubic` on an interactive terminal opens the TUI instead, §78/§80). Pinned literally so
 // a command-list drift fails here instead of shipping stale help.
 export const ROOT_USAGE_LINE =
-  'usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
+  'usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | skills | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
 
 // The launcher's named Node-requirement line (issue #128), printed to
 // stderr when a runtime below 22.19 runs bin/kubic.js. `runningVersion`
@@ -155,6 +156,8 @@ export function binaryContract({
   nonRepoCwd,
   modelsCwd,
   refusedCwd,
+  orchRepoCwd,
+  runSymlinked,
 }) {
   const problems = [];
   if (!distPresent) {
@@ -480,6 +483,60 @@ export function binaryContract({
     }
   }
 
+  // Issue #179: the worker entry resolves from the manager's own module,
+  // never argv[1] or the cwd. Through a `kubic` bin symlink (no .js
+  // suffix) from a foreign cwd the worker child must still launch: a full
+  // orchestrate on faux through the symlinked entry exits 0 with one
+  // completed envelope. Both inputs are optional (older unit callers omit
+  // them): the probe runs only when both are present.
+  if (orchRepoCwd !== undefined && runSymlinked !== undefined) {
+    const linked = runSymlinked(
+      [
+        'orchestrate',
+        '-p',
+        'symlinked entry',
+        '--agents',
+        'w1',
+        '--session',
+        'symlink',
+        '--yes',
+        '--json',
+      ],
+      {
+        cwd: orchRepoCwd,
+        env: { KUBIC_PROVIDER: 'faux', KUBIC_NO_NOTICE: '1' },
+      },
+    );
+    const linkedFailed = probeProblems(
+      'kubic orchestrate through a symlinked bin',
+      linked,
+    );
+    if (linkedFailed.length > 0) {
+      problems.push(...linkedFailed);
+    } else if (linked.code !== 0) {
+      problems.push(
+        `\`kubic orchestrate\` through a symlinked bin exited ${linked.code} (expected 0 — the worker entry resolves from the manager's own module, issue #179): ${linked.stderr.trim().slice(-300)}`,
+      );
+    } else {
+      // --json stdout is exactly one (pretty-printed) envelope document.
+      let envelope = null;
+      try {
+        envelope = JSON.parse(linked.stdout);
+      } catch {
+        envelope = null;
+      }
+      if (
+        envelope === null ||
+        envelope.ok !== true ||
+        envelope.status !== 'completed'
+      ) {
+        problems.push(
+          `\`kubic orchestrate\` through a symlinked bin printed no completed envelope (stdout was ${JSON.stringify(linked.stdout.slice(0, 200))})`,
+        );
+      }
+    }
+  }
+
   // Issue #244: the models.json receipt is a diagnostic (stderr) and the
   // --json document is the ONLY stdout content, for both commands that
   // assemble the catalog. The probes run in a scratch dir holding a
@@ -749,6 +806,39 @@ function realRunner(root, { cwd, home, timeoutMs = 60_000, stubPath }) {
   };
 }
 
+// Symlinked-entry runner (issue #179): `node <link> <args>` where <link> is
+// a `kubic` bin symlink with no .js suffix — the installed-user shape where
+// process.argv[1] names the link, not the wrapper. Spelling the link as an
+// explicit argv entry (rather than exec'ing it) needs no exec bit and keeps
+// argv[1] byte-identical to the shebang case. Same hermetic env as the
+// real runner; a longer bound — a full orchestrate drives a real child.
+function symlinkRunner(linkPath, { cwd, home, timeoutMs = 120_000 }) {
+  return (args, opts = {}) => {
+    const env = {
+      PATH: process.env.PATH ?? '',
+      HOME: home,
+      TMPDIR: process.env.TMPDIR ?? '',
+      ...opts.env,
+    };
+    const result = spawnSync(process.execPath, [linkPath, ...args], {
+      cwd: opts.cwd ?? cwd,
+      env,
+      encoding: 'utf8',
+      timeout: timeoutMs,
+    });
+    return {
+      code: result.status,
+      stdout: result.stdout ?? '',
+      stderr: result.stderr ?? '',
+      error:
+        result.error ??
+        (result.status === null
+          ? new Error(`killed by signal ${result.signal}`)
+          : null),
+    };
+  };
+}
+
 // The `--import` preload the stubbed guard probes run with (issue #128):
 // rewrites process.versions.node before the entry module evaluates, so an
 // old runtime is simulated on the current one. A value the contract never
@@ -772,12 +862,52 @@ if (import.meta.main) {
     const nonRepoCwd = join(scratch, 'non-repo');
     const modelsCwd = join(scratch, 'models');
     const refusedCwd = join(scratch, 'refused');
+    const orchRepo = join(scratch, 'orch-repo');
+    const bindir = join(scratch, 'bindir');
     const home = join(scratch, 'home');
     mkdirSync(cwd);
     mkdirSync(nonRepoCwd);
     mkdirSync(modelsCwd);
     mkdirSync(join(refusedCwd, '.kubic'), { recursive: true });
+    mkdirSync(orchRepo);
+    mkdirSync(bindir);
     mkdirSync(home);
+    // Issue #179 fixtures: a git repo the symlinked orchestrate runs in,
+    // and a `kubic` bin symlink (no .js suffix — the installed-user shape
+    // where argv[1] names the link, not the wrapper).
+    for (const args of [
+      ['init', '-b', 'main'],
+      ['config', 'user.email', 'contract@kubic.dev'],
+      ['config', 'user.name', 'kubic contract'],
+      ['config', 'commit.gpgsign', 'false'],
+    ]) {
+      const setup = spawnSync('git', args, {
+        cwd: orchRepo,
+        encoding: 'utf8',
+      });
+      if (setup.status !== 0) {
+        throw new Error(
+          `contract setup git ${args.join(' ')} failed: ${setup.stderr}`,
+        );
+      }
+    }
+    writeFileSync(join(orchRepo, 'base.txt'), 'base\n');
+    for (const args of [
+      ['add', 'base.txt'],
+      ['commit', '-m', 'base'],
+    ]) {
+      const setup = spawnSync('git', args, {
+        cwd: orchRepo,
+        encoding: 'utf8',
+      });
+      if (setup.status !== 0) {
+        throw new Error(
+          `contract setup git ${args.join(' ')} failed: ${setup.stderr}`,
+        );
+      }
+    }
+    const symlinkBin = join(bindir, 'kubic');
+    symlinkSync(join(root, 'bin', 'kubic.js'), symlinkBin);
     // Issue #244 fixtures: a models.json the receipt names, and a project
     // config with an unknown key that fails the load closed.
     writeFileSync(
@@ -810,6 +940,8 @@ if (import.meta.main) {
       modelsCwd,
       refusedCwd,
       run: realRunner(root, { cwd, home, stubPath }),
+      orchRepoCwd: orchRepo,
+      runSymlinked: symlinkRunner(symlinkBin, { cwd, home }),
     });
     if (result.problems.length > 0) {
       for (const problem of result.problems) {
@@ -823,7 +955,7 @@ if (import.meta.main) {
       throw CONTRACT_VIOLATION;
     }
     console.log(
-      `binary contract OK: ${expectedLine} (exit 0); --help/-h exit 0 with the root usage line; bare kubic exit 1 (same line); an unknown command exits ${USAGE_EXIT} with the prompt hint; the bare multi-word prompt runs like \`kubic run -p\` (completed on faux); orchestrate/clean outside a git repo exit ${WORKSPACE_EXIT}; models/doctor --json keep stdout to one document with the models.json receipt on stderr; a refused config exits 1 with the run envelope under --json and stderr-only otherwise; stubbed old node hits the named guard (exit 1, stderr-only) and the 22.19 floor passes; injected failure prints one \`error:\` line (stack only under KUBIC_DEBUG=1); doctor exit ${DOCTOR_PROVIDER_EXIT} ${JSON.stringify(PROVIDER_DOWN_LINE)} with the five embedded role presets reported as builtin (issue #203); provider-less run exit ${RUN_PROVIDER_EXIT} with session:/journal:/usage:/trajectory: refs`,
+      `binary contract OK: ${expectedLine} (exit 0); --help/-h exit 0 with the root usage line; bare kubic exit 1 (same line); an unknown command exits ${USAGE_EXIT} with the prompt hint; the bare multi-word prompt runs like \`kubic run -p\` (completed on faux); orchestrate/clean outside a git repo exit ${WORKSPACE_EXIT}; models/doctor --json keep stdout to one document with the models.json receipt on stderr; a refused config exits 1 with the run envelope under --json and stderr-only otherwise; stubbed old node hits the named guard (exit 1, stderr-only) and the 22.19 floor passes; injected failure prints one \`error:\` line (stack only under KUBIC_DEBUG=1); doctor exit ${DOCTOR_PROVIDER_EXIT} ${JSON.stringify(PROVIDER_DOWN_LINE)} with the five embedded role presets reported as builtin (issue #203); provider-less run exit ${RUN_PROVIDER_EXIT} with session:/journal:/usage:/trajectory: refs; orchestrate on faux through a symlinked bin exits 0 with one completed envelope (issue #179)`,
     );
   } catch (error) {
     // The violation marker carries no information the user has not already

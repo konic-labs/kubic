@@ -41,5 +41,6 @@ output. All command examples below assume the built binary (`./bin/kubic.js
 - [configuration.md](configuration.md) — config precedence and secrets
 - [trust.md](trust.md) — `kubic trust` and the project-trust store
 - [doctor-and-debug.md](doctor-and-debug.md) — `kubic doctor` diagnostics
+- [skills.md](skills.md) — `kubic skills`: which skills loaded and why any were left out
 
 Back to the [docs index](../README.md).

@@ -43,6 +43,7 @@ import {
   credentialAccessInPath,
 } from './approvals-credentials.js';
 import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
+import { isGitDirTarget } from './orchestrator/worktree/git-guard.js';
 import {
   appendToLedger,
   auditLedgerDirFor,
@@ -316,6 +317,9 @@ export interface TriggerContext {
 // merely contains the word (`git -c "a push" status`) still reads as a push.
 const GIT_WORD = /(^|[|;&\s(/'"\\`!])git(?=\s)/gi;
 const GIT_ARG_OPTION = /^-c$/i;
+// Attached short options (issue #435): `-C<path>` and `-cname=val` are
+// complete in one word — unlike bare `-c`/`-C` they consume nothing more.
+const GIT_ATTACHED_SHORT = /^-[cC][\s\S]+$/;
 const GIT_FLAG = /^(?:-p|--[a-z][a-z-]*)$/i;
 const GIT_VALUE_OPTION =
   /^--(?:git-dir|work-tree|namespace|exec-path|config-env)$/i;
@@ -418,7 +422,11 @@ function gitVerbFollows(
       }
       if (GIT_ARG_OPTION.test(token.text)) next |= EXPECT_ARGUMENT;
       // `-C <dir>` — the regex flag was case-insensitive, so `-C` is `-c`.
-      if (GIT_FLAG.test(token.text) || GIT_VALUE_ASSIGNED.test(token.text)) {
+      if (
+        GIT_FLAG.test(token.text) ||
+        GIT_VALUE_ASSIGNED.test(token.text) ||
+        GIT_ATTACHED_SHORT.test(token.text)
+      ) {
         next |= EXPECT_OPTION;
       }
       // A value option may take the next word or stand alone.
@@ -439,6 +447,104 @@ function gitPushOrRemoteMutation(command: string): boolean {
     if (
       gitVerbFollows(command, from, quoted, nextShellToken) ||
       gitVerbFollows(command, from, plain, nextPlainToken)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// `git config` that MUTATES (issue #428): `git config core.hooksPath …`
+// rewrites `.git/config` with no file-write target, so the write-target
+// detectors never fire — only the settle drift check reports it
+// afterwards. Reads (`--get`, `--list`, a bare single-name lookup) stay
+// quiet; anything that writes — a set with a value, `--add`, `--unset`
+// and friends, `--edit`, a scoped write via `--file` — raises. Same
+// two-reader walk as the push detector (quote-aware plus plain
+// whitespace-split), linear in the command, failing toward asking.
+const GIT_CONFIG_VERB = /^config$/i;
+// Display modifiers only (issue #435): `--show-origin`/`--show-scope`
+// neither read nor write, so `git config --show-origin <name> <value>`
+// counts positionals and raises while `--show-origin --get <name>` and a
+// bare `--show-origin <name>` stay quiet.
+const GIT_CONFIG_READ =
+  /^(--get|--get-all|--get-regexp|--list|-l|--get-urlmatch|--get-color|--get-colorbool)$/i;
+const GIT_CONFIG_WRITE =
+  /^(--add|--unset|--unset-all|--replace-all|--rename-section|--remove-section|--edit)$/i;
+const GIT_CONFIG_VALUE_OPTION = /^--file$/i;
+const GIT_CONFIG_FLAG = /^(--[a-z][a-z-]*(=[\s\S]*)?|-[a-z])$/i;
+
+function configMutationFollows(
+  command: string,
+  from: number,
+  explored: Set<number>,
+  read: TokenReader,
+): boolean {
+  let position = from;
+  let subcommand = false;
+  let readOnly = false;
+  let positionals = 0;
+  for (;;) {
+    const token = read(command, position);
+    if (token === undefined) break;
+    position = token.end;
+    const text = token.text;
+    if (!subcommand) {
+      // Linear-time memo (same scheme as the push detector): every token
+      // an earlier `git` evaluated in pre-subcommand mode evaluates the
+      // same way again, so revisiting one ends this walk — the earlier
+      // walk already determined what follows from here.
+      if (explored.has(token.start)) return false;
+      explored.add(token.start);
+      // Global options before the subcommand: `-c`/`-C` and the value
+      // options consume their argument; anything else flag-shaped skips.
+      if (GIT_ARG_OPTION.test(text) || GIT_VALUE_OPTION.test(text)) {
+        const value = read(command, position);
+        if (value === undefined) return false;
+        position = value.end;
+        continue;
+      }
+      if (
+        GIT_FLAG.test(text) ||
+        GIT_VALUE_ASSIGNED.test(text) ||
+        GIT_ATTACHED_SHORT.test(text)
+      )
+        continue;
+      if (GIT_CONFIG_VERB.test(text)) {
+        subcommand = true;
+        continue;
+      }
+      return false;
+    }
+    if (GIT_CONFIG_WRITE.test(text)) return true;
+    if (GIT_CONFIG_READ.test(text)) {
+      readOnly = true;
+      continue;
+    }
+    if (GIT_CONFIG_VALUE_OPTION.test(text)) {
+      const value = read(command, position);
+      if (value === undefined) break;
+      position = value.end;
+      continue;
+    }
+    if (GIT_CONFIG_FLAG.test(text)) continue;
+    positionals += 1;
+  }
+  if (!subcommand) return false;
+  if (readOnly) return false;
+  // `git config <name>` reads one value; `git config <name> <value>`
+  // (scope flags aside) writes it.
+  return positionals >= 2;
+}
+
+function gitConfigMutation(command: string): boolean {
+  const quoted = new Set<number>();
+  const plain = new Set<number>();
+  for (const origin of command.matchAll(GIT_WORD)) {
+    const from = origin.index + origin[0].length;
+    if (
+      configMutationFollows(command, from, quoted, nextShellToken) ||
+      configMutationFollows(command, from, plain, nextPlainToken)
     ) {
       return true;
     }
@@ -1286,6 +1392,9 @@ export function detectTriggers(
     if (networkGated(ctx.network) && ctx.isNetworkCommand(command))
       found.push('network');
     if (gitPushOrRemoteMutation(command)) found.push('git-push');
+    // Issue #428: `git config` sets rewrite `.git/config` with no
+    // file-write target, so the write-target detectors never fire.
+    if (gitConfigMutation(command)) found.push(KUBIC_STATE_WRITE);
     if (INSTALL.test(command)) found.push('install');
     if (DEPLOY.test(command)) found.push('deploy');
     // Every write target (redirect, tee, cp/mv/install) goes through one
@@ -1379,6 +1488,9 @@ export function detectTriggers(
       found.push('outside-write');
     }
   }
+  // Issue #363: a write under the workspace's own `.git/` (hooks, config)
+  // is control-plane-grade tampering — a planted hook runs on the host's
+  // later git commands — so it raises the same always-ask capability.
   if (
     writeTargets(
       toolName,
@@ -1388,7 +1500,7 @@ export function detectTriggers(
     ).some(
       (target) =>
         controlPlaneClass(ctx.workspace, target, ctx.controlPlane) !==
-        undefined,
+          undefined || isGitDirTarget(ctx.workspace, target),
     )
   ) {
     found.push(KUBIC_STATE_WRITE);
@@ -1841,6 +1953,14 @@ export interface SoloPolicyInput {
   /** Config-sourced classes; absent means the documented SOLO_DEFAULTS. */
   classes?: PermissionClasses;
   /**
+   * Role-sourced approval obligations (issue #196, §41.1): tool names
+   * that always require approval under the resolved role — the union of
+   * the role document's `requires` and every config `[roles.<name>]`
+   * layer's. Threaded into the installed trigger context; absent means
+   * none (the triggers alone decide).
+   */
+  requires?: string[];
+  /**
    * Where the classes came from, as the CONFIG LAYER recorded it. Absent
    * falls back to the shape rule (classes present ⇒ 'config'), which is what
    * legacy callers mean; the composition root always passes the layer's own
@@ -1896,6 +2016,19 @@ export interface SoloPolicyInput {
    * issue #227) is still recorded under the model the lane runs now.
    */
   model?: string | (() => string);
+  /**
+   * §60 audit identity (issue #282): the thinking level the lane runs. A
+   * function is read at RECORD time, like the model — the policy is
+   * installed before the lane boots, and `/thinking` can change it
+   * mid-session. Absent keeps the honest `unknown`.
+   */
+  thinking?: string | (() => string | undefined);
+  /**
+   * §60 audit identity (issue #282): the base revision the run started
+   * from (`git rev-parse HEAD` captured once at run start, `none` outside
+   * git). The composition root resolves it; the policy only carries it.
+   */
+  base?: string;
   /** A failed ledger append lands here; it never reaches the approval. */
   onAuditError?: (message: string) => void;
   /**
@@ -2110,6 +2243,11 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     try {
       const model =
         typeof input.model === 'function' ? input.model() : input.model;
+      // Issue #282: the thinking level at record time, like the model.
+      const thinking =
+        typeof input.thinking === 'function'
+          ? input.thinking()
+          : input.thinking;
       appendToLedger(
         ledgerDir,
         soloDecisionAudit({
@@ -2118,6 +2256,8 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
           trigger,
           workspace: input.workspace,
           ...(model === undefined ? {} : { model }),
+          ...(thinking === undefined ? {} : { thinking }),
+          ...(input.base === undefined ? {} : { base: input.base }),
           approved: decision.approved,
           ...(decision.approved
             ? decision.by === undefined
@@ -2263,7 +2403,15 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     const detected = detectTriggers(
       call.toolName,
       call.args,
-      triggerContextFor(posture.classes, input.workspace, controlPlane),
+      // Issue #196 (§41.1): the role's approval obligations challenge
+      // here, alongside the class-derived triggers.
+      triggerContextFor(
+        posture.classes,
+        input.workspace,
+        controlPlane,
+        undefined,
+        input.requires,
+      ),
     );
     let capabilities = detected;
     if (posture.fullAccess && posture.route === 'ask-user') {
@@ -2431,6 +2579,10 @@ export function triggerContextFor(
   workspace: string,
   controlPlaneOrHome?: ControlPlaneRoots | string,
   home?: string,
+  // Issue #196 (§41.1): role-sourced approval obligations — tool names
+  // that always challenge under the resolved role. Optional, so the
+  // existing call shapes (and their tests) are untouched.
+  requires?: string[],
 ): TriggerContext {
   // HEAD passes the #324 control plane as the third argument; the #355
   // branch passes the user's home string there (tests rely on both shapes),
@@ -2446,7 +2598,7 @@ export function triggerContextFor(
     workspace,
     home: resolvedHome,
     ...(controlPlane === undefined ? {} : { controlPlane }),
-
+    ...(requires === undefined ? {} : { requires: [...requires] }),
     network: classes.network,
     credentials: classes.credentials,
     isDestructive: defaultIsDestructive,

@@ -141,3 +141,26 @@ describe('journal interception (issue #17, slice B)', () => {
     expect(() => c.env.fs.readFile('big.txt')).toThrow();
   });
 });
+
+describe('journal tool attribution (issue #335)', () => {
+  it("records the intercepting tool's name on the entry", async () => {
+    const journal = new FileJournalStore(journalDir());
+    const c = ctx(journal);
+    const edited = await callOperation(
+      'edit',
+      { path: 'a.txt', oldText: 'world', newText: 'there' },
+      inv(),
+      c,
+    );
+    expect(edited.ok).toBe(true);
+    const written = await callOperation(
+      'write',
+      { path: 'new.txt', content: 'n\n' },
+      inv(),
+      c,
+    );
+    expect(written.ok).toBe(true);
+    const names = journal.entries().map((e) => e.toolName);
+    expect(names).toEqual(['edit', 'write']);
+  });
+});

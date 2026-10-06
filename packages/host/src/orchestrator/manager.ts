@@ -1,5 +1,5 @@
 // Manager lane slice 1 (issue #40; §5.2, §9.2, §81).
-// Pure host-side contracts: the 10-tool allowlist, exec fail-closed policy,
+// Pure host-side contracts: the 14-tool allowlist, exec fail-closed policy,
 // mode resolution, and the non-git --orchestrator refusal (exit 5 → solo).
 // No CLI wiring here (flag parsing lands separately); no worker imports.
 
@@ -13,6 +13,7 @@ export const MANAGER_ALLOWLIST = [
   'workspace_diff',
   'workspace_apply',
   'workspace_merge',
+  'review_verdict',
   'ask_user',
   // §43.1 (issue #205): read-only git inspection for the manager — how it
   // reads the repo without being able to author. The WRITER git tools
@@ -64,6 +65,13 @@ export class ManagerToolsetError extends Error {
   }
 }
 
+export class ManagerToolNotWiredError extends Error {
+  constructor(toolName: string) {
+    super(`manager tool '${toolName}' is not wired yet`);
+    this.name = 'ManagerToolNotWiredError';
+  }
+}
+
 export class ManagerPolicyBlockedError extends Error {
   constructor(toolName: string) {
     super(
@@ -96,6 +104,12 @@ export function assertManagerToolset(activeTools: readonly string[]): void {
       `manager toolset must equal the allowlist exactly (${detail || 'mismatch'})`,
     );
   }
+  // Defence in depth (issue #422): the exact-equality check above compares
+  // against MANAGER_ALLOWLIST itself, so it cannot see the allowlist being
+  // widened to include an exec-forbidden tool — a future edit adding one
+  // there would still compare equal. This loop re-asserts the invariant
+  // directly on the active set, so that drift fails closed here instead of
+  // reaching the per-call live path (checkManagerCall) below.
   for (const forbidden of EXEC_FORBIDDEN_TOOLS) {
     if (active.includes(forbidden)) {
       throw new ManagerToolsetError(
@@ -140,7 +154,14 @@ function isAbsolutePath(value: unknown): value is string {
   return typeof value === 'string' && value.startsWith('/');
 }
 
-function rejectAuthoring(input: Record<string, unknown>): void {
+/**
+ * The lane's authoring block (step 4 of the #204 split, issue #416): any
+ * manager tool call carrying inline file contents is refused here — the
+ * manager merges worker-produced bytes it references, never bytes it
+ * supplies. Called first in every workspace adapter (schemas omit the
+ * fields, so this is the defense in depth a direct call still hits).
+ */
+export function rejectAuthoring(input: Record<string, unknown>): void {
   if (input.contents !== undefined || input.content !== undefined) {
     throw new ManagerPolicyBlockedError('write (inline authoring)');
   }
@@ -181,26 +202,6 @@ export function validateWorkspaceApply(
   }
   if (typeof input.patch !== 'string' || input.patch.length === 0) {
     errors.push('patch must be a non-empty diff');
-  }
-  return { valid: errors.length === 0, errors };
-}
-
-export interface WorkspaceMergeInput {
-  worktree: string;
-  source: string;
-  contents?: string;
-}
-
-export function validateWorkspaceMerge(
-  input: WorkspaceMergeInput,
-): WorkspaceValidation {
-  rejectAuthoring(input as unknown as Record<string, unknown>);
-  const errors: string[] = [];
-  if (!isAbsolutePath(input.worktree)) {
-    errors.push('worktree must be an absolute path');
-  }
-  if (typeof input.source !== 'string' || input.source.trim().length === 0) {
-    errors.push('source must be a non-empty agent or ref id');
   }
   return { valid: errors.length === 0, errors };
 }
@@ -346,7 +347,7 @@ export function runManagerStub(spy: ManagerCallSpy, plan: string[]): string[] {
 
 // Slice 3 (issue #103): the live manager lane. Registration is the gate the
 // §40 allowlist is enforced at: a lane that asks for anything but the exact
-// ten-tool set refuses to START (assertManagerToolset throws the named
+// 13-tool set refuses to START (assertManagerToolset throws the named
 // ManagerToolsetError) rather than running with an exec tool registered.
 // Exec tools are absent by construction — the caller cannot get a lane back
 // that carries one.
@@ -392,6 +393,12 @@ export interface ManagerPlanStep {
   /** Total steps in the plan. */
   total: number;
   prompt: string;
+  /**
+   * The role the lane minted this step for (issue #431): lane-path steps
+   * only — template steps carry their role through the binding. Restored
+   * on resume so follow-ups keep the mint's role narrowing.
+   */
+  role?: string;
 }
 
 function planPrompt(
@@ -425,7 +432,3 @@ export function planStepFor(
 ): ManagerPlanStep | undefined {
   return plan.find((entry) => entry.agentId === agentId);
 }
-
-// Slice 2: one-paragraph trade statement (§9.3).
-export const MANAGER_TRADE_DOC =
-  'Orchestrator mode trades solo directness for auditable delegation: the root becomes a pure manager with only the ten §9.2 tools (spawn, message, wait, cancel, inspect, collect, workspace diff/apply/merge, ask_user), so every change arrives as a worker-produced diff the manager can review and merge but never silently author, while solo keeps the full exec lane for fast single-agent work at the cost of that separation; choose orchestrator when parallel reviewable work matters and solo when speed and direct control matter.';

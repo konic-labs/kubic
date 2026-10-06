@@ -4,7 +4,6 @@ import {
   createTranscriptSink,
   DebugLog,
   makeWriteLogSink,
-  runHook,
   SpanRecorder,
 } from './spans.js';
 
@@ -45,13 +44,17 @@ describe('SpanRecorder (§49.3 order + startup isolation)', () => {
     recorder.end(startup);
     const tool = recorder.start('pi.tool.execute');
     recorder.end(tool);
+    // Issue #290: the manager-side worker.start span is wall-clock too —
+    // per-tool time still counts pi.tool.execute spans only.
+    const worker = recorder.start('kubic.worker.start');
+    recorder.end(worker);
     expect(recorder.startupMs()).toBe(100);
     expect(recorder.toolMsTotal()).toBe(20);
   });
 });
 
-describe('DebugLog (§50 --debug vocabulary, 9 classes)', () => {
-  it('emits all 9 classes with in/out/cached + exited cleanly (0 leaked handles)', () => {
+describe('DebugLog (§50 --debug vocabulary, 8 classes)', () => {
+  it('emits all 8 classes with in/out/cached + exited cleanly', () => {
     const lines: string[] = [];
     const debug = new DebugLog((line: string) => lines.push(line));
     debug.policy('route=ask-user tool=bash');
@@ -64,7 +67,8 @@ describe('DebugLog (§50 --debug vocabulary, 9 classes)', () => {
     debug.agent('turn=3 done');
     debug.hookError('onToolEnd', new Error('boom'));
     debug.exit(0);
-    debug.handles(0);
+    // Issue #246: no leak line — nothing ever measured a leak count.
+    expect(lines.join('\n')).not.toContain('leaked handles');
     const joined = lines.join('\n');
     for (const cls of [
       '[policy]',
@@ -74,36 +78,12 @@ describe('DebugLog (§50 --debug vocabulary, 9 classes)', () => {
       '[model]',
       '[agent]',
       '[exit]',
-      '[handles]',
       'handler_error',
     ]) {
       expect(joined).toContain(cls);
     }
     expect(joined).toContain('in=120 out=45 cached=30');
     expect(joined).toContain('exited cleanly');
-    expect(joined).toContain('0 leaked handles');
-  });
-});
-
-describe('runHook (failing hook → handler_error, fails closed)', () => {
-  it('denies closed, surfaces handler_error in output and trace', async () => {
-    const lines: string[] = [];
-    const debug = new DebugLog((line: string) => lines.push(line));
-    const recorder = new SpanRecorder(() => 0);
-    const result = await runHook(
-      'onToolEnd',
-      () => {
-        throw new Error('boom');
-      },
-      { debug, recorder },
-    );
-    expect(result.ok).toBe(false);
-    expect(result.denied).toBe(true);
-    expect(lines.join('\n')).toContain('handler_error');
-    const hookSpan = recorder
-      .trace()
-      .find((span) => span.name === 'pi.harness.hook');
-    expect(hookSpan?.error).toContain('handler_error');
   });
 });
 
@@ -134,5 +114,73 @@ describe('debug transcript (headless transcript + PI_TUI_WRITE_LOG ANSI path)', 
     expect(joined).toContain('[policy]');
     expect(joined).toContain('[worker]');
     expect(makeWriteLogSink({}, () => undefined)).toBeNull();
+  });
+});
+
+describe('SpanRecorder keyed lookup (issue #243)', () => {
+  it('reads one span by id without copying the trace', () => {
+    const recorder = new SpanRecorder(() => 7);
+    const first = recorder.start('kubic.agent.run');
+    const second = recorder.start('pi.tool.execute', first);
+    recorder.end(second, 'boom');
+    expect(recorder.get(first)).toMatchObject({ id: first, endMs: null });
+    expect(recorder.get(second)).toMatchObject({
+      id: second,
+      name: 'pi.tool.execute',
+      error: 'boom',
+    });
+    expect(recorder.get('span-404')).toBeUndefined();
+  });
+
+  it('hands out a copy, so a reader cannot rewrite the record', () => {
+    const recorder = new SpanRecorder(() => 0);
+    const id = recorder.start('rpc');
+    const read = recorder.get(id);
+    expect(read).not.toBeUndefined();
+    if (read !== undefined) read.endMs = 999;
+    expect(recorder.get(id)?.endMs).toBeNull();
+  });
+});
+
+describe('SpanRecorder explicit end (issue #290)', () => {
+  it('closes a span at the given end time', () => {
+    const recorder = new SpanRecorder(() => 999);
+    const id = recorder.start('kubic.worker.startup');
+    recorder.endAt(id, 140);
+    expect(recorder.get(id)).toMatchObject({ id, startMs: 999, endMs: 140 });
+  });
+
+  it('refuses an unknown span like end does', () => {
+    const recorder = new SpanRecorder(() => 0);
+    expect(() => recorder.endAt('span-404', 1)).toThrow(
+      'unknown span span-404',
+    );
+  });
+});
+
+describe('debug line helpers (issue #246)', () => {
+  it('formats the same handler_error line the method emits', async () => {
+    const { hookErrorLine } = await import('./spans.js');
+    const lines: string[] = [];
+    new DebugLog((line: string) => lines.push(line)).hookError(
+      'tool',
+      'task exploded',
+    );
+    expect(hookErrorLine('tool', 'task exploded')).toBe(lines[0]);
+    expect(hookErrorLine('tool', 'task exploded')).toBe(
+      'handler_error hook=tool error=task exploded verdict=deny',
+    );
+  });
+
+  it('formats the same [model] line the method emits', async () => {
+    const { modelLine } = await import('./spans.js');
+    const lines: string[] = [];
+    new DebugLog((line: string) => lines.push(line)).model(
+      120,
+      45,
+      30,
+      'test/faux-1',
+    );
+    expect(modelLine(120, 45, 30, 'test/faux-1')).toBe(lines[0]);
   });
 });

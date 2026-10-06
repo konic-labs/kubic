@@ -119,15 +119,59 @@ export async function removeWorktree(
   };
 }
 
+// Whether a spawned branch is merged into the repo HEAD (issue #146):
+// `git merge-base --is-ancestor` exits 0 when the tip is reachable, 1 when
+// it is not. Anything else (bad revision, no repo) is a probe failure —
+// the caller refuses rather than guessing. Namespace confinement mirrors
+// the delete side: a name outside `kubic/` is refused before any git call,
+// so the branch argv can never smuggle a flag.
+export async function isBranchMerged(
+  env: ExecutionEnv,
+  repoRoot: string,
+  branch: string,
+): Promise<boolean> {
+  if (parseBranchAgent(branch) === null) {
+    throw new WorktreeError(
+      'remove_failed',
+      `refusing to probe ${branch}: not a kubic/<session>/<agent> branch`,
+      1,
+    );
+  }
+  const provenance: Provenance = {
+    sessionId: 'cli',
+    agentId: 'manager',
+    toolCallId: 'worktree-branch-probe',
+    turnId: 0,
+    operation: 'worktree_branch_probe',
+  };
+  const done = await env.shell
+    .spawn(
+      'git',
+      ['-C', repoRoot, 'merge-base', '--is-ancestor', branch, 'HEAD'],
+      { provenance },
+    )
+    .wait();
+  if (done.exitCode === 0) return true;
+  if (done.exitCode === 1) return false;
+  throw new WorktreeError(
+    'remove_failed',
+    `git merge-base --is-ancestor ${branch} HEAD failed (exit ${done.exitCode}): ${done.stderr.trim().slice(0, 200)}`,
+    1,
+  );
+}
+
 // Branch half of disposal (issue #92): a spawned worktree's `kubic/<agent>`
 // branch is deleted only through here, and only after the worktree checkout
 // is gone (git refuses to delete a branch still checked out). Namespace
 // confinement mirrors the worktree side: a name outside `kubic/` is refused
-// before any git call.
+// before any git call. The delete itself is safe by default (issue #146):
+// `git branch -d` refuses an unmerged branch, so committed-but-unmerged
+// worker work from a merge_conflict or approval_denied run survives a plain
+// `kubic clean`; only an explicit `--force` escalates to `-D`.
 export async function deleteSpawnedBranch(
   env: ExecutionEnv,
   branch: string,
-  options?: { sessionId?: string },
+  options?: { sessionId?: string; force?: boolean },
 ): Promise<{ branch: string; deleted: true }> {
   if (parseBranchAgent(branch) === null) {
     throw new WorktreeError(
@@ -143,14 +187,20 @@ export async function deleteSpawnedBranch(
     turnId: 0,
     operation: 'worktree_branch_delete',
   };
-  const handle = env.shell.spawn('git', ['branch', '-D', branch], {
+  // Both argv spellings stay literal: the `clean-docs` source scan pins
+  // that `git branch -D` on a spawned branch is issued only from here.
+  const argv =
+    options?.force === true
+      ? ['branch', '-D', branch]
+      : ['branch', '-d', branch];
+  const handle = env.shell.spawn('git', argv, {
     provenance,
   });
   const done = await handle.wait();
   if (done.exitCode !== 0) {
     throw new WorktreeError(
       'remove_failed',
-      `git branch -D ${branch} failed (exit ${done.exitCode}): ${done.stderr.trim().slice(0, 200)}`,
+      `git ${argv.slice(0, 2).join(' ')} ${branch} failed (exit ${done.exitCode}): ${done.stderr.trim().slice(0, 200)}`,
       1,
     );
   }

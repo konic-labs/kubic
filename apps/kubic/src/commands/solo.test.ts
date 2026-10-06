@@ -18,6 +18,7 @@ type Key =
   | 'run'
   | 'tui'
   | 'doctor'
+  | 'skills'
   | 'models'
   | 'config'
   | 'trust'
@@ -56,6 +57,7 @@ async function kubic(
     run: runner('run'),
     tui: runner('tui'),
     doctor: runner('doctor'),
+    skills: runner('skills'),
     models: runner('models'),
     config: runner('config'),
     trust: runner('trust'),
@@ -89,6 +91,7 @@ const GROUP: readonly (readonly string[])[] = [
   ['run'],
   ['tui'],
   ['doctor'],
+  ['skills'],
   ['models'],
   ['config'],
   ['trust'],
@@ -121,8 +124,10 @@ describe('solo commands: generated help', () => {
       '--session <id>',
       '--timeout <ms>',
       '--max-turns <n>',
+      '--budget <dims>',
       '--role <name>',
       '--skill <path>',
+      '--invoke-skill <name>',
       '--no-skills',
       '--debug',
       '--json',
@@ -224,6 +229,8 @@ describe('kubic run', () => {
       '/a.md',
       '--skill',
       '/b.md',
+      '--invoke-skill',
+      'secret',
       '--no-skills',
       '--debug',
       '--json',
@@ -239,6 +246,7 @@ describe('kubic run', () => {
           maxTurns: 10,
           role: 'reviewer',
           skills: ['/a.md', '/b.md'],
+          invokeSkill: 'secret',
           noSkills: true,
           debug: true,
           json: true,
@@ -250,6 +258,57 @@ describe('kubic run', () => {
   it('passes only the prompt when nothing else is given', async () => {
     const result = await kubic(['run', '--prompt', 'hi']);
     expect(result.calls).toEqual([{ key: 'run', input: { prompt: 'hi' } }]);
+  });
+
+  // Issue #283 (§71): the opt-in budget reaches the runner as parsed
+  // limits; absence leaves the key out (never defaulted). Agent-scoped
+  // clauses belong to `kubic orchestrate --budget`.
+  it('parses --budget dims into the runner options', async () => {
+    expect(
+      (
+        await kubic([
+          'run',
+          '-p',
+          'hi',
+          '--budget',
+          'maxToolCalls=1,maxCostUsd=0.5',
+        ])
+      ).calls,
+    ).toEqual([
+      {
+        key: 'run',
+        input: {
+          prompt: 'hi',
+          budget: { maxToolCalls: 1, maxCostUsd: 0.5 },
+        },
+      },
+    ]);
+    expect((await kubic(['run', '-p', 'hi'])).calls).toEqual([
+      { key: 'run', input: { prompt: 'hi' } },
+    ]);
+  });
+
+  it('refuses a malformed --budget naming the flag', async () => {
+    expect(
+      await usageError(['run', '-p', 'hi', '--budget', 'bogus']),
+    ).toContain('--budget');
+  });
+
+  it('refuses agent-scoped --budget clauses on a solo run', async () => {
+    expect(
+      await usageError(['run', '-p', 'hi', '--budget', 'worker-1:toolCalls=1']),
+    ).toContain('--budget');
+  });
+
+  // Issue #278 (§19): autonomous mode is explicit — the flag reaches
+  // the runner, and its absence leaves the key out (off by default).
+  it('parses --autonomous into the runner options', async () => {
+    expect((await kubic(['run', '-p', 'hi', '--autonomous'])).calls).toEqual([
+      { key: 'run', input: { prompt: 'hi', autonomous: true } },
+    ]);
+    expect((await kubic(['run', '-p', 'hi'])).calls).toEqual([
+      { key: 'run', input: { prompt: 'hi' } },
+    ]);
   });
 
   it('returns the runner exit code (the §78 terminus map)', async () => {
@@ -313,6 +372,25 @@ describe('kubic run', () => {
       "--model must be 'provider/id'",
     );
     expect(await usageError(['run', '-p', 'hi', '--model'])).toContain(
+      'argument missing',
+    );
+  });
+
+  // Issue #225: `--thinking` is the same kind of input as `--model` — a
+  // config-layer value dispatch pre-scans, never a runner option — so the
+  // runner input carries no trace of it, and a malformed level is
+  // commander's exit 2 with the levels named, never a silent default.
+  it('accepts the config-layer --thinking flag without copying it into the runner options', async () => {
+    expect(
+      (await kubic(['run', '-p', 'hi', '--thinking', 'high'])).calls,
+    ).toEqual([{ key: 'run', input: { prompt: 'hi' } }]);
+  });
+
+  it('refuses a malformed --thinking value with commander exit 2', async () => {
+    expect(
+      await usageError(['run', '-p', 'hi', '--thinking', 'banana']),
+    ).toContain("unknown thinking level 'banana'");
+    expect(await usageError(['run', '-p', 'hi', '--thinking'])).toContain(
       'argument missing',
     );
   });
@@ -463,6 +541,17 @@ describe('kubic tui', () => {
     expect((await kubic(['tui'])).calls).toEqual([{ key: 'tui', input: {} }]);
   });
 
+  // Issue #283 (§71): same opt-in budget grammar as `run` — parsed
+  // limits reach the runner, absence leaves the key out.
+  it('parses --budget dims into the runner options', async () => {
+    expect((await kubic(['tui', '--budget', 'maxCostUsd=0.5'])).calls).toEqual([
+      { key: 'tui', input: { budget: { maxCostUsd: 0.5 } } },
+    ]);
+    expect(await usageError(['tui', '--budget', 'bogus'])).toContain(
+      '--budget',
+    );
+  });
+
   // Issue #295: the explicit model pin, same `provider/id` rule as replay.
   it('parses --model <provider/id> and refuses a malformed ref', async () => {
     expect((await kubic(['tui', '--model', 'faux/b'])).calls).toEqual([
@@ -541,8 +630,36 @@ describe('kubic doctor', () => {
     expect((await kubic(['doctor'], 6)).code).toBe(6);
   });
 
+  it('forwards --session to the doctor runner', async () => {
+    const result = await kubic(['doctor', '--session', 'abc']);
+    expect(result.calls).toEqual([
+      { key: 'doctor', input: { skip: [], session: 'abc' } },
+    ]);
+  });
+
   it('refuses --skip without a value', async () => {
     expect(await usageError(['doctor', '--skip'])).toContain(
+      'argument missing',
+    );
+  });
+});
+
+describe('kubic skills', () => {
+  it('parses --role and --json', async () => {
+    expect((await kubic(['skills'])).calls).toEqual([
+      { key: 'skills', input: {} },
+    ]);
+    expect(
+      (await kubic(['skills', '--role', 'reviewer', '--json'])).calls,
+    ).toEqual([{ key: 'skills', input: { role: 'reviewer', json: true } }]);
+  });
+
+  it('passes the skills exit code through', async () => {
+    expect((await kubic(['skills'], 6)).code).toBe(6);
+  });
+
+  it('refuses --role without a value', async () => {
+    expect(await usageError(['skills', '--role'])).toContain(
       'argument missing',
     );
   });

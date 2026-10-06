@@ -53,11 +53,18 @@ export interface SessionPruneLocked {
   startedAt?: number;
 }
 
+export interface SessionPruneKept {
+  id: string;
+  // `--keep-session` for an explicit name; `child of <id>` for a run
+  // member kept with its explicitly kept parent (issue #164).
+  why: string;
+}
+
 export interface SessionPrunePlan {
   candidates: SessionPruneCandidate[];
   locked: SessionPruneLocked[];
   // Aged sessions protected by name (`--keep-session`).
-  kept: string[];
+  kept: SessionPruneKept[];
   // Session-shaped entries that could not be inspected — skipped, reported.
   unreadable: string[];
   totalBytes: number;
@@ -77,6 +84,11 @@ export interface SessionPrunePlanArgs {
   keepDays: number;
   keep: readonly string[];
   now?: number;
+  // Issue #164 (§23): the parent session of an id, if it has one. A run
+  // ages out as a unit (pass listSessions' linkage from the caller): the
+  // family's effective mtime is its newest member's, and an explicitly
+  // kept parent keeps its children. Absent means every session ages alone.
+  parentOf?: (id: string) => string | undefined;
 }
 
 function detail(error: unknown): string {
@@ -142,6 +154,12 @@ export function planSessionPrune(args: SessionPrunePlanArgs): SessionPrunePlan {
   } catch (error) {
     throw new SessionsRootError(args.root, detail(error));
   }
+  // First pass: locks and mtimes. Locked sessions are reported, never
+  // candidates — but a mid-run member still counts toward its family's
+  // age (review #164: an old parent with a live-locked child keeps the
+  // parent, since the run is as young as its youngest member).
+  const mtimes = new Map<string, number>();
+  const lockedIds = new Set<string>();
   for (const entry of entries) {
     if (!entry.isDirectory || entry.isSymbolicLink) continue;
     if (!SESSION_ID_PATTERN.test(entry.name)) continue;
@@ -149,30 +167,71 @@ export function planSessionPrune(args: SessionPrunePlanArgs): SessionPrunePlan {
     const posture = sessionLockIsLive(join(args.root, entry.name));
     if (posture !== undefined) {
       plan.locked.push({ id: entry.name, ...posture });
-      continue;
+      lockedIds.add(entry.name);
     }
     let info: BridgeFileInfo;
     try {
       info = args.bridge.fileInfo(entry.name);
     } catch {
-      plan.unreadable.push(entry.name);
+      // Issue #419: a locked session whose header cannot be statted is
+      // already reported in exactly one bucket (locked) — the live lock
+      // read succeeded, only the stat failed.
+      if (!lockedIds.has(entry.name)) plan.unreadable.push(entry.name);
       continue;
     }
-    if (info.mtimeMs > cutoff) continue; // recent: not a candidate
-    if (keep.has(entry.name)) {
-      plan.kept.push(entry.name);
+    mtimes.set(entry.name, info.mtimeMs);
+  }
+  // Issue #164 (§23): a run ages out as a unit. The family root is the
+  // topmost ancestor (cycles resolve to self — a linkage loop never hangs
+  // the planner); every member is evaluated at the family's newest mtime,
+  // so an old parent with a recent child is kept, and an old run becomes
+  // candidates in the same pass. An explicitly kept ancestor keeps the
+  // whole family below it.
+  const parentOf = args.parentOf;
+  const familyRoot = (id: string): string => {
+    if (parentOf === undefined) return id;
+    const seen = new Set<string>([id]);
+    let root = id;
+    for (;;) {
+      const parent = parentOf(root);
+      if (parent === undefined || seen.has(parent)) return root;
+      seen.add(parent);
+      root = parent;
+    }
+  };
+  const familyMtime = new Map<string, number>();
+  const familyKept = new Set<string>();
+  for (const [id, mtimeMs] of mtimes) {
+    const root = familyRoot(id);
+    const newest = familyMtime.get(root);
+    if (newest === undefined || mtimeMs > newest)
+      familyMtime.set(root, mtimeMs);
+    if (keep.has(id)) familyKept.add(root);
+  }
+  const keptFamily = (id: string): boolean => familyKept.has(familyRoot(id));
+  const effectiveMtime = (id: string): number =>
+    familyMtime.get(familyRoot(id)) ?? 0;
+  for (const id of mtimes.keys()) {
+    if (lockedIds.has(id)) continue; // locked: reported, never a candidate
+    if (effectiveMtime(id) > cutoff) continue; // recent: not a candidate
+    if (keep.has(id)) {
+      plan.kept.push({ id, why: '--keep-session' });
       continue;
     }
-    const bytes = dirBytes(args.bridge, entry.name);
+    if (keptFamily(id)) {
+      plan.kept.push({ id, why: `child of ${familyRoot(id)}` });
+      continue;
+    }
+    const bytes = dirBytes(args.bridge, id);
     if (bytes === undefined) {
-      plan.unreadable.push(entry.name);
+      plan.unreadable.push(id);
       continue;
     }
-    plan.candidates.push({ id: entry.name, bytes });
+    plan.candidates.push({ id, bytes });
   }
   plan.candidates.sort(byId);
   plan.locked.sort(byId);
-  plan.kept.sort(byName);
+  plan.kept.sort((left, right) => byName(left.id, right.id));
   plan.unreadable.sort(byName);
   plan.totalBytes = plan.candidates.reduce(
     (sum, candidate) => sum + candidate.bytes,

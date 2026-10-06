@@ -192,6 +192,85 @@ describe('replay acceptance (issue #13)', () => {
     expect(c.env.fs.readFile('w.txt')).toBe('first\n');
   });
 
+  // A counting invocation over the in-process store: the registry memo
+  // gate is the only memo a caller without its own replay gate has.
+  function counting(
+    id: string,
+    store: MemoryMemoStore,
+    counts: { gets: number; sets: number },
+  ): ToolInvocation {
+    const base = createInvocation(
+      { invocationId: id, operationId: 'op-nr', turnId: 't-nr' },
+      store,
+    );
+    return {
+      ...base,
+      getMemo: async (name: string) => {
+        counts.gets += 1;
+        return base.getMemo(name);
+      },
+      setMemo: async (name: string, value: JsonValue | undefined) => {
+        counts.sets += 1;
+        return base.setMemo(name, value);
+      },
+    };
+  }
+
+  it('a failed never-replay op is not memoized, and a later call re-executes (issue #217)', async () => {
+    const env = new FakeExecutionEnv({});
+    env.fs.writeFile('x.txt', 'aaa\n');
+    const counts = { gets: 0, sets: 0 };
+    const invocation = counting('inv-nrf', new MemoryMemoStore(), counts);
+    const miss = { path: 'x.txt', oldText: 'zzz-no-match', newText: 'b' };
+    const first = await callOperation('edit', miss, invocation, fakeCtx(env));
+    expect(first.ok).toBe(false);
+    const second = await callOperation('edit', miss, invocation, fakeCtx(env));
+    expect(second.ok).toBe(false);
+    // The failure stored nothing, so the later call checked the memo
+    // again, missed again, and re-executed instead of replaying a fault.
+    expect(counts.sets).toBe(0);
+    expect(counts.gets).toBe(2);
+  });
+
+  it('a memoized never-replay answer returns without re-executing (issue #217)', async () => {
+    // The memo key is the registry's (`op-result-<name>`); seeding it is
+    // what a pre-crash attempt's success would have stored.
+    const store = new MemoryMemoStore();
+    await store.set('inv-nrh', 'op-result-edit', { path: 'x.txt' });
+    const counts = { gets: 0, sets: 0 };
+    const invocation = counting('inv-nrh', store, counts);
+    // x.txt does not exist: a re-execution would fail, the memo answers.
+    const out = await callOperation(
+      'edit',
+      { path: 'x.txt', oldText: 'a', newText: 'b' },
+      invocation,
+      fakeCtx(new FakeExecutionEnv({})),
+    );
+    expect(out.ok).toBe(true);
+    expect(counts.gets).toBe(1);
+    expect(counts.sets).toBe(0);
+  });
+
+  it('memoOnce returns the existing value without a setMemo write (issue #217)', async () => {
+    const store = new MemoryMemoStore();
+    const base = createInvocation(
+      { invocationId: 'inv-nrm', operationId: 'op-nr', turnId: 't-nr' },
+      store,
+    );
+    let sets = 0;
+    const invocation: ToolInvocation = {
+      ...base,
+      setMemo: async (name: string, value: JsonValue | undefined) => {
+        sets += 1;
+        return base.setMemo(name, value);
+      },
+    };
+    expect(await invocation.memoOnce('k', 'first')).toBe('first');
+    // First-writer-wins: the existing value comes back, no write happens.
+    expect(await invocation.memoOnce('k', 'second')).toBe('first');
+    expect(sets).toBe(0);
+  });
+
   it('never-replay memo keys are pi-durable-legal (no colons)', async () => {
     // pi-agent-core's validateMemoName rejected ':' (and the key became a
     // pi-durable memo name too) — a colon key would fail every never-replay

@@ -17,18 +17,9 @@ export class PromptCacheError extends Error {
   }
 }
 
-// The 7 cache-preservation rules (§26): assembly keeps 1-4, the lane
-// lifecycle keeps 5-6, compaction keeps 7.
-export const PROMPT_CACHE_RULES: readonly string[] = [
-  'stable-prefix: identical inputs assemble byte-identical system prompts',
-  'stable-tool-order: tool definitions sort by name',
-  'stable-metadata: metadata serializes with sorted keys',
-  'append-only-turns: per-turn content appends as suffix, prefix untouched',
-  'reuse-lane: continuations reuse the bound lane, re-spawn is rejected',
-  'pin-model: one model id per task, no per-action reselect',
-  'fresh-compaction-ids: compaction uses fresh routing ids, no cache write',
-];
-
+// NOTE (issue #215): the PROMPT_CACHE_RULES list was deleted — it named
+// no production reader (the rules live in §26 and are pinned by the
+// assembly, lifecycle and two-turn tests, not by a constant).
 export interface SystemPromptInput {
   role: string;
   cwd: string;
@@ -59,57 +50,16 @@ export function assembleSystemPrompt(input: SystemPromptInput): string {
   return sections.join('\n');
 }
 
-// Rule 4: turn-varying content may only extend the prompt. Anything else
-// shifts prefix bytes and voids the cache.
-export function appendTurnContent(prefix: string, turn: string): string {
-  if (turn.length === 0) {
-    throw new PromptCacheError('turn content must not be empty');
-  }
-  return `${prefix}\nturn: ${turn}`;
-}
-
-export function assertStartsWithPrefix(full: string, prefix: string): void {
-  if (!full.startsWith(prefix)) {
-    throw new PromptCacheError('prompt prefix bytes changed mid-session');
-  }
-}
-
-export interface LaneBinding {
-  sessionId: string;
-  lane: string;
-  modelId: string;
-}
-
-// Rule 5: one live lane per session+lane key. Continuations resolve the
-// bound lane; spawning over a live key is rejected so a continuation can
-// never silently fork (and lose) the cached prefix.
-export class LaneRegistry {
-  private bound = new Map<string, LaneBinding>();
-
-  private key(sessionId: string, lane: string): string {
-    return `${sessionId}/${lane}`;
-  }
-
-  spawn(binding: LaneBinding): void {
-    const key = this.key(binding.sessionId, binding.lane);
-    if (this.bound.has(key)) {
-      throw new PromptCacheError(
-        `re-spawn rejected for continuation on '${key}': reuse the lane`,
-      );
-    }
-    this.bound.set(key, { ...binding });
-  }
-
-  continuation(sessionId: string, lane: string): LaneBinding {
-    const found = this.bound.get(this.key(sessionId, lane));
-    if (found === undefined) {
-      throw new PromptCacheError(
-        `no active lane for '${sessionId}/${lane}': continuation must reuse a lane`,
-      );
-    }
-    return { ...found };
-  }
-}
+// Rule 4 lives structurally in assembleSystemPrompt above (extra sections
+// append last; nothing shifts prefix bytes) and is pinned at lane level by
+// the no-new-pi.system-entry two-turn test — there is no per-turn prompt
+// extension in the pi-durable design, so the standalone append/assert
+// helpers were deleted (issue #215).
+// Rule 5 (issue #82) deleted in the #210 review round: LaneRegistry (and
+// its LaneBinding shape) had no production consumer repo-wide — only test
+// constructions plus the optional boot field — so the class, the interface,
+// the boot spawn/continuation branch and the lane's binding surface went
+// with it. The per-task model pin (rule 6) below is the live mechanism.
 
 export interface AffinityEscalation {
   from: string;

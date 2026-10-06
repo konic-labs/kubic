@@ -16,6 +16,7 @@ import {
 } from '../../../core/src/cli/exit-codes.js';
 import { enforcedLimits } from '../../../worker/src/lifecycle/resources.js';
 import { alwaysAskAutoApprove, validatePolicy } from '../approvals.js';
+import { mcpRefusalMessage } from '../config/stances.js';
 import type { DoctorCheck } from '../doctor.js';
 
 // §78 provider-failure code, mirroring kubic run (§78): a doctor matrix
@@ -255,8 +256,10 @@ export function policyEnforceabilityCheck(raw: unknown): DoctorCheck {
       ...base,
       status: 'fail',
       reason: 'policy-mismatch',
-      detail:
-        'config key [mcp] is unsupported in v1 (Phase-4 arrival; §33, §59.1)',
+      // Issue #254 (§33): the refusal names the settled arrival
+      // requirements — built from the same constant the config-load
+      // refusal throws, so the two can never disagree.
+      detail: mcpRefusalMessage(),
     };
   }
   const refused = autoApprove.filter(
@@ -322,60 +325,4 @@ export function collectLimitChecks(input: LimitProbeInputs): DoctorCheck[] {
     depsLimitCheck(input.deps),
     policyEnforceabilityCheck(input.policy),
   ];
-}
-
-export interface LimitProbeDeps {
-  probeProviders: () => LimitProviderProbe[];
-  checkDeps: () => LimitDepProbe[];
-  loadPolicy: () => unknown;
-}
-
-function probeMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-// Registration entry for #29's doctor.ts (append-only): every section is
-// total — a throwing probe becomes a failing check, never a crash. Static
-// §59.1 notices report warn (informational, never exit-flipping); only
-// fail (provider-down, deps-missing, policy-mismatch) flips the exit via
-// limitsDoctorExit — so these lines can never turn a clean run failing
-// except by reporting a genuinely degraded posture.
-export function collectLimitChecksFromDeps(
-  deps: LimitProbeDeps,
-): DoctorCheck[] {
-  const checks: DoctorCheck[] = [...staticLimitChecks()];
-  try {
-    checks.push(providerAvailabilityCheck(deps.probeProviders()));
-  } catch (error) {
-    checks.push({
-      id: 'limit:provider-availability',
-      label: 'limit provider availability',
-      status: 'fail',
-      reason: 'provider-down',
-      detail: probeMessage(error),
-    });
-  }
-  try {
-    checks.push(depsLimitCheck(deps.checkDeps()));
-  } catch (error) {
-    checks.push({
-      id: 'limit:deps-present',
-      label: 'limit deps present',
-      status: 'fail',
-      reason: 'deps-missing',
-      detail: probeMessage(error),
-    });
-  }
-  try {
-    checks.push(policyEnforceabilityCheck(deps.loadPolicy()));
-  } catch (error) {
-    checks.push({
-      id: 'policy:enforceability',
-      label: 'policy enforceability',
-      status: 'fail',
-      reason: 'policy-mismatch',
-      detail: probeMessage(error),
-    });
-  }
-  return checks;
 }

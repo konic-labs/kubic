@@ -12,6 +12,7 @@ import {
   parseSlashCommand,
   SLASH_COMMANDS,
   SlashCommandAutocomplete,
+  skillCommandSpecs,
   slashCommandRows,
 } from './slash-commands.js';
 
@@ -34,6 +35,7 @@ describe('slash-command registry (issue #305)', () => {
       'undo',
       'quit',
       'model',
+      'scoped-models',
       'thinking',
       'compact',
     ]) {
@@ -162,5 +164,38 @@ describe('slash-command autocomplete (issue #305)', () => {
       '/he',
     );
     expect(middle.lines).toEqual(['/help rest']);
+  });
+});
+
+describe('per-skill /skill: rows (issue #183)', () => {
+  it('builds one local row per booted skill name', () => {
+    const specs = skillCommandSpecs(['hidden', 'open']);
+    expect(specs.map((spec) => spec.name)).toEqual([
+      'skill:hidden',
+      'skill:open',
+    ]);
+    for (const spec of specs) {
+      // A local read like /help: no §66 command, never dispatched.
+      expect(spec.command).toBeUndefined();
+      expect(spec.usage.startsWith(`/${spec.name}`)).toBe(true);
+    }
+  });
+
+  it('completes /skill: prefixes without joining the registry', async () => {
+    expect(findSlashCommand('skill')?.command).toBeUndefined();
+    // The static entry stays the registry's only skill row: per-skill rows
+    // live in the editor provider alone, so /help and the palette never
+    // enumerate skill names.
+    expect(
+      SLASH_COMMANDS.filter((spec) => spec.name.startsWith('skill:')),
+    ).toEqual([]);
+    const provider = new SlashCommandAutocomplete([
+      ...SLASH_COMMANDS,
+      ...skillCommandSpecs(['hidden']),
+    ]);
+    const suggestions = await provider.getSuggestions(['/skill:hi'], 0, 9);
+    expect(suggestions?.items.map((item) => item.value)).toEqual([
+      '/skill:hidden',
+    ]);
   });
 });

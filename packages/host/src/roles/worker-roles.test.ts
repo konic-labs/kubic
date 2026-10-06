@@ -14,6 +14,7 @@ import { createRoleToolGuard } from './resolver.js';
 import {
   composeWorkerPrompt,
   planWorkerRoles,
+  roleBudgetForAgent,
   roleForAgent,
   type WorkerRolesPlan,
 } from './worker-roles.js';
@@ -95,6 +96,7 @@ function planFor(
   return planWorkerRoles({
     bridge: memBridge(twoRoleCwd()),
     cwd: CWD,
+    trusted: true,
     agents,
     ...(binding.roles === undefined ? {} : { roles: binding.roles }),
     ...(binding.models === undefined ? {} : { models: binding.models }),
@@ -106,6 +108,26 @@ const TWO_ROLES = {
 };
 
 describe('delegation-path role assignment (issue #104, §12)', () => {
+  it("carries the role's classes and approval requires to the spawn (issue #196)", () => {
+    const files: Record<string, string> = {
+      [`${CWD}/.kubic/roles/reviewer.md`]: roleText(
+        'reviewer',
+        'tools: [read, bash]\nfilesystem: read\nshell: true\nnetwork: none\ngit: false\ncredentials: none\nrequires: [write]\n',
+        'You are the reviewer.',
+      ),
+    };
+    const plan = planWorkerRoles({
+      bridge: memBridge(files),
+      cwd: CWD,
+      trusted: true,
+      agents: ['alpha'],
+      roles: { alpha: 'reviewer' },
+    });
+    expect(plan.assignments).toHaveLength(1);
+    expect(plan.assignments[0]?.classes.network).toBe('none');
+    expect(plan.assignments[0]?.requires).toEqual(['write']);
+  });
+
   it('defaults every unassigned worker to the implementer, never a positional cycle (issue #178)', () => {
     // The five roles are fixed (D11): the manager composes from them and
     // never invents a role at runtime. Position is not a task: a worker with
@@ -173,6 +195,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     const plan = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       layers: [{ layer: 'project', roles: { planner: { model: 'acme/cfg' } } }],
       parentModel: 'acme/manager',
@@ -237,6 +260,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     const plan = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: { alpha: 'planner' },
       layers: [{ layer: 'project', roles: { planner: { model: 'acme/p1' } } }],
@@ -253,6 +277,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     const overridden = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       thinkingOverride: 'xhigh',
     });
@@ -271,6 +296,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     const bare = planWorkerRoles({
       bridge: memBridge(files),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta', 'gamma'],
       roles: { alpha: 'planner', beta: 'implementer', gamma: 'tester' },
     });
@@ -281,6 +307,36 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
       ['implementer', 'medium'],
       ['tester', 'low'],
     ]);
+  });
+
+  it('resolves worker thinking as override, then [roles.<r>].thinking, then the role default (issue #225)', () => {
+    // The config layer sits between the run's explicit level and the
+    // hardcoded §12 default — the GAP in #225's review, where the plan
+    // ignored the layer the docs already promised the child.
+    const layer = {
+      layer: 'project',
+      roles: { planner: { thinking: 'low' } },
+    } as const;
+    const plan = planWorkerRoles({
+      bridge: memBridge(twoRoleCwd()),
+      cwd: CWD,
+      agents: ['alpha', 'beta'],
+      roles: { alpha: 'planner' },
+      layers: [layer],
+    });
+    const [planner, implementer] = plan.assignments;
+    expect(planner?.thinking).toBe('low');
+    expect(implementer?.thinking).toBe('medium');
+    // The run's explicit level still outranks the config layer.
+    const overridden = planWorkerRoles({
+      bridge: memBridge(twoRoleCwd()),
+      cwd: CWD,
+      agents: ['alpha'],
+      roles: { alpha: 'planner' },
+      layers: [layer],
+      thinkingOverride: 'xhigh',
+    });
+    expect(overridden.assignments[0]?.thinking).toBe('xhigh');
   });
 
   it('refuses a contradictory role document by the resolver name, assigning nothing', () => {
@@ -296,6 +352,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     const plan = planWorkerRoles({
       bridge: memBridge(files),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: TWO_ROLES.roles,
     });
@@ -316,6 +373,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     const plan = planWorkerRoles({
       bridge: memBridge(files),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha'],
       roles: { alpha: 'planner' },
     });
@@ -334,6 +392,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     const plan = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta', 'gamma'],
       roles: { alpha: 'planner', beta: 'implementer', gamma: 'archaeologist' },
     });
@@ -354,6 +413,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     const plan = planWorkerRoles({
       bridge: memBridge({}),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha'],
     });
     expect(plan.refused).toEqual([]);
@@ -386,6 +446,7 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
         ].join('\n'),
       }),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: { alpha: 'implementer', beta: 'planner' },
     });
@@ -404,6 +465,39 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     ]);
     // …and the untouched presets still come from the binary.
     expect(plan.assignments[1]?.promptText).toContain('You are the planner.');
+  });
+
+  it('takes the worker prompt from the file that declared the role (issue #293)', () => {
+    // review.md declares `role: reviewer`: the worker bound to reviewer
+    // gets review.md's prompt body — never a re-read of reviewer.md
+    // (roleDocPath is gone; the prompt travels on the selection).
+    const plan = planWorkerRoles({
+      bridge: memBridge({
+        [`${CWD}/.kubic/roles/review.md`]: [
+          '---',
+          'role: reviewer',
+          'tools: [read, ls, find, grep]',
+          'filesystem: read',
+          'shell: false',
+          'network: none',
+          'git: false',
+          'credentials: none',
+          '---',
+          '',
+          '## Prompt',
+          '',
+          'Review from review.md.',
+          '',
+        ].join('\n'),
+      }),
+      cwd: CWD,
+      trusted: true,
+      agents: ['alpha'],
+      roles: { alpha: 'reviewer' },
+    });
+    expect(plan.refused).toEqual([]);
+    expect(plan.assignments).toHaveLength(1);
+    expect(plan.assignments[0]?.promptText).toContain('Review from review.md.');
   });
 
   it('withholds write/edit/bash for a read-only role by absence, never approval', () => {
@@ -436,6 +530,88 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
 // `kubic run --role` refuses a role that declares a denied tool, so the
 // manager's plan must refuse the same assignment up front — before a
 // worktree or a process exists — instead of gating roles not at all.
+describe('document model and budget on the delegation path (issue #198)', () => {
+  const BUDGET_WRITER =
+    'tools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n';
+
+  function budgetedCwd(): Record<string, string> {
+    return {
+      [`${CWD}/.kubic/roles/implementer.md`]: roleText(
+        'implementer',
+        `${BUDGET_WRITER}model: acme/doc-1\nbudget = { maxToolCalls = 5 }\n`,
+        'You are the implementer.',
+      ),
+      [`${CWD}/.kubic/roles/planner.md`]: roleText(
+        'planner',
+        READ_ONLY,
+        'You are the planner.',
+      ),
+    };
+  }
+
+  function budgetedPlan(
+    agents: readonly string[],
+    extra: Record<string, unknown> = {},
+  ): WorkerRolesPlan {
+    return planWorkerRoles({
+      bridge: memBridge(budgetedCwd()),
+      cwd: CWD,
+      trusted: true,
+      agents,
+      roles: { alpha: 'implementer' },
+      ...extra,
+    });
+  }
+
+  it("carries the document's model and budget to the assignment", () => {
+    const plan = budgetedPlan(['alpha']);
+    expect(plan.refused).toEqual([]);
+    expect(plan.assignments[0]?.modelRef).toBe('acme/doc-1');
+    expect(plan.assignments[0]?.budget).toEqual({ maxToolCalls: 5 });
+  });
+
+  it('model precedence: explicit pin > config > document > manager default', () => {
+    // Document only: the document pin resolves.
+    expect(budgetedPlan(['alpha']).assignments[0]?.modelRef).toBe('acme/doc-1');
+    // No pin anywhere: the manager's model is inherited.
+    const bare = planWorkerRoles({
+      bridge: memBridge({
+        [`${CWD}/.kubic/roles/implementer.md`]: roleText(
+          'implementer',
+          BUDGET_WRITER,
+          'You are the implementer.',
+        ),
+      }),
+      cwd: CWD,
+      trusted: true,
+      agents: ['alpha'],
+      roles: { alpha: 'implementer' },
+      parentModel: 'acme/manager-1',
+    });
+    expect(bare.assignments[0]?.modelRef).toBe('acme/manager-1');
+    // Explicit per-agent pin outranks the document pin.
+    const pinned = budgetedPlan(['alpha'], {
+      models: { alpha: 'acme/pinned-1' },
+    });
+    expect(pinned.assignments[0]?.modelRef).toBe('acme/pinned-1');
+  });
+
+  it('roleBudgetForAgent returns the assignment budget, else undefined', () => {
+    const plan = budgetedPlan(['alpha', 'beta'], {
+      roles: { alpha: 'implementer', beta: 'planner' },
+    });
+    expect(roleBudgetForAgent(plan, 'alpha')).toEqual({ maxToolCalls: 5 });
+    expect(roleBudgetForAgent(plan, 'beta')).toBeUndefined();
+    expect(roleBudgetForAgent(plan, 'ghost')).toBeUndefined();
+  });
+
+  it('absent document budget means unbounded (no assignment budget)', () => {
+    const plan = planFor(['beta'], { roles: { beta: 'implementer' } });
+    expect(plan.assignments[0]?.budget).toBeUndefined();
+    expect(roleBudgetForAgent(plan, 'beta')).toBeUndefined();
+  });
+});
+
 describe('delegation-path role assignment under the enterprise tool policy (issue #288)', () => {
   const denyBash = resolveEffectivePolicy([
     { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
@@ -445,6 +621,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const plan = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: TWO_ROLES.roles,
       toolPolicy: denyBash,
@@ -463,6 +640,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const plan = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: TWO_ROLES.roles,
       toolPolicy: resolveEffectivePolicy([
@@ -480,6 +658,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const outside = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: TWO_ROLES.roles,
       toolPolicy: resolveEffectivePolicy([
@@ -494,6 +673,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const ungated = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: TWO_ROLES.roles,
       toolPolicy: resolveEffectivePolicy([
@@ -517,6 +697,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const layered = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: TWO_ROLES.roles,
       toolPolicy: denyBash,
@@ -532,6 +713,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const bare = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha', 'beta'],
       roles: TWO_ROLES.roles,
       toolPolicy: denyBash,
@@ -556,6 +738,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const layered = planWorkerRoles({
       bridge: memBridge(files),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha'],
       roles: { alpha: 'planner' },
       layers,
@@ -566,6 +749,7 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const bare = planWorkerRoles({
       bridge: memBridge(files),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha'],
       roles: { alpha: 'planner' },
     });
@@ -580,11 +764,43 @@ describe('delegation-path role assignment under the enterprise tool policy (issu
     const plan = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
+      trusted: true,
       agents: ['alpha'],
       roles: { alpha: 'planner' },
       toolPolicy: denyBash,
     });
     expect(plan.refused).toEqual([]);
     expect(plan.assignments.map((entry) => entry.role)).toEqual(['planner']);
+  });
+});
+
+describe('global ~/.kubic/roles on the delegation path (issue #241)', () => {
+  it('plans a global override of a fixed role with no trust flags', () => {
+    // The manager plans the same roles the worker's own `kubic run --role`
+    // will resolve (§35): a global document overriding a fixed role name
+    // reaches the plan, and the global layer needs no trust opt-in —
+    // L-D27 gates the repo documents only — so the planning carries no
+    // trust flags at all and still resolves.
+    const home = '/home/ada';
+    const files = {
+      [`${home}/.kubic/roles/reviewer.md`]: roleText(
+        'reviewer',
+        'tools: [read, bash]\nfilesystem: read\nshell: true\nnetwork: none\ngit: false\ncredentials: none\nrequires: [write]\n',
+        'Global reviewer instructions.',
+      ),
+    };
+    const plan = planWorkerRoles({
+      bridge: memBridge(files),
+      cwd: CWD,
+      home,
+      agents: ['alpha'],
+      roles: { alpha: 'reviewer' },
+    });
+    expect(plan.refused).toEqual([]);
+    expect(plan.assignments).toHaveLength(1);
+    expect(plan.assignments[0]?.promptText).toContain(
+      'Global reviewer instructions.',
+    );
+    expect(plan.assignments[0]?.requires).toEqual(['write']);
   });
 });

@@ -8,12 +8,17 @@
 // and boot the real `bootTuiLane`.
 //
 // Faux provider only: zero network, zero paid tokens.
-import { execFileSync } from 'node:child_process';
+
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../../packages/exec/src/test-support/git-sandbox.js';
 import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
 import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
 import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
@@ -54,6 +59,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   for (const dir of tempDirs.splice(0)) {
@@ -62,6 +69,16 @@ afterEach(() => {
 });
 
 const ENTERPRISE = '/etc/kubic-test/enterprise.toml';
+
+// The test's git driver (issue #420): one injected sandbox per test, so
+// the repo setup and the production git the TUI run shells share the
+// scrubbed view. Workspaces keep their own dirs; only the env is shared.
+let driver: GitSandbox | undefined;
+
+function git(cwd: string, args: string[]): void {
+  driver ??= createGitSandbox({ injectProcessEnv: true });
+  driver.git(args, { cwd });
+}
 const PROJECT = '/nonexistent-cwd/.kubic/config.toml';
 
 // The effective config exactly as the composition root wraps it: a real
@@ -690,7 +707,7 @@ describe('the interactive orchestrator refuses a denied role like `kubic orchest
       join(workspace, '.kubic', 'roles', 'implementer.md'),
       '---\nrole: implementer\ntools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nBuild it.\n',
     );
-    execFileSync('git', ['init', '-q'], { cwd: workspace });
+    git(workspace, ['init', '-q']);
     const cfg = cliConfig({
       [ENTERPRISE]: '[policy]\ndenied_tools = ["bash"]\n',
     });
@@ -793,7 +810,7 @@ describe('the interactive orchestrator judges a role after the config layers (is
       join(workspace, '.kubic', 'roles', 'implementer.md'),
       '---\nrole: implementer\ntools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nBuild it.\n',
     );
-    execFileSync('git', ['init', '-q'], { cwd: workspace });
+    git(workspace, ['init', '-q']);
     const cfg = cliConfig({
       [ENTERPRISE]: '[policy]\ndenied_tools = ["bash"]\n',
       [PROJECT]: '[roles.implementer]\ntools = ["read"]\n',
@@ -841,7 +858,7 @@ describe('the interactive orchestrator follows a frozen enterprise model (issue 
         })),
       }),
     );
-    execFileSync('git', ['init', '-q'], { cwd: workspace });
+    git(workspace, ['init', '-q']);
     // Only the enterprise model's provider has a key on this host.
     vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
     vi.stubEnv('GW_API_KEY', 'sk-not-a-real-key');

@@ -36,12 +36,15 @@
 // converter, the repo is unreleased (§21).
 
 import { dirname, join } from 'node:path';
+import type { RunMode } from '../../../agents/src/budget.js';
 import type {
   BridgeFileInfo,
   FileBridge,
 } from '../../../exec/src/file-bridge.js';
 import {
+  claimLockLink,
   createLockFile,
+  processStartTimeOf,
   readLockFile,
   removeLockFile,
   tightenStateDir,
@@ -108,11 +111,21 @@ export interface KubicSessionMeta {
   cwd: string;
   createdAt: string;
   workspace?: string;
+  // Issue #164 (§22–§23): the orchestrate run this session belongs to —
+  // the manager session's id for a worker, absent for a root (a solo run,
+  // a manager record itself). Plus the role/agent the run spawned it as.
+  // Linkage only: never a transcript, message history or entry reference.
+  parentSessionId?: string;
+  role?: string;
+  agentId?: string;
   // Issue #265 (§22.3): a forked session's lane runs a FORK of the source's
   // conversation, not the reserved root: its id is recorded here (absent ⇒
   // the root), with where it came from.
   conversation?: number;
   forkedFrom?: { session: string; at: number };
+  // Issue #278 (§19): the run's mode, recorded when the run names it
+  // (absent ⇒ off by default, never assumed).
+  mode?: RunMode;
   [k: string]: JsonValue | undefined;
 }
 
@@ -127,6 +140,10 @@ export const KubicSessionDoc = defineDoc<{
   workspace?: string;
   conversation?: number;
   forkedFrom?: { session: string; at: number };
+  parentSessionId?: string;
+  role?: string;
+  agentId?: string;
+  mode?: RunMode;
 }>({
   kind: 'kubic.session',
   version: 1,
@@ -185,13 +202,17 @@ export class SessionIdError extends Error {
 }
 
 // Session locking (issue #118; §21–§22): one live attachment per session.
-// The lock file is <sessions-root>/<id>/lock.json — `{pid, startedAt}` of
-// the attaching process. It wraps EVERY storage open (issue #392): pi-durable
-// owns a storage exclusively and does no cross-process locking, so the Kubic
-// lock is the only guard against two processes appending to one session.
-// LOCAL FILESYSTEM ONLY: O_EXCL create is atomic on a local fs (and on
-// volumes that honor it), but no network/shared-disk locking semantics are
-// claimed — see docs/packages/worker.md.
+// The lock file is <sessions-root>/<id>/lock.json — `{pid, startedAt,
+// procStart?, nonce?}` of the attaching process (`startedAt` is when the
+// lock was taken, `procStart` the holder process's own start time for the
+// pid-reuse guard in issue #145, `nonce` the per-attempt unique that makes
+// the post-write verification exact). It wraps EVERY storage open (issue
+// #392): pi-durable owns a storage exclusively and does no cross-process
+// locking, so the Kubic lock is the only guard against two processes
+// appending to one session. LOCAL FILESYSTEM ONLY: O_EXCL create and hard
+// links are atomic on a local fs (and on volumes that honor them), but no
+// network/shared-disk locking semantics are claimed — see
+// docs/packages/worker.md.
 export class SessionLockError extends Error {
   constructor(sessionId: string, holder: { pid: number; startedAt: number }) {
     // Totality: a partially-written lock must refuse with the named error,
@@ -210,26 +231,45 @@ export class SessionLockError extends Error {
 
 // The lock file's holder, as far as it can be read: a torn write or a
 // non-object payload yields what is missing and nothing more (the caller's
-// stale-candidate case, never a crash).
-function readLockHolder(lockPath: string): {
+// stale-candidate case, never a crash). Unknown keys (`nonce`, …) are
+// ignored; legacy locks simply carry no `procStart`.
+interface LockHolder {
   pid?: number;
   startedAt?: number;
-} {
-  const raw = readLockFile(lockPath);
+  procStart?: number;
+  nonce?: string;
+}
+
+function parseLockHolder(raw: string | undefined): LockHolder {
   if (raw === undefined) return {};
   try {
-    const parsed = JSON.parse(raw) as { pid?: unknown; startedAt?: unknown };
+    const parsed = JSON.parse(raw) as {
+      pid?: unknown;
+      startedAt?: unknown;
+      procStart?: unknown;
+      nonce?: unknown;
+    };
     if (parsed === null || typeof parsed !== 'object') return {};
     return {
       ...(typeof parsed.pid === 'number' ? { pid: parsed.pid } : {}),
       ...(typeof parsed.startedAt === 'number'
         ? { startedAt: parsed.startedAt }
         : {}),
+      ...(typeof parsed.procStart === 'number'
+        ? { procStart: parsed.procStart }
+        : {}),
+      // Issue #424: the nonce survives the parse so release can prove
+      // ownership — it is the only per-attempt unique in the payload.
+      ...(typeof parsed.nonce === 'string' ? { nonce: parsed.nonce } : {}),
     };
   } catch {
     // torn write: treat as stale candidate
     return {};
   }
+}
+
+function readLockHolder(lockPath: string): LockHolder {
+  return parseLockHolder(readLockFile(lockPath));
 }
 
 // process.kill(pid, 0) is the liveness probe — signal 0 performs the
@@ -240,15 +280,89 @@ function pidIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    // Issue #424: EPERM means the process exists but belongs to another
+    // uid — alive, not stale. ESRCH (and any other failure) reads as not
+    // alive; the start-time reuse guard above is what doubts toward the
+    // holder, not the pid probe.
+    const code = (error as { code?: string } | null)?.code;
+    return code === 'EPERM';
   }
+}
+
+// How far the recorded process start may drift from the pid's actual
+// start and still name the same process. Both sides compute through the
+// same reader, so a live holder compares exactly equal — the tolerance is
+// belt-and-braces for tick rounding, not a window a reused pid can hide
+// in (reuse moves the start by the gap between the two processes).
+const PROC_START_TOLERANCE_MS = 1000;
+
+// Holder liveness (issue #145): the pid probe plus the start-time check
+// against pid reuse. A live pid number is not necessarily the holder — the
+// recorded process start must still match the pid's actual start. There is
+// NO age rule: a 48h-old lock with a live, matching holder is a long TUI
+// session, never stale. A dead holder is stale immediately (crash recovery
+// works same-day); a torn payload names nobody and is a stale candidate.
+// Locks without a recorded start (legacy shape, or a platform without a
+// start-time source) and pids whose start cannot be read fall back to the
+// pid probe: stealing is the destructive arm, so doubt protects the holder.
+function holderIsLive(holder: LockHolder): boolean {
+  if (holder.pid === undefined || !pidIsAlive(holder.pid)) return false;
+  if (holder.procStart === undefined) return true;
+  const actual = processStartTimeOf(holder.pid);
+  if (actual === undefined) return true;
+  return Math.abs(actual - holder.procStart) <= PROC_START_TOLERANCE_MS;
+}
+
+function lockErrorHolder(holder: LockHolder): {
+  pid: number;
+  startedAt: number;
+} {
+  return {
+    pid: holder.pid ?? -1,
+    startedAt: holder.startedAt ?? 0,
+  };
+}
+
+// Stale takeover (issue #145): temp lock + link claim, re-read and verify
+// the owner. Each generation is arbitrated by the link — exactly one racer
+// lands, every loser sees EEXIST — and the clear only ever removes the
+// stale occupant this attempt judged: bytes that changed under us mean a
+// rival acted, so re-evaluate instead of deleting a lock that may now be
+// live. A live occupant throws naming it; surviving the bounded retries
+// without landing throws naming nobody.
+function stealSessionLock(
+  lockPath: string,
+  sessionId: string,
+  payload: string,
+): void {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const observed = readLockFile(lockPath);
+    const holder = parseLockHolder(observed);
+    if (holderIsLive(holder))
+      throw new SessionLockError(sessionId, lockErrorHolder(holder));
+    // Conditional clear: only remove the occupant judged stale above.
+    // Unconditional compare (review #145): an absent read licenses
+    // nothing — `undefined` compares correctly, so a live lock that lands
+    // after an absent read is re-evaluated, never removed.
+    if (readLockFile(lockPath) !== observed) continue;
+    removeLockFile(lockPath);
+    if (
+      claimLockLink(lockPath, payload) &&
+      readLockFile(lockPath) === payload
+    ) {
+      return;
+    }
+    // Lost the claim or the verify: loop re-reads, and a live winner
+    // throws above.
+  }
+  throw new SessionLockError(sessionId, { pid: -1, startedAt: 0 });
 }
 
 export function acquireSessionLock(
   sessionDir: string,
   sessionId: string,
-): void {
+): string {
   // Issue #361: a session directory is private state; an existing loose one
   // (created before this, or by hand) is closed on the way in — and so is the
   // sessions root, which is what `kubic doctor` reports and what the docs
@@ -257,38 +371,42 @@ export function acquireSessionLock(
   tightenStateDir(sessionDir);
   tightenStateDir(dirname(sessionDir));
   const lockPath = join(sessionDir, 'lock.json');
-  const payload = JSON.stringify({ pid: process.pid, startedAt: Date.now() });
+  const ownStart = processStartTimeOf(process.pid);
+  // The nonce makes the post-write verification exact: only these bytes
+  // read as "acquired by this attempt". Returned so the owner's release
+  // can prove it (issue #424) — a stale handle's old nonce never matches
+  // a re-acquired lock.
+  const nonce = `${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2)}`;
+  const payload = JSON.stringify({
+    pid: process.pid,
+    startedAt: Date.now(),
+    ...(ownStart === undefined ? {} : { procStart: ownStart }),
+    nonce,
+  });
   // O_EXCL test-and-set via the exec seam (I/O confinement, §9; the
   // primitive creates the session dir eagerly so the lock can land there).
-  if (createLockFile(lockPath, payload)) return;
-  // Stale handling exactly as the work-order sketch: a lock is refused
-  // only while its holder process is alive AND the file is fresher than a
-  // day. A gone holder alone is already stale (crash recovery must work
-  // same-day); a day-old file is stale regardless (pid reuse). Torn
-  // lock.json is a stale candidate either way.
-  const holder = readLockHolder(lockPath);
-  const holderAlive = holder.pid !== undefined && pidIsAlive(holder.pid);
-  const staleByAge =
-    holder.startedAt !== undefined &&
-    Date.now() - holder.startedAt > 24 * 60 * 60 * 1000;
-  if (holderAlive && !staleByAge)
-    throw new SessionLockError(sessionId, {
-      pid: holder.pid as number,
-      startedAt: holder.startedAt as number,
-    });
-  removeLockFile(lockPath);
-  if (createLockFile(lockPath, payload)) return;
-  throw new SessionLockError(sessionId, { pid: -1, startedAt: 0 });
+  // The verify closes the fresh path against a stealer that observed a
+  // stale lock before our create: bytes that are not ours fall through to
+  // the steal path, which re-evaluates the live occupant.
+  if (createLockFile(lockPath, payload)) {
+    if (readLockFile(lockPath) === payload) return nonce;
+  } else {
+    const holder = readLockHolder(lockPath);
+    if (holderIsLive(holder))
+      throw new SessionLockError(sessionId, lockErrorHolder(holder));
+  }
+  stealSessionLock(lockPath, sessionId, payload);
+  return nonce;
 }
 
 // Read-only liveness view for consumers that must never pull state out
 // from under a live attachment (issue #119: `kubic sessions prune`).
-// Stronger than the steal rule above on purpose: deletion is
-// unrecoverable, so ANY live holder pid protects the session regardless
-// of the lock's age (a reused pid can cost at most a skipped prune), while
-// a dead holder — or a torn/absent payload — never protects. LOCAL
-// FILESYSTEM ONLY, like every read here: pid liveness is this machine's
-// process table, never another host's.
+// Pid-only on purpose, and deliberately stronger than the steal rule:
+// deletion is unrecoverable, so ANY live holder pid protects the session
+// — prune never applies the start-time reuse check, and a reused pid costs
+// at most a skipped prune — while a dead holder, or a torn/absent payload,
+// never protects. LOCAL FILESYSTEM ONLY, like every read here: pid
+// liveness is this machine's process table, never another host's.
 export function sessionLockIsLive(
   sessionDir: string,
 ): { pid: number; startedAt?: number } | undefined {
@@ -300,8 +418,23 @@ export function sessionLockIsLive(
   };
 }
 
-export function releaseSessionLock(sessionDir: string): void {
-  removeLockFile(join(sessionDir, 'lock.json'));
+export function releaseSessionLock(sessionDir: string, nonce?: string): void {
+  const lockPath = join(sessionDir, 'lock.json');
+  const holder = readLockHolder(lockPath);
+  // Owned-release only (issue #145, hardened in #424): a lock naming
+  // another process is left alone. A nonced lock is ours exactly when it
+  // carries the releasing handle's nonce — the pid alone is not enough,
+  // because the same process can release, re-acquire, and then run a
+  // stale handle's release over its own live lock. A caller with no nonce
+  // never owned a nonced lock, and a torn payload is never provably ours
+  // (it stays a stale candidate for the next acquire). Legacy locks with
+  // no nonce keep the pid rule; missing stays the idempotent no-op.
+  if (holder.nonce !== undefined) {
+    if (nonce === undefined || holder.nonce !== nonce) return;
+  } else if (holder.pid !== process.pid) {
+    return;
+  }
+  removeLockFile(lockPath);
 }
 
 // The listing header: Kubic's projection of the session metadata, read by
@@ -403,11 +536,33 @@ function metaFrom(
   if (cwd === undefined || createdAt === undefined) return undefined;
   const conversation = value.conversation;
   const forkedFrom = value.forkedFrom as Record<string, unknown> | undefined;
+  const parentSessionId =
+    typeof value.parentSessionId === 'string' &&
+    value.parentSessionId !== '' &&
+    isSessionId(value.parentSessionId)
+      ? value.parentSessionId
+      : undefined;
+  const role =
+    typeof value.role === 'string' && value.role !== ''
+      ? value.role
+      : undefined;
+  const agentId =
+    typeof value.agentId === 'string' && value.agentId !== ''
+      ? value.agentId
+      : undefined;
   return {
     cwd,
     createdAt,
     ...(typeof value.workspace === 'string' && value.workspace !== ''
       ? { workspace: value.workspace }
+      : {}),
+    ...(parentSessionId === undefined ? {} : { parentSessionId }),
+    ...(role === undefined ? {} : { role }),
+    ...(agentId === undefined ? {} : { agentId }),
+    // Issue #278 (§19): only the two RunMode spellings survive the read —
+    // a foreign or hand-edited value is absent, never a third mode.
+    ...(value.mode === 'autonomous' || value.mode === 'interactive'
+      ? { mode: value.mode }
       : {}),
     ...(typeof conversation === 'number' && Number.isSafeInteger(conversation)
       ? { conversation }
@@ -484,10 +639,13 @@ export async function forkSession(
   const targetDir = sessionDirOf(store, id);
   if (store.bridge.exists(storagePathOf(targetDir)))
     throw new Error(`Session already exists: ${id}`);
-  acquireSessionLock(sourceDir, sourceId);
+  const sourceNonce = acquireSessionLock(sourceDir, sourceId);
   let sourceMeta: KubicSessionMeta | undefined;
+  // Declared outside: the post-fork cleanup below releases the target
+  // lock past the try that acquired it.
+  let targetNonce: string | undefined;
   try {
-    acquireSessionLock(targetDir, id);
+    targetNonce = acquireSessionLock(targetDir, id);
     try {
       const sourceStorage = await openSessionStorage(store, sourceDir, context);
       try {
@@ -506,11 +664,11 @@ export async function forkSession(
         );
       }
     } catch (error) {
-      releaseSessionLock(targetDir);
+      releaseSessionLock(targetDir, targetNonce);
       throw error;
     }
   } finally {
-    releaseSessionLock(sourceDir);
+    releaseSessionLock(sourceDir, sourceNonce);
   }
   try {
     if (sourceMeta === undefined)
@@ -522,6 +680,16 @@ export async function forkSession(
       ...(sourceMeta.workspace === undefined
         ? {}
         : { workspace: sourceMeta.workspace }),
+      // Issue #164: a fork stays in its run's tree — the copied document
+      // already carries the ancestry, and the header must agree with it so
+      // listSessions sees the lineage before the first attach re-syncs.
+      ...(sourceMeta.parentSessionId === undefined
+        ? {}
+        : { parentSessionId: sourceMeta.parentSessionId }),
+      ...(sourceMeta.role === undefined ? {} : { role: sourceMeta.role }),
+      ...(sourceMeta.agentId === undefined
+        ? {}
+        : { agentId: sourceMeta.agentId }),
     };
     let at: number | undefined;
     const storage = await openSessionStorage(store, targetDir, context);
@@ -591,7 +759,7 @@ export async function forkSession(
     }
     throw error;
   } finally {
-    releaseSessionLock(targetDir);
+    releaseSessionLock(targetDir, targetNonce);
   }
 }
 
@@ -612,6 +780,14 @@ function writeSessionHeader(
       cwd: meta.cwd,
       createdAt: meta.createdAt,
       ...(meta.workspace === undefined ? {} : { workspace: meta.workspace }),
+      // Issue #164: the listing projection carries the ancestry, so
+      // listSessions surfaces the tree without opening any storage.
+      ...(meta.parentSessionId === undefined
+        ? {}
+        : { parentSessionId: meta.parentSessionId }),
+      ...(meta.role === undefined ? {} : { role: meta.role }),
+      ...(meta.agentId === undefined ? {} : { agentId: meta.agentId }),
+      ...(meta.mode === undefined ? {} : { mode: meta.mode }),
     })}\n`,
     { mode: 0o600 },
   );
@@ -672,6 +848,9 @@ function handleFor(
   sessionDir: string,
   id: string,
   meta: KubicSessionMeta,
+  // The acquire's nonce: the handle's release proves ownership with it
+  // (issue #424) instead of the pid alone.
+  nonce: string,
 ): SessionHandle {
   let adopted = false;
   return {
@@ -687,7 +866,7 @@ function handleFor(
       try {
         if (!adopted) await storage.close(context);
       } finally {
-        releaseSessionLock(sessionDir);
+        releaseSessionLock(sessionDir, nonce);
       }
     },
   };
@@ -695,11 +874,28 @@ function handleFor(
 
 export async function createSession(
   store: SessionStore,
-  opts: { id?: string; cwd: string; workspace?: string },
+  opts: {
+    id?: string;
+    cwd: string;
+    workspace?: string;
+    parentSessionId?: string;
+    role?: string;
+    agentId?: string;
+    // Issue #278 (§19): the run's mode, recorded in the creating commit.
+    mode?: RunMode;
+  },
   context: Context,
 ): Promise<SessionHandle> {
   const sessionId = opts.id ?? uuidv7();
   if (!isSessionId(sessionId)) throw new SessionIdError(sessionId);
+  // Issue #164: the parent link is a session id or nothing — a value that
+  // cannot name a session directory is refused before anything is written.
+  if (
+    opts.parentSessionId !== undefined &&
+    !isSessionId(opts.parentSessionId)
+  ) {
+    throw new SessionIdError(opts.parentSessionId);
+  }
   const sessionDir = sessionDirOf(store, sessionId);
   // Refusals before the lock: a session that already exists is never
   // re-created over (0.87's `Session already exists: <id>`, same message),
@@ -714,12 +910,18 @@ export async function createSession(
   // storage open, so it must be held before the storage exists, not after.
   // The lock primitive creates the session dir eagerly, which is also the
   // storage's directory.
-  acquireSessionLock(sessionDir, sessionId);
+  const createNonce = acquireSessionLock(sessionDir, sessionId);
   try {
     const meta: KubicSessionMeta = {
       cwd: opts.cwd,
       createdAt: new Date().toISOString(),
       ...(opts.workspace === undefined ? {} : { workspace: opts.workspace }),
+      ...(opts.parentSessionId === undefined
+        ? {}
+        : { parentSessionId: opts.parentSessionId }),
+      ...(opts.role === undefined ? {} : { role: opts.role }),
+      ...(opts.agentId === undefined ? {} : { agentId: opts.agentId }),
+      ...(opts.mode === undefined ? {} : { mode: opts.mode }),
     };
     const storage = await openSessionStorage(store, sessionDir, context);
     // The creating commit: the session's metadata is written with the session
@@ -734,6 +936,11 @@ export async function createSession(
         doc.cwd = meta.cwd;
         doc.createdAt = meta.createdAt;
         if (meta.workspace !== undefined) doc.workspace = meta.workspace;
+        if (meta.parentSessionId !== undefined)
+          doc.parentSessionId = meta.parentSessionId;
+        if (meta.role !== undefined) doc.role = meta.role;
+        if (meta.agentId !== undefined) doc.agentId = meta.agentId;
+        if (meta.mode !== undefined) doc.mode = meta.mode;
       }, context);
     } finally {
       // The kernel owns the storage it was opened over: closing it closes the
@@ -747,6 +954,7 @@ export async function createSession(
       sessionDir,
       sessionId,
       meta,
+      createNonce,
     );
   } catch (error) {
     // A create that fails must not strand its lock, and must not leave a
@@ -754,7 +962,7 @@ export async function createSession(
     // retry as `Session already exists`. The files this call created are
     // removed (the directory and anything predating the call stay); any
     // orphaned sidecar is dropped by the next open's recovery.
-    releaseSessionLock(sessionDir);
+    releaseSessionLock(sessionDir, createNonce);
     for (const path of [storagePathOf(sessionDir), headerPathOf(sessionDir)]) {
       try {
         // FileBridge.remove takes positional flags, not an options object.
@@ -826,7 +1034,7 @@ export async function attachSession(
   // The lock is held before the storage is opened (issue #118, #392): no
   // reader ever observes a session another live attachment is writing, and no
   // second process ever opens the same pi-durable storage.
-  acquireSessionLock(sessionDir, sessionId);
+  const attachNonce = acquireSessionLock(sessionDir, sessionId);
   let storage: Storage | undefined;
   try {
     storage = await openSessionStorage(store, sessionDir, context);
@@ -842,16 +1050,19 @@ export async function attachSession(
         header === undefined ||
         header.cwd !== meta.cwd ||
         header.createdAt !== meta.createdAt ||
-        header.workspace !== meta.workspace
+        header.workspace !== meta.workspace ||
+        header.parentSessionId !== meta.parentSessionId ||
+        header.role !== meta.role ||
+        header.agentId !== meta.agentId
       ) {
         writeSessionHeader(store, sessionDir, sessionId, meta);
       }
     }
-    return handleFor(storage, sessionDir, sessionId, meta);
+    return handleFor(storage, sessionDir, sessionId, meta, attachNonce);
   } catch (error) {
     // The lock above is ours; an attach that fails must not strand it.
     await storage?.close(context).catch(() => undefined);
-    releaseSessionLock(sessionDir);
+    releaseSessionLock(sessionDir, attachNonce);
     throw error;
   }
 }

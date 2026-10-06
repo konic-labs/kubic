@@ -59,14 +59,18 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   on stderr and nothing touched; 1 an unexpected IO failure (root
   catch-all). `undo` also exits **1** when it restored but skipped steps. Three skip classes reach that code:
   `non-reversible (skipped)` — entries an end-of-run reconciliation sweep
-  appended (`unattributed`) whose baseline holds hashes, not pre-images
-  (the exception is a path whose pre-image an earlier attributed entry in
-  the same run already stored — there the sweep entry is reversible, `undo`
-  restores it, and the exit code follows the normal rule);
+  appended (`unattributed`) with no retrievable pre-image (the exceptions
+  are a path clean against the git index at boot — the sweep restores its
+  blob-OID pre-image from the object store — and a path whose pre-image an
+  earlier attributed entry in the same run already stored — there the sweep
+  entry is reversible, `undo` restores it, and the exit code follows the
+  normal rule);
   `stale (skipped)` — the file changed after the entry was journaled, so
   restoring would destroy unjournaled changes (issue #108; `--force`
-  overrides per-invocation); and `already undone (skipped)` — a previous
-  undo already unwound the step, nothing is rewritten. In every skipped
+  overrides per-invocation); `already undone (skipped)` — a previous
+  undo already unwound the step, nothing is rewritten; and
+  `head-moved (skipped)` — the entry predates a HEAD move the run observed
+  (issue #378; `--force` overrides per-invocation). In every skipped
   class the exit is 1 and nothing is written for that step. A live session
   lock (issue #337) refuses the whole invocation with exit 1 and one `error:`
   line naming the holder pid — `--force` overrides it, and nothing is
@@ -142,7 +146,10 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   (`error: … code=<code>` names it: `spawn_failed`, `worker_failed`,
   `result_invalid` (a worker exited 0 without a valid §68 result report),
   `spawn_denied`, `merge_failed`, `merge_conflict`,
-  `no_orchestrator_state`, `reap_failed`); 2 usage errors; 5 the non-git
+  `no_orchestrator_state`, `reap_failed`, plus the lane codes
+  `manager_turn_bound`, `lane_model_unresolved`, `lane_resume_failed`
+  and `lane_provider_unreachable` (opt-in `--manager-lane` only, issue
+  #431); 2 usage errors; 5 the non-git
   refusal (never silently solo); 4 approval denied **or** approval timeout
   — both map to exit 4, and the envelope's `status`, `error.kind` and
   `error.code` all name which: `approval_denied` when the decider is the
@@ -170,9 +177,13 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   `--json` emits `{ok, exitCode, dryRun, worktrees, branches, journal,
   failures?}` and reports the same code in `exitCode`.
 - **`kubic workers`**: 0 (an empty record included); 2 usage errors
-  (unknown flag, stray operand, `--json=1`) with one `error:` line on
+  (unknown flag, unknown subcommand, `--json=1`) with one `error:` line on
   stderr. The old usage-exit remap (1 → 2) is gone: the parser exits 2
-  itself, so a 1 is always a real failure.
+  itself, so a 1 is always a real failure. `inspect`/`terminate` on an
+  unknown id exit 1 (`code=no_such_worker`); `terminate` on a settled
+  worker, a gone pid or a reused pid exits 1 (`code=worker_not_running`)
+  without signalling anything; `terminate --generation <n>` on a replaced
+  worker exits 2 (`code=stale_generation`).
 - **`kubic tui`**: 0 clean quit (final document printed), 2 usage
   errors (unknown options, missing values, operands, bad `--session`), 5
   missing session, 6 no reachable provider, 1 any other lane boot failure.

@@ -51,6 +51,16 @@ export const BUDGET_OWNERSHIP: Record<BudgetLimit, BudgetEnforcer> = {
 
 export type RunMode = 'autonomous' | 'interactive';
 
+// The `--budget` dimension vocabulary (issue #283; §71): the flag dims
+// both `kubic orchestrate --budget` and the solo `run`/`tui` `--budget`
+// parse. Shared here so the two parsers cannot drift apart.
+export const BUDGET_DIMENSIONS: readonly string[] = [
+  'maxTokens',
+  'maxCostUsd',
+  'maxRuntimeMs',
+  'maxToolCalls',
+];
+
 export type BlockedSpawnOutcome =
   | { outcome: 'queued' }
   // Issue #277 (§41.1): an interactive run asks the USER before going past the
@@ -65,6 +75,21 @@ export function resolveBlockedSpawn(
 ): BlockedSpawnOutcome {
   if (mode === 'autonomous') return { outcome: 'queued' };
   return { outcome: 'ask', reason };
+}
+
+// The run's mode (issue #278, §19): autonomous is explicit
+// (`--autonomous`) or standing (`--yes` makes the run autonomous, and a
+// headless run has no one to ask); an attached run without either stays
+// interactive and asks before spawning past the cap.
+export function resolveRunMode(input: {
+  interactive: boolean;
+  autoApprove: boolean;
+  autonomous: boolean;
+}): RunMode {
+  if (input.autonomous || input.autoApprove || !input.interactive) {
+    return 'autonomous';
+  }
+  return 'interactive';
 }
 
 export interface BudgetTermination {

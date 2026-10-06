@@ -28,14 +28,18 @@ import {
   validatePolicy,
 } from './approvals.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
+import type { FullAccessSession } from './doctor-full-access.js';
 // Issue #58 honest limits (§59.1, §78): registration import only — no
 // existing check builder in this file was modified for #58. Exit codes
 // route through the limits mapper so provider-down exits 6.
 import type { ResourceEnforcementProbe } from './limits/doctor-limits.js';
 import {
-  collectLimitChecksFromDeps,
+  depsLimitCheck,
   limitsDoctorExit,
+  policyEnforceabilityCheck,
+  providerAvailabilityCheck,
   resourceEnforcementCheck,
+  staticLimitChecks,
 } from './limits/doctor-limits.js';
 
 export const DOCTOR_EXIT_OK = EXIT_OK;
@@ -58,6 +62,7 @@ export type DoctorReason =
   | 'full-access'
   | 'unsupported-level'
   | 'detection-only'
+  | 'sink-unreachable'
   | 'skipped';
 
 export interface DoctorCheck {
@@ -118,17 +123,33 @@ export interface DoctorDeps extends CliIo {
   // run can never print green. Absent: no role checks (legacy matrices are
   // unchanged).
   probeRoles?: () => DoctorCheck[];
+  // Issue #181 (§29.4): the skills gate probe — absent means no skills
+  // checks. Same contract as probeRoles: a throwing probe becomes one
+  // failing check, returned checks pass through verbatim.
+  probeSkills?: () => DoctorCheck[];
   // §58 enterprise policy (issue #289): the checks `enterpriseDoctorChecks`
   // derives from the resolved `[policy]` section, built by the composition
   // root (host never imports the app). Absent — including when no `[policy]`
   // is configured at all — means no enterprise checks and an unchanged
   // default matrix. A throwing probe becomes one named failing check.
   enterpriseChecks?: () => DoctorCheck[];
+  // §58 configured audit sinks (issue #286): the checks
+  // `auditSinksDoctorChecks` derives from the loaded `[[audit]]` tables,
+  // built by the composition root with real reachability probes. Absent
+  // means no sink checks and an unchanged default matrix. A throwing
+  // probe becomes one named failing check, never a crash.
+  probeAuditSinks?: () => DoctorCheck[];
   // Repo-level session overlap (issue #118; §42.5): the local session
   // store's view of sessions recorded against one workspace — two or more
   // reports a warn note (concurrent different-session runs are legal; the
   // note states the sweep blind spot). Absent: no overlap check.
   probeSessionOverlap?: () => SessionOverlapProbe;
+  // §41.4 full-access sessions (issue #310): the composition root's
+  // enumeration of the workspace's live sessions whose posture.json
+  // records fullAccess (host/doctor-full-access). Absent: no per-session
+  // checks (legacy matrices are unchanged). A throwing probe becomes one
+  // warn check, never a crash: an unlistable store must not flip the exit.
+  probeFullAccessSessions?: () => FullAccessSession[];
   // Issue #361: a state directory that other local users can read (session
   // transcripts, journaled file content). undefined means private or absent.
   probeStatePermissions?: () => StatePermissionProbe | undefined;
@@ -315,6 +336,25 @@ export interface ExtensionPostureInput {
 export interface SessionOverlapProbe {
   workspace: string;
   sessionIds: string[];
+}
+
+function fullAccessSessionCheck(session: FullAccessSession): DoctorCheck {
+  // Warn, never fail: full access is operator intent (flag or toggle),
+  // doctor informs. The detail names the grant when the posture recorded
+  // one, and the way back to enforcement.
+  const granted =
+    session.enabledAt === undefined && session.enabledBy === undefined
+      ? 'grant details not recorded'
+      : `enabled ${session.enabledAt ?? 'at an unknown time'} by ${session.enabledBy ?? 'an unknown operator'}`;
+  return {
+    id: `session:full-access:${session.sessionId}`,
+    label: 'session full access',
+    status: 'warn',
+    reason: 'full-access',
+    detail:
+      `session ${session.sessionId}: approvals FULL ACCESS (${granted}) — ` +
+      'end the session or switch approvals back on; new sessions start enforced',
+  };
 }
 
 function sessionOverlapCheck(probe: SessionOverlapProbe): DoctorCheck {
@@ -552,9 +592,17 @@ export function collectDoctorChecks(
   skip: string[],
 ): DoctorCheck[] {
   const checks: DoctorCheck[] = [];
+  // Issue #291: each probe runs ONCE here and the results are captured —
+  // the limit aggregates at the end reuse these results and never re-call
+  // the probes (a second call would double-bill expensive probes and let
+  // a flaky probe answer differently twice).
+  let providerProbes: ProviderProbe[] | undefined;
+  let providerError: unknown;
   try {
-    checks.push(...providerChecks(deps.probeProviders()));
+    providerProbes = deps.probeProviders();
+    checks.push(...providerChecks(providerProbes));
   } catch (error) {
+    providerError = error;
     checks.push({
       id: 'provider:probe',
       label: 'provider probe',
@@ -563,9 +611,13 @@ export function collectDoctorChecks(
       detail: probeMessage(error),
     });
   }
+  let depProbes: DepProbe[] | undefined;
+  let depError: unknown;
   try {
-    checks.push(...depChecks(deps.checkDeps()));
+    depProbes = deps.checkDeps();
+    checks.push(...depChecks(depProbes));
   } catch (error) {
+    depError = error;
     checks.push({
       id: 'dep:check',
       label: 'dep check',
@@ -590,11 +642,16 @@ export function collectDoctorChecks(
     }
   }
   let configured: ConfiguredApprovals | undefined;
+  let rawPolicy: unknown;
+  let policyLoaded = false;
+  let policyError: unknown;
   try {
-    const raw = deps.loadPolicy();
-    configured = configuredApprovals(raw);
-    checks.push(policyCheck(raw));
+    rawPolicy = deps.loadPolicy();
+    policyLoaded = true;
+    configured = configuredApprovals(rawPolicy);
+    checks.push(policyCheck(rawPolicy));
   } catch (error) {
+    policyError = error;
     checks.push({
       id: 'policy:approvals',
       label: 'policy approvals',
@@ -658,6 +715,21 @@ export function collectDoctorChecks(
       });
     }
   }
+  // Skills gate (issue #181, §29.4): opt-in via the injected probe —
+  // absent means no skills checks, same fail-closed probe contract.
+  if (deps.probeSkills !== undefined) {
+    try {
+      checks.push(...deps.probeSkills());
+    } catch (error) {
+      checks.push({
+        id: 'skill:documents',
+        label: 'skill documents',
+        status: 'fail',
+        reason: 'policy-mismatch',
+        detail: probeMessage(error),
+      });
+    }
+  }
   // §58 enterprise policy (issue #289): opt-in via the injected probe — the
   // composition root builds it from the SAME effective `[policy]` resolution
   // `kubic policy` reports (enterpriseDoctorChecks), and only when a
@@ -673,6 +745,22 @@ export function collectDoctorChecks(
         label: 'policy enterprise',
         status: 'fail',
         reason: 'policy-mismatch',
+        detail: probeMessage(error),
+      });
+    }
+  }
+  // §58 configured audit sinks (issue #286): opt-in via the injected
+  // probe — absent means no sink checks, so legacy matrices are unchanged.
+  // A throwing probe becomes one named failing check, never a crash.
+  if (deps.probeAuditSinks !== undefined) {
+    try {
+      checks.push(...deps.probeAuditSinks());
+    } catch (error) {
+      checks.push({
+        id: 'audit:sinks',
+        label: 'audit sinks',
+        status: 'fail',
+        reason: 'sink-unreachable',
         detail: probeMessage(error),
       });
     }
@@ -714,16 +802,142 @@ export function collectDoctorChecks(
       });
     }
   }
+  // §41.4 full-access sessions (issue #310): one warning per live session
+  // running with approvals off (see fullAccessSessionCheck). A throwing
+  // probe becomes one warn check, never a crash.
+  if (deps.probeFullAccessSessions !== undefined) {
+    try {
+      for (const session of deps.probeFullAccessSessions()) {
+        checks.push(fullAccessSessionCheck(session));
+      }
+    } catch (error) {
+      checks.push({
+        id: 'session:full-access',
+        label: 'session full access',
+        status: 'warn',
+        reason: 'ok',
+        detail: `full-access sessions unverified (session store not listable): ${probeMessage(error)}`,
+      });
+    }
+  }
   // License identity (issue #59): reported on every run, never skipped
   // implicitly — --skip license:kubic remains available like any check.
   checks.push(licenseCheck());
-  // Issue #58 honest limits (§59.1): registration only — the limit
-  // checks ride the same --skip and exit path as #29. The builder is
-  // total (a throwing probe becomes a failing check). Static §59.1
-  // notices report warn (informational, never exit-flipping); only
-  // fail (provider-down, deps-missing, policy-mismatch) flips the exit,
-  // via limitsDoctorExit below (6 for provider-down, 1 otherwise).
-  checks.push(...collectLimitChecksFromDeps(deps));
+  // Issue #58 honest limits (§59.1) plus issue #291: the limit aggregates
+  // derive from the probes captured above — never a second probe call —
+  // and from the POST-skip items, so skipping a failing item clears the
+  // aggregate it would otherwise fail. A direct --skip of a limit id is
+  // still honoured by the final pass below.
+  const skipped = new Set(skip);
+  checks.push(
+    ...limitChecksFromResults(
+      {
+        providerProbes,
+        providerError,
+        depProbes,
+        depError,
+        rawPolicy,
+        policyLoaded,
+        policyError,
+      },
+      skipped,
+    ),
+  );
+  return applySkip(checks, skip);
+}
+
+// Issue #291: limit aggregates from captured probe results. Probes whose
+// per-item check was skipped are excluded, so a skipped refusal no longer
+// fails the aggregate; when skipping empties a section entirely the
+// aggregate reports skip (it has nothing to assess), never a failure.
+function limitChecksFromResults(
+  probed: {
+    providerProbes: ProviderProbe[] | undefined;
+    providerError: unknown;
+    depProbes: DepProbe[] | undefined;
+    depError: unknown;
+    rawPolicy: unknown;
+    policyLoaded: boolean;
+    policyError: unknown;
+  },
+  skipped: Set<string>,
+): DoctorCheck[] {
+  const checks: DoctorCheck[] = [...staticLimitChecks()];
+  if (probed.providerProbes === undefined) {
+    checks.push({
+      id: 'limit:provider-availability',
+      label: 'limit provider availability',
+      status: 'fail',
+      reason: 'provider-down',
+      detail: probeMessage(probed.providerError),
+    });
+  } else {
+    const live = probed.providerProbes.filter(
+      (probe) => !skipped.has(`provider:${probe.id}`),
+    );
+    checks.push(
+      aggregateOrSkipped(
+        providerAvailabilityCheck(live),
+        probed.providerProbes.length,
+        live.length,
+      ),
+    );
+  }
+  if (probed.depProbes === undefined) {
+    checks.push({
+      id: 'limit:deps-present',
+      label: 'limit deps present',
+      status: 'fail',
+      reason: 'deps-missing',
+      detail: probeMessage(probed.depError),
+    });
+  } else {
+    const live = probed.depProbes.filter(
+      (probe) => !skipped.has(`dep:${probe.id}`),
+    );
+    checks.push(
+      aggregateOrSkipped(
+        depsLimitCheck(live),
+        probed.depProbes.length,
+        live.length,
+      ),
+    );
+  }
+  if (!probed.policyLoaded) {
+    checks.push({
+      id: 'policy:enforceability',
+      label: 'policy enforceability',
+      status: 'fail',
+      reason: 'policy-mismatch',
+      detail: probeMessage(probed.policyError),
+    });
+  } else {
+    // A skipped policy:approvals changes nothing here: the check reads the
+    // raw policy and already passes with a pointer when it is invalid.
+    checks.push(policyEnforceabilityCheck(probed.rawPolicy));
+  }
+  return checks;
+}
+
+// When --skip emptied a section entirely, the aggregate has nothing to
+// assess: it reports skip, never a failure (or a vacuous pass).
+function aggregateOrSkipped(
+  built: DoctorCheck,
+  total: number,
+  live: number,
+): DoctorCheck {
+  if (live === 0 && total > 0) {
+    return {
+      ...built,
+      status: 'skip' as DoctorStatus,
+      reason: 'skipped' as DoctorReason,
+      detail: `skipped via --skip (all inputs skipped)`,
+    };
+  }
+  return built;
+}
+
+function applySkip(checks: DoctorCheck[], skip: string[]): DoctorCheck[] {
   return checks.map((check) =>
     skip.includes(check.id)
       ? {
@@ -750,6 +964,10 @@ function summarize(checks: DoctorCheck[]): string {
 export interface DoctorCommandOptions {
   readonly skip?: readonly string[];
   readonly json?: boolean;
+  // Issue #310: check one session — its installed posture reads that
+  // session's posture.json, and the full-access enumeration covers
+  // exactly it (workspace filter bypassed).
+  readonly session?: string;
 }
 
 export async function runDoctorCommand(

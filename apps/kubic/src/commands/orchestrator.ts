@@ -9,8 +9,9 @@
 // (packages/host) receive typed options and own the run itself.
 
 import { InvalidArgumentError, Option } from '@commander-js/extra-typings';
+import { BUDGET_DIMENSIONS } from '../../../../packages/agents/src/budget.js';
+import { CliUsageError } from '../../../../packages/core/src/cli/exit-codes.js';
 import {
-  BUDGET_DIMENSIONS,
   type ParsedBudgetSpec,
   parseAgentBindings,
   parseBudgetSpec,
@@ -41,7 +42,7 @@ function budgetSpec(raw: string): ParsedBudgetSpec {
   const spec = parseBudgetSpec(raw);
   if (spec === undefined) {
     throw new InvalidArgumentError(
-      `Use <dim>=<n>[,…] or <agent>:<dim>=<n>[;…] with positive numbers; dims: ${BUDGET_DIMENSIONS.join(', ')}.`,
+      `Use <dim>=<n>[,…], <agent>:<dim>=<n>[;…] or total:<dim>=<n> (aggregate task cap) with positive numbers; dims: ${BUDGET_DIMENSIONS.join(', ')}.`,
     );
   }
   return spec;
@@ -126,9 +127,22 @@ export const registerOrchestratorCommands: CommandRegistrar = (
       positiveInt,
     )
     .option(
+      '--manager-lane',
+      'drive this run through the model-driven manager lane instead of the deterministic template plan (needs a resolvable manager model; overrides [orchestrator].manager)',
+    )
+    .option(
       '--on-failure <mode>',
       "what one worker's failure does to the run: 'stop' (default) fails the run, 'continue' merges the survivors and exits 7",
       failureMode,
+    )
+    .option(
+      '--max-attempts <n>',
+      'debugger-loop bound (§70): how many debugger settlements before the single escalation and the loop-bound failure (default 3)',
+      positiveInt,
+    )
+    .option(
+      '--escalation-model <provider/id>',
+      'stronger model the debugger loop climbs to once after --max-attempts (default: the debugger relaunches at its own model)',
     )
     .option(
       '--session <id>',
@@ -141,6 +155,10 @@ export const registerOrchestratorCommands: CommandRegistrar = (
     )
     .option('--yes', 'auto-approve every merge (non-interactive)')
     .option(
+      '--autonomous',
+      'run to completion without stopping for input (§19; recorded in the session and audit)',
+    )
+    .option(
       '--skill <path>',
       'skill every worker and the resolver are granted (repeatable); a relative path resolves against this cwd',
       collect,
@@ -148,7 +166,7 @@ export const registerOrchestratorCommands: CommandRegistrar = (
     )
     .option(
       '--budget <dims>',
-      'opt-in per-worker budget, e.g. maxToolCalls=20 or w1:maxCostUsd=1;w2:maxTokens=5000',
+      'opt-in per-worker budget, e.g. maxToolCalls=20 or w1:maxCostUsd=1;w2:maxTokens=5000; total:maxCostUsd=5 caps the whole task',
       budgetSpec,
     )
     .option(
@@ -212,6 +230,10 @@ export const registerOrchestratorCommands: CommandRegistrar = (
       'journal retention: keep at most n bytes',
       positiveInt,
     )
+    .option(
+      '--all-sessions',
+      'with --journal, prune session journals of every workspace, not just this one',
+    )
     .option('--json', 'print one JSON envelope on stdout')
     .addHelpText('after', CLEAN_EXAMPLES)
     .action(async ({ session, ...rest }) => {
@@ -222,15 +244,53 @@ export const registerOrchestratorCommands: CommandRegistrar = (
       ctx.setExitCode(await runners.clean(options, config));
     });
 
-  program
+  // `kubic workers` is a group (issue #167; the `sessions` shape): the bare
+  // form lists, `inspect <id>` shows one worker, `terminate <id>` stops one.
+  // The group action owns the operands so an unknown subcommand is the
+  // documented `error: unknown command '<name>'` (exit 2), not commander's
+  // excess-arguments line.
+  const workers = program
     .command('workers')
-    .description('list orchestrator workers from the repo record')
+    .description('list, inspect or terminate orchestrator workers')
     .option('--json', 'print the rows as one JSON array')
     .option(
       '--debug',
       'also print §50 spawn/exit lines on stderr (or KUBIC_DEBUG=1)',
     )
-    .action(async (options) => {
-      ctx.setExitCode(await runners.workers(options, config));
+    .allowExcessArguments();
+  workers.action(async (options, command) => {
+    const name = command.args[0] as string | undefined;
+    if (name === undefined) {
+      ctx.setExitCode(
+        await runners.workers({ command: 'list', ...options }, config),
+      );
+      return;
+    }
+    throw new CliUsageError(`unknown command '${name}' (inspect | terminate)`);
+  });
+  workers
+    .command('inspect')
+    .description("show one worker's row, worktree, budget, usage and approvals")
+    .argument('<id>', 'the worker id', sessionId)
+    .option('--json', 'print the worker as one JSON object')
+    .action(async (id, options) => {
+      ctx.setExitCode(
+        await runners.workers({ command: 'inspect', id, ...options }, config),
+      );
+    });
+  workers
+    .command('terminate')
+    .description('stop a runaway worker via the lifecycle layer (group reap)')
+    .argument('<id>', 'the worker id', sessionId)
+    .option(
+      '--generation <n>',
+      'only stop the generation the operator saw (a replaced worker is refused)',
+      positiveInt,
+    )
+    .option('--json', 'print the termination as one JSON object')
+    .action(async (id, options) => {
+      ctx.setExitCode(
+        await runners.workers({ command: 'terminate', id, ...options }, config),
+      );
     });
 };

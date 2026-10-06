@@ -9,6 +9,8 @@
 // reused verbatim — there is no second parser and no second loader here.
 // Pure and injected: the FileBridge arrives as a parameter, so tests drive
 // fixtures while prod passes the real bridge.
+
+import type { PermissionClasses } from '../../../agents/src/policy.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import type { EffectivePolicy } from '../policy/enterprise.js';
 import type { RoleLayerInput } from './resolver.js';
@@ -29,18 +31,50 @@ export interface WorkerRoleAssignment {
   /** The resolver's resolved tool set: what the worker lane registers. */
   tools: string[];
   /**
+   * The role's resolved classes (issue #196, §40.2): the manager sends
+   * these in the task resources and the child merges them with its own
+   * config classes (most restrictive wins) — the worker runs under the
+   * role without re-reading a worktree document.
+   */
+  classes: PermissionClasses;
+  /**
+   * The role's approval obligations (issue #196, §41.1): document +
+   * layers unioned. The child challenges these tools on its triggers.
+   */
+  requires: string[];
+  /**
    * The resolved `provider/model` pin the worker child is told, or undefined
    * when no level chose one (issue #202): the child then keeps its own
    * selection default instead of being forced onto an invented provider.
-   * Precedence: `[roles.<r>].model` config > the manager's effective model.
+   * Precedence: explicit per-agent pin > `[roles.<r>].model` config > the
+   * document's own pin > the manager's effective model.
    */
   modelRef: string | undefined;
   /**
-   * The thinking level the worker child is told (issue #202): the run's
-   * explicit level (`KUBIC_MODEL_THINKING`) when set, else the role's own
+   * The document's own budget dims (issue #198, §71), or undefined when
+   * the role declares none — absent means unbounded. A copy, so the plan
+   * owns the dims the spawn gate will enforce.
+   */
+  budget?: Record<string, number>;
+  /**
+   * The thinking level the worker child is told (issues #202/#225): the
+   * run's explicit level (`KUBIC_MODEL_THINKING`) when set, else the
+   * role's `[roles.<r>].thinking` config default, else the role's own
    * §12 default. Undefined leaves the child's `[model].thinking` in force.
    */
   thinking: string | undefined;
+}
+
+// The document budget in force for one worker (issue #198): the
+// assignment's own dims, or undefined when the role declares none (the
+// spawn gate then enforces nothing for this worker). The orchestrate
+// budget composition calls this only after the CLI's own by-agent and
+// shared specs — spawn/CLI > document.
+export function roleBudgetForAgent(
+  plan: WorkerRolesPlan,
+  agentId: string,
+): Record<string, number> | undefined {
+  return plan.assignments.find((entry) => entry.agentId === agentId)?.budget;
 }
 
 export interface WorkerRolesPlan {
@@ -85,13 +119,26 @@ export const DEFAULT_WORKER_ROLE: BuiltinRoleName = 'implementer';
 export interface WorkerRolesInput {
   bridge: Pick<FileBridge, 'listDir' | 'readTextFile'>;
   cwd: string;
+  // Issue #229 (§35.1): the project root the repo documents resolve at.
+  // Forwarded to the live loader; absent means the cwd itself.
+  projectRoot?: string;
+  // Issue #430 (§33, L-D27): project trust for the repo documents —
+  // forwarded to the live loader; absent both means untrusted.
+  trusted?: boolean;
+  trustProject?: (dir: string) => boolean;
+  // Issue #241 (§35): the home directory whose `.kubic/roles` the planning
+  // layers under the project documents — the same roles the worker's own
+  // `kubic run --role` will resolve. Absent means no global source.
+  home?: string;
   agents: readonly string[];
   layers?: RoleLayerInput[];
-  // §38.1 model levels (issue #202): the manager's own effective model pin
-  // (`provider/id`) is the fallback under the role's `[roles.<r>].model`,
-  // and the run's explicit thinking level (`KUBIC_MODEL_THINKING`) outranks
-  // the role's own thinking default. Both absent means the child keeps its
-  // own selection/thinking defaults — never a hardcoded role provider.
+  // §38.1 model levels (issue #202) plus the role thinking default (issue
+  // #225): the manager's own effective model pin (`provider/id`) is the
+  // fallback under the role's `[roles.<r>].model`, and the run's explicit
+  // thinking level (`KUBIC_MODEL_THINKING`) outranks the role's
+  // `[roles.<r>].thinking` config default, which outranks the role's own
+  // §12 default. Both absent means the child keeps its own
+  // selection/thinking defaults — never a hardcoded role provider.
   parentModel?: string;
   thinkingOverride?: string;
   // Explicit per-agent binding (issue #178): `roles` names one of the five
@@ -164,7 +211,15 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
     loaded = loadRoles({
       bridge: input.bridge,
       cwd: input.cwd,
+      ...(input.projectRoot === undefined
+        ? {}
+        : { projectRoot: input.projectRoot }),
+      ...(input.home === undefined ? {} : { home: input.home }),
       ...(input.layers === undefined ? {} : { layers: input.layers }),
+      ...(input.trusted === undefined ? {} : { trusted: input.trusted }),
+      ...(input.trustProject === undefined
+        ? {}
+        : { trustProject: input.trustProject }),
     });
   } catch (error) {
     return {
@@ -203,18 +258,35 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
         bridge: input.bridge,
         cwd: input.cwd,
         role,
+        ...(input.projectRoot === undefined
+          ? {}
+          : { projectRoot: input.projectRoot }),
+        ...(input.home === undefined ? {} : { home: input.home }),
         ...(input.layers === undefined ? {} : { layers: input.layers }),
+        ...(input.trusted === undefined ? {} : { trusted: input.trusted }),
+        ...(input.trustProject === undefined
+          ? {}
+          : { trustProject: input.trustProject }),
         ...(input.toolPolicy === undefined
           ? {}
           : { toolPolicy: input.toolPolicy }),
       });
       const promptText = rolePromptFor(selected.doc, selected.markdown);
+      // Issue #225: the role's merged `[roles.<r>].thinking` config default
+      // sits between the run's explicit level and the hardcoded §12
+      // default — without it the config-file value the docs promise the
+      // child never reaches the plan (the GAP in #225's review).
       const fallbackThinking = ROLE_THINKING_DEFAULTS[role];
       assignments.push({
         agentId,
         role,
         promptText,
         tools: [...selected.resolved.tools],
+        // Issue #196 (§40.2/§41.1): the role's classes and approval
+        // obligations travel in the task resources — the child merges
+        // the classes with its own config, most restrictive wins.
+        classes: { ...selected.resolved.classes },
+        requires: [...selected.resolved.requires],
         // §38.1 (issue #202/#178): the explicit per-agent pin, then the
         // role's own config pin, then the manager's model — never the role
         // NAME and never a hardcoded provider.
@@ -224,7 +296,16 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
             : undefined) ??
           selected.resolved.model ??
           input.parentModel,
-        thinking: input.thinkingOverride ?? fallbackThinking,
+        thinking:
+          input.thinkingOverride ??
+          selected.resolved.thinking ??
+          fallbackThinking,
+        // Issue #198 (§71): the document's own budget dims ride the
+        // assignment, so the spawn gate can enforce them when no
+        // spawn/CLI budget outranks them. Absent stays absent.
+        ...(selected.resolved.budget === undefined
+          ? {}
+          : { budget: { ...selected.resolved.budget } }),
       });
     } catch (error) {
       refusedByName.set(

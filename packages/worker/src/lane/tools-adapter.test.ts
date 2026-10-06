@@ -348,11 +348,16 @@ describe('kubicToolsToPiTools (issue #168)', () => {
 
   it('read refuses binary content with size and type, never replacement chars', async () => {
     const env = new FakeExecutionEnv({});
-    const bytes = '\uFFFDPNG\r\n\u001a\n';
-    env.fs.writeFile('logo.png', bytes);
+    // Seam without ranged reads (issue #356): the literal-U+FFFD fixture
+    // only refuses on the fallback path, which treats a surviving U+FFFD
+    // as evidence the decode replaced bytes (fail-closed by design).
+    env.fs.readFileRange = undefined;
+    env.fs.writeFile('logo.png', '\uFFFDPNG\r\n\u001a\n');
     const out = await text('read', { path: 'logo.png' }, toolContext({ env }));
+    // BYTE size (issue #356): U+FFFD is 3 bytes in UTF-8, so the 8-char
+    // fixture stats as 10 bytes.
     expect(out).toBe(
-      `[read logo.png: binary file (${bytes.length}B, invalid UTF-8) — read serves text only; use bash for byte-level inspection]\n`,
+      `[read logo.png: binary file (10B, invalid UTF-8) — read serves text only; use bash for byte-level inspection]\n`,
     );
     expect(out).not.toContain('\uFFFD');
   });
@@ -456,6 +461,49 @@ describe('kubicToolsToPiTools (issue #168)', () => {
       toolContext({ env }),
     );
     expect(JSON.parse(out)).toMatchObject({ path: 'w.txt' });
+  });
+
+  it('an unexpected throw stays an internal error result and never rejects', async () => {
+    // readFailure names known fs failures and propagates anything else
+    // unchanged, so a raw seam fault reaches callOperation's catch and
+    // becomes code 'internal' content — the promise resolves, pi-durable
+    // only marks a throw as an error result.
+    const base = new FakeExecutionEnv({});
+    const fault = (): never => {
+      throw new Error('disk on fire');
+    };
+    const env = Object.assign(Object.create(base) as FakeExecutionEnv, {
+      fs: { ...base.fs, readFile: fault, readFileRange: fault },
+    });
+    const out = await run('read', { path: 'x.txt' }, toolContext({ env }));
+    expect(out.text).toBe('error internal: disk on fire');
+    expect(out.isError).toBeUndefined();
+    expect(out.details).toEqual({
+      ok: false,
+      toolCallId: 'call-1',
+      code: 'internal',
+    });
+  });
+
+  it('a failed never-replay op writes no memo on the lane either (issue #217)', async () => {
+    // The lane sets keepEffectMemo: false, so the registry memo never
+    // engages there — success (above) or failure, no second durable copy.
+    const env = new FakeExecutionEnv({});
+    env.fs.writeFile('x.txt', 'aaa\n');
+    const api = drive({ callId: 'call-edit-1' });
+    const out = await run(
+      'edit',
+      { path: 'x.txt', oldText: 'zzz-no-match', newText: 'b' },
+      toolContext({ env }),
+      api,
+    );
+    expect(out.text).toBe('error no_match: edit: oldText not found in x.txt');
+    expect(out.details).toEqual({
+      ok: false,
+      toolCallId: 'call-edit-1',
+      code: 'no_match',
+    });
+    expect([...api.memos.keys()]).toEqual([]);
   });
 
   it('an op error stays a model-readable error line', async () => {

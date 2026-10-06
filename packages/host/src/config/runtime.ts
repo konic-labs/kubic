@@ -18,11 +18,17 @@
 // File access arrives as the exec FileBridge (I/O confinement): this module
 // never imports node:fs. Zero network, zero real processes.
 
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import {
   type PermissionClasses,
   validateClasses,
 } from '../../../agents/src/policy.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
+import {
+  DEFAULT_RESERVE_TOKENS,
+  effectiveReserveTokens,
+  SOLO_KEEP_RECENT_TOKENS,
+} from '../../../worker/src/compaction.js';
 import { alwaysAskAutoApprove, validatePolicy } from '../approvals.js';
 import {
   type EffectivePolicy,
@@ -31,15 +37,19 @@ import {
   resolveEffectivePolicy,
 } from '../policy/enterprise.js';
 import { redactSecretShapes } from '../policy/secret-shapes.js';
+import { findProjectRoot } from '../project-root.js';
 import {
   type ApprovalsConfig,
   ConfigError,
   type ConfigLayer,
   checkGitignoreSplit,
+  checkOrchestratorManager,
   checkOrchestratorMaxWorkers,
   checkOrchestratorRoot,
   checkOutOfScopeEntries,
   checkRoleModelRef,
+  checkSessionCompaction,
+  checkThinkingLevel,
   checkVerifyConfig,
   defaultLayerPaths,
   type KubicConfig,
@@ -47,6 +57,7 @@ import {
   mergeLayered,
   ProjectUntrustedError,
   parseLayerConfig,
+  resolveConfigSkills,
   VERIFY_COMMAND_KEYS,
 } from './config.js';
 import { parseSecretRef } from './secrets.js';
@@ -123,6 +134,10 @@ export function runtimeKeyEffectText(entry: RuntimeKeyEffect): string {
 }
 
 export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
+  'agent.systemPromptFile': {
+    effect:
+      'file whose contents the run, tui and replay lanes append to the assembled system prompt (ahead of the skills block)',
+  },
   'agent.name': {
     effect:
       'agent id on the solo lane + journal attribution (`kubic diff --agent`)',
@@ -135,7 +150,31 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   'model.thinking': {
     effect:
-      'default thinking level reported by `kubic config`; per-run override is --model',
+      'thinking level the run/tui lane boots with (clamped to the model); per-run override is --thinking, then KUBIC_MODEL_THINKING',
+  },
+  'model.timeoutMs': {
+    effect:
+      'per-request provider timeout on the solo lane (`settings.stream`), layered per role by `[roles.<name>].timeoutMs` (§37.4)',
+  },
+  'model.maxRetries': {
+    effect:
+      'provider/SDK retries inside one request attempt on the solo lane (`settings.stream`), layered per role by `[roles.<name>].maxRetries` (§37.4)',
+  },
+  'model.maxRetryDelayMs': {
+    effect:
+      'cap on the server-requested retry delay on the solo lane (`settings.stream`), layered per role by `[roles.<name>].maxRetryDelayMs` (§37.4)',
+  },
+  'model.cacheRetention': {
+    effect:
+      'prompt cache retention preference on the solo lane (`settings.stream`), layered per role by `[roles.<name>].cacheRetention` (§37.4)',
+  },
+  'model.escalate': {
+    effect:
+      'escalation ladder rungs the run/tui lane climbs one-way (§38.4); a role escalate wins for that role',
+  },
+  'model.maxEscalations': {
+    effect:
+      'climbs allowed per run on the escalation ladder (§38.4); unset means the ladder length',
   },
   'modes.solo': {
     effect:
@@ -190,13 +229,17 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   roles: {
     effect:
-      'per-role model/tool defaults layered under the role document (§12.1)',
+      'per-role model/tool/thinking/request-option defaults, requires and the allowed model set, layered under the role document (§12.1, §38.2)',
   },
   'orchestrator.root': {
     effect: 'parent directory for orchestrator worktrees',
   },
   'orchestrator.maxWorkers': {
     effect: 'default admission cap for the orchestrator scheduler (§45)',
+  },
+  'orchestrator.manager': {
+    effect:
+      'opt-in driver for `kubic orchestrate`: "lane" routes the run through the model-driven manager lane, "template" (the default) keeps the deterministic plan',
   },
   'ui.theme': {
     effect:
@@ -216,6 +259,18 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
     effect:
       'default keep-window for `kubic sessions prune` (deletion stays explicit)',
   },
+  'session.autoCompact': {
+    effect:
+      'threshold compaction on the solo lane (run, tui, workers): false disables it, true is the automatic default',
+  },
+  'session.reserveTokens': {
+    effect:
+      'reserved-room tokens on the solo lane (run, tui, workers), clamped per model to at most a quarter of its context window',
+  },
+  'session.keepRecentTokens': {
+    effect:
+      'verbatim recent-context window on the solo lane (run, tui, workers)',
+  },
   'verify.tests': {
     effect:
       'tests gate command run in the worktree after each run settles; exit status → signal:tests (§48)',
@@ -234,6 +289,14 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   'verify.timeoutMs': {
     effect: 'per-command bound for the [verify] gates (a timeout is a fail)',
+  },
+  // §29.2 (issue #237): the top-level `skills` array — NOT a `[skills]`
+  // section. Entries resolve against their declaring file at load and
+  // reach `run`, `tui` and orchestrator workers with source 'settings';
+  // project-layer entries apply only for a trusted project.
+  skills: {
+    effect:
+      'settings skills for `kubic run`, `kubic tui` and orchestrator workers (loaded with source `settings`)',
   },
   // §58 enterprise [policy] (issue #288). The allow/deny and model keys reach
   // the live path (lane tool intersection, model selection gate, `kubic
@@ -284,7 +347,7 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
     kept: 'max_agents/max_cost_usd resolve into the effective policy but are NOT enforced: the orchestrator cap is a named follow-up (doctor does not report it yet)',
   },
   audit: {
-    kept: '[[audit]] sinks are parsed and validated; sink construction is a named follow-up, so the CLI cannot write to them yet',
+    kept: '[[audit]] sinks are parsed, validated and built: appendToLedger fans every §60 row out to the configured sinks plus the mandatory repo ledger (level = privileged keeps decisions and privileged actions only)',
   },
 };
 
@@ -292,6 +355,15 @@ export interface RuntimeModelSelection {
   provider: string;
   id: string;
   thinking?: string;
+}
+
+// The effective thinking level (issue #225; §38.3) with where it came from.
+// `cli`/`env` sources are per-run overrides that beat a session's persisted
+// level; a file-layer source is the config default, which a persisted
+// session level and a role default both beat (resolved at lane boot).
+export interface RuntimeThinking {
+  level: string;
+  source: ConfigValueSource;
 }
 
 // A cli/env model pin the frozen enterprise `[model]` overrode (issue #295;
@@ -335,6 +407,38 @@ export interface RuntimeJournal {
   source: ConfigValueSource;
 }
 
+export interface RuntimeSystemPrompt {
+  // The resolved path (what `kubic config` reports) and the contents the
+  // lane boots append to the assembled system prompt. Read once, at load,
+  // through the file bridge — a missing or unreadable file is a named
+  // ConfigError, never a silent skip.
+  path: string;
+  contents: string;
+  // The layer that declared it (global paths are always allowed; the
+  // project layer additionally requires trust and containment, enforced
+  // at load).
+  source: ConfigValueSource;
+}
+
+export interface RuntimeCompaction {
+  // Undefined means "not configured" — the lane defaults apply (automatic
+  // compaction, the default reserve, the default recent window), never an
+  // invented value here.
+  enabled?: boolean;
+  reserveTokens?: number;
+  keepRecentTokens?: number;
+  // The highest-precedence layer that set a key, or 'defaults' when none
+  // is set.
+  source: ConfigValueSource;
+}
+
+// The merged `[model]` escalation ladder (issue #210; §38.4): steps plus
+// the per-run bound, projected once per config load.
+export interface RuntimeEscalation {
+  steps: string[];
+  maxEscalations: number;
+}
+
 export interface RuntimeModes {
   solo: boolean;
   orchestrator: boolean;
@@ -354,6 +458,12 @@ export interface RuntimeOrchestrator {
    * session/argv cap still wins.
    */
   maxWorkers?: number;
+  /**
+   * The delegation driver (issue #431, L-D34): `"lane"` opts the run
+   * into the model-driven manager lane, anything else (including absent)
+   * keeps the deterministic template plan.
+   */
+  manager?: 'lane' | 'template';
 }
 
 export interface RuntimeBudgets {
@@ -375,6 +485,12 @@ export interface RuntimeConfigInputs {
   bridge: Pick<FileBridge, 'exists' | 'readTextFile'>;
   home: string;
   cwd: string;
+  // Issue #229 (§35.1): the project root the project layer resolves at —
+  // the nearest ancestor holding `.kubic/` (or the git top level). Absent
+  // means the load resolves it from the cwd itself (findProjectRoot), so
+  // a run from a subdirectory reads the same committed config as one from
+  // the root instead of silently dropping to defaults.
+  projectRoot?: string;
   workspaceRoot?: string;
   enterprisePath?: string;
   productPath?: string;
@@ -382,7 +498,7 @@ export interface RuntimeConfigInputs {
   // Trust gate for the project layer (§35.1). An explicit true is the
   // caller's accepted trust prompt; KUBIC_TRUST_PROJECT=1 also opts in.
   projectTrusted?: boolean;
-  cli?: { model?: RuntimeModelSelection };
+  cli?: { model?: RuntimeModelSelection; thinking?: string };
   // Session/agent layers arrive programmatically, never as files.
   session?: KubicConfig;
   agent?: KubicConfig;
@@ -407,9 +523,21 @@ export interface RuntimeConfig {
   policy: EffectivePolicy;
   model: RuntimeModelSelection | undefined;
   modelSource: ConfigValueSource;
+  // Undefined when nothing set a level: the lane then boots at the session's
+  // persisted level, a role default, or Pi's 'off'.
+  thinking: RuntimeThinking | undefined;
+  // The merged `[model]` escalation ladder (issue #210; §38.4): the steps
+  // plus the bound (defaulting to the ladder length — the ladder itself
+  // bounds). Undefined when no layer named rungs: escalation is opt-in.
+  // A role's own ladder wins per run at the lane, not here.
+  escalate: RuntimeEscalation | undefined;
   approvals: RuntimeApprovals;
   permissions: RuntimePermissions;
   journal: RuntimeJournal;
+  compaction: RuntimeCompaction;
+  // Undefined when no layer declares `[agent] systemPromptFile` — the
+  // lane assembles its prompt unchanged.
+  systemPromptFile?: RuntimeSystemPrompt;
   modes: RuntimeModes;
   orchestrator: RuntimeOrchestrator;
   verify: RuntimeVerify;
@@ -455,8 +583,17 @@ export interface EffectiveConfigView {
     outOfScope?: string[];
     source: ConfigValueSource;
   };
+  compaction: {
+    enabled: boolean;
+    reserveTokens: number;
+    keepRecentTokens: number;
+    source: ConfigValueSource;
+  };
   model: RuntimeModelSelection | undefined;
   modelSource: ConfigValueSource;
+  // The effective thinking level with its source (issue #225), so
+  // `kubic config --json` reports what the lane boots with.
+  thinking: RuntimeThinking | undefined;
   modes: RuntimeModes;
   budgets: RuntimeBudgets;
   projectTrusted: boolean;
@@ -495,7 +632,22 @@ function formatValue(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((item) => formatValue(item)).join(', ')}]`;
   }
+  // Tables render as JSON (issue #255): the role `models` set is the
+  // first array-of-tables in config, and without this branch it printed
+  // `[object Object]`. Strings redact leaf-wise, never the structure.
+  if (isRecord(value)) return JSON.stringify(redactDeep(value));
   return JSON.stringify(redactSecretShapes(String(value)));
+}
+
+function redactDeep(value: unknown): unknown {
+  if (typeof value === 'string') return redactSecretShapes(value);
+  if (Array.isArray(value)) return value.map(redactDeep);
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, redactDeep(child)]),
+    );
+  }
+  return value;
 }
 
 // §36: a secret reference must never live in config — `$VAR` and
@@ -508,7 +660,7 @@ function assertNoSecretRefs(config: KubicConfig): void {
       const ref = parseSecretRef(value);
       if (ref.kind === 'env' || ref.kind === 'command') {
         throw new ConfigError(
-          `${path || 'config'}: secrets never appear in config (§36) — declare the ref in models.json instead`,
+          `${path || 'config'}: secrets never appear in config (§36) — provider keys live in models.json instead (apiKey / header refs, resolved at request time)`,
         );
       }
       return;
@@ -584,7 +736,9 @@ function loadLayers(
 ): LoadedLayers {
   const paths = defaultLayerPaths({
     home: inputs.home,
-    projectRoot: inputs.cwd,
+    projectRoot:
+      inputs.projectRoot ??
+      findProjectRoot(inputs.bridge, inputs.cwd, inputs.home),
     ...(inputs.workspaceRoot === undefined
       ? {}
       : { workspaceRoot: inputs.workspaceRoot }),
@@ -610,8 +764,14 @@ function loadLayers(
         trusted: true,
       });
       if (programmatic !== undefined) {
-        layerInputs.push({ layer, config: programmatic });
-        perLayer.push({ layer, config: programmatic });
+        // Issue #237: programmatic layers declare no file, so their
+        // relative `skills` entries anchor at the invoking cwd.
+        const resolved = resolveConfigSkills(
+          programmatic,
+          join(inputs.cwd, 'config.toml'),
+        );
+        layerInputs.push({ layer, config: resolved });
+        perLayer.push({ layer, config: resolved });
       }
       continue;
     }
@@ -636,12 +796,16 @@ function loadLayers(
     }
     if (!present || path === undefined) continue;
     const parsed = parseLayerConfig(layer, inputs.bridge.readTextFile(path));
+    // Issue #237 (§29.2): relative `skills` entries anchor at the config
+    // file that declared them — a project config's `../shared/skills`
+    // names the project's sibling, wherever the run was invoked from.
+    const resolved = resolveConfigSkills(parsed, path);
     layerInputs.push({
       layer,
-      config: parsed,
+      config: resolved,
       ...(layer === 'project' ? { trusted: true as const } : {}),
     });
-    perLayer.push({ layer, config: parsed });
+    perLayer.push({ layer, config: resolved });
     for (const leaf of Object.keys(flatten(parsed))) {
       if (!(leaf in sources)) sources[leaf] = layer;
     }
@@ -750,6 +914,90 @@ function modesFrom(
   };
 }
 
+// [agent] systemPromptFile (issue #240; §63 `system_prompt_file`): resolve
+// the configured path against the declaring layer and read it now, through
+// the bridge — fail-closed. `~` expands to the home directory; an absolute
+// path is taken as typed; a relative path resolves against the declaring
+// config file's directory (programmatic session/agent layers are never
+// files, so a relative path there is refused, never guessed). The project
+// layer additionally requires containment in the project root: a trusted
+// path outside it is refused by name. Global and higher layers are
+// unrestricted. A missing or unreadable file is a named ConfigError.
+// Source attribution for the programmatic session/agent layers (issues
+// #239, #240): first layer in precedence order that sets the leaf. File
+// layers always win over these (they precede them), so this is only the
+// fallback when no file source recorded the key.
+function programmaticSourceFor(
+  inputs: RuntimeConfigInputs,
+  key: string,
+): ConfigLayer | undefined {
+  for (const layer of ['session', 'agent'] as const) {
+    const scoped = inputs[layer];
+    if (scoped !== undefined && flatten(scoped)[key] !== undefined) {
+      return layer;
+    }
+  }
+  return undefined;
+}
+
+export function resolveSystemPromptFile(args: {
+  bridge: Pick<FileBridge, 'exists' | 'readTextFile'>;
+  home: string;
+  projectRoot: string;
+  configured: string | undefined;
+  source: ConfigValueSource | undefined;
+  layerPath: string | undefined;
+}): RuntimeSystemPrompt | undefined {
+  const { configured, source } = args;
+  if (configured === undefined) return undefined;
+  if (typeof configured !== 'string' || configured === '') {
+    throw new ConfigError(
+      `'agent': 'systemPromptFile' must be a non-empty string`,
+    );
+  }
+  if (source === undefined || source === 'defaults') {
+    // The key is set but no layer owns it: attribution would be a guess.
+    throw new ConfigError(
+      `'agent': 'systemPromptFile' is set but no config layer owns it`,
+    );
+  }
+  const layer = source as ConfigLayer;
+  let resolved: string;
+  if (configured.startsWith('~/')) {
+    resolved = join(args.home, configured.slice(2));
+  } else if (isAbsolute(configured)) {
+    resolved = configured;
+  } else if (args.layerPath === undefined) {
+    throw new ConfigError(
+      `'agent': 'systemPromptFile' '${configured}' is a relative path with no declaring config file — use an absolute path`,
+    );
+  } else {
+    resolved = join(dirname(args.layerPath), configured);
+  }
+  if (layer === 'project') {
+    const rel = relative(args.projectRoot, resolved);
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+      throw new ConfigError(
+        `'agent': 'systemPromptFile' '${resolved}' is outside the project root '${args.projectRoot}'`,
+      );
+    }
+  }
+  if (!safeExists(args.bridge, resolved)) {
+    throw new ConfigError(
+      `'agent': 'systemPromptFile' '${resolved}' does not exist`,
+    );
+  }
+  let contents: string;
+  try {
+    contents = args.bridge.readTextFile(resolved);
+  } catch (error) {
+    throw new ConfigError(
+      `'agent': 'systemPromptFile' '${resolved}' cannot be read: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return { path: resolved, contents, source };
+}
+
 export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   const env = inputs.env ?? {};
   const trustEnv = env[RUNTIME_ENV_OVERRIDES.trustProject];
@@ -778,38 +1026,71 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     envModelRaw === undefined
       ? undefined
       : parseEnvModel(envModelRaw, RUNTIME_ENV_OVERRIDES.model);
-  const envThinking = env[RUNTIME_ENV_OVERRIDES.modelThinking];
+  const envThinking = checkThinkingLevel(
+    env[RUNTIME_ENV_OVERRIDES.modelThinking],
+    RUNTIME_ENV_OVERRIDES.modelThinking,
+  );
+  const cliThinking = checkThinkingLevel(inputs.cli?.thinking, '--thinking');
   const cliModel = inputs.cli?.model;
   const fileModel = modelFrom(config);
   // §35.1: enterprise keys are frozen against every override — a lower file
   // layer, an env override, and a CLI flag included. Nothing un-sets them.
   const frozen = (key: string): boolean => loaded.sources[key] === 'enterprise';
+  // §38.3 thinking level (issue #225): --thinking > KUBIC_MODEL_THINKING >
+  // the file layers — and an enterprise level is frozen against both (an
+  // explicit flag is refused by name; the env override is not applied).
+  let thinking: RuntimeThinking | undefined;
+  const fileThinking = config.model?.thinking;
+  // Issue #226 (§35.1): an env override a frozen enterprise level drops
+  // is reported in `overriddenAttempts` (never applied), mirroring the
+  // model-pin overrides below. The flag is refused by name above, so only
+  // the env input can land here; an equal value overrode nothing.
+  let droppedEnvThinking: string | undefined;
+  if (frozen('model.thinking')) {
+    if (cliThinking !== undefined) {
+      throw new ConfigError(
+        `--thinking ${JSON.stringify(cliThinking)} refused: model.thinking is frozen by the enterprise layer`,
+      );
+    }
+    thinking = { level: fileThinking as string, source: 'enterprise' };
+    if (envThinking !== undefined && envThinking !== fileThinking) {
+      droppedEnvThinking = `model: KUBIC_MODEL_THINKING '${envThinking}' rejected: enterprise thinking '${fileThinking}' holds`;
+    }
+  } else if (cliThinking !== undefined) {
+    thinking = { level: cliThinking, source: 'cli' };
+  } else if (envThinking !== undefined) {
+    thinking = { level: envThinking, source: 'env' };
+  } else if (fileThinking !== undefined) {
+    thinking = {
+      level: fileThinking,
+      source: loaded.sources['model.thinking'] ?? 'defaults',
+    };
+  }
+  // The selected pin carries the effective level too, so `kubic config`'s
+  // "selected model … (thinking: …)" line reports what the lane boots with.
+  const withThinking = (
+    selection: RuntimeModelSelection,
+  ): RuntimeModelSelection => {
+    const pin = { provider: selection.provider, id: selection.id };
+    return thinking === undefined ? pin : { ...pin, thinking: thinking.level };
+  };
   let model: RuntimeModelSelection | undefined;
   let modelSource: ConfigValueSource;
   if (frozen('model.provider') || frozen('model.id')) {
-    model = fileModel;
+    model = fileModel === undefined ? undefined : withThinking(fileModel);
     modelSource = 'enterprise';
   } else if (cliModel !== undefined) {
-    model = cliModel;
+    model = withThinking(cliModel);
     modelSource = 'cli';
   } else if (envModel !== undefined) {
-    model =
-      envThinking === undefined
-        ? envModel
-        : { ...envModel, thinking: envThinking };
+    model = withThinking(envModel);
     modelSource = 'env';
   } else if (fileModel !== undefined) {
-    model =
-      envThinking === undefined
-        ? fileModel
-        : { ...fileModel, thinking: envThinking };
+    model = withThinking(fileModel);
     modelSource =
       loaded.sources['model.provider'] ??
       loaded.sources['model.id'] ??
       'defaults';
-  } else if (envThinking !== undefined) {
-    model = undefined;
-    modelSource = 'env';
   } else {
     model = undefined;
     modelSource = 'defaults';
@@ -876,6 +1157,54 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
       : (loaded.sources['journal.retentionDays'] ?? 'defaults'),
   };
 
+  // Session compaction policy (issue #239; §27.1): re-validated here,
+  // because the programmatic session/agent layers never pass through the
+  // TOML parser — a bad value there is refused by name, never carried to
+  // the lane. Unset means the lane defaults (never an invented value here).
+  const sessionCompaction = checkSessionCompaction(
+    (config.session ?? {}) as Record<string, unknown>,
+    'session',
+  );
+  // The config key is `autoCompact`; the runtime projection names the lane
+  // option (`enabled`) — one spelling per surface, mapped here.
+  // Provenance (review follow-up): the highest-precedence layer among the
+  // set keys — evaluated per key, not the first-set key's layer in key
+  // order. Each key's layer is already its highest-precedence setter (the
+  // file merge is first-wins in LAYER_ORDER; the programmatic
+  // session/agent fallback trails every file layer), so the minimum rank
+  // wins. 'defaults' ranks below every layer and only survives when no key
+  // is set at all.
+  const rankOf = (source: ConfigValueSource): number => {
+    const index = (LAYER_ORDER as readonly string[]).indexOf(source);
+    return index === -1 ? LAYER_ORDER.length : index;
+  };
+  const compactionSource = (
+    [
+      'session.autoCompact',
+      'session.reserveTokens',
+      'session.keepRecentTokens',
+    ] as const
+  )
+    .map(
+      (key) =>
+        loaded.sources[key] ?? programmaticSourceFor(inputs, key) ?? 'defaults',
+    )
+    .reduce((best, candidate) =>
+      rankOf(candidate) < rankOf(best) ? candidate : best,
+    );
+  const compaction: RuntimeCompaction = {
+    ...(sessionCompaction.autoCompact === undefined
+      ? {}
+      : { enabled: sessionCompaction.autoCompact }),
+    ...(sessionCompaction.reserveTokens === undefined
+      ? {}
+      : { reserveTokens: sessionCompaction.reserveTokens }),
+    ...(sessionCompaction.keepRecentTokens === undefined
+      ? {}
+      : { keepRecentTokens: sessionCompaction.keepRecentTokens }),
+    source: compactionSource,
+  };
+
   // §35/§44/§45 orchestrator keys (issue #133): validated here too, because
   // the programmatic session/agent layers never pass through the TOML
   // parser — an escaping root or a non-positive cap is refused by name,
@@ -888,11 +1217,19 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     config.orchestrator?.maxWorkers,
     'orchestrator',
   );
+  const orchestratorManager = checkOrchestratorManager(
+    config.orchestrator?.manager,
+    'orchestrator',
+  );
   // §12.1 per-role model pins (issue #133): validated here too, because the
   // programmatic session/agent layers never pass through the TOML parser — a
   // malformed `provider/id` ref is refused by name, never carried to the lane.
   for (const [name, role] of Object.entries(config.roles ?? {})) {
     checkRoleModelRef(role.model, name);
+    // Issue #225: the programmatic session/agent layers never pass through
+    // the TOML parser — a malformed role thinking default is refused by
+    // name here, never carried to the lane.
+    checkThinkingLevel(role.thinking, `'roles.${name}': 'thinking'`);
   }
   // §48 gate commands (issue #267): re-validated for the programmatic
   // layers, which never pass through the TOML parser.
@@ -924,15 +1261,38 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     loaded.sources['model.provider'] = 'env';
     loaded.sources['model.id'] = 'env';
   }
-  if (
-    model !== undefined &&
-    model.thinking !== undefined &&
-    envThinking !== undefined
-  ) {
-    loaded.sources['model.thinking'] = 'env';
+  if (thinking?.source === 'cli' || thinking?.source === 'env') {
+    loaded.sources['model.thinking'] = thinking.source;
   }
   if (approvals.source === 'env') loaded.sources['approvals.route'] = 'env';
   if (retentionEnvApplies) loaded.sources['journal.retentionDays'] = 'env';
+
+  // [agent] systemPromptFile (issue #240): the declaring layer's file
+  // resolves a relative path; anything else means no declaring file.
+  // The programmatic session/agent layers merge values without recording
+  // sources (loadLayers records file layers only), so a key set there
+  // attributes to the winning programmatic layer in precedence order —
+  // never to 'defaults', and never refused as ownerless.
+  const systemPromptSource =
+    loaded.sources['agent.systemPromptFile'] ??
+    programmaticSourceFor(inputs, 'agent.systemPromptFile');
+  const systemPromptLayerPath =
+    systemPromptSource !== undefined &&
+    (LAYER_ORDER as readonly string[]).includes(systemPromptSource)
+      ? loaded.paths[systemPromptSource as ConfigLayer]
+      : undefined;
+
+  // The merged `[model]` escalation ladder (issue #210; §38.4): steps
+  // from the winning layer, bound defaulting to the ladder length so the
+  // ladder itself bounds when no explicit max is set.
+  const modelEscalate = config.model?.escalate;
+  const escalate: RuntimeEscalation | undefined =
+    modelEscalate === undefined
+      ? undefined
+      : {
+          steps: [...modelEscalate],
+          maxEscalations: config.model?.maxEscalations ?? modelEscalate.length,
+        };
 
   const rawPermissions = config.permissions ?? {};
   const permissions: RuntimePermissions = {
@@ -948,15 +1308,33 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     policy,
     model,
     modelSource,
+    thinking,
+    escalate,
     approvals,
     permissions,
     journal,
+    compaction,
+    // [agent] systemPromptFile (issue #240): resolved + read at load, so
+    // the lane boots and the `kubic config` report share one derivation.
+    systemPromptFile: resolveSystemPromptFile({
+      bridge: inputs.bridge,
+      home: inputs.home,
+      projectRoot:
+        inputs.projectRoot ??
+        findProjectRoot(inputs.bridge, inputs.cwd, inputs.home),
+      configured: config.agent?.systemPromptFile,
+      source: systemPromptSource,
+      layerPath: systemPromptLayerPath,
+    }),
     modes: modesFrom(config, loaded.sources),
     orchestrator: {
       ...(orchestratorRoot === undefined ? {} : { root: orchestratorRoot }),
       ...(orchestratorMaxWorkers === undefined
         ? {}
         : { maxWorkers: orchestratorMaxWorkers }),
+      ...(orchestratorManager === undefined
+        ? {}
+        : { manager: orchestratorManager }),
     },
     verify,
     budgets: {
@@ -971,6 +1349,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
         (entry) =>
           `model: ${entry.source === 'cli' ? '--model' : 'KUBIC_MODEL'} '${entry.requested}' rejected: enterprise pin '${entry.pinned}' holds`,
       ),
+      ...(droppedEnvThinking === undefined ? [] : [droppedEnvThinking]),
     ],
     modelPinOverrides,
     layers: loaded.reports,
@@ -992,6 +1371,16 @@ export function effectiveConfigView(
       layer: runtime.sources[key] ?? 'defaults',
       disposition: runtimeKeyDisposition(keyEffectFor(key)),
     });
+  }
+  // [agent] systemPromptFile (issue #240): the report names the EFFECTIVE
+  // (resolved) path, not the declared spelling — same derivation the lane
+  // boots with. The layer stays the declaring one.
+  if (runtime.systemPromptFile !== undefined) {
+    const row = values.find((entry) => entry.key === 'agent.systemPromptFile');
+    if (row !== undefined) {
+      row.value = formatValue(runtime.systemPromptFile.path);
+      row.layer = runtime.systemPromptFile.source;
+    }
   }
   values.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return {
@@ -1015,14 +1404,47 @@ export function effectiveConfigView(
         ? {}
         : { outOfScope: [...runtime.journal.outOfScope] }),
     },
+    // The reportable compaction policy (issue #239): configured values
+    // default-filled, so the report names what the lane will run with. The
+    // reserve is the EFFECTIVE one through the same clamp the lane's live
+    // getter uses — with no conversation there is no model window yet, so
+    // an unknown window reports the configured value and the lane re-clamps
+    // per model at boot.
+    compaction: {
+      enabled: runtime.compaction.enabled ?? true,
+      reserveTokens: effectiveReserveTokens(
+        0,
+        runtime.compaction.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
+      ),
+      keepRecentTokens:
+        runtime.compaction.keepRecentTokens ?? SOLO_KEEP_RECENT_TOKENS,
+      source: runtime.compaction.source,
+    },
     model: runtime.model === undefined ? undefined : { ...runtime.model },
     modelSource: runtime.modelSource,
+    thinking:
+      runtime.thinking === undefined ? undefined : { ...runtime.thinking },
     modes: { ...runtime.modes },
     budgets: { ...runtime.budgets },
     projectTrusted: runtime.projectTrusted,
     overriddenAttempts: [...runtime.overriddenAttempts],
     layers: runtime.layers.map((layer) => ({ ...layer })),
   };
+}
+
+// The effective compaction policy as one reportable line (issue #239): what
+// the lane runs with. The reserve is already clamped through the lane's own
+// clamp; the lane re-clamps per model at boot (at most a quarter of its
+// window), so a small-window model may compact sooner than this line's
+// figure. Shared by `kubic config` and the doctor probe, so the two surfaces
+// cannot disagree about the effective reserve.
+export function compactionSummaryLine(compaction: {
+  enabled: boolean;
+  reserveTokens: number;
+  keepRecentTokens: number;
+  source: ConfigValueSource;
+}): string {
+  return `compaction: ${compaction.enabled ? 'automatic' : 'off'}, reserve=${compaction.reserveTokens} token(s) (${compaction.source}; clamped per model to at most a quarter of its window), keep-recent=${compaction.keepRecentTokens} token(s)`;
 }
 
 // Human-readable rendering of the same view (one line per fact); secret
@@ -1071,6 +1493,14 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
       `selected model: first available provider (${view.modelSource}) — no model pin configured`,
     );
   }
+  // The effective thinking level with its source (issue #225): what the
+  // lane boots with before the model clamp. The `model.thinking` value row
+  // above names the file default; this names the winner.
+  if (view.thinking !== undefined) {
+    lines.push(
+      `thinking level: ${view.thinking.level} (${view.thinking.source})`,
+    );
+  }
   // An always-ask capability in autoApprove never applies (issue #324): named
   // and left out of the count, never printed as an approval nothing grants.
   const ignoredAutoApprove = [
@@ -1099,6 +1529,7 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
       ? 'journal out-of-scope: none declared — the walk still skips .git/, .kubic/ and .gitignore hits on its own'
       : `journal out-of-scope: ${view.journal.outOfScope.length} path(s) excluded from the baseline and the sweep (self + children): ${view.journal.outOfScope.join(', ')}`,
   );
+  lines.push(compactionSummaryLine(view.compaction));
   lines.push(
     `modes: solo=${String(view.modes.solo)}, orchestrator=${String(view.modes.orchestrator)} (${view.modes.source})`,
   );
@@ -1148,7 +1579,16 @@ function safeReadTextFile(
 export function checkWorkspaceIgnoreSplit(
   bridge: Pick<FileBridge, 'exists' | 'readTextFile'>,
   cwd: string,
+  git?: IgnoreSplitGit,
 ): { missing: string[]; checked: string[]; applicable: boolean } {
+  // Issue #292: when a git runner is injected the toplevel and the exclude
+  // resolve the way the writer resolves them — `${cwd}/.git` is a FILE in
+  // a linked worktree (so `${cwd}/.git/info/exclude` fails ENOTDIR) and is
+  // absent from a subdirectory. Without a runner this module stays
+  // process-free and keeps the legacy bridge probe.
+  if (git !== undefined) {
+    return checkWorkspaceIgnoreSplitViaGit(bridge, cwd, git);
+  }
   // Outside a git repository there is nothing to ignore: `kubic run` ships
   // its exclude rules into `.git/info/exclude`, which does not exist, and
   // runtime state stays local wherever it is written. Reporting a missing
@@ -1170,4 +1610,57 @@ export function checkWorkspaceIgnoreSplit(
     checked,
     applicable,
   };
+}
+
+// The git seam for the ignore-split check (issue #292). Injected so this
+// module never spawns a process; the prod caller passes a spawnSync runner
+// mirroring the writer's.
+export type IgnoreSplitGit = (
+  cwd: string,
+  args: readonly string[],
+) => { code: number; out: string };
+
+// The writer's own resolution (`git rev-parse --show-toplevel` +
+// `--git-path info/exclude`): in a linked worktree the exclude is the
+// common dir's file, unreachable through the worktree's `.git` file. Only
+// a failed toplevel (not a repository) reports inapplicable.
+function checkWorkspaceIgnoreSplitViaGit(
+  bridge: Pick<FileBridge, 'exists' | 'readTextFile'>,
+  cwd: string,
+  git: IgnoreSplitGit,
+): { missing: string[]; checked: string[]; applicable: boolean } {
+  const top = git(cwd, ['rev-parse', '--show-toplevel']);
+  if (top.code !== 0 || top.out === '') {
+    return { missing: [], checked: [], applicable: false };
+  }
+  const probe = git(cwd, ['rev-parse', '--git-path', 'info/exclude']);
+  const exclude =
+    probe.code === 0 && probe.out !== ''
+      ? joinGitPath(cwd, probe.out)
+      : undefined;
+  const candidates = [
+    `${top.out}/.gitignore`,
+    ...(exclude === undefined ? [] : [exclude]),
+  ];
+  const checked: string[] = [];
+  let text = '';
+  for (const path of candidates) {
+    if (!safeExists(bridge, path)) continue;
+    const content = safeReadTextFile(bridge, path);
+    if (content === undefined) continue;
+    checked.push(path);
+    text += `${content}\n`;
+  }
+  return {
+    missing: checkGitignoreSplit(text).missing,
+    checked,
+    applicable: true,
+  };
+}
+
+// `rev-parse --show-toplevel` prints absolute; `--git-path` prints
+// relative to the invocation cwd. No node:path import (this module stays
+// import-light like the `${cwd}/.git` probes above).
+function joinGitPath(cwd: string, out: string): string {
+  return out.startsWith('/') ? out : `${cwd}/${out}`;
 }

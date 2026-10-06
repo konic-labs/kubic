@@ -155,13 +155,25 @@ export interface RuntimeExcludeOutcome {
   detail?: string;
 }
 
-function git(cwd: string, args: string[]): { code: number; out: string } {
+// The sync git probe the writer and the ignore-split checker share
+// (issue #292): `rev-parse` runs no hooks, and a missing git binary
+// reports `{ code: 1 }` instead of throwing. Exported for the doctor's
+// checker (host) and the CLI config load (apps/kubic) — both stay
+// process-free behind this seam per the §9 I/O confinement rule.
+export function gitSync(
+  cwd: string,
+  args: readonly string[],
+): { code: number; out: string } {
   try {
-    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    const result = spawnSync('git', [...args], { cwd, encoding: 'utf8' });
     return { code: result.status ?? 1, out: (result.stdout ?? '').trim() };
   } catch (error) {
     return { code: 1, out: error instanceof Error ? error.message : '' };
   }
+}
+
+function git(cwd: string, args: string[]): { code: number; out: string } {
+  return gitSync(cwd, args);
 }
 
 // Idempotent entry point: makes sure the runtime rules are in the

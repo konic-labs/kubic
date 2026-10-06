@@ -106,6 +106,21 @@ describe('first-party bundle startup (issue #80)', () => {
     expect(posture.detail).toContain('refused 2');
   });
 
+  // Issue #283 (§71): the posture doctor prints names the ACTIVE limits —
+  // the unbounded default must read differently from a real bound.
+  it('names the loaded budget limits in the posture detail', async () => {
+    const posture = await probeFirstPartyPosture({
+      anchorDir: '/repo/dist/apps/kubic/src',
+      files: fakeFiles('/repo', { dir: true, manifest: MANIFEST_JSON }),
+      trust: OPTS,
+      limits: { maxToolCalls: 1, maxCostUsd: 0.5 },
+    });
+    expect(posture.ok).toBe(true);
+    expect(posture.detail).toContain(
+      'loaded 1 (kubic/budget: budget: cost≤$0.5 calls≤1)',
+    );
+  });
+
   it('fails closed with a clear error when the bundle dir is gone, never a silent no-op', async () => {
     const posture = await probeFirstPartyPosture({
       anchorDir: '/repo/dist/apps/kubic/src',

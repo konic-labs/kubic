@@ -16,16 +16,25 @@
 // arrive injected (fakes in tests, the exec seam in prod via
 // apps/kubic/src/orchestrate-run.ts).
 
-import { type RunMode, resolveBlockedSpawn } from '../../agents/src/budget.js';
+import {
+  BUDGET_DIMENSIONS,
+  type RunMode,
+  resolveBlockedSpawn,
+  resolveRunMode,
+} from '../../agents/src/budget.js';
 import {
   addEdge,
   addNode,
   createGraph,
   renderDag,
 } from '../../agents/src/graph.js';
+import type { PermissionClasses } from '../../agents/src/policy.js';
 import { createLineLogger } from '../../core/src/cli/logger.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
+import type { SessionHandle } from '../../worker/src/lane/session-store.js';
+import type { MutableModels } from '../../worker/src/pi-boundary.js';
+import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import type {
   AgentResult,
   ResultErrorKind,
@@ -53,6 +62,11 @@ import {
   type WorkerApprovalsRun,
   type WorkerApprovalTermination,
 } from './orchestrator/approvals/worker-asks.js';
+import {
+  QUESTION_UNANSWERED_CODE,
+  type WorkerQuestionOutcome,
+} from './orchestrator/approvals/worker-questions.js';
+import { isModelRef, storedBudgetDims } from './orchestrator/budget-spec.js';
 import type { ManagerLane, ManagerPlanStep } from './orchestrator/manager.js';
 import {
   buildManagerPlan,
@@ -61,6 +75,34 @@ import {
   recordManagerLaneCall,
   registerManagerLane,
 } from './orchestrator/manager.js';
+import {
+  assertGitRef,
+  describeLaneTransportError,
+  LANE_PROVIDER_UNREACHABLE_CODE,
+  LaneDriveTimeoutError,
+  MANAGER_DRIVE_DEADLINE_MS,
+  MANAGER_MAX_SUBMISSIONS,
+  MANAGER_MAX_TOOL_CALLS,
+  MANAGER_TURN_BOUND_CODE,
+  managerFinalMessage,
+  waitLaneSubmissionWithDeadline,
+  withAskTimeout,
+  withManagerToolCallBound,
+} from './orchestrator/manager-drive.js';
+import {
+  bootManagerLane,
+  type ManagerLaneHandle,
+} from './orchestrator/manager-lane.js';
+import {
+  buildManagerTools,
+  ManagerToolRefusalError,
+  type ManagerToolsDeps,
+  managerCallsFromLane,
+  managerToolRegistrations,
+  type WorkerChange,
+  type WorkerRowInfo,
+  type WorkerSpawnRequest,
+} from './orchestrator/manager-tools.js';
 import type {
   AttributedHunk,
   MergedHunk,
@@ -77,8 +119,12 @@ import {
   resolverPromptFor,
 } from './orchestrator/merge/conflicts.js';
 import { createMergeQueue } from './orchestrator/merge/queue.js';
+import type { ReviewVerdict } from './orchestrator/merge/review.js';
 import { REVIEWER_READONLY_TOOLS } from './orchestrator/merge/review.js';
-import { assertManagerZeroWrites } from './orchestrator/merge/settle.js';
+import {
+  applySettlementAfterReview,
+  assertManagerZeroWrites,
+} from './orchestrator/merge/settle.js';
 import type {
   MergeOutcome,
   MergeTelemetry,
@@ -87,7 +133,11 @@ import {
   recordMergeTelemetry,
   totalMergeMs,
 } from './orchestrator/merge/telemetry.js';
-import { sanitizeReasonField } from './orchestrator/parallel/limits.js';
+import {
+  type BudgetGate,
+  sanitizeReasonField,
+  type UsageTally,
+} from './orchestrator/parallel/limits.js';
 import { ParallelScheduler } from './orchestrator/parallel/scheduler.js';
 import type {
   ParallelTrajectoryEvent,
@@ -98,12 +148,31 @@ import {
   buildParallelTreeLine,
   buildParallelWorkersExtra,
 } from './orchestrator/parallel/visibility.js';
+import type {
+  TaskArtifact,
+  TaskTransfer,
+  TaskTransferInput,
+} from './orchestrator/transfer.js';
+import {
+  artifactFromResult,
+  buildHandoff,
+  buildTaskTransfer,
+  handoffFindingLines,
+  isStoredArtifact,
+  renderTransferRecord,
+} from './orchestrator/transfer.js';
 import { validateAgentId } from './orchestrator/worktree/naming.js';
 import type { WorktreeStatus } from './orchestrator/worktree/status.js';
-import { BUILTIN_ROLE_NAMES, isBuiltinRole } from './roles/roles-data.js';
-import type { WorkerRolesPlan } from './roles/worker-roles.js';
+import {
+  BUILTIN_ROLE_NAMES,
+  isBuiltinRole,
+  ROLE_THINKING_DEFAULTS,
+} from './roles/roles-data.js';
 import {
   applyRolesToPlan,
+  composeWorkerPrompt,
+  roleBudgetForAgent,
+  type WorkerRolesPlan,
   workerRoleAssignment,
 } from './roles/worker-roles.js';
 import {
@@ -127,6 +196,11 @@ export type {
 } from './config/role-credentials.js';
 
 export const ORCHESTRATE_DEFAULT_AGENTS: string[] = ['worker-1', 'worker-2'];
+
+// The debugger-loop default bound (issue #188, §70): how many debugger
+// settlements the run absorbs before the single escalation. `--resume`
+// replays it only when neither the flag nor the stored loop names one.
+export const REVIEW_LOOP_DEFAULT_MAX_ATTEMPTS = 3;
 
 // The bounded wait for a per-worker approval ask (issue #105, §41.2). A fixed
 // run-level contract rather than a caller knob: an ask that no seat can answer
@@ -161,6 +235,9 @@ export interface OrchestrateCliOptions {
   readonly session?: string;
   readonly resume?: boolean;
   readonly yes?: boolean;
+  // Explicit autonomous mode (issue #278, §19): off by default, recorded
+  // in session metadata and the §60 audit trail, driving RunMode.
+  readonly autonomous?: boolean;
   readonly budget?: ParsedBudgetSpec;
   readonly fullAccess?: boolean;
   readonly json?: boolean;
@@ -176,6 +253,26 @@ export interface OrchestrateCliOptions {
   // failed worker named. Always `stop` for an approval terminus — a denial is
   // the user's decision for the whole run, never a worker-local hiccup.
   readonly onFailure?: 'stop' | 'continue';
+  /**
+   * `--manager-lane` (issue #431, L-D34): opt the run into the
+   * model-driven manager lane. Absent means the deterministic template
+   * plan — the flag is the headless opt-in, never a default.
+   */
+  readonly managerLane?: boolean;
+  /**
+   * `--max-attempts` (issue #188, §70): the debugger-loop bound — how
+   * many debugger settlements the run absorbs before the single
+   * escalation and the loop-bound failure. Default 3. Lane-only (the
+   * template path runs no loop); persisted for resume.
+   */
+  readonly maxAttempts?: number;
+  /**
+   * `--escalation-model` (issue #188, §70): the stronger model the
+   * debugger loop climbs to once after the bound trips. `provider/id`
+   * or absent (the escalation relaunches at the debugger's own model).
+   * Persisted for resume.
+   */
+  readonly escalationModel?: string;
   /**
    * `--skill <path>` (repeatable, issue #170): skills every worker AND the
    * resolver are granted. Relative values are resolved against the manager's
@@ -207,11 +304,8 @@ export type AgentBindingsParse =
     }
   | { ok: false; reason: string };
 
-// The `provider/id` shape an explicit per-agent model pin must carry.
-function isModelRef(raw: string): boolean {
-  const slash = raw.indexOf('/');
-  return slash > 0 && slash < raw.length - 1;
-}
+// Re-exported for existing importers (issue #207 moved them to a leaf module).
+export { BUDGET_DIMENSIONS, isModelRef, storedBudgetDims };
 
 // `--agents <id>[:<role>[:<provider/id>]]` (issue #178): comma-separated
 // workers, each optionally bound to one of the five §12 roles and to an
@@ -338,10 +432,14 @@ export interface OrchestratedWorkerRecord {
   agentId: string;
   branch: string;
   hunks: MergedHunk[];
+  // The branch tip sha at settle (issue #429): resume compares it against
+  // the current tip and refuses a completion recorded before a same-name
+  // rewrite. Absent on state written before #429 (unknown, not a refusal).
   // The worker's §68 result (issue #185): status, summary, provenance and
   // metrics — persisted with the run so resume, handoff and replay can read
   // what each worker did and cost. Absent on state written before #185.
   result?: AgentResult;
+  tipSha?: string;
 }
 
 // What a worker run hands back (issue #185): the hunks it produced plus its
@@ -460,6 +558,95 @@ export interface OrchestratorRunState {
   // instead of silently reverting to all-or-nothing. A state written before
   // the policy existed has none, and `stop` is the default it implies.
   onFailure?: 'stop' | 'continue';
+  // The spawn CAP this run started with (issue #413): the `--agents` entry
+  // count on a fresh run. A model-driven manager lane may spawn at most
+  // this many workers; the template path spawns exactly the listed agents,
+  // so the cap never binds there. A state written before #413 has none,
+  // and the resume path adopts the stored agent count.
+  spawnCap?: number;
+  // The lane drove this run (issue #431, step 7 of the #204 split): the
+  // manager lane (not the template plan) spawned the workers, so a
+  // `--resume` re-attaches the manager session and continues the lane —
+  // never re-plans silently. Absent means the template path owns the run.
+  laneDriven?: true;
+  // The manager conversation's session (issue #431): the run's own id —
+  // the manager session IS the ancestry tree's root (#164). Present only
+  // with laneDriven.
+  managerSessionId?: string;
+  // The manager's final message (issue #431): its last transcript text,
+  // carried for the #418 envelope. Absent until the lane finishes.
+  managerSummary?: string;
+  // The context transfer records (issue #184, §24/§25): one transfer per
+  // launched worker plus one artifact per settled result, keyed by agent.
+  // Rebuilt at every launch from the stored results, so a --resume
+  // recomposes the same findings deterministically.
+  transfers?: Record<string, TaskTransfer>;
+  artifacts?: Record<string, TaskArtifact>;
+  // Review verdicts (issue #188, §70): the reviewer's routing per worker —
+  // accept merges, request-changes discards, escalate routes the debugger
+  // loop. Recorded by the `review_verdict` lane tool; the merge call
+  // executes the verdict. A worker with no verdict merges (the shipped
+  // default). Persisted so a --resume re-executes the same verdict
+  // instead of re-merging a refused diff.
+  reviewVerdicts?: Record<string, ReviewVerdict>;
+  // Discarded diffs (issue #188, §70): one entry per worker whose diff
+  // the verdict refused — branch + hunks (+ the §68 result when present),
+  // mirroring `completed`. A discard is terminal: --resume never retries
+  // it, and the branch stays for inspection. A state written before #188
+  // has none.
+  discarded?: OrchestratedWorkerRecord[];
+  // The debugger-loop bound (issue #188, §70): the max debugger
+  // settlements before the single escalation, whether the escalation
+  // fired, and the stronger model it climbs to (absent: same model).
+  // Adopted from the flags on a fresh run (or the default bound) and
+  // re-applied from storage on --resume — an explicit flag still wins.
+  reviewLoop?: {
+    maxAttempts: number;
+    escalationModel?: string;
+    debuggerSettlements: number;
+    escalated: boolean;
+  };
+  // Write-ahead worker completions (issue #160): one entry per worker that
+  // settled successfully but is not merged yet — branch + hunks (+ the §68
+  // result when the worker reported one). Persisted as soon as the worker
+  // settles, BEFORE the merge gate runs, so an approval deny/timeout, a
+  // failed merge or a kill never loses the work: --resume skips re-running
+  // a completed worker whose worktree branch still matches and enqueues it
+  // for merge instead. `records` keeps meaning "merged"; a merge success
+  // moves the entry there. A state written before #160 has none.
+  completed?: OrchestratedWorkerRecord[];
+}
+
+// One stored per-worker record, merged or merely completed (issue #160):
+// agent + branch + hunks (+ an optional validated §68 result). Stored state
+// is untrusted JSON, so anything else fails closed.
+function validStoredWorkerRecord(record: unknown): boolean {
+  if (typeof record !== 'object' || record === null) return false;
+  const entry = record as Record<string, unknown>;
+  if (typeof entry.agentId !== 'string') return false;
+  if (typeof entry.branch !== 'string') return false;
+  if (!Array.isArray(entry.hunks)) return false;
+  // Review #429: the tip rides a debug line on resume, so anything but
+  // lowercase hex fails the state closed — a hand-crafted rows file cannot
+  // smuggle newlines/control chars into the log. Real tips are always hex
+  // (`rev-parse HEAD`); a non-hex tip means a crafted state, never a
+  // legacy one (pre-#429 states simply omit the field).
+  if (
+    entry.tipSha !== undefined &&
+    (typeof entry.tipSha !== 'string' || !/^[0-9a-f]+$/.test(entry.tipSha))
+  ) {
+    return false;
+  }
+  if (entry.result !== undefined && !validateAgentResult(entry.result).valid) {
+    return false;
+  }
+  for (const hunk of entry.hunks) {
+    if (typeof hunk !== 'object' || hunk === null) return false;
+    const part = hunk as Record<string, unknown>;
+    if (typeof part.path !== 'string') return false;
+    if (typeof part.hunk !== 'string') return false;
+  }
+  return true;
 }
 
 // Stored resume state is untrusted JSON (a torn write, a hand edit, or
@@ -494,6 +681,21 @@ export function parseOrchestratorRunState(
     return undefined;
   }
   const agents = value.agents as string[];
+  // The launched-worker universe (issue #184 review): agents plus
+  // plan-step ids in plan order — lane mints join agents only post-drive,
+  // but their plan steps are appended at spawn. Hoisted: verdict, transfer
+  // and artifact key checks all share it.
+  const plannedIds: string[] = [];
+  if (Array.isArray(value.plan)) {
+    for (const step of value.plan) {
+      const id = (step as { agentId?: unknown }).agentId;
+      if (typeof id === 'string' && !plannedIds.includes(id)) {
+        plannedIds.push(id);
+      }
+    }
+  }
+  const knownAgent = (key: string): boolean =>
+    agents.includes(key) || plannedIds.includes(key);
   // Explicit per-agent binding (issue #178): a record whose keys do not name
   // this run's workers, whose role is outside the five, or whose model is
   // not `provider/id` is refused, never half-applied.
@@ -535,25 +737,87 @@ export function parseOrchestratorRunState(
   ) {
     return undefined;
   }
-  if (!Array.isArray(value.records)) return undefined;
-  for (const record of value.records) {
-    if (typeof record !== 'object' || record === null) return undefined;
-    const entry = record as Record<string, unknown>;
-    if (typeof entry.agentId !== 'string') return undefined;
-    if (typeof entry.branch !== 'string') return undefined;
-    if (!Array.isArray(entry.hunks)) return undefined;
+  // The spawn cap (issue #413): a non-negative integer when present —
+  // anything else is a torn or hand-edited state and fails closed.
+  if (value.spawnCap !== undefined) {
     if (
-      entry.result !== undefined &&
-      !validateAgentResult(entry.result).valid
+      typeof value.spawnCap !== 'number' ||
+      !Number.isSafeInteger(value.spawnCap) ||
+      value.spawnCap < 0
     ) {
       return undefined;
     }
-    for (const hunk of entry.hunks) {
-      if (typeof hunk !== 'object' || hunk === null) return undefined;
-      const part = hunk as Record<string, unknown>;
-      if (typeof part.path !== 'string') return undefined;
-      if (typeof part.hunk !== 'string') return undefined;
+  }
+  if (!Array.isArray(value.records)) return undefined;
+  for (const record of value.records) {
+    if (!validStoredWorkerRecord(record)) return undefined;
+  }
+  // Write-ahead completions (issue #160) ride the same shape: anything
+  // that is not exactly a list of per-worker records fails closed here.
+  if (value.completed !== undefined) {
+    if (!Array.isArray(value.completed)) return undefined;
+    for (const record of value.completed) {
+      if (!validStoredWorkerRecord(record)) return undefined;
     }
+  }
+  // Review verdicts (issue #188, §70): values are exactly the three
+  // reviewer verdicts, keys name launched workers (agents plus plan-step
+  // ids — the lane mint universe, same as transfers/artifacts).
+  if (value.reviewVerdicts !== undefined) {
+    if (
+      typeof value.reviewVerdicts !== 'object' ||
+      value.reviewVerdicts === null
+    ) {
+      return undefined;
+    }
+    for (const [key, verdict] of Object.entries(value.reviewVerdicts)) {
+      if (!knownAgent(key)) return undefined;
+      if (
+        verdict !== 'accept' &&
+        verdict !== 'request-changes' &&
+        verdict !== 'escalate'
+      ) {
+        return undefined;
+      }
+    }
+  }
+  // Discarded diffs (issue #188) ride the worker-record shape: anything
+  // else fails closed here.
+  if (value.discarded !== undefined) {
+    if (!Array.isArray(value.discarded)) return undefined;
+    for (const record of value.discarded) {
+      if (!validStoredWorkerRecord(record)) return undefined;
+    }
+  }
+  // The debugger loop (issue #188, §70): a bound of at least one, an
+  // optional `provider/id` escalation rung, and non-negative counters.
+  if (value.reviewLoop !== undefined) {
+    if (typeof value.reviewLoop !== 'object' || value.reviewLoop === null) {
+      return undefined;
+    }
+    const loop = value.reviewLoop as Record<string, unknown>;
+    if (
+      typeof loop.maxAttempts !== 'number' ||
+      !Number.isSafeInteger(loop.maxAttempts) ||
+      loop.maxAttempts < 1
+    ) {
+      return undefined;
+    }
+    if (
+      loop.escalationModel !== undefined &&
+      (typeof loop.escalationModel !== 'string' ||
+        !isModelRef(loop.escalationModel))
+    ) {
+      return undefined;
+    }
+    if (
+      typeof loop.debuggerSettlements !== 'number' ||
+      !Number.isSafeInteger(loop.debuggerSettlements) ||
+      loop.debuggerSettlements < 0
+    ) {
+      return undefined;
+    }
+    if (typeof loop.escalated !== 'boolean') return undefined;
   }
   // The stored plan (issue #103) is untrusted JSON like everything else: a
   // step that is not exactly id/step/total/prompt would reach runWorker as
@@ -584,6 +848,56 @@ export function parseOrchestratorRunState(
     typeof value.merging !== 'string'
   ) {
     return undefined;
+  }
+  // The lane-driving marks (issue #431): strictly shaped or refused — a
+  // laneDriven flag without its session, or a non-string summary, is not
+  // a state --resume may continue.
+  if (value.laneDriven !== undefined && value.laneDriven !== true) {
+    return undefined;
+  }
+  if (
+    value.managerSessionId !== undefined &&
+    (typeof value.managerSessionId !== 'string' ||
+      value.managerSessionId.trim() === '')
+  ) {
+    return undefined;
+  }
+  if (
+    value.managerSummary !== undefined &&
+    typeof value.managerSummary !== 'string'
+  ) {
+    return undefined;
+  }
+  if (value.laneDriven === true && value.managerSessionId === undefined) {
+    return undefined;
+  }
+  // The transfer records (issue #184, §24/§25): keys must name this run's
+  // workers and every record must validate — a torn or hand-edited state
+  // fails closed rather than composing prompts from garbage. The key
+  // universe is agents plus plan-step ids (see knownAgent above):
+  // refusing mint keys would make a follow-up-then-kill lane run
+  // unresumable.
+  if (value.transfers !== undefined) {
+    if (typeof value.transfers !== 'object' || value.transfers === null) {
+      return undefined;
+    }
+    for (const [key, entry] of Object.entries(value.transfers)) {
+      if (!knownAgent(key)) return undefined;
+      try {
+        buildTaskTransfer(entry as TaskTransferInput);
+      } catch {
+        return undefined;
+      }
+    }
+  }
+  if (value.artifacts !== undefined) {
+    if (typeof value.artifacts !== 'object' || value.artifacts === null) {
+      return undefined;
+    }
+    for (const [key, entry] of Object.entries(value.artifacts)) {
+      if (!knownAgent(key)) return undefined;
+      if (!isStoredArtifact(entry)) return undefined;
+    }
   }
   return raw as OrchestratorRunState;
 }
@@ -638,6 +952,33 @@ export function workerSessionFor(sessionId: string, agentId: string): string {
   return `${sessionId}-${agentId}`;
 }
 
+/** The lane merge cursor: names each staged head exactly once. */
+export interface MergeHeadCursor {
+  /** The next staged head, advancing past it; undefined when drained. */
+  nextHead(): string | undefined;
+}
+
+/**
+ * A cursor over the router's live staged list (issue #431 review): the
+ * router's `applyStaged` peeked `stagedForMerge[0]` without consuming,
+ * so consecutive `workspace_merge` calls re-reported the same head as
+ * 'merged'. Each call now advances past the head it names; stages that
+ * land later stay reachable because the list is read live.
+ */
+export function createMergeHeadCursor(
+  staged: readonly string[],
+): MergeHeadCursor {
+  let index = 0;
+  return {
+    nextHead: () => {
+      const head = staged[index];
+      if (head === undefined) return undefined;
+      index += 1;
+      return head;
+    },
+  };
+}
+
 // What the manager must do before spawning a worker (issue #85): `kubic run
 // --session <id>` only ATTACHES, so the manager creates the session with an
 // explicit id first. The spawn then happens with the same id.
@@ -646,6 +987,12 @@ export interface WorkerSessionRequest {
   agentId: string;
   workerSessionId: string;
   worktree: OrchestrateWorktree;
+  // Issue #164 (§23): the role the worker spawns as, recorded on the
+  // worker session beside the parent linkage. Absent means unassigned.
+  role?: string;
+  // Issue #278 (§19): the run's mode, recorded on the manager and worker
+  // session records.
+  mode: RunMode;
 }
 
 // The id the child attaches to, handed to runWorker so the create step and
@@ -669,6 +1016,21 @@ export interface WorkerSpawnInfo {
   thinking?: string;
   /** §67 task resources (issue #170): the `--skill` values this worker gets. */
   skills?: string[];
+  /**
+   * Issue #196 (§40.2/§41.1): the assigned role's resolved classes and
+   * approval obligations — the spawn writes them into the task resources
+   * (the child merges the classes with its own config, most restrictive
+   * wins). Absent when the worker has no role assignment.
+   */
+  classes?: PermissionClasses;
+  requires?: string[];
+  /**
+   * Issue #198 (§71, #431 follow-up): the assigned role document's own
+   * budget dims, when it declares any — the fallback tier under an
+   * explicit spawn budget. Carried for lane mints exactly like
+   * classes/requires so the per-spawn gate enforces them.
+   */
+  budget?: Record<string, number>;
 }
 
 // The §54 delegation DAG (§49.1 projection): the shipped run is one manager
@@ -699,6 +1061,19 @@ export interface ApprovalInput {
   branch: string;
 }
 
+// One run's start, as the §60 ledger records it (issue #278, §19): the
+// §19 mode the run resolved, the command that started it and whether
+// `--autonomous` was explicit.
+export interface RunStartRecord {
+  sessionId: string;
+  command: 'orchestrate';
+  mode: 'orchestrator';
+  runMode: RunMode;
+  workspace: string;
+  posture: string;
+  autonomous: boolean;
+}
+
 // One settled merge-gate decision, as the §60 ledger records it (issue
 // #323). `by` is `--yes` for the run's standing answer and `user` for a
 // decider's answer (or the deny-closed absence of one).
@@ -706,6 +1081,8 @@ export interface MergeDecisionRecord {
   sessionId: string;
   agentId: string;
   branch: string;
+  /** The worker worktree merged from (issue #284): named in the row. */
+  worktree?: string;
   approved: boolean;
   by: '--yes' | 'user';
   reason?: string;
@@ -858,6 +1235,17 @@ export interface OrchestrateCommandDeps {
     agentId: string,
     worktree: OrchestrateWorktree,
   ) => boolean | Promise<boolean>;
+  // Branch-tip probe (issue #429): the HEAD sha of the worker branch at
+  // settle is persisted with the completion; on resume a different tip
+  // means the branch was rewritten under the same name, so the stored
+  // hunks must not merge against it. Optional so older fakes keep
+  // working; absent (or throwing, or a state written before #429) means
+  // unknown — resume reuses on branch match as before (#160), and a
+  // positive mismatch is the only refusal.
+  readBranchTip?: (
+    agentId: string,
+    worktree: OrchestrateWorktree,
+  ) => string | undefined | Promise<string | undefined>;
   reapWorker: (agentId: string) => void | Promise<void>;
   // Fail-fast cancellation (issue #206): a worker still in flight when the
   // run stops — a sibling failed, or the admission layer refused a spawn —
@@ -979,6 +1367,11 @@ export interface OrchestrateCommandDeps {
   // who answered the prompt, so the ledger never records an inferred
   // approval as a user decision.
   auditMerge?: (record: MergeDecisionRecord) => void;
+  // The run-start §60 audit hook (issue #278, §19). Called once per run,
+  // before any worktree, session or child exists; the composition root
+  // appends the run:start row. Absent means no run-start row (older fakes
+  // keep working).
+  auditRunStart?: (record: RunStartRecord) => void;
   // Whether a merge-gate refusal points the operator at `--yes` (default
   // true). A surface with no such flag — the TUI, whose merge asks go through
   // its own approval overlay — passes false so the message never names a flag
@@ -1021,6 +1414,56 @@ export interface OrchestrateCommandDeps {
     | undefined
     | Promise<OrchestratorRunState | undefined>;
   saveState?: (state: OrchestratorRunState) => void | Promise<void>;
+  /**
+   * The model catalog for the manager lane (issue #431): the composition
+   * root's assembled pi-ai models. Absent means no manager model can
+   * resolve, so the run keeps the deterministic template path.
+   */
+  managerModels?: MutableModels;
+  /**
+   * The resolved manager model pin (issue #431): what the manager lane
+   * boots on. Absent with managerModels means template, like a run with
+   * no usable provider.
+   */
+  managerModel?: { provider: string; id: string };
+  /**
+   * Wall-clock bound for one lane drive (issue #431, L-D34 fail-fast):
+   * unset means the shipped `MANAGER_DRIVE_DEADLINE_MS`. Tests inject a
+   * small bound to watch a hung provider fail fast by name.
+   */
+  managerDriveDeadlineMs?: number;
+  /**
+   * The L-D34 opt-in (issue #431): true only when the operator asked for
+   * the lane (`--manager-lane` or `[orchestrator] manager = "lane"`).
+   * The lane never engages on a resolved model alone — a resolvable
+   * provider without the opt-in keeps the deterministic template path.
+   */
+  managerLaneOptIn?: boolean;
+  /**
+   * Attach-or-create the manager conversation's session (issue #431):
+   * the lane boots its harness over the adopted storage, and a `--resume`
+   * re-attaches the same session so the model continues its transcript
+   * instead of re-planning. A refusal fails the run by name.
+   */
+  openManagerSession?: (sessionId: string) => Promise<SessionHandle>;
+  /**
+   * The seat the manager's `ask_user` reaches (issue #431): interactive
+   * presents on the run's TUI/terminal seat, headless denies closed. The
+   * router races it against the ask bound, so a hanging seat resolves
+   * unanswered instead of hanging the turn. Absent means no seat — every
+   * ask resolves unanswered (fail-closed).
+   */
+  askUserSeat?: (question: string) => Promise<WorkerQuestionOutcome>;
+  /**
+   * Run one read-only git inspection over the op registry (issue #431):
+   * the lane's `git_status`/`git_diff`/`git_log` adapters and the
+   * `readWorkerChange` seam call through here. The builder wires the
+   * real op calls; absent, the lane's git tools refuse by name.
+   */
+  inspectGit?: (
+    tool: 'git_status' | 'git_diff' | 'git_log',
+    args: unknown,
+  ) => Promise<string>;
 }
 
 // The role an approval scope names for one worker (issue #159): the assigned
@@ -1079,15 +1522,45 @@ export interface OrchestrateEnvelope {
   exitCode: number;
   sessionId: string;
   status: OrchestrateStatus;
+  // The run's §19 mode (issue #278): explicit `--autonomous` or off by
+  // default. The status already names the stop condition that ended it.
+  mode: RunMode;
   // Issue #185: each worker that produced a §68 result also carries its
   // role, status, summary, usage and provenance (WorkerResultView).
   workers: ({
     agentId: string;
     branch: string;
     hunks: number;
+    // The §25.2 artifact (issue #184): the structured result, present
+    // when the worker reported a result that passed the §69 gate.
+    artifact?: TaskArtifact;
+    // The reviewer verdict (issue #188, §70): present when the lane
+    // recorded one — the row tells whether the diff merged or was
+    // refused without joining mergeOrder to find out.
+    reviewVerdict?: ReviewVerdict;
   } & Partial<WorkerResultView>)[];
   mergeOrder: string[];
+  // Discarded diffs (issue #188, §70): agent ids the review verdict
+  // refused, in discard order. Details ride the workers[] rows (branch)
+  // and the run's debug channel (verdict); mergeOrder never names them.
+  // Present on every envelope (empty when nothing was refused) so the
+  // shape is stable for consumers.
+  discarded: string[];
+  // The §70 loop on the envelope (issue #188): present only once the
+  // loop turns (debugger settlements or a spent escalation) — template
+  // envelopes stay byte-clean.
+  reviewLoop?: {
+    maxAttempts: number;
+    escalationModel?: string;
+    debuggerSettlements: number;
+    escalated: boolean;
+  };
   attribution: AttributedHunk[];
+  // The manager's final message (issue #418): present only on
+  // lane-driven runs whose drive produced one — the text `result:` line
+  // and this field report the same sentence, so the two surfaces cannot
+  // disagree. Absent on the template path (the mechanical counts stand).
+  managerSummary?: string;
   // The §54 delegation DAG of this run (§49.1 projection), rendered by
   // `delegationGraphLines`. Present on every envelope — a run that never
   // spawned still has a manager node, so the shape is stable for consumers.
@@ -1181,12 +1654,19 @@ interface ParsedArgs {
   sessionId?: string;
   resume: boolean;
   autoApprove: boolean;
+  // Explicit autonomous mode (issue #278, §19): drives RunMode with the
+  // shipped --yes/headless rule.
+  autonomous: boolean;
   json: boolean;
   // Opt-in budgets (§71, issue #105): absent means NO budget is applied to a
   // spawn. Per-worker overrides arrive as --budget <agent>=<dims>; the shared
   // --budget <dims> applies to every worker of the run.
   budget?: Record<string, number>;
   budgetsByAgent: Record<string, Record<string, number>>;
+  // The aggregate task budget (issue #207): `--budget total:<dims>` caps
+  // spend across all workers of the task, mapped to the admission layer's
+  // budgetGate. Threaded beside the per-spawn spec above.
+  budgetTotal?: Record<string, number>;
   fullAccess: boolean;
   // This run's admission override (issue #206): absent means the scheduler's
   // own resolution (explicit limits cap > configured maxWorkers > 4) stands.
@@ -1199,19 +1679,26 @@ interface ParsedArgs {
   skills: string[];
 }
 
-// --budget maxToolCalls=10                                  (every worker)
-// --budget worker-1:maxToolCalls=10;worker-2:maxCostUsd=1   (per spawn)
-// Opt-in only: a malformed value is a usage error, never a silently dropped
-// limit (a dropped limit would run a worker unbounded while looking bounded).
-export const BUDGET_DIMENSIONS: readonly string[] = [
-  'maxTokens',
-  'maxCostUsd',
-  'maxRuntimeMs',
-  'maxToolCalls',
-];
+// Session ids that would collide with the orchestrator dir's fixed entries
+// (issue #174): `workers` IS `<repo>/.kubic/orchestrator/workers.json` —
+// the lifecycle rows a run under that id would overwrite on its first
+// save — and `approvals` IS the `approvals/` ledger directory. Reserved
+// on fresh runs and resumes alike, before anything loads or saves.
+export const RESERVED_SESSION_IDS: ReadonlySet<string> = new Set([
+  'workers',
+  'approvals',
+]);
 
 export interface ParsedBudgetSpec {
   shared?: Record<string, number>;
+  /**
+   * The aggregate task budget (issue #207): a `total:<dims>` clause caps
+   * spend across ALL workers of the task (mapped to the admission layer's
+   * budgetGate). `total` is a reserved keyword — it never names a worker,
+   * so a per-agent clause for a worker literally named `total` is not
+   * expressible (that worker still runs under the shared spec).
+   */
+  total?: Record<string, number>;
   byAgent: Record<string, Record<string, number>>;
 }
 
@@ -1246,11 +1733,21 @@ export function parseBudgetSpec(raw: string): ParsedBudgetSpec | undefined {
     null,
   ) as Record<string, Record<string, number>>;
   let shared: Record<string, number> | undefined;
+  // The aggregate task budget (issue #207): `total:<dims>` caps the whole
+  // task. Claimed before the agent check below — `total` is reserved, never
+  // a worker id — and merged across repeated clauses like the shared spec.
+  let total: Record<string, number> | undefined;
   for (const clause of raw.split(';')) {
     const trimmed = clause.trim();
     if (trimmed.length === 0) continue;
     const colon = trimmed.indexOf(':');
     const head = colon > 0 ? trimmed.slice(0, colon).trim() : '';
+    if (head === 'total') {
+      const dims = parseBudgetDims(trimmed.slice(colon + 1));
+      if (dims === undefined) return undefined;
+      total = { ...(total ?? {}), ...dims };
+      continue;
+    }
     if (head.length > 0 && !BUDGET_DIMENSIONS.includes(head)) {
       if (validateAgentId(head).length > 0) return undefined;
       const dims = parseBudgetDims(trimmed.slice(colon + 1));
@@ -1262,29 +1759,18 @@ export function parseBudgetSpec(raw: string): ParsedBudgetSpec | undefined {
     if (dims === undefined) return undefined;
     shared = { ...(shared ?? {}), ...dims };
   }
-  if (shared === undefined && Object.keys(byAgent).length === 0) {
+  if (
+    shared === undefined &&
+    total === undefined &&
+    Object.keys(byAgent).length === 0
+  ) {
     return undefined;
   }
   return {
     ...(shared === undefined ? {} : { shared }),
+    ...(total === undefined ? {} : { total }),
     byAgent,
   };
-}
-
-function storedBudgetDims(raw: unknown): Record<string, number> | undefined {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    return undefined;
-  }
-  const dims: Record<string, number> = {};
-  for (const [name, value] of Object.entries(raw)) {
-    if (!BUDGET_DIMENSIONS.includes(name)) return undefined;
-    if (typeof value !== 'number' || !Number.isFinite(value) || !(value > 0)) {
-      return undefined;
-    }
-    if (name === 'maxRuntimeMs' && value > MAX_RUN_TIMEOUT_MS) return undefined;
-    dims[name] = value;
-  }
-  return Object.keys(dims).length === 0 ? undefined : dims;
 }
 
 // The stored form of a ParsedBudgetSpec (OrchestratorRunState.budget). Unlike
@@ -1299,12 +1785,20 @@ export function parseStoredBudgetSpec(
   }
   const record = raw as Record<string, unknown>;
   if (
-    Object.keys(record).some((key) => key !== 'shared' && key !== 'byAgent')
+    Object.keys(record).some(
+      (key) => key !== 'shared' && key !== 'total' && key !== 'byAgent',
+    )
   ) {
     return undefined;
   }
   const shared = storedBudgetDims(record.shared);
   if (record.shared !== undefined && shared === undefined) return undefined;
+  // The aggregate task budget travels with the state like the rest of the
+  // spec (issue #207): a resume re-applies the stored gate, and a flag
+  // naming a different aggregate is refused by budgetSpecsEqual below.
+  const total =
+    record.total === undefined ? undefined : storedBudgetDims(record.total);
+  if (record.total !== undefined && total === undefined) return undefined;
   // Null-prototype for the same reason as parseBudgetSpec (issue #208
   // review): a stored `__proto__` clause must survive as data.
   const byAgent: Record<string, Record<string, number>> = Object.create(
@@ -1327,13 +1821,34 @@ export function parseStoredBudgetSpec(
       byAgent[agent] = parsed;
     }
   }
-  if (shared === undefined && Object.keys(byAgent).length === 0) {
+  if (
+    shared === undefined &&
+    total === undefined &&
+    Object.keys(byAgent).length === 0
+  ) {
     return undefined;
   }
   return {
     ...(shared === undefined ? {} : { shared }),
+    ...(total === undefined ? {} : { total }),
     byAgent,
   };
+}
+
+// The worker line's §71 suffix (issue #285): the agent's effective bound
+// — its own override over the shared spec — as `k=v` pairs, the same
+// discipline as the stored-budget inspect facet. Undefined when the worker
+// runs unbounded (or under an aggregate-only `total:`, which binds the
+// task, never the worker line).
+export function workerBudgetLine(
+  spec: ParsedBudgetSpec | undefined,
+  agentId: string,
+): string | undefined {
+  if (spec === undefined) return undefined;
+  const dims = { ...spec.shared, ...spec.byAgent[agentId] };
+  const keys = Object.keys(dims);
+  if (keys.length === 0) return undefined;
+  return keys.map((key) => `${key}=${dims[key]}`).join(' ');
 }
 
 // Canonical equality for two parsed specs (issue #208): resume re-applies the
@@ -1359,6 +1874,13 @@ export function budgetSpecsEqual(
       ? a.shared === undefined && b.shared === undefined
       : dimsEqual(a.shared, b.shared);
   if (!sharedEqual) return false;
+  // The aggregate gate is part of the spec (issue #207): a resume flag
+  // naming a different aggregate is refused, like any other difference.
+  const totalEqual =
+    a.total === undefined || b.total === undefined
+      ? a.total === undefined && b.total === undefined
+      : dimsEqual(a.total, b.total);
+  if (!totalEqual) return false;
   const aAgents = Object.keys(a.byAgent).sort();
   const bAgents = Object.keys(b.byAgent).sort();
   if (aAgents.length !== bAgents.length) return false;
@@ -1388,6 +1910,7 @@ function parsedFrom(options: OrchestrateCliOptions): ParsedArgs {
     binding: parsed.ok ? parsed.binding : { roles: {}, models: {} },
     resume: options.resume === true,
     autoApprove: options.yes === true,
+    autonomous: options.autonomous === true,
     json: options.json === true,
     // §71 opt-in budget, per spawn. Opt-in means exactly that: no flag →
     // nothing configured → no limit applied.
@@ -1395,6 +1918,9 @@ function parsedFrom(options: OrchestrateCliOptions): ParsedArgs {
       ? {}
       : { budget: options.budget.shared }),
     budgetsByAgent: options.budget?.byAgent ?? {},
+    ...(options.budget?.total === undefined
+      ? {}
+      : { budgetTotal: options.budget.total }),
     fullAccess: options.fullAccess === true,
     skills: [...(options.skills ?? [])],
     ...(options.prompt === undefined ? {} : { prompt: options.prompt }),
@@ -1443,8 +1969,12 @@ export function refusedOrchestrateEnvelope(
     exitCode: RUN_EXIT_FAILED,
     sessionId: 'unassigned',
     status: 'failed',
+    // Issue #278 (§19): the run never started, so no flag was ever
+    // parsed — the §19 default (off) is the honest mode.
+    mode: 'interactive',
     workers: [],
     mergeOrder: [],
+    discarded: [],
     attribution: [],
     graph: [],
     error: { kind: 'failed', message, code: 'config_refused' },
@@ -1458,6 +1988,15 @@ export async function runOrchestrateCommand(
   const now = deps.now ?? Date.now;
   const debug = deps.debug ?? (() => undefined);
   const parsed = parsedFrom(options);
+  // The run's §19 mode (issue #278): explicit `--autonomous` wins,
+  // otherwise the shipped rule (`--yes` or headless is autonomous).
+  // It drives the spawn-cap ask below; the admission layer keeps the
+  // queueing rule past the gate (see the requestSpawn call).
+  const runMode: RunMode = resolveRunMode({
+    interactive: deps.interactive === true,
+    autoApprove: parsed.autoApprove,
+    autonomous: parsed.autonomous,
+  });
   // --json keeps every stream colourless; stdout carries one document.
   const theme =
     parsed.json || deps.theme === undefined
@@ -1483,6 +2022,27 @@ export async function runOrchestrateCommand(
       log.error(`invalid --agents: ${parsedAgents.reason}`);
       return RUN_EXIT_USAGE;
     }
+  }
+  // The debugger-loop flags (issue #188, §70): a bound of at least one
+  // and an escalation rung in `provider/id` shape — a library caller
+  // cannot bypass the CLI's own checks.
+  if (
+    options.maxAttempts !== undefined &&
+    (!Number.isSafeInteger(options.maxAttempts) || options.maxAttempts < 1)
+  ) {
+    log.error(
+      `invalid --max-attempts ${JSON.stringify(options.maxAttempts)} (use a positive integer)`,
+    );
+    return RUN_EXIT_USAGE;
+  }
+  if (
+    options.escalationModel !== undefined &&
+    !isModelRef(options.escalationModel)
+  ) {
+    log.error(
+      `invalid --escalation-model ${JSON.stringify(options.escalationModel)} (use 'provider/id')`,
+    );
+    return RUN_EXIT_USAGE;
   }
   if (
     parsed.sessionId !== undefined &&
@@ -1521,6 +2081,9 @@ export async function runOrchestrateCommand(
           exitCode: RUN_EXIT_FAILED,
           sessionId,
           status,
+          // Issue #278: this refusal bypasses emit, so it names the
+          // §19 mode itself.
+          mode: runMode,
           workers: [],
           mergeOrder: [],
           attribution: [],
@@ -1537,11 +2100,18 @@ export async function runOrchestrateCommand(
     return RUN_EXIT_FAILED;
   }
 
-  const emit = (envelope: OrchestrateEnvelope, textLines: string[]): number => {
+  // Issue #278 (§19): every envelope names the run's §19 mode — injected
+  // here so no exit path (usage refusals, pre-loop failures, the success
+  // and partial termini) can emit a modeless envelope.
+  const emit = (
+    envelope: Omit<OrchestrateEnvelope, 'mode'>,
+    textLines: string[],
+  ): number => {
+    const full: OrchestrateEnvelope = { ...envelope, mode: runMode };
     // stdout is data (the envelope, or the report lines); the failure
     // line is a diagnostic on stderr in both modes.
     if (parsed.json) {
-      deps.out(formatJson(envelope));
+      deps.out(formatJson(full));
     } else {
       for (const line of textLines) deps.out(line);
     }
@@ -1570,7 +2140,7 @@ export async function runOrchestrateCommand(
     message: string,
     partial?: Pick<
       OrchestrateEnvelope,
-      'workers' | 'mergeOrder' | 'attribution'
+      'workers' | 'mergeOrder' | 'discarded' | 'attribution' | 'reviewLoop'
     >,
     // The agents the envelope should describe. Defaults to the parsed list,
     // which is right for the pre-state failures (usage/non-git refusals) —
@@ -1588,7 +2158,13 @@ export async function runOrchestrateCommand(
         status,
         workers: partial?.workers ?? [],
         mergeOrder: partial?.mergeOrder ?? [],
+        discarded: partial?.discarded ?? [],
         attribution: partial?.attribution ?? [],
+        // The §70 loop (issue #188): a bound trip fails WITH its
+        // counters — the failure envelope is the trip's record.
+        ...(partial?.reviewLoop === undefined
+          ? {}
+          : { reviewLoop: partial.reviewLoop }),
         graph: delegationGraphLines(sessionId, graphAgents ?? parsed.agents),
         error: { kind: status, message, code },
         ...(reapErrors.length === 0 ? {} : { reapErrors: [...reapErrors] }),
@@ -1596,7 +2172,11 @@ export async function runOrchestrateCommand(
         // never an empty array claiming measurements that did not happen.
         ...(mergeTelemetry.length === 0 ? {} : { mergeTelemetry }),
       },
-      [`${theme.accent('session:')} ${sessionId}`, ...mergeTelemetryLines()],
+      [
+        // Issue #278 (§19): the terminal status line names the §19 mode.
+        `${theme.accent('session:')} ${sessionId} mode=${runMode}`,
+        ...mergeTelemetryLines(),
+      ],
     );
   };
 
@@ -1624,6 +2204,20 @@ export async function runOrchestrateCommand(
     );
     return RUN_EXIT_WORKSPACE_UNAVAILABLE;
   }
+  // Issue #278 (§19): the run's start names the §19 mode through the
+  // audit hook — the composition root appends the run:start row to the
+  // §60 ledger. After the §78 workspace gate (a refused run never starts,
+  // so it leaves no run:start row) and before any worktree, session or
+  // child exists.
+  deps.auditRunStart?.({
+    sessionId,
+    command: 'orchestrate',
+    mode: 'orchestrator',
+    runMode,
+    workspace: deps.repoRoot ?? process.cwd(),
+    posture: parsed.fullAccess ? 'full-access' : 'approvals',
+    autonomous: parsed.autonomous,
+  });
 
   // Resume: re-attach to the stored session. The stored payload is
   // untrusted JSON — anything malformed fails closed here as
@@ -1635,13 +2229,26 @@ export async function runOrchestrateCommand(
   // state on --resume (a differing flag is refused after the state loads).
   const requestedBudget: ParsedBudgetSpec | undefined =
     parsed.budget === undefined &&
+    parsed.budgetTotal === undefined &&
     Object.keys(parsed.budgetsByAgent).length === 0
       ? undefined
       : {
           ...(parsed.budget === undefined ? {} : { shared: parsed.budget }),
+          ...(parsed.budgetTotal === undefined
+            ? {}
+            : { total: parsed.budgetTotal }),
           byAgent: { ...parsed.budgetsByAgent },
         };
   let state: OrchestratorRunState;
+  // A reserved session id (issue #174) never names a run — not fresh, not
+  // resumed — so the rows file and the ledger dir stay what they are.
+  if (RESERVED_SESSION_IDS.has(sessionId)) {
+    return fail(
+      RUN_EXIT_USAGE,
+      'session_reserved',
+      `session id '${sessionId}' is reserved (it names the orchestrator's own record) — choose another --session id`,
+    );
+  }
   if (parsed.resume) {
     const loaded = await deps.loadState?.(sessionId);
     const resumed =
@@ -1668,8 +2275,15 @@ export async function runOrchestrateCommand(
             ...(record.result === undefined
               ? {}
               : workerResultView(record.result)),
+            // The §25.2 artifact rides the stored records too (issue
+            // #184): this early return runs before any launch rebuilds
+            // them, so the validated stored copy surfaces instead.
+            ...(resumed.artifacts?.[record.agentId] === undefined
+              ? {}
+              : { artifact: resumed.artifacts[record.agentId] }),
           })),
           mergeOrder: resumed.merged,
+          discarded: (resumed.discarded ?? []).map((entry) => entry.agentId),
           attribution: resumed.records.flatMap((record) =>
             attributeMergedHunks(record.hunks, record.agentId),
           ),
@@ -1700,6 +2314,8 @@ export async function runOrchestrateCommand(
       sessionId,
       prompt: parsed.prompt as string,
       agents: parsed.agents,
+      // The --agents entry count is the run's spawn cap (issue #413).
+      spawnCap: parsed.agents.length,
       // The explicit assignment travels with the state (issue #178):
       // --resume replays it instead of falling back to a default role.
       ...(bindingIsEmpty(parsed.binding)
@@ -1760,6 +2376,29 @@ export async function runOrchestrateCommand(
   }
   if (parsed.resume && stateSkills.length === 0 && parsed.skills.length > 0) {
     state = { ...state, skills: [...parsed.skills] };
+  }
+  // A state written before #413 carries no cap: the stored agent count is
+  // the cap the run was launched under — adopted (and persisted below),
+  // the same adoption the skills and the binding get.
+  if (state.spawnCap === undefined) {
+    state = { ...state, spawnCap: state.agents.length };
+  }
+  // Issue #422: a run a previous attempt capped has a repair path —
+  // `--resume --agents <larger list>` raises the stored cap to the flag's
+  // count, so a worker refused by the old cap is admitted instead of
+  // refused again. Only the COUNT is adopted (the ids stay ignored on
+  // resume, as before), and the cap never shrinks: a shorter or equal
+  // list leaves the stored cap in force.
+  if (
+    parsed.resume &&
+    options.agents !== undefined &&
+    parsed.agents.length > (state.spawnCap ?? state.agents.length)
+  ) {
+    const raisedFrom = state.spawnCap ?? state.agents.length;
+    state = { ...state, spawnCap: parsed.agents.length };
+    debug(
+      `resume: --agents raises the spawn cap ${raisedFrom} → ${parsed.agents.length} — a worker refused by the old cap is admitted`,
+    );
   }
   const effectiveSkills = state.skills ?? parsed.skills;
   // A pre-#178 state adopts the flag's assignment, so a later resume replays
@@ -1824,10 +2463,67 @@ export async function runOrchestrateCommand(
   if (state.onFailure !== effectiveOnFailure) {
     state = { ...state, onFailure: effectiveOnFailure };
   }
-  // No approvals layer means no gate to enforce the spec. Refused, never
-  // silently dropped — the exact false sense of cost control issue #208
-  // exists to remove.
-  if (effectiveBudget !== undefined && deps.approvals === undefined) {
+  // The debugger loop travels with the state too (issue #188, §70): a
+  // fresh run adopts the flags (or the default bound), and --resume
+  // re-applies the stored loop — an explicit flag still wins, so a user
+  // can raise the bound on the retry. Counters always replay stored.
+  const storedLoop = state.reviewLoop;
+  const escalationModel =
+    options.escalationModel ?? storedLoop?.escalationModel;
+  const effectiveLoop: NonNullable<OrchestratorRunState['reviewLoop']> = {
+    maxAttempts:
+      options.maxAttempts ??
+      storedLoop?.maxAttempts ??
+      REVIEW_LOOP_DEFAULT_MAX_ATTEMPTS,
+    ...(escalationModel === undefined ? {} : { escalationModel }),
+    debuggerSettlements: storedLoop?.debuggerSettlements ?? 0,
+    escalated: storedLoop?.escalated ?? false,
+  };
+  if (JSON.stringify(state.reviewLoop) !== JSON.stringify(effectiveLoop)) {
+    state = { ...state, reviewLoop: effectiveLoop };
+  }
+  // Step 7 (issue #431): the model-driven manager lane drives the run when
+  // a manager model resolves — a catalog plus a pin naming a model in it
+  // (the composition root resolves the pin-or-first-usable default;
+  // absence is the deterministic template fallback). A resume follows the
+  // STORED path: a lane-driven run re-attaches its manager session below,
+  // a template run replays its plan. A lane run whose model no longer
+  // resolves refuses by name (never re-plans silently), a template run
+  // never jumps to the lane, and a pin naming nothing refuses loudly —
+  // silently driving a run the operator did not ask to drive is worse than
+  // refusing it.
+  const laneModelPin = deps.managerModel;
+  const laneCatalog = deps.managerModels;
+  const laneModel =
+    laneCatalog === undefined || laneModelPin === undefined
+      ? undefined
+      : laneCatalog.getModel(laneModelPin.provider, laneModelPin.id);
+  // L-D34 opt-in (issue #431): a fresh run lanes only when the operator
+  // asked (`--manager-lane` / `[orchestrator] manager = "lane"`) AND a
+  // manager model resolves. A `--resume` continues the marked lane it
+  // started under (the mark is the record of that opt-in) — it never
+  // re-plans as template, and never lanes an unmarked run.
+  const laneOptIn = deps.managerLaneOptIn === true;
+  const laneMode =
+    state.laneDriven === true
+      ? true
+      : laneOptIn && laneModel !== undefined && !parsed.resume;
+  // The two lane refusals live after role + credential validation (issue
+  // #431): a contradictory role document or an undeliverable credential
+  // fails first, so the operator fixes roles/keys before the manager
+  // model is even considered — the lane never outranks a `role_refused`.
+  // The mode itself is committed there too (the lane owns spawning: minted
+  // ids arrive as it spawns, so the run starts with nothing pending).
+  // No approvals layer means no gate to enforce the per-spawn spec.
+  // Refused, never silently dropped — the exact false sense of cost control
+  // issue #208 exists to remove. A `total`-only spec is exempt (issue
+  // #207): the aggregate gate lives in the admission layer, which needs no
+  // approvals wiring, so there is nothing unenforced to refuse.
+  const needsSpawnEnforcement =
+    effectiveBudget !== undefined &&
+    (effectiveBudget.shared !== undefined ||
+      Object.keys(effectiveBudget.byAgent).length > 0);
+  if (needsSpawnEnforcement && deps.approvals === undefined) {
     log.error(
       '--budget cannot be enforced: this run has no approvals layer wired — refusing rather than dropping the limit',
     );
@@ -1870,18 +2566,162 @@ export async function runOrchestrateCommand(
   // worker's prompt. A resumed state written before #103 (or by a caller
   // that dropped it) re-derives the plan from the stored objective and agent
   // list, so --resume replays per-worker prompts either way — never the
-  // shared `-p` text.
-  if (state.plan === undefined) {
+  // shared `-p` text. Never on the lane path (issue #431): the lane-driven
+  // run has no steps, and re-deriving a plan for it would silently mix the
+  // two drivers.
+  if (state.plan === undefined && !laneMode) {
     state = {
       ...state,
       plan: composeRoles(buildManagerPlan(prompt, state.agents)),
     };
   }
-  const plan = state.plan as ManagerPlanStep[];
-  const promptForWorker = (agentId: string): string => {
-    const step = planStepFor(plan, agentId);
-    return step === undefined ? prompt : step.prompt;
+  // The lane path states its steps as it mints (no template plan exists
+  // there); the fallback keeps `promptForWorker` total — a mint without
+  // a recorded step runs the objective, never a crash.
+  const plan = (state.plan ?? []) as ManagerPlanStep[];
+  // Every worker's output is reviewed and merged (the merge gate), so the
+  // transfer names that contract as the expected output.
+  const TRANSFER_EXPECTED_OUTPUT =
+    'changes committed on the worker branch for review and merge';
+  // The artifact ledger (issue #184, §25.2): artifacts materialize lazily
+  // from settled results — including results rehydrated from stored state
+  // on a resume — so a retry rebuilds the same findings deterministically.
+  // A result that fails the §69 gate is skipped fail-closed (debug line,
+  // no artifact): the worker still merges on its hunks, it just hands
+  // nothing down the agent order.
+  const ensureArtifact = (agentId: string): TaskArtifact | undefined => {
+    const stored = state.artifacts?.[agentId];
+    if (stored !== undefined) return stored;
+    const result = resultsByAgent.get(agentId);
+    if (result === undefined) return undefined;
+    const placement = prepared.get(agentId) ?? worktrees.get(agentId);
+    if (placement === undefined) {
+      debug(`artifact for '${agentId}': no worktree recorded — skipped`);
+      return undefined;
+    }
+    try {
+      const artifact = artifactFromResult(agentId, result, {
+        worktree: placement.path,
+        diffRef: result.diff?.diffId ?? `branch:${placement.branch}`,
+      });
+      state.artifacts = { ...state.artifacts, [agentId]: artifact };
+      return artifact;
+    } catch (error) {
+      debug(
+        `artifact for '${agentId}' rejected — ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return undefined;
+    }
   };
+  // Launch order (issue #184 review): lane mints join state.agents only
+  // post-drive, but their plan steps are appended at spawn — agents plus
+  // plan-step ids in plan order is the order workers actually launched,
+  // so settled mints feed later mints mid-drive.
+  const launchOrderAgents = (): string[] => {
+    const order = [...state.agents];
+    for (const step of state.plan ?? []) {
+      if (!order.includes(step.agentId)) order.push(step.agentId);
+    }
+    return order;
+  };
+  // Relevant files (issue #184 review, §24 intent): the union of earlier
+  // settled artifacts' file refs, in launch order — existing data, so no
+  // producer is needed and the record is complete, not decorative.
+  const relevantFilesFor = (agentId: string): string[] => {
+    const files: string[] = [];
+    for (const earlier of launchOrderAgents()) {
+      if (earlier === agentId) break;
+      const artifact = ensureArtifact(earlier);
+      if (artifact === undefined) continue;
+      for (const file of artifact.fileRefs) {
+        if (!files.includes(file)) files.push(file);
+      }
+    }
+    return files;
+  };
+  // The handoff chain (issue #184, §25.3/§69): findings flow down the
+  // launch order from workers that already settled — a worker launching
+  // before an earlier sibling settles simply sees fewer findings.
+  const previousFindingsFor = (agentId: string): string[] => {
+    const lines: string[] = [];
+    for (const earlier of launchOrderAgents()) {
+      if (earlier === agentId) break;
+      const artifact = ensureArtifact(earlier);
+      if (artifact === undefined) continue;
+      try {
+        lines.push(
+          ...handoffFindingLines(
+            buildHandoff(
+              earlier,
+              artifact,
+              state.transfers?.[earlier]?.constraints ?? [],
+            ),
+          ),
+        );
+      } catch (error) {
+        debug(
+          `handoff from '${earlier}' rejected — ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    return lines;
+  };
+  const promptForWorker = (
+    agentId: string,
+    worktree: OrchestrateWorktree,
+  ): string => {
+    const step = planStepFor(plan, agentId);
+    const base = step === undefined ? prompt : step.prompt;
+    // The transfer (issue #184, §24) is rebuilt at every launch and
+    // rendered after the step prompt — the stored plan step stays the
+    // worker's own prompt, so a --resume replays it verbatim while the
+    // findings always reflect the artifacts settled so far. A transfer
+    // that cannot validate (an empty stored objective) degrades to the
+    // bare step prompt rather than crashing the launch.
+    try {
+      const transfer = buildTaskTransfer({
+        task: state.prompt,
+        worktree: worktree.path,
+        relevantFiles: relevantFilesFor(agentId),
+        constraints: [...(spawnRoleInfo(agentId, rolePlan).requires ?? [])],
+        expectedOutput: TRANSFER_EXPECTED_OUTPUT,
+        previousFindings: previousFindingsFor(agentId),
+      });
+      state.transfers = { ...state.transfers, [agentId]: transfer };
+      return `${base}\n\n${renderTransferRecord(transfer)}`;
+    } catch (error) {
+      debug(
+        `transfer for '${agentId}' rejected — ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return base;
+    }
+  };
+  // Review verdicts by agent (issue #188, §70): the run's own record of
+  // what the lane decided per settled worker. The `review_verdict` tool
+  // writes through `recordVerdict` below; the merge call executes.
+  // Restored from state on resume alongside the mint roles, so a resumed
+  // merge re-executes the same verdict instead of re-merging a refusal.
+  const reviewVerdicts = new Map<string, ReviewVerdict>();
+  for (const [agentId, verdict] of Object.entries(state.reviewVerdicts ?? {})) {
+    reviewVerdicts.set(agentId, verdict);
+  }
+  // The lane's minted roles (issue #431): `onSpawned` records each mint's
+  // role here, so `spawnRoleInfo` (session linkage, worker rows) and the
+  // role registry resolve a minted id exactly like a planned one. Declared
+  // before `spawnRoleInfo` — the preflight below already reads it.
+  const laneSpawnRoles = new Map<
+    string,
+    Pick<
+      WorkerSpawnInfo,
+      | 'role'
+      | 'tools'
+      | 'modelRef'
+      | 'thinking'
+      | 'classes'
+      | 'requires'
+      | 'budget'
+    >
+  >();
   // The role half of a worker's spawn info (issue #104): the assigned role,
   // its resolved tool set and its resolved model/thinking levels (issue
   // #202). Empty for a worker with no assignment (no role documents), so the
@@ -1889,7 +2729,21 @@ export async function runOrchestrateCommand(
   const spawnRoleInfo = (
     agentId: string,
     roles: WorkerRolesPlan,
-  ): Pick<WorkerSpawnInfo, 'role' | 'tools' | 'modelRef' | 'thinking'> => {
+  ): Pick<
+    WorkerSpawnInfo,
+    | 'role'
+    | 'tools'
+    | 'modelRef'
+    | 'thinking'
+    | 'classes'
+    | 'requires'
+    | 'budget'
+  > => {
+    // The lane's mints (issue #431): minted ids carry no plan assignment —
+    // their role travels in the lane map the spawn adapter fills (role
+    // documents included, so classes/requires ride along per #196).
+    const lane = laneSpawnRoles.get(agentId);
+    if (lane !== undefined) return { ...lane };
     const assignment = workerRoleAssignment(roles, agentId);
     if (assignment === undefined) return {};
     return {
@@ -1897,6 +2751,10 @@ export async function runOrchestrateCommand(
       tools: [...assignment.tools],
       modelRef: assignment.modelRef,
       thinking: assignment.thinking,
+      // Issue #196 (§40.2/§41.1): the role's classes and obligations
+      // travel to the spawn — the task carries them to the child.
+      classes: { ...assignment.classes },
+      requires: [...assignment.requires],
     };
   };
   // §36.3 credential preflight (issue #200): the same role/model inputs
@@ -1925,6 +2783,44 @@ export async function runOrchestrateCommand(
       );
     }
   }
+  if (parsed.resume && state.laneDriven === true && laneModel === undefined) {
+    return fail(
+      RUN_EXIT_FAILED,
+      'lane_resume_failed',
+      `cannot resume the lane-driven run '${sessionId}': the manager model is not in the catalog — refusing rather than re-planning the run as a template`,
+      undefined,
+      state.agents,
+    );
+  }
+  // L-D34 opt-in: only an opted-in run refuses over its manager model —
+  // without the opt-in a bad pin is the template path's business (worker
+  // preflight names it), never a loud lane refusal.
+  if (
+    laneOptIn &&
+    !parsed.resume &&
+    laneCatalog !== undefined &&
+    laneModelPin !== undefined &&
+    laneModel === undefined
+  ) {
+    return fail(
+      RUN_EXIT_FAILED,
+      'lane_model_unresolved',
+      `the manager model '${laneModelPin.provider}/${laneModelPin.id}' is not in the model catalog — refusing rather than driving the run as a template`,
+      undefined,
+      state.agents,
+    );
+  }
+  if (laneMode && !parsed.resume) {
+    // The lane owns spawning: minted ids arrive as it spawns, so the run
+    // starts with nothing pending (the template loops below no-op on an
+    // empty pending list) and the lane mark travels with the state.
+    state = {
+      ...state,
+      laneDriven: true,
+      managerSessionId: sessionId,
+      pending: [],
+    };
+  }
   // The lane's own call trace (issue #103): the manager drives each worker
   // through spawn → wait → collect, and each driven worker contributes its
   // own sequence — recorded through the allowlist-checking recorder as the
@@ -1947,6 +2843,9 @@ export async function runOrchestrateCommand(
     }
   }
   const recordLaneSequence = (): void => {
+    // The lane path records its REAL calls after the drive (issue #431) —
+    // the template trace must never mix into them.
+    if (laneMode) return;
     for (const step of MANAGER_LANE_SEQUENCE) {
       recordManagerLaneCall(laneSpy, step);
       laneCalls.push(step);
@@ -1969,6 +2868,30 @@ export async function runOrchestrateCommand(
   if (parsed.concurrency !== undefined) {
     scheduler.setSessionOverride(parsed.concurrency);
   }
+  // The aggregate task budget (issue #207, §71): `--budget total:<dims>`
+  // caps spend across ALL workers of the task through the admission
+  // layer's budgetGate. Installed only when the run carries one — absent
+  // means no aggregate limit (whatever the scheduler was constructed with
+  // stands). The effective spec travels with the state, so a resume
+  // re-applies the stored gate.
+  if (effectiveBudget?.total !== undefined) {
+    const total = effectiveBudget.total;
+    const gate: BudgetGate = {
+      ...(typeof total.maxCostUsd === 'number'
+        ? { maxCostUsd: total.maxCostUsd }
+        : {}),
+      ...(typeof total.maxTokens === 'number'
+        ? { maxTokens: total.maxTokens }
+        : {}),
+      ...(typeof total.maxToolCalls === 'number'
+        ? { maxToolCalls: total.maxToolCalls }
+        : {}),
+      ...(typeof total.maxRuntimeMs === 'number'
+        ? { maxRuntimeMs: total.maxRuntimeMs }
+        : {}),
+    };
+    scheduler.setBudgetGate(gate);
+  }
   let runningHighWater = 0;
   let queuedHighWater = 0;
   const observeAdmission = (): void => {
@@ -1989,6 +2912,11 @@ export async function runOrchestrateCommand(
   const enqueuedAtMs = new Map<string, number>();
   const diffMsByAgent = new Map<string, number>();
   const worktrees = new Map<string, OrchestrateWorktree>();
+  // Declared beside worktrees (issue #184): failure envelopes built before
+  // the launch section read worktree placement through `ensureArtifact`,
+  // so this map must exist before any early return — not just before
+  // the first launch.
+  const prepared = new Map<string, OrchestrateWorktree>();
   const hunksByAgent = new Map<string, MergedHunk[]>();
   // §68 results per worker (issue #185), successes and failures alike.
   const resultsByAgent = new Map<string, AgentResult>();
@@ -1998,6 +2926,37 @@ export async function runOrchestrateCommand(
       resultsByAgent.set(record.agentId, record.result);
     }
   }
+  // Aggregate usage roll-up (issue #207, §71): the previous attempt's
+  // records seed the tally below, so a resume never forgets what the run
+  // already spent — the gate judges the retry against real spend. Both
+  // lists seed it: `records` (merged) AND `completed` (issue #160
+  // write-ahead completions not yet merged when the attempt ended — a
+  // stopped run's settled workers live there, and their spend counts).
+  const aggregateUsage: UsageTally = {};
+  const accumulateUsage = (result: AgentResult | undefined): void => {
+    if (result === undefined) return;
+    // The stored payload is untrusted JSON: only finite numbers enter the
+    // tally, so a crafted record can never poison the gate fail-open
+    // (NaN comparisons are false, which would read as "under budget").
+    const num = (value: unknown): number =>
+      typeof value === 'number' && Number.isFinite(value) ? value : 0;
+    const metrics = result.metrics;
+    aggregateUsage.costUsd =
+      (aggregateUsage.costUsd ?? 0) + num(metrics.costUsd);
+    aggregateUsage.tokens =
+      (aggregateUsage.tokens ?? 0) +
+      num(metrics.inputTokens) +
+      num(metrics.outputTokens);
+    aggregateUsage.toolCalls =
+      (aggregateUsage.toolCalls ?? 0) + num(metrics.toolCalls);
+    aggregateUsage.runtimeMs =
+      (aggregateUsage.runtimeMs ?? 0) + num(metrics.wallMs);
+  };
+  for (const result of resultsByAgent.values()) accumulateUsage(result);
+  for (const record of state.completed ?? []) {
+    accumulateUsage(record.result);
+  }
+  scheduler.updateUsage({ ...aggregateUsage });
 
   // Per-worker approvals + opt-in budgets (issue #105; §41.1, §41.2, §71).
   // One approvals run for the whole orchestration: the router, its durable
@@ -2019,10 +2978,21 @@ export async function runOrchestrateCommand(
       ? {}
       : { budget: effectiveBudget.shared }),
     // Per-spawn overrides (`--budget worker-1:maxToolCalls=5`) reach the gate
-    // of THAT spawn only; absent, the shared spec applies. The spec read here
-    // is the EFFECTIVE one: a resume re-applies what the state stored.
+    // of THAT spawn only; absent, the shared spec applies; absent that, the
+    // worker's role DOCUMENT applies when it declares a budget (issue #198:
+    // spawn/CLI > document — the role pin is the fallback tier, reported by
+    // the approvals layer's own debug line when it is the spec in force).
+    // The spec read here is the EFFECTIVE one: a resume re-applies what
+    // the state stored.
     budgetForAgent: (agentId: string) =>
-      effectiveBudget?.byAgent[agentId] ?? effectiveBudget?.shared,
+      effectiveBudget?.byAgent[agentId] ??
+      effectiveBudget?.shared ??
+      // Lane mints (#431 follow-up): a minted id has no roster
+      // assignment, so the roster lookup below never fires for it — the
+      // mint's role-document dims travel in the lane map instead. Issue
+      // #198 precedence holds: both CLI tiers already won above.
+      laneSpawnRoles.get(agentId)?.budget ??
+      roleBudgetForAgent(rolePlan, agentId),
     ...(parsed.fullAccess ? { fullAccess: true } : {}),
     // A fresh run of a reused id must not find the old run's full-access
     // record or memoized decisions; only `--resume` continues them.
@@ -2053,6 +3023,11 @@ export async function runOrchestrateCommand(
       const record = state.records.find((entry) => entry.agentId === agentId);
       const hunks = hunksByAgent.get(agentId) ?? [];
       const result = resultsByAgent.get(agentId);
+      // The artifact materializes here too (issue #184): the last worker
+      // to settle has no later launch to build it, but --json still
+      // surfaces it.
+      const artifact = ensureArtifact(agentId);
+      const verdict = reviewVerdicts.get(agentId);
       return {
         agentId,
         branch:
@@ -2061,15 +3036,33 @@ export async function runOrchestrateCommand(
           `kubic/${sessionId}/${agentId}`,
         hunks: hunks.length,
         ...(result === undefined ? {} : workerResultView(result)),
+        ...(artifact === undefined ? {} : { artifact }),
+        ...(verdict === undefined ? {} : { reviewVerdict: verdict }),
       };
     });
 
+  // The §70 loop on the envelope (issue #188): the same activity gate
+  // as the text line — absent until the loop turns, so template
+  // envelopes stay byte-clean. Shared by the success and failure
+  // envelopes, so the bound trip reports its own counters.
+  const reviewLoopEnvelope = (): Pick<OrchestrateEnvelope, 'reviewLoop'> => {
+    const loop = state.reviewLoop;
+    if (
+      loop === undefined ||
+      (loop.debuggerSettlements === 0 && !loop.escalated)
+    ) {
+      return {};
+    }
+    return { reviewLoop: { ...loop } };
+  };
   const partial = (): Pick<
     OrchestrateEnvelope,
-    'workers' | 'mergeOrder' | 'attribution'
+    'workers' | 'mergeOrder' | 'discarded' | 'attribution' | 'reviewLoop'
   > => ({
     workers: workerRows(),
     mergeOrder: [...state.merged],
+    discarded: (state.discarded ?? []).map((entry) => entry.agentId),
+    ...reviewLoopEnvelope(),
     attribution: state.records.flatMap((record) =>
       attributeMergedHunks(record.hunks, record.agentId),
     ),
@@ -2156,6 +3149,27 @@ export async function runOrchestrateCommand(
     );
     if (at === -1) state.records.push(record);
     else state.records[at] = record;
+  };
+  // Write-ahead completion (issue #160): the worker settled successfully
+  // but is not merged yet. An upsert keyed by agent, like the merge record
+  // above — a retried worker replaces its earlier completion.
+  const upsertCompleted = (record: OrchestratedWorkerRecord): void => {
+    const completed = state.completed ?? [];
+    const at = completed.findIndex((entry) => entry.agentId === record.agentId);
+    if (at === -1) completed.push(record);
+    else completed[at] = record;
+    if (state.completed === undefined) state = { ...state, completed };
+  };
+  // A merge success moves the completion to the merge records (issue #160):
+  // `records` keeps meaning "merged", `completed` only the still-pending.
+  const moveCompletedToRecords = (record: OrchestratedWorkerRecord): void => {
+    upsertRecord(record);
+    if (state.completed !== undefined) {
+      const rest = state.completed.filter(
+        (entry) => entry.agentId !== record.agentId,
+      );
+      state = { ...state, completed: rest };
+    }
   };
   const recordFailure = async (
     agentId: string,
@@ -2294,7 +3308,24 @@ export async function runOrchestrateCommand(
       (existing.result !== undefined && existing.result.status !== 'completed')
     ) {
       resultsByAgent.delete(inFlight);
-      upsertRecord({ agentId: inFlight, branch: worktree.branch, hunks: [] });
+      // The reconciled merge keeps the persisted hunks (issue #160): the
+      // worker settled before the kill, so its completion — not an empty
+      // hunk list — is what attribution reports. Without one (a state
+      // written before #160) the empty record stands, as before.
+      const completedEntry = state.completed?.find(
+        (record) => record.agentId === inFlight,
+      );
+      if (completedEntry?.result !== undefined) {
+        resultsByAgent.set(inFlight, completedEntry.result);
+      }
+      moveCompletedToRecords({
+        agentId: inFlight,
+        branch: worktree.branch,
+        hunks: completedEntry === undefined ? [] : [...completedEntry.hunks],
+        ...(completedEntry?.result === undefined
+          ? {}
+          : { result: completedEntry.result }),
+      });
     }
     state.merged.push(inFlight);
     state.pending = state.pending.filter((entry) => entry !== inFlight);
@@ -2342,6 +3373,23 @@ export async function runOrchestrateCommand(
   // silent queue. The autonomous run keeps the shipped rule (the shared
   // resolveBlockedSpawn contract): the cap bounds concurrency, it never asks.
   const concurrencyCap = scheduler.maxConcurrency();
+  // Issue #207 (§71): the mode the admission layer judges every spawn
+  // under — a TTY run without --yes is interactive (pressure fails
+  // immediately with a reason), --yes or headless is autonomous (pressure
+  // queues). The #277 spawn-agents ask below is the interactive decision
+  // for the concurrency cap itself: approving it proceeds under the
+  // queueing rule, so an approval flips back to autonomous for the
+  // per-worker requests — the user already decided, no second ask per
+  // worker and no fail-fast betraying the approval.
+  // Seeded from the run's §19 mode (issue #278: explicit --autonomous wins,
+  // else --yes / headless is autonomous) so the admission layer honours it.
+  let spawnMode: RunMode = runMode;
+  // The --agents spawn cap (issue #413): adopted from stored state when the
+  // run predates it, so a resume never runs uncapped.
+  const spawnCap = state.spawnCap ?? state.agents.length;
+  // Workers refused by the spawn cap in the prepare loop below — skipped by
+  // the spawn loop, mirroring deniedSpawns.
+  const cappedSpawns = new Set<string>();
   const excessAgents =
     state.agents.length <= concurrencyCap
       ? []
@@ -2354,12 +3402,8 @@ export async function runOrchestrateCommand(
   if (excessAgents.length > 0 && approvalsRun !== undefined) {
     // `--yes` is the run's standing answer: it makes the run autonomous, so
     // the cap never asks (issue #323's rule, applied to this ask too).
-    const runMode: RunMode =
-      deps.interactive === true && parsed.autoApprove !== true
-        ? 'interactive'
-        : 'autonomous';
     const blocked = resolveBlockedSpawn(
-      runMode,
+      spawnMode,
       `${state.agents.length} workers requested with a concurrency cap of ${concurrencyCap}`,
     );
     if (blocked.outcome === 'ask') {
@@ -2384,13 +3428,19 @@ export async function runOrchestrateCommand(
           `admission: spawn-agents ask denied — ${excessAgents.join(', ')} will not spawn (${verdict.reason})`,
         );
       } else {
+        // The approval is the queueing decision (issue #207): the excess
+        // proceeds under the queueing rule, so the per-worker requests
+        // below judge under autonomous even on an interactive run.
+        spawnMode = 'autonomous';
         debug(
           `admission: spawn-agents ask approved — ${excessAgents.join(', ')} proceed under the queueing rule`,
         );
       }
     }
   }
-  const prepared = new Map<string, OrchestrateWorktree>();
+  // Pending workers whose write-ahead completion (issue #160) this resume
+  // reuses: prepared like the rest, but never spawned or run again.
+  const resumedCompleted = new Set<string>();
   // §61 worktree creation duration per agent (issue #158).
   const worktreeMsByAgent = new Map<string, number>();
   for (const agentId of state.pending) {
@@ -2406,6 +3456,24 @@ export async function runOrchestrateCommand(
         kind: 'approval',
         code: 'spawn_agents_denied',
         message: refusalReasonFor(agentId),
+      });
+      continue;
+    }
+    // Issue #413: --agents is the run's spawn CAP, not just its roster — a
+    // worker past the cap fails before any worktree is created, with the
+    // refusal as its result (the same failed-worker contract as the denial
+    // above). The count is DISTINCT preparations: denials never reach this
+    // loop, so they never consume a slot, and a re-prepared worker (issue
+    // #175) spends the slot it already holds. On the template path the
+    // pending set is the agent list, so the cap never binds — the guard is
+    // live for the manager lane's spawn_agent adapter (issue #414).
+    if (!prepared.has(agentId) && prepared.size >= spawnCap) {
+      cappedSpawns.add(agentId);
+      await recordFailure(agentId, undefined, {
+        status: 'spawn_failed',
+        kind: 'process',
+        code: 'spawn_cap_exceeded',
+        message: `spawn refused for worker '${agentId}': the run's --agents cap is ${spawnCap} and ${prepared.size} worker(s) are already prepared`,
       });
       continue;
     }
@@ -2442,6 +3510,64 @@ export async function runOrchestrateCommand(
       worktrees.set(agentId, worktree);
     }
     prepared.set(agentId, worktree);
+    // Write-ahead completion reuse (issue #160): this resume continues a run
+    // whose worker already settled — when the retained worktree is still on
+    // the completion's branch, the recorded hunks (+ result) are restored
+    // and the worker is queued for merge WITHOUT re-running it (a second
+    // run would spend tokens and mix a second commit into the same branch).
+    // A completion on any other branch is stale (recreated out-of-band) and
+    // is dropped, so the worker runs again.
+    const completedEntry = state.completed?.find(
+      (entry) => entry.agentId === agentId,
+    );
+    if (completedEntry !== undefined) {
+      // Tip check (issue #429): a branch rewritten under the same name
+      // must not receive the hunks recorded before the rewrite. Only a
+      // positive mismatch refuses — an unknown tip (no probe, a throwing
+      // probe, a state written before #429) reuses on branch match (#160).
+      let tipMoved = false;
+      if (completedEntry.tipSha !== undefined) {
+        let current: string | undefined;
+        try {
+          current = await deps.readBranchTip?.(agentId, worktree);
+        } catch {
+          current = undefined;
+        }
+        tipMoved = current !== undefined && current !== completedEntry.tipSha;
+        if (tipMoved) {
+          debug(
+            `resume: worker '${agentId}' completion tip moved (recorded ${completedEntry.tipSha}, worktree tip ${current}) — running again`,
+          );
+        }
+      }
+      if (tipMoved) {
+        state = {
+          ...state,
+          completed: (state.completed ?? []).filter(
+            (entry) => entry.agentId !== agentId,
+          ),
+        };
+      } else if (completedEntry.branch === worktree.branch) {
+        hunksByAgent.set(agentId, [...completedEntry.hunks]);
+        if (completedEntry.result !== undefined) {
+          resultsByAgent.set(agentId, completedEntry.result);
+        }
+        resumedCompleted.add(agentId);
+        debug(
+          `resume: worker '${agentId}' already completed on ${worktree.branch} — skipping re-run, queued for merge`,
+        );
+      } else {
+        state = {
+          ...state,
+          completed: (state.completed ?? []).filter(
+            (entry) => entry.agentId !== agentId,
+          ),
+        };
+        debug(
+          `resume: worker '${agentId}' completion is stale (recorded on ${completedEntry.branch}, worktree is ${worktree.branch}) — running again`,
+        );
+      }
+    }
   }
 
   const runWorkerOnce = async (
@@ -2461,6 +3587,14 @@ export async function runOrchestrateCommand(
         agentId,
         workerSessionId,
         worktree,
+        // Issue #278 (§19): the run's mode travels to the session records.
+        mode: runMode,
+        // Issue #164 (§23): the assignment travels to the session record
+        // so the worker session names its role beside its parent.
+        ...(() => {
+          const role = spawnRoleInfo(agentId, rolePlan).role;
+          return role === undefined ? {} : { role };
+        })(),
       });
       if (created === undefined) {
         const noHook = `spawn failed for worker '${agentId}': no session-creation hook is wired for session '${workerSessionId}' — a spawned child could only die at attach ("unknown session")`;
@@ -2503,24 +3637,29 @@ export async function runOrchestrateCommand(
         approvalsRun.beginWorker(approvalScopeFor(agentId, worktree));
       }
       const output = runOutputOf(
-        await deps.runWorker(agentId, worktree, promptForWorker(agentId), {
-          sessionId,
-          workerSessionId,
-          ...(worktreeMsByAgent.get(agentId) === undefined
-            ? {}
-            : { worktreeMs: worktreeMsByAgent.get(agentId) as number }),
-          // The role this worker was assigned and the tool set its lane
-          // must register (§12.1/§40): the resolved set is what withholds
-          // a tool — absence, never approval. Absent means no role
-          // document exists for this worker, so nothing is narrowed.
-          ...spawnRoleInfo(agentId, rolePlan),
-          // §67 task resources (issue #170): the run's `--skill` values reach
-          // every worker (the STORED ones on a resume), and the run resolves
-          // them against its own cwd.
-          ...(effectiveSkills.length === 0
-            ? {}
-            : { skills: [...effectiveSkills] }),
-        }),
+        await deps.runWorker(
+          agentId,
+          worktree,
+          promptForWorker(agentId, worktree),
+          {
+            sessionId,
+            workerSessionId,
+            ...(worktreeMsByAgent.get(agentId) === undefined
+              ? {}
+              : { worktreeMs: worktreeMsByAgent.get(agentId) as number }),
+            // The role this worker was assigned and the tool set its lane
+            // must register (§12.1/§40): the resolved set is what withholds
+            // a tool — absence, never approval. Absent means no role
+            // document exists for this worker, so nothing is narrowed.
+            ...spawnRoleInfo(agentId, rolePlan),
+            // §67 task resources (issue #170): the run's `--skill` values reach
+            // every worker (the STORED ones on a resume), and the run resolves
+            // them against its own cwd.
+            ...(effectiveSkills.length === 0
+              ? {}
+              : { skills: [...effectiveSkills] }),
+          },
+        ),
       );
       if (output.result !== undefined) {
         resultsByAgent.set(agentId, output.result);
@@ -2551,6 +3690,32 @@ export async function runOrchestrateCommand(
         }
       }
       hunksByAgent.set(agentId, [...hunks]);
+      // Write-ahead completion (issue #160): the worker settled, so its
+      // branch + hunks persist BEFORE the merge gate runs — a deny, a
+      // timeout or a kill must not lose them. Best-effort here (siblings
+      // are still in flight); the merge phase re-saves fail-closed.
+      // The branch tip travels with it (issue #429): a throwing probe is
+      // an unknown tip, never a failed settle.
+      let tipSha: string | undefined;
+      try {
+        tipSha = await deps.readBranchTip?.(agentId, worktree);
+      } catch {
+        tipSha = undefined;
+      }
+      upsertCompleted({
+        agentId,
+        branch: worktree.branch,
+        hunks: [...hunks],
+        ...(output.result === undefined ? {} : { result: output.result }),
+        ...(tipSha === undefined ? {} : { tipSha }),
+      });
+      try {
+        await deps.saveState?.(state);
+      } catch (error) {
+        debug(
+          `state: completion record for '${agentId}' not saved — ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       // The lane drove this worker to completion — its spawn → wait →
       // collect is part of the manager's real call record (issue #103).
       recordLaneSequence();
@@ -2653,6 +3818,11 @@ export async function runOrchestrateCommand(
   const started = new Set<string>();
   const handled = new Set<string>();
   const queued = new Set<string>();
+  // The lane's settle observer (issue #431): set by the lane section when
+  // the manager lane drives the run (undefined on the template path), and
+  // invoked from `startWorker`'s completion tail for every worker that
+  // settles — however it was launched.
+  let laneSettleHook: ((agentId: string) => void) | undefined;
   // Worker-level failures the run continued past (issue #169): keyed by
   // agent, in agent order, each with the named terminus the envelope and the
   // partial-failure exit report.
@@ -2702,10 +3872,19 @@ export async function runOrchestrateCommand(
   // Release a settled worker's slot, then start whatever the scheduler's FIFO
   // drain woke — shared by the success and the `continue` failure paths, so a
   // failed worker frees its slot exactly like a completed one (issue #206).
+  // The settled worker's reported usage feeds the admission layer FIRST
+  // (issue #207, §71): the drain that wakes the next worker judges under
+  // the fresh tally, so a spawn the run can no longer afford stays queued
+  // (or is denied outright in interactive mode) instead of starting blind.
   const releaseSlot = (agentId: string): void => {
-    const woken = scheduler.complete(agentId);
+    accumulateUsage(resultsByAgent.get(agentId));
+    const woken = scheduler.updateUsage({ ...aggregateUsage });
+    const usageWakeups = woken.filter((id) => !started.has(id));
+    for (const id of usageWakeups) startWorker(id);
+    if (usageWakeups.length > 0) recordAdmission(usageWakeups);
+    const drained = scheduler.complete(agentId);
     observeAdmission();
-    const wakeups = woken.filter((id) => !started.has(id));
+    const wakeups = drained.filter((id) => !started.has(id));
     for (const id of wakeups) startWorker(id);
     if (wakeups.length > 0) recordAdmission(wakeups);
   };
@@ -2739,6 +3918,20 @@ export async function runOrchestrateCommand(
       }
       inFlight.delete(agentId);
       finished.set(agentId, outcome);
+      // The lane's settle hook (issue #431): the router observes the same
+      // settlement the run merges — the hook releases the scheduler slot
+      // and settles the registry, so `wait_for_agent` wakes on the run's
+      // own bookkeeping, not a copy. Guarded: a hook bug must never break
+      // the task the siblings await on. Undefined on the template path.
+      if (laneSettleHook !== undefined) {
+        try {
+          laneSettleHook(agentId);
+        } catch (error) {
+          debug(
+            `lane: settle hook for '${agentId}' failed — ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
     })();
     inFlight.set(agentId, task);
   };
@@ -2796,7 +3989,12 @@ export async function runOrchestrateCommand(
     // Issue #277: a worker the user refused to admit past the cap never got a
     // worktree — its failure result was recorded when the run reached it — so
     // it is skipped here rather than dereferencing a missing preparation.
-    if (deniedSpawns.has(agentId)) continue;
+    // A worker past the --agents spawn cap (issue #413) is skipped the same
+    // way: refused in the prepare loop above, never spawned here. A worker
+    // whose completion this resume reuses (issue #160) is skipped too: it
+    // is already prepared above and goes straight to the merge queue.
+    if (deniedSpawns.has(agentId) || cappedSpawns.has(agentId)) continue;
+    if (resumedCompleted.has(agentId)) continue;
     const worktree = prepared.get(agentId) as OrchestrateWorktree;
     // §45 provider caps: the worker's own model pin names the provider its
     // child will call, so the admission layer judges the right one. The pin
@@ -2820,7 +4018,7 @@ export async function runOrchestrateCommand(
         worktree: worktree.path,
         ...(provider === undefined ? {} : { provider }),
       },
-      'autonomous',
+      spawnMode,
     );
     // The admission layer's own numbers, sampled right after the request
     // (issue #106, §49.1/§50) — the point at which running/queued are the
@@ -3013,21 +4211,926 @@ export async function runOrchestrateCommand(
     return fail(denied.exitCode, denied.code, denied.message, partial());
   }
 
+  // Every pending worker settled: persist the write-ahead completions
+  // fail-closed (issue #160) — the run never proceeds merge-side without
+  // them saved, so a kill at the gate still resumes without re-running.
+  {
+    const saveFailure = await saveOrFail(state);
+    if (saveFailure !== undefined) {
+      await reapSpawned(spawned);
+      return saveFailure;
+    }
+  }
   // Every pending worker settled: enqueue the candidates in AGENT order, so
   // the merge order is deterministic whatever the settle order was (issue
   // #206) and the write-ahead intent still travels with one candidate at a
   // time. A worker the run continued past (issue #169) is never enqueued: it
   // did not succeed, so there is nothing to merge, and it stays pending for
-  // `--resume` to retry.
+  // `--resume` to retry. Skipped on the lane path (issue #431): the lane
+  // stages its own queue through `workspace_apply` — the template pass
+  // below breaks out immediately instead.
   for (const agentId of state.pending) {
+    if (laneMode) break;
     // A worker the run continued past (issue #169), and — issue #277 — one the
     // user refused past the concurrency cap: neither succeeded, so there is
-    // nothing to merge; both stay pending for `--resume` to retry.
-    if (partialFailures.has(agentId) || deniedSpawns.has(agentId)) continue;
+    // nothing to merge; both stay pending for `--resume` to retry. A worker
+    // past the --agents spawn cap (issue #413) never spawned either.
+    if (
+      partialFailures.has(agentId) ||
+      deniedSpawns.has(agentId) ||
+      cappedSpawns.has(agentId)
+    ) {
+      continue;
+    }
     const worktree = prepared.get(agentId) as OrchestrateWorktree;
     queue.enqueue({ agentId, branch: worktree.branch });
     enqueuedAtMs.set(agentId, now());
     debug(`spawn: worker '${agentId}' in ${worktree.path}`);
+  }
+
+  // Step 7 (issue #431): the model-driven manager lane. The template path
+  // above no-ops here (empty pending, empty in-flight), and the merge phase
+  // below runs unchanged — the lane stages the same queue the template
+  // enqueue would have, settles the same registries the merge asserts
+  // over, and records the same write-ahead completions a kill resumes
+  // from. The faux/template fallback stays: this whole section runs only
+  // when a manager model resolved.
+  if (laneMode) {
+    if (laneModel === undefined || laneCatalog === undefined) {
+      return fail(
+        RUN_EXIT_FAILED,
+        'lane_resume_failed',
+        `cannot drive the lane run '${sessionId}': no manager model is wired — refusing rather than re-planning as a template`,
+        undefined,
+        state.agents,
+      );
+    }
+    if (deps.openManagerSession === undefined) {
+      return fail(
+        RUN_EXIT_FAILED,
+        'lane_session_failed',
+        `cannot drive the lane run '${sessionId}': no manager-session seam is wired — refusing rather than running without a transcript`,
+        undefined,
+        state.agents,
+      );
+    }
+    const managerSessionId = state.managerSessionId ?? sessionId;
+    let managerSession: SessionHandle;
+    try {
+      managerSession = await deps.openManagerSession(managerSessionId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return fail(
+        RUN_EXIT_FAILED,
+        'lane_session_failed',
+        `cannot drive the lane run '${sessionId}': the manager session '${managerSessionId}' refused to attach — ${message}`,
+        undefined,
+        state.agents,
+      );
+    }
+    // Minted ids are unique across the roster AND the run's own mints
+    // (issue #431): a resume re-seeds from the stored agents, so a
+    // re-driven lane never re-mints an id the first drive already used —
+    // and a roster id shaped like a mint is skipped, never collided with.
+    const takenIds = new Set(state.agents);
+    let mintCounter = 0;
+    for (const agentId of state.agents) {
+      const match = /^worker-(\d+)$/.exec(agentId);
+      if (match !== null) {
+        mintCounter = Math.max(mintCounter, Number(match[1]));
+      }
+    }
+    const preflighted = new Set<string>();
+    const cancelledByManager = new Set<string>();
+    const releasedSlots = new Set<string>();
+    const stagedForMerge: string[] = [];
+    const mergeHeads = createMergeHeadCursor(stagedForMerge);
+    const consumedFailures = new Set<string>();
+    // The drive's view of the run: restored settlements (a resume's
+    // completions and merge records) plus every mint the lane spawns.
+    const tracked = new Set<string>();
+    // The §70 loop-bound trip (issue #188): set when a debugger spawn
+    // refuses past the bound — the run fails closed with the bound named
+    // once the drive ends, instead of dribbling on unbounded.
+    let loopBoundTripped = false;
+    const settledAgentResult = (agentId: string): AgentResult => {
+      const settled = resultsByAgent.get(agentId);
+      if (settled !== undefined) return settled;
+      // Belt: `runWorkerOnce` always records a result (its own or a
+      // synthesized failure), so a settlement without one is a bug in
+      // that conversion — synthesized here in the same shape rather than
+      // wedging `collect_result` on `collect_before_settle` forever.
+      const synthesized = buildAgentResult({
+        status: 'completed',
+        summary: `worker '${agentId}' settled without a report`,
+        provenance: {
+          workerId: agentId,
+          sessionId: workerSessionFor(sessionId, agentId),
+          pid: null,
+          generation: 0,
+          worktree: worktrees.get(agentId)?.path ?? NO_WORKTREE,
+          model: UNRESOLVED_MODEL,
+        },
+        metrics: { wallMs: 0, latencyMs: 0 },
+      });
+      resultsByAgent.set(agentId, synthesized);
+      return synthesized;
+    };
+    const releaseSlotOnce = (agentId: string): void => {
+      if (releasedSlots.has(agentId)) return;
+      releasedSlots.add(agentId);
+      releaseSlot(agentId);
+    };
+    const routerDeps: ManagerToolsDeps = {
+      sessionId,
+      // The run's derived §19 mode (issues #278/#207) — never a fixed
+      // value. The template path hardcodes 'autonomous' past its
+      // spawn-cap ask (that ask owns the interactive branch); the lane
+      // has no such ask, so admission follows the mode the operator
+      // chose: an interactive run fail-fasts a blocked spawn, an
+      // autonomous one queues it.
+      runMode,
+      scheduler,
+      spawnCap,
+      // Settlement is guaranteed by `startWorker`'s never-rejecting
+      // tasks: every launch settles into `finished`, so the wait needs no
+      // clock of its own — the lane's own tool-call bound is the backstop.
+      waitTimeoutMs: Number.POSITIVE_INFINITY,
+      validRoles: [
+        ...BUILTIN_ROLE_NAMES,
+        ...new Set(rolePlan.assignments.map((assignment) => assignment.role)),
+      ],
+      resolveRole: (roleName) => {
+        if (isBuiltinRole(roleName)) {
+          // The role's tools are role-level, never per-agent: any roster
+          // assignment resolved under the same documents carries them
+          // (the embedded §12 presets ship with the binary, issue #203,
+          // so this works with no repo documents). Only tools and prompt
+          // travel — a matched agent's personal model pin never leaks
+          // onto a mint (#202 precedence stays per-agent).
+          const match = rolePlan.assignments.find(
+            (entry) => entry.role === roleName,
+          );
+          return {
+            promptText: match?.promptText ?? '',
+            tools: [...(match?.tools ?? [])],
+            modelRef: undefined,
+            thinking: ROLE_THINKING_DEFAULTS[roleName],
+            // Issue #196: the mint runs under this role's documents, so
+            // its classes and obligations travel — never a bare spawn.
+            ...(match?.classes === undefined
+              ? {}
+              : { classes: { ...match.classes } }),
+            ...(match?.requires === undefined
+              ? {}
+              : { requires: [...match.requires] }),
+            // Issue #198 (#431 follow-up): the same documents' budget
+            // dims travel as the fallback tier under an explicit
+            // spawn_agent(budget=…) — absent stays absent.
+            ...(match?.budget === undefined
+              ? {}
+              : { budget: { ...match.budget } }),
+          };
+        }
+        const assignment = rolePlan.assignments.find(
+          (entry) => entry.role === roleName,
+        );
+        if (assignment === undefined) return undefined;
+        return {
+          promptText: assignment.promptText,
+          tools: [...assignment.tools],
+          modelRef: assignment.modelRef,
+          thinking: assignment.thinking,
+          // Issue #196: same documents as the tools above.
+          ...(assignment.classes === undefined
+            ? {}
+            : { classes: { ...assignment.classes } }),
+          ...(assignment.requires === undefined
+            ? {}
+            : { requires: [...assignment.requires] }),
+          // Issue #198 (#431 follow-up): the fallback tier, as above.
+          ...(assignment.budget === undefined
+            ? {}
+            : { budget: { ...assignment.budget } }),
+        };
+      },
+      spawnedIds: () => [...spawned],
+      noteSpawned: () => undefined,
+      // Issue #188 (§70): the verdict lands in the run's map and the
+      // persisted record together, so mid-drive saves already carry it.
+      recordVerdict: (agentId, verdict) => {
+        reviewVerdicts.set(agentId, verdict);
+        state = {
+          ...state,
+          reviewVerdicts: Object.fromEntries(reviewVerdicts),
+        };
+        debug(`review verdict for '${agentId}': ${verdict}`);
+      },
+      // The §70 debugger-loop spawn gate (issue #188): the run owns
+      // the bound, the adapter only asks. Within the bound the spawn
+      // proceeds; at the bound the single escalation fires (the rung
+      // overrides the pin, same model when none is configured); past
+      // bound plus escalation the spawn refuses by name.
+      gateDebuggerSpawn: () => {
+        const loop = state.reviewLoop ?? {
+          maxAttempts: REVIEW_LOOP_DEFAULT_MAX_ATTEMPTS,
+          debuggerSettlements: 0,
+          escalated: false,
+        };
+        if (loop.debuggerSettlements < loop.maxAttempts) return {};
+        if (!loop.escalated) {
+          state = {
+            ...state,
+            reviewLoop: { ...loop, escalated: true },
+          };
+          debug(
+            `debugger loop: bound of ${loop.maxAttempts} reached — escalating once${loop.escalationModel === undefined ? ' at the same model' : ` to ${loop.escalationModel}`}`,
+          );
+          return loop.escalationModel === undefined
+            ? {}
+            : { modelOverride: loop.escalationModel };
+        }
+        return {
+          refused: `loop bound exceeded: ${loop.debuggerSettlements} debugger settlement(s) (bound ${loop.maxAttempts}), escalated once — the tester still fails`,
+        };
+      },
+      noteLoopBoundExceeded: () => {
+        loopBoundTripped = true;
+        debug('debugger loop: bound trip recorded — the run fails closed');
+      },
+      mintAgentId: () => {
+        let candidate = '';
+        do {
+          mintCounter += 1;
+          candidate = `worker-${mintCounter}`;
+        } while (takenIds.has(candidate));
+        takenIds.add(candidate);
+        return candidate;
+      },
+      // The spawn's actual model rides the mint (issue #188): the §70
+      // escalation rung overrides the pin, so the recorded ref is what
+      // the child runs — never the role default it did not run.
+      onSpawned: (agentId, role, task, model) => {
+        const spec = routerDeps.resolveRole(role);
+        laneSpawnRoles.set(agentId, {
+          role,
+          tools: [...(spec?.tools ?? [])],
+          modelRef: model ?? spec?.modelRef,
+          thinking: spec?.thinking,
+          ...(spec?.classes === undefined
+            ? {}
+            : { classes: { ...spec.classes } }),
+          ...(spec?.requires === undefined
+            ? {}
+            : { requires: [...spec.requires] }),
+          // Issue #198 (#431 follow-up): the document dims ride the
+          // mint so the per-spawn gate finds them by minted id.
+          ...(spec?.budget === undefined ? {} : { budget: { ...spec.budget } }),
+        });
+        tracked.add(agentId);
+        // The lane has no template plan: the mint's plan step IS its
+        // worker prompt — the role text composed with the task, exactly
+        // as `applyRolesToPlan` composes the template's steps — so the
+        // child runs what the manager asked, never the bare objective.
+        const plan = [...(state.plan ?? [])];
+        plan.push({
+          agentId,
+          step: 1,
+          total: 1,
+          prompt: composeWorkerPrompt(spec?.promptText ?? '', task),
+          role,
+        });
+        state = { ...state, plan };
+      },
+      prepareWorker: async (agentId) => {
+        // The §36.3 preflight (issue #200) per mint, once per
+        // role+model: the template preflight above only saw the roster,
+        // so a mint's credentials are probed at its first spawn — a
+        // refusal names the provider before any worktree exists.
+        const info = laneSpawnRoles.get(agentId);
+        const preflightKey = `${info?.role ?? 'worker'}::${info?.modelRef ?? ''}`;
+        if (!preflighted.has(preflightKey)) {
+          preflighted.add(preflightKey);
+          if (deps.preflightWorkerCredentials !== undefined) {
+            const refusal = deps.preflightWorkerCredentials([
+              {
+                agentId,
+                role: info?.role ?? 'worker',
+                ...(info?.modelRef === undefined
+                  ? {}
+                  : { modelRef: info.modelRef }),
+              },
+            ]);
+            if (refusal !== undefined) {
+              throw new Error(
+                `worker '${agentId}' (${refusal.role}): ${refusal.message}`,
+              );
+            }
+          }
+        }
+        // The template prepare loop, minus its roster guards: the cap
+        // already bound at mint time, and denials never reach the lane.
+        // Resume reuses the retained worktree, never ensures twice.
+        resultsByAgent.delete(agentId);
+        let worktree = worktrees.get(agentId);
+        if (worktree === undefined) {
+          const creationStartedAt = now();
+          worktree = await deps.ensureWorktree(agentId, worktreeRequest);
+          worktreeMsByAgent.set(
+            agentId,
+            Math.max(0, now() - creationStartedAt),
+          );
+          worktrees.set(agentId, worktree);
+        }
+        prepared.set(agentId, worktree);
+        return { agentId, worktreePath: worktree.path };
+      },
+      launchWorker: async (request: WorkerSpawnRequest) => {
+        startWorker(request.agentId);
+        const task = inFlight.get(request.agentId);
+        if (task === undefined) {
+          throw new Error(
+            `lane: worker '${request.agentId}' was never launched — the spawn adapter's launch did not start it`,
+          );
+        }
+        await task;
+        observeAdmission();
+        return settledAgentResult(request.agentId);
+      },
+      inspectWorker: (agentId) => {
+        if (!spawned.includes(agentId)) return undefined;
+        const worktree = prepared.get(agentId) ?? worktrees.get(agentId);
+        const result = resultsByAgent.get(agentId);
+        const outcome = finished.get(agentId);
+        const info = laneSpawnRoles.get(agentId);
+        const row: WorkerRowInfo = {
+          agentId,
+          branch: worktree?.branch ?? `kubic/${sessionId}/${agentId}`,
+          role: info?.role ?? 'worker',
+          status: cancelledByManager.has(agentId)
+            ? 'cancelled'
+            : outcome === undefined
+              ? 'running'
+              : outcome.ok
+                ? 'completed'
+                : 'failed',
+          summary:
+            result?.summary ??
+            (outcome === undefined
+              ? 'still running'
+              : `settled: ${outcome.ok ? 'ok' : outcome.code}`),
+        };
+        return row;
+      },
+      cancelWorker: async (agentId) => {
+        cancelledByManager.add(agentId);
+        try {
+          await deps.cancelWorker?.(agentId);
+        } finally {
+          releaseSlotOnce(agentId);
+        }
+      },
+      runFollowUp: async (agentId, promptText) => {
+        const worktree = prepared.get(agentId);
+        if (worktree === undefined) {
+          throw new ManagerToolRefusalError(
+            'unknown_agent',
+            `no worker '${agentId}' was prepared by this run`,
+          );
+        }
+        const output = runOutputOf(
+          await deps.runWorker(agentId, worktree, promptText, {
+            sessionId,
+            workerSessionId: workerSessionFor(sessionId, agentId),
+            ...(worktreeMsByAgent.get(agentId) === undefined
+              ? {}
+              : { worktreeMs: worktreeMsByAgent.get(agentId) as number }),
+            ...spawnRoleInfo(agentId, rolePlan),
+            ...(effectiveSkills.length === 0
+              ? {}
+              : { skills: [...effectiveSkills], skillsCwd: process.cwd() }),
+          }),
+        );
+        if (output.result !== undefined) {
+          resultsByAgent.set(agentId, output.result);
+        }
+        const result = output.result ?? settledAgentResult(agentId);
+        upsertCompleted({
+          agentId,
+          branch: worktree.branch,
+          hunks: [...output.hunks],
+          result,
+        });
+        try {
+          await deps.saveState?.(state);
+        } catch (error) {
+          debug(
+            `state: follow-up completion for '${agentId}' not saved — ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        return result;
+      },
+      readWorkerChange: async (agentId, worktreePath, base) => {
+        // Issue #416's `(agentId, worktree, base?)` contract: the adapter
+        // passes the worktree path it tracked at spawn as the second
+        // positional (a pre-#431 two-arg implementation read it as the
+        // base ref — every diff failed `ambiguous argument`). The branch
+        // always resolves from the run's own maps: the adapter tracks
+        // paths, never branch names.
+        const entry = prepared.get(agentId) ?? worktrees.get(agentId);
+        if (entry === undefined) {
+          throw new ManagerToolRefusalError(
+            'unknown_agent',
+            `no worker '${agentId}' was prepared by this run`,
+          );
+        }
+        const worktree =
+          typeof worktreePath === 'string' && worktreePath !== ''
+            ? { path: worktreePath, branch: entry.branch }
+            : entry;
+        // Gap 1 (#416 review): the model-supplied base is validated as a
+        // git ref BEFORE it reaches git — never a flag, never a range
+        // escape. The default base is the merge-base the run branched
+        // from... unknown here, so HEAD names the comparison point.
+        const revision = base ?? 'HEAD';
+        assertGitRef(revision);
+        assertGitRef(worktree.branch);
+        const seam = deps.inspectGit;
+        if (seam === undefined) {
+          throw new ManagerToolRefusalError(
+            'git_failed',
+            `no git inspection seam is wired for worker '${agentId}' — the builder did not provide one`,
+          );
+        }
+        const patch = await seam('git_diff', {
+          range: `${revision}...${worktree.branch}`,
+        });
+        const filesChanged: string[] = [];
+        for (const line of patch.split('\n')) {
+          const header = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
+          if (header === null) continue;
+          const name = (header[2] ?? '').replace(/^"|"$/g, '');
+          if (name !== '' && !filesChanged.includes(name)) {
+            filesChanged.push(name);
+          }
+        }
+        const change: WorkerChange = { agentId, filesChanged, patch };
+        return change;
+      },
+      stageWorker: async (agentId, branch) => {
+        // An already-merged worker is never re-staged (issue #431): a
+        // resumed lane whose transcript still says "merge" after the
+        // merge already landed gets a named refusal, never a double
+        // merge. FIFO order is the stage order — the manager cannot
+        // reorder the queue, only choose what enters it.
+        if (state.merged.includes(agentId)) {
+          throw new ManagerToolRefusalError(
+            'already_merged',
+            `worker '${agentId}' is already merged — refusing to stage it again`,
+          );
+        }
+        const worktree = prepared.get(agentId) ?? worktrees.get(agentId);
+        if (worktree === undefined || worktree.branch !== branch) {
+          throw new ManagerToolRefusalError(
+            'unknown_agent',
+            `no worker '${agentId}' on branch '${branch}' was prepared by this run`,
+          );
+        }
+        if (!stagedForMerge.includes(agentId)) {
+          stagedForMerge.push(agentId);
+          queue.enqueue({ agentId, branch });
+          enqueuedAtMs.set(agentId, now());
+        }
+        return { position: stagedForMerge.indexOf(agentId) + 1 };
+      },
+      applyStaged: async () => {
+        const agentId = mergeHeads.nextHead();
+        if (agentId === undefined) return undefined;
+        return { agentId };
+      },
+      askSeat: (question) =>
+        withAskTimeout(
+          deps.askUserSeat?.(question) ??
+            Promise.resolve({
+              answered: false,
+              code: QUESTION_UNANSWERED_CODE,
+              reason: 'no ask seat is wired for this run',
+            }),
+          deps.approvalPolicy?.maxPendingMs ?? ORCHESTRATE_APPROVAL_BOUND_MS,
+        ),
+      inspectGit: async (tool, args) => {
+        const seam = deps.inspectGit;
+        if (seam === undefined) {
+          throw new ManagerToolRefusalError(
+            'git_failed',
+            `no git inspection seam is wired — the builder did not provide one`,
+          );
+        }
+        return seam(tool, args);
+      },
+    };
+    const toolset = buildManagerTools(routerDeps);
+    // The settle hook: every launch settles through `startWorker`, so the
+    // registry observes the run's own bookkeeping — `wait_for_agent` wakes
+    // on what the run will merge, and the slot is freed exactly once.
+    const settleTools = toolset.settle;
+    laneSettleHook = (agentId: string): void => {
+      releaseSlotOnce(agentId);
+      observeAdmission();
+      // The §70 loop counter (issue #188): a settled debugger mint
+      // spends one loop turn — persisted at once, so a kill between the
+      // settle and the next save cannot replay the turn after resume.
+      // Follow-up re-settlements bypass this hook (adapter path), so the
+      // bound counts spawn-path turns, the unit the bound documents.
+      if (laneSpawnRoles.get(agentId)?.role === 'debugger') {
+        const loop = state.reviewLoop ?? {
+          maxAttempts: REVIEW_LOOP_DEFAULT_MAX_ATTEMPTS,
+          debuggerSettlements: 0,
+          escalated: false,
+        };
+        const debuggerSettlements = loop.debuggerSettlements + 1;
+        state = {
+          ...state,
+          reviewLoop: { ...loop, debuggerSettlements },
+        };
+        debug(
+          `debugger loop: '${agentId}' settled (${debuggerSettlements}/${loop.maxAttempts})`,
+        );
+      }
+      try {
+        settleTools.noteSettled(agentId, settledAgentResult(agentId));
+      } catch (error) {
+        debug(
+          `lane: settle note for '${agentId}' failed — ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    };
+    // A resume restores the prior drive's settlements into the fresh
+    // registry (issue #160 write-ahead, completed or merged): the lane
+    // continues from what already settled instead of re-running it.
+    // Restored entries re-prepare their worktrees (retained on disk) so
+    // rows, diffs and stages all resolve.
+    const restoreSettled = async (agentId: string): Promise<void> => {
+      const completed = state.completed?.find(
+        (entry) => entry.agentId === agentId,
+      );
+      const record = state.records.find((entry) => entry.agentId === agentId);
+      const result = completed?.result ?? record?.result;
+      if (result === undefined && completed === undefined) return;
+      let worktree = worktrees.get(agentId);
+      if (worktree === undefined) {
+        try {
+          worktree = await deps.ensureWorktree(agentId, worktreeRequest);
+        } catch {
+          return;
+        }
+        worktrees.set(agentId, worktree);
+      }
+      prepared.set(agentId, worktree);
+      if (completed !== undefined) {
+        hunksByAgent.set(agentId, [...completed.hunks]);
+      }
+      const settled = result ?? settledAgentResult(agentId);
+      resultsByAgent.set(agentId, settled);
+      settleTools.seedSettled(agentId, settled);
+      tracked.add(agentId);
+    };
+    // Restored mints keep their role narrowing (issue #431): the plan
+    // step recorded the mint's role, so a resumed follow-up resolves the
+    // same tools/model the first drive launched with.
+    for (const step of (state.plan ?? []) as ManagerPlanStep[]) {
+      if (step.role !== undefined) {
+        const spec = routerDeps.resolveRole(step.role);
+        laneSpawnRoles.set(step.agentId, {
+          role: step.role,
+          tools: [...(spec?.tools ?? [])],
+          modelRef: spec?.modelRef,
+          thinking: spec?.thinking,
+          ...(spec?.classes === undefined
+            ? {}
+            : { classes: { ...spec.classes } }),
+          ...(spec?.requires === undefined
+            ? {}
+            : { requires: [...spec.requires] }),
+          // Issue #198 (#431 follow-up): re-resolved, so a resumed
+          // drive keeps the same document fallback as the first.
+          ...(spec?.budget === undefined ? {} : { budget: { ...spec.budget } }),
+        });
+      }
+    }
+    for (const agentId of state.agents) {
+      await restoreSettled(agentId);
+    }
+    let boundTripped = false;
+    let currentSubmission:
+      | Awaited<ReturnType<ManagerLaneHandle['conversation']['submit']>>
+      | undefined;
+    const bounded = withManagerToolCallBound(toolset, {
+      maxToolCalls: MANAGER_MAX_TOOL_CALLS,
+      onTrip: () => {
+        boundTripped = true;
+      },
+      abortCurrent: () => {
+        void currentSubmission
+          ?.abort(BACKGROUND_CONTEXT)
+          .catch(() => undefined);
+      },
+    });
+    const lane = await bootManagerLane({
+      session: managerSession,
+      models: laneCatalog,
+      model: laneModel,
+      sessionId: managerSessionId,
+      cwd: process.cwd(),
+      tools: managerToolRegistrations(bounded),
+    });
+    try {
+      // A fresh drive never inherits a transcript (issue #431): the
+      // state-exists guard above already refuses a stored run, so a
+      // non-empty manager session here is an orphan — refused, never
+      // silently continued.
+      if (!parsed.resume) {
+        const existing = await lane.conversation.entries(
+          {},
+          1,
+          undefined,
+          BACKGROUND_CONTEXT,
+        );
+        if (existing.items.length > 0) {
+          return fail(
+            RUN_EXIT_FAILED,
+            'lane_session_failed',
+            `cannot drive the lane run '${sessionId}': the manager session '${managerSessionId}' already has a transcript — dispose it first, it belongs to no stored run`,
+            undefined,
+            state.agents,
+          );
+        }
+      }
+      if (state.spawnCap === 0) {
+        return fail(
+          RUN_EXIT_USAGE,
+          'no_workers',
+          `cannot drive the lane run '${sessionId}': --agents names no workers and the lane mints against a zero cap — name at least one worker`,
+          undefined,
+          state.agents,
+        );
+      }
+      let submissions = 0;
+      const objective = parsed.prompt ?? state.prompt;
+      if (objective === undefined || objective.trim() === '') {
+        return fail(
+          RUN_EXIT_USAGE,
+          'no_prompt',
+          `cannot drive the lane run '${sessionId}': no prompt objective — pass --prompt`,
+          undefined,
+          state.agents,
+        );
+      }
+      const driveStatus = (): string => {
+        const ids = [...tracked].sort();
+        const settled = ids.filter(
+          (agentId) => settleTools.resultOf(agentId) !== undefined,
+        );
+        const running = ids.filter(
+          (agentId) =>
+            started.has(agentId) &&
+            !finished.has(agentId) &&
+            !cancelledByManager.has(agentId),
+        );
+        return `lane status: ${settled.length}/${ids.length} settled${running.length === 0 ? '' : `, running: ${running.join(', ')}`}. Continue driving the run: wait for settlements, collect results, stage and merge finished work, then give your final summary.`;
+      };
+      const driveComplete = (): boolean => {
+        for (const agentId of tracked) {
+          if (settleTools.resultOf(agentId) === undefined) return false;
+        }
+        return true;
+      };
+      // A resume continues the restored transcript — re-submitting the
+      // full objective would duplicate the transcript's first input — so
+      // the first post-resume input is the status nudge, not the objective.
+      // L-D34 fail-fast (issue #431): the drive carries a wall-clock
+      // deadline — a provider that never answers (or answers with a
+      // transport failure) ends the run with `lane_provider_unreachable`,
+      // never a hang inside durable retries. The deadline is a drive
+      // total: each turn races only its remainder.
+      const driveDeadlineBoundMs =
+        deps.managerDriveDeadlineMs ?? MANAGER_DRIVE_DEADLINE_MS;
+      const driveDeadlineAt = Date.now() + driveDeadlineBoundMs;
+      const failUnreachable = async (
+        detail: string,
+      ): Promise<ReturnType<typeof fail>> => {
+        const failure = await reapSpawned(spawned);
+        if (failure !== undefined) {
+          debug(
+            `reap: worker '${failure.agentId}' failed — ${failure.message}`,
+          );
+        }
+        return fail(
+          RUN_EXIT_FAILED,
+          LANE_PROVIDER_UNREACHABLE_CODE,
+          detail,
+          partial(),
+        );
+      };
+      // Aborts the live submission when a wait outlives the deadline —
+      // best-effort (an abort rejection never masks the timeout itself),
+      // and clears the slot so the next turn starts clean.
+      const abortCurrentSubmission = async (): Promise<void> => {
+        const live = currentSubmission;
+        currentSubmission = undefined;
+        if (live === undefined) return;
+        try {
+          await live.abort(BACKGROUND_CONTEXT);
+        } catch {
+          // Best-effort: the timeout below is what the drive reports.
+        }
+      };
+      // A submit/wait rejection that names the network (or the deadline
+      // itself) ends the run by name; anything else keeps its own
+      // handling — a model or usage error is never misclassified.
+      const unreachableIfTransport = async (
+        error: unknown,
+      ): Promise<number | undefined> => {
+        const transport =
+          error instanceof LaneDriveTimeoutError
+            ? error.message
+            : describeLaneTransportError(error);
+        if (transport === undefined) return undefined;
+        return failUnreachable(
+          `${transport} — refusing with '${LANE_PROVIDER_UNREACHABLE_CODE}' rather than hanging the run`,
+        );
+      };
+      let input = parsed.resume ? driveStatus() : objective;
+      for (;;) {
+        const remainingMs = driveDeadlineAt - Date.now();
+        if (remainingMs <= 0) {
+          return failUnreachable(
+            `the manager provider did not answer within the drive deadline (${driveDeadlineBoundMs}ms) — refusing with '${LANE_PROVIDER_UNREACHABLE_CODE}' rather than hanging the run`,
+          );
+        }
+        try {
+          currentSubmission = await waitLaneSubmissionWithDeadline(
+            lane.conversation.submit(
+              { type: 'input', content: input },
+              BACKGROUND_CONTEXT,
+            ),
+            { remainingMs, onTimeout: abortCurrentSubmission },
+          );
+        } catch (error) {
+          currentSubmission = undefined;
+          const unreachable = await unreachableIfTransport(error);
+          if (unreachable !== undefined) return unreachable;
+          throw error;
+        }
+        let settledSubmission: Awaited<
+          ReturnType<NonNullable<typeof currentSubmission>['wait']>
+        >;
+        try {
+          settledSubmission = await waitLaneSubmissionWithDeadline(
+            (currentSubmission as NonNullable<typeof currentSubmission>).wait(
+              BACKGROUND_CONTEXT,
+            ),
+            {
+              remainingMs: driveDeadlineAt - Date.now(),
+              onTimeout: abortCurrentSubmission,
+            },
+          );
+        } catch (error) {
+          const unreachable = await unreachableIfTransport(error);
+          if (unreachable !== undefined) return unreachable;
+          throw error;
+        }
+        currentSubmission = undefined;
+        submissions += 1;
+        // A turn that settles without an answer is a provider-side failure
+        // (a working provider always places one): the run names the
+        // provider, never succeeds vacuously on its silence.
+        if (settledSubmission.status !== 'done') {
+          return failUnreachable(
+            `the manager provider left the turn unanswered — refusing with '${LANE_PROVIDER_UNREACHABLE_CODE}' rather than succeeding vacuously on its silence`,
+          );
+        }
+        // The run's own policy still binds the lane (issues #169/#175): a
+        // newly settled failure goes through `failWorker` — under `stop`
+        // the drive ends here and the run fails below; under `continue`
+        // the slot is already freed by the settle hook. No automatic
+        // replacement: the manager owns the retry (re-spawn or follow-up).
+        for (const agentId of [...tracked]) {
+          if (consumedFailures.has(agentId)) continue;
+          const outcome = finished.get(agentId);
+          if (outcome === undefined || outcome.ok) continue;
+          consumedFailures.add(agentId);
+          if (failWorker(agentId, outcome) === 'stop') {
+            denied = outcome;
+            break;
+          }
+        }
+        if (denied !== undefined || boundTripped) break;
+        if (driveComplete()) break;
+        if (submissions >= MANAGER_MAX_SUBMISSIONS) {
+          boundTripped = true;
+          break;
+        }
+        observeAdmission();
+        input = driveStatus();
+      }
+      const entries = await lane.conversation.entries(
+        {},
+        1000,
+        undefined,
+        BACKGROUND_CONTEXT,
+      );
+      const realCalls = managerCallsFromLane([...entries.items].reverse());
+      for (const step of realCalls) laneCalls.push(step);
+      const finalText = managerFinalMessage([...entries.items].reverse());
+      if (finalText !== undefined) {
+        state = { ...state, managerSummary: finalText };
+      }
+      if (boundTripped || denied !== undefined) {
+        const tripCode = boundTripped ? MANAGER_TURN_BOUND_CODE : denied?.code;
+        const tripMessage = boundTripped
+          ? `the manager lane exceeded its turn backstop (${MANAGER_MAX_TOOL_CALLS} tool calls / ${MANAGER_MAX_SUBMISSIONS} submissions) — stopping the drive with ${state.merged.length} merged; settled work is saved, retry with \`--resume --session ${sessionId}\``
+          : (denied?.message ?? 'the run was stopped');
+        if (inFlight.size > 0) {
+          for (const agentId of [...inFlight.keys()]) {
+            try {
+              await deps.cancelWorker?.(agentId);
+            } catch (error) {
+              debug(
+                `cancel: worker '${agentId}' could not be stopped — ${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
+          }
+          await Promise.all([...inFlight.values()]);
+        }
+        {
+          const saveFailure = await saveOrFail(state);
+          if (saveFailure !== undefined) {
+            await reapSpawned(spawned);
+            return saveFailure;
+          }
+        }
+        const failure = await reapSpawned(spawned);
+        if (failure !== undefined) {
+          debug(
+            `reap: worker '${failure.agentId}' failed — ${failure.message}`,
+          );
+        }
+        return fail(
+          RUN_EXIT_FAILED,
+          tripCode ?? 'manager_turn_bound',
+          tripMessage,
+          partial(),
+        );
+      }
+      // The drive settled everything it tracked: pending names the
+      // unmerged remainder for the merge loop and `--resume`, and the
+      // minted ids join the run's agents so rows, graph and state agree.
+      state.agents.push(
+        ...[...tracked].filter((agentId) => !state.agents.includes(agentId)),
+      );
+      state.pending = [...tracked].filter(
+        (agentId) =>
+          !state.merged.includes(agentId) && !partialFailures.has(agentId),
+      );
+      {
+        const saveFailure = await saveOrFail(state);
+        if (saveFailure !== undefined) {
+          await reapSpawned(spawned);
+          return saveFailure;
+        }
+      }
+      // The §70 terminus (issue #188): the loop spent its bound plus
+      // its single escalation and the tester still fails — fail with the
+      // bound named, settled work saved above for inspection.
+      if (loopBoundTripped) {
+        const loop = state.reviewLoop;
+        await reapSpawned(spawned);
+        return fail(
+          RUN_EXIT_FAILED,
+          'loop_bound_exceeded',
+          `debugger loop bound exceeded after ${loop?.debuggerSettlements ?? 0} debugger settlement(s) (bound ${loop?.maxAttempts ?? REVIEW_LOOP_DEFAULT_MAX_ATTEMPTS}) with one escalation spent — the tester still fails: inspect the debugger findings or raise --max-attempts`,
+          partial(),
+        );
+      }
+    } finally {
+      laneSettleHook = undefined;
+      // Fail-fast hygiene (issue #431, L-D34): a drive that died on an
+      // unreachable provider leaves a hung generation behind — abort the
+      // conversation before closing so the shutdown never waits on it.
+      // Best-effort and idle-safe: on the happy path there is nothing
+      // live to abort.
+      try {
+        await lane.conversation.abort(BACKGROUND_CONTEXT);
+      } catch {
+        // The abort is hygiene; the close below owns the outcome.
+      }
+      await lane.close(BACKGROUND_CONTEXT);
+      // The session lock is the only cross-process guard (the durable
+      // store has none): handing it back lets a later `--resume`
+      // re-attach. After the harness closed — never before.
+      await managerSession.release(BACKGROUND_CONTEXT);
+    }
   }
 
   // §45.2 conflict delegation (issue #106). The manager never resolves a
@@ -3201,6 +5304,7 @@ export async function runOrchestrateCommand(
       sessionId,
       agentId,
       branch: worktree.branch,
+      worktree: worktree.path,
       approved: verdict.verdict === 'approve',
       by: parsed.autoApprove ? '--yes' : 'user',
       ...(verdict.verdict === 'timeout'
@@ -3270,15 +5374,92 @@ export async function runOrchestrateCommand(
     // candidate — a second conflict on the re-merge is the terminus, never a
     // retry loop. Both merge legs run the same guard → trace → merge sequence
     // as the pre-#106 path, so the merge plumbing itself is unchanged.
-    const mergeAttempt = async (): Promise<void> => {
+    // 'discarded' (issue #188, §70): the reviewer refused the diff —
+    // recorded and saved inside; the caller skips the merge-success
+    // bookkeeping and dequeues the next candidate.
+    const mergeAttempt = async (): Promise<'discarded' | undefined> => {
       await deps.prepareMerge?.(agentId, worktree);
       assertWrites(managerCallsForMerge(laneCalls));
+      // L-D33 (issue #431): the lane's settle handoff runs through the
+      // settle apply path — the recorded trace is proven write-free a
+      // second time (the shipped guard, which no injected seam can stub
+      // out) and the merge gate's approval above is the human verdict
+      // routing to apply (deny/timeout already returned). The review
+      // verdict (issue #188, §70) routes here: absent means accept (the
+      // shipped default). The registry's `apply` is sync while the
+      // branch merge is async — and must stay inside this try/catch so
+      // a conflict routes to the resolver — so the decision gates the
+      // merge below instead of performing it.
+      const verdict = reviewVerdicts.get(agentId) ?? 'accept';
+      if (verdict === 'escalate') {
+        // Routed by the debugger loop (issue #188 slice S2) — failing
+        // loud until it lands, so an escalate never silently merges or
+        // silently drops.
+        throw new Error(
+          `merge for worker '${agentId}' escalated by review — the debugger loop is not wired yet (issue #188)`,
+        );
+      }
+      const decision = applySettlementAfterReview(
+        managerCallsForMerge(laneCalls),
+        { verdict },
+        () => undefined,
+      );
+      if (decision !== 'apply') {
+        // The reviewer refused the diff (issue #188, §70): record the
+        // discard and skip the merge — the run continues with the other
+        // workers. Terminal: pending drops the worker (resume never
+        // retries a refusal) while the branch stays for inspection, and
+        // any write-ahead completion moves to `discarded` with it.
+        const completed = state.completed ?? [];
+        const prior = completed.find((entry) => entry.agentId === agentId);
+        const result = resultsByAgent.get(agentId);
+        const entry = prior ?? {
+          agentId,
+          branch: worktree.branch,
+          hunks: hunksByAgent.get(agentId) ?? [],
+          ...(result === undefined ? {} : { result }),
+        };
+        const discarded = state.discarded ?? [];
+        const at = discarded.findIndex((entry) => entry.agentId === agentId);
+        if (at === -1) discarded.push(entry);
+        else discarded[at] = entry;
+        state = {
+          ...state,
+          discarded,
+          completed: completed.filter((entry) => entry.agentId !== agentId),
+          pending: state.pending.filter((entry) => entry !== agentId),
+          merging: undefined,
+        };
+        const saveFailure = await saveOrFail(state);
+        if (saveFailure !== undefined) {
+          throw new Error(
+            `discard save failed for worker '${agentId}' (exit ${saveFailure})`,
+          );
+        }
+        mergeTelemetry.push(
+          recordMergeTelemetry({
+            agentId,
+            queueMs,
+            diffMs,
+            mergeMs: 0,
+            resolveMs: 0,
+            applyMs: 0,
+            outcome: 'review-discarded',
+          }),
+        );
+        debug(
+          `discarded: ${agentId} (verdict ${verdict}, branch ${worktree.branch})`,
+        );
+        return 'discarded';
+      }
       await deps.mergeBranch(agentId, worktree);
+      return undefined;
     };
     let conflict: MergeConflictError | undefined;
     let mergeFailure: unknown;
+    let discardedWorker = false;
     try {
-      await mergeAttempt();
+      discardedWorker = (await mergeAttempt()) === 'discarded';
     } catch (error) {
       if (error instanceof MergeConflictError) {
         conflict = error;
@@ -3304,7 +5485,7 @@ export async function runOrchestrateCommand(
         // rather than trusted from the resolver's own report.
         conflict = undefined;
         try {
-          await mergeAttempt();
+          if ((await mergeAttempt()) === 'discarded') discardedWorker = true;
         } catch (error) {
           if (error instanceof MergeConflictError) {
             conflict = error;
@@ -3400,6 +5581,12 @@ export async function runOrchestrateCommand(
         partial(),
       );
     }
+    // A refused diff (issue #188) skips the merge-success bookkeeping
+    // below — already recorded, saved and telemetered inside the attempt.
+    if (discardedWorker) {
+      candidate = queue.dequeue();
+      continue;
+    }
     const hunks = hunksByAgent.get(agentId) ?? [];
     const result = resultsByAgent.get(agentId);
     // §61 (issue #158): the apply leg starts here — attribute the hunks,
@@ -3407,7 +5594,9 @@ export async function runOrchestrateCommand(
     const appliedAtMs = now();
     // An upsert: a resumed retry replaces the failure record kept from the
     // attempt that failed (issue #185) instead of listing the worker twice.
-    upsertRecord({
+    // The write-ahead completion moves to the merge records (issue #160),
+    // so `completed` never names a merged worker.
+    moveCompletedToRecords({
       agentId,
       branch: worktree.branch,
       hunks,
@@ -3449,6 +5638,19 @@ export async function runOrchestrateCommand(
     const refused = state.agents.find((agentId) => deniedSpawns.has(agentId));
     const reason = refusalReasonFor(refused ?? 'worker');
     return fail(RUN_EXIT_FAILED, 'spawn_agents_denied', reason, partial());
+  }
+
+  // Issue #413: a spawn refused by the --agents cap ends the run on the
+  // refusal once every in-cap candidate settled — the same terminus shape
+  // as the denial above, with the cap named.
+  if (cappedSpawns.size > 0) {
+    const refused = state.agents.find((agentId) => cappedSpawns.has(agentId));
+    return fail(
+      RUN_EXIT_FAILED,
+      'spawn_cap_exceeded',
+      `spawn refused for worker '${refused ?? 'worker'}': the run's --agents cap is ${spawnCap}`,
+      partial(),
+    );
   }
 
   const reapError = await reapSpawned(spawned);
@@ -3530,11 +5732,18 @@ export async function runOrchestrateCommand(
             .join(', ')}`,
         };
   const textLines = [
-    `${theme.accent('session:')} ${sessionId}`,
-    ...state.records.map(
-      (record) =>
-        `worker: ${record.agentId} branch=${record.branch} hunks=${record.hunks.length}`,
-    ),
+    // Issue #278 (§19): the terminal status line names the §19 mode.
+    `${theme.accent('session:')} ${sessionId} mode=${runMode}`,
+    ...state.records.map((record) => {
+      // Issue #285 (§71): the worker's effective bound rides the worker
+      // line itself — the operator sees it on stdout, never --debug.
+      // Unbounded workers keep the shipped line untouched.
+      const bound = workerBudgetLine(state.budget, record.agentId);
+      return (
+        `worker: ${record.agentId} branch=${record.branch} hunks=${record.hunks.length}` +
+        (bound === undefined ? '' : ` budget=${bound}`)
+      );
+    }),
     // Issue #185: what each worker did, in its own words (§68 summary).
     ...state.records.flatMap((record) =>
       record.result === undefined
@@ -3544,6 +5753,28 @@ export async function runOrchestrateCommand(
     `merge order: ${state.merged.join(' -> ')}`,
     `attribution: ${perAgent}`,
     ...state.merged.map((agentId) => `${theme.success('merged:')} ${agentId}`),
+    // Review verdicts (issue #188, §70): refused diffs read beside the
+    // merges — the branch stays for inspection, named with its verdict.
+    ...(state.discarded ?? []).map(
+      (entry) =>
+        `${theme.warning('discarded:')} ${entry.agentId} (${state.reviewVerdicts?.[entry.agentId] ?? 'unknown'})`,
+    ),
+    // The §70 loop state (issue #188): shown only once the loop turns —
+    // a template run never settles a debugger, so its report stays
+    // byte-clean while a looped run names settlements, bound and the
+    // single escalation.
+    ...(() => {
+      const loop = state.reviewLoop;
+      if (
+        loop === undefined ||
+        (loop.debuggerSettlements === 0 && !loop.escalated)
+      ) {
+        return [];
+      }
+      return [
+        `${theme.muted('review loop:')} ${loop.debuggerSettlements} debugger settlement(s), bound ${loop.maxAttempts}${loop.escalated ? `, escalated once${loop.escalationModel === undefined ? '' : ` to ${loop.escalationModel}`}` : ''}`,
+      ];
+    })(),
     // §61 (issue #158): the measured merge phases, one line per candidate.
     ...mergeTelemetryLines(),
     ...failedWorkers.map(
@@ -3568,13 +5799,21 @@ export async function runOrchestrateCommand(
     // §44.1 retained-worktree status (issue #106) — after the run, one line
     // per retained worktree, dirty ones naming their files.
     ...retainedLines,
-    ...(partialError === undefined
+    // The manager's final message (issue #418) replaces the mechanical
+    // counts on lane-driven runs — it lived through the merges,
+    // conflicts and worker results, so it reports them. The fallback
+    // (no summary: template path) keeps the shipped wording untouched.
+    ...(state.managerSummary === undefined
       ? [
-          `${theme.success('result:')} orchestrated ${state.records.length} worker(s), merged ${state.merged.length}`,
+          ...(partialError === undefined
+            ? [
+                `${theme.success('result:')} orchestrated ${state.records.length} worker(s), merged ${state.merged.length}`,
+              ]
+            : [
+                `${theme.error('result:')} orchestrated with ${failedWorkers.length} failed worker(s) — merged ${state.merged.length}, pending ${state.pending.length} (retry with \`--resume --session ${sessionId}\`)`,
+              ]),
         ]
-      : [
-          `${theme.error('result:')} orchestrated with ${failedWorkers.length} failed worker(s) — merged ${state.merged.length}, pending ${state.pending.length} (retry with \`--resume --session ${sessionId}\`)`,
-        ]),
+      : [`${theme.success('result:')} ${state.managerSummary}`]),
   ];
   return emit(
     {
@@ -3585,7 +5824,12 @@ export async function runOrchestrateCommand(
       status: partialError === undefined ? 'completed' : 'partial',
       workers: workerRows(),
       mergeOrder: [...state.merged],
+      discarded: (state.discarded ?? []).map((entry) => entry.agentId),
+      ...reviewLoopEnvelope(),
       attribution,
+      ...(state.managerSummary === undefined
+        ? {}
+        : { managerSummary: state.managerSummary }),
       // §61 per-agent merge telemetry (issue #158). Present only when the
       // loop recorded at least one candidate — an empty array would claim the
       // run measured merges it never had.

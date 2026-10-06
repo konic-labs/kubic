@@ -1,14 +1,25 @@
 // Runtime config load (issue #90; design §35.1/§36/§71) — RED first.
 // Every test drives the production entry point (`loadRuntimeConfig`) over
 // a fake FileBridge: zero network, zero real files, dummy $ENV_VAR refs.
-import { mkdtempSync, rmSync } from 'node:fs';
+
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
+import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../exec/src/journal.js';
+import {
+  ensureRuntimeExcludeRules,
+  gitSync,
+} from '../../../exec/src/runtime-exclude.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../../exec/src/test-support/git-sandbox.js';
 import { applyToolPolicy } from '../../../worker/src/lane/policy.js';
 import {
   bootFauxLane,
@@ -26,6 +37,7 @@ import {
   ProjectUntrustedError,
 } from './config.js';
 import {
+  checkWorkspaceIgnoreSplit,
   effectiveConfigView,
   keyEffectFor,
   loadRuntimeConfig,
@@ -65,10 +77,16 @@ function tempDir(prefix: string): string {
 }
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// The test's git driver (issue #420): plain, never injected — production
+// reaches git only through the injected gitRunner seam.
+let driver: GitSandbox | undefined;
 
 function load(
   files: Record<string, string>,
@@ -169,6 +187,48 @@ describe('runtime config load (issue #90)', () => {
       timestamp: Date.now() - 30 * dayMs,
     });
     expect(keep.entries().length).toBe(1);
+  });
+
+  it('projects the [model] escalation ladder with its bound (issue #210)', () => {
+    const runtime = load(
+      {
+        [PROJECT]:
+          '[model]\nprovider = "local"\nid = "a"\nescalate = ["local/a", "acme/big"]\nmaxEscalations = 1\n',
+      },
+      { projectTrusted: true },
+    );
+    expect(runtime.escalate).toEqual({
+      steps: ['local/a', 'acme/big'],
+      maxEscalations: 1,
+    });
+    expect(runtime.sources['model.escalate']).toBe('project');
+    // Unset max defaults to the ladder length (the ladder itself bounds).
+    expect(
+      load(
+        {
+          [PROJECT]:
+            '[model]\nprovider = "local"\nid = "a"\nescalate = ["local/a", "local/b"]\n',
+        },
+        { projectTrusted: true },
+      ).escalate,
+    ).toEqual({ steps: ['local/a', 'local/b'], maxEscalations: 2 });
+    // No ladder: nothing is invented.
+    expect(
+      load(
+        { [PROJECT]: '[model]\nprovider = "x"\nid = "y"\n' },
+        { projectTrusted: true },
+      ).escalate,
+    ).toBeUndefined();
+  });
+
+  it('explains the escalation keys in the key-effects table (issue #210)', () => {
+    for (const key of ['model.escalate', 'model.maxEscalations']) {
+      expect(runtimeKeyDisposition(keyEffectFor(key))).toBe('consumed');
+    }
+    // The per-role ladder falls back to the `roles` section row.
+    expect(runtimeKeyDisposition(keyEffectFor('roles.reviewer.escalate'))).toBe(
+      'consumed',
+    );
   });
 
   it('projects [journal] outOfScope with its layer, refusing an empty entry by name', () => {
@@ -592,6 +652,161 @@ describe('runtime config load (issue #90)', () => {
   });
 });
 
+describe('thinking level load (issue #225; §38.3)', () => {
+  const MODEL_HIGH =
+    '[model]\nprovider = "local"\nid = "llama3"\nthinking = "high"\n';
+
+  it('resolves --thinking > env > file, and the pin carries it', () => {
+    const file = load({ [PROJECT]: MODEL_HIGH }, { projectTrusted: true });
+    expect(file.thinking).toEqual({ level: 'high', source: 'project' });
+    expect(file.model).toMatchObject({ thinking: 'high' });
+
+    const env = load(
+      { [PROJECT]: MODEL_HIGH },
+      {
+        projectTrusted: true,
+        env: { [RUNTIME_ENV_OVERRIDES.modelThinking]: 'low' },
+      },
+    );
+    expect(env.thinking).toEqual({ level: 'low', source: 'env' });
+    expect(env.model).toMatchObject({
+      provider: 'local',
+      id: 'llama3',
+      thinking: 'low',
+    });
+
+    const cli = load(
+      { [PROJECT]: MODEL_HIGH },
+      {
+        projectTrusted: true,
+        env: { [RUNTIME_ENV_OVERRIDES.modelThinking]: 'low' },
+        cli: { thinking: 'minimal' },
+      },
+    );
+    expect(cli.thinking).toEqual({ level: 'minimal', source: 'cli' });
+    expect(cli.model).toMatchObject({ thinking: 'minimal' });
+  });
+
+  it('keeps an env-only level without inventing a model pin', () => {
+    const runtime = load(
+      {},
+      {
+        projectTrusted: true,
+        env: { [RUNTIME_ENV_OVERRIDES.modelThinking]: 'low' },
+      },
+    );
+    expect(runtime.model).toBeUndefined();
+    expect(runtime.thinking).toEqual({ level: 'low', source: 'env' });
+  });
+
+  it('refuses a malformed env value fail-closed, naming the variable', () => {
+    expect(() =>
+      load(
+        {},
+        {
+          projectTrusted: true,
+          env: { [RUNTIME_ENV_OVERRIDES.modelThinking]: 'banana' },
+        },
+      ),
+    ).toThrow(/KUBIC_MODEL_THINKING.*banana/);
+  });
+
+  it('refuses a malformed --thinking value fail-closed, naming the flag', () => {
+    expect(() =>
+      load({}, { projectTrusted: true, cli: { thinking: 'banana' } }),
+    ).toThrow(/--thinking.*banana/);
+  });
+
+  it('freezes an enterprise level against the flag; the env override is not applied', () => {
+    const files = {
+      '/etc/kubic/config.toml': MODEL_HIGH,
+      [PROJECT]: '[model]\nprovider = "local"\nid = "llama3"\n',
+    };
+    const frozen = load(files, { projectTrusted: true });
+    expect(frozen.thinking).toEqual({ level: 'high', source: 'enterprise' });
+    expect(() =>
+      load(files, { projectTrusted: true, cli: { thinking: 'low' } }),
+    ).toThrow(/--thinking.*frozen by the enterprise layer/);
+    const envIgnored = load(files, {
+      projectTrusted: true,
+      env: { [RUNTIME_ENV_OVERRIDES.modelThinking]: 'low' },
+    });
+    expect(envIgnored.thinking).toEqual({
+      level: 'high',
+      source: 'enterprise',
+    });
+  });
+
+  it('names --thinking (not --model) as the per-run override', () => {
+    const text = runtimeKeyEffectText(RUNTIME_KEY_EFFECTS['model.thinking']);
+    expect(text).toContain('--thinking');
+    expect(text).not.toContain('--model');
+  });
+});
+
+describe('enterprise-frozen thinking + thinking-only layers (issue #226)', () => {
+  // Bug A: an enterprise-pinned level keeps its value and source against
+  // the env override — and the dropped override is reported, never
+  // silent (the model-pin #295 pattern, one row per ignored input).
+  it('records the env override a frozen enterprise level drops', () => {
+    const files = {
+      // Thinking-only enterprise layer (the issue's shape): the pin comes
+      // from project, the level from enterprise.
+      '/etc/kubic/config.toml': '[model]\nthinking = "high"\n',
+      [PROJECT]: '[model]\nprovider = "local"\nid = "llama3"\n',
+    };
+    const env = load(files, {
+      projectTrusted: true,
+      env: { [RUNTIME_ENV_OVERRIDES.modelThinking]: 'low' },
+    });
+    expect(env.thinking).toEqual({ level: 'high', source: 'enterprise' });
+    expect(env.model).toMatchObject({ thinking: 'high' });
+    expect(env.overriddenAttempts).toEqual([
+      "model: KUBIC_MODEL_THINKING 'low' rejected: enterprise thinking 'high' holds",
+    ]);
+    // An equal value overrode nothing.
+    expect(
+      load(files, {
+        projectTrusted: true,
+        env: { [RUNTIME_ENV_OVERRIDES.modelThinking]: 'high' },
+      }).overriddenAttempts,
+    ).toEqual([]);
+    // No env override: nothing to report.
+    expect(load(files, { projectTrusted: true }).overriddenAttempts).toEqual(
+      [],
+    );
+  });
+
+  // Bug B: a layer that sets only `[model] thinking` reaches the
+  // projection through the thinking channel (no model pin is invented)
+  // and `kubic config` names the same winner the lane boots with.
+  it('reports a thinking-only layer consistently', () => {
+    const runtime = load(
+      { [PROJECT]: '[model]\nthinking = "high"\n' },
+      { projectTrusted: true },
+    );
+    expect(runtime.model).toBeUndefined();
+    expect(runtime.thinking).toEqual({ level: 'high', source: 'project' });
+    const view = effectiveConfigView(runtime);
+    expect(view.values).toEqual(
+      expect.arrayContaining([
+        {
+          key: 'model.thinking',
+          value: '"high"',
+          layer: 'project',
+          disposition: 'consumed',
+        },
+      ]),
+    );
+    expect(view.thinking).toEqual({ level: 'high', source: 'project' });
+    const lines = renderEffectiveConfig(view);
+    expect(lines).toContain('thinking level: high (project)');
+    expect(lines).toContain(
+      'selected model: first available provider (defaults) — no model pin configured',
+    );
+  });
+});
+
 describe('effective config view (issue #90)', () => {
   it('reports every value with the layer it came from, machine-readable', () => {
     const runtime = load(
@@ -626,6 +841,216 @@ describe('effective config view (issue #90)', () => {
     expect(JSON.parse(JSON.stringify(view)).values.length).toBe(
       view.values.length,
     );
+  });
+
+  it('turns [session] compaction keys into a live lane projection (issue #239)', () => {
+    const runtime = load(
+      {
+        [PROJECT]:
+          '[session]\nautoCompact = false\nreserveTokens = 4000\nkeepRecentTokens = 5000\n',
+      },
+      { projectTrusted: true },
+    );
+    expect(runtime.compaction).toEqual({
+      enabled: false,
+      reserveTokens: 4000,
+      keepRecentTokens: 5000,
+      source: 'project',
+    });
+    // The effective view default-fills for display: the report names the
+    // values the lane will run with, and the render line states the clamp.
+    const view = effectiveConfigView(runtime);
+    expect(view.compaction).toEqual({
+      enabled: false,
+      reserveTokens: 4000,
+      keepRecentTokens: 5000,
+      source: 'project',
+    });
+    expect(
+      view.values.find((v) => v.key === 'session.reserveTokens'),
+    ).toMatchObject({
+      value: '4000',
+      layer: 'project',
+      disposition: 'consumed',
+    });
+    const lines = renderEffectiveConfig(view);
+    expect(lines.some((line) => line.includes('reserve=4000 token(s)'))).toBe(
+      true,
+    );
+  });
+
+  it('reports the highest-precedence contributing layer for split compaction keys (issue #239 review)', () => {
+    // autoCompact from project, reserveTokens from global: the old
+    // first-set-key rule named 'project' (autoCompact sorts first in key
+    // order); the provenance must name 'global' — the
+    // highest-precedence layer that contributed a key.
+    const runtime = load(
+      {
+        [GLOBAL]: '[session]\nreserveTokens = 4000\n',
+        [PROJECT]: '[session]\nautoCompact = false\n',
+      },
+      { projectTrusted: true },
+    );
+    expect(runtime.compaction).toEqual({
+      enabled: false,
+      reserveTokens: 4000,
+      source: 'global',
+    });
+  });
+
+  it('reports compaction defaults when nothing is configured (issue #239)', () => {
+    const runtime = load({});
+    expect(runtime.compaction).toEqual({ source: 'defaults' });
+    const view = effectiveConfigView(runtime);
+    expect(view.compaction).toEqual({
+      enabled: true,
+      reserveTokens: 16384,
+      keepRecentTokens: 20000,
+      source: 'defaults',
+    });
+    const lines = renderEffectiveConfig(view);
+    expect(lines.some((line) => line.includes('reserve=16384 token(s)'))).toBe(
+      true,
+    );
+  });
+
+  it('re-validates session compaction for the programmatic layers (issue #239)', () => {
+    // The session/agent layers never pass through the TOML parser: a bad
+    // value there is refused by name, never carried to the lane.
+    expect(() =>
+      loadRuntimeConfig({
+        bridge: fakeBridge({}),
+        home: HOME,
+        cwd: CWD,
+        session: { session: { reserveTokens: 0 } },
+      }),
+    ).toThrow(/'session': 'reserveTokens' must be a positive integer/);
+    expect(() =>
+      loadRuntimeConfig({
+        bridge: fakeBridge({}),
+        home: HOME,
+        cwd: CWD,
+        agent: { session: { autoCompact: 'yes' as unknown as boolean } },
+      }),
+    ).toThrow(/'session': 'autoCompact' must be a boolean/);
+  });
+
+  it('resolves [agent] systemPromptFile against the declaring layer (issue #240)', () => {
+    const runtime = load(
+      {
+        [GLOBAL]: '[agent]\nsystemPromptFile = "SYSTEM.md"\n',
+        [`${HOME}/.kubic/SYSTEM.md`]: 'Be terse.\n',
+      },
+      { projectTrusted: true },
+    );
+    // The contents travel in the runtime; the report names the path.
+    expect(runtime.systemPromptFile).toEqual({
+      path: `${HOME}/.kubic/SYSTEM.md`,
+      contents: 'Be terse.\n',
+      source: 'global',
+    });
+    const view = effectiveConfigView(runtime);
+    expect(
+      view.values.find((v) => v.key === 'agent.systemPromptFile'),
+    ).toMatchObject({
+      // formatValue quotes: the effective (resolved) path, reported.
+      value: `"${HOME}/.kubic/SYSTEM.md"`,
+      layer: 'global',
+      disposition: 'consumed',
+    });
+    const lines = renderEffectiveConfig(view);
+    expect(
+      lines.some((line) =>
+        line.includes(
+          `agent.systemPromptFile = "${HOME}/.kubic/SYSTEM.md" (global, consumed)`,
+        ),
+      ),
+    ).toBe(true);
+    // The path reports; the contents never do.
+    expect(lines.join('\n')).not.toContain('Be terse.');
+    expect(keyEffectFor('agent.systemPromptFile')).toBe(
+      RUNTIME_KEY_EFFECTS['agent.systemPromptFile'],
+    );
+  });
+
+  it('expands a leading ~/ against home (issue #240)', () => {
+    const runtime = load(
+      {
+        [GLOBAL]: '[agent]\nsystemPromptFile = "~/prompts/sys.md"\n',
+        [`${HOME}/prompts/sys.md`]: 'Tilde.\n',
+      },
+      { projectTrusted: true },
+    );
+    expect(runtime.systemPromptFile?.path).toBe(`${HOME}/prompts/sys.md`);
+    expect(runtime.systemPromptFile?.contents).toBe('Tilde.\n');
+  });
+
+  it('contains the project layer to the project root (issue #240)', () => {
+    const inside = load(
+      {
+        [PROJECT]: '[agent]\nsystemPromptFile = "docs/SYSTEM.md"\n',
+        [`${CWD}/.kubic/docs/SYSTEM.md`]: 'Inside.\n',
+      },
+      { projectTrusted: true },
+    );
+    expect(inside.systemPromptFile?.path).toBe(`${CWD}/.kubic/docs/SYSTEM.md`);
+    // A trusted absolute path outside the root is refused by name.
+    expect(() =>
+      load(
+        { [PROJECT]: '[agent]\nsystemPromptFile = "/tmp/evil.md"\n' },
+        { projectTrusted: true },
+      ),
+    ).toThrow(
+      /'agent': 'systemPromptFile' '\/tmp\/evil.md' is outside the project root/,
+    );
+    // So is a relative path that escapes it.
+    expect(() =>
+      load(
+        {
+          [PROJECT]: '[agent]\nsystemPromptFile = "../../evil.md"\n',
+        },
+        { projectTrusted: true },
+      ),
+    ).toThrow(/is outside the project root/);
+  });
+
+  it('refuses an untrusted project file pre-trust and a missing file by name (issue #240)', () => {
+    // The trust gate fires before any project file is read: the refusal
+    // names trust, never the file.
+    expect(() =>
+      load({
+        [PROJECT]: '[agent]\nsystemPromptFile = "SYSTEM.md"\n',
+        [`${CWD}/.kubic/SYSTEM.md`]: 'Untrusted.\n',
+      }),
+    ).toThrow(ProjectUntrustedError);
+    expect(() =>
+      load({
+        [GLOBAL]: '[agent]\nsystemPromptFile = "MISSING.md"\n',
+      }),
+    ).toThrow(
+      /'agent': 'systemPromptFile' '.*MISSING.md' (does not exist|cannot be read)/,
+    );
+  });
+
+  it('re-validates the programmatic layers and refuses relative paths without a declaring file (issue #240)', () => {
+    expect(() =>
+      loadRuntimeConfig({
+        bridge: fakeBridge({}),
+        home: HOME,
+        cwd: CWD,
+        session: { agent: { systemPromptFile: 42 as unknown as string } },
+      }),
+    ).toThrow(/'agent': 'systemPromptFile' must be a non-empty string/);
+    // Session/agent layers are never files: a relative path has no
+    // directory to resolve against, so it is refused, never guessed.
+    expect(() =>
+      loadRuntimeConfig({
+        bridge: fakeBridge({}),
+        home: HOME,
+        cwd: CWD,
+        agent: { agent: { systemPromptFile: 'REL.md' } },
+      }),
+    ).toThrow(/no declaring config file/);
   });
 
   it('renders the same view for humans', () => {
@@ -757,6 +1182,43 @@ describe('effective config view (issue #90)', () => {
     } finally {
       await lane.cleanup();
     }
+  });
+});
+
+describe('§37.4 request options reach the effective view (issue #257)', () => {
+  it('marks the [model] tuning consumed with its layer', () => {
+    const runtime = load(
+      {
+        [PROJECT]:
+          '[model]\nprovider = "local"\nid = "llama3"\ntimeoutMs = 60000\nmaxRetries = 5\nmaxRetryDelayMs = 10000\ncacheRetention = "long"\n',
+      },
+      { projectTrusted: true },
+    );
+    for (const key of [
+      'model.timeoutMs',
+      'model.maxRetries',
+      'model.maxRetryDelayMs',
+      'model.cacheRetention',
+    ]) {
+      expect(keyEffectFor(key), key).toBe(RUNTIME_KEY_EFFECTS[key]);
+      expect(runtimeKeyDisposition(keyEffectFor(key)), key).toBe('consumed');
+    }
+    const view = effectiveConfigView(runtime);
+    expect(view.values.find((v) => v.key === 'model.timeoutMs')).toMatchObject({
+      value: '60000',
+      layer: 'project',
+      disposition: 'consumed',
+    });
+    expect(
+      view.values.find((v) => v.key === 'model.cacheRetention'),
+    ).toMatchObject({
+      value: '"long"',
+      layer: 'project',
+      disposition: 'consumed',
+    });
+    // A role table's tuning resolves through the `roles` section row — the
+    // same section-or-key rule `roles.<name>.model` already follows.
+    expect(keyEffectFor('roles.a.maxRetries')).toBe(RUNTIME_KEY_EFFECTS.roles);
   });
 });
 
@@ -926,6 +1388,15 @@ describe('orchestrator config projections (issue #133)', () => {
     );
     expect(bare.orchestrator).toEqual({});
 
+    // Issue #431 (L-D34): the delegation driver projects through, default
+    // template (absent, never invented).
+    const lane = load(
+      { [PROJECT]: '[orchestrator]\nmanager = "lane"\n' },
+      { projectTrusted: true },
+    );
+    expect(lane.orchestrator).toEqual({ manager: 'lane' });
+    expect(lane.sources['orchestrator.manager']).toBe('project');
+
     // An absolute root or a `..` segment is refused at load, by name: the
     // value is a workspace-relative parent, never a path that escapes.
     expect(() =>
@@ -1084,5 +1555,98 @@ describe('orchestrator config projections (issue #133)', () => {
         { projectTrusted: true },
       ),
     ).toThrow(/secrets never appear in config/);
+  });
+});
+
+describe('checkWorkspaceIgnoreSplit in linked worktrees (issue #292)', () => {
+  // Real git fixtures: a linked worktree's `.git` is a file, so only
+  // `git rev-parse --git-path info/exclude` (what the writer uses) finds
+  // the common-dir exclude. Cleanup removes the worktree first so no
+  // stale metadata stays in the main checkout, then the temp dirs.
+  const worktrees: Array<{ repo: string; wt: string }> = [];
+
+  afterEach(() => {
+    for (const { repo, wt } of worktrees.splice(0)) {
+      try {
+        git(repo, ['worktree', 'remove', '--force', wt]);
+      } catch {
+        // The rmSync below still reclaims the directory.
+      }
+    }
+  });
+
+  function git(cwd: string, args: string[]): string {
+    // Shared sandbox driver (issue #420): production reaches git only
+    // through the injected gitRunner seam below — plain, never injected.
+    driver ??= createGitSandbox();
+    return driver.git(args, { cwd }).trim();
+  }
+
+  // The injectable runner the prod caller passes: the writer's own probe.
+  const gitRunner = gitSync;
+
+  function initRepo(): string {
+    const repo = tempDir('kubic-ignore-split-');
+    git(repo, ['init', '-q']);
+    git(repo, ['config', 'user.email', 'split@kubic.dev']);
+    git(repo, ['config', 'user.name', 'kubic split']);
+    writeFileSync(join(repo, 'base.txt'), 'base\n');
+    git(repo, ['add', 'base.txt']);
+    git(repo, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'base']);
+    return repo;
+  }
+
+  function linkWorktree(repo: string): string {
+    const wt = join(tempDir('kubic-ignore-wt-'), 'checkout');
+    git(repo, ['worktree', 'add', '--detach', wt, 'HEAD']);
+    worktrees.push({ repo, wt });
+    return wt;
+  }
+
+  it('finds the writer entries in the common-dir exclude from a linked worktree', () => {
+    const repo = initRepo();
+    const wt = linkWorktree(repo);
+    // Prod fidelity: the real writer puts the entries where rev-parse
+    // points — the common dir's info/exclude.
+    const written = ensureRuntimeExcludeRules({ cwd: wt });
+    expect(written.changed).toBe(true);
+    const split = checkWorkspaceIgnoreSplit(
+      createNodeFileBridge('/'),
+      wt,
+      gitRunner,
+    );
+    expect(split.applicable).toBe(true);
+    // The worktree `.git` is a file: the legacy `${cwd}/.git/info/exclude`
+    // probe fails ENOTDIR and every entry reports missing.
+    expect(split.missing).toEqual([]);
+  });
+
+  it('reads the root files from a repo subdirectory', () => {
+    const repo = initRepo();
+    const written = ensureRuntimeExcludeRules({ cwd: repo });
+    expect(written.changed).toBe(true);
+    const sub = join(repo, 'a', 'b');
+    mkdirSync(sub, { recursive: true });
+    const split = checkWorkspaceIgnoreSplit(
+      createNodeFileBridge('/'),
+      sub,
+      gitRunner,
+    );
+    expect(split.applicable).toBe(true);
+    expect(split.missing).toEqual([]);
+    expect(split.checked.some((path) => path.endsWith('info/exclude'))).toBe(
+      true,
+    );
+  });
+
+  it('stays inapplicable outside any repository', () => {
+    const outside = tempDir('kubic-ignore-outside-');
+    const split = checkWorkspaceIgnoreSplit(
+      createNodeFileBridge('/'),
+      outside,
+      gitRunner,
+    );
+    expect(split.applicable).toBe(false);
+    expect(split.missing).toEqual([]);
   });
 });

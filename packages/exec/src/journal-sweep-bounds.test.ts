@@ -23,6 +23,7 @@ import {
   sha256HexOfFile,
 } from './journal.js';
 import { diffEntries, renderDiff } from './journal-diff.js';
+import { captureGitBaseline, type GitCommand } from './journal-git.js';
 import { renderLog } from './journal-status.js';
 
 const CTX = {
@@ -254,5 +255,34 @@ describe('sweep content bound (issue #120)', () => {
     expect(text).not.toContain('@@');
     // `kubic log` keeps today's `+NB` delta shape for the entry.
     expect(renderLog(store).join('\n')).toContain('big.bin +0B reconciled');
+  });
+});
+
+describe('git baseline cost (issue #371)', () => {
+  it('stays a metadata walk: two git calls and no blob reads, however many files the repo holds', () => {
+    const root = tmpRoot();
+    const fileCount = 50;
+    for (let i = 0; i < fileCount; i++) {
+      writeFileSync(join(root, `f${i}.ts`), `content ${i}\n`);
+    }
+    const baseline = captureBaseline(root);
+    expect(Object.keys(baseline)).toHaveLength(fileCount);
+    const ls = Object.keys(baseline)
+      .map((p, i) => `100644 ${(i % 16).toString(16).repeat(40)} 0\t${p}`)
+      .join('\0');
+    const calls: string[][] = [];
+    const run: GitCommand = (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'ls-files')
+        return { status: 0, stdout: Buffer.from(`${ls}\0`, 'utf8') };
+      if (args[0] === 'status') return { status: 0, stdout: Buffer.alloc(0) };
+      return { status: 1, stdout: Buffer.alloc(0) };
+    };
+    const added = captureGitBaseline(root, baseline, run);
+    // One ls-files for the whole repo, one status for the stat-clean check:
+    // per-file cost is zero git I/O, and no blob is ever read at baseline.
+    expect(calls).toHaveLength(2);
+    expect(calls.some((c) => c.includes('cat-file'))).toBe(false);
+    expect(Object.keys(added ?? {})).toHaveLength(fileCount);
   });
 });

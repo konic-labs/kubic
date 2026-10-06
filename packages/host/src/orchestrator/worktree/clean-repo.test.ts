@@ -1,10 +1,10 @@
 // `kubic clean` on a real scratch repository (issue #92; §42.4, §44.1, §78).
 // RED first: every disposer acceptance checkbox is proven against real git
-// state in a throwaway repo (mkdtempSync + git init — never this repo).
+// state in a throwaway repo (the shared git sandbox, issue #420 — never
+// this repo).
 // `--dry-run` mutates nothing, the real run removes retained worktrees +
 // branches through the library path (idempotent, one line per removal), and
 // git state Kubic did not name is never touched.
-import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -17,50 +17,45 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { NodeExecutionEnv } from '../../../../exec/src/env.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../../../exec/src/test-support/git-sandbox.js';
 import { approvalsSessionDir } from '../approvals/worker-asks.js';
 import { type CleanOptions, runCleanCommand } from './clean.js';
 
 const scratchDirs: string[] = [];
+let driver: GitSandbox | undefined;
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-// stderr is piped, not inherited: `git worktree add` narrates "Preparing
-// worktree ..." on stderr, which would otherwise leak into the test output.
-// A failing call still throws with that stderr attached.
+// The test's git driver: every setup spawn runs through the scratch repo's
+// sandbox (issue #420), whose scrubbed env the repo was built with. Set by
+// scratchRepo, which every git-driving test calls first.
 function git(dir: string, args: string[]): string {
-  return execFileSync('git', args, {
-    cwd: dir,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  if (driver === undefined) throw new Error('git() needs scratchRepo() first');
+  return driver.git(args, { cwd: dir });
 }
 
-// realpath: macOS tmpdir is a symlink (/var → /private/var) and git reports
-// the resolved toplevel, so the test's root must be the resolved form too.
-// Identity and signing are passed per-commit, so the operator's global git
-// config (e.g. commit.gpgsign) cannot break or stall the fixture.
+// Identity, signing and hooks are pinned by the sandbox constructor, so the
+// operator's global git config (e.g. commit.gpgsign) cannot break or stall
+// the fixture. sandbox.path is realpath-resolved (macOS /var → /private/var),
+// which git's reported toplevel needs. Injected into process.env because
+// runCleanCommand shells git on the inherited environment.
 function scratchRepo(): string {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'kubic-clean-')));
-  scratchDirs.push(dir);
-  git(dir, ['init', '-q']);
+  const sandbox = createGitSandbox({ injectProcessEnv: true });
+  driver = sandbox;
+  const dir = sandbox.path;
   writeFileSync(join(dir, 'README.md'), '# scratch\n');
-  git(dir, ['add', 'README.md']);
-  git(dir, [
-    '-c',
-    'user.email=kubic-test@local',
-    '-c',
-    'user.name=kubic test',
-    '-c',
-    'commit.gpgsign=false',
-    'commit',
-    '-q',
-    '-m',
-    'init',
-  ]);
+  sandbox.git(['add', 'README.md']);
+  sandbox.git(['commit', '-q', '-m', 'init']);
   return dir;
 }
 
@@ -669,6 +664,108 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     const forced = await clean(root, { force: true });
     expect(forced.code).toBe(0);
     expect(existsSync(retained)).toBe(false);
+    expect(kubicBranches(root)).toEqual([]);
+  });
+});
+
+// Committed-but-unmerged worker work (issue #146): a merge_conflict or
+// approval_denied run commits onto `kubic/<agent>` and retains it as
+// evidence — plain `kubic clean` must not `branch -D` that evidence away.
+// RED first: the probe, the refusal and the `-d` default do not exist yet,
+// so plain clean deletes the branch and every assertion below fails.
+function commitInWorktree(wt: string, file: string, content: string): void {
+  writeFileSync(join(wt, file), content);
+  git(wt, ['add', file]);
+  git(wt, [
+    '-c',
+    'user.email=kubic-test@local',
+    '-c',
+    'user.name=kubic test',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-q',
+    '-m',
+    file,
+  ]);
+}
+
+describe('unmerged branches survive plain clean (issue #146)', () => {
+  it('plain clean refuses an unmerged branch and keeps the worktree', async () => {
+    const root = scratchRepo();
+    const retained = retainWorktree(root, 'worker-1');
+    commitInWorktree(retained, 'work.txt', 'unmerged work\n');
+    const listedBefore = worktreeList(root);
+
+    const { code, errs } = await clean(root, {});
+
+    expect(code).toBe(1);
+    expect(errs.join('\n')).toMatch(/unmerged branch kubic\/worker-1.*--force/);
+    expect(kubicBranches(root)).toEqual(['kubic/worker-1']);
+    expect(worktreeList(root)).toBe(listedBefore);
+    expect(existsSync(join(retained, 'work.txt'))).toBe(true);
+  });
+
+  it('--force deletes the unmerged worktree and branch', async () => {
+    const root = scratchRepo();
+    const retained = retainWorktree(root, 'worker-1');
+    commitInWorktree(retained, 'work.txt', 'unmerged work\n');
+
+    const { code, lines } = await clean(root, { force: true });
+
+    expect(code).toBe(0);
+    expect(lines).toContain(`removed worktree ${retained}`);
+    expect(lines).toContain('deleted branch kubic/worker-1');
+    expect(existsSync(retained)).toBe(false);
+    expect(kubicBranches(root)).toEqual([]);
+  });
+
+  it('plain clean still deletes a merged branch', async () => {
+    const root = scratchRepo();
+    const retained = retainWorktree(root, 'worker-1');
+    commitInWorktree(retained, 'work.txt', 'merged work\n');
+    git(root, ['merge', '--ff-only', 'kubic/worker-1']);
+
+    const { code, lines } = await clean(root, {});
+
+    expect(code).toBe(0);
+    expect(lines).toContain(`removed worktree ${retained}`);
+    expect(lines).toContain('deleted branch kubic/worker-1');
+    expect(existsSync(retained)).toBe(false);
+    expect(kubicBranches(root)).toEqual([]);
+  });
+
+  it('prunes a hand-deleted worktree dir and deletes its branch, then has nothing to prune (issue #214)', async () => {
+    const root = scratchRepo();
+    const retained = retainWorktree(root, 'worker-1');
+    rmSync(retained, { recursive: true, force: true });
+
+    const first = await clean(root, {});
+
+    expect(first.code).toBe(0);
+    expect(first.lines).toContain('deleted branch kubic/worker-1');
+    expect(kubicBranches(root)).toEqual([]);
+
+    const second = await clean(root, {});
+    expect(second.code).toBe(0);
+    expect(second.lines.join('\n')).toContain('nothing to prune');
+  });
+
+  it('refuses a branch-only unmerged branch without --force', async () => {
+    const root = scratchRepo();
+    const retained = retainWorktree(root, 'worker-1');
+    commitInWorktree(retained, 'work.txt', 'unmerged work\n');
+    git(root, ['worktree', 'remove', '--force', retained]);
+    expect(kubicBranches(root)).toEqual(['kubic/worker-1']);
+
+    const { code, errs } = await clean(root, {});
+
+    expect(code).toBe(1);
+    expect(errs.join('\n')).toMatch(/unmerged branch kubic\/worker-1.*--force/);
+    expect(kubicBranches(root)).toEqual(['kubic/worker-1']);
+
+    const forced = await clean(root, { force: true });
+    expect(forced.code).toBe(0);
     expect(kubicBranches(root)).toEqual([]);
   });
 });

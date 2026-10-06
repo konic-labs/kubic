@@ -1,7 +1,8 @@
 // Slice C: git stage/commit/branch/checkpoint effect ops (issue #19; §43.1).
 // RED: git_stage/git_commit/git_branch/git_checkpoint do not exist yet.
 import { describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
+import { argvKey, FakeExecutionEnv } from '../../../exec/src/env.js';
+import { OperationKillRegistry } from '../lane/abort.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
@@ -16,6 +17,11 @@ function ctx(
   };
 }
 
+// Human form of the recorded argv, for exact-argv pins (issue #356).
+function argvOf(env: FakeExecutionEnv): string[] {
+  return env.calls.map((c) => `${c.cmd} ${c.args.join(' ')}`);
+}
+
 function inv(id: string): ToolInvocation {
   return createInvocation(
     { invocationId: id, operationId: id, turnId: 't-1' },
@@ -25,14 +31,25 @@ function inv(id: string): ToolInvocation {
 
 describe('git effects (issue #19, slice C)', () => {
   it('git_stage stages explicit paths only (never -A)', async () => {
+    const env = new FakeExecutionEnv({
+      [argvKey('git', 'add', '--', 'a.txt')]: {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+    });
     const out = await callOperation(
       'git_stage',
       { paths: ['a.txt'] },
       inv('c1'),
-      ctx({ 'git add -- a.txt': { exitCode: 0, stdout: '', stderr: '' } }),
+      { env, sessionId: 's1', agentId: 'root' },
     );
     expect(out.ok).toBe(true);
     if (out.ok) expect(out.result.staged).toEqual(['a.txt']);
+    // Exact argv pin (issue #356): a `git add -A` mutant derives a
+    // different key, hits no script, and strict mode throws — so this
+    // assertion failing is the mutant being killed.
+    expect(argvOf(env)).toEqual(['git add -- a.txt']);
   });
 
   it('git_stage refuses empty paths and absolute escapes', async () => {
@@ -50,7 +67,8 @@ describe('git effects (issue #19, slice C)', () => {
         ),
         ctx({}),
       );
-      // Unscripted fake spawns exit 0, so only validation can refuse.
+      // Rejected by validation before any spawn (the strict fake would
+      // throw on an unscripted argv, so reaching the shell fails loudly).
       expect(out.ok).toBe(false);
       if (!out.ok) expect(out.error.code).toBe('invalid_args');
     }
@@ -91,33 +109,47 @@ describe('git effects (issue #19, slice C)', () => {
 
   it('git_commit returns the sha plus file list for the trajectory', async () => {
     const scripts = {
-      'git commit -m work in progress': {
+      [argvKey('git', 'commit', '-m', 'work in progress')]: {
         exitCode: 0,
         stdout: '[main abc1234] work in progress',
         stderr: '',
       },
-      'git rev-parse HEAD': {
+      [argvKey('git', 'rev-parse', 'HEAD')]: {
         exitCode: 0,
         stdout: 'abc1234567890\n',
         stderr: '',
       },
-      'git show -z --name-only --format= abc1234567890': {
+      [argvKey(
+        'git',
+        'show',
+        '-z',
+        '--name-only',
+        '--format=',
+        'abc1234567890',
+      )]: {
         exitCode: 0,
         stdout: 'a.txt\0b.txt\0',
         stderr: '',
       },
     };
+    const env = new FakeExecutionEnv(scripts);
     const out = await callOperation(
       'git_commit',
       { message: 'work in progress' },
       inv('c3'),
-      ctx(scripts),
+      { env, sessionId: 's1', agentId: 'root' },
     );
     expect(out.ok).toBe(true);
     if (out.ok) {
       expect(out.result.sha).toBe('abc1234567890');
       expect(out.result.files).toEqual(['a.txt', 'b.txt']);
     }
+    // Single message element, not split (issue #356): the joined legacy
+    // key conflated `['-m', 'work in progress']` with five elements; the
+    // argv-array key does not, and the recorded call proves which the
+    // op issued.
+    expect(argvOf(env)[0]).toBe('git commit -m work in progress');
+    expect(env.calls[0]?.args).toEqual(['commit', '-m', 'work in progress']);
   });
 
   it.each([
@@ -141,7 +173,7 @@ describe('git effects (issue #19, slice C)', () => {
       'git_commit',
       { message: 'm' },
       inv('c3f'),
-      ctx({ 'git commit -m m': run }),
+      ctx({ [argvKey('git', 'commit', '-m', 'm')]: run }),
     );
     expect(out.ok).toBe(false);
     if (out.ok) return;
@@ -155,7 +187,7 @@ describe('git effects (issue #19, slice C)', () => {
       { message: 'before risky edit' },
       inv('c4'),
       ctx({
-        'git stash create before risky edit': {
+        [argvKey('git', 'stash', 'create', 'before risky edit')]: {
           exitCode: 0,
           stdout: 'deadbeef\n',
           stderr: '',
@@ -172,7 +204,12 @@ describe('git effects (issue #19, slice C)', () => {
       {},
       inv('c5'),
       ctx({
-        'git for-each-ref --format=%(refname:lstrip=2) refs/heads': {
+        [argvKey(
+          'git',
+          'for-each-ref',
+          '--format=%(refname:lstrip=2)',
+          'refs/heads',
+        )]: {
           exitCode: 0,
           stdout: 'main\nfeature/x\n',
           stderr: '',
@@ -186,9 +223,63 @@ describe('git effects (issue #19, slice C)', () => {
       'git_branch',
       { create: 'feature/y' },
       inv('c6'),
-      ctx({ 'git branch feature/y': { exitCode: 0, stdout: '', stderr: '' } }),
+      ctx({
+        [argvKey('git', 'branch', 'feature/y')]: {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+      }),
     );
     expect(created.ok).toBe(true);
     if (created.ok) expect(created.result.created).toBe('feature/y');
+  });
+});
+
+describe('git kill registry (issue #190)', () => {
+  // The op hands its kill to the lane registry under the invocation's
+  // operation id and unregisters on settle — before this change runGit
+  // never called trackHandle, so the registry stayed empty mid-flight.
+  it('git_commit registers its kill under the operation id, then untracks', async () => {
+    const registry = new OperationKillRegistry();
+    const seen: string[] = [];
+    const scripts = {
+      'git commit -m wip': {
+        exitCode: 0,
+        stdout: '[main abc] wip',
+        stderr: '',
+      },
+      'git rev-parse HEAD': { exitCode: 0, stdout: 'abc\n', stderr: '' },
+      'git show -z --name-only --format= abc': {
+        exitCode: 0,
+        stdout: 'a.txt\0',
+        stderr: '',
+      },
+    };
+    const env = new FakeExecutionEnv(scripts);
+    const trackedCtx: OpContext = {
+      env,
+      sessionId: 's1',
+      agentId: 'root',
+      trackHandle: (kill, invocation) => {
+        seen.push(String(invocation.operationId));
+        return registry.track(String(invocation.operationId), kill);
+      },
+    };
+    const out = await callOperation(
+      'git_commit',
+      { message: 'wip' },
+      inv('git-commit-track-1'),
+      trackedCtx,
+    );
+    expect(out.ok).toBe(true);
+    // All three child spawns (commit, rev-parse, show) registered.
+    expect(seen).toEqual([
+      'git-commit-track-1',
+      'git-commit-track-1',
+      'git-commit-track-1',
+    ]);
+    // ...and every one unregistered on settle: no leak in the registry.
+    expect(registry.drain('git-commit-track-1')).toEqual([]);
   });
 });

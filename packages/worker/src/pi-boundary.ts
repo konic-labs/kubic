@@ -485,3 +485,28 @@ export { ResetEntry, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
 //     already exists upstream.
 //   review: issue #330
 export { estimateContextTokens } from '@earendil-works/pi-ai/utils/estimate';
+
+// --- #257 additions ---
+
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-ai#CacheRetention (type)
+//   used by: packages/worker/src/stream-options.ts (the cacheRetention
+//     leaf of the §37.4 tuning)
+//   why Pi has no alternative: it is the exact retention vocabulary
+//     ('none' | 'short' | 'long') the provider stream options accept; a
+//     Kubic string union would drift from the values Pi validates.
+//   review: issue #257
+export type { CacheRetention } from '@earendil-works/pi-ai';
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-durable#ConversationStreamOptions (type)
+//   used by: packages/worker/src/stream-options.ts (the §37.4 per-model/
+//     per-role tuning the solo lane hands to Harness.open as settings.stream)
+//     and packages/host/src/config/config.ts (the parsed [model]/[roles.*]
+//     tables it resolves from)
+//   why Pi has no alternative: these are the curated request options the
+//     durable harness reads at every use (timeoutMs, maxRetries,
+//     maxRetryDelayMs, headers, metadata, cacheRetention, deferred); a
+//     Kubic-shaped copy would neither type against HarnessSettings nor track
+//     the options generation actually forwards to the provider stream.
+//   review: issue #257
+export type { ConversationStreamOptions } from '@earendil-works/pi-durable';

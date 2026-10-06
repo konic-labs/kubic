@@ -46,11 +46,12 @@ export const RETRY_STRATEGIES = [
   'retry_with_wider_capability',
 ] as const;
 
-// Full §53 strategy vocabulary. Only retry_same and
-// retry_with_different_tool are emitted today; the rest activate with
-// their owners (new context with #34 compaction, stronger model with #20
-// models, new agent with the orchestrator, wider capability with #16
-// approvals) instead of being guessed here.
+// Full §53 strategy vocabulary. Emitted today: retry_same (executed by the
+// harness's durable generation retry, #395), retry_with_different_tool, and
+// retry_with_new_context (solo compact-then-retry, issue #209). Stronger
+// model and new agent are DECIDED here and executed by their owners
+// (#210 escalates, #184 relaunches with a handoff); wider capability only
+// ever arises through an explicit approval (#16), never from this chooser.
 
 export type RetryStrategy = (typeof RETRY_STRATEGIES)[number];
 
@@ -207,11 +208,14 @@ export function classifyFailure(
           strategy: 'escalate',
         };
       }
+      // Issue #209: overflow compacts first, then retries on the fresh
+      // context (executed by the solo recovery, #399's compactSoloLane).
+      // A polluted context still escalates: only the operator picks the
+      // fresh agent after seeing the record.
       return {
         code: 'context_overflow',
-        remedy:
-          'Context overflowed; compact first, then retry with a new agent.',
-        strategy: 'escalate',
+        remedy: 'Context overflowed; compact first, then retry once.',
+        strategy: 'retry_with_new_context',
       };
     }
     case 'budget': {
@@ -243,6 +247,12 @@ export function classifyFailure(
 export interface RetryHints {
   retryAfterMs?: number;
   now?: number;
+  // Retry spend metered OUTSIDE this budget (issue #209): the caller
+  // reports what retries have cost so far (task spend never counts —
+  // retry spend lands on the retry budget, §53). The orchestrator passes
+  // its BudgetUsage; a solo recovery passes its measured retry cost.
+  // Absent, only the attempts arm binds.
+  costUsd?: number;
 }
 
 // §52 code → the ResultErrorKind it belongs to (issue #155): the inverse of
@@ -277,12 +287,18 @@ export interface RetryDecision {
   reason: string;
 }
 
+// Product-policy retry budget (issue #209): attempts AND cost arms, spent
+// separately from any task budget. Constructed from the orchestrator's
+// RetryBudgetConfig ({maxAttempts, maxCostUsd}) wherever a retry policy
+// runs — same field names, no import (the lane never imports host).
 export class RetryBudget {
   private spent = 0;
   readonly maxAttempts: number;
+  readonly maxCostUsd: number;
 
-  constructor(maxAttempts: number) {
+  constructor(maxAttempts: number, maxCostUsd = Number.POSITIVE_INFINITY) {
     this.maxAttempts = maxAttempts;
+    this.maxCostUsd = maxCostUsd;
   }
 
   get remaining(): number {
@@ -299,7 +315,14 @@ export class RetryBudget {
     if (this.spent >= this.maxAttempts) {
       return {
         decision: 'abandon',
-        reason: `retry budget exhausted (${this.spent}/${this.maxAttempts})`,
+        reason: `retry budget exhausted (${this.spent}/${this.maxAttempts} attempts)`,
+      };
+    }
+    const spend = hints.costUsd ?? 0;
+    if (spend >= this.maxCostUsd) {
+      return {
+        decision: 'abandon',
+        reason: `retry budget exhausted ($${spend}/$${this.maxCostUsd} retry spend)`,
       };
     }
     this.spent += 1;

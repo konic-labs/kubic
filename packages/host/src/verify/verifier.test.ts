@@ -76,7 +76,9 @@ describe('runVerifier (issue #267)', () => {
   it('defaults a gate bound to ten minutes and asks the exec seam for sh -c', async () => {
     expect(DEFAULT_VERIFY_TIMEOUT_MS).toBe(10 * 60 * 1000);
     const seen: { args: string[]; maxOutputBytes: unknown }[] = [];
-    const env = new FakeExecutionEnv({});
+    // The gate answer is exit 0 either way; only the requested argv is
+    // pinned, so opt out of strict mode explicitly (issue #356).
+    const env = new FakeExecutionEnv({}, { allowUnscripted: true });
     const spy: ExecutionEnv = {
       cwd: env.cwd,
       fs: env.fs,

@@ -311,17 +311,26 @@ export async function assembleModels(
       // provider-key use is resolved and audited per request.
       const names = registerCustomProviders(models, specs, options);
       for (const spec of specs) {
-        // §36.3 (issue #200): the names a worker role grant must forward —
-        // the declared apiKeyEnv, or the documented KUBIC_API_KEY default
-        // registerCustomProviders falls back to. A literal models.json key
-        // (the keyless-local-server form) is already in the catalog, so
-        // nothing needs forwarding.
+        // §36.3 (issue #200): the names a worker role grant must forward.
+        // The declared apiKeyEnv, the documented KUBIC_API_KEY default
+        // registerCustomProviders falls back to — and (issue #224) every
+        // $VAR a ref key or header names, so the child can re-resolve what
+        // the manager never materialises. A literal key is already in the
+        // catalog and a !command key runs in the child itself, so neither
+        // forwards anything — and neither is an undeliverable refusal.
+        const refNames = [
+          ...(spec.apiKeyRef?.kind === 'env' ? [spec.apiKeyRef.name] : []),
+          ...Object.values(spec.headerRefs ?? {}).flatMap((ref) =>
+            ref.kind === 'env' ? [ref.name] : [],
+          ),
+        ];
+        const envVars =
+          spec.apiKey === undefined
+            ? [spec.apiKeyEnv ?? 'KUBIC_API_KEY', ...refNames]
+            : refNames;
         keyEnv.set(spec.id, {
-          envVars:
-            spec.apiKey === undefined
-              ? [spec.apiKeyEnv ?? 'KUBIC_API_KEY']
-              : [],
-          noKeyNeeded: spec.apiKey !== undefined,
+          envVars: [...new Set(envVars)],
+          noKeyNeeded: envVars.length === 0,
         });
       }
       for (const name of names) {

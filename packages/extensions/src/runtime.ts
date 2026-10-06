@@ -153,7 +153,14 @@ export function budgetLimitsOf(startup: BundleLoad): BudgetLimits {
 // dead. Accounting matches the worker's own interceptor: every attempt
 // counts, in-flight call included, so `maxToolCalls: 1` admits exactly one
 // call and refuses the next.
-export function budgetToolGate(startup: BundleLoad): ToolGateContribution {
+// Issue #283 (§71): `onBreach` fires when a call is refused (before the
+// throw), so a headless run can trip its guard and end budget_exhausted
+// instead of letting the model talk past the refusal. Lanes without the
+// callback (the TUI) keep refusal-as-tool-error semantics.
+export function budgetToolGate(
+  startup: BundleLoad,
+  onBreach?: (limit: string) => void,
+): ToolGateContribution {
   const limits = budgetLimitsOf(startup);
   let attempts = 0;
   return {
@@ -163,7 +170,10 @@ export function budgetToolGate(startup: BundleLoad): ToolGateContribution {
       async (...args) => {
         attempts += 1;
         const breached = checkBudgetExhausted({ toolCalls: attempts }, limits);
-        if (breached !== undefined) throw new ExtensionBudgetError(breached);
+        if (breached !== undefined) {
+          onBreach?.(breached);
+          throw new ExtensionBudgetError(breached);
+        }
         return next(...args);
       },
   };

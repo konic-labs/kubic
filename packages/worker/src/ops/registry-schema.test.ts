@@ -54,6 +54,9 @@ const FIXTURES: Record<OperationName, Fixtures> = {
     full: { message: 'before refactor' },
     required: ['message'],
   },
+  git_merge: { full: { branch: 'feature' }, required: ['branch'] },
+  git_conflict_status: { full: {}, required: [] },
+  git_worktree_list: { full: {}, required: [] },
 };
 
 const NAMES = Object.keys(OPERATIONS) as OperationName[];

@@ -49,7 +49,7 @@ broken install whose extension bundle would fail the boot.
 Build first (`npm run build`), then invoke `./bin/kubic.js` (or
 `npm run kubic -- …`); anything else dispatches below; an unknown command
 prints
-`usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>`
+`usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | skills | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>`
 and exits **2** (a usage error, issue #372); a word-shaped unknown token
 also prints `hint: to run it as a prompt: kubic run -p '<word>'`, while the
 bare invocation keeps the POSIX usage-on-no-args posture: the identical
@@ -66,7 +66,7 @@ with the hint above (L-D7). Solo mode runs in-process with your user authority: 
 isolation, no containment — approvals plus the journal are the controls.
 Orchestrator mode (`orchestrate`) is opt-in — `run` never delegates.
 
-## `kubic run [-p] <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--model <provider/id>] [--skill <path>]... [--no-skills] [--tools <a,b,...>] [--no-tools] [--debug] [--json] [--dangerously-skip-approvals]`
+## `kubic run [-p] <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--model <provider/id>] [--thinking <level>] [--skill <path>]... [--invoke-skill <name>] [--no-skills] [--tools <a,b,...>] [--no-tools] [--budget <dims>] [--debug] [--autonomous] [--json] [--dangerously-skip-approvals]`
 
 Non-interactive solo run: no alt-screen, no prompt, consumable output.
 
@@ -76,22 +76,28 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | `--session <id>` | Resume into an existing session. Ids accept only `[A-Za-z0-9_-]` — anything else exits 2 before any store is touched. **Model rule** (issue #148): a resumed session runs its own stored lane model unless a model is *pinned* (`--model`, `KUBIC_MODEL` / `[model]`, a role's `[roles.<name>].model`, or `KUBIC_PROVIDER=faux`) — a pin that differs switches the session to it (`model: session model '<a>' switched to '<b>' (explicit selection)` on stderr, compaction reserve re-clamped to the new window); the unpinned default pick never switches it (`model: session keeps its own model '<a>' …`). The prompt metadata, the `--json` `model` field and the usage rows all name the model the lane actually runs. A stored model that is no longer registered fails closed with `provider_probe_failed` (exit 6): `session model '<a>' is unavailable: …` — pin a model to move the session. |
 | `--timeout <ms>` | Wall-clock bound for the run's turn — settling the pending work plus the prompt's own run (positive integer ms, max `2147483647`). Default `300000` (5 minutes). A model that never settles is cut off and the run ends `timeout` (exit 1, issue #280) with the ref triple intact — §71 budgets exist only when configured, so a default bound never claims `budget_exhausted`. When the bound fires mid-tool, the in-flight work is **aborted and killed, not abandoned**: the turn's context is cancelled, the run states a durable `conversation.abort()`, drains the kill registry (detached bash children die with their process groups), and only then runs the end-of-run reconciliation sweep — so a late write from orphaned work cannot land outside the journal. A provider that ignores cancellation cannot hang the run: the abort and the harness close are bounded, and the mapped result is reported either way. |
 | `--max-turns <n>` | Optional turn bound (positive integer). A turn is one committed model response, counted from the lane's own usage events; durable provider retries the harness performs inside a turn are not turns. Exceeding the bound ends the run `budget_exhausted` (exit 3) with the same abort-and-drain path as `--timeout`. Unset means no turn bound — the wall clock is the only limit. |
-| `--role <name>` | Boot as a §12 role: the `.kubic/roles/<name>.md` document when the workspace has one, else the preset of that name embedded in the binary (issue #203). The document's prompt text, tool set and model pin apply either way. |
+| `--role <name>` | Boot as a §12 role: the `.kubic/roles/<name>.md` document when the workspace has one, else `~/.kubic/roles/<name>.md` (issue #241), else the preset of that name embedded in the binary (issue #203). The document's prompt text, tool set and model pin apply either way. A project document loads only for a trusted project root (issue #430, §33 — same gate as project skills): untrusted, `--role` naming it refuses with the trust message and `kubic doctor` warns what trust would unlock. The document may declare a `skills: [...]` list (issue #181, §29.4): only the named skills reach the role's prompt — merged with each skill's own `roles:` list, so both must admit. Skills outside the role, or needing tools the lane's classes deny, are withheld with reasons (debug log; `kubic doctor` warns each as `skill:<name>`) — never offered, never silently failing. The role's permission classes merge with the config's, most restrictive wins (issue #196, §40.2), and the role document (or a `[roles.<name>]` layer) may declare `requires: [...]` — tools that always require approval under the role (issue #196, §41.1). `kubic doctor` prints each role's effective classes under the run's config. Roles match by the declared `role:` name, not the filename (issue #293): `review.md` declaring `role: reviewer` boots `--role reviewer` with review.md's own `## Prompt` body — the prompt is never re-read from `<name>.md`. Robustness (issue #236): one malformed document never blocks the other roles — `--role` naming it refuses with that file's parse error, `kubic doctor` fails it as `role:<file-stem>`; two documents declaring the same `role:` name are refused by name everywhere (run refusal + doctor fail), both files listed, and neither copy wins. |
 | `--model <provider/id>` | Session model override (§38.1): the `cli` config layer, above `KUBIC_MODEL` and every file layer — and never above a frozen enterprise key, which still wins (one stderr note names the ignored flag or `KUBIC_MODEL` pin: `note: --model x ignored: model pinned by enterprise policy (corp/approved)`; stdout and a `--json` envelope are untouched). An unknown provider/model exits 6 with the id and the input that carried the pin named (`--model`, `KUBIC_MODEL`, `[model] in <layer> config`, `role model`); the flag is an input to the one config load, so `kubic config --model` reports the same selection. |
-| `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). |
+| `--thinking <level>` | Session thinking-level override (§38.3, issue #225): the `cli` config layer — `--thinking` beats `KUBIC_MODEL_THINKING`, which beats `[model].thinking`, and a frozen enterprise `model.thinking` beats the flag (refused by name: `--thinking <level> refused: model.thinking is frozen by the enterprise layer`; the env override is silently not applied). The lane resolves it against the session's stored level and the role default (`--thinking` > env > session > role > config) and clamps it to the effective model — a clamp is one stderr notice naming the model, the request and the level applied, never a silent rewrite. The applied level is committed to the session (a reattach keeps it) and recorded in `trajectory.json`. An unknown level exits 2 naming the levels that exist. |
+| `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). A directory, a `SKILL.md` file, or a bare name (discovery roots first, then the cwd). Relative values resolve against the invoking cwd on both `run` and `tui` (issue #177) — never against the sessions root — and an unresolvable value warns on stderr (`skill skipped (unknown skill '…')`), without needing `--debug`. |
+| `--invoke-skill <name>` | Invoke one booted skill by name (`run` only): its full content runs as the turn prompt — including skills hidden from the model (`disableModelInvocation`, issue #183, §29.4) — followed by `-p`/operand text as further instructions. An unknown name fails the run with `unknown skill '<name>'` (exit 1); a withheld skill (role gate, trust gate) resolves as unknown and fails the same way. |
 | `--no-skills` | Turn layered skill discovery off. |
+| `--autonomous` | Run to completion without stopping for input (§19, issue #278): the §19 mode is recorded on the run's session (`autonomous`, else `interactive` — off by default, never assumed), a `run:start` row naming the mode lands in the §60 audit ledger, and the result and `--json` envelope carry `mode` (the `status` already names the stop condition that ended the run). Combines freely with `--dangerously-skip-approvals` — the combination is legitimate for a batch run on a throwaway checkout, and the session plus the ledger name it. |
 | `--debug` | Emit §49.3 lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same `DEBUG_CLASSES` vocabulary as the interactive TUI debug channel), plus the run's diagnostics on the same channel (as `[session] …` lines when they carry no class of their own): the extension-load receipt, `reconcile:` notices (including the overlap warning below), `skills:` reports and drain failures. A retry backoff and a compaction are named too (issue #150): `[lane] retry attempt <n> after error: <message>` when the harness schedules a retry of a transient model error and `[lane] retry attempt <n> settled` when it lands, `[lane] compaction started (<reason>)` / `[lane] compaction finished (<reason>)` around an automatic or manual compaction — the wait is never silent. Off by default; stdout stays consumable. |
 | `--dangerously-skip-approvals` | Full access for **this run's session only** (§41.4): challenged calls run without an ask. It is recorded in the session's `posture.json` and as one `posture:full-access` row in the audit ledger (session id and command), never in config, and a `warning: full-access approvals skipped for session <id> …` line goes to stderr. Each challenged call the posture waives is recorded under its own capability (`trigger:<capability>`, posture `full-access`), one record per capability; an untriggered call is neither audited nor marked challenged (issue #234). A later `kubic run --session <id>` on that session warns again on stderr. |
 | `--tools <a,b,...>` | §40.1 mechanism 1 (issue #273): narrow the run's tool set to these tools — comma-separated and repeatable (`--tools read,ls --tools grep`). The selection can only **narrow**: it is intersected with the permission classes, any `--role` set and the enterprise tool gate. An unknown name is refused by name; a tool the classes forbid (`--tools write` under `filesystem = "read"`) is refused with the §40.3 reason — both exit 2 before any lane boots. |
 | `--no-tools` | The empty tool set (a chat-only run). Mutually exclusive with `--tools` — both at once exits 2 naming both. |
-| `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs — `usage` also carries the run's `input`, `output`, `cacheRead`, `cacheWrite`, `costUsd` and `toolCalls` once a session exists —, `model` — the `provider/id` the lane actually ran, present once a lane booted —, `approvals.posture` — `approvals` or `full-access` — once the lane is installed, optional `error`, and — on a classified failure — `failure: {code, remedy, strategy}`, the §52 code with its retry remedy and strategy, issue #155) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
+| `--budget <dims>` | Opt-in §71 solo budget (issue #283): bare dimensions only, reusing orchestrate's grammar without agent scoping — `maxToolCalls=1,maxCostUsd=0.5` (dimensions: `maxTokens`, `maxCostUsd`, `maxRuntimeMs`, `maxToolCalls`; each a positive number, `maxRuntimeMs` at most `2147483647`). Anything shaped like an agent clause (`worker-1:…`, any `;`) is refused naming the flag, as is an unknown dimension. The limits ride into the first-party bundle the run boots with: a refused tool call past `maxToolCalls` trips the run guard mid-turn, and a settled turn whose billed tokens/cost breach their bound, ends `budget_exhausted` (exit 3) with the limit named (`extension budget exhausted: <limit> limit breached …`). Absent means no limits — never defaults — and orchestrator worker children keep their own `KUBIC_BUDGET` path (issue #208), not this flag. While set, the TUI status bar burns the limits down (`budget tools 3/10 · $0.12/$0.50`, issue #285) and the settled trajectory records them (schema v1.2 `budget` block). |
+| `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs — `usage` also carries the run's `input`, `output`, `cacheRead`, `cacheWrite`, `costUsd` and `toolCalls` once a session exists —, `model` — the `provider/id` the lane actually ran, present once a lane booted —, `approvals.posture` — `approvals` or `full-access` — once the lane is installed, `mode` — the §19 mode the run resolved (`autonomous` with `--autonomous`, else `interactive`) —, optional `error`, and — on a classified failure — `failure: {code, remedy, strategy}`, the §52 code with its retry remedy and strategy, issue #155) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
 
 **Skill paths the `read` tool may open (§29.3, issue #173).** Every skill
 advertised in the `<skills>` block names its absolute `<filePath>`. Paths
 outside the workspace are normally re-rooted under it, so one narrow,
 read-only exception applies to exactly the advertised skills that live
 outside the cwd: user skills (`~/.pi/agent/skills`, `~/.agents/skills`),
-trusted ancestor project skills, and explicit `--skill` paths. For a
+trusted project skills (the cwd up to the repository top level — the cwd
+alone outside a repository, and a user root is never relabelled `project`),
+and explicit `--skill` paths. For a
 `SKILL.md`, `read` may open anything inside that skill's own directory
 (so the skill's relative references resolve); a flat skill file opens
 only itself. Nothing else changes: `write`, `edit`, `ls`, `find` and
@@ -136,6 +142,11 @@ absolute path. The file holds the session's latest settled run; a resumed
 - the git base revision (`no-vcs` outside a git checkout) and branch
 - the used tool environment (`toolSpawnEnv`, so no secrets)
 - a result with a §52 `failureCategory` on every non-completed status
+- the §71 budget when the run was budgeted (`budget: {limits, usage?,
+  exhausted?}` — schema v1.2, wholly optional on read so older records and
+  older readers keep working; a budgeted trajectory replays and evals like
+  any other, the block is evidence of the original bound, never a second
+  enforcement)
 - with `[verify]` configured, the §48 gate labels (`signal:tests|build|
   lint|typecheck`, plus `signal:regression` against the base revision):
   see [gate verification](configuration.md#gate-verification-verify)
@@ -248,7 +259,8 @@ the file a day old) — so crash recovery works same-day. **Different**
 sessions in one repo stay legal — nothing blocks them — but each run's
 end-of-run sweep compares against its own boot baseline, so a run
 overlapping another session records that session's in-flight changes as
-**unattributed, non-reversible** journal entries. When the local session
+**unattributed** journal entries (still `non-reversible` unless a pre-image
+resolves — a git pre-image or an earlier attributed entry in the run). When the local session
 store shows another session on the workspace, the run's debug channel
 emits one `reconcile: another run may be live in this workspace …` line
 naming the sibling ids, and `kubic doctor` reports the same overlap as the
@@ -258,19 +270,32 @@ semantics are provided or tested.
 
 ### Where the spans go
 
-Lane and tool spans have two destinations, both documented:
+Lane, tool and worker spans have three destinations:
 
 1. **stderr, behind `--debug`** — each span close writes one
-   `<label>: <name> …` line through the shared `DebugSink`. This is the
-   channel the interactive TUI debug view uses, so the vocabulary is
-   identical across modes. Silence (no `--debug`) is the default, which
-   keeps stdout consumable and the run's exit contract untouched.
+   `<label>: <name> …` line through the shared `DebugSink`. Silence (no
+   `--debug`) is the default, which keeps stdout consumable and the run's
+   exit contract untouched. (`kubic tui` has no `--debug` flag: its span
+   closes go to the artifact below, and lane faults render as transcript
+   notices — see the debug page.)
 2. **the session artifact** — `run-spans.ts` also serializes the same
    spans to `spans.jsonl` under the session's own directory
    (`<sessions-root>/<session-id>/spans.jsonl`), one JSON object per
    closed span. The artifact is evidence, not a surface: nothing reads it
    back and no CLI command reports it yet (the aggregate is #95/#96's
-   telemetry work).
+   telemetry work). Every run surface writes the same file for its own
+   session: `kubic run` writes the lane accept/drive steps plus one
+   `pi.tool.execute` span per tool call (#98, #397); `kubic tui` appends
+   one `kubic.agent.run` span per settled turn plus that turn's tool spans
+   (#290); an orchestrator worker child writes its own session file like
+   a headless run, so the manager and worker traces join on the worker
+   session id.
+3. **the orchestrator artifact** — the manager writes one
+   `kubic.worker.start` span per launch with a nested
+   `kubic.worker.startup` span whose duration is the registry's
+   `startupMs` (#290), appended per settled worker to
+   `<repo>/.kubic/orchestrator/<session>.spans.jsonl` next to the run
+   state and trajectory files.
 
 Both are additive: a run with no spans still exits exactly as before.
 
@@ -321,7 +346,7 @@ $ KUBIC_PROVIDER=faux kubic run -p 'faux:tool ls {"path":"."}'
 built binary: a faux `run --json` (echo and a tool call), text mode, the
 unknown-value refusal, and an `orchestrate --yes` across worker processes.
 
-## `kubic orchestrate -p <prompt> [--agents <a,b>] [--concurrency <n>] [--on-failure <stop|continue>] [--session <id>] [--resume] [--yes] [--budget <dims>] [--dangerously-skip-approvals] [--json]`
+## `kubic orchestrate -p <prompt> [--agents <a,b>] [--concurrency <n>] [--on-failure <stop|continue>] [--max-attempts <n>] [--escalation-model <provider/id>] [--session <id>] [--resume] [--yes] [--autonomous] [--budget <dims>] [--dangerously-skip-approvals] [--json]`
 
 `kubic orchestrate --help` prints the generated help (every flag below plus
 examples) and exits 0. Unknown flags, a missing flag value, a stray operand,
@@ -343,12 +368,12 @@ as evidence (only `kubic clean` disposes) — that claim is asserted by
 if this sentence or the `clean` command goes missing. Requires a git repo:
 outside one the command refuses with exit 5 (§78, issue #372) and never
 silently runs solo.
-Worker runs need a configured provider (each worker is a child `kubic run -p`).
+Worker runs need a configured provider (each worker is a child `kubic run -p`). Each child carries its orchestrator-assigned identity (`KUBIC_WORKER_ID`), so its journal, reconciliation and trajectory entries are tagged with the worker id instead of `root` (issue #364) — `kubic diff/log --session <orch>` aggregates the `<orch>-<agent>` worker journals and `--agent` selects one worker's changes.
 Worktree names carry the session, so a later run with the same agents
 (e.g. the default `worker-1`/`worker-2`) always starts on fresh worktrees at
 the current HEAD — never on an earlier run's retained, possibly dirty or
 unmerged tree — and two runs in one repo never share a worktree. Only
-`--resume --session <id>` reuses that session's own worktrees; a fresh run
+`--resume --session <id>` reuses that session's own worktrees; a settled-but-unmerged worker whose worktree branch still matches is queued for merge without re-running — unless the branch tip moved under the same name (the tip sha is recorded at settle and compared on resume), in which case the stale completion is dropped and the worker runs again (issue #429). A fresh run
 whose session-scoped worktree or branch already exists fails closed with
 `code=worktree_exists`, exit 1, naming the `--resume` and
 `kubic clean --session <id>` ways out. A fresh run under a `--session <id>`
@@ -426,7 +451,10 @@ generations. The bound is one replacement per worker.
 manager: it registers the manager lane's toolset through the §40 allowlist
 before anything spawns, derives a plan from `-p` (one step per worker), creates
 one worktree per agent, spawns one child `kubic run` per agent and merges what
-they commit. **Each worker runs its own plan step under an assigned role**: the
+they commit. A child is launched through the same bin wrapper that started the
+manager (resolved from the manager's own module, never the cwd), so `kubic`
+reached through a bin symlink — `node_modules/.bin`, `npm link`, a global
+install — still spawns working children. **Each worker runs its own plan step under an assigned role**: the
 prompt a child receives cites that worker's step (`Plan step 2 of 2 for agent
 'beta': …`), carries the objective, and opens with the `## Prompt` text of the
 role that worker was assigned — `-p` is the objective the plan is derived from,
@@ -434,10 +462,21 @@ never copied to a worker verbatim. The role is chosen per worker by the
 `--agents` binding (issue #178): `<id>:<role>` names one of the five presets,
 and a worker with no binding runs as an **implementer** — never by list
 position, so the default two-worker run no longer spends a worker on a planner
-whose plan nothing consumes. The role also decides the worker's lane: the
+whose plan nothing consumes. After the step, every prompt carries the
+worker's §24 transfer record (issue #184): the task (the run objective),
+its worktree, the role obligations as constraints, the expected output
+(changes committed for review and merge), and the previous findings handed
+down the agent order — one line per settled earlier worker: its files,
+findings, failing tests, diff ref and worktree. A
+result smuggling message-history-shaped content hands nothing down (§69,
+fail-closed) and surfaces no `artifact`; no prompt ever carries a
+transcript. The role also decides the worker's lane: the
 child is told `--role <name>` and registers exactly that role's resolved tool
 set, so a tool the role does not hold is never registered (absence, not
-approval, withholds it). Each worker's model and thinking level are resolved
+approval, withholds it). The role's classes and approval obligations travel
+in the task resources (issue #196, §40.2/§41.1): the child merges the classes
+with its own config, most restrictive wins, and challenges the requires on
+its installed triggers. Each worker's model and thinking level are resolved
 per role (§38.1, issue #202): `[roles.<name>].model` wins for its own worker,
 otherwise the worker inherits the manager's effective model — never a
 hardcoded provider — and the winner travels through the existing `KUBIC_MODEL`
@@ -554,9 +593,24 @@ can produce one):
   worker cannot make another tool call. `maxRuntimeMs` is the manager's
   wall-clock watchdog: a worker that outlives it is killed and the run reports
   `limit=wallClock` — distinct from the child's own `--timeout`. A worker
-  cannot raise its own budget: the raise is refused and audited. The spec
+  cannot raise its own budget: a self-raise is refused and audited. On an
+  interactive run the raise ask still reaches the user (issue #141) —
+  approving applies the raise to that worker's live plan and gate and
+  audits `budget-raise-approved`; declining, headless and `--yes` runs deny
+  with the reason named (the session skip never stands in for the user).
+  The spec
   persists with the session, so `--resume` re-applies it; a differing
   `--budget` on resume is refused (exit 2) rather than silently mixed.
+- **The task can also carry an aggregate budget (§71, issue #207).**
+  `--budget total:<dims>` caps spend across ALL workers of the task (e.g.
+  `--budget total:maxCostUsd=5`), enforced by the admission layer before
+  each spawn: settled workers' reported usage accumulates into the gate, so
+  a spawn the run can no longer afford is blocked — denied with the gate's
+  reason on an interactive run, queued (then refused when no release can
+  free it) on an autonomous one. `total` is a reserved keyword and never
+  names a worker. The aggregate persists with the session like the rest of
+  the spec: `--resume` re-applies the stored gate AND the spend the previous
+  attempt already accumulated.
 - **`--dangerously-skip-approvals` is the session-scoped skip (§41.4).** It
   is stored per session, indicated on the surface, recorded for audit/doctor
   (one `posture:full-access` ledger row), warned on stderr, and a fresh
@@ -572,7 +626,24 @@ Unapproved worker execution needs the explicit `--full-access` posture. Every
 settled merge decision is appended to the §60 audit ledger
 (`.kubic/orchestrator/approvals/audit.jsonl`, read by `kubic audit`) as a
 `merge:<branch>` row whose approval is `approved by --yes` for the standing
-answer, `approved by user` for an answered prompt, or `denied`.
+answer, `approved by user` for an answered prompt, or `denied`. An approved
+merge names the worktree it merged from in its reason (`approved from
+<path>`). Beyond approval decisions the ledger records every privileged
+action, one row per act with the same provenance block (session, mode,
+model, worker pid and generation, workspace path and base): the closed set
+is `full-access-grant` (`posture:full-access`, one per grant),
+`merge` (`merge:<branch>`), `worktree-create`/`worktree-remove`
+(`worktree-create:<branch>`, `worktree-remove:<branch>`), `worker-spawn`/
+`worker-terminate` (one pair bracketing each child's process lifetime — the
+terminate reason is `ok` or the failure code), and `undo-restore` (one per
+`kubic undo` that restores, naming the restored paths and the skipped
+count; a dry run records nothing). Every run also opens with one `run:start`
+row naming its §19 mode (`autonomous` with `--autonomous`, else
+`interactive`), the command and the posture (issue #278) — a run record,
+not a privileged action, kept at the privileged sink level beside the
+decisions. `kubic audit --json` returns the full
+14-field records; a ledger append that fails surfaces on stderr and never
+fails the action.
 
 The interactive merge gate is **bounded like every other ask** (issue #130,
 §41.2). A TTY run asks each merge under the run's approval policy
@@ -609,9 +680,9 @@ verdict is a §60 row (`trigger:spawn-agents`, mode orchestrator): approving
 proceeds under the queueing rule above (the excess waits in the scheduler's
 FIFO queue for a slot), and denying leaves every worker inside the cap to run
 and merge, then fails the excess ones with `code=spawn_agents_denied` and exit
-1, the partial-failure contract. A headless run, and any run passing `--yes`
-(the standing answer makes it autonomous), never asks and keeps the queueing
-rule.
+1, the partial-failure contract. A headless run, and any run passing `--yes` or `--autonomous`
+(the standing answer makes it autonomous, as does the explicit flag),
+never asks and keeps the queueing rule.
 
 Concurrency changes only *when* workers run, never the merge: candidates are
 enqueued in **agent order** after the workers settle, so `kubic orchestrate
@@ -653,23 +724,29 @@ prompt is the pending one), never appended as a duplicate prompt, and the
 | Flag | Meaning |
 | --- | --- |
 | `-p`, `--prompt <text>` | **Required** (unless `--resume`). The objective the manager derives the plan from; each worker receives its own plan step built on this text, never the text verbatim. |
-| `--agents <a,b>` | Workers as `<id>[:<role>[:<provider/id>]]` (default `worker-1,worker-2`, both implementers — the two-worker demo, run concurrently). `<id>` accepts only `[A-Za-z0-9_-]` and must be unique (one worktree per writer); `<role>` is one of the five §12 presets (`planner`, `implementer`, `tester`, `debugger`, `reviewer`) and defaults to `implementer` — a worker with no binding never becomes a planner by list position (issue #178); `<provider/id>` is that worker's explicit model pin, the highest model level (§38.1), above `[roles.<name>].model` and the manager's own model. An unknown role, a duplicate id or a malformed model ref exits 2 before anything spawns. A role that declares a tool the enterprise policy denies (or omits from `allowed_tools`) refuses that binding by name — `role_refused` for the run and `FAIL role:<name>` in `kubic doctor`; since #157 the read-only roles declare `bash`, so a policy denying `bash` refuses every preset that runs a shell. The binding persists with the session and `--resume` re-applies it (a `--agents` naming a different assignment on resume is refused, exit 2). |
+| `--agents <a,b>` | Workers as `<id>[:<role>[:<provider/id>]]` (default `worker-1,worker-2`, both implementers — the two-worker demo, run concurrently). `<id>` accepts only `[A-Za-z0-9_-]` and must be unique (one worktree per writer); `<role>` is one of the five §12 presets (`planner`, `implementer`, `tester`, `debugger`, `reviewer`) and defaults to `implementer` — a worker with no binding never becomes a planner by list position (issue #178); `<provider/id>` is that worker's explicit model pin, the highest model level (§38.1), above `[roles.<name>].model` and the manager's own model. An unknown role, a duplicate id or a malformed model ref exits 2 before anything spawns. A role that declares a tool the enterprise policy denies (or omits from `allowed_tools`) refuses that binding by name — `role_refused` for the run and `FAIL role:<name>` in `kubic doctor`; since #157 the read-only roles declare `bash`, so a policy denying `bash` refuses every preset that runs a shell. The binding persists with the session and `--resume` re-applies it (a `--agents` naming a different assignment on resume is refused, exit 2). The entry count is the run's spawn cap (issue #413): a model-driven manager lane may spawn at most this many workers (`spawn_cap_exceeded`, exit 1, names the refused worker); the template path spawns exactly the listed agents, so the cap never binds there. A worker refused by the cap keeps its named failure record and stays pending, so a plain `--resume` re-reports the refusal — the repair is `--resume --agents <larger list>`, which raises the stored cap to the flag's count and admits the refused worker (issue #422; only the count is read, the ids stay ignored on resume, and the cap never shrinks). |
 | `--concurrency <n>` | How many workers may run at once for **this run** (positive integer). Overrides `[orchestrator].maxWorkers` (and any explicit limits cap) for the run; workers past it wait in the admission layer's FIFO queue and start as slots free. Unset ⇒ the configured cap, else the shipped 4. |
+| `--max-attempts <n>` | Debugger-loop bound (issue #188, §70, lane-only): how many debugger settlements the run absorbs before the single escalation and the loop-bound failure (default 3, positive integer). Stored with the session and re-applied on `--resume`; an explicit flag on the resume wins. |
+| `--escalation-model <provider/id>` | The stronger model the debugger loop climbs to once after the bound trips (issue #188, §70, lane-only). Absent: the escalation relaunches at the debugger's own model. Stored and re-applied like `--max-attempts`. |
 | `--on-failure <stop\|continue>` | What one worker's failure does to the **run** (issue #169, §9.2). `stop` (the default) is the all-or-nothing terminus: the run ends on the failed worker's own code (1 for a crash/spawn failure, 3 for its budget, 4 for an approval) and nothing merges — after a crash-class death has had its one §81 replacement (below), so a single crash that the replacement survives still completes. `continue` keeps the pending workers running, merges the ones that succeeded, lists every failed worker with its code, and exits **7** (`status: "partial"`, `code: partial_failure`); the failed workers stay pending, so `--resume` retries exactly them (the policy is stored with the session and re-applied — pass `--on-failure stop` to opt out). An approval terminus (exit 4) always stops the run — a denial is your decision, not a worker-local hiccup. |
 | `--skill <path>` | Skill every worker **and** the conflict resolver are granted (repeatable, issue #170). A relative path resolves against the manager's cwd before it travels — the children run in their own worktrees, where the same relative path would name something else — and each value reaches the child as an absolute `--skill <path>` plus the worker's §67 task resources, so `kubic workers` prints `skills=…` for it. |
-| `--session <id>` | Session scope (default `orch-<now>`). Same `[A-Za-z0-9_-]` rule as `run`. A fresh run whose id already has stored state exits 2 (`code=session_exists`) instead of overwriting it — `--resume` or another id. State persists at `<repo>/.kubic/orchestrator/<id>.json` — including the plan, so `--resume` replays each worker's own prompt; each worker's session id is `<id>-<agent>`. |
-| `--resume` | Re-attach after a kill: merges only pending workers in the original order, never re-merges, and each retried worker runs the plan step stored for it (a state written before #103 has no plan and re-derives one from the stored objective). The pending set is what the previous attempt left unmerged — a worker that failed under `--on-failure continue` is retried, the workers that already merged are not (issue #169). The budget, the explicit per-agent role/model binding and the `--skill` values the run started with are re-applied from the state; a `--budget`, `--agents` or `--skill` naming a different spec is refused (exit 2). The worker-failure policy (`--on-failure`) is stored and re-applied too, so a `continue` run stays `continue`; an explicit `--on-failure` on the resume wins. Needs `--session`. No stored state exits 1 (`code=no_orchestrator_state`); a stopped queue re-reports the conflict and merges nothing (`code=merge_conflict`). |
+| `--manager-lane` | **Opt-in** model-driven manager lane (issue #431, L-D34): the manager conversation plans the run through the 14 §9.2 tools instead of the deterministic template plan. Needs a resolvable manager model (`--model` pin, else the first model of the first deliverable fallback provider) — opt-in without one keeps the template path. Headless `orchestrate` only; the TUI orchestrator always templates. Config twin: `[orchestrator] manager = "lane"` (default `"template"`). |
+| `--session <id>` | Session scope (default `orch-<now>`). Same `[A-Za-z0-9_-]` rule as `run`. A fresh run whose id already has stored state exits 2 (`code=session_exists`) instead of overwriting it — `--resume` or another id. `workers` and `approvals` are reserved (they name the orchestrator's own rows record and ledger dir) and exit 2 (`code=session_reserved`) on fresh runs and resumes alike. State persists at `<repo>/.kubic/orchestrator/<id>.json` — including the plan, so `--resume` replays each worker's own prompt; each worker's session id is `<id>-<agent>`. |
+| `--resume` | Re-attach after a kill: merges only pending workers in the original order, never re-merges, and each retried worker runs the plan step stored for it (a state written before #103 has no plan and re-derives one from the stored objective). The pending set is what the previous attempt left unmerged — a worker that failed under `--on-failure continue` is retried, the workers that already merged are not (issue #169). A worker that settled but never merged is NOT re-run either (issue #160): its branch + hunks persist with the session as soon as it settles, so the resume merges them straight from the record (a completion whose branch no longer matches is dropped and the worker runs again). The budget, the explicit per-agent role/model binding and the `--skill` values the run started with are re-applied from the state; a `--budget` or `--skill` naming a different spec, or a `--agents` naming a different role/model assignment, is refused (exit 2) — while a bare `--agents` with a larger count raises the stored spawn cap instead of refusing (issue #422). The worker-failure policy (`--on-failure`) is stored and re-applied too, so a `continue` run stays `continue`; an explicit `--on-failure` on the resume wins. The debugger-loop bound/model and counters (`--max-attempts`, `--escalation-model`) are stored and re-applied the same way (issue #188). Needs `--session`. No stored state exits 1 (`code=no_orchestrator_state`); a stopped queue re-reports the conflict and merges nothing (`code=merge_conflict`). |
 | `--yes` | Auto-approve merges (non-interactive). Worker asks are never auto-approved by it. Without it, a TTY is asked per merge under `approvals.maxPendingMs` (an elapse denies closed, exit 4, naming the bound and the candidate); headless without a decider denies closed with exit 4. |
+| `--autonomous` | Run to completion without stopping for input (§19, issue #278): the run's §19 mode, recorded on the manager and worker sessions, in a `run:start` §60 ledger row, and in the envelope (`mode`) and the terminal `session:` line. It makes the spawn-cap ask never fire (same rule as `--yes`); without it, an attached run asks once before spawning past the cap (§41.1). Merges still ask under `--autonomous` alone — only `--yes` auto-approves them. |
 | `--budget <dims>` | **Opt-in** per-spawn budget for every worker (`maxTokens`, `maxCostUsd`, `maxRuntimeMs`, `maxToolCalls` — positive numbers; `maxRuntimeMs` at most `2147483647`; e.g. `--budget maxToolCalls=20`). Per-spawn overrides: `--budget worker-1:maxToolCalls=5;worker-2:maxCostUsd=0.5`; a clause naming an agent that is not in the run (`--agents`, or the stored session on `--resume`) exits 2. Absent means **no limit is applied**. Each worker's own lane counts every tool attempt — including ones a policy guard blocks — plus its usage roll-up; the manager watches `maxRuntimeMs` and kills a worker that outlives it. Either end is `BUDGET_EXHAUSTED` (exit 3) naming the `limit=` that tripped, and a worker cannot raise its own budget. The spec persists with the session. |
 | `--dangerously-skip-approvals` | Session-scoped full-access posture (§41.4): approvals are skipped for **this session only**, indicated, recorded in the audit ledger, and warned on stderr. A fresh session starts enforced again. |
 | `--full-access` | Deprecated alias of `--dangerously-skip-approvals`; prints `hint: --full-access is deprecated — use --dangerously-skip-approvals` on stderr. |
-| `--json` | One JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `workers`, `mergeOrder`, `attribution`, `graph`, `parallel`, `retained`, optional `error` with a machine-readable `code`, optional `reapErrors`). `graph` is the delegation DAG as text lines (`node …`/`edge …`), naming the session and one node per worker — on a `--resume` run it describes the resumed session's agents. `parallel` is `{ running, queued, maxConcurrency }` (the same numbers the text lines print); `retained` is one row per retained worktree with its measured dirtiness. `reapErrors` lists `{ agentId, message }` for every reap that failed on a **failure** path, where the primary terminus wins: every spawned worker is still reaped, and the errors are reported instead of dropped. |
+| `--json` | One JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `mode` — the §19 mode the run resolved (issue #278) —, `workers`, `mergeOrder`, `attribution`, `graph`, `parallel`, `retained`, optional `error` with a machine-readable `code`, optional `reapErrors`, optional `managerSummary` — the manager's final message, present only on `--manager-lane` runs whose drive produced one (issue #418). `graph` is the delegation DAG as text lines (`node …`/`edge …`), naming the session and one node per worker — on a `--resume` run it describes the resumed session's agents. `parallel` is `{ running, queued, maxConcurrency }` (the same numbers the text lines print); `retained` is one row per retained worktree with its measured dirtiness. `reapErrors` lists `{ agentId, message }` for every reap that failed on a **failure** path, where the primary terminus wins: every spawned worker is still reaped, and the errors are reported instead of dropped. |
 
-Text output prints `session:`, one `worker: <id> branch=<b> hunks=<n>` line
-per worker, `merge order: a -> b`, `attribution: a=<n> hunk(s), …`, the
+Text output prints `session: <id> mode=<autonomous|interactive>` (the §19 mode, issue #278), one `worker: <id> branch=<b> hunks=<n>` line
+per worker (plus `budget=<k=v …>` — the worker's effective §71 bound —
+when the run was budgeted, issue #285, no `--debug` needed),
+`merge order: a -> b`, `attribution: a=<n> hunk(s), …`, the
 `dag:` lines (`node …`/`edge …`) for the delegation graph, one
 `merged:`/`reaped:` line per worker, then the admission surface and the
-retained evidence, then `result:`. Two lines carry the §49.1/§50 admission
+retained evidence, then `result:`. On a `--manager-lane` run the `result:` line is the manager's final message (issue #418) — worktrees merged, conflicts, worker results — instead of the mechanical counts; the template path prints the counts. Two lines carry the §49.1/§50 admission
 numbers of the run — `parallel: running <n> queued <n> cap <n>` and
 `tree: <session> parallel <running>/<cap>` (with ` (queued <n>)` appended when
 anything was queued). One `retained: <agent> branch=<b> worktree=<path>
@@ -698,7 +775,13 @@ guess `process_crashed`; the exit-code mapping is only the fallback for a
 child that printed no report, issue #155). A completed
 worker's result also names its change set as a reference
 (`diff.diffId` = `<base>...<branch>`), never the diff text; no result ever
-carries a transcript or messages (§69). The result is persisted with the run
+carries a transcript or messages (§69). Each entry also surfaces `artifact`
+(issue #184, §25.2) — the structured result (`summary`, `fileRefs`,
+`findings`, `testResults`, `decisions`, optional `diffRef`, `worktree`)
+that hands findings down the agent order into later workers' prompts.
+Present only when the worker reported a result that passed the §69 gate:
+a result smuggling message-history-shaped content surfaces no artifact
+(fail-closed) and hands nothing down. The result is persisted with the run
 in `<repo>/.kubic/orchestrator/<session>.json` (`records[].result`) — a
 failure's result too: a worker that failed leaves its failure record there
 (still `pending`, so `--resume` retries it and the retry replaces the record),
@@ -720,6 +803,77 @@ goes to stderr, so `kubic orchestrate --json … | jq` always parses). On a
 colour terminal the report labels (`session:`, `merged:`, `result:`, …) are
 coloured; `NO_COLOR`, a pipe, and `--json` turn colour off.
 
+**Model-driven manager lane (issue #431, L-D34).** Opt-in, default off:
+`--manager-lane` (or `[orchestrator] manager = "lane"`) routes the
+submitted prompt through the manager lane instead of the deterministic
+template plan — without the opt-in the run always templates, even when a
+manager model would resolve. The flag needs a resolvable manager model
+(the explicit `--model` pin, else the first model of the first
+deliverable fallback provider): opt-in with no resolvable model keeps the
+template path and says so on the debug channel (`lane_model_unresolved`
+is never raised without the flag). The TUI orchestrator always templates
+(headless-only until #439). The manager conversation (session
+`<id>-manager`, attach-or-created on the run's own session store) calls
+`spawn_agent` with free-text roles and tasks, and the run admits,
+launches, inspects, follows up, diffs, stages and merges through the
+same scheduler (concurrency, §71 budget gate and queueing rule — an
+interactive run fail-fasts a blocked lane spawn, an autonomous one
+queues it), worktrees, merge queue and merge gate as the template
+path. A minted worker inherits its role document's budget dims when the
+document declares any (issue #198 — the fallback tier; an explicit
+`spawn_agent(budget=…)` still wins, as do the CLI `--budget` tiers).
+Minted workers are named `worker-<n>` (skipping ids the roster
+takes), recorded with `parentSessionId`/`role`/`agentId` linkage, and merged
+in queue order after the merge gate approves — the gate's approval is the
+review verdict routing the settle apply path (`applySettlementAfterReview`:
+a tainted manager trace refuses before apply runs, and only an accept
+verdict applies). The lane carries 14 tools: the spawn/wait/collect,
+inspect/cancel/send, workspace diff/apply/merge, `review_verdict` and
+`ask_user` adapters plus read-only `git_status`/`git_diff`/`git_log`
+(bounded text, `HEAD` or a validated ref as the diff base — leading `-`
+and non-ref shapes refused). `review_verdict` records the reviewer
+verdict per settled worker (`accept`, `request-changes`, `escalate`);
+the next `workspace_merge` executes it — `request-changes` records the
+diff under `discarded` (branch kept for inspection, `--resume` never
+retries it, `mergeOrder` never names it, the run continues) instead of
+merging. A worker with no verdict merges (the shipped default).
+`escalate` routes the §70 debugger loop: a tester whose *tests* fail
+(completed with failing rows — a crashed worker takes the `--on-failure`
+path instead) is followed by a debugger mint that inherits the failing
+tests, the diff ref and the worktree through the handoff, then the tester
+re-runs. The run absorbs `--max-attempts` debugger settlements (default
+3); the next debugger spawn escalates once (the `--escalation-model` rung
+overrides the pin, same model when none is configured); further debugger
+spawns refuse (`review_loop_bound`) and the run fails exit 1
+(`code=loop_bound_exceeded`) with the bound named, settled work saved.
+The bound counts spawn-path debugger settlements (follow-up
+re-settlements of the same worker are continuations, not new turns) and
+travels with the session, so `--resume` continues the count. The envelope
+names refused ids under `discarded`, each worker row carries its
+`reviewVerdict`, and the text report lists `discarded: <id> (<verdict>)`
+beside the merges. Once the loop turns, the text report adds a
+`review loop: <settlements> debugger settlement(s), bound <n>[, escalated
+once[ to <model>]]` line and the envelope carries the same `reviewLoop`
+object (both gated on activity — template runs stay byte-clean). The
+manager staffs no planner or reviewer for trivial or read-only objectives
+(issue #188): implementer and tester suffice, and nothing is staffed when
+no diff will be authored or reviewed.
+`workspace_apply` stages any settled worker's change — completed,
+cancelled or failed alike; only a still-running worker is refused
+(`apply_before_settle`). The staged bytes are always re-read from the
+worker's worktree: the model names the worker, never the patch.
+`ask_user` reaches the run's ask seat (a TTY is asked per question, a
+headless run denies closed); the seat is always raced against the ask
+bound, so an abandoned prompt resolves unanswered instead of hanging the
+turn. The drive itself is bounded (200 tool calls / 10 submissions —
+`manager_turn_bound`, exit 1, settled work saved) with a wall-clock
+deadline (10 minutes — `lane_provider_unreachable`, exit 1); the lane
+boots with generation retries disabled, so a dead endpoint or a refused
+connection surfaces on the first attempt — named, never a hang inside
+durable backoff (transient blips fail the run; `--resume` replays the
+stored transcript). `--resume --session <id>` re-attaches the lane
+without re-running settled workers or re-merging merged ones.
+
 **A genuine merge conflict is delegated, never resolved by the manager**
 (issue #106, §45.2). The merge aborts first (never a half-merged tree); the
 manager then builds the writer-resolver spec — both diffs, the conflicted file
@@ -738,7 +892,7 @@ no snapshot or no resolver seam, the queue stops exactly as before
 the failure line names the resolver outcome so a delegation attempt is never
 indistinguishable from no attempt at all.
 
-## `kubic clean [--all] [--session <id>] [--dry-run] [--force] [--journal] [--max-age-ms <n>] [--max-bytes <n>] [--json]`
+## `kubic clean [--all] [--session <id>] [--dry-run] [--force] [--journal] [--max-age-ms <n>] [--max-bytes <n>] [--all-sessions] [--json]`
 
 `kubic clean --help` prints the generated help with examples and exits 0.
 
@@ -765,13 +919,14 @@ never appear in `--dry-run`.
 
 | Flag | Meaning |
 | --- | --- |
-| (none) | Remove every retained worktree+branch for this repo. One `removed worktree <path>` line per worktree, one `deleted branch <branch>` line per branch; `clean: nothing to prune` (exit 0) when there is nothing left. |
+| (none) | Remove every retained worktree+branch for this repo. One `removed worktree <path>` line per worktree, one `deleted branch <branch>` line per branch; `clean: nothing to prune` (exit 0) when there is nothing left. Branches delete with the safe `git branch -d`: a branch with committed-but-unmerged work (a `merge_conflict` run's retained evidence) is refused instead — exit 1, the worktree and branch are kept, `rerun with --force`. |
 | `--all` | Explicit scope-all (the default scope). Mutually exclusive with `--session` — both exit 2. |
 | `--session <id>` | Scope to one `orchestrate` run: `kubic/<id>/<agent>` at `<root>/.kubic/wt/<id>/<agent>` for each agent named in `<repo>/.kubic/orchestrator/<id>.json`, so a **failed** run's retained worktrees are disposable too, and another session's same-named agent (its worktree, branch and live worker) is never planned or touched. An unknown session exits 1 (`no retained set for session '<id>'`, naming the file it looked for) and removes nothing. Only what the run actually left behind is planned (a worker that never spawned has no worktree or branch, so it neither appears in `--dry-run` nor fails the disposal). A **full** disposal — no failure (a dirty or live worktree without `--force` is one) and either at least one item removed or nothing of the session left standing (its workers never got a worktree, or a plain `kubic clean` already removed them) — also retires the run's state file `<repo>/.kubic/orchestrator/<id>.json` and that session's approval state directory under `~/.kubic/orchestrator/<repo-key>/<id>/` (full-access record, memoized decisions, ask mailbox; the repo-wide `<repo>/.kubic/orchestrator/approvals/audit.jsonl` ledger is never deleted) (`retired session state <path>`; `retiredState` under `--json`), so the id can start a fresh run; `--dry-run` prints `would retire session state <path> and its approvals directory <dir>` and changes nothing, and a partial disposal and another session's state are never touched. |
-| `--dry-run` | Print `would remove worktree <path>` / `would delete branch <branch>` and exit 0 — mutates nothing (`git worktree list` is byte-identical before and after). |
-| `--force` | Pass `git worktree remove --force`, disposing a worktree with uncommitted worker changes. Without it a dirty worktree fails loudly: exit 1, an `error:` line per failure, and the branch is kept (never half-disposed). |
-| `--journal` | Also enforce the journal retention policy at `<root>/.kubic/journal`. Alone it prunes to the store's default byte bound; with `--max-age-ms`/`--max-bytes` it prunes to those bounds. The byte bound measures the whole store — `index.jsonl` plus the blobs it references (issue #350) — and a pass that has to prune frees a tenth of that bound, so the next appends do not each rewrite the index. Prints `journal: pruned <n> entr(ies), freed <b> byte(s)`, plus `, over bound by <x> byte(s) (newest entry kept)` when the newest entry alone cannot fit the bound — it is never dropped, and the excess is reported instead (issue #348). With a live writer holding the journal's mutation lock the pass steps aside and prints `journal: prune skipped — the journal is in use (pid <n>)` (issue #337): pruning under a live run can drop entries it just appended and delete blobs it just wrote. |
+| `--dry-run` | Print `would remove worktree <path>` / `would delete branch <branch>` and exit 0 — mutates nothing (`git worktree list` is byte-identical before and after). An unmerged branch prints `would refuse: unmerged branch <branch>` instead (the merge probe is read-only). With a bounded `--journal` it additionally prints one `would prune journal for session <id>` line per session journal it would visit. |
+| `--force` | Pass `git worktree remove --force` and delete branches with `git branch -D`, disposing a worktree with uncommitted worker changes and a branch with committed-but-unmerged work. Without it a dirty worktree fails loudly: exit 1, an `error:` line per failure, and the branch is kept (never half-disposed) — and an unmerged branch is refused the same way. |
+| `--journal` | Also enforce the journal retention policy — on the legacy store `<root>/.kubic/journal` (a store no run writes to) **and** on the session journals under the sessions root (`~/.kubic/sessions`) whose recorded workspace is this workspace (issue #367). Alone it prunes to the store's default byte bound; with `--max-age-ms`/`--max-bytes` it prunes to those bounds. The byte bound measures the whole store — `index.jsonl` plus the blobs it references (issue #350) — and a pass that has to prune frees a tenth of that bound, so the next appends do not each rewrite the index. Prints one `journal: pruned <n> entr(ies), freed <b> byte(s)` line for the legacy store plus one `… for session <id>` line per visited session journal (`journal` under `--json` carries the matching `sessions` array with per-session `entries`/`bytes`/`overBound`), plus `, over bound by <x> byte(s) (newest entry kept)` when the newest entry alone cannot fit the bound — it is never dropped, and the excess is reported instead (issue #348). With a live writer holding a journal's mutation lock that pass steps aside and prints `journal: prune skipped — the journal is in use (pid <n>)` for the legacy store or `journal: prune skipped — session <id> journal is in use (pid <n>)` for a session (issue #337): pruning under a live run can drop entries it just appended and delete blobs it just wrote. Sessions of other workspaces are untouched unless `--all-sessions` is passed, and `--session <id>` narrows the pass to that session's journal. |
 | `--max-age-ms <n>` / `--max-bytes <n>` | Positive integers; the journal retention bounds. Either one turns the journal prune on without `--journal`. `--max-bytes` is the whole store's bound (index + blobs), not the blobs' alone. |
+| `--all-sessions` | With `--journal`, also prune session journals recorded for workspaces other than this one. Without it only this workspace's sessions (plus the legacy store) are visited. |
 | `--json` | One JSON envelope (`ok`, `exitCode`, `dryRun`, `worktrees`, `branches`, `journal`, optional `failures`) — same exit code as the text view. |
 
 The report (`removed worktree …`, `would delete branch …`, `journal: …`)
@@ -780,7 +935,7 @@ non-repo refusal — is stderr, so `--json` stdout is always exactly one
 two-space-indented document.
 
 Exit codes: 0 success (including a dry run and a second idempotent run),
-1 a hard failure (dirty worktree without `--force`, a failing branch delete,
+1 a hard failure (dirty worktree without `--force`, an unmerged branch without `--force`, a failing branch delete,
 an unknown `--session`), 2 usage errors (unknown flag, stray operand, a
 missing value, a non-positive `--max-age-ms`/`--max-bytes`, an invalid
 `--session` id, `--all` with `--session` — each refused by the parser before
@@ -799,7 +954,7 @@ before the alt-screen). The id follows the `[A-Za-z0-9_-]` rule (anything
 else exits 2). The full flag surface (`--role`, `--model`, `--orchestrator`,
 `--dangerously-skip-approvals`, …) stays on `kubic tui`.
 
-## `kubic tui [--session <id>] [--role <name>] [--model <provider/id>] [--skill <path>]... [--no-skills] [--tools <a,b,...>] [--no-tools] [--orchestrator] [--dangerously-skip-approvals]`
+## `kubic tui [--session <id>] [--role <name>] [--model <provider/id>] [--thinking <level>] [--skill <path>]... [--no-skills] [--tools <a,b,...>] [--no-tools] [--budget <dims>] [--orchestrator] [--dangerously-skip-approvals]`
 
 Interactive solo TUI: the alt-screen over the solo lane. Tree,
 transcript, and status rows render in root order, with the prompt editor
@@ -811,19 +966,29 @@ on stderr before the screen opens. A `--tools`/`--no-tools` selection
 (§40.1, issue #273) follows the same rule: an unknown name or one the
 permission classes forbid is refused with the §40.3 reason before the
 alt-screen (exit 2), `--no-tools` is the empty set, and the two are
-mutually exclusive. Lane boot failure exits 5 on a missing
+mutually exclusive. `--budget <dims>` (issue #283) takes the same bare-dimensions grammar as `kubic run`'s and loads the bundle with those limits: an over-budget call is refused as a tool error naming the limit (`extension budget exhausted: <limit> limit breached …`) — the lane keeps running, there is no terminus. Absent means no gate. Lane boot failure exits 5 on a missing
 session, 6 with no provider available, 1 otherwise, each with one
 `error: …` line on stderr (never stdout) before the screen opens. The
 `--session` model rule is the same as `kubic run`'s (issue #148; issue
 #227 adds the same pins): `--model <provider/id>`, `KUBIC_MODEL`,
 `[model]`, a role's `[roles.<name>].model`, or `KUBIC_PROVIDER=faux` —
 the status bar and usage rows name the model the lane actually runs, and a
-kept or switched model is named in the first footer. In the loop,
+kept or switched model is named in the first footer. `--thinking <level>` boots the lane at that level under the same rule as `kubic run` (resolved against the session record and the role default, clamped to the model with a named notice); the status bar seeds from the committed level. In the loop,
 `/model <provider/id>` switches the live lane: the id is resolved against
 the catalogue, committed to the session as a config update, and the
 header, welcome block and status bar all move to it; `/model` alone
 reports the current model, and an unknown or malformed id is refused in
-the footer while the lane keeps the model it had. Under an enterprise
+the footer while the lane keeps the model it had. `/scoped-models`
+reports the role's resolved allowed set (§38.2, issue #255) — the entries
+the boot selected against, with any per-entry thinking — or that the role
+(or a roleless lane) is unconstrained. `/escalate <provider/id> [reason]`
+climbs the configured escalation ladder (§38.4, issue #210) one rung with
+the reason recorded — `/model <provider/id>` climbs the same ladder
+silently; off-ladder targets, down-steps and exhausted budgets are refused
+in the footer with the live model untouched. Three consecutive tool-failure
+turns climb one rung automatically, once per run. Every climb appends an
+`escalation: <from> → <to> (<reason>)` transcript row and lands on the
+trajectory's `model.escalations`. Under an enterprise
 `[policy]` (§58) the switch passes the same model/provider gate the boot
 does: a model outside `allowed_models`/`allowed_providers` is refused in the
 footer with the boot's named refusal and the lane keeps its model. A frozen
@@ -841,6 +1006,8 @@ operator is present to re-send — and the editor footer names the outcome
 interrupted run`) from the first render, together with the prompt the dead
 process had already admitted (`— interrupted prompt: <text>`) when there
 was one.
+
+**Explicit skill invocation (§29.4, issue #183).** `/skill:<name> [instructions]` expands the booted skill of that name into the submitted turn — its full content followed by the instructions — including skills hidden from the model (`disableModelInvocation`); the hidden skill stays out of the system prompt either way. An unknown name (including a withheld one: role gate, trust gate) is refused in the footer (`skill: unknown skill '<name>'`) and nothing is sent. The colon form only: a bare `/skill` reports the usage (`usage: /skill:<name> [instructions]`). Per-skill rows complete in the editor but never join `/help` or the palette.
 
 **Prompt images (§16.8, issue #338).** `/image <path>` attaches one image
 to the next submitted prompt — `png`, `jpeg`, `webp` or `gif`, up to 5 MB,
@@ -963,14 +1130,16 @@ same context the headless one does:
   interactive system prompt. `--skill <path>` adds an explicit skill
   (repeatable), `--no-skills` turns layered discovery off — and explicit
   `--skill` paths still apply under `--no-skills`, exactly as `run`.
-- **Roles (§12.1):** `--role <name>` loads `.kubic/roles/<name>.md` — or the
-  matching preset embedded in the binary when the workspace has no such
+  Relative paths resolve against the invoking cwd (issue #177), and an
+  unresolvable value warns on stderr — same as `run`.
+- **Roles (§12.1):** `--role <name>` loads `.kubic/roles/<name>.md` — else `~/.kubic/roles/<name>.md` (issue #241) — or the
+  matching preset embedded in the binary when neither has such a
   document (issue [#203](https://github.com/konic-labs/kubic/issues/203); the
   five §12 presets ship with `kubic`, and a repo document of the same name
   replaces its preset) — the document's prompt text replaces the solo
   constant and its tool set narrows the lane (absence, not approval). Every refusal is fail-closed
   with the named reason (unknown role, contradictory document, missing
-  `## Prompt`, parse failure); the boot exits before the alt-screen.
+  `## Prompt`, parse failure, untrusted project root — issue #430); the boot exits before the alt-screen.
 - **Journal retention (§42.4):** the session journal takes the same
   `[journal] retentionDays` projection `run` threads — a TUI session's
   journal age-prunes under config.
@@ -1016,7 +1185,9 @@ the journal (and both panels) as its tool call ends. A change made with
 `bash` is not intercepted, so it is journaled by the reconciliation sweep —
 which, in the TUI, runs when a turn that used `bash` **settles** (before the
 panels refresh), not only at quit: after such a turn `Ctrl-R` lists the
-change as `unattributed, non-reversible` and `Ctrl-O` follows it. The sweep
+change as `unattributed` (plus `non-reversible` when no pre-image exists —
+a bash edit of a committed file carries its git pre-image and undoes) and
+`Ctrl-O` follows it. The sweep
 walks and hashes the workspace, so turns that ran no `bash` do not pay for
 it; it is safe to repeat (an unchanged tree appends nothing). The cost is
 real: the sweep is a synchronous walk-and-hash of the whole workspace on the
@@ -1366,10 +1537,10 @@ its own generated help (`kubic sessions prune --help`).
 
 | Subcommand | Meaning |
 | --- | --- |
-| `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id on stdout. `--cwd` sets the session directory (default: current directory). `--dangerously-skip-approvals` records session-scoped full-access in the session dir, appends one `posture:full-access` row to the audit ledger (session id, `kubic sessions create --dangerously-skip-approvals`), and prints a `warn:` line on stderr — fresh sessions start safe, the flag must be passed explicitly every time. |
+| `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id on stdout. `--cwd` sets the session directory (default: current directory): a relative path resolves against the invoking directory (never the sessions root) and must name an existing directory, otherwise create refuses with `kubic sessions create: --cwd <path>: no such directory` (exit 1) and creates nothing. `--dangerously-skip-approvals` records session-scoped full-access in the session dir, appends one `posture:full-access` row to the audit ledger (session id, `kubic sessions create --dangerously-skip-approvals`), and prints a `warn:` line on stderr — fresh sessions start safe, the flag must be passed explicitly every time. |
 
-| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. **`kubic sessions --json` with no subcommand is the same array** (issue #268); `kubic sessions` without `--json` stays the usage error naming the subcommands. A session written by Kubic on Pi 0.87 is listed with its recorded cwd and marked `(legacy pi 0.87 — cannot attach)`: it is listed so it can be seen, and it can never be attached ([below](#session-storage-and-legacy-pi-087-sessions)). |
-| `attach [--] <id> [--tail <n>] [--ids]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), the `pending work: <kind> <id> (<status>)` summary when a crashed run left unfinished durable work (settled by the next `run`/`tui --session`), then the last `--tail` transcript turns (default 10) — one readable line per turn (`user: …`, `assistant: …`, `tool-result <name>: …`, `system: …`, `[compaction] …`, `[reset] …`), whitespace collapsed and bounded to 300 characters; transcript text and model-authored tool names are untrusted, so terminal control sequences are stripped before a line is printed. `--tail` needs a non-negative integer. `--ids` prefixes each transcript line with its entry id (`#12 user: …`) — the id `kubic sessions fork --at` takes (issue #265). |
+| `list [--json] [--parent <id>]` | A `SESSION  CWD  PARENT` table (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none — plus `parentSessionId`/`role`/`agentId` keys on sessions that carry them (an orchestrate worker names its run; a root carries no parent key at all). `--parent <id>` shows only that orchestrate run's children — a `--parent` naming no recorded session is refused (`unknown parent session: <id>`, exit 1; secret-shaped ids are redacted in the echo), and a `--parent` outside the id class is refused without echo (`invalid --parent id …`, exit 2). **`kubic sessions --json` with no subcommand is the same array** (issue #268); `kubic sessions` without `--json` stays the usage error naming the subcommands. A session written by Kubic on Pi 0.87 is listed with its recorded cwd and marked `(legacy pi 0.87 — cannot attach)`: it is listed so it can be seen, and it can never be attached ([below](#session-storage-and-legacy-pi-087-sessions)). |
+| `attach [--] <id> [--tail <n>] [--ids] [--json]` | Print session metadata (including the `parent=<run> [role=<r>] [agent=<a>]` line on a worker session), the approvals posture (`approvals enforced` or `full-access …`), the `pending work: <kind> <id> (<status>)` summary when a crashed run left unfinished durable work (settled by the next `run`/`tui --session`), then the last `--tail` transcript turns (default 10) — one readable line per turn (`user: …`, `assistant: …`, `tool-result <name>: …`, `system: …`, `[compaction] …`, `[reset] …`), whitespace collapsed and bounded to 300 characters; transcript text and model-authored tool names are untrusted, so terminal control sequences are stripped before a line is printed. `--tail` needs a non-negative integer. `--ids` prefixes each transcript line with its entry id (`#12 user: …`) — the id `kubic sessions fork --at` takes (issue #265). `--json` prints the raw tail entries instead — one full untruncated entry JSON per line, for scripting. |
 
 | `fork [--] <id> [--at <entry>] [--tree] [--json]` | Fork a session into a **new** one (issue #265; §22.3) and print the new id — `--json` prints one `{id, source, at}` document (`at` is `null` for `--tree`). The id works at once with `kubic run --session` / `kubic tui --session`. A **branch fork** (the default) cuts *at* an entry, inclusive — `--at <entry>` names it (`kubic sessions attach <id> --ids` prints them), default the source's newest — and the new session's lane is a pi-durable fork of the source's: it sees the history through that entry and the agent (model, thinking level) as of it, and nothing after it. **`--tree`** copies the whole session instead: every conversation and branch tip, the lane unchanged. Either way the new session has its **own** directory, lock and an empty journal, starts with **no usage** (the copied `pi.usage` documents are emptied, so `kubic cost` never counts the source's spend twice), and starts with **approvals enforced** — the source's posture, approvals and journal are not copied. The source is only read, under its own lock: forking a session another process holds live is **refused** (the lock refusal naming the holder, exit 1, nothing written), as is a missing or Pi 0.87 session (exit 1) and an `--at` entry the source does not have (exit 1). `--at` with `--tree` is a usage error (exit 2). |
 
@@ -1458,7 +1629,12 @@ journal entries at read time (see the read-time self-heal note under
 - **Age is the session dir's own mtime** (create, attach, and close all
   bump it): a session is a candidate when that mtime is at or before
   `now − keepDays`. A session attached recently survives even if the files
-  inside it are old.
+  inside it are old. An orchestrate run ages out **as a unit** (issue
+  #164; §23): every member of the run's tree is evaluated at the
+  family's newest mtime, so an old manager record with a recent worker
+  is kept, and an old run becomes candidates in the same pass. A
+  live-locked member still counts toward the family age (it is reported
+  `locked:`, never a candidate itself).
 - **A live lock is a hard stop.** A session holding a `lock.json` whose
   holder pid is alive is never a candidate, even when old and even with
   `--yes`: it is reported `locked: <id> (held by pid <pid> since <iso>) —
@@ -1478,7 +1654,8 @@ journal entries at read time (see the read-time self-heal note under
   session by name even when aged; the name is reported
   `kept: <id> (--keep-session)` when it is what spared an aged session — a
   recent session is never a candidate anyway, and a live-locked one is
-  reported `locked:` instead.
+  reported `locked:` instead. Keeping an orchestrate run's manager record
+  keeps its worker sessions too (reported `kept: <child> (child of <id>)`).
 - **Only session-shaped entries are touched.** Plain files, a stray
   `lock.json`, names outside `[A-Za-z0-9_-]`, and the `--<cwd>--`
   transcript directories of 0.87 sessions (which hold the `.jsonl`
@@ -1519,7 +1696,7 @@ value, `--max` that is not a positive integer, `stage` with no path,
 
 | Subcommand | Meaning |
 | --- | --- |
-| `status [--json]` | Branch (plus ahead/behind when non-zero), `staged:`/`modified:`/`untracked:` lines, or `clean`. On a detached HEAD the branch line reads `branch (detached HEAD)`. `--json` prints the status object: `branch` is `null` on a detached HEAD, and `renames` lists one `{path, oldPath, staged}` record per renamed or copied path that git detected (the new path also appears in `staged`/`modified`). |
+| `status [--json]` | Branch (plus ahead/behind when non-zero), `staged:`/`modified:`/`untracked:` lines, a `conflicts:` line when merges are unresolved, or `clean`. On a detached HEAD the branch line reads `branch (detached HEAD)`. `--json` prints the status object: `branch` is `null` on a detached HEAD, `conflicts` lists the unresolved paths (never duplicated into `staged`/`modified`), and `renames` lists one `{path, oldPath, staged}` record per renamed or copied path that git detected (the new path also appears in `staged`/`modified`). |
 | `log [--max <n>] [--json]` | A `SHA DATE AUTHOR MESSAGE` table (short sha), or `no commits` — also on a fresh repo with no commits yet (exit 0). `--json` prints the entries array (`[]` when empty). |
 | `stage [--] <paths...>` | Stage paths, print `staged <p>` per path. `--json` prints `{staged: [paths]}`. Put `--` before a path that starts with `-`. |
 | `commit -m <message>` | Commit, print `committed <sha8> (<n> file(s))`. `--json` prints `{sha, files}` with each path verbatim (never C-quoted, even non-ASCII or newline names). `-m`/`--message` takes the next token verbatim, even one starting with `-` (`-m --amend` commits the message `--amend`). |
@@ -1551,7 +1728,7 @@ one store, resolved in this order (issues #18, #125, #362):
    <id>` run from another project restores files under the session's
    workspace, never under the current directory.
 2. Without `--session`, the workspace store `<root>/.kubic/journal` (the
-   interactive solo journal for the current directory) when it is
+   legacy per-directory store, which no run writes to) when it is
    non-empty.
 3. Otherwise the **latest session journal recorded for this workspace**:
    among the sessions whose recorded cwd is the current directory or
@@ -1625,8 +1802,8 @@ Options also take the `--flag=value` form (`--agent=w1`).
 
 | Subcommand | Meaning |
 | --- | --- |
-| `diff [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>]` | Rendered diff of journaled changes (`no changes` + exit 0 when empty). `--path`/`--agent` filter; `--json` prints `{session, root, changes}` — the change array with each side clipped at 64 KiB per change (`--max-content-bytes <n>` overrides the bound; `0` = unlimited). A `--path`/`--agent`/`--session` without a value, or a `--max-content-bytes` that is missing or not a non-negative integer, is a usage error (exit 2). |
-| `undo [--] [<path>] [--step] [--dry-run] [--force] [--json] [--session <id>]` | Restore journaled changes. `--json` prints one object `{session, root, dryRun, restored: [paths], skipped: [{path, kind: stale\|already-undone\|non-reversible, reason}]}` (also when there is nothing to undo) with the same exit codes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus a summary; warnings (a removal whose content had no recoverable copy, a pre-undo file that is no longer lossless utf-8 text — recorded hash-only, so that undo cannot be redone (issue #352) — or a step whose inverse record would not fit the journal's byte bound — that step is skipped BEFORE the file is touched, so the undo never lands unrecorded) go to stderr as `warn: …`. A session whose lock is live (issue #337) refuses the whole invocation with one `error: session '<id>' is attached by pid <pid> — refusing to undo under a live run (pass --force to override)` line and exit 1: restoring under a live run races its writes, and `--force` is the documented override (the same knob the staleness refusal uses). `nothing to undo` exits 0. **Exit 1 when any step was skipped** (issue #372 — the partial outcome never reuses the usage code) — three skip classes, each with its own line: `non-reversible (skipped): <p>` (no retrievable pre-image: an unattributed reconciliation find, a write over a file above the 8 MiB pre-image bound (recorded hash-only), a delete-shaped undo whose file was absent pre-undo, or an inverse record over the journal's byte bound), `stale (skipped): <p> — <reason>` (the file changed after the entry was journaled — restoring would destroy unjournaled changes), `already undone (skipped): <p>` (a previous undo already unwound it — nothing is rewritten). The summary is `undo: N restored, M non-reversible` when all skips are the non-reversible class, else `undo: N restored, M skipped (K stale, J already undone)` naming the counts present. The `--session` value selects the store, never the path scope. |
+| `diff [path] [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>]` | Rendered diff of journaled changes (`no changes` + exit 0 when empty). The `[path]` operand scopes exactly like `--path` (issue #271 — giving both with different values exits 2 naming the conflict; a second operand is refused the same way); `--stat` prints the per-file summary `path +added -removed tool[, turn N]` instead of hunks (counts from the same hunks, so they always agree; tool and turn render when the entry carries them — pre-schema entries show the op, reconciliation finds `reconciled`); `--path`/`--agent` filter; `--json` prints `{session, root, changes}` — the change array with each side clipped at 64 KiB per change (`--max-content-bytes <n>` overrides the bound; `0` = unlimited). A `--path`/`--agent`/`--session` without a value, or a `--max-content-bytes` that is missing or not a non-negative integer, is a usage error (exit 2). Orchestration (issue #364): `--session <orch>` also aggregates the linked `<orch>-<agent>` worker journals — one change per session+path (two workers' same relative path never merges into one hunk), so the run is covered whole and `--agent worker-2` selects that worker's changes; `--json` then carries `linkedSessions: [<ids>]`. Read-only: `undo` keeps the single-store contract (undo across worktrees is out of scope). |
+| `undo [--] [<path>] [--step] [--dry-run] [--force] [--json] [--session <id>]` | Restore journaled changes. `--json` prints one object `{session, root, dryRun, restored: [paths], skipped: [{path, kind: stale\|already-undone\|non-reversible\|head-moved, reason}]}` (also when there is nothing to undo) with the same exit codes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus a summary; warnings (a removal whose content had no recoverable copy, a pre-undo file that is no longer lossless utf-8 text — recorded hash-only, so that undo cannot be redone (issue #352) — or a step whose inverse record would not fit the journal's byte bound — that step is skipped BEFORE the file is touched, so the undo never lands unrecorded) go to stderr as `warn: …`. A session whose lock is live (issue #337) refuses the whole invocation with one `error: session '<id>' is attached by pid <pid> — refusing to undo under a live run (pass --force to override)` line and exit 1: restoring under a live run races its writes, and `--force` is the documented override (the same knob the staleness refusal uses). `nothing to undo` exits 0. **Exit 1 when any step was skipped** (issue #372 — the partial outcome never reuses the usage code) — four skip classes, each with its own line: `non-reversible (skipped): <p>` (no retrievable pre-image: an unattributed reconciliation find with no git pre-image (untracked, dirty at baseline, non-repo, binary or over-bound) or whose tool chain stored none, a write over a file above the 8 MiB pre-image bound (recorded hash-only), a delete-shaped undo whose file was absent pre-undo, or an inverse record over the journal's byte bound), `stale (skipped): <p> — <reason>` (the file changed after the entry was journaled — restoring would destroy unjournaled changes), `already undone (skipped): <p>` (a previous undo already unwound it — nothing is rewritten), `head-moved (skipped): <p> — <reason>` (the entry predates a HEAD move the run observed — restoring would write pre-move content onto the moved HEAD; `--force` overrides per-invocation). The summary is `undo: N restored, M non-reversible` when all skips are the non-reversible class, else `undo: N restored, M skipped (K stale, J already undone)` naming the counts present. The `--session` value selects the store, never the path scope. |
 
 **Undo staleness safety (issue #108).** Before any restore, the file's
 current content is verified against the entry's recorded after-hash — undo
@@ -1672,8 +1849,8 @@ undo of a delete cannot itself be undone. Plain `undo` (no `--step`) never
 targets `kubic-undo` records: it restores real agent work once and then
 reports `already undone` without appending, so repeating it never re-undoes
 the undo. `--dry-run` appends nothing; a skipped step appends nothing. |
-| `log [--json] [--session <id>]` | With `session.retentionDays` set and the session's lock live, the read-time self-heal is skipped with one `warn: journal retention skipped: session '<id>' is attached by pid <pid> — pruning under a live run can drop entries it just appended` line (issue #337); the read itself is unchanged. A `TIME AGENT TOOL CALL OP PATH BYTES NOTE` table, one row per journal entry, oldest first — `NOTE` reads `reconciled` for an unattributed sweep find (`journal is empty` + exit 0 when empty); `--json` prints `{session, root, entries}` with the raw entries array. The human output closes with the reconciliation line `unattributed: N of M entr(ies) reconciled at run end` (printed for an empty journal too). |
-| `status [--json] [--session <id>]` | `--json` prints the status object (`session`, `root`, `entries`, `reversible`, `nonReversible`, `unattributed`, `corrupt`, `corruptLines`, `repo`). Otherwise `entries: N (reversible: R, non-reversible: M)`, then `unattributed: U of N (reconciled at run end)`, then `corrupt: C` (content missing under a recorded hash) and `corrupt index lines: L` (index lines that do not parse and were dropped from the read — a torn tail from a crash or a full disk; the next append repairs it and the next retention rewrite drops it), plus repo line: `repo: non-repo directory (journal works without git)` or `repo: branch <b>, dirty: yes|no|unknown`. Inside a linked worktree the branch is resolved through the `.git` `gitdir:` pointer (below); an unreadable pointer prints `branch (unknown)`. |
+| `log [--json] [--session <id>]` | With `session.retentionDays` set and the session's lock live, the read-time self-heal is skipped with one `warn: journal retention skipped: session '<id>' is attached by pid <pid> — pruning under a live run can drop entries it just appended` line (issue #337); the read itself is unchanged. A `TIME AGENT TOOL CALL OP PATH BYTES NOTE` table, one row per journal entry, oldest first — `NOTE` reads `reconciled` for an unattributed sweep find (`journal is empty` + exit 0 when empty); `--json` prints `{session, root, entries}` with the raw entries array. The human output closes with the reconciliation line `unattributed: N of M entr(ies) reconciled at run end` (printed for an empty journal too). Orchestration (issue #364): `--session <orch>` interleaves the linked `<orch>-<agent>` worker journals by timestamp (each under its own lock for the self-heal), the summary counts the merged timeline, and `--json` carries `linkedSessions: [<ids>]`. |
+| `status [--json] [--session <id>]` | `--json` prints the status object (`session`, `root`, `entries`, `reversible`, `nonReversible`, `unattributed`, `corrupt`, `corruptLines`, `repo`). Otherwise `entries: N (reversible: R, non-reversible: M)`, then `unattributed: U of N (reconciled at run end)`, then `corrupt: C` (content missing under a recorded hash) and `corrupt index lines: L` (index lines that do not parse and were dropped from the read — a torn tail from a crash or a full disk; the next append repairs it and the next retention rewrite drops it), plus repo line: `repo: non-repo directory (journal works without git)` or `repo: branch <b>, dirty: yes|no|unknown` with `, root <path>` when the root reads, `, ahead <n>, behind <m>` when an upstream exists, and `, conflicts: <p>, …` when merges are unresolved. Inside a linked worktree the branch is resolved through the `.git` `gitdir:` pointer (below); an unreadable pointer prints `branch (unknown)`. |
 
 **Display truthfulness (issue #126).** Three display-level guarantees on the
 read side:
@@ -1756,13 +1933,19 @@ composition paths therefore capture a **baseline** when the lane boots and
   `packages/foo/build/`), and an unreadable nested ignore leaves its parent's
   rules in force. Anything missed only widens the baseline, never narrows the
   journal.
-- Before-content is unknowable for these finds — the baseline holds hashes,
-  not copies — so they are recorded **hashes only** and the badge is
-  `[unattributed, non-reversible]`: `kubic undo` skips them naming the path
-  (`non-reversible (skipped): <p>`), exiting **1** without writing. The sweep
-  never invents a pre-image. If an earlier attributed entry in the same run
-  already stored that path's pre-image, the entry *is* reversible and `undo`
-  restores it — the badge then reads `[unattributed]` alone.
+- Before-content for these finds comes from the git object store when the
+  path was clean against the index at boot — the baseline records its blob
+  OID, the sweep reads it back, and `kubic undo` restores it, so a bash `rm`
+  or `sed -i` on a committed file undoes like a tool edit (the badge then
+  reads `[unattributed]` alone). Otherwise — untracked files, files dirty at
+  baseline, non-repositories, binary or over-4-MiB pre-images — they are
+  recorded **hashes only** and the badge is `[unattributed, non-reversible]`:
+  `kubic undo` skips them naming the path (`non-reversible (skipped): <p>`),
+  exiting **1** without writing. The sweep never invents a pre-image: a blob
+  that does not hash to the baseline digest is refused. If an earlier
+  attributed entry in the same run already stored that path's pre-image, the
+  entry *is* reversible through the tool chain instead, and `undo` restores
+  it — the badge then reads `[unattributed]` alone.
 - Cost is bounded: unchanged files cost one hash and no blob, and a file larger
   than 4 MiB is hashed in chunks, so its boot and sweep cost is one chunk of
   memory rather than the file size (a 256MB artifact measured below 1MB of heap
@@ -1784,6 +1967,14 @@ composition paths therefore capture a **baseline** when the lane boots and
   changes would be invisible to the journal.
 - Fail-open: a baseline or sweep failure is reported on the debug receipt and
   never turns a finished run into a failed one.
+- HEAD moves are marked, not silently absorbed: the baseline records HEAD sha,
+  branch and stash count, and a sweep that finds them changed appends one
+  `marker` entry (`head-moved <branch>@<sha> -> <branch>@<sha>`) instead of
+  letting a `checkout`/`reset`/`stash` read as hundreds of ordinary file
+  changes. `kubic status` warns per move, `kubic log` lists the marker, and
+  `kubic undo` refuses to restore entries from before the move without
+  `--force` — their pre-move content does not belong on the moved HEAD.
+  Entries journaled after the move undo normally.
 
 `kubic log` answers "did anything bypass the tools?" with the count line above;
 `kubic status` names it in the summary. `--json` keeps the raw entries (the
@@ -1831,14 +2022,16 @@ e.g. `[model] provider = "anthropic"`, `id = "claude-sonnet-4-6"`.
 Usage errors (unknown option, `--resolve` without a value, an operand)
 exit 2 on stderr. `--help`/`-h` prints the generated help and exits 0.
 
-## `kubic config [--json] [--model <provider/id>]`
+## `kubic config [--json] [--model <provider/id>] [--thinking <level>]`
 
 The effective configuration with the layer each value came from — see
 [configuration](configuration.md#seeing-the-effective-values). `--json`
 prints one pretty-printed JSON document. `--model <provider/id>` reports
 the config as if that session override were passed, so the `model.*` rows
 and the `selected model:` line carry the `(cli)` source the `run`/`tui`
-lane would use. A refused config prints
+lane would use. `--thinking <level>` does the same for the thinking level:
+the `thinking level:` line carries the `(cli)` source the lane boots with.
+A refused config prints
 `error: <reason>` on stderr and exits 1; usage errors exit 2.
 
 ## `kubic trust [--revoke] [--list] [path]`
@@ -1879,13 +2072,23 @@ limits a stock CLI run does not configure are reported as available but
 unconfigured (there is no flag or config key for them today), never as
 protection the run does not deliver.
 
-## `kubic workers [--json] [--debug]`
+## `kubic workers [--json] [--debug] [inspect <id> | terminate <id>]`
 
 Worker list read from the repo's persisted record
 (`<repo>/.kubic/orchestrator/workers.json` — one shared record, never a
 fresh empty registry): one line per worker with the two §13 states, age,
 owner, pid, startup span ms, and resources (`skills=… templates=…`, `-` when
-none).
+none). The record is read at the repo runtime root — the same resolver
+`kubic audit` uses — so a run from any subdirectory lists the run's rows
+instead of an empty list. The **RESOURCES** cell shows resource consumption
+(issue #248) after the skills/templates grants: a live pid's point-sampled
+`rss=<MB> cpu=<%>` (one `ps` sample, never an average — absent when the pid
+is gone), then the settled `tok=<n>` `cost=$<n>` `calls=<n>` from the run's
+own usage summary when the worker settled (`tok` totals input+output+cached
+and abbreviates at k/M). The run state is read by the `owner` suffix, but the
+rows file is untrusted input (issue #437): a suffix outside the session-id
+charset — or a state file resolving outside `.kubic/orchestrator/` — reads as
+an absent facet, never a file from elsewhere.
 
 A row that FAILED also names the code it settled on — `failed(<code>)` in the
 **AGENT** cell and a `failure: {code, message}` field in `--json` (issue
@@ -1908,13 +2111,43 @@ an orchestrator has no record — nothing on stdout (`--json` prints `[]`), an
 
 | Flag | Meaning |
 | --- | --- |
-| (none) | A table with one row per worker: `WORKER  AGENT  PROCESS  GEN  AGE  OWNER  PID  STARTUP  RESOURCES` (`-` for an unknown pid/startup). Plain space-aligned columns off a TTY (pipes, CI, `NO_COLOR`); box-drawn, with both states coloured, on an interactive colour terminal. |
-| `--json` | The same rows as JSON (`workerId`, `sessionId`, `generation`, `status`, `agentStatus`, `signal`, `cancel`, `ageMs`, `owner`, `resources`, `pid`, `startupMs`) — field-for-field with the text view (`status` is the process phase, `agentStatus` the agent state). `cancel` appears only for a worker that was actually cancelled: `settled` when its own cooperative shutdown finished inside the worker grace, `forced` when the group SIGKILL escalation beat it (issue #249). |
-| `--debug` | `[worker] spawn …` per row plus `[exit] code=0 exited cleanly` on stderr (`KUBIC_DEBUG=1` does the same). Spawn env values are always redacted (`KUBIC_ROLE_*` never prints). |
+| (none) | A table with one row per worker: `WORKER  AGENT  PROCESS  GEN  AGE  OWNER  PID  STARTUP  RESOURCES  BUDGET` (`-` for an unknown pid/startup, and for an unbounded worker's budget). Plain space-aligned columns off a TTY (pipes, CI, `NO_COLOR`); box-drawn, with both states coloured, on an interactive colour terminal. The **BUDGET** cell (issue #285) names the worker's effective §71 bound with burn-down from the settled consumption (`tools 3/10`, `$0.12/$0.50` — limits alone, `maxToolCalls=4`, while the worker is still live, since a live spend is unknown, never zero). |
+| `--json` | The same rows as JSON (`workerId`, `sessionId`, `generation`, `status`, `agentStatus`, `signal`, `cancel`, `ageMs`, `owner`, `resources`, `pid`, `startupMs`) — field-for-field with the text view (`status` is the process phase, `agentStatus` the agent state). `cancel` appears only for a worker that was actually cancelled: `settled` when its own cooperative shutdown finished inside its grace, `forced` when the group SIGKILL escalation beat it (issue #249). `resourceUsage` (`rssMb`, `cpuPct`) appears for a live pid, `consumption` (the settled token/cost/call counts) for a settled worker — both additive (issue #248). `budget` (`{limits, usage?}` — the effective §71 limits plus the settled usage in trajectory shape, absent for unbounded workers) appears when the run stored a bound (issue #285). |
+| `--debug` | `[worker] spawn …` per row plus the command's own `[exit] code=0 (kubic workers command exit)` on stderr (`KUBIC_DEBUG=1` does the same) — the exit line is the list command's, never any worker's; a worker's real signal reads next to its PROCESS cell. Spawn env values are always redacted (`KUBIC_ROLE_*` never prints). |
 
 `kubic workers --help` prints the generated help and exits 0. An unknown
-flag, a stray operand, or a value on a boolean flag (`--json=1`) prints one
-`error: …` line on stderr and exits 2 (no stack trace).
+flag, an unknown subcommand (`error: unknown command '<name>'`), or a value
+on a boolean flag (`--json=1`) prints one `error: …` line on stderr and
+exits 2 (no stack trace).
+
+### `kubic workers inspect <id> [--json]`
+
+One worker's full row plus the four operator facets: the worktree (found by
+its `kubic/<run>/<agent>` branch, so a custom worktree root still resolves —
+path, branch, `clean` or `dirty: N files`, `not found` when the tree is
+gone), the run's stored budget for the worker (`worker …`, `shared …`, or
+`none recorded`), usage (the settled rollup from the run's own record, or
+`accruing (kubic cost --session <worker-session>)` while the worker runs —
+live usage accrues inside the worker session, which `kubic cost` reads), and
+approvals (`1 ask pending (worker is waiting)` when the agent state is
+`waiting`, with the newest §60 decision for the worker session when any).
+`--json` prints the same facets as one object. An unknown id exits 1
+(`code=no_such_worker`).
+
+### `kubic workers terminate <id> [--generation <n>] [--json]`
+
+Stop a runaway worker through the lifecycle layer instead of a raw `kill`:
+the pid-reuse guard (the pid's command line must name the worker's own
+`--session`) then the process-group reap. The child observes the SIGTERM
+and reports `cancelled` in its own §68 report, so the owning run settles
+the worker as `cancelled` rather than as a crash when its wait resolves —
+whether or not the manager is still alive. `--generation <n>` names the
+generation the operator saw: a worker replaced since is refused (`code=
+stale_generation`, exit 2) before anything is signalled, so the signal can
+never land on its successor. An unknown id exits 1 (`code=no_such_worker`);
+a settled worker, a gone pid, or a reused pid exits 1 (`code=
+worker_not_running`) without signalling anything. Success prints
+`terminated worker '<id>' (pid <n>, generation <n>)`, exit 0.
 
 ## Analysis commands: shared rules
 
@@ -2175,24 +2408,37 @@ written (`export-failed`); 2 a usage error or an empty match
 manifest is written last, so a failed batch leaves a partial JSONL and no
 `<out>.manifest.json` — the missing manifest is the completeness marker.
 
-## `kubic cost [--session <id>] [--json]`
+## `kubic cost [--session <id>] [--all] [--by <level>] [--json]`
 
-Reads real usage out of the durable session store: one `AGENT / MODEL /
-TOKENS / COST` row per usage bucket a session recorded — each
-`provider/model`, and each tool that reported its own spend (labelled
-`tool:<name>`) — followed by `task total $<sum> (<n> agents)`. The total is
-exactly the sum of the rows.
+Reads real usage out of the durable session store, scoped to the current
+project by default: only sessions touching the invoking workspace are
+reported, with `--all` for the machine-global total the command used to
+print. Rows aggregate to the `--by` level (`request | agent | session |
+project`, default `agent`), one `GROUP / ROLE / MODEL / IN / OUT / CACHE-R
+/ CACHE-W / COST` row each — the worker's role and model per §39, with
+input, output and prefix-cache counters split out — followed by
+`task total $<sum> (<n> <level>)`. The total is exactly the sum of the
+rows. Costs below $1 print at 4 decimals (`$0.0023`), $1 and above at 2.
 
-The numbers are the session's `pi.usage` documents, summed per bucket, so
-they match what `Harness.usage()` reports for the same run. Reading is
-read-only and never boots a lane. A session whose storage a live run owns
-is skipped, never opened (pi-durable: one process per storage), and
+The numbers are the sessions' `pi.usage` documents, so they match what
+`Harness.usage()` reports for the same run. Reading is read-only and never
+boots a lane. `--by request` lists one row per assistant entry that
+carries its response's usage (the model spend of that request — tools that
+report their own spend aggregate at the higher levels); `--by project`
+rolls each workspace to a single row. A session whose storage a live run
+owns is skipped, never opened (pi-durable: one process per storage), and
 reported as a zero row with `MODEL` `(locked)`; a session that cannot be
 read at all (a Pi 0.87 transcript, a half-written directory) is
-`(unreadable)` the same way. A session the operator NAMED with `--session`
+`(unreadable)` the same way. A session that goes live *during* the read —
+after the lock probe said it was dead — is read as far as it can be (a
+partial trailing record is the writer's uncommitted tail and is skipped,
+never a parse error) and gets a zero `(live)` row beside its rows: the
+sibling rows may be partial ([#426](https://github.com/konic-labs/kubic/issues/426)). A session the operator NAMED with `--session`
 is never skipped that way: an unknown id, a live lock and a 0.87 transcript
-each print their refusal and exit 1. Skip reporting, the lock-free read and the
-session-dir mtime question are [#251](https://github.com/konic-labs/kubic/issues/251)'s.
+each print their refusal and exit 1 — except an unknown id that still has recorded children naming it as parent: the refusal names the orphaned children (`orphaned children: <ids>`) so the operator's next step is a live id. The read path is lock-free
+([#251](https://github.com/konic-labs/kubic/issues/251)): `kubic cost` never
+creates or removes `lock.json`, so session dir mtimes (the prune age
+signal) are untouched and a concurrent attach is never blocked.
 
 When the sessions carry prefix-cache counters, the readout adds the
 cache line and the transparent-caching note. With no sessions stored it
@@ -2200,8 +2446,10 @@ prints `no cost rows` and exits 0.
 
 | Flag | Meaning |
 | --- | --- |
-| `--session <id>` | Reads only this session. Ids follow the same `[A-Za-z0-9_-]` rule as `run`: anything else exits 2 before the store is touched, and an unknown session exits 1 (`error: unknown session: <id>`). |
-| `--json` | Prints the in-code `toCostJson` shape (`agents`, `taskTotal`) field-for-field. Exits 0. |
+| `--session <id>` | Reads only this session — or, when the id is an orchestrate run's, the run's total: the manager record plus every session whose metadata names it as parent, with one row per worker session. This is the single per-worker usage surface (issue #433): the launch-layer `usage()` readout was deleted rather than duplicated. A live run's locked manager record is skipped in favour of its children, so a running run still has a cost view.  Ids follow the same `[A-Za-z0-9_-]` rule as `run`: anything else exits 2 before the store is touched, and an unknown session exits 1 (`error: unknown session: <id>`). An explicitly named session ignores the project scope. |
+| `--all` | Lifts the default project scope: report sessions from every project on the machine. |
+| `--by <level>` | Group rows at `request`, `agent` (the default), `session` or `project`. Anything else exits 2. |
+| `--json` | Prints the in-code `toCostJson` shape (`agents`, `taskTotal`) field-for-field — rows carry the same `agent`/`role`/`session`/`project`/`request` identity the table groups on. Exits 0. |
 
 ## `kubic perf --budget <kind> (--measure | --samples <csv>) [--json]`
 
@@ -2210,9 +2458,14 @@ one sample source, `--measure` or `--samples`:
 
 - **`--measure`** runs the real thing and times it:
   - `spawn` cycles a real `node -e` child through the worker spawn
-    environment
-  - `worktree` runs a real `git worktree add` / `remove` cycle in a
-    scratch directory
+    environment (a spawn that exits non-zero is a measurement error,
+    not a timing — issue #252)
+  - `worktree` runs a real `git worktree add` / `remove` cycle under
+    the repo root (`git rev-parse --show-toplevel` from the cwd, so a
+    subdirectory run still measures under `<root>/.kubic/wt` — issue
+    #252) and deletes the sample branch afterwards, so a measurement
+    leaves no `kubic/perf-*` branch and no worktree behind (a failed
+    remove or delete is a measurement error, with cleanup attempted)
   - `attach` creates a session in your real sessions root, attaches it
     and releases it (the §61 attach row; issue #158), cleaning up the
     measurement's own session afterwards
@@ -2240,7 +2493,7 @@ picking one.
 | Flag | Meaning |
 | --- | --- |
 | `--budget <worktree\|spawn\|attach\|teardown>` | **Required.** The budget to evaluate. Any other kind exits 2. |
-| `--measure` | Measures for real. Only `spawn` and `worktree` have a live source; the other kinds exit 2 and name `--samples`. |
+| `--measure` | Measures for real. `spawn`, `worktree` and `attach` have a live source; `teardown` exits 2 and names `--samples`. |
 | `--samples <ms,ms,…>` | Fallback: comma-separated, non-negative millisecond samples. At least one is required: an empty or non-numeric list exits 2, so a run never passes vacuously. |
 | `--json` | Prints the full evaluation (`kind`, `budgetMs`, `count`, `p50`, `p95`, `within`, `regression`, plus `source` and `note` for measured samples). Exits 0 on a pass, 1 on a breach. |
 
@@ -2321,6 +2574,20 @@ shipped runtime ignore rules cover this file.
 - The model on every solo record is the model the lane runs: `kubic run`
   reads it after the stored-model rule (`--session` without a pin keeps the
   session's own model, and both the record and `trajectory.json` say so).
+  `model.thinking` is the thinking level the lane runs, read from the
+  conversation's agent document (a `/thinking` change mid-session is read at
+  record time, so later rows name the new level); a manager's worker-ask row
+  names the resolved level for that worker (the per-worker level, else the
+  run's explicit level).
+- `worker.pid` and `worker.generation` on a manager's worker-ask row are the
+  live registry row the spawn recorded — the child's pid, the generation
+  after a respawn — so the ledger answers which worker process ran what. A
+  solo row names its own process and generation `0`.
+- `workspace.base` is the base revision the run started from: `git rev-parse
+  HEAD` of the worktree at creation for a worker ask (at resume for a
+  resumed tree), `HEAD` at run start for a solo run, `none` outside git. A
+  row that genuinely knows no better (a refused manager approve of a forged
+  key) keeps the honest `unknown` instead of inventing a value.
 - Enabling full access (`--dangerously-skip-approvals` on `kubic`, `tui`,
   `run`, `sessions create` or `orchestrate`, or the in-session `Alt+A` /
   `/approvals on` toggle) appends one `posture:full-access` row naming the

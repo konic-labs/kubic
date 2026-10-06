@@ -40,6 +40,7 @@ import { createNodeFileBridge } from './file-bridge.js';
 import {
   type FileCurrentState,
   type FileJournalStore,
+  type HeadState,
   isUndoableCreate,
   type JournalEntry,
   type JournalEntryInput,
@@ -48,6 +49,7 @@ import {
   restoreEntry,
   sha256HexOfBytes,
 } from './journal.js';
+import { formatHeadMove } from './journal-status.js';
 
 export interface UndoScope {
   path?: string;
@@ -59,6 +61,11 @@ export interface UndoScope {
 // undo plans exclude it — see planUndo.
 const UNDO_AGENT_ID = 'kubic-undo';
 
+export interface HeadMove {
+  from: HeadState;
+  to: HeadState;
+}
+
 export interface UndoPlan {
   steps: JournalEntry[];
   reversible: number;
@@ -66,6 +73,57 @@ export interface UndoPlan {
   /** Paths whose current content is stale relative to their entry (read-only count). */
   stale: number;
   stalePaths: string[];
+  /**
+   * Issue #378: in-scope markers newer than at least one step — restoring
+   * such a step would write pre-move content onto the moved HEAD, so it
+   * needs `--force`. Oldest first. Empty when no marker blocks a step.
+   */
+  headMoves: HeadMove[];
+}
+
+// Issue #378: chronological positions of in-scope markers in `all`, and
+// whether `step` is older than any of them (restoring it crosses the move).
+// Position-matched by value, not reference: applyUndo re-reads the index,
+// so its entry objects differ from the plan's. Duplicate-shaped entries
+// (identical JSON at two positions) resolve conservatively — crossing if
+// ANY matching position is older than a marker — the safe direction, and
+// `--force` is the override either way.
+function markerPositions(all: JournalEntry[]): number[] {
+  const out: number[] = [];
+  all.forEach((e, i) => {
+    if (
+      e.op === 'marker' &&
+      e.headFrom !== undefined &&
+      e.headTo !== undefined
+    ) {
+      out.push(i);
+    }
+  });
+  return out;
+}
+
+function stepCrosses(
+  all: JournalEntry[],
+  step: JournalEntry,
+  markers: number[],
+): HeadMove | null {
+  if (markers.length === 0) return null;
+  const key = JSON.stringify(step);
+  for (let i = 0; i < all.length; i++) {
+    if (JSON.stringify(all[i]) !== key) continue;
+    const newer = markers.filter((m) => m > i);
+    if (newer.length > 0) {
+      const marker = all[newer[0] ?? -1];
+      if (
+        marker?.op === 'marker' &&
+        marker.headFrom !== undefined &&
+        marker.headTo !== undefined
+      ) {
+        return { from: marker.headFrom, to: marker.headTo };
+      }
+    }
+  }
+  return null;
 }
 
 // A step is reversible when its pre-state is recoverable: a before-blob,
@@ -174,11 +232,20 @@ export function planUndo(
   scope: UndoScope,
   root?: string,
 ): UndoPlan {
-  let steps = [...store.entries()].reverse();
+  // Issue #378: markers are scope-less bookkeeping — never steps, but the
+  // barrier applies in every scope (a `--path` restore crosses the move
+  // exactly like a whole-run one), so they survive the path filter and are
+  // dropped only when steps are selected.
+  const all = store.entries();
+  const markers = markerPositions(all);
+  let steps = [...all].reverse();
   if (scope.path !== undefined) {
     const path = scope.path;
-    steps = steps.filter((e) => e.path === path);
+    steps = steps.filter((e) => e.path === path || e.op === 'marker');
   }
+  // Markers are never steps: `--step` lands on the newest file entry even
+  // when a marker is newer, and plain undo never tries to restore one.
+  steps = steps.filter((e) => e.op !== 'marker');
   if (scope.step === true) {
     // One step: the newest entry for the scope, undo records included. That
     // is the redo path — undoing the undo record re-applies the pre-undo
@@ -229,12 +296,29 @@ export function planUndo(
       }
     }
   }
+  // Issue #378: the markers blocking at least one step — oldest first,
+  // deduplicated (one marker can block many steps).
+  const headMoves: HeadMove[] = [];
+  for (const step of steps) {
+    const move = stepCrosses(all, step, markers);
+    if (
+      move !== null &&
+      !headMoves.some(
+        (m) =>
+          JSON.stringify(m.from) === JSON.stringify(move.from) &&
+          JSON.stringify(m.to) === JSON.stringify(move.to),
+      )
+    ) {
+      headMoves.push(move);
+    }
+  }
   return {
     steps,
     reversible,
     nonReversible,
     stale: stalePaths.length,
     stalePaths,
+    headMoves,
   };
 }
 
@@ -392,6 +476,11 @@ export function applyUndo(
   const force = options.force === true;
   const now = options.now ?? ((): number => Date.now());
   const planBefore = collectPlanBefore(store, plan.steps);
+  // Issue #378: the barrier, evaluated against the live index (which may
+  // have grown since planning — a concurrent append cannot smuggle a step
+  // past a marker).
+  const undoAll = store.entries();
+  const undoMarkers = markerPositions(undoAll);
   // Dry-run simulates the walk's writes; a real run re-probes the actual
   // disk before each step (which the walk itself is mutating). Both follow
   // the same verdict rules, so --dry-run reports what the real run does.
@@ -404,6 +493,20 @@ export function applyUndo(
         reason:
           'no before-content: no retrievable pre-image for this entry — nothing to restore',
       });
+      continue;
+    }
+    // Issue #378: a step older than a newer in-scope marker restores only
+    // with `--force` — its pre-move content does not belong on the moved
+    // HEAD. The dry run reports the same skip, so it never promises a
+    // restore the real run refuses.
+    const crossing = stepCrosses(undoAll, step, undoMarkers);
+    if (crossing !== null && !force) {
+      const reason =
+        `head-moved: '${step.path}' was journaled before HEAD moved ` +
+        `(${formatHeadMove(crossing.from, crossing.to)}) — restoring would ` +
+        'write pre-move content onto the moved HEAD; use --force';
+      skipped.push(step.path);
+      skippedDetails.push({ path: step.path, reason });
       continue;
     }
     const state =

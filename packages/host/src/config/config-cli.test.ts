@@ -17,6 +17,8 @@ function runtime(): RuntimeConfig {
     policy: resolveEffectivePolicy([]).policy,
     model: { provider: 'local', id: 'llama3' },
     modelSource: 'global',
+    thinking: undefined,
+    escalate: undefined,
     approvals: {
       policy: {
         route: 'deny',
@@ -37,6 +39,7 @@ function runtime(): RuntimeConfig {
       },
       source: 'defaults',
     },
+    compaction: { source: 'defaults' },
     journal: {
       retentionDays: 30,
       maxAgeMs: 30 * 86_400_000,
@@ -85,6 +88,22 @@ describe('kubic config (issue #90)', () => {
     expect(text).toContain('approvals: route=deny (project)');
     expect(text).toContain('journal retention: 30 day(s)');
     expect(text).toContain('budgets: none');
+  });
+
+  it("renders a role's allowed set with its layer (issue #255)", () => {
+    const { lines, out } = collect();
+    const base = runtime();
+    base.config.roles = {
+      reviewer: {
+        models: [{ id: 'local/*' }, { id: 'acme/big', thinking: 'high' }],
+      },
+    };
+    base.sources['roles.reviewer.models'] = 'project';
+    const code = runConfigCommand({}, { load: () => base, out });
+    expect(code).toBe(CONFIG_EXIT_OK);
+    expect(lines.join('\n')).toContain(
+      'roles.reviewer.models = [{"id":"local/*"}, {"id":"acme/big","thinking":"high"}] (project, consumed)',
+    );
   });
 
   it('emits one machine-readable object covering every projection', () => {

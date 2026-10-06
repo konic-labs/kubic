@@ -10,9 +10,17 @@ import {
   type JournalOp,
 } from './journal.js';
 
+/**
+ * Issue #378: the file ops — every `JournalOp` except the sweep's HEAD-move
+ * `marker`. `diffEntries` skips markers, so a `FileChange` can never carry
+ * one; the narrower type keeps the TUI's file-op views (`DiffOp`) assignable
+ * without teaching them about journal bookkeeping.
+ */
+export type FileOp = Exclude<JournalOp, 'marker'>;
+
 export interface FileChange {
   path: string;
-  op: JournalOp;
+  op: FileOp;
   agentId: string;
   toolCallId: string | null;
   sessionId: string;
@@ -39,6 +47,12 @@ export interface FileChange {
   // with a marker line naming the bound). Absent — never true — on the full
   // core read, which `undo` and `renderDiff` rely on.
   contentTruncated?: boolean;
+  // Issue #335: the intercepting tool's name and the interactive turn, from
+  // the group's latest entry. Absent on pre-schema entries, reconciliation
+  // finds (no tool ran) and tool entries journaled before turns were
+  // threaded — `--stat` and `--json` render them when present.
+  toolName?: string;
+  turn?: number;
 }
 
 export interface DiffFilter {
@@ -52,6 +66,9 @@ export function diffEntries(
 ): FileChange[] {
   const byPath = new Map<string, JournalEntry[]>();
   for (const e of store.entries()) {
+    // Issue #378: markers are journal bookkeeping, not file changes —
+    // never a diff hunk (status/log surface them instead).
+    if (e.op === 'marker') continue;
     if (filter.path !== undefined && e.path !== filter.path) continue;
     if (filter.agent !== undefined && e.agentId !== filter.agent) continue;
     const list = byPath.get(e.path) ?? [];
@@ -63,38 +80,132 @@ export function diffEntries(
     const first = list[0];
     const last = list[list.length - 1];
     if (first === undefined || last === undefined) continue;
-    const before = store.readBefore(first);
-    const after = store.readAfter(last);
-    // "Unexpectedly null while hashes exist" (issue #111): unattributed
-    // entries legitimately carry a hash-only pre-image (no before-blob by
-    // design), so that absence is not corruption; everything else missing
-    // under a recorded hash is.
-    const beforeLost =
-      first.beforeHash !== null &&
-      before === null &&
-      first.unattributed !== true &&
-      first.beforeOmitted !== true;
-    // A hash-only sweep after-side (issue #120) is a designed absence: the
-    // entry records the walk hash but deliberately no content.
-    const afterLost =
-      last.afterHash !== null && after === null && last.afterOmitted !== true;
-    out.push({
+    const change = buildChange(
       path,
-      op: last.op,
-      agentId: last.agentId,
-      toolCallId: last.toolCallId,
-      sessionId: last.sessionId,
-      timestamp: last.timestamp,
-      unattributed: last.unattributed === true,
-      reversible: before !== null || isUndoableCreate(first),
-      before,
-      after,
-      corrupt: beforeLost || afterLost,
-      afterOmitted: last.afterOmitted === true,
-      ...(last.afterBytes === undefined ? {} : { afterBytes: last.afterBytes }),
-    });
+      first,
+      last,
+      (e) => store.readBefore(e),
+      (e) => store.readAfter(e),
+    );
+    if (change !== null) out.push(change);
   }
   return out;
+}
+
+// Issue #364: read-only multi-store diff — `kubic diff --session <orch>`
+// covering the orchestration's linked worker journals. Blobs are read from
+// each entry's home store (a worker's before-content lives under its own
+// session dir, never the orch's). Groups key on session+path: two workers'
+// worktrees share relative paths, and merging them into one hunk would
+// misattribute both — each worker's path renders as its own change with
+// its own agent tag. Null when the group's latest entry is a marker (keeps
+// `FileChange.op` marker-free; see `FileOp`).
+//
+// One store behaves exactly like `diffEntries` (same path key), so the
+// single-store command keeps calling that instead — this stays the
+// aggregation-only path.
+export function diffEntriesMany(
+  stores: FileJournalStore[],
+  filter: DiffFilter,
+): FileChange[] {
+  // Review follow-up: each side keeps its own entry's home-store reader —
+  // the first entry's before-side resolves through the store that created
+  // it, the last entry's after-side through its own. Harmless under
+  // one-store-per-session (both readers are the same store then), exact
+  // when it is not.
+  const byKey = new Map<
+    string,
+    {
+      path: string;
+      first: JournalEntry;
+      last: JournalEntry;
+      readFirstBefore: (e: JournalEntry) => string | null;
+      readLastAfter: (e: JournalEntry) => string | null;
+    }
+  >();
+  for (const store of stores) {
+    const readBefore = (e: JournalEntry): string | null => store.readBefore(e);
+    const readAfter = (e: JournalEntry): string | null => store.readAfter(e);
+    for (const e of store.entries()) {
+      if (e.op === 'marker') continue;
+      if (filter.path !== undefined && e.path !== filter.path) continue;
+      if (filter.agent !== undefined && e.agentId !== filter.agent) continue;
+      const key = `${e.sessionId}\0${e.path}`;
+      const group = byKey.get(key);
+      if (group === undefined) {
+        byKey.set(key, {
+          path: e.path,
+          first: e,
+          last: e,
+          readFirstBefore: readBefore,
+          readLastAfter: readAfter,
+        });
+      } else {
+        group.last = e;
+        group.readLastAfter = readAfter;
+      }
+    }
+  }
+  // Groups are per-session (each session writes exactly one store), so
+  // arrival order within a group is chronological — the same first/last
+  // `diffEntries` would pick.
+  const out: FileChange[] = [];
+  for (const group of byKey.values()) {
+    const change = buildChange(
+      group.path,
+      group.first,
+      group.last,
+      group.readFirstBefore,
+      group.readLastAfter,
+    );
+    if (change !== null) out.push(change);
+  }
+  return out;
+}
+
+function buildChange(
+  path: string,
+  first: JournalEntry,
+  last: JournalEntry,
+  readBeforeOfFirst: (e: JournalEntry) => string | null,
+  readAfterOfLast: (e: JournalEntry) => string | null,
+): FileChange | null {
+  const before = readBeforeOfFirst(first);
+  const after = readAfterOfLast(last);
+  // "Unexpectedly null while hashes exist" (issue #111): unattributed
+  // entries legitimately carry a hash-only pre-image (no before-blob by
+  // design), so that absence is not corruption; everything else missing
+  // under a recorded hash is.
+  const beforeLost =
+    first.beforeHash !== null &&
+    before === null &&
+    first.unattributed !== true &&
+    first.beforeOmitted !== true;
+  // A hash-only sweep after-side (issue #120) is a designed absence: the
+  // entry records the walk hash but deliberately no content.
+  const afterLost =
+    last.afterHash !== null && after === null && last.afterOmitted !== true;
+  // Unreachable (markers never reach the map), but the guard is what
+  // narrows `op` to `FileOp` — the grouping above erases the filter's
+  // narrowing, and a cast would hide a future leak.
+  if (last.op === 'marker') return null;
+  return {
+    path,
+    op: last.op,
+    agentId: last.agentId,
+    toolCallId: last.toolCallId,
+    sessionId: last.sessionId,
+    timestamp: last.timestamp,
+    ...(last.toolName === undefined ? {} : { toolName: last.toolName }),
+    ...(last.turn === undefined ? {} : { turn: last.turn }),
+    unattributed: last.unattributed === true,
+    reversible: before !== null || isUndoableCreate(first),
+    before,
+    after,
+    corrupt: beforeLost || afterLost,
+    afterOmitted: last.afterOmitted === true,
+    ...(last.afterBytes === undefined ? {} : { afterBytes: last.afterBytes }),
+  };
 }
 
 // Minimal unified hunks: changed region plus context lines, with real
@@ -224,4 +335,25 @@ export function renderDiff(changes: FileChange[]): string {
     out.push(...unifiedHunks(c.before ?? '', c.after ?? ''));
   }
   return out.join('\n');
+}
+
+// Issue #335 (§84 flow): the per-file summary — path, added/removed line
+// counts, the intercepting tool and the turn. The counts come from the
+// same `unifiedHunks` the full render prints, so `--stat` can never
+// disagree with the hunks; a missing side counts as empty (a create reads
+// as all-added, a delete as all-removed). Tool and turn render only when
+// the entry carries them — pre-schema entries and reconciliation finds
+// show the op (or `reconciled`) instead of a blank.
+export function renderDiffStat(changes: FileChange[]): string[] {
+  return changes.map((c) => {
+    let added = 0;
+    let removed = 0;
+    for (const line of unifiedHunks(c.before ?? '', c.after ?? '')) {
+      if (line.startsWith('+')) added += 1;
+      else if (line.startsWith('-')) removed += 1;
+    }
+    const what = c.toolName ?? (c.unattributed ? 'reconciled' : c.op);
+    const turn = c.turn === undefined ? '' : `, turn ${c.turn}`;
+    return `${c.path} +${added} -${removed} ${what}${turn}`;
+  });
 }

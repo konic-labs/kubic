@@ -18,7 +18,10 @@ export type MergeOutcome =
   | 'stopped-unresolvable'
   // The merge gate's verdict ended the candidate before any merge leg ran.
   | 'approval-denied'
-  | 'approval-timeout';
+  | 'approval-timeout'
+  // The reviewer refused the diff (issue #188, §70): recorded under
+  // `discarded`, the branch stays for inspection, resume never retries.
+  | 'review-discarded';
 
 export interface MergeTelemetry {
   agentId: string;

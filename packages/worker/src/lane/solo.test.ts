@@ -25,12 +25,14 @@ import {
   type Storage,
   SystemEntry,
 } from '../pi-boundary.js';
+import { PromptCacheError } from '../prompts.js';
 import {
   assembleSoloPrompt,
   bootSoloLane,
   SOLO_PROMPT_SECTION,
   SOLO_ROLE,
   type SoloLane,
+  splitSoloModelId,
 } from './solo.js';
 
 vi.mock('./interceptors.js', () => ({
@@ -125,6 +127,29 @@ vi.mock('./tools-adapter.js', async () => {
         }),
       ),
   };
+});
+
+// Model-id splitting (issue #218): the lane only boots 'provider/id' —
+// the table pins what splits and what throws PromptCacheError, so a
+// misrouted id fails at parse time, never inside a run.
+describe('splitSoloModelId', () => {
+  it('splits provider from id on the first slash', () => {
+    expect(splitSoloModelId('prov/id')).toEqual({
+      provider: 'prov',
+      modelId: 'id',
+    });
+  });
+
+  it.each(['noslash', '/id', 'prov/'])('rejects %s', (id) => {
+    expect(() => splitSoloModelId(id)).toThrowError(PromptCacheError);
+  });
+
+  it("keeps 'b/c' as the model id for 'a/b/c'", () => {
+    expect(splitSoloModelId('a/b/c')).toEqual({
+      provider: 'a',
+      modelId: 'b/c',
+    });
+  });
 });
 
 const DIRS: string[] = [];
@@ -425,6 +450,11 @@ describe('solo boot on the durable harness (issue #394)', () => {
     );
     await first.close(BACKGROUND_CONTEXT);
 
+    // Issue #225 (§38.3) supersedes store-verbatim: the lane resolves the
+    // stored level against the effective model at boot, so a level the
+    // model does not support is clamped with a named notice — never kept
+    // silently, never dropped silently.
+    const notices: string[] = [];
     const second = await bootSoloLane({
       session: handle(
         await openNodeJsonlStorage(dir, BACKGROUND_CONTEXT),
@@ -435,9 +465,13 @@ describe('solo boot on the durable harness (issue #394)', () => {
       env,
       sessionId: 'think',
       agentId: 'root',
+      onThinkingNotice: (line) => notices.push(line),
     });
     SOLOS.push(second);
     const agent = await second.conversation.agent(BACKGROUND_CONTEXT);
-    expect(agent.thinkingLevel).toBe('high');
+    expect(agent.thinkingLevel).toBe('off');
+    expect(notices).toEqual([
+      expect.stringMatching(/thinking 'high'.*clamped to 'off'/),
+    ]);
   });
 });

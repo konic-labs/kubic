@@ -22,21 +22,27 @@ import type {
   GitBranchResult,
   GitCheckpointResult,
   GitCommitResult,
+  GitConflictStatusResult,
   GitDiffResult,
   GitLogResult,
+  GitMergeResult,
   GitShowResult,
   GitStageResult,
   GitStatusResult,
+  GitWorktreeListResult,
 } from './git.js';
 import {
   gitBranchOperation,
   gitCheckpointOperation,
   gitCommitOperation,
+  gitConflictStatusOperation,
   gitDiffOperation,
   gitLogOperation,
+  gitMergeOperation,
   gitShowOperation,
   gitStageOperation,
   gitStatusOperation,
+  gitWorktreeListOperation,
 } from './git.js';
 import type { GrepResult } from './grep.js';
 import { GREP_DEFAULT_MAX, grepOperation } from './grep.js';
@@ -71,6 +77,9 @@ export const OPERATIONS = {
   git_commit: gitCommitOperation,
   git_branch: gitBranchOperation,
   git_checkpoint: gitCheckpointOperation,
+  git_merge: gitMergeOperation,
+  git_conflict_status: gitConflictStatusOperation,
+  git_worktree_list: gitWorktreeListOperation,
 } as const;
 
 export type OperationName = keyof typeof OPERATIONS;
@@ -264,6 +273,14 @@ export const OPERATION_PARAMETERS: { readonly [N in OperationName]: TSchema } =
       },
       closed,
     ),
+    git_merge: Type.Object(
+      {
+        branch: nonEmpty('Local branch to merge into the current one.'),
+      },
+      closed,
+    ),
+    git_conflict_status: Type.Object({}, closed),
+    git_worktree_list: Type.Object({}, closed),
   };
 
 export interface OperationResults {
@@ -282,6 +299,9 @@ export interface OperationResults {
   git_commit: GitCommitResult;
   git_branch: GitBranchResult;
   git_checkpoint: GitCheckpointResult;
+  git_merge: GitMergeResult;
+  git_conflict_status: GitConflictStatusResult;
+  git_worktree_list: GitWorktreeListResult;
 }
 
 export function callOperation<N extends OperationName>(

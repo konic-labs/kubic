@@ -12,6 +12,7 @@ import {
   ConfigError,
   type ConfigLayer,
   checkGitignoreSplit,
+  checkRoleModelRef,
   defaultLayerPaths,
   EXAMPLE_TOML,
   GITIGNORE_REQUIRED_ENTRIES,
@@ -214,6 +215,67 @@ sink = "syslog"
 level = "privileged"
 `;
 
+describe('§37.4 request options (issue #257)', () => {
+  it('parses [model] timeoutMs/maxRetries/maxRetryDelayMs/cacheRetention', () => {
+    const parsed = parseTomlConfig(
+      '[model]\nprovider = "local"\nid = "llama3"\ntimeoutMs = 60000\nmaxRetries = 5\nmaxRetryDelayMs = 10000\ncacheRetention = "long"\n',
+    );
+    expect(parsed.model).toEqual({
+      provider: 'local',
+      id: 'llama3',
+      timeoutMs: 60000,
+      maxRetries: 5,
+      maxRetryDelayMs: 10000,
+      cacheRetention: 'long',
+    });
+  });
+
+  it('parses [roles.<name>] request options over the [model] ones', () => {
+    const parsed = parseTomlConfig(
+      '[model]\ntimeoutMs = 60000\n[roles.a]\nmodel = "local/x"\nmaxRetries = 1\ncacheRetention = "none"\n',
+    );
+    expect(parsed.model?.timeoutMs).toBe(60000);
+    expect(parsed.roles?.a).toEqual({
+      model: 'local/x',
+      maxRetries: 1,
+      cacheRetention: 'none',
+    });
+  });
+
+  it('refuses invalid [model] request options by name', () => {
+    expect(() => parseTomlConfig('[model]\ntimeoutMs = 0\n')).toThrow(
+      /'model': 'timeoutMs' must be a positive integer/,
+    );
+    expect(() => parseTomlConfig('[model]\ntimeoutMs = 1.5\n')).toThrow(
+      /'model': 'timeoutMs' must be a positive integer/,
+    );
+    expect(() => parseTomlConfig('[model]\nmaxRetries = -1\n')).toThrow(
+      /'model': 'maxRetries' must be a non-negative integer/,
+    );
+    expect(() => parseTomlConfig('[model]\nmaxRetries = 2.5\n')).toThrow(
+      /'model': 'maxRetries' must be a non-negative integer/,
+    );
+    expect(() => parseTomlConfig('[model]\nmaxRetryDelayMs = -5\n')).toThrow(
+      /'model': 'maxRetryDelayMs' must be a non-negative integer/,
+    );
+    expect(() =>
+      parseTomlConfig('[model]\ncacheRetention = "forever"\n'),
+    ).toThrow(/'model': 'cacheRetention' must be one of/);
+  });
+
+  it('refuses invalid [roles.<name>] request options by name', () => {
+    expect(() => parseTomlConfig('[roles.a]\ntimeoutMs = 0\n')).toThrow(
+      /'roles\.a': 'timeoutMs' must be a positive integer/,
+    );
+    expect(() => parseTomlConfig('[roles.a]\nmaxRetries = -1\n')).toThrow(
+      /'roles\.a': 'maxRetries' must be a non-negative integer/,
+    );
+    expect(() =>
+      parseTomlConfig('[roles.a]\ncacheRetention = "forever"\n'),
+    ).toThrow(/'roles\.a': 'cacheRetention' must be one of/);
+  });
+});
+
 describe('§58 [policy] + [[audit]] (issue #288)', () => {
   it('parses the §58 example verbatim, keys normalized for the policy engine', () => {
     const parsed = parseTomlConfig(S58_POLICY_EXAMPLE);
@@ -299,6 +361,30 @@ describe('§58 [policy] + [[audit]] (issue #288)', () => {
     ).toThrow(/unknown key 'bogus'/);
   });
 
+  // Review finding (issue #286): docs promise `facility` as "name or
+  // number 0–23", so TOML `facility = 19` must parse to the number.
+  it('accepts a numeric facility 0–23 in [[audit]]', () => {
+    const parsed = parseTomlConfig(
+      '[[audit]]\nsink = "syslog"\nlevel = "privileged"\nfacility = 19\n',
+    );
+    expect(parsed.audit).toEqual([
+      { sink: 'syslog', level: 'privileged', facility: 19 },
+    ]);
+  });
+
+  it('refuses an out-of-range or fractional facility by name', () => {
+    expect(() =>
+      parseTomlConfig(
+        '[[audit]]\nsink = "syslog"\nlevel = "privileged"\nfacility = 99\n',
+      ),
+    ).toThrow(/facility/);
+    expect(() =>
+      parseTomlConfig(
+        '[[audit]]\nsink = "syslog"\nlevel = "privileged"\nfacility = 1.5\n',
+      ),
+    ).toThrow(/facility/);
+  });
+
   it('keeps the audit list appendable across multiple [[audit]] tables', () => {
     const parsed = parseTomlConfig(
       '[[audit]]\nsink = "syslog"\nlevel = "privileged"\n\n[[audit]]\nsink = "file"\nlevel = "all"\ntarget = "/var/log/kubic.jsonl"\n',
@@ -351,6 +437,52 @@ describe('session.retentionDays (issue #119)', () => {
     ]);
     expect(merged.config.session?.retentionDays).toBe(14);
     expect(merged.overriddenAttempts).toContain('session.retentionDays');
+  });
+});
+
+describe('[session] compaction keys (issue #239)', () => {
+  it('parses autoCompact, reserveTokens and keepRecentTokens', () => {
+    const session = parseTomlConfig(
+      '[session]\nautoCompact = false\nreserveTokens = 4000\nkeepRecentTokens = 5000\n',
+    ).session;
+    expect(session?.autoCompact).toBe(false);
+    expect(session?.reserveTokens).toBe(4000);
+    expect(session?.keepRecentTokens).toBe(5000);
+  });
+
+  it('refuses malformed values by key name (fail-closed)', () => {
+    expect(() => parseTomlConfig('[session]\nautoCompact = "yes"\n')).toThrow(
+      /'session': 'autoCompact' must be a boolean/,
+    );
+    for (const bad of ['-1', '0', '4.5', '"4000"']) {
+      expect(() =>
+        parseTomlConfig(`[session]\nreserveTokens = ${bad}\n`),
+      ).toThrow(/'session': 'reserveTokens' must be a positive integer/);
+      expect(() =>
+        parseTomlConfig(`[session]\nkeepRecentTokens = ${bad}\n`),
+      ).toThrow(/'session': 'keepRecentTokens' must be a positive integer/);
+    }
+    expect(() => parseTomlConfig('[session]\nauto_compact = false\n')).toThrow(
+      /unknown key/,
+    );
+  });
+});
+
+describe('[agent] systemPromptFile (issue #240)', () => {
+  it('parses the key and refuses malformed values by name', () => {
+    expect(
+      parseTomlConfig('[agent]\nsystemPromptFile = "SYSTEM.md"\n').agent
+        ?.systemPromptFile,
+    ).toBe('SYSTEM.md');
+    expect(() => parseTomlConfig('[agent]\nsystemPromptFile = 42\n')).toThrow(
+      /'agent': 'systemPromptFile' must be a non-empty string/,
+    );
+    expect(() => parseTomlConfig('[agent]\nsystemPromptFile = ""\n')).toThrow(
+      /'agent': 'systemPromptFile' must be a non-empty string/,
+    );
+    expect(() =>
+      parseTomlConfig('[agent]\nsystem_prompt_file = "x"\n'),
+    ).toThrow(/unknown key/);
   });
 });
 
@@ -496,6 +628,17 @@ describe('TOML parser hardening (issue #69)', () => {
     expect(parsed.roles?.a?.tools).toEqual(['a', 'b']);
   });
 
+  it('parses [roles.<name>] requires like tools (issue #196)', () => {
+    const parsed = parseTomlConfig(
+      '[roles.a]\nrequires = ["write", \'bash\']\n',
+    );
+    expect(parsed.roles?.a?.requires).toEqual(['write', 'bash']);
+    expect(() => parseTomlConfig('[roles.a]\nrequires = [["x"]]\n')).toThrow(
+      /nested arrays/,
+    );
+    expect(() => parseTomlConfig('[roles.a]\nrequires = ["x]\n')).toThrow();
+  });
+
   it('rejects unterminated strings in arrays', () => {
     expect(() => parseTomlConfig('[roles.a]\ntools = ["x]\n')).toThrow(
       /unterminated string/,
@@ -604,6 +747,93 @@ describe('config validation hardening (issue #69)', () => {
     );
   });
 
+  it('parses [roles.<name>] thinking, refusing unknown levels by name (issue #225)', () => {
+    expect(
+      parseTomlConfig('[roles.a]\nthinking = "high"\n').roles?.a?.thinking,
+    ).toBe('high');
+    expect(() => parseTomlConfig('[roles.a]\nthinking = "ultra"\n')).toThrow(
+      /'roles\.a': 'thinking' must be one of/,
+    );
+  });
+
+  it('parses [roles.<name>] models, refusing bad entries by name (issue #255)', () => {
+    const parsed = parseTomlConfig(
+      '[roles.a]\nmodels = ["local/*", { id = "acme/big", thinking = "high" }]\n',
+    );
+    expect(parsed.roles?.a?.models).toEqual([
+      // String entries normalize to { id } tables: one shape downstream.
+      { id: 'local/*' },
+      { id: 'acme/big', thinking: 'high' },
+    ]);
+    // An empty set parses (it means all models).
+    expect(
+      parseTomlConfig('[roles.a]\nmodels = []\n').roles?.a?.models,
+    ).toEqual([]);
+    expect(() => parseTomlConfig('[roles.a]\nmodels = "local/*"\n')).toThrow(
+      /'roles\.a': 'models' must be an array/,
+    );
+    expect(() => parseTomlConfig('[roles.a]\nmodels = [["x/y"]]\n')).toThrow(
+      /nested arrays are unsupported/,
+    );
+    expect(() => parseTomlConfig('[roles.a]\nmodels = ["noid"]\n')).toThrow(
+      /'roles\.a': 'models\[0\]' must be 'provider\/id' or 'provider\/\*'/,
+    );
+    expect(() => parseTomlConfig('[roles.a]\nmodels = [42]\n')).toThrow(
+      /'roles\.a': 'models\[0\]' must be 'provider\/id' or 'provider\/\*'/,
+    );
+    // Tables land in the string-array validators nowhere else: a table in
+    // `tools` is still refused by its own checker, not the parser.
+    expect(() =>
+      parseTomlConfig('[roles.a]\ntools = ["read", { x = 1 }]\n'),
+    ).toThrow(/'roles\.a': 'tools' must be a string array/);
+    expect(() =>
+      parseTomlConfig('[roles.a]\nmodels = [{ id = "x/y" }]\n'),
+    ).not.toThrow();
+    expect(() =>
+      parseTomlConfig(
+        '[roles.a]\nmodels = [{ id = "x/y", thinking = "ultra" }]\n',
+      ),
+    ).toThrow(/'models\[0\]\.thinking' must be one of/);
+    expect(() =>
+      parseTomlConfig('[roles.a]\nmodels = [{ thinking = "low" }]\n'),
+    ).toThrow(/'roles\.a\.models\[0\]': 'id' must be a non-empty string/);
+    expect(() =>
+      parseTomlConfig('[roles.a]\nmodels = [{ id = "x/y", bogus = 1 }]\n'),
+    ).toThrow(/'roles\.a\.models\[0\]': unknown key 'bogus'/);
+  });
+
+  it('parses [model]/[roles.<name>] escalate + maxEscalations (issue #210)', () => {
+    const parsed = parseTomlConfig(
+      '[model]\nescalate = ["local/a", "acme/big"]\nmaxEscalations = 2\n' +
+        '[roles.a]\nescalate = ["local/a", "local/b"]\n',
+    );
+    expect(parsed.model?.escalate).toEqual(['local/a', 'acme/big']);
+    expect(parsed.model?.maxEscalations).toBe(2);
+    expect(parsed.roles?.a?.escalate).toEqual(['local/a', 'local/b']);
+    // Unset means no ladder, not an empty one.
+    expect(
+      parseTomlConfig('[model]\nprovider = "x"\n').model?.escalate,
+    ).toBeUndefined();
+    expect(() => parseTomlConfig('[model]\nescalate = "local/a"\n')).toThrow(
+      /'model': 'escalate' must be an array/,
+    );
+    expect(() => parseTomlConfig('[model]\nescalate = ["noid"]\n')).toThrow(
+      /'model': 'escalate\[0\]' must be 'provider\/id'/,
+    );
+    expect(() => parseTomlConfig('[model]\nescalate = ["local/*"]\n')).toThrow(
+      /'model': 'escalate\[0\]' must be 'provider\/id'/,
+    );
+    expect(() => parseTomlConfig('[model]\nmaxEscalations = -1\n')).toThrow(
+      /'model': 'maxEscalations' must be a non-negative integer/,
+    );
+    expect(() => parseTomlConfig('[model]\nmaxEscalations = 1.5\n')).toThrow(
+      /'model': 'maxEscalations' must be a non-negative integer/,
+    );
+    expect(() => parseTomlConfig('[roles.a]\nescalate = ["noid"]\n')).toThrow(
+      /'roles\.a': 'escalate\[0\]' must be 'provider\/id'/,
+    );
+  });
+
   it('rejects negative numbers and non-string role tools', () => {
     expect(() => parseTomlConfig('[journal]\nretentionDays = -1\n')).toThrow(
       /non-negative number/,
@@ -671,6 +901,32 @@ describe('config validation hardening (issue #69)', () => {
     expect(() => assertNoBudgetKeys(null)).not.toThrow();
     expect(() => assertNoBudgetKeys([])).not.toThrow();
     expect(() => assertNoBudgetKeys('budgets')).not.toThrow();
+  });
+});
+
+describe('[orchestrator] manager key (issue #431, L-D34)', () => {
+  it('parses lane and template, leaving the key absent when unset', () => {
+    expect(
+      parseTomlConfig('[orchestrator]\nmanager = "lane"\n').orchestrator
+        ?.manager,
+    ).toBe('lane');
+    expect(
+      parseTomlConfig('[orchestrator]\nmanager = "template"\n').orchestrator
+        ?.manager,
+    ).toBe('template');
+    expect(
+      parseTomlConfig('[orchestrator]\nroot = ".kubic/wt"\n').orchestrator
+        ?.manager,
+    ).toBeUndefined();
+  });
+
+  it('refuses anything but lane or template by name', () => {
+    expect(() =>
+      parseTomlConfig('[orchestrator]\nmanager = "agentic"\n'),
+    ).toThrow(/'orchestrator': 'manager' must be "lane" or "template"/);
+    expect(() => parseTomlConfig('[orchestrator]\nmanager = 7\n')).toThrow(
+      /'orchestrator': 'manager' must be "lane" or "template"/,
+    );
   });
 });
 
@@ -1058,5 +1314,30 @@ describe('[verify] section (issue #267)', () => {
     expect(() => parseTomlConfig('verify = 1\n')).toThrow(
       "'[verify]' must be a table",
     );
+  });
+});
+
+describe('checkRoleModelRef (issue #211)', () => {
+  it.each(['llama', '/x', 'x/', ''])(
+    'refuses %j with the provider/id message',
+    (ref) => {
+      expect(() => checkRoleModelRef(ref, 'implementer')).toThrow(
+        "'roles.implementer': 'model' must be 'provider/id'",
+      );
+    },
+  );
+
+  it('refuses a blank or non-string ref', () => {
+    expect(() => checkRoleModelRef('   ', 'implementer')).toThrow(
+      "'roles.implementer': 'model' must be 'provider/id'",
+    );
+    expect(() => checkRoleModelRef(42, 'implementer')).toThrow(
+      "'roles.implementer': 'model' must be 'provider/id'",
+    );
+  });
+
+  it('passes a provider/id ref and undefined through', () => {
+    expect(checkRoleModelRef('g/file', 'implementer')).toBe('g/file');
+    expect(checkRoleModelRef(undefined, 'implementer')).toBeUndefined();
   });
 });

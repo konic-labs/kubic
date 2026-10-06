@@ -7,8 +7,10 @@ import { describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { SOLO_DEFAULTS } from '../policy.js';
+import type { LoadedSkill } from './skills.js';
 import {
   discoverSkills,
+  expandSkillInvocation,
   formatSkillsForSystemPrompt,
   gateSkills,
   invokeSkill,
@@ -16,7 +18,10 @@ import {
   resolveTaskSkillRefs,
 } from './skills.js';
 
-function bridgeFromEnv(env: FakeExecutionEnv): FileBridge {
+function bridgeFromEnv(
+  env: FakeExecutionEnv,
+  links: Record<string, string> = {},
+): FileBridge {
   const isDir = (dir: string, name: string): boolean => {
     const clean = dir.replace(/\/*$/, '');
     const full = clean === '' ? name : `${clean}/${name}`;
@@ -96,6 +101,23 @@ function bridgeFromEnv(env: FakeExecutionEnv): FileBridge {
     remove: (): void => undefined,
     createTempDir: (): string => '/fake-tmp',
     createTempFile: (): string => '/fake-tmp-file',
+    // Issue #423: symlink stand-in — the fake fs cannot model links, so
+    // tests declare lexical-prefix → target mappings here. Longest prefix
+    // wins, applied iteratively so chained links resolve fully.
+    realPath: (path: string): string => {
+      let resolved = path.replace(/\/*$/, '') || '/';
+      for (let i = 0; i < 10; i++) {
+        const from = Object.keys(links)
+          .sort((a, b) => b.length - a.length)
+          .find(
+            (candidate) =>
+              resolved === candidate || resolved.startsWith(`${candidate}/`),
+          );
+        if (from === undefined) break;
+        resolved = `${links[from]}${resolved.slice(from.length)}`;
+      }
+      return resolved || '/';
+    },
   };
 }
 
@@ -132,6 +154,42 @@ describe('skill discovery (issue #36)', () => {
       'alpha',
       'beta',
     ]);
+  });
+
+  it('discovers ~/.kubic/skills as a third user root (issue #237)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${HOME}/.kubic/skills/gamma/SKILL.md`,
+      skillMd('name: gamma\ndescription: Kubic-native skill'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['gamma']);
+    expect(result.skills[0]?.source).toBe('user');
+  });
+
+  it('prefers ~/.kubic/skills over the Pi-compatible roots on name conflict (issue #237)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/lint/SKILL.md`,
+      skillMd('name: lint\ndescription: Pi-carried lint'),
+    );
+    env.fs.writeFile(
+      `${HOME}/.kubic/skills/lint/SKILL.md`,
+      skillMd('name: lint\ndescription: Kubic-native lint'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['lint']);
+    expect(result.skills[0]?.description).toBe('Kubic-native lint');
   });
 
   it('applies precedence: project shadows user on name conflict (trusted)', () => {
@@ -179,6 +237,7 @@ describe('skill discovery (issue #36)', () => {
 
   it('checks trust per ancestor: a child grant never reaches the parent (issue #228 review)', () => {
     const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
     env.fs.writeFile(
       '/repo/.pi/skills/far/SKILL.md',
       skillMd('name: far\ndescription: Far skill'),
@@ -201,6 +260,7 @@ describe('skill discovery (issue #36)', () => {
 
   it('lets a parent grant cover the parent tree from a child cwd (issue #228 review)', () => {
     const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
     env.fs.writeFile(
       '/repo/.pi/skills/far/SKILL.md',
       skillMd('name: far\ndescription: Far skill'),
@@ -223,6 +283,7 @@ describe('skill discovery (issue #36)', () => {
 
   it('loads ancestor project dirs far-to-near with nearer shadowing', () => {
     const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
     env.fs.writeFile(
       '/repo/.agents/skills/deep/SKILL.md',
       skillMd('name: deep\ndescription: Far skill'),
@@ -239,6 +300,123 @@ describe('skill discovery (issue #36)', () => {
     });
     expect(result.skills.map((skill) => skill.name)).toEqual(['deep']);
     expect(result.skills[0]?.description).toBe('Near skill');
+  });
+
+  it('stops the ancestor walk at the git top level (issue #189)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/parent/.agents/skills/outsider/SKILL.md',
+      skillMd('name: outsider\ndescription: Above the repo'),
+    );
+    env.fs.writeFile(
+      '/repo/.agents/skills/insider/SKILL.md',
+      skillMd('name: insider\ndescription: At the root'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/pkg/sub',
+      trusted: true,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['insider']);
+  });
+
+  it('loads repo-root skills from a nested cwd (issue #189)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/repo/.agents/skills/rooted/SKILL.md',
+      skillMd('name: rooted\ndescription: Repo root skill'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/a/b',
+      trusted: true,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['rooted']);
+  });
+
+  it('searches only the cwd outside a repository (issue #189)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      '/plain/.agents/skills/parent-skill/SKILL.md',
+      skillMd('name: parent-skill\ndescription: Parent skill'),
+    );
+    env.fs.writeFile(
+      '/plain/sub/.agents/skills/own-skill/SKILL.md',
+      skillMd('name: own-skill\ndescription: Own skill'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/plain/sub',
+      trusted: true,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['own-skill']);
+  });
+
+  it('ignores a package.json above the git root (issue #189)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/package.json',
+      JSON.stringify({ skills: ['./evil-skills/pwn'] }),
+    );
+    env.fs.writeFile(
+      '/evil-skills/pwn/SKILL.md',
+      skillMd('name: pwn\ndescription: Above-root package skill'),
+    );
+    env.fs.writeFile(
+      '/repo/package.json',
+      JSON.stringify({ skills: ['./repo-skills/ok'] }),
+    );
+    env.fs.writeFile(
+      '/repo/repo-skills/ok/SKILL.md',
+      skillMd('name: ok\ndescription: In-repo package skill'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/sub',
+      trusted: true,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['ok']);
+  });
+
+  it('keeps home skills user-only, never relabelled project (issue #189)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/home-skill/SKILL.md`,
+      skillMd('name: home-skill\ndescription: Home skill'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: `${HOME}/proj`,
+      trusted: true,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['home-skill']);
+    expect(result.skills[0]?.source).toBe('user');
+  });
+
+  it('never lists a user root as a project root when the repo root is $HOME (issue #189)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(`${HOME}/.git/HEAD`, 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/home-skill/SKILL.md`,
+      skillMd('name: home-skill\ndescription: Home skill'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: `${HOME}/proj`,
+      trusted: true,
+    });
+    const hits = result.skills.filter((skill) => skill.name === 'home-skill');
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.source).toBe('user');
   });
 
   it('--skill appends under --no-skills', () => {
@@ -331,6 +509,278 @@ describe('skill discovery (issue #36)', () => {
   });
 });
 
+// Package-declared skill confinement (issue #423): a package.json entry
+// naming an absolute path, a `..` escape, or a symlink resolving outside
+// the declaring ancestor never loads — each refusal carries its reason on
+// the log sink.
+describe('package-declared skill confinement (issue #423)', () => {
+  it('refuses absolute and ../-escape package entries outside the declaring dir', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/repo/pkg/package.json',
+      JSON.stringify({
+        skills: ['/abs/elsewhere/evil', '../outside', './local-ok'],
+      }),
+    );
+    env.fs.writeFile(
+      '/repo/pkg/local-ok/SKILL.md',
+      skillMd('name: ok\ndescription: Local skill'),
+    );
+    const lines: string[] = [];
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/pkg',
+      trusted: true,
+      log: (line) => {
+        lines.push(line);
+      },
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['ok']);
+    expect(
+      lines.filter((line) => /outside trusted root/.test(line)),
+    ).toHaveLength(2);
+    // Review on #423: the refusals are reported, not just logged —
+    // both entries land in `skipped` with reasons (issue #238 surface).
+    expect(result.skipped).toEqual([
+      {
+        name: 'evil',
+        filePath: '/abs/elsewhere/evil/SKILL.md',
+        source: 'package',
+        status: 'excluded',
+        reason:
+          "package skill '/abs/elsewhere/evil' outside trusted root '/repo/pkg'",
+      },
+      {
+        name: 'outside',
+        filePath: '/repo/outside/SKILL.md',
+        source: 'package',
+        status: 'excluded',
+        reason:
+          "package skill '/repo/outside' outside trusted root '/repo/pkg'",
+      },
+    ]);
+  });
+
+  it('refuses a package entry whose symlink resolves outside the declaring dir', () => {
+    const env = new FakeExecutionEnv({});
+    const bridge = bridgeFromEnv(env, {
+      '/repo/pkg/linked': '/outside/real',
+    });
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/repo/pkg/package.json',
+      JSON.stringify({ skills: ['./linked'] }),
+    );
+    // Present at the lexical path (the link itself is readable); the
+    // realPath stand-in above resolves it outside the repo.
+    env.fs.writeFile(
+      '/repo/pkg/linked/SKILL.md',
+      skillMd('name: smuggled\ndescription: Via symlink'),
+    );
+    const lines: string[] = [];
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/pkg',
+      trusted: true,
+      log: (line) => {
+        lines.push(line);
+      },
+    });
+    expect(result.skills).toEqual([]);
+    expect(lines.some((line) => /outside trusted root/.test(line))).toBe(true);
+  });
+
+  it('fails closed when realPath throws (a transient failure must not load)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/repo/pkg/package.json',
+      JSON.stringify({ skills: ['./maybe-link'] }),
+    );
+    // Readable at the lexical path — without fail-closed this loads.
+    env.fs.writeFile(
+      '/repo/pkg/maybe-link/SKILL.md',
+      skillMd('name: maybe\ndescription: Maybe'),
+    );
+    const throwing: FileBridge = {
+      ...bridge,
+      realPath: () => {
+        throw new Error('EIO');
+      },
+    };
+    const lines: string[] = [];
+    const result = discoverSkills({
+      bridge: throwing,
+      homeDir: HOME,
+      cwd: '/repo/pkg',
+      trusted: true,
+      log: (line) => {
+        lines.push(line);
+      },
+    });
+    expect(result.skills).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        name: 'maybe-link',
+        filePath: '/repo/pkg/maybe-link/SKILL.md',
+        source: 'package',
+        status: 'error',
+        reason:
+          "package skill '/repo/pkg/maybe-link' unresolvable under trusted root '/repo/pkg' (realPath failed)",
+      },
+    ]);
+    expect(lines.some((line) => /unresolvable/.test(line))).toBe(true);
+  });
+
+  it('keeps a package entry whose symlink resolves inside the declaring dir', () => {
+    const env = new FakeExecutionEnv({});
+    const bridge = bridgeFromEnv(env, {
+      '/repo/pkg/alias': '/repo/pkg/real',
+    });
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/repo/pkg/package.json',
+      JSON.stringify({ skills: ['./alias'] }),
+    );
+    env.fs.writeFile(
+      '/repo/pkg/alias/SKILL.md',
+      skillMd('name: inner\ndescription: Inside link'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/pkg',
+      trusted: true,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['inner']);
+  });
+});
+
+describe('skipped-skill reporting (issue #238)', () => {
+  it('names untrusted project skills as excluded with the reason', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${CWD}/.pi/skills/hidden-gem/SKILL.md`,
+      skillMd('name: hidden-gem\ndescription: Left out'),
+    );
+    const lines: string[] = [];
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      log: (line) => {
+        lines.push(line);
+      },
+    });
+    expect(result.skills).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        name: 'hidden-gem',
+        filePath: `${CWD}/.pi/skills/hidden-gem/SKILL.md`,
+        source: 'project',
+        status: 'excluded',
+        reason: expect.stringContaining('untrusted'),
+      },
+    ]);
+    expect(lines.some((line) => /untrusted cwd/.test(line))).toBe(true);
+  });
+
+  it('excludes only the untrusted ancestors under per-path trust', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/repo/.pi/skills/far/SKILL.md',
+      skillMd('name: far\ndescription: Far skill'),
+    );
+    env.fs.writeFile(
+      '/repo/pkg/.pi/skills/near/SKILL.md',
+      skillMd('name: near\ndescription: Near skill'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/pkg',
+      trusted: false,
+      trustProject: (dir) => dir === '/repo/pkg',
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['near']);
+    expect(result.skipped).toEqual([
+      {
+        name: 'far',
+        filePath: '/repo/.pi/skills/far/SKILL.md',
+        source: 'project',
+        status: 'excluded',
+        reason: expect.stringContaining('/repo'),
+      },
+    ]);
+  });
+
+  it('reports an unreadable SKILL.md as an error with its reason', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/broken/SKILL.md`,
+      skillMd('name: broken\ndescription: Unreadable'),
+    );
+    const unreadable: FileBridge = {
+      ...bridge,
+      readTextFile: (path: string): string => {
+        if (path.endsWith('/broken/SKILL.md')) throw new Error('EACCES');
+        return bridge.readTextFile(path);
+      },
+    };
+    const lines: string[] = [];
+    const result = discoverSkills({
+      bridge: unreadable,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      log: (line) => {
+        lines.push(line);
+      },
+    });
+    expect(result.skills).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        name: 'broken',
+        filePath: `${HOME}/.agents/skills/broken/SKILL.md`,
+        source: 'user',
+        status: 'error',
+        reason: expect.stringContaining('unreadable'),
+      },
+    ]);
+    expect(lines.some((line) => /unreadable/.test(line))).toBe(true);
+  });
+
+  it('reports confined-away package entries as excluded skips (issue #423)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
+    env.fs.writeFile(
+      '/repo/pkg/package.json',
+      JSON.stringify({ skills: ['/abs/elsewhere/evil'] }),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/pkg',
+      trusted: true,
+    });
+    expect(result.skills).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        name: 'evil',
+        filePath: '/abs/elsewhere/evil/SKILL.md',
+        source: 'package',
+        status: 'excluded',
+        reason: expect.stringContaining('outside trusted root'),
+      },
+    ]);
+  });
+});
+
 describe('role scoping and capability gating (issue #36)', () => {
   it('hides role-restricted skills from other roles with a reason', () => {
     const { env, bridge } = setup();
@@ -388,6 +838,26 @@ describe('role scoping and capability gating (issue #36)', () => {
     ]);
     expect(logged.join('\n')).toContain('writer');
     expect(logged.join('\n')).toContain('write');
+  });
+
+  // Issue #181 (§29.4): no role on the lane means no role scoping — the
+  // capability check alone decides, so a plain run keeps role-scoped
+  // skills it can actually run.
+  it('skips role scoping when the lane booted with no role', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/deploy/SKILL.md`,
+      skillMd('name: deploy\ndescription: Deploy\nroles: [implementer]'),
+    );
+    const { skills } = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+    });
+    const gated = gateSkills(skills, { classes: SOLO_DEFAULTS });
+    expect(gated.visible.map((skill) => skill.name)).toEqual(['deploy']);
+    expect(gated.withheld).toEqual([]);
   });
 
   it('emits one XML block per visible skill with name/description/filePath', () => {
@@ -581,7 +1051,7 @@ describe('explicit skill loading hardening (issue #69)', () => {
     expect(lines.some((line) => /unreadable/.test(line))).toBe(true);
   });
 
-  it('logs unknown --skill names without failing', () => {
+  it('reports unknown --skill names without failing (issue #177)', () => {
     const { bridge } = setup();
     const lines: string[] = [];
     const result = discoverSkills({
@@ -595,7 +1065,10 @@ describe('explicit skill loading hardening (issue #69)', () => {
       },
     });
     expect(result.skills).toEqual([]);
-    expect(lines.some((line) => /unknown skill/.test(line))).toBe(true);
+    // The loader stays fail-open, but the miss is reported for the
+    // caller's stderr warning — never only a debug-log line.
+    expect(result.unknownSkills).toEqual(['ghost-skill']);
+    expect(lines.some((line) => /unknown skill/.test(line))).toBe(false);
   });
 
   it('loads a direct .md --skill path', () => {
@@ -696,24 +1169,169 @@ describe('explicit skill loading hardening (issue #69)', () => {
   });
 });
 
+// Explicit skill paths anchor at the invoking cwd (issue #177, §29.2/§29.3):
+// `./rel-skill`, `rel-skill` and `../up/skill` load from cwd-relative
+// locations, `rel/SKILL.md` never consults the bridge's own root, and a
+// stray filesystem-root hit never wins over the discovery roots.
+describe('explicit skill paths anchor at the invoking cwd (issue #177)', () => {
+  it('loads --skill ./rel-skill from the cwd', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${CWD}/rel-skill/SKILL.md`,
+      skillMd('name: rel\ndescription: Rel'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['./rel-skill'],
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['rel']);
+    expect(result.skills[0]?.filePath).toBe(`${CWD}/rel-skill/SKILL.md`);
+    expect(result.unknownSkills).toEqual([]);
+  });
+
+  it('loads a bare --skill name from the cwd when no root provides it', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${CWD}/local/SKILL.md`,
+      skillMd('name: local\ndescription: Local'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['local'],
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['local']);
+    expect(result.unknownSkills).toEqual([]);
+  });
+
+  it('prefers the discovery roots over the cwd for a bare name', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/shared/SKILL.md`,
+      skillMd('name: shared\ndescription: From root'),
+    );
+    env.fs.writeFile(
+      `${CWD}/shared/SKILL.md`,
+      skillMd('name: shared\ndescription: From cwd'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['shared'],
+    });
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0]?.description).toBe('From root');
+  });
+
+  it('loads --skill ../up/skill above the cwd', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      '/fakehome/up/skill/SKILL.md',
+      skillMd('name: upsy\ndescription: Up'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['../up/skill'],
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['upsy']);
+    expect(result.unknownSkills).toEqual([]);
+  });
+
+  it('loads --skill rel/SKILL.md against the cwd, not the bridge root', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${CWD}/rel/SKILL.md`,
+      skillMd('name: relfile\ndescription: Rel file'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['rel/SKILL.md'],
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['relfile']);
+    expect(result.unknownSkills).toEqual([]);
+  });
+
+  it('resolves relative settings skill dirs against the cwd', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${CWD}/team/SKILL.md`,
+      skillMd('name: team\ndescription: Team'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      settingsSkills: ['./team'],
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['team']);
+    expect(result.skills[0]?.source).toBe('settings');
+  });
+
+  it('never probes the filesystem root for a bare name', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      '/planted/SKILL.md',
+      skillMd('name: planted\ndescription: Planted'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['planted'],
+    });
+    expect(result.skills).toEqual([]);
+    expect(result.unknownSkills).toEqual(['planted']);
+  });
+});
+
 describe('skill gating and invocation hardening (issue #69)', () => {
   it('escapes XML metacharacters in the system prompt', () => {
     const xml = formatSkillsForSystemPrompt([
       {
-        name: 'a&b<c>d',
-        description: 'x&y<z>',
+        name: 'a&b<c>d"e\'f',
+        description: 'x&y<z>"q"',
         filePath: '/p/SKILL.md',
         source: 'user',
         content: 'c',
       },
     ]);
-    expect(xml).toContain('a&amp;b&lt;c&gt;d');
-    expect(xml).toContain('x&amp;y&lt;z&gt;');
+    expect(xml).toContain('a&amp;b&lt;c&gt;d&quot;e&apos;f');
+    expect(xml).toContain('x&amp;y&lt;z&gt;&quot;q&quot;');
     expect(xml).not.toContain('a&b');
   });
 
   it('throws on unknown explicit skill names', () => {
     expect(() => invokeSkill([], 'ghost')).toThrow(/unknown skill/);
+  });
+
+  it('expands an explicit invocation to the skill content plus instructions (issue #183)', () => {
+    const skills = [
+      { name: 'secret', content: 'Hidden content.' },
+      { name: 'open', content: 'Open content.' },
+    ] as LoadedSkill[];
+    expect(expandSkillInvocation(skills, 'secret', 'do x')).toBe(
+      'Hidden content.\n\ndo x',
+    );
+    expect(expandSkillInvocation(skills, 'open')).toBe('Open content.');
+    expect(expandSkillInvocation(skills, 'open', '  ')).toBe('Open content.');
+    expect(() => expandSkillInvocation(skills, 'ghost', 'do x')).toThrow(
+      /unknown skill 'ghost'/,
+    );
   });
 
   it('reports unknown task refs with the unknown-skill reason', () => {
@@ -725,5 +1343,91 @@ describe('skill gating and invocation hardening (issue #69)', () => {
     expect(resolved.withheld).toEqual([
       { name: 'ghost', reason: "unknown skill 'ghost'" },
     ]);
+  });
+});
+
+// Pi skill-contract parity (issue #186, §29): the canonical kebab-case
+// `disable-model-invocation`, block sequences and folded/literal scalars
+// for the contract keys, and recursive discovery. Deeper YAML (anchors,
+// tags, nested maps, indent indicators) stays plain values by design.
+describe('Pi skill-contract parity (issue #186)', () => {
+  it('hides disable-model-invocation skills, keeping camelCase as an alias', () => {
+    const kebab = parseSkillFile(
+      '/x/hide/SKILL.md',
+      '---\nname: hide\ndisable-model-invocation: true\n---\nBody.\n',
+    );
+    expect(kebab.disableModelInvocation).toBe(true);
+    const camel = parseSkillFile(
+      '/x/hide/SKILL.md',
+      '---\nname: hide\ndisableModelInvocation: true\n---\nBody.\n',
+    );
+    expect(camel.disableModelInvocation).toBe(true);
+    const plain = parseSkillFile('/x/hide/SKILL.md', '---\nname: hide\n---\n');
+    expect(plain.disableModelInvocation).toBeUndefined();
+    // Hidden means hidden: neither spelling reaches the prompt block.
+    const xml = formatSkillsForSystemPrompt([
+      { ...kebab, source: 'user' },
+      { ...camel, name: 'hide2', source: 'user' },
+    ]);
+    expect(xml).not.toContain('hide');
+  });
+
+  it('folds > descriptions and keeps | newlines', () => {
+    const folded = parseSkillFile(
+      '/x/f/SKILL.md',
+      '---\nname: f\ndescription: >\n  Line one\n  line two\n---\nBody.\n',
+    );
+    expect(folded.description).toBe('Line one line two');
+    const literal = parseSkillFile(
+      '/x/f/SKILL.md',
+      '---\nname: f\ndescription: |\n  Line one\n  line two\n---\nBody.\n',
+    );
+    expect(literal.description).toBe('Line one\nline two');
+    const stripped = parseSkillFile(
+      '/x/f/SKILL.md',
+      '---\nname: f\ndescription: |-\n  Line one\n  line two\n---\nBody.\n',
+    );
+    expect(stripped.description).toBe('Line one\nline two');
+  });
+
+  it('parses block-list roles and tools, stripping quotes', () => {
+    const parsed = parseSkillFile(
+      '/x/b/SKILL.md',
+      '---\nname: b\nroles:\n  - reviewer\n  - "plan ner"\ntools:\n  - read\n  - write\n---\nBody.\n',
+    );
+    expect(parsed.roles).toEqual(['reviewer', 'plan ner']);
+    expect(parsed.requiredTools).toEqual(['read', 'write']);
+  });
+
+  it('reads an empty value with indented non-list text as absent', () => {
+    const parsed = parseSkillFile(
+      '/x/b/SKILL.md',
+      '---\nname: b\nroles:\n  just some text\ntools: [read]\n---\nBody.\n',
+    );
+    expect(parsed.roles).toBeUndefined();
+    expect(parsed.requiredTools).toEqual(['read']);
+  });
+
+  it('discovers nested skill dirs, skipping dot-dirs and node_modules', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/outer/nested/SKILL.md`,
+      skillMd('name: nested\ndescription: Deep'),
+    );
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/.hidden/SKILL.md`,
+      skillMd('name: hidden\ndescription: Nope'),
+    );
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/node_modules/dep/SKILL.md`,
+      skillMd('name: dep\ndescription: Nope'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['nested']);
   });
 });

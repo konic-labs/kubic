@@ -126,15 +126,6 @@ export function readWorkerRows(bridge: FileBridge, path: string): WorkerRow[] {
   return payload.rows.filter(isRow).map(normalized);
 }
 
-// Convenience for a caller holding a registry: snapshot it into the file.
-export function persistWorkerRows(
-  bridge: FileBridge,
-  path: string,
-  rows: readonly WorkerRow[],
-): void {
-  writeWorkerRows(bridge, path, rows);
-}
-
 // Where a repo's rows live: `<repo>/.kubic/orchestrator/workers.json`, the
 // same dir the run state uses (§35 keeps `.kubic/` out of the commit path).
 export function workerRowsPath(repo: string): string {

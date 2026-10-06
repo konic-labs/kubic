@@ -4,6 +4,8 @@
 // the exec Shell seam (`git -C <path> status`, explicit argv).
 
 import type { ExecutionEnv, Provenance } from '../../../../exec/src/env.js';
+import type { GitRename } from '../../../../worker/src/ops/git.js';
+import { parsePorcelainStatus } from '../../../../worker/src/ops/git.js';
 import {
   isSpawnedWorktreePath,
   isSpawnedWorktreeShape,
@@ -14,11 +16,14 @@ import { DEFAULT_WORKTREE_ROOT } from './naming.js';
 
 export interface WorktreeStatus {
   path: string;
-  branch: string;
+  /** Current branch, or null when the worktree HEAD is detached. */
+  branch: string | null;
   clean: boolean;
   staged: string[];
   unstaged: string[];
   untracked: string[];
+  /** Rename/copy records, by new path with the old path available. */
+  renames: GitRename[];
 }
 
 export type SettledWorktree = WorktreeEntry & {
@@ -81,7 +86,7 @@ export async function getWorktreeStatus(
   };
   const handle = env.shell.spawn(
     'git',
-    ['-C', path, 'status', '--porcelain=v1', '-b'],
+    ['-C', path, 'status', '--porcelain=v2', '-z', '-b'],
     { provenance },
   );
   const done = await handle.wait();
@@ -92,37 +97,17 @@ export async function getWorktreeStatus(
       1,
     );
   }
-  let branch = '(unknown)';
-  const staged: string[] = [];
-  const unstaged: string[] = [];
-  const untracked: string[] = [];
-  for (const line of done.stdout.split('\n')) {
-    if (line.startsWith('## ')) {
-      const head = line.slice(3);
-      branch = (head.split('...')[0] ?? head).trim() || '(unknown)';
-      if (branch.startsWith('No commits yet on ')) {
-        branch = branch.slice('No commits yet on '.length);
-      }
-      continue;
-    }
-    if (line.length < 4) continue;
-    const x = line[0];
-    const y = line[1];
-    const file = line.slice(3).trim();
-    if (x === '?' && y === '?') {
-      if (file !== '') untracked.push(file);
-      continue;
-    }
-    if (x !== undefined && x !== ' ' && file !== '') staged.push(file);
-    if (y !== undefined && y !== ' ' && file !== '') unstaged.push(file);
-  }
+  // The worker's porcelain v2 parser (issue #388): NUL-delimited records
+  // mean paths round-trip unquoted, renames arrive as new path + old path
+  // (never v1's `old -> new` string), and detached HEAD is branch null.
+  const parsed = parsePorcelainStatus(done.stdout);
   return {
     path,
-    branch,
-    clean:
-      staged.length === 0 && unstaged.length === 0 && untracked.length === 0,
-    staged,
-    unstaged,
-    untracked,
+    branch: parsed.branch,
+    clean: parsed.clean,
+    staged: parsed.staged,
+    unstaged: parsed.unstaged,
+    untracked: parsed.untracked,
+    renames: parsed.renames,
   };
 }

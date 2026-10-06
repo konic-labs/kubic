@@ -3,13 +3,13 @@
 // builders with honest messages; provider-down maps to exit 6; --json
 // matches the #29 envelope shape. Faux-only: injected values, no I/O.
 import { describe, expect, it } from 'vitest';
+import { MCP_ARRIVAL_REQUIREMENTS } from '../config/stances.js';
 import type { DoctorCheck } from '../doctor.js';
 import { runDoctorCommand } from '../doctor.js';
 import { RUN_EXIT_PROVIDER_PROBE_FAILED } from '../run-cli.js';
 import {
   buildLimitsJsonReport,
   collectLimitChecks,
-  collectLimitChecksFromDeps,
   depsLimitCheck,
   LIMITS_DOCTOR_EXIT_FAIL,
   LIMITS_DOCTOR_EXIT_OK,
@@ -105,6 +105,18 @@ describe('doctor matrix (issue #58)', () => {
     });
     expect(check.status).toBe('fail');
     expect(check.reason).toBe('policy-mismatch');
+  });
+
+  it('config-level mcp refusal names the §33 arrival requirements', () => {
+    const check = policyEnforceabilityCheck({
+      route: 'ask-user',
+      autoApprove: [],
+      mcp: { servers: [] },
+    });
+    expect(check.status).toBe('fail');
+    for (const req of MCP_ARRIVAL_REQUIREMENTS) {
+      expect(check.detail).toContain(req);
+    }
   });
 
   it('config-level mcp key fails the same honest way', () => {
@@ -247,29 +259,6 @@ describe('collectLimitChecks (issue #58)', () => {
     expect(ids).toContain('limit:provider-availability');
     expect(ids).toContain('limit:deps-present');
     expect(ids).toContain('policy:enforceability');
-  });
-
-  it('never throws on throwing probes — it reports them', () => {
-    const checks = collectLimitChecksFromDeps({
-      probeProviders: () => {
-        throw new Error('probe exploded');
-      },
-      checkDeps: () => [{ id: 'node', ok: true }],
-      loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
-    });
-    const provider = checks.find(
-      (check) => check.id === 'limit:provider-availability',
-    );
-    expect(provider?.status).toBe('fail');
-    expect(provider?.reason).toBe('provider-down');
-    expect(provider?.detail).toBe('probe exploded');
-    // The other sections still ran: one throwing probe is not a crash.
-    expect(
-      checks.find((check) => check.id === 'limit:deps-present')?.status,
-    ).toBe('pass');
-    expect(
-      checks.find((check) => check.id === 'policy:enforceability')?.status,
-    ).toBe('pass');
   });
 });
 

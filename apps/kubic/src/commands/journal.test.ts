@@ -78,7 +78,16 @@ async function kubic(
 
 describe('journal commands: generated help (exit 0, no runner)', () => {
   const cases: readonly (readonly [readonly string[], readonly string[]])[] = [
-    [['diff'], ['--path <path>', '--agent <id>', '--max-content-bytes <n>']],
+    [
+      ['diff'],
+      [
+        '[path]',
+        '--path <path>',
+        '--stat',
+        '--agent <id>',
+        '--max-content-bytes <n>',
+      ],
+    ],
     [['undo'], ['[path]', '--step', '--dry-run', '--force']],
     [['log'], ['--session <id>', '--json']],
     [['status'], ['--session <id>', '--json']],
@@ -133,7 +142,11 @@ describe('journal commands: usage errors exit 2 on stderr, no runner', () => {
     [['diff', '--max-content-bytes', 'abc'], /non-negative integer/],
     [['diff', '--max-content-bytes', '-1'], /non-negative integer/],
     [['diff', '--max-content-bytes', '1.5'], /non-negative integer/],
-    [['diff', 'stray'], /too many arguments/],
+    [['diff', 'a.txt', 'b.txt'], /too many arguments/],
+    [
+      ['diff', '--path', 'a.txt', 'b.txt'],
+      /^error: --path 'a.txt' conflicts with path operand 'b.txt' — give one path/,
+    ],
     [['undo', 'a.txt', 'b.txt'], /too many arguments/],
     [['log', 'stray'], /too many arguments/],
     [['git'], /^error: git needs a subcommand/],
@@ -167,6 +180,7 @@ describe('journal commands: parsed requests reach the runner', () => {
       '--path',
       'src/a.ts',
       '--agent=w1',
+      '--stat',
       '--max-content-bytes',
       '0',
       '--session',
@@ -179,11 +193,26 @@ describe('journal commands: parsed requests reach the runner', () => {
         command: 'diff',
         path: 'src/a.ts',
         agent: 'w1',
+        stat: true,
         maxContentBytes: 0,
         session: 'journal:s-1',
         json: true,
       },
     ]);
+  });
+
+  // Issue #271: `kubic diff <path>` scopes like `--path` — the operand
+  // was never declared, so commander rejected it as excess.
+  it('diff takes the path operand, equivalent to --path', async () => {
+    const r = await kubic(['diff', 'src/a.ts']);
+    expect(r.code).toBe(0);
+    expect(r.journal).toEqual([{ command: 'diff', path: 'src/a.ts' }]);
+  });
+
+  it('diff accepts the same path twice (operand and --path agree)', async () => {
+    const r = await kubic(['diff', '--path', 'src/a.ts', 'src/a.ts']);
+    expect(r.code).toBe(0);
+    expect(r.journal).toEqual([{ command: 'diff', path: 'src/a.ts' }]);
   });
 
   it('a bare command sends only its name', async () => {

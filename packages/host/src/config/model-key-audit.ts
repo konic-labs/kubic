@@ -24,6 +24,12 @@ export interface LedgerModelKeyResolverOptions {
   onError?: (message: string) => void;
   /** The run's provider/model ids: a key that is one of them is identity. */
   identity?: () => readonly string[];
+  /**
+   * Runs a `!command` secret ref (issue #224): the production runner in
+   * the run boots, a fake in tests. Required — a run without one refuses
+   * command refs by name instead of leaving them unwired.
+   */
+  runCommand: (argv: string[]) => string | Promise<string>;
 }
 
 export function createLedgerModelKeyResolver(
@@ -34,6 +40,7 @@ export function createLedgerModelKeyResolver(
   const resolver = createModelKeyResolver({
     role: options.role,
     ...(options.identity === undefined ? {} : { identity: options.identity }),
+    runCommand: options.runCommand,
     audit: (event) => {
       appendToLedger(
         dir,

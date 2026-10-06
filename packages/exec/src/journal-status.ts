@@ -10,10 +10,43 @@ import {
   createNodeFileBridge,
   type FileBridge,
 } from './file-bridge.js';
-import { type FileJournalStore, isUndoableCreate } from './journal.js';
+import {
+  type FileJournalStore,
+  type HeadState,
+  isUndoableCreate,
+} from './journal.js';
+
+/** Issue #378: one side of a head-moved marker, human-readable. */
+export function formatHeadState(state: HeadState): string {
+  const stash = state.stash > 0 ? ` (stash ${state.stash})` : '';
+  return `${state.branch}@${state.head.slice(0, 12)}${stash}`;
+}
+
+/** Issue #378: `from -> to` for a marker, a status warning, an undo refusal. */
+export function formatHeadMove(from: HeadState, to: HeadState): string {
+  return `${formatHeadState(from)} -> ${formatHeadState(to)}`;
+}
 
 export function renderLog(store: FileJournalStore): string[] {
   return store.entries().map((e) => {
+    // Issue #378: markers are not file rows — one greppable line naming
+    // the move, in the same column shape as every other line.
+    if (
+      e.op === 'marker' &&
+      e.headFrom !== undefined &&
+      e.headTo !== undefined
+    ) {
+      return [
+        new Date(e.timestamp).toISOString(),
+        e.agentId,
+        e.toolCallId ?? 'none',
+        e.op,
+        '(HEAD)',
+        '+0B',
+        'reconciled',
+        `head-moved ${formatHeadMove(e.headFrom, e.headTo)}`,
+      ].join(' ');
+    }
     const parts = [
       new Date(e.timestamp).toISOString(),
       e.agentId,
@@ -32,6 +65,16 @@ export interface RepoState {
   // null when git is unavailable or the query fails: reported as unknown,
   // never guessed.
   dirty: boolean | null;
+  // Issue #380: the repo root (`rev-parse --show-toplevel`), null when it
+  // cannot be read.
+  repoRoot: string | null;
+  // Ahead/behind against the upstream: null when there is no upstream or
+  // it cannot be read.
+  ahead: number | null;
+  behind: number | null;
+  // Paths with unresolved merge conflicts (never null: no conflicts is
+  // the empty list).
+  conflicts: string[];
 }
 
 export interface JournalStatus {
@@ -57,6 +100,9 @@ export interface JournalStatus {
   // (that counts missing content); a dropped line has no entry at all, so
   // nothing else in this object would show it.
   corruptLines: number;
+  // Issue #378: every HEAD move the sweeps observed, oldest first. `undo`
+  // refuses to restore entries from before a move without `--force`.
+  headMoves: { from: HeadState; to: HeadState }[];
   repo: RepoState | null;
 }
 
@@ -130,7 +176,63 @@ function readRepo(root: string): RepoState | null {
   } catch {
     dirty = null;
   }
-  return { branch, dirty };
+  // Each query degrades independently: a repo without an upstream still
+  // reports its root, and a failed rev-list never takes conflicts with it.
+  let repoRoot: string | null = null;
+  try {
+    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: root,
+      timeout: 10_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .toString()
+      .trim();
+    repoRoot = top === '' ? null : top;
+  } catch {
+    repoRoot = null;
+  }
+  let ahead: number | null = null;
+  let behind: number | null = null;
+  try {
+    const counts = execFileSync(
+      'git',
+      ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'],
+      { cwd: root, timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] },
+    )
+      .toString()
+      .trim()
+      .split(/\s+/);
+    if (counts.length === 2) {
+      ahead = Number(counts[0]);
+      behind = Number(counts[1]);
+      if (!Number.isInteger(ahead) || !Number.isInteger(behind)) {
+        ahead = null;
+        behind = null;
+      }
+    }
+  } catch {
+    ahead = null;
+    behind = null;
+  }
+  let conflicts: string[] = [];
+  try {
+    conflicts = execFileSync(
+      'git',
+      ['diff', '--name-only', '--diff-filter=U'],
+      {
+        cwd: root,
+        timeout: 10_000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    )
+      .toString()
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '');
+  } catch {
+    conflicts = [];
+  }
+  return { branch, dirty, repoRoot, ahead, behind, conflicts };
 }
 
 export function journalStatus(
@@ -141,7 +243,20 @@ export function journalStatus(
   let reversible = 0;
   let unattributed = 0;
   let corrupt = 0;
+  const headMoves: { from: HeadState; to: HeadState }[] = [];
   for (const e of entries) {
+    // Issue #378: the marker counts as journaled work (unattributed and,
+    // with nothing to restore, non-reversible) and its move is collected
+    // for the warning — never a corruption count.
+    if (
+      e.op === 'marker' &&
+      e.headFrom !== undefined &&
+      e.headTo !== undefined
+    ) {
+      unattributed++;
+      headMoves.push({ from: e.headFrom, to: e.headTo });
+      continue;
+    }
     const before = store.readBefore(e);
     // An agent create reverts by removal: its pre-state is "absent".
     if (before !== null || isUndoableCreate(e)) reversible++;
@@ -168,6 +283,7 @@ export function journalStatus(
     unattributed,
     corrupt,
     corruptLines,
+    headMoves,
     repo: readRepo(root),
   };
 }
@@ -179,7 +295,15 @@ export function journalStatus(
 // "0 of 0" is the honest answer, and it keeps the surface's shape stable
 // for scripts.
 export function reconciliationSummary(store: FileJournalStore): string {
-  const entries = store.entries();
+  return reconciliationSummaryFor(store.entries());
+}
+
+// Issue #364: the same line over an already-merged entry list — `log
+// --session <orch>` counts the orchestration's workers together with its
+// own journal instead of reporting the primary store alone.
+export function reconciliationSummaryFor(
+  entries: readonly { unattributed?: boolean }[],
+): string {
   const unattributed = entries.filter((e) => e.unattributed === true).length;
   return `unattributed: ${unattributed} of ${entries.length} entr(ies) reconciled at run end`;
 }

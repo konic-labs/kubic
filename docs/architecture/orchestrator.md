@@ -20,9 +20,9 @@ solo) — and `run` never delegates.
 
 - **The CLI registers the manager lane, then plans and merges.** The
   `kubic orchestrate` process registers its toolset through the §40
-  allowlist before anything spawns — the lane runs with exactly those ten
-  tools, and a lane that would carry an exec tool refuses to start rather
-  than running with one. It then reads `--agents`, authors a plan (one step
+  allowlist before anything spawns — the lane runs with exactly those
+  fourteen tools, and a lane that would carry an exec tool refuses to
+  start rather than running with one. It then reads `--agents`, authors a plan (one step
   per worker, in agent order), creates one worktree per agent, spawns one
   child `kubic run` per agent, and settles them through the merge queue.
 - **Each worker runs its own plan step, under an assigned role.** The
@@ -254,7 +254,10 @@ solo) — and `run` never delegates.
 - **A retained worktree reports whether it is dirty.** Each retained worktree
   gets one line after the run — `retained: <agent> branch=<b> worktree=<path>
   clean=<bool>` — and a dirty one names the files (`staged`/`unstaged`/
-  `untracked` kept apart). A status that cannot be read prints
+  `untracked` kept apart). The reader parses `git status --porcelain=v2 -z -b`
+  through the parser it shares with `git_status`, so renames arrive by new
+  path (never `old -> new`), non-ASCII/whitespace paths arrive unquoted, and
+  a detached HEAD reports `branch: null`. A status that cannot be read prints
   `clean=unknown` with the reason, never a false clean.
 
 The manager toolset the design fixes in §40/§43.1 (`spawn_agent`,
@@ -263,12 +266,48 @@ live: `packages/host/src/orchestrator/manager.ts` exports `MANAGER_ALLOWLIST`
 and the registration the run validates itself against, so the allowlist is
 what constrains delegation on this path — a requested lane that differs from
 it refuses to start with the named `ManagerToolsetError` (exit 1,
-`code=manager_toolset_refused`). The three git tools are read-only
+`code=manager_toolset_refused`). Opt-in model-driven management
+(`kubic orchestrate --manager-lane`, or `[orchestrator] manager = "lane"` —
+the default `"template"` keeps the plan above) hands the planning to the
+manager conversation instead: it calls the same fourteen tools through the
+same scheduler (concurrency, §71 budget gate and queueing rule), worktrees,
+merge queue and merge gate, and the run envelope reports its final message
+(`managerSummary` in `--json`, the text `result:` line) instead of the
+mechanical counts. `workspace_apply` stages any settled worker's change —
+completed, cancelled or failed; only a still-running worker is refused.
+The three git tools are read-only
 inspection (§43.1, issue #205): the writer git tools
 (`git_commit`/`git_stage`/`git_branch`/`git_checkpoint`) are not in the
 allowlist, so a lane carrying one refuses to start and `checkManagerCall`
 refuses the name. The root is still the CLI process rather than a
 model-driven agent; what the lane adds is the toolset gate and the plan.
+
+## The §70 review loop: verdicts, discards and the debugger bound
+
+Every settled worker gets a reviewer verdict through `review_verdict`
+(`accept`, `request-changes`, `escalate`), and the next `workspace_merge`
+executes it: `accept` (or no verdict, the shipped default) merges through
+the existing merge gate, `request-changes` records the diff under
+discarded work — branch kept for inspection, never retried by `--resume`,
+never named in `mergeOrder`, the run continuing with the survivors — and
+`escalate` routes the tester→debugger→tester loop. The loop covers failing
+*tests* (a tester completed with failing rows, which it inherits through
+the handoff with the diff ref and worktree); a crashed worker takes the
+`--on-failure` path instead and never enters the loop. The run absorbs
+`--max-attempts` debugger settlements (default 3, persisted with the
+session and re-applied on `--resume`, explicit flags winning), then the
+next debugger spawn escalates once — the `--escalation-model` rung
+overrides the spawn pin, the debugger's own model when unconfigured — and
+past bound plus escalation debugger spawns refuse (`review_loop_bound`)
+and the run fails exit 1 (`code=loop_bound_exceeded`) with the bound
+named. The manager prompt carries both sequencing rules: the review loop
+above, and the staffing skip (no planner or reviewer for trivial or
+read-only objectives). Loop state surfaces on the run's own surfaces — a
+`review loop:` text line, the envelope's `reviewLoop`, each worker row's
+`reviewVerdict` and the `discarded:` lines — while the §54 DAG keeps its
+shape (verdicts annotate the report, never the graph) and the §49.1
+trajectory stays admission-scoped (parallel conc/queue/wakeups only): the
+envelope is the loop's record, not a new trajectory kind.
 
 ## Worker lifecycle: crash and replacement
 
@@ -283,6 +322,31 @@ bound is one replacement: a second crash is terminal (`worker_failed`, naming
 both generations). A launch that never became ready, and every budget /
 approval / workspace / provider terminus, is **not** replaceable — a fresh
 child cannot fix a decision or a setup failure.
+
+## Retry strategies (§20.6/§53, issue #209)
+
+A classified failure picks its remedy through `chooseRetry` against a
+`RetryBudget` (attempts AND cost caps, spent separately from any task
+budget), and each decision (`strategy`, `reason`, `notBefore`) is recorded.
+Who executes what:
+
+| Strategy | Executor | Status |
+|---|---|---|
+| `retry_same` (transients) | the harness's durable generation retry (#395) | shipped — Kubic never relaunches it |
+| `retry_with_new_context` (context overflow) | solo recovery: compact (#399) then one retry, live on the headless path | shipped (#209) |
+| `retry_with_different_tool` | the model, on the next turn | shipped (classifier emits it; no executor needed) |
+| `retry_with_stronger_model` | escalation (#210) | decided by `chooseRetry`, execution pending |
+| `retry_with_new_agent` | orchestrator relaunch with a handoff (#184) | decided by `chooseRetry`, execution pending |
+| `retry_with_wider_capability` | explicit approval only | never emitted by the chooser |
+| `escalate` (refusals, pollution, workspace) / `abandon` (budget, denied approvals, exhausted retry budget) | operator / nobody | shipped — neither spends retry budget |
+
+Replacement (§81, above) is NOT a retry: it replays a crashed worker's
+mandate in a fresh generation, while a retry re-attempts a classified
+failure under policy. Open follow-ups: recording the per-worker strategy
+on the orchestrate `--json` worker record + trajectory events (routed to
+the manager-lane / result-persistence owners), and the `usage.retries`
+increment the relaunch must perform before the retry-budget maxAttempts
+arm can bind.
 
 ## Concurrency
 

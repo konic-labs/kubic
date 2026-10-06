@@ -2,15 +2,71 @@
 //
 // One-way dependency rule: packages may only import "downward".
 // Forbidden edges (importer -> forbidden imported packages):
+//
+// Every non-root package forbids the `extensions` bundle facade and the
+// `kubic` composition root (issue #369): through the app root a package
+// reaches host/worker implementation transitively, which is exactly what
+// §64 forbids. Test scaffolding (`*.test.ts`) is exempt from those two
+// targets only — host/tui prod-path tests wire the real builders from
+// apps/kubic and packages/extensions, the mandated pattern — every other
+// forbidden edge still fires in tests, and extensions itself may never
+// reach the app root, tests included. A package missing from this table
+// forbids every listed target (the `??` fallback in checkTree), so a new
+// package is denied by default.
 const FORBIDDEN = {
-  core: ['exec', 'worker', 'host', 'agents', 'trajectory', 'eval', 'tui'],
-  exec: ['worker', 'host', 'agents', 'trajectory', 'eval', 'tui'],
-  worker: ['host', 'tui'],
-  host: ['tui'],
-  agents: ['host', 'worker', 'tui', 'trajectory', 'eval'],
-  trajectory: ['exec', 'worker', 'host', 'agents', 'eval', 'tui'],
-  eval: ['exec', 'worker', 'host', 'tui'],
-  tui: ['exec', 'worker', 'host', 'agents', 'trajectory', 'eval'],
+  core: [
+    'exec',
+    'worker',
+    'host',
+    'agents',
+    'trajectory',
+    'eval',
+    'tui',
+    'extensions',
+    'kubic',
+  ],
+  exec: [
+    'worker',
+    'host',
+    'agents',
+    'trajectory',
+    'eval',
+    'tui',
+    'extensions',
+    'kubic',
+  ],
+  worker: ['host', 'tui', 'extensions', 'kubic'],
+  host: ['tui', 'extensions', 'kubic'],
+  agents: [
+    'host',
+    'worker',
+    'tui',
+    'trajectory',
+    'eval',
+    'extensions',
+    'kubic',
+  ],
+  trajectory: [
+    'exec',
+    'worker',
+    'host',
+    'agents',
+    'eval',
+    'tui',
+    'extensions',
+    'kubic',
+  ],
+  eval: ['exec', 'worker', 'host', 'tui', 'extensions', 'kubic'],
+  tui: [
+    'exec',
+    'worker',
+    'host',
+    'agents',
+    'trajectory',
+    'eval',
+    'extensions',
+    'kubic',
+  ],
   // extensions sits above the library layers it dogfoods (core/exec/agents/
   // trajectory/eval) but below the runtime implementations: a bundle facade
   // must never reach into worker/host/tui implementation or the app root.
@@ -84,6 +140,20 @@ export function checkTree(root) {
     const forbidden = new Set(FORBIDDEN[owner] ?? Object.keys(FORBIDDEN));
     for (const file of tsFiles(srcDir)) {
       const content = readFileSync(file, 'utf8');
+      // Test-scaffolding exemption (issues #369, #387): prod-path tests
+      // wire the real builders, so `*.test.ts` may reach the `extensions`
+      // facade. The `kubic` root is NOT exempt: since #387 the composition
+      // root's behaviour tests live under apps/kubic, so a package test
+      // reaching the app root is a dependency inversion. extensions itself
+      // keeps its absolute bar on the app root — a bundle facade test must
+      // never boot the whole app.
+      const testExempt =
+        file.endsWith('.test.ts') &&
+        owner !== 'kubic' &&
+        owner !== 'extensions';
+      const forbiddenForFile = testExempt
+        ? new Set([...forbidden].filter((t) => t !== 'extensions'))
+        : forbidden;
       for (const m of content.matchAll(IMPORT_RE)) {
         const spec = m[1] ?? m[2];
         if (
@@ -131,7 +201,7 @@ export function checkTree(root) {
           continue;
         }
         const target = resolveTarget(owner, file, spec, root);
-        if (target && forbidden.has(target)) {
+        if (target && forbiddenForFile.has(target)) {
           const line = content.slice(0, m.index).split('\n').length;
           violations.push({
             from: owner,

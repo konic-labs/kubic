@@ -1,3 +1,5 @@
+import { createSocket } from 'node:dgram';
+
 // Production wiring for the command dispatch (issue #135): one runner per
 // command in the if-chain, built from the same objects `main()` built
 // inline before the extraction. This module is the composition root's prod
@@ -10,6 +12,8 @@
 // fail-closed instead of scoring fiction (the refusal is pinned verbatim
 // by dispatch.test.ts).
 
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import {
   EXIT_FAILED,
   EXIT_USAGE,
@@ -32,6 +36,7 @@ import {
   runEvalCommand,
 } from '../../../packages/eval/src/cli.js';
 import { runExportCommand as runTrajectoryExportCommand } from '../../../packages/eval/src/export-cli.js';
+import { confinedStatePath } from '../../../packages/exec/src/confined-path.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { isGitWorktreeClean } from '../../../packages/exec/src/git-clean.js';
@@ -54,6 +59,11 @@ import type {
 } from '../../../packages/host/src/doctor.js';
 import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
 import {
+  describeFullAccessSession,
+  type FullAccessSession,
+  listFullAccessSessions,
+} from '../../../packages/host/src/doctor-full-access.js';
+import {
   FAUX_NOTICE,
   fauxProviderActive,
 } from '../../../packages/host/src/faux-provider.js';
@@ -72,19 +82,27 @@ import {
 import { runPerfCommand } from '../../../packages/host/src/ops/perf/perf-cli.js';
 import {
   ORCHESTRATE_DEFAULT_AGENTS,
+  type OrchestrateCliOptions,
   runOrchestrateCommand,
 } from '../../../packages/host/src/orchestrate-cli.js';
 import {
   cleanDepsWithDefaults,
   runCleanCommand,
 } from '../../../packages/host/src/orchestrator/worktree/clean.js';
+import { parseWorktreePorcelain } from '../../../packages/host/src/orchestrator/worktree/list.js';
+import { branchForAgent } from '../../../packages/host/src/orchestrator/worktree/naming.js';
 import {
   loadProdAuditSecrets,
   runAuditCommand,
 } from '../../../packages/host/src/policy/audit-cli.js';
 import {
   auditLedgerDirFor,
+  auditSinkSnapshot,
+  auditSinksDoctorChecks,
+  buildConfiguredSinks,
+  isSyslogTargetAvailable,
   readAuditLedger,
+  resolveRepoRuntimeRoot,
 } from '../../../packages/host/src/policy/audit-ledger.js';
 import { enterpriseDoctorChecks } from '../../../packages/host/src/policy/enterprise.js';
 import {
@@ -92,23 +110,47 @@ import {
   policyWithInstalledAllowlist,
   runPolicyCommand,
 } from '../../../packages/host/src/policy/policy-cli.js';
-import { runReplayCommand } from '../../../packages/host/src/replay/replay.js';
-import { rolesDoctorProbe } from '../../../packages/host/src/roles/roles-boot.js';
+import { findProjectRoot } from '../../../packages/host/src/project-root.js';
+import {
+  type ReplayRuntimeDeps,
+  runReplayCommand,
+} from '../../../packages/host/src/replay/replay.js';
+import {
+  rolesDoctorProbe,
+  selectRole,
+} from '../../../packages/host/src/roles/roles-boot.js';
 import {
   planWorkerRoles,
   thinkingOverrideFromEnv,
 } from '../../../packages/host/src/roles/worker-roles.js';
-import { runRunCommand } from '../../../packages/host/src/run-cli.js';
+import {
+  runRunCommand,
+  SESSION_ID_PATTERN,
+} from '../../../packages/host/src/run-cli.js';
 import {
   defaultSessionsRoot,
   runSessionsCommand,
 } from '../../../packages/host/src/sessions-cli.js';
+import { skillsDoctorProbe } from '../../../packages/host/src/skills-boot.js';
+import { runSkillsCommand } from '../../../packages/host/src/skills-cli.js';
 import { runTrustCommand } from '../../../packages/host/src/trust-cli.js';
-import { runWorkersCommand } from '../../../packages/host/src/workers-cli.js';
+import {
+  parsePsSample,
+  runWorkerInspectCommand,
+  runWorkersCommand,
+  runWorkerTerminateCommand,
+  type WorkerBudgetView,
+  type WorkerConsumption,
+  type WorkerListRow,
+  type WorkerRunView,
+  type WorkerSample,
+  type WorkerWorktreeView,
+} from '../../../packages/host/src/workers-cli.js';
 import {
   openSessionStore,
   sessionsTouchingWorkspace,
 } from '../../../packages/worker/src/lane/session-store.js';
+import { killProcessGroup } from '../../../packages/worker/src/lifecycle/orphans.js';
 import { workersListFromRepo } from '../../../packages/worker/src/lifecycle/rows.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 import {
@@ -121,12 +163,16 @@ import {
   kubicConfigLoader,
   projectTrustFor,
   runtimeApprovalDeps,
+  runtimeCompactionDeps,
   runtimeLaneDeps,
   runtimeModelFrozen,
   runtimeModelPin,
   runtimeModelPinNotes,
   runtimePolicy,
   runtimeRunDeps,
+  runtimeSkillsDeps,
+  runtimeStreamTuning,
+  runtimeSystemPromptSection,
   sessionRetentionDays,
 } from './config-runtime.js';
 import type { DispatchRunners } from './dispatch.js';
@@ -134,6 +180,7 @@ import { createProdRunSuite } from './eval-prod.js';
 import {
   extensionPostureForDoctor,
   loadExtensionStartup,
+  prodExtensionStartupOptions,
 } from './extension-startup.js';
 import { type HeadlessRunDeps, runHeadlessPrompt } from './headless-run.js';
 import { orchestrateDepsWithDefaults } from './orchestrate-run.js';
@@ -150,6 +197,24 @@ import {
 export interface ProdRunnerIo {
   readonly out: (line: string) => void;
   readonly debug: (line: string) => void;
+}
+
+// Test-only overrides for the orchestrate runner (issue #179): prod-path
+// tests that reach worker spawn inject the child entry the deps accept, so
+// the child on the path under test is a REAL process running a fixture
+// argv — never a network-hitting real lane. Absent in prod (dispatch
+// passes two arguments). The extra OPTIONAL parameter keeps
+// assignability to CommandRunner (and ProdRunners to DispatchRunners).
+export interface OrchestrateRunnerOverrides {
+  readonly workerEntry?: { cmd: string; args: string[] };
+}
+
+export interface ProdRunners extends DispatchRunners {
+  readonly orchestrate: (
+    options: OrchestrateCliOptions,
+    config: CliConfigResult,
+    overrides?: OrchestrateRunnerOverrides,
+  ) => number | Promise<number>;
 }
 
 // The presentation seams of one solo-command invocation, derived once from
@@ -207,6 +272,27 @@ function stderrTheme(): CliTheme {
 
 const PLAIN = createCliTheme('none');
 
+// §58 audit-sink reachability probes (issue #286): the real platform — a
+// unix syslog socket must exist; UDP needs a creatable dgram socket
+// (connectionless, so delivery stays best-effort past this point).
+const auditProbes = {
+  socketExists: (path: string): boolean => {
+    try {
+      return createNodeFileBridge('/').exists(path);
+    } catch {
+      return false;
+    }
+  },
+  udpAvailable: (): boolean => {
+    try {
+      createSocket('udp4').close();
+      return true;
+    } catch {
+      return false;
+    }
+  },
+};
+
 // Report colours and table style for a migrated command, decided once from
 // the real stdout: colour only on a TTY that allows it (NO_COLOR,
 // FORCE_COLOR, TERM=dumb honoured), box-drawn tables only there too, and
@@ -229,8 +315,22 @@ function reportStyle(json: boolean): { theme: CliTheme; fancy: boolean } {
 // dropped (the defect class of issues #288/#294).
 export function prodRunDeps(cliConfig: CliConfigResult): HeadlessRunDeps {
   const enterprisePolicy = runtimePolicy(cliConfig);
+  // Issue #239: the session compaction keys, threaded to the lane boot
+  // below. Worker children are `kubic run` processes loading the same
+  // committed config, so this is also their inheritance.
+  const compaction = runtimeCompactionDeps(cliConfig);
+  // Issue #240: the system prompt file section, read at load — worker
+  // children assemble the same prompt because they load the same config.
+  const systemPromptSection = runtimeSystemPromptSection(cliConfig);
+  // §37.4 (issue #257): the `[model]` / `[roles.<name>]` request tuning
+  // the headless boot resolves against the run's role. Undefined when
+  // nothing is tuned — the lane then omits `settings.stream`.
+  const streamTuning = runtimeStreamTuning(cliConfig);
   return {
     model: runtimeModelPin(cliConfig),
+    ...(compaction === undefined ? {} : { compaction }),
+    ...(systemPromptSection === undefined ? {} : { systemPromptSection }),
+    ...(streamTuning === undefined ? {} : { streamTuning }),
     // §58 enterprise policy (issue #288): the model gate, the role grant
     // check and the lane tool intersection all read this one resolved
     // object.
@@ -246,6 +346,10 @@ export function prodRunDeps(cliConfig: CliConfigResult): HeadlessRunDeps {
     // (journal attribution, `kubic diff --agent`) and the config-sourced
     // role layers `--role` merges under the document.
     ...runtimeLaneDeps(cliConfig),
+    // Issue #237 (§29.2): the config `skills` projection — resolved at
+    // load, loaded with source 'settings'. The lane falls back to the
+    // prod home/cwd/trust around it (only this key is set).
+    skills: { ...runtimeSkillsDeps(cliConfig) },
   };
 }
 
@@ -258,6 +362,13 @@ export function prodTuiDeps(
   cliConfig: CliConfigResult,
 ): TuiDepsInput {
   const enterprisePolicy = runtimePolicy(cliConfig);
+  // Issue #239: the session compaction projection, like `kubic run`.
+  const compaction = runtimeCompactionDeps(cliConfig);
+  // Issue #240: the system prompt file section, like `kubic run`.
+  const systemPromptSection = runtimeSystemPromptSection(cliConfig);
+  // §37.4 (issue #257): the same request tuning `kubic run` threads — the
+  // interactive boot resolves it against `--role` identically.
+  const streamTuning = runtimeStreamTuning(cliConfig);
   return {
     out: io.out,
     // `error:` lines (unknown session, no models) are diagnostics.
@@ -276,11 +387,21 @@ export function prodTuiDeps(
     // interactive lane's baseline and sweep exclude what `kubic run`
     // excludes.
     reconcileOutOfScope: runtimeRunDeps(cliConfig).reconcileOutOfScope,
+    // Issue #239: the same session compaction projection `kubic run`
+    // threads — the interactive lane compacts under the configured
+    // policy, not the lane defaults.
+    ...(compaction === undefined ? {} : { compaction }),
+    // Issue #240: the same system prompt file section — the interactive
+    // lane assembles the same prompt.
+    ...(systemPromptSection === undefined ? {} : { systemPromptSection }),
     // Issue #295 with #227 (§38.1): the SAME model projection `kubic run`
     // consumes — the cli `--model` (above `KUBIC_MODEL`/`[model]`) included.
     // Without it the TUI ignored those pins and ran the first registered
     // provider.
     model: runtimeModelPin(cliConfig),
+    // §37.4 (issue #257): spread beside the model pin so the tuning can
+    // never drift from the projection `kubic run` boots with.
+    ...(streamTuning === undefined ? {} : { streamTuning }),
     // §58 enterprise policy (issue #288): the interactive lane gates role
     // grants, model selection and its tool set identically.
     ...(enterprisePolicy === undefined
@@ -314,10 +435,267 @@ export function prodTuiDeps(
     // Issue #133: the SAME lane projections `kubic run` consumes — the
     // interactive lane names itself and layers `--role` identically.
     ...runtimeLaneDeps(cliConfig),
+    // Issue #237 (§29.2): the same settings-skills projection `kubic run`
+    // threads — the interactive lane loads the config skills too.
+    skills: { ...runtimeSkillsDeps(cliConfig) },
   };
 }
 
-export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
+// Worker inspect/terminate/list prod providers (issues #167, #248): the
+// durable rows plus local process probes (ps for the pid-reuse guard and
+// the RSS/CPU sample, git for the worktree facet) and two more durable
+// reads (the run state for budget and settled usage, the §60 ledger for
+// the last decision). No model, no network; every read is defensive — a
+// missing file reads as an absent facet, never a crash.
+function prodSpawnOutput(
+  command: string,
+  args: string[],
+  cwd: string,
+  toolCallId: string,
+): Promise<string | undefined> {
+  try {
+    const handle = new NodeExecutionEnv(cwd).shell.spawn(command, args, {
+      provenance: {
+        sessionId: 'cli',
+        agentId: 'manager',
+        toolCallId,
+        turnId: 0,
+        operation: 'inspect',
+      },
+    });
+    return handle
+      .wait()
+      .then((done) => (done.exitCode === 0 ? done.stdout : undefined));
+  } catch {
+    return Promise.resolve(undefined);
+  }
+}
+
+async function prodWorkerCommand(pid: number): Promise<string | undefined> {
+  try {
+    const handle = new NodeExecutionEnv(process.cwd()).shell.spawn(
+      'ps',
+      ['-ww', '-o', 'command=', '-p', String(pid)],
+      {
+        provenance: {
+          sessionId: 'cli',
+          agentId: 'manager',
+          toolCallId: 'workers-terminate-probe',
+          turnId: 0,
+          operation: 'terminate',
+        },
+      },
+    );
+    const done = await handle.wait();
+    return done.exitCode === 0 ? done.stdout.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// The run session an owner names (`orchestrate:<run>`), or undefined for a
+// legacy row — without it there is no run state to read.
+function prodRunSessionOf(row: WorkerListRow): string | undefined {
+  const prefix = 'orchestrate:';
+  if (!row.owner.startsWith(prefix)) return undefined;
+  const runSession = row.owner.slice(prefix.length);
+  // The rows file is repo-local data, not a trust root (issue #437): the
+  // suffix must be shaped like the session id orchestrate wrote —
+  // SESSION_ID_PATTERN, the same charset rule `--session` obeys — before
+  // anything builds a path from it.
+  if (!SESSION_ID_PATTERN.test(runSession)) return undefined;
+  return runSession;
+}
+
+async function prodInspectWorktree(
+  repoRoot: string,
+  row: WorkerListRow,
+): Promise<WorkerWorktreeView | undefined> {
+  const runSession = prodRunSessionOf(row);
+  if (runSession === undefined) return undefined;
+  const listed = await prodSpawnOutput(
+    'git',
+    ['worktree', 'list', '--porcelain'],
+    repoRoot,
+    'workers-inspect-git',
+  );
+  if (listed === undefined) return undefined;
+  const wanted = branchForAgent(row.workerId, runSession);
+  const entry = parseWorktreePorcelain(listed).find(
+    (candidate) => candidate.branch === wanted,
+  );
+  if (entry === undefined) return undefined;
+  const status = await prodSpawnOutput(
+    'git',
+    ['status', '--porcelain=v1'],
+    entry.path,
+    'workers-inspect-git',
+  );
+  if (status === undefined) {
+    return { path: entry.path, branch: wanted, clean: true, changed: 0 };
+  }
+  const changed = status
+    .split('\n')
+    .filter((line) => line.trim().length > 0).length;
+  return { path: entry.path, branch: wanted, clean: changed === 0, changed };
+}
+
+function numericRecord(value: unknown): Record<string, number> | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const out: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) return undefined;
+    out[key] = raw;
+  }
+  return out;
+}
+
+// The run state behind an owner (`orchestrate:<run>`), or undefined for a
+// legacy row or an unreadable file — the list and inspect share it so the
+// settled usage never comes from two readers (issue #248).
+function prodReadRunState(
+  repoRoot: string,
+  row: WorkerListRow,
+): { runSession: string; state: unknown } | undefined {
+  const runSession = prodRunSessionOf(row);
+  if (runSession === undefined) return undefined;
+  // Belt and braces behind the charset gate (issue #437): the file must
+  // resolve inside the orchestrator dir — a symlink pointing out is
+  // refused with its named reason, exactly like a missing file.
+  const orchDir = join(repoRoot, '.kubic', 'orchestrator');
+  const confined = confinedStatePath(orchDir, `${runSession}.json`);
+  if (!confined.ok) return undefined;
+  try {
+    // Read the resolved path itself, not a re-joined one: nothing is
+    // re-resolved between the confinement check and the read.
+    const raw = createNodeFileBridge(orchDir).readTextFile(confined.path);
+    const state = JSON.parse(raw) as unknown;
+    if (typeof state !== 'object' || state === null) return undefined;
+    return { runSession, state };
+  } catch {
+    return undefined;
+  }
+}
+
+// Settled usage: the run's own record carries the §68 metrics rollup.
+// The §71 budget bound a worker runs under (issue #285): the shared
+// task spec plus the worker's own override. Undefined when the run stored
+// no bound for the worker — the row stays silent, never unbounded-claimed.
+function prodBudgetOf(
+  state: unknown,
+  workerId: string,
+): WorkerBudgetView | undefined {
+  const budget = (state as { budget?: unknown }).budget;
+  if (typeof budget !== 'object' || budget === null) return undefined;
+  const shared = numericRecord((budget as { shared?: unknown }).shared);
+  const byAgent = (budget as { byAgent?: unknown }).byAgent;
+  const worker =
+    typeof byAgent === 'object' && byAgent !== null
+      ? numericRecord((byAgent as Record<string, unknown>)[workerId])
+      : undefined;
+  if (shared === undefined && worker === undefined) return undefined;
+  return {
+    ...(shared === undefined ? {} : { shared }),
+    ...(worker === undefined ? {} : { worker }),
+  };
+}
+
+function prodUsageOf(
+  state: unknown,
+  workerId: string,
+): WorkerConsumption | undefined {
+  const records = state as { records?: unknown; completed?: unknown };
+  const candidates = [
+    ...(Array.isArray(records.records) ? records.records : []),
+    ...(Array.isArray(records.completed) ? records.completed : []),
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'object' || candidate === null) continue;
+    const entry = candidate as { agentId?: unknown; result?: unknown };
+    if (entry.agentId !== workerId) continue;
+    const metrics =
+      typeof entry.result === 'object' && entry.result !== null
+        ? (entry.result as { metrics?: unknown }).metrics
+        : undefined;
+    const numbers =
+      typeof metrics === 'object' && metrics !== null
+        ? (metrics as Record<string, unknown>)
+        : undefined;
+    if (numbers === undefined) continue;
+    const pick = (key: string): number | undefined =>
+      typeof numbers[key] === 'number' && Number.isFinite(numbers[key])
+        ? (numbers[key] as number)
+        : undefined;
+    const usage: WorkerConsumption = {
+      ...(pick('inputTokens') === undefined
+        ? {}
+        : { inputTokens: pick('inputTokens') as number }),
+      ...(pick('outputTokens') === undefined
+        ? {}
+        : { outputTokens: pick('outputTokens') as number }),
+      ...(pick('cachedTokens') === undefined
+        ? {}
+        : { cachedTokens: pick('cachedTokens') as number }),
+      ...(pick('toolCalls') === undefined
+        ? {}
+        : { toolCalls: pick('toolCalls') as number }),
+      ...(pick('costUsd') === undefined
+        ? {}
+        : { costUsd: pick('costUsd') as number }),
+    };
+    if (Object.keys(usage).length > 0) return usage;
+  }
+  return undefined;
+}
+
+async function prodSampleResources(
+  pid: number,
+): Promise<WorkerSample | undefined> {
+  // `ps -o rss=,pcpu=` reads on BSD and GNU ps alike; the header-suppressing
+  // `=` keeps the output to one `"<rssKb> <cpuPct>"` line the pure
+  // parsePsSample turns into a point sample (issue #248).
+  const output = await prodSpawnOutput(
+    'ps',
+    ['-o', 'rss=,pcpu=', '-p', String(pid)],
+    process.cwd(),
+    'workers-list-sample',
+  );
+  return output === undefined ? undefined : parsePsSample(output);
+}
+
+function prodInspectRun(repoRoot: string, row: WorkerListRow): WorkerRunView {
+  const view: WorkerRunView = {
+    usageHint: `kubic cost --session ${row.sessionId}`,
+    pendingApproval: row.agentStatus === 'waiting',
+  };
+  // The newest §60 decision for the worker session, when any.
+  try {
+    const ledger = readAuditLedger(auditLedgerDirFor(process.cwd()));
+    const last = ledger
+      .filter((record) => record.agent.session === row.sessionId)
+      .at(-1);
+    if (last !== undefined) {
+      view.lastDecision = `${last.result} ${last.what} — ${last.reason}`;
+    }
+  } catch {
+    // No ledger: no decision.
+  }
+  const found = prodReadRunState(repoRoot, row);
+  if (found === undefined) return view;
+  const { state } = found;
+  // Issue #285 (§71): the list rows carry the same bound (zero extra
+  // reads — the run state is already in hand for the consumption).
+  const budget = prodBudgetOf(state, row.workerId);
+  if (budget !== undefined) view.budget = budget;
+  const usage = prodUsageOf(state, row.workerId);
+  if (usage !== undefined) {
+    view.usage = usage;
+    view.usageHint = undefined;
+  }
+  return view;
+}
+
+export function createProdRunners(io: ProdRunnerIo): ProdRunners {
   const { out, debug } = io;
   // The analysis handlers' channels: the report on stdout, diagnostics on
   // stderr (the `debug` channel), report colour and box drawing from the
@@ -409,14 +787,82 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         providers: assembled.providers,
       });
     },
-    trust: (options, cliConfig) =>
-      runTrustCommand(options, {
-        ...presentation(out, debug, false),
-        store: new ProjectTrustStore(
-          projectTrustStorePath(cliConfig.trust.home),
-        ),
-        cwd: process.cwd(),
-      }),
+    skills: (options, cliConfig) => {
+      // Issue #238: the listing over the same discovery the lane boots.
+      // The trust inputs mirror `kubic run`'s (the env opt-in plus the
+      // per-path project check), the classes are the installed ones the
+      // doctor judges, and `--role` resolves through the same `selectRole`
+      // call — a refusal fails the listing closed with its named reason.
+      const view = presentation(out, debug, options.json === true);
+      const cwd = process.cwd();
+      const rolesBridge = createNodeFileBridge(cwd);
+      const enterprisePolicy = runtimePolicy(cliConfig);
+      const layers = runtimeLaneDeps(cliConfig).roles?.layers;
+      return runSkillsCommand(options, {
+        ...view,
+        base: {
+          bridge: createNodeFileBridge(cwd),
+          cwd,
+          homeDir: cliConfig.trust.home,
+          trusted:
+            process.env.KUBIC_TRUST_PROJECT === '1' ||
+            process.env.KUBIC_TRUST_PROJECT === 'true',
+          trustProject: projectTrustFor(cliConfig),
+          ...runtimeSkillsDeps(cliConfig),
+          ...installedPolicyClasses(cliConfig),
+        },
+        resolveRole: (name: string) => {
+          const selected = selectRole({
+            bridge: rolesBridge,
+            cwd,
+            role: name,
+            projectRoot: findProjectRoot(
+              rolesBridge,
+              cwd,
+              cliConfig.trust.home,
+            ),
+            ...(layers === undefined ? {} : { layers }),
+            trustProject: projectTrustFor(cliConfig),
+            ...(enterprisePolicy === undefined
+              ? {}
+              : { toolPolicy: enterprisePolicy }),
+          });
+          return {
+            name: selected.resolved.name,
+            ...(selected.doc.skills === undefined
+              ? {}
+              : { skills: selected.doc.skills }),
+            classes: selected.resolved.classes,
+          };
+        },
+      });
+    },
+    trust: (options, cliConfig) => {
+      // Issue #229: grants are recorded at the project root — the same
+      // root the config load keys its trust report to — so `kubic trust`
+      // from a subdirectory records a grant the loader honours. An
+      // explicit path resolves to its own root; the bare form reuses the
+      // load's root (it was resolved from this same cwd).
+      const target = options.path ?? process.cwd();
+      const root =
+        options.path === undefined
+          ? cliConfig.projectRoot
+          : findProjectRoot(
+              createNodeFileBridge(target),
+              target,
+              cliConfig.trust.home,
+            );
+      return runTrustCommand(
+        root === target ? options : { ...options, path: root },
+        {
+          ...presentation(out, debug, false),
+          store: new ProjectTrustStore(
+            projectTrustStorePath(cliConfig.trust.home),
+          ),
+          cwd: process.cwd(),
+        },
+      );
+    },
     run: (options, cliConfig) => {
       noteOverriddenModelPins(cliConfig);
       return runRunCommand(options, {
@@ -431,15 +877,48 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       // bundle set at dispatch, through the same gates — a degraded load
       // throws here (named ExtensionStartupError) instead of opening the
       // alt-screen on a run whose extensions never loaded.
-      await loadExtensionStartup('tui', process.cwd(), {
+      // Issue #283 (§71): the loaded bundle travels into the boot's
+      // budget gate — the load is kept, not discarded.
+      const extensions = await loadExtensionStartup('tui', process.cwd(), {
         receipt: debug,
+        // The opt-in budget rides into the bundle build; absence keeps
+        // the historical bare call.
+        ...(options.budget === undefined
+          ? {}
+          : {
+              options: prodExtensionStartupOptions(
+                process.cwd(),
+                options.budget,
+              ),
+            }),
       });
       return runTuiCommand(
         options,
-        tuiDepsWithDefaults(prodTuiDeps({ out, debug }, cliConfig)),
+        tuiDepsWithDefaults({
+          ...prodTuiDeps({ out, debug }, cliConfig),
+          extensions,
+        }),
       );
     },
     doctor: async (options, cliConfig) => {
+      // Issue #310: `doctor --session <id>` checks one session — its
+      // installed posture reads that session's posture.json. A value that
+      // cannot name a session directory is refused before any path join.
+      const doctorSession = options.session;
+      if (
+        doctorSession !== undefined &&
+        !SESSION_ID_PATTERN.test(doctorSession)
+      ) {
+        debug(
+          `error: invalid --session id ${JSON.stringify(doctorSession)} (use [A-Za-z0-9_-])`,
+        );
+        return EXIT_USAGE;
+      }
+      const sessionsRoot = defaultSessionsRoot();
+      const doctorSessionDir =
+        doctorSession === undefined
+          ? undefined
+          : join(sessionsRoot, doctorSession);
       const enterprisePolicy = runtimePolicy(cliConfig);
       // §58 (issue #289): the enterprise checks run only when a `[policy]`
       // section is actually configured — the resolved policy is always
@@ -496,6 +975,27 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       } catch {
         sessionOverlapProbe = undefined;
       }
+      // §41.4 full-access sessions (issue #310): the workspace's live
+      // sessions running with approvals off — enumerated eagerly like the
+      // overlap probe, so the check cannot disagree with the store doctor
+      // just listed. With --session exactly one session is checked (the
+      // workspace filter is bypassed: the operator named it). Best-effort
+      // like the overlap probe: an unlistable store makes no claim.
+      let fullAccessProbe: (() => FullAccessSession[]) | undefined;
+      try {
+        const fullAccess =
+          doctorSession === undefined
+            ? await listFullAccessSessions({
+                sessionsRoot,
+                workspace: process.cwd(),
+              })
+            : await describeFullAccessSession(sessionsRoot, doctorSession).then(
+                (session) => (session === undefined ? [] : [session]),
+              );
+        fullAccessProbe = () => fullAccess;
+      } catch {
+        fullAccessProbe = undefined;
+      }
       // §36.3 credential posture (issue #200): which provider each role's
       // workers get credentials for — over the same default delegation set a
       // bare `kubic orchestrate` assigns, through the same resolution the
@@ -508,6 +1008,13 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         const plan = planWorkerRoles({
           bridge: createNodeFileBridge(cwd),
           cwd,
+          // Issue #229: the same project root the config load resolves,
+          // so the posture describes the roles the run would actually use.
+          projectRoot: cliConfig.projectRoot,
+          // Issue #241 (§35): the same global roles the run would see.
+          ...(cliConfig.trust.home === ''
+            ? {}
+            : { home: cliConfig.trust.home }),
           agents: ORCHESTRATE_DEFAULT_AGENTS,
           // §38.1 (#202): the same model levels the run resolves — the
           // manager's own pin under each role's `[roles.<r>].model`, and the
@@ -595,6 +1102,12 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         installedPolicy: () =>
           installedPolicyPosture({
             workspace: process.cwd(),
+            // Issue #310: with --session the installed posture reads that
+            // session's posture.json, so a full-access session reports
+            // FULL ACCESS instead of the workspace-level false.
+            ...(doctorSessionDir === undefined
+              ? {}
+              : { sessionDir: doctorSessionDir }),
             ...installedPolicyDeps(cliConfig),
           }),
         // §82 resource enforcement (issue #163): which per-agent limits this
@@ -612,19 +1125,39 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           configured: {},
         }),
         // §58 enterprise policy (issue #289): the SAME effective resolution
-        // `kubic policy` reports, checked for enforceability. `syslogAvailable:
-        // false` is the honest value today: `[[audit]]` sinks are parsed and
-        // validated, but sink construction is a named follow-up
-        // (docs/cli/configuration.md), so a configured syslog sink cannot be
-        // written — the check fails closed instead of claiming an audit trail
-        // that does not exist. The probe is wired only for a configured
-        // `[policy]`, so the default matrix is unchanged.
+        // `kubic policy` reports, checked for enforceability. `syslogAvailable`
+        // is probed for real now (issue #286): every enterprise syslog target
+        // must be reachable, or the check fails closed instead of claiming
+        // an audit trail that does not exist. The probe is wired only for a
+        // configured `[policy]`, so the default matrix is unchanged.
         ...(enterprisePolicy === undefined || !policyConfigured
           ? {}
           : {
               enterpriseChecks: () =>
                 enterpriseDoctorChecks(enterprisePolicy, {
-                  syslogAvailable: false,
+                  syslogAvailable: enterprisePolicy.audit.sinks.every(
+                    (sink) =>
+                      sink.kind !== 'syslog' ||
+                      isSyslogTargetAvailable(sink.target, auditProbes),
+                  ),
+                }),
+            }),
+        // §58 configured `[[audit]]` sinks (issue #286): the SAME tables
+        // dispatch built this process's sinks from, probed for reachability
+        // plus the runtime failures recorded so far. Wired only when tables
+        // exist, so the default matrix is unchanged.
+        ...(cliConfig.runtime?.config.audit === undefined ||
+        cliConfig.runtime.config.audit.length === 0
+          ? {}
+          : {
+              probeAuditSinks: () =>
+                auditSinksDoctorChecks({
+                  tables: cliConfig.runtime?.config.audit ?? [],
+                  problems: buildConfiguredSinks(
+                    cliConfig.runtime?.config.audit ?? [],
+                  ).problems,
+                  snapshot: auditSinkSnapshot(),
+                  probes: auditProbes,
                 }),
             }),
         // First-party extensions (issues #80, #93): doctor reports the SAME
@@ -645,6 +1178,9 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           rolesDoctorProbe({
             cwd: process.cwd(),
             bridge: createNodeFileBridge(process.cwd()),
+            // Issue #229: judge the roles the run would resolve — the
+            // project root's documents, not the subdir's (absent) ones.
+            projectRoot: cliConfig.projectRoot,
             // §58 (issue #288): a role declaring an enterprise-denied tool is
             // refused by `kubic run --role`, so it is red here too.
             ...(enterprisePolicy === undefined
@@ -653,6 +1189,34 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
             // The config `[roles.<name>]` layers `kubic run --role` merges
             // under each document: a role is judged as it would run.
             ...(roleLayers === undefined ? {} : { layers: roleLayers }),
+            // Issue #196 (§40.2): judge the effective classes the lane
+            // would install — the most restrictive merge with each role.
+            ...installedPolicyClasses(cliConfig),
+            // Issue #430 (§33, L-D27): judge the trust the run would see —
+            // an untrusted root's withheld roles warn here, never green.
+            trustProject: projectTrustFor(cliConfig),
+            // Issue #241 (§35): judge the global roles the run would see —
+            // absent (tests and embeddings with no home) means no source.
+            ...(cliConfig.trust.home === ''
+              ? {}
+              : { home: cliConfig.trust.home }),
+          }),
+        // Skills gate (issue #181, §29.4): the same boot the lane runs,
+        // judged with the lane's classes and no role — a skill the lane
+        // would not offer warns with the gate's reason, never green. The
+        // trust inputs mirror `kubic run`'s (env opt-in + the per-path
+        // project check), so doctor judges the tree the run would see.
+        probeSkills: () =>
+          skillsDoctorProbe({
+            bridge: createNodeFileBridge(process.cwd()),
+            cwd: process.cwd(),
+            homeDir: homedir(),
+            trusted:
+              process.env.KUBIC_TRUST_PROJECT === '1' ||
+              process.env.KUBIC_TRUST_PROJECT === 'true',
+            trustProject: projectTrustFor(cliConfig),
+            ...runtimeSkillsDeps(cliConfig),
+            ...installedPolicyClasses(cliConfig),
           }),
         // Repo-level session overlap (issue #118): warning only — the check
         // reports warn (never exit-flipping) when 2+ sessions are recorded
@@ -660,12 +1224,22 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         ...(sessionOverlapProbe === undefined
           ? {}
           : { probeSessionOverlap: sessionOverlapProbe }),
+        // §41.4 full-access sessions (issue #310): one warning per live
+        // session running with approvals off (named grant + way back when
+        // recorded). With --session exactly the named session is checked.
+        ...(fullAccessProbe === undefined
+          ? {}
+          : { probeFullAccessSessions: fullAccessProbe }),
         // Issue #361: always injected — the check itself is a pass when the
         // state directories are private.
         probeStatePermissions: statePermissionProbe,
       });
     },
-    orchestrate: async (options, cliConfig) => {
+    orchestrate: async (
+      options,
+      cliConfig,
+      overrides?: OrchestrateRunnerOverrides,
+    ) => {
       // Opt-in orchestrator mode (issue #76): the EPIC E stack (manager
       // lane, worker lifecycle, merge queue, approvals, worktrees) executes
       // for real. Solo stays the default — `run` never enters this path.
@@ -704,6 +1278,13 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           // The config `[roles.<name>]` layers: the manager judges each
           // assigned role as the worker's own `kubic run --role` resolves it.
           ...(roleLayers === undefined ? {} : { roleLayers }),
+          // Issue #237 (§29.2): the manager's own settings skills — every
+          // worker's child loads them through the #170 channel.
+          ...runtimeSkillsDeps(cliConfig),
+          // L-D34 opt-in (issue #431): `--manager-lane` selects the
+          // model-driven manager lane for this run; the builder ORs it
+          // with `[orchestrator] manager = "lane"`.
+          ...(options.managerLane === true ? { managerLane: true } : {}),
           // Issue #228 (§35.1): the per-ROOT trust check — a store grant is
           // keyed to one exact directory, so the run evaluates it for the
           // models root it loads (never the launch cwd) and only a trusted
@@ -715,6 +1296,12 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           ...(cliConfig.runtime === undefined
             ? {}
             : { orchestrator: cliConfig.runtime.orchestrator }),
+          // Issue #179: prod-path tests that reach worker spawn inject the
+          // child entry the same way the deps accept it — the manager,
+          // preflight and merge queue stay the real builders.
+          ...(overrides?.workerEntry === undefined
+            ? {}
+            : { workerEntry: overrides.workerEntry }),
         }),
       );
     },
@@ -737,10 +1324,13 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         }),
       ),
     cost: (options) =>
-      // Per-agent cost over real session stats (one aggregate row per
-      // session); the task total is Σ(rows) by construction (issue #79).
+      // Per-agent cost over real session usage (issue #79; #250: scoped
+      // to the invoking project unless --all, grouped by --by); the task
+      // total is Σ(rows) by construction.
       runCostCommand(options, {
-        loadRows: (sessionId) => loadSessionCostRows(undefined, sessionId),
+        loadRows: (sessionId, query) =>
+          loadSessionCostRows(undefined, sessionId, query),
+        workspace: process.cwd(),
         ...report(),
       }),
     perf: (options) =>
@@ -797,7 +1387,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         loadSecrets: loadProdAuditSecrets,
         ...report(),
       }),
-    workers: async (options) => {
+    workers: async (invocation) => {
       // Issue #94: the rows come from the SHARED durable record the
       // orchestration writes (`<repo>/.kubic/orchestrator/workers.json`).
       // The in-process WorkerRegistry is the orchestrator run's own view —
@@ -808,15 +1398,95 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       // KUBIC_DEBUG=1) adds the §50 spawn/exit lines on stderr.
       const theme = stdoutTheme();
       const mode = outputModeFor({
-        json: options.json === true,
+        json: invocation.json === true,
         stdinTTY: process.stdin.isTTY === true,
         stdoutTTY: process.stdout.isTTY === true,
         colorEnabled: theme.enabled,
       });
+      const repoRoot = resolveRepoRuntimeRoot(process.cwd());
+      if (invocation.command === 'inspect') {
+        return runWorkerInspectCommand(
+          invocation.id,
+          { json: invocation.json },
+          {
+            find: (id) =>
+              workersListFromRepo(resolveRepoRuntimeRoot(process.cwd())).find(
+                (row) => row.workerId === id,
+              ),
+            worktree: (row) => prodInspectWorktree(repoRoot, row),
+            run: (row) => prodInspectRun(repoRoot, row),
+            out,
+            err: debug,
+            theme,
+            errTheme: stderrTheme(),
+            fancy: mode.fancy,
+          },
+        );
+      }
+      if (invocation.command === 'terminate') {
+        return runWorkerTerminateCommand(
+          invocation.id,
+          {
+            generation: invocation.generation,
+            json: invocation.json,
+          },
+          {
+            find: (id) =>
+              workersListFromRepo(resolveRepoRuntimeRoot(process.cwd())).find(
+                (row) => row.workerId === id,
+              ),
+            command: (pid) => prodWorkerCommand(pid),
+            signal: (pid) => killProcessGroup(pid),
+            out,
+            err: debug,
+            theme,
+            errTheme: stderrTheme(),
+          },
+        );
+      }
       return runWorkersCommand(
-        { ...options, debug: debugEnabled(options) },
+        { json: invocation.json, debug: debugEnabled(invocation) },
         {
-          list: () => workersListFromRepo(process.cwd()),
+          // The rows live at the repo runtime root (issue #281) — the
+          // same resolver `kubic audit` uses (issue #279) — so a run
+          // from a subdirectory lists what orchestrate wrote at the
+          // root. Outside git the resolver returns the cwd itself.
+          // Each row also carries its settled consumption from the
+          // run's own record when any (issue #248); live RSS/CPU comes
+          // from the `sample` probe below, never the stored row.
+          list: async () => {
+            const root = resolveRepoRuntimeRoot(process.cwd());
+            // The stored row carries no consumption (issue #248): it comes
+            // from the run's own record — read once per distinct run
+            // session, not once per worker (review #248).
+            const states = new Map<
+              string,
+              { runSession: string; state: unknown } | undefined
+            >();
+            const stateOf = (row: WorkerListRow) => {
+              const cached = states.get(row.owner);
+              if (cached !== undefined || states.has(row.owner)) {
+                return cached;
+              }
+              const found = prodReadRunState(root, row);
+              states.set(row.owner, found);
+              return found;
+            };
+            return workersListFromRepo(root).map((row) => {
+              const found = stateOf(row);
+              if (found === undefined) return row;
+              const usage = prodUsageOf(found.state, row.workerId);
+              const budget = prodBudgetOf(found.state, row.workerId);
+              return usage === undefined && budget === undefined
+                ? row
+                : {
+                    ...row,
+                    ...(usage === undefined ? {} : { consumption: usage }),
+                    ...(budget === undefined ? {} : { budget }),
+                  };
+            });
+          },
+          sample: (pid) => prodSampleResources(pid),
           out,
           err: debug,
           debug,
@@ -851,12 +1521,33 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       }),
     replay: (options, cliConfig) => {
       const enterprisePolicy = runtimePolicy(cliConfig);
+      // Issue #239: the live re-execution tiers boot the real solo lane,
+      // so they compact under the configured policy like `kubic run`.
+      const compaction = runtimeCompactionDeps(cliConfig);
+      // Issue #240: the same prompt augmentation on the re-executed tiers.
+      const systemPromptSection = runtimeSystemPromptSection(cliConfig);
       // `--session <id>` (issue #383): the session's own trajectory file.
       const resolved = resolveSessionTrajectory(options, defaultSessionsRoot());
       if ('error' in resolved) return usageError(resolved.error);
       // Replay at a declared tier (issue #78): recorded/compare are
       // log-only; deterministic/live re-execute the recorded objective
       // through the real solo lane at the declared model pin.
+      // Issues #239/#240 (review follow-up): the runtime object is built
+      // against the named type, so a dropped or mistyped projection fails
+      // compile — the spreads below used to ride unchecked.
+      const runtime: ReplayRuntimeDeps = {
+        ...runtimeRunDeps(cliConfig),
+        trustProject: projectTrustFor(cliConfig),
+        ...(enterprisePolicy === undefined
+          ? {}
+          : { modelPolicy: enterprisePolicy }),
+        // Issue #272: the shared lane projections `kubic run` threads
+        // (agent id + config-sourced role layers + the out-of-scope
+        // paths) — the pinned role merges under them identically.
+        ...runtimeLaneDeps(cliConfig),
+        ...(compaction === undefined ? {} : { compaction }),
+        ...(systemPromptSection === undefined ? {} : { systemPromptSection }),
+      };
       return runReplayCommand(
         resolved.options,
         {
@@ -869,17 +1560,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         // assembled catalog gates the project models.json on its own root.
         // §58 enterprise policy (issue #288): and the same model/tool/role
         // gates — a live re-execution is not an ungated lane.
-        {
-          ...runtimeRunDeps(cliConfig),
-          trustProject: projectTrustFor(cliConfig),
-          ...(enterprisePolicy === undefined
-            ? {}
-            : { modelPolicy: enterprisePolicy }),
-          // Issue #272: the shared lane projections `kubic run` threads
-          // (agent id + config-sourced role layers + the out-of-scope
-          // paths) — the pinned role merges under them identically.
-          ...runtimeLaneDeps(cliConfig),
-        },
+        runtime,
       );
     },
     export: (options) => {

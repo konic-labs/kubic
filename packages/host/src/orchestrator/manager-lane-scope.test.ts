@@ -20,11 +20,36 @@
 //     still be owned by an executed issue — manager.ts is WIRED by #103, so
 //     it may not come back as a row;
 //   - the deleted orchestrator leftovers stay deleted.
-import { execFileSync } from 'node:child_process';
+
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { createGitSandbox } from '../../../exec/src/test-support/git-sandbox.js';
+import type { SessionHandle } from '../../../worker/src/lane/session-store.js';
+import {
+  BACKGROUND_CONTEXT,
+  type Context,
+  createModels,
+  type EntryRecord,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  MemoryStorage,
+  SystemEntry,
+  ToolResultEntry,
+} from '../../../worker/src/pi-boundary.js';
+import {
+  EXEC_FORBIDDEN_TOOLS,
+  MANAGER_ALLOWLIST,
+  ManagerToolsetError,
+} from './manager.js';
+import {
+  bootManagerLane,
+  MANAGER_PROMPT_SECTION,
+  type ManagerLaneHandle,
+  managerToolStubs,
+} from './manager-lane.js';
 
 // packages/host/src/orchestrator/ → repo root is four levels up.
 const ROOT = join(
@@ -135,11 +160,16 @@ function markdownOnDisk(dir: string): string[] {
 function trackedDocs(): string[] {
   let listed = '';
   try {
-    listed = execFileSync('git', ['ls-files', 'docs', 'README.md'], {
-      cwd: ROOT,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
+    // The listing still scans the real checkout, but through the shared
+    // sandbox's scrubbed env (issue #420) — no developer config shapes it.
+    const sandbox = createGitSandbox();
+    try {
+      listed = sandbox.git(['ls-files', 'docs', 'README.md'], {
+        cwd: ROOT,
+      });
+    } finally {
+      sandbox.cleanup();
+    }
   } catch {
     // Not a git checkout at all: fall through to the walk.
   }
@@ -356,5 +386,202 @@ describe('orchestrator scope is honest (issue #95)', () => {
       ).toBe(false);
     }
     expect(ledger).toMatch(/#95 re-scoped|issue #95/);
+  });
+});
+
+describe('manager lane toolset (issue #413)', () => {
+  const lanes: ManagerLaneHandle[] = [];
+
+  afterEach(async () => {
+    for (const lane of lanes.splice(0)) {
+      await lane.close(BACKGROUND_CONTEXT);
+    }
+  });
+
+  // A MemoryStorage-backed handle: no session root, no lock, no fs.
+  function memoryHandle(id: string, cwd: string): SessionHandle {
+    const storage = new MemoryStorage();
+    let adopted = false;
+    return {
+      id,
+      dir: `/memory-sessions/${id}`,
+      storage,
+      meta: { cwd, createdAt: new Date(0).toISOString() },
+      adopt: () => {
+        adopted = true;
+        return storage;
+      },
+      release: async (context: Context): Promise<void> => {
+        if (!adopted) await storage.close(context);
+      },
+    };
+  }
+
+  async function boot(
+    responses: Parameters<ReturnType<typeof fauxProvider>['setResponses']>[0],
+  ): Promise<ManagerLaneHandle> {
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const model = faux.getModel();
+    if (model === undefined) throw new Error('faux has no default model');
+    faux.setResponses([...responses]);
+    const lane = await bootManagerLane({
+      session: memoryHandle('mgr-1', '/repo'),
+      models,
+      model,
+      sessionId: 'mgr-1',
+      cwd: '/repo',
+    });
+    lanes.push(lane);
+    return lane;
+  }
+
+  async function bootWithTools(
+    tools: Parameters<typeof bootManagerLane>[0]['tools'],
+  ): Promise<never> {
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const model = faux.getModel();
+    if (model === undefined) throw new Error('faux has no default model');
+    const lane = await bootManagerLane({
+      session: memoryHandle('mgr-drift', '/repo'),
+      models,
+      model,
+      sessionId: 'mgr-drift',
+      cwd: '/repo',
+      tools,
+    });
+    lanes.push(lane);
+    throw new Error('booted with a drifted toolset');
+  }
+
+  function promptOf(entries: EntryRecord[]): string {
+    for (const entry of entries) {
+      if (!SystemEntry.is(entry)) continue;
+      const messages = entry.model as
+        | Array<{ sections?: Record<string, string | null> }>
+        | undefined;
+      const prompt = messages?.[0]?.sections?.[MANAGER_PROMPT_SECTION];
+      if (typeof prompt === 'string' && prompt !== '') return prompt;
+    }
+    return '';
+  }
+
+  it('boots a lane whose active tools equal MANAGER_ALLOWLIST', async () => {
+    const lane = await boot([fauxAssistantMessage('ok')]);
+    const agent = await lane.conversation.agent(BACKGROUND_CONTEXT);
+    const active = agent.tools.map((tool) => tool.name).sort();
+    expect(active).toEqual([...MANAGER_ALLOWLIST].sort());
+    for (const forbidden of EXEC_FORBIDDEN_TOOLS) {
+      expect(active).not.toContain(forbidden);
+    }
+  });
+
+  it('the committed prompt advertises exactly the offered set', async () => {
+    const lane = await boot([fauxAssistantMessage('ok')]);
+    // The system entry materializes with the first turn, as on the solo
+    // lane (solo-tools-line.test.ts reads it the same way).
+    const first = await lane.conversation.submit(
+      { type: 'input', content: 'hi' },
+      BACKGROUND_CONTEXT,
+    );
+    await first.wait(BACKGROUND_CONTEXT);
+    const page = await lane.conversation.entries(
+      {},
+      500,
+      undefined,
+      BACKGROUND_CONTEXT,
+    );
+    const line =
+      /^tools: (.*)$/m.exec(promptOf([...page.items].reverse()))?.[1] ?? '';
+    const advertised = line
+      .split(',')
+      .map((name) => name.trim())
+      .filter((name) => name !== '')
+      .sort();
+    expect(advertised).toEqual([...MANAGER_ALLOWLIST].sort());
+  });
+
+  it('a drifted toolset refuses to boot with a named reason', async () => {
+    // A tool missing from the allowlist…
+    await expect(
+      bootWithTools([...managerToolStubs()].slice(0, 12)),
+    ).rejects.toBeInstanceOf(ManagerToolsetError);
+    await expect(
+      bootWithTools([...managerToolStubs()].slice(0, 12)),
+    ).rejects.toThrow(/manager toolset must equal the allowlist.*missing/);
+    // …and an exec tool smuggled in under a renamed registration.
+    const renamed = [...managerToolStubs()].map((tool, index) =>
+      index === 0 ? { ...tool, name: 'bash' } : tool,
+    );
+    await expect(bootWithTools(renamed)).rejects.toThrow(
+      /manager toolset must equal the allowlist.*extra: bash/,
+    );
+  });
+
+  it('an unwired tool refuses the call by name', async () => {
+    const lane = await boot([fauxAssistantMessage('ok')]);
+    const tool = lane.registry
+      .snapshot()
+      .tools()
+      .find(({ tool: candidate }) => candidate.name === 'spawn_agent')?.tool;
+    if (tool === undefined) throw new Error('spawn_agent not registered');
+    await expect(
+      tool.execute(
+        {},
+        {
+          callId: 'call-1',
+          taskId: 'task-1',
+          conversationId: lane.conversation.id,
+          output: () => undefined,
+          diagnostic: () => undefined,
+          details: async () => undefined,
+          memo: async () => undefined,
+          commit: async () => undefined,
+          env: undefined,
+        } as never,
+        BACKGROUND_CONTEXT,
+      ),
+    ).rejects.toThrow(/spawn_agent.*not wired yet/);
+  });
+
+  it('a faux manager tool round ends with stopReason toolUse and the lane refuses it', async () => {
+    const lane = await boot([
+      // A toolUse turn with no following text ends `unanswered`: the
+      // trailing message is the turn's answer, as in every faux script.
+      fauxAssistantMessage([fauxToolCall('spawn_agent', {})], {
+        stopReason: 'toolUse',
+      }),
+      fauxAssistantMessage('refused as expected'),
+    ]);
+    const submission = await lane.conversation.submit(
+      { type: 'input', content: 'go' },
+      BACKGROUND_CONTEXT,
+    );
+    const settled = await submission.wait(BACKGROUND_CONTEXT);
+    expect(settled.status).toBe('done');
+    const entries = await lane.conversation.entries(
+      {},
+      1000,
+      undefined,
+      BACKGROUND_CONTEXT,
+    );
+    const results: string[] = [];
+    for (const entry of entries.items) {
+      if (!ToolResultEntry.is(entry)) continue;
+      const message = (
+        entry.model as unknown as
+          | Array<{ role?: string; content?: Array<{ text?: string }> }>
+          | undefined
+      )?.[0];
+      if (message?.role !== 'toolResult') continue;
+      results.push(
+        (message.content ?? []).map((part) => part.text ?? '').join(''),
+      );
+    }
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.join('\n')).toContain('spawn_agent');
   });
 });

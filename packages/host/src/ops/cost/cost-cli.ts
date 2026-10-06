@@ -11,6 +11,7 @@
 // and reported on the readout. No new top-level --json field: the extra
 // per-row numbers are additive inside the existing `agents` entries.
 
+import { join, sep } from 'node:path';
 import {
   EXIT_FAILED,
   EXIT_OK,
@@ -24,13 +25,15 @@ import {
   createCliTheme,
 } from '../../../../core/src/cli/theme.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
+import { stripUnsafeCharacters } from '../../../../exec/src/runtime-exclude.js';
+import { bridgeToPiFileSystem } from '../../../../worker/src/lane/session-fs.js';
 import {
-  attachSession,
   listSessions,
   openSessionStore,
   SessionAttachError,
   SessionFormatError,
   SessionLockError,
+  sessionLockIsLive,
 } from '../../../../worker/src/lane/session-store.js';
 import {
   entriesToTranscript,
@@ -39,6 +42,7 @@ import {
 import {
   BACKGROUND_CONTEXT,
   type Context,
+  JsonlStorage,
   type Storage,
   type Usage,
   UsageDoc,
@@ -49,6 +53,11 @@ import { defaultSessionsRoot } from '../../sessions-cli.js';
 import { transparentCachingNote } from './cache.js';
 import {
   type AgentCostInput,
+  type CostGroupBy,
+  DEFAULT_COST_GROUP_BY,
+  formatCostUsd,
+  groupCostRows,
+  isCostGroupBy,
   type PerAgentCostSummary,
   summarizePerAgentCost,
   toCostJson,
@@ -58,12 +67,29 @@ import {
 export interface CostOptions {
   readonly session?: string;
   readonly json?: boolean;
+  // Issue #250 (§39): `--all` lifts the default project scope; `--by`
+  // picks the aggregation level (default per-agent).
+  readonly all?: boolean;
+  readonly by?: string;
+}
+
+// What the loader filters and aggregates on: the argv flags plus the
+// invoking workspace (which never comes from argv).
+export interface CostQuery {
+  readonly workspace?: string;
+  readonly all?: boolean;
+  readonly by?: CostGroupBy;
 }
 
 export interface CostCommandDeps {
   loadRows: (
     sessionId?: string,
+    query?: CostQuery,
   ) => AgentCostInput[] | Promise<AgentCostInput[]>;
+  // The invoking workspace (the composition root's cwd): the default
+  // project scope filters to sessions touching it. Absent means unscoped
+  // (tests); prod always sets it.
+  workspace?: string;
   // stdout: the report or the one `--json` document.
   out: (line: string) => void;
   // stderr: diagnostics, one `error: …` line each (core/cli/logger).
@@ -202,55 +228,211 @@ export function totalSessionUsage(
   };
 }
 
-// Prod loader: one row per real session out of the session store, one row
-// per usage bucket the session recorded (each `provider/model`, and each tool
-// that reported its own usage), so the task total is still exactly Σ(rows).
+// Issue #251: lock-free read-only open of one session's storage. The
+// caller classified the session via `listSessions` and probed no live
+// holder via `sessionLockIsLive`, so this never creates or removes
+// `lock.json` — the session dir mtime (the prune age signal) is untouched
+// and a concurrent attach is never blocked. A missing storage is an
+// unknown session, exactly as `attachSession` reports it.
+async function openCostReadStorage(
+  sessionsRoot: string,
+  sessionId: string,
+): Promise<Storage> {
+  const bridge = createNodeFileBridge(sessionsRoot);
+  if (!bridge.exists(join(sessionsRoot, sessionId, 'main.jsonl'))) {
+    throw new SessionAttachError(sessionId);
+  }
+  // The portable core over the exec bridge, never the `/node` entry point:
+  // session bytes keep crossing the I/O seam, where the #359 secret
+  // scrubbing and the #361 file modes live (see session-fs.ts). fsync stays
+  // off — cost never commits, so there is nothing to flush.
+  return JsonlStorage.open(
+    join(sessionsRoot, sessionId),
+    bridgeToPiFileSystem(bridge),
+    BACKGROUND_CONTEXT,
+    { fsync: false },
+  );
+}
+
+// Issue #250 (§39): the invoking workspace, canonically. Symlinks are
+// resolved (macOS /var → /private/var); a path that no longer exists keeps
+// its lexical form, matching journal-cli's rule, so it can then only match
+// itself.
+function canonicalWorkspace(path: string): string {
+  try {
+    return createNodeFileBridge('/').realPath?.(path) ?? path;
+  } catch {
+    return path;
+  }
+}
+
+// Issue #250: whether a session belongs to the invoking project. The
+// recorded workspace (`meta.workspace ?? meta.cwd`) matches when it nests
+// with the invocation either way — a run started at the repo root covers a
+// `cost` from a subdirectory, and a subdir run still belongs to a `cost`
+// from the root — so both directions count as touching the workspace.
+function touchesWorkspace(
+  recorded: string | undefined,
+  workspace: string,
+): boolean {
+  if (recorded === undefined || recorded === '') return false;
+  const left = canonicalWorkspace(recorded);
+  const right = canonicalWorkspace(workspace);
+  if (left === right) return true;
+  const below = (parent: string, child: string): boolean =>
+    child.startsWith(parent.endsWith(sep) ? parent : `${parent}${sep}`);
+  return below(left, right) || below(right, left);
+}
+
+// Prod loader: usage facts out of the session store, aggregated to the
+// `--by` level (issue #250; default per-agent). One base fact per session
+// per usage bucket (each `provider/model`, and each tool that reported its
+// own spend, labelled `tool:<name>`), so the task total is still exactly
+// Σ(rows).
 // A session whose storage another live run owns is SKIPPED, never opened
 // (pi-durable: one process per storage), and reported as a zero row so the
-// operator sees what the readout could not read. #251 owns the richer
-// skip/unreadable report (and the lock-free read that stops cost refreshing
-// the session dir's prune age).
+// operator sees what the readout could not read.
+//
+// Issue #251: the read path is lock-free by construction. Sessions are
+// classified by `listSessions` (header reads only) and a live holder is
+// detected by the read-only `sessionLockIsLive` probe — `attachSession`
+// never appears here, so `kubic cost` creates no `lock.json`, removes none,
+// leaves every session dir mtime (the prune age signal) untouched, and a
+// concurrent `kubic run --session` is never blocked. Unreadable sessions
+// report a zero marker row instead of failing the report.
 export async function loadSessionCostRows(
   sessionsRoot: string = defaultSessionsRoot(),
   sessionId?: string,
+  query?: CostQuery,
 ): Promise<AgentCostInput[]> {
+  const by = query?.by ?? DEFAULT_COST_GROUP_BY;
   const store = openSessionStore(
     sessionsRoot,
     createNodeFileBridge(sessionsRoot),
   );
-  const entries =
+  const all = await listSessions(store, BACKGROUND_CONTEXT);
+  // Issue #164 (§23): a NAMED orchestrate session rolls its run up — the
+  // manager record plus every session whose metadata names it as parent,
+  // so `kubic cost --session <orch>` is the run's total with per-child
+  // rows. The named parent keeps its contract (unknown/locked/legacy
+  // escape, never a marker row); a child that cannot be opened reports a
+  // zero marker row like the listing sweep, so a still-running worker
+  // (live lock) reads as `(locked)` instead of failing the report.
+  // A named session is explicit and ignores the project scope.
+  const named =
     sessionId === undefined
-      ? await listSessions(store, BACKGROUND_CONTEXT)
-      : [{ id: sessionId }];
+      ? undefined
+      : all.find((entry) => entry.id === sessionId);
+  if (sessionId !== undefined && named === undefined) {
+    // Issue #419: an unknown named parent with recorded children names
+    // the orphans instead of exiting bare — the operator's next step is
+    // a child id, and the bare `unknown session` hid that it exists.
+    // (The id passed the SESSION_ID_PATTERN gate in runCostCommand, but
+    // this loader is exported — redact on principle, like cost does.)
+    const orphans = all
+      .filter((entry) => entry.meta?.parentSessionId === sessionId)
+      .map((entry) => entry.id)
+      .sort();
+    if (orphans.length > 0) {
+      throw new Error(
+        `unknown session ${redactSecretShapes(sessionId)} (orphaned children: ${orphans.join(', ')})`,
+      );
+    }
+    throw new SessionAttachError(sessionId);
+  }
+  if (named?.format === 'legacy') {
+    throw new SessionFormatError(named.id);
+  }
+  const children =
+    named === undefined
+      ? []
+      : all.filter(
+          (entry) =>
+            entry.id !== named.id && entry.meta?.parentSessionId === named.id,
+        );
+  // Issue #250: the default scope is the invoking project — sessions
+  // touching its workspace — with `--all` for the machine-global total the
+  // command used to print.
+  const workspace = query?.workspace;
+  const scoped =
+    named !== undefined || query?.all === true || workspace === undefined
+      ? named === undefined
+        ? all
+        : [named, ...children]
+      : all.filter((entry) =>
+          touchesWorkspace(entry.meta?.workspace ?? entry.meta?.cwd, workspace),
+        );
   const rows: AgentCostInput[] = [];
-  for (const entry of entries) {
-    let session: Awaited<ReturnType<typeof attachSession>>;
-    try {
-      session = await attachSession(store, entry.id, BACKGROUND_CONTEXT);
-    } catch (error) {
-      // A session the operator NAMED is never silently skipped: an unknown
-      // id, a live lock and a 0.87 transcript all escape so
-      // `runCostCommand` prints the refusal and exits 1, as it did before
-      // the durable store. Marker rows are for the listing sweep only.
-      if (
-        sessionId !== undefined &&
-        (error instanceof SessionAttachError ||
-          error instanceof SessionLockError ||
-          error instanceof SessionFormatError)
-      ) {
-        throw error;
+  for (const entry of scoped) {
+    const isNamed = named !== undefined && entry.id === named.id;
+    const project = entry.meta?.workspace ?? entry.meta?.cwd;
+    // Base identity every row below carries (issue #250): the session id
+    // stays `agentId` (the stable contract), while `agent`/`role` name the
+    // #164 worker and `session`/`project` locate the fact.
+    const identity = {
+      agentId: entry.id,
+      session: entry.id,
+      ...(project === undefined ? {} : { project }),
+      ...(entry.meta?.agentId === undefined
+        ? {}
+        : { agent: entry.meta.agentId }),
+      ...(entry.meta?.role === undefined ? {} : { role: entry.meta.role }),
+    } as const;
+    if (entry.format === 'legacy') {
+      // A named legacy id escaped above; a legacy child of a named run
+      // reports like any other unreadable listing entry.
+      rows.push({
+        ...identity,
+        model: '(unreadable)',
+        costUsd: 0,
+        input: 0,
+        output: 0,
+      });
+      continue;
+    }
+    const live = sessionLockIsLive(join(sessionsRoot, entry.id));
+    if (live !== undefined) {
+      // A session the operator NAMED is never silently skipped: a live
+      // lock escapes so `runCostCommand` prints the refusal and exits 1,
+      // as it did before the durable store. Marker rows are for the
+      // listing sweep — and for the NAMED run's children — only.
+      // Review #164: a live run's manager record is lock-held by the run
+      // itself — refusing the whole report would leave a running run with
+      // no cost view. With children recorded, the parent row is skipped
+      // and the report covers the children; without children the named
+      // contract below still escapes.
+      if (isNamed && children.length > 0) {
+        continue;
       }
+      if (isNamed) {
+        throw new SessionLockError(entry.id, {
+          pid: live.pid,
+          startedAt: live.startedAt ?? 0,
+        });
+      }
+      // Never opened: a live run owns this storage (pi-durable: one
+      // process per storage).
+      rows.push({
+        ...identity,
+        model: '(locked)',
+        costUsd: 0,
+        input: 0,
+        output: 0,
+      });
+      continue;
+    }
+    let storage: Storage;
+    try {
+      storage = await openCostReadStorage(sessionsRoot, entry.id);
+    } catch (error) {
+      if (isNamed) throw error;
       if (
-        error instanceof SessionLockError ||
         error instanceof SessionAttachError ||
         error instanceof SessionFormatError
       ) {
-        // Never opened: the lock is taken before the storage (and a 0.87
-        // directory has no storage at all).
         rows.push({
-          agentId: entry.id,
-          model:
-            error instanceof SessionLockError ? '(locked)' : '(unreadable)',
+          ...identity,
+          model: '(unreadable)',
           costUsd: 0,
           input: 0,
           output: 0,
@@ -259,30 +441,77 @@ export async function loadSessionCostRows(
       }
       throw error;
     }
+    // Issue #426: the race the pre-read probe cannot see. Between the
+    // probe above and the reads below, the session can go live — cost
+    // then reads a store another process is appending to. The torn tail
+    // needs no handling here (the JSONL core truncates a partial trailing
+    // record before it parses, #392 — the in-flight commit is skipped,
+    // never a parse error), but the rows may be partial, so the lock is
+    // re-probed AFTER the read and a live session gets a zero marker row
+    // beside its rows — the same convention as `(locked)`/`(unreadable)`.
+    let wentLive = false;
     try {
-      for (const row of await readSessionUsage(
-        session.storage,
-        BACKGROUND_CONTEXT,
-      )) {
-        rows.push({
-          agentId: entry.id,
-          // A tool bucket has no provider/model identity: it is labelled
-          // `tool:<name>` so the readout never looks like a model row.
-          model: row.kind === 'tool' ? `tool:${row.key}` : row.key,
-          costUsd: num(row.usage.cost?.total),
-          input: row.usage.input,
-          output: row.usage.output,
-          // §62 lever 2 (issue #98): the real prefix-cache counters off the
-          // session's usage rollup.
-          cacheRead: row.usage.cacheRead,
-          cacheWrite: row.usage.cacheWrite,
-        });
+      // Issue #250 (§39 request level): one row per assistant entry that
+      // carries its response's usage — the model spend of that request.
+      // Tools that report their own spend aggregate at the higher levels;
+      // a request row never invents their attribution.
+      if (by === 'request') {
+        const items = entriesToTranscript(
+          await readSessionEntries(storage, BACKGROUND_CONTEXT),
+        );
+        for (const item of items) {
+          if (item.kind !== 'assistant' || item.usage === undefined) continue;
+          rows.push({
+            ...identity,
+            request: item.entryId,
+            model:
+              item.provider !== undefined && item.model !== undefined
+                ? `${item.provider}/${item.model}`
+                : 'unknown',
+            costUsd: num(item.usage.cost?.total),
+            input: num(item.usage.input),
+            output: num(item.usage.output),
+            cacheRead: item.usage.cacheRead,
+            cacheWrite: item.usage.cacheWrite,
+          });
+        }
+      } else {
+        for (const row of await readSessionUsage(storage, BACKGROUND_CONTEXT)) {
+          rows.push({
+            ...identity,
+            // A tool bucket has no provider/model identity: it is labelled
+            // `tool:<name>` so the readout never looks like a model row.
+            model: row.kind === 'tool' ? `tool:${row.key}` : row.key,
+            costUsd: num(row.usage.cost?.total),
+            input: row.usage.input,
+            output: row.usage.output,
+            // §62 lever 2 (issue #98): the real prefix-cache counters off the
+            // session's usage rollup.
+            cacheRead: row.usage.cacheRead,
+            cacheWrite: row.usage.cacheWrite,
+          });
+        }
       }
     } finally {
-      await session.release(BACKGROUND_CONTEXT);
+      // No lock was taken, so there is none to give back: closing the
+      // storage is the whole release.
+      await storage.close(BACKGROUND_CONTEXT);
+      wentLive = sessionLockIsLive(join(sessionsRoot, entry.id)) !== undefined;
+    }
+    if (wentLive) {
+      rows.push({
+        ...identity,
+        model: '(live)',
+        costUsd: 0,
+        input: 0,
+        output: 0,
+      });
     }
   }
-  return rows;
+  // Marker rows (`(locked)`, `(unreadable)`, `(live)`) carry zero counters, so
+  // grouping keeps the task total exactly Σ(rows); at project level they
+  // merge into the project sum, at the other levels they stay visible.
+  return groupCostRows(rows, by);
 }
 
 // One run's usage as its `--json` report carries it (issue #185; §39,
@@ -298,13 +527,28 @@ export async function readSessionRunUsage(
     sessionsRoot,
     createNodeFileBridge(sessionsRoot),
   );
-  const session = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
+  // Issue #251: the same lock-free contract as `loadSessionCostRows` — a
+  // named unknown id, a live lock and a 0.87 transcript escape exactly as
+  // `attachSession` reported them, but nothing is ever locked.
+  const found = (await listSessions(store, BACKGROUND_CONTEXT)).find(
+    (entry) => entry.id === sessionId,
+  );
+  if (found === undefined) throw new SessionAttachError(sessionId);
+  if (found.format === 'legacy') throw new SessionFormatError(sessionId);
+  const live = sessionLockIsLive(join(sessionsRoot, sessionId));
+  if (live !== undefined) {
+    throw new SessionLockError(sessionId, {
+      pid: live.pid,
+      startedAt: live.startedAt ?? 0,
+    });
+  }
+  const storage = await openCostReadStorage(sessionsRoot, sessionId);
   try {
     const totals = totalSessionUsage(
-      await readSessionUsage(session.storage, BACKGROUND_CONTEXT),
+      await readSessionUsage(storage, BACKGROUND_CONTEXT),
     );
     const items = entriesToTranscript(
-      await readSessionEntries(session.storage, BACKGROUND_CONTEXT),
+      await readSessionEntries(storage, BACKGROUND_CONTEXT),
     );
     let toolCalls = 0;
     let model: string | undefined;
@@ -330,28 +574,58 @@ export async function readSessionRunUsage(
       ...(model === undefined ? {} : { model }),
     };
   } finally {
-    await session.release(BACKGROUND_CONTEXT);
+    await storage.close(BACKGROUND_CONTEXT);
   }
 }
 
-// Presentation over the per-agent rows: a table (box-drawn only on a
-// coloured terminal, plain aligned text otherwise), then the task total.
+// Presentation over the grouped rows (issue #250; §39): the group column
+// names the `--by` level, then the worker's role, the model, and the
+// separate in/out/cacheRead/cacheWrite counters the old combined-tokens
+// column hid. Box-drawn only on a coloured terminal, plain aligned text
+// otherwise. Role/agent/model values are operator- or model-authored, so
+// the display strips control characters (the stored rows keep them raw,
+// exactly like `sessions attach`).
 function costTable(
   summary: PerAgentCostSummary,
   deps: CostCommandDeps,
+  by: CostGroupBy,
 ): string {
+  const groupHeader =
+    by === 'request'
+      ? 'REQUEST'
+      : by === 'session'
+        ? 'SESSION'
+        : by === 'project'
+          ? 'PROJECT'
+          : 'AGENT';
+  const groupOf = (entry: AgentCostInput): string => {
+    if (by === 'request') return `#${entry.request ?? '?'}`;
+    if (by === 'session') return entry.session ?? entry.agentId;
+    if (by === 'project') return entry.project ?? '(unknown)';
+    return entry.agent ?? entry.agentId;
+  };
+  const cell = (value: string): string =>
+    stripUnsafeCharacters(value).replace(/\s+/g, ' ');
   const rows = summary.perAgent.map((entry) => [
-    entry.agentId,
-    entry.model,
-    String(entry.input + entry.output),
-    `$${entry.costUsd.toFixed(2)}`,
+    cell(groupOf(entry)),
+    entry.role === undefined ? '-' : cell(entry.role),
+    cell(entry.model),
+    String(entry.input),
+    String(entry.output),
+    String(entry.cacheRead ?? 0),
+    String(entry.cacheWrite ?? 0),
+    formatCostUsd(entry.costUsd),
   ]);
   return renderTable(
     rows,
     [
-      { header: 'AGENT' },
+      { header: groupHeader },
+      { header: 'ROLE' },
       { header: 'MODEL' },
-      { header: 'TOKENS', align: 'right' },
+      { header: 'IN', align: 'right' },
+      { header: 'OUT', align: 'right' },
+      { header: 'CACHE-R', align: 'right' },
+      { header: 'CACHE-W', align: 'right' },
       { header: 'COST', align: 'right' },
     ],
     { fancy: deps.fancy === true, theme: deps.theme ?? PLAIN },
@@ -379,9 +653,28 @@ export async function runCostCommand(
     );
     return EXIT_USAGE;
   }
+  // Issue #250: `--by` takes exactly the four §39 levels; anything else is
+  // a usage error, and the rejected value is argv-controlled, so it is
+  // redacted like the session id above.
+  const by =
+    options.by === undefined
+      ? DEFAULT_COST_GROUP_BY
+      : isCostGroupBy(options.by)
+        ? options.by
+        : undefined;
+  if (by === undefined) {
+    log.error(
+      `invalid --by ${redactSecretShapes(JSON.stringify(options.by))} (use request|agent|session|project)`,
+    );
+    return EXIT_USAGE;
+  }
   let rows: AgentCostInput[];
   try {
-    rows = await deps.loadRows(sessionId);
+    rows = await deps.loadRows(sessionId, {
+      all: options.all === true,
+      by,
+      ...(deps.workspace === undefined ? {} : { workspace: deps.workspace }),
+    });
   } catch (error) {
     if (error instanceof Error && error.name === 'SessionAttachError') {
       // SESSION_ID_PATTERN admits sk-shaped strings, so the validated id
@@ -407,10 +700,18 @@ export async function runCostCommand(
     deps.out('no cost rows');
     return EXIT_OK;
   }
-  deps.out(costTable(summary, deps));
+  deps.out(costTable(summary, deps, by));
+  const unit =
+    by === 'request'
+      ? 'requests'
+      : by === 'session'
+        ? 'sessions'
+        : by === 'project'
+          ? 'projects'
+          : 'agents';
   deps.out(
     theme.bold(
-      `task total $${summary.taskTotal.toFixed(2)} (${summary.perAgent.length} agents)`,
+      `task total ${formatCostUsd(summary.taskTotal)} (${summary.perAgent.length} ${unit})`,
     ),
   );
   // §62 lever 2 over real usage rows (issue #98): reported only when the
@@ -418,7 +719,7 @@ export async function runCostCommand(
   // shows a fabricated 0%.
   if (summary.cache !== null) {
     deps.out(
-      `cache: ${summary.cache.hits}/${summary.cache.total} sessions with prefix hits ` +
+      `cache: ${summary.cache.hits}/${summary.cache.total} ${unit} with prefix hits ` +
         `(${Math.round(summary.cache.rate * 100)}%)`,
     );
     deps.out(theme.muted(transparentCachingNote()));

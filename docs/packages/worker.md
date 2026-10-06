@@ -20,7 +20,7 @@ every diff touching the boundary for maintainer review.
 | --- | --- |
 | `result.ts` | `AgentResult`, `RESULT_FIELDS`, `ResultStatus`, `RESULT_STATUSES`, `ResultError`, `ResultErrorKind`, `ERROR_KINDS`, `TestResult`, `ArtifactRef`, `WorkspaceDiffRef`, `WorkerProvenance`, `ApprovalRecord`, `EscalationRecord`, `ResultMetrics`, `ResultValidation`, `validateAgentResult`, `JsonValue` |
 | `pi-boundary.ts` | Worker Pi seam (§65, [#197](https://github.com/konic-labs/kubic/issues/197); #391 moved it to the Pi 1.0 surface). pi-durable harness: values `Harness`, `createRegistry`, `defineExtension`, `defineTool`, `wrapTool`, `hook`, `section`, `ToolTask`, `GenerationTask`, `CompactionTask`, `AgentDoc`, `LiveDoc`, `UsageDoc`, `configure`, `defineDoc`, the entry-kind tokens (`UserEntry`, `AssistantEntry`, `ToolResultEntry`, `SystemEntry`, `CompactionEntry`), `MemoryStorage`, `watchEvents`, `ConversationBusy`; types `Conversation`, `Submission`, `SettledSubmissionRecord`, `Extension`, `ToolRegistration`, `ToolExecutionApi`, `ToolHooks`, `HookRegistration`, `HarnessSettings`, `CompactionPolicy`, `AgentEvent`, `EntryRecord`, `Storage`; storage `openNodeJsonlStorage`. `@earendil-works/chord`: `Context`, `BACKGROUND_CONTEXT`, `JsonValue`. `@earendil-works/pi-durable/env`: `FileSystem`, `ExecutionEnv`, `Result`, `ok`, `err`, `FileError`, `FileErrorCode`, `FileInfo`, `FileKind`. Model layer (`Model`, `MutableModels`, `Usage`, `DeferredHandle`, `ModelThinkingLevel`, thinking clamp, providers, `Type`, the lazy `api/*.lazy` subpaths, `builtinProviders`) — each re-export carries a JUSTIFICATION block naming seam, user, why-Pi, and review, and the pi-boundary gate fails an export without one |
-| `lane/solo.ts` | `SOLO_LANE_NAME` (`'main'`), `SOLO_PROMPT_SECTION`, `SOLO_ROLE`, `assembleSoloPrompt`, `SoloPromptInput`, `defaultSoloModelId`, `defaultSoloPrompt`, `SoloPolicyOptions` (`beforePolicyHooks`/`spanHooks`/`contributions`/`classes`/`interceptors`; enterprise `toolAllowed`/`modelAllowed`), `SoloCompactionOptions`, `SoloBootOptions` (`session` is the #392 handle, handed to the harness through `session.adopt()` so a `release()` cannot close a storage a live harness owns; `settings` excludes `compaction`/`extensions`, which the lane owns; the pre-1.0 `memos` option is gone — tool memos are pi-durable `api.memo`; `modelPolicy`/`onModelNotice`: a resumed lane keeps its stored model unless the selection is an explicit pin, which switches it; an unregistered stored model fails closed with `ModelSelectError` — #148), `SoloLane` (`harness`/`conversation`/`registry`/`kills`/`model`; `close()` closes the harness and leaves `session.release()` to the caller), `bootSoloLane` (installs the per-process registry `kubic.budget` → `kubic.policy` → `kubic.spans` → `kubic` — install order is hook order, #397/#394), `splitSoloModelId`, `escalateSoloModel`. One turn is `conversation.submit(...)` → `submission.wait(...)`; the pre-1.0 `driveToSettled`/`DriveOutcome` loop was deleted with #395, and `lane/turn.ts` owns the glue |
+| `lane/solo.ts` | `SOLO_LANE_NAME` (`'main'`), `SOLO_PROMPT_SECTION`, `SOLO_ROLE`, `assembleSoloPrompt`, `SoloPromptInput`, `defaultSoloModelId`, `SoloPolicyOptions` (`beforePolicyHooks`/`spanHooks`/`contributions`/`classes`/`interceptors`; enterprise `toolAllowed`/`modelAllowed`), `SoloCompactionOptions`, `SoloBootOptions` (`session` is the #392 handle, handed to the harness through `session.adopt()` so a `release()` cannot close a storage a live harness owns; `settings` excludes `compaction`/`extensions`, which the lane owns; the pre-1.0 `memos` option is gone — tool memos are pi-durable `api.memo`; `modelPolicy`/`onModelNotice`: a resumed lane keeps its stored model unless the selection is an explicit pin, which switches it; an unregistered stored model fails closed with `ModelSelectError` — #148), `SoloLane` (`harness`/`conversation`/`registry`/`kills`/`model`; `close()` closes the harness and leaves `session.release()` to the caller), `bootSoloLane` (installs the per-process registry `kubic.budget` → `kubic.policy` → `kubic.spans` → `kubic` — install order is hook order, #397/#394), `splitSoloModelId`, `escalateSoloModel`. One turn is `conversation.submit(...)` → `submission.wait(...)`; the pre-1.0 `driveToSettled`/`DriveOutcome` loop was deleted with #395, and `lane/turn.ts` owns the glue |
 | `lane/events.ts` | `KubicLaneEvent`, `LaneEventSink`, `KubicLaneTool`, `KubicLaneCompaction`, `toKubicLaneEvent`, `subscribeLaneEvents` |
 | `lane/failures.ts` | `FailureCode`, `FAILURE_CODES`, `RetryStrategy`, `RETRY_STRATEGIES`, `RetryDecisionKind`, `ClassifiedFailure`, `classifyFailure`, `RetryHints`, `RetryDecision`, `RetryBudget`, `chooseRetry` |
 | `lane/tools-adapter.ts` | `KubicToolContext`, `kubicToolsToPiTools` (registry schemas + json_schema/`prefer` constrained sampling — #168), `renderToolText`, `renderReadText`, `renderGrepText`, `renderBashText` (plain-text results with a header; [tools](../cli/tools.md)) |
@@ -28,7 +28,7 @@ every diff touching the boundary for maintainer review.
 | `lane/policy.ts` | `PermissionClasses` (re-export), `PolicyRefusedError` |
 | `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `KubicSessionMeta`, `KubicSessionDoc`, `SessionHandle`, `SessionListEntry`, `createSession`, `attachSession`, `listSessions`, `readSessionMetadata`, `forkSession` / `ForkSessionOptions` / `ForkSessionResult` / `SessionForkError` (issue #265: a new session forked from an existing one), `laneConversationIdOf` (the conversation a session's lane runs — a fork's recorded `KubicSessionMeta.conversation`, else the reserved root; every transcript reader resolves it), `SessionAttachError`, `SessionFormatError`, `SessionIdError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionLockIsLive`, `sessionsTouchingWorkspace` — session storage on pi-durable ([session storage](#session-storage-issue-392)) |
 | `lane/session-fs.ts` | `bridgeToPiFileSystem` — the 1.0 `FileSystem` (19 members, `id`/`truncateFile`/`flushFile` included) over the exec file bridge |
-| `lane/turn.ts` | `TurnOutcome`, `RunTurnOptions`, `runTurn`, `awaitTurn`, `turnAbort`, `turnAbortReasonOf`, `TurnAbort`, `turnLaneRecord`, `TURN_BUSY_REASON` — one turn is `conversation.submit({ type: 'input', … })` → `submission.wait(context)`; no Kubic-side loop, no sleep (§20.5–§20.7, #395) |
+| `lane/turn.ts` | `TurnOutcome`, `RunTurnOptions`, `runTurn`, `awaitTurn`, `turnAbort`, `turnAbortReasonOf`, `TurnAbort`, `turnLaneRecord`, `TURN_BUSY_REASON`, `SoloOverflowRecovery`, `OverflowRecoveryOptions`, `recoverSoloOverflowTurn`, `runTurnWithOverflowRecovery` — one turn is `conversation.submit({ type: 'input', … })` → `submission.wait(context)`; no Kubic-side loop, no sleep (§20.5–§20.7, #395). The recovery wrapper retries exactly one failure — context overflow, compacted first (#399) and retried once (#209) |
 | `lane/settle.ts` | `OperationErrorLike`, `SettledResult`, `LaneTerminalStatus`, `SubmissionFailure`, `classifyHarnessError`, `classifySubmissionFailure`, `classifyThrownError`, `laneStatusOf`, `laneErrorOf`, `settleTerminalStatus`, `settleSubmission` — a settled pi-durable submission → Kubic's `ResultStatus`/`ResultError` and the §52 codes (#395) |
 | `lane/pending.ts` | `PendingPolicy`, `PendingReport`, `PendingSettlementResult`, `SettlePendingOptions`, `PendingLane`, `inspectPending`, `settlePending`, `describePendingSettlement`, `pendingInputText`, `inspectStoredWork` — settle a turn a crashed process left open (#147; #396: `harness.inspect()` decides, `resume` waits under the caller's guard, `abort` is durable) |
 | `lane/abort.ts` | `KillFn`, `OperationKillRegistry`, `AbortableLane`, `LaneAbortResult`, `LaneDriveError`, `abortLane`, `forgetLaneKills` — `conversation.abort(context)` plus the conversation-keyed kill drain (every kill attempted, failures aggregated, #395 D6.2); `track()` returns the unregister fn its owner calls when the handle settles (#142) |
@@ -39,11 +39,11 @@ every diff touching the boundary for maintainer review.
 | `lifecycle/env.ts` | `ENV_ALLOWLIST`, `filterSpawnEnv`, `roleCredentialEnv`, `roleGrantEnv`, `withRoleGrant`, `buildSpawnEnv`, `redactEnvForLog` |
 | `lifecycle/reap.ts` | `RawExit`, `ExitReport`, `reportExit`, `ReapTarget`, `ReapDeps`, `DetachedReap`, `TEARDOWN_BUDGET_MS`, `reapDetached` |
 | `lifecycle/budgets.ts` | `LIFECYCLE_BUDGETS_MS`, `PerfSample`, `PerfGateResult`, `checkPerfGate` |
-| `usage.ts` | `KubicUsageRow`, `ModelUsageSummary`, `UsageSummary`, `summarizeUsage`, `formatCost`, `formatUsageLine`, `usageRowFromEntry` |
-| `model-select.ts` | `ModelSelectError`, `ModelSelection`, `AnyModel`, `selectModel`, `parseModelFlag`, `EscalationRecord`, `EscalationLadder`, `EscalationError`, `createLadder`, `escalateModel`, `supportedThinking`, `clampThinking`, `saveThinkingLevel`, `loadThinkingLevel` |
+| `usage.ts` | `KubicUsageRow`, `formatCost`, `usageRowFromEntry` |
+| `model-select.ts` | `ModelSelectError`, `ModelSelection`, `AnyModel`, `selectModel`, `parseModelFlag`, `EscalationRecord`, `EscalationLadder`, `EscalationError`, `escalateModel`, `supportedThinking`, `clampThinking` |
 | `models-config.ts` | `CustomApi`, `CUSTOM_APIS`, `CustomModelSpec`, `CustomProviderSpec`, `ModelsJsonError`, `THINKING_LEVELS`, `isThinkingLevel`, `parseModelsJson`, `LOCAL_MODELS_EXAMPLE`, `registerCustomProviders` |
-| `prompts.ts` | `PromptCacheError`, `PROMPT_CACHE_RULES`, `SystemPromptInput`, `assembleSystemPrompt`, `sortedToolNames`, `serializeMetadata`, `appendTurnContent`, `LaneBinding`, `LaneRegistry`, `AffinityEscalation`, `TaskAffinity`, `pinModelForTask`, `taskModelForTurn`, `assertSingleModelId`, `ModelEscalationEvent`, `escalatePinnedModel`, `CompactionRoute`, `buildCompactionRoute`, `SessionCacheCounters`, `emptyCacheCounters`, `recordCacheUsage`, `cacheHitRate`, `SessionCacheStats` |
-| `compaction.ts` | `DEFAULT_RESERVE_TOKENS`, `MAX_RESERVE_FRACTION`, `effectiveReserveTokens`, `SOLO_KEEP_RECENT_TOKENS` (20000), `SOLO_BACKGROUND_TOKENS` (0: Kubic's reserve threshold is the only trigger — no speculative background summary, #399), `SoloCompactionSettingsOptions`, `soloCompactionSettings` (the harness `settings.compaction`; `reserveTokens` is a live getter clamped to the current model's window, so a model switch re-clamps with no explicit step), `SoloCompactionLane`, `compactSoloLane` (§27.2 manual `/compact [focus]`; admits Pi's compaction task with Kubic's prompt as its instructions — #330; **automatic** threshold/overflow compaction uses Pi's own summarization prompt, because pi-durable only accepts instructions through `compact()`, so Kubic's `buildCompactPrompt` reaches the manual path only — #399/D3), `parseCompactCommand`, `CompactionError`, `CompactPromptInput`, `buildCompactPrompt`, `FileOpKind`, `FileOp`, `CumulativeFileOps`, `emptyFileOps`, `accumulateFileOps`, `StructuredSummary`, `formatStructuredSummary`, `TruncatedToolOutput`, `SpillArtifact`, `resolveTruncatedOutput`, `buildSpillArtifact`, `passThroughOutput`, `CompactedState`, `buildCompactedState` |
+| `prompts.ts` | `PromptCacheError`, `SystemPromptInput`, `assembleSystemPrompt`, `sortedToolNames`, `serializeMetadata`, `AffinityEscalation`, `TaskAffinity`, `pinModelForTask`, `taskModelForTurn`, `assertSingleModelId`, `ModelEscalationEvent`, `escalatePinnedModel`, `CompactionRoute`, `buildCompactionRoute`, `SessionCacheCounters`, `emptyCacheCounters`, `recordCacheUsage`, `cacheHitRate`, `SessionCacheStats` |
+| `compaction.ts` | `DEFAULT_RESERVE_TOKENS`, `MAX_RESERVE_FRACTION`, `effectiveReserveTokens`, `SOLO_KEEP_RECENT_TOKENS` (20000), `SOLO_BACKGROUND_TOKENS` (0: Kubic's reserve threshold is the only trigger — no speculative background summary, #399), `SoloCompactionSettingsOptions`, `soloCompactionSettings` (the harness `settings.compaction`; `reserveTokens` is a live getter clamped to the current model's window, so a model switch re-clamps with no explicit step), `SoloCompactionLane`, `compactSoloLane` (§27.2 manual `/compact [focus]`; admits Pi's compaction task with Kubic's prompt as its instructions — #330; **automatic** threshold/overflow compaction uses Pi's own summarization prompt, because pi-durable only accepts instructions through `compact()`, so Kubic's `buildCompactPrompt` reaches the manual path only — #399/D3), `parseCompactCommand`, `CompactionError`, `CompactPromptInput`, `buildCompactPrompt`, `FileOpKind`, `FileOp`, `CumulativeFileOps`, `emptyFileOps`, `accumulateFileOps`, `StructuredSummary`, `formatStructuredSummary`, `TruncatedToolOutput`, `SpillArtifact`, `resolveTruncatedOutput`, `buildSpillArtifact`, `passThroughOutput`, `CompactedState` (the `buildCompactedState` constructor was deleted, #215) |
 | `approval-client.ts`, `session.ts`, `tools.ts` | Pointer | Approvals decider in `@kubic/host` `approvals.ts` (#16) + `lane/interceptors.ts`; sessions in `lane/session-store.ts` (#14); tools in `lane/tools-adapter.ts` (#11) |
 | `ops/` | Implemented | Operation implementations (read/write/edit/bash/git/…) + registry |
 
@@ -451,13 +451,16 @@ and does not transfer ownership.
 
 One live attachment per session, fail-closed. `createSession` (before the
 storage is created) and `attachSession` (before the storage is opened)
-acquire `<sessions-root>/<session-id>/lock.json` — a `{pid, startedAt}`
-record of the attaching process — through the exec-owned lock-file
-primitive (`exec/lock-file.ts`; I/O confinement, §9): an O_EXCL
-(`writeFileSync(…, {flag: 'wx'})`) create is the atomic test-and-set, and
-the primitive makes the session dir eagerly as the lock's parent.
-`handle.release(…)` releases the lock (best-effort remove), so the file
-exists only while a session is actually attached.
+acquire `<sessions-root>/<session-id>/lock.json` — a
+`{pid, startedAt, procStart?, nonce?}` record of the attaching process
+(`startedAt` is when the lock was taken, `procStart` the holder process's
+own start time for the pid-reuse guard in issue #145, `nonce` the
+per-attempt unique that makes the post-write verification exact) — through
+the exec-owned lock-file primitive (`exec/lock-file.ts`; I/O confinement,
+§9): an O_EXCL (`writeFileSync(…, {flag: 'wx'})`) create is the atomic
+test-and-set, and the primitive makes the session dir eagerly as the
+lock's parent. `handle.release(…)` releases the lock, so the file exists
+only while a session is actually attached.
 
 The lock is the ONLY guard around a storage open (issue #392): pi-durable
 states that one process owns a storage at a time and provides no
@@ -470,10 +473,22 @@ already held.
   without reading the transcript.
 - **Stale steal** (never a steal of a live lock): a holder whose process
   is gone (`process.kill(pid, 0)` fails) is stale immediately — crash
-  recovery works same-day; a lock file older than a day is stale
-  regardless (pid reuse); an unparseable/torn `lock.json` is a stale
-  candidate. A steal that loses its re-create race surfaces as
+  recovery works same-day. There is NO age rule: a days-old lock with a
+  live, matching holder is a long TUI session, never stale. Pid reuse is
+  caught by the process-start check instead: the lock records the holder's
+  own start time (`/proc` on Linux; `processStartTimeOf`, issue #145), and
+  a live pid whose start moved is a recycled number, so the lock is stale.
+  Locks without a recorded start (legacy shape, or a platform without a
+  start-time source) fall back to the pid probe. An unparseable/torn
+  `lock.json` is a stale candidate. The takeover lands through a temp
+  file + hard-link claim (`claimLockLink`: exactly one racer lands per
+  generation), clears only the stale occupant it judged, and re-reads to
+  verify the owner is this attempt. A steal that loses surfaces as
   `SessionLockError`, never a crash.
+- **Owned release**: `releaseSessionLock` removes only a lock naming this
+  process — another process's lock is left alone. A refused attach or a
+  failed create therefore releases safely: what they never owned, they
+  never delete.
 - **Local filesystem only.** O_EXCL atomicity is claimed on local
   filesystems only — no network/shared-disk (NFS/SMB) locking semantics
   are provided or tested.
@@ -608,14 +623,30 @@ carrying the committed `entries`, live tools, retry, compactions and
 `retry_with_stronger_model`, `retry_with_different_tool`,
 `retry_with_wider_capability`; decisions add `escalate`/`abandon`, and
 retry spend lands on `RetryBudget`, never the task budget.
+Emitted by `classifyFailure` (#209): `retry_same` (executed by the
+harness's durable generation retry, #395 — Kubic never relaunches it),
+`retry_with_different_tool`, and `retry_with_new_context` (solo
+compact-then-retry). Pollution escalates (the operator picks the fresh
+agent); `budget_exhausted`/`approval_denied` abandon and spend nothing.
+`retry_with_stronger_model` / `retry_with_new_agent` are decided by
+`chooseRetry` but executed by their owners (#210 escalates, #184
+relaunches); `retry_with_wider_capability` only ever arises through an
+explicit approval, never from the chooser. `RetryBudget(maxAttempts,
+maxCostUsd)` binds both arms (attempts AND reported retry spend; task
+spend never counts) and is constructed straight from the orchestrator's
+`RetryBudgetConfig` — same field names, no import. Solo overflow
+recovery (`recoverSoloOverflowTurn` / `runTurnWithOverflowRecovery` in
+`lane/turn.ts`, live on the headless path): compact via
+`runManualCompaction`, then one retry with a fresh request id; a
+compaction that did not cut abandons with the original failure.
 
 ### Usage (`usage.ts`, §39)
 
 `KubicUsageRow` is `{ model, provider, usage: Usage (Pi type),
-toolCallId?, entryId? }`. `summarizeUsage` folds
-rows into `UsageSummary` (`requests`, `input`, `output`, `cacheRead`,
-`cacheWrite`, `costTotal`, plus `byModel` per model) — pure, so cost
-tests use fixture rows, never network or paid tokens. Since #398 the rows
+toolCallId?, entryId? }`. There is no launch-layer rollup: the `usageRows`
+dep, `launched.usage()` and `summarizeUsage` were deleted (issue #433) —
+no production code ever supplied or read them, and the single roll-up
+surface is `kubic cost --session <run>` (#164). Since #398 the rows
 are built by `usageRowFromEntry` from the committed assistant entry, so
 `provider`/`model` are the ones that really answered (not the lane name or
 the boot model — #287). Issue #346 deleted the never-written

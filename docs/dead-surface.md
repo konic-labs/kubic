@@ -125,6 +125,13 @@ file that no longer exists, or when a row's file has become reachable
   `trajectory/src/index.ts` barrel cannot be deleted (a §64 skeleton path
   pinned by `scripts/dep-lint.test.mjs`); its row is re-owned from `delete:`
   to a named `keep:`.
+- Issue #211 executed a function-level **delete**: `applySelectedRole` +
+  `validateRoleToolsRegistered` in the live
+  `packages/host/src/roles/roles-boot.ts` had zero callers anywhere (the
+  solo boot applies roles inline via `selectRole`/`rolePromptFor`, the
+  delegation path via `worker-roles.ts`), so they were deleted rather than
+  wired to an invented caller. Function-level, in a reachable file — no
+  ledger row.
 
 | LOC | file | owner | disposition |
 | --- | --- | --- | --- |
@@ -141,6 +148,8 @@ file that no longer exists, or when a row's file has become reachable
 | 58 | `packages/eval/src/rl/index.ts` | #99 | wire: RL dataset export (phase 4, design §53) — keep behind the eval CLI |
 | 4 | `packages/exec/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/exec/src/paths.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 225 | `packages/exec/src/test-support/git-sandbox.ts` | #365 | keep: test-only real-git sandbox factory (scrubbed env, activated process.env, `git`/`gitResult` runners) imported exclusively by `*.test.ts` files, which the value-import walk excludes by rule — a test seam can never be `reachable` |
+| 60 | `packages/exec/src/test-support/orchestrate-lane-fixtures.ts` | #431 | keep: test-only lane-worker child script (self-scrubbed git view, pinned commit identity) imported exclusively by the #431 prod acceptance — same test-seam exclusion as the git sandbox |
 | 4 | `packages/exec/src/workspace.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 58 | `packages/extensions/src/cancellation.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
 | 55 | `packages/extensions/src/facets.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
@@ -150,8 +159,8 @@ file that no longer exists, or when a row's file has become reachable
 | 4 | `packages/host/src/credentials.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/host/src/dispatch.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/host/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 117 | `packages/host/src/limits/skip-records.ts` | #86 | wire: full-access skip records surface with approvals (#86/#48) |
 | 18 | `packages/host/src/limits/trust-first.ts` | #100 | wire: docs ordering note consumed by help/docs rendering (#100) |
+| 94 | `packages/exec/src/test-support/orchestrate-conflict-fixtures.ts` | #420 | keep: test-only resolver-child scripts (self-scrubbed git view, committed through scrubbed env) imported exclusively by `apps/kubic/src/orchestrate-conflict-prod.test.ts` (moved from `packages/host` by #387), which the value-import walk excludes by rule — a test seam can never be `reachable` |
 
 | 4 | `packages/host/src/root-agent.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/host/src/worker-manager.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
@@ -212,3 +221,15 @@ non-test caller nor a row below (issue #359).
 | `useScopedToken` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 broker, not implemented (design drift item 22) |
 | `substituteTokenHost` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 host substitution, not implemented (design drift item 22) |
 | `revokeAllTokens` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 settle/exit revocation, not implemented (design drift item 22) |
+| `emptyFileOps` | `packages/worker/src/compaction.ts` | #34 | keep: §27 structured-summary/file-ops vocabulary; the spill path is not implemented |
+| `accumulateFileOps` | `packages/worker/src/compaction.ts` | #34 | keep: §27 structured-summary/file-ops vocabulary; the spill path is not implemented |
+| `formatStructuredSummary` | `packages/worker/src/compaction.ts` | #34 | keep: §27 structured-summary vocabulary; summaries are not rendered anywhere yet |
+| `resolveTruncatedOutput` | `packages/worker/src/compaction.ts` | #34 | keep: spill-path resolver; the spill path is not implemented |
+| `buildSpillArtifact` | `packages/worker/src/compaction.ts` | #34 | keep: spill artifact constructor; spill artifacts are not implemented |
+| `passThroughOutput` | `packages/worker/src/compaction.ts` | #34 | keep: no-truncation guarantee for the spill path; the spill path is not implemented |
+| `assertSingleModelId` | `packages/worker/src/prompts.ts` | #215 | wire: single-model-per-turn guard; no per-turn re-selection site exists yet to gate |
+| `SessionCacheStats` | `packages/worker/src/prompts.ts` | #215 | keep: cache hit/miss observability vocabulary; no status surface reads it yet (TUI footer / cost) |
+| `buildCompactionRoute` | `packages/worker/src/prompts.ts` | #215 | keep: Rule 7 fresh-routing-id guard; no routing-id compaction site exists yet |
+| `compositionOrder` | `packages/worker/src/lane/wrap.ts` | #215 | keep: extension wrap-order formatter; the boot order is fixed, nothing formats it yet |
+| `settleSubmission` | `packages/worker/src/lane/settle.ts` | #215 | keep: submission-settlement kernel; the live path settles via `settleTerminalStatus` directly |
+

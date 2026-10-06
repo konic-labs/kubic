@@ -104,6 +104,50 @@ describe('persistRunTrajectory (issue #383)', () => {
     expect(exported.approvals).toEqual([]);
   });
 
+  // Issue #285 (§71): a budgeted run carries its limits, measured usage
+  // and breach; an unbounded run carries no block at all.
+  it('records the §71 budget block when the run was budgeted', () => {
+    const { exported } = persist(
+      {},
+      {
+        budget: {
+          limits: { maxToolCalls: 1 },
+          usage: { tokens: 10, costUsd: 0.01 },
+          exhausted: { limit: 'toolCalls', used: 2, max: 1 },
+        },
+      },
+    );
+    expect(exported.budget).toEqual({
+      limits: { maxToolCalls: 1 },
+      usage: { tokens: 10, costUsd: 0.01 },
+      exhausted: { limit: 'toolCalls', used: 2, max: 1 },
+    });
+  });
+
+  it('omits the §71 budget block when the run was unbounded', () => {
+    const { exported } = persist({});
+    expect(exported.budget).toBeUndefined();
+  });
+
+  it('carries the lane escalation record into model.escalations (issue #210)', () => {
+    const { exported } = persist(
+      {},
+      {
+        escalations: [
+          {
+            reason: '3 consecutive tool failures',
+            at: new Date(1_500).toISOString(),
+            fromModel: 'faux/echo',
+            toModel: 'faux/big',
+            thinking: null,
+          },
+        ],
+      },
+    );
+    expect(exported.model.escalations).toHaveLength(1);
+    expect(exported.model.escalations[0]?.toModel).toBe('faux/big');
+  });
+
   it('records a selected model and defaults thinking to null', () => {
     const { exported } = persist(
       {},

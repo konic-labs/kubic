@@ -782,6 +782,25 @@ describe('run -p headless behavior (§17, §80)', () => {
   });
 });
 
+// Issue #283 (§71): the parsed solo budget travels to the runner;
+// absence leaves the key out.
+it('forwards --budget limits to the runner options', async () => {
+  const o = out();
+  const seen: { budget?: unknown } = {};
+  const exit = await runRunCommand(
+    { prompt: 'hi', budget: { maxToolCalls: 1 } },
+    {
+      out: o.write,
+      run: (async (_prompt: string, options: { budget?: unknown }) => {
+        seen.budget = options.budget;
+        return completedResult({ summary: 'ok' });
+      }) as never,
+    },
+  );
+  expect(exit).toBe(0);
+  expect(seen.budget).toEqual({ maxToolCalls: 1 });
+});
+
 describe('run -p argument handling (issue #68; mutation hardening)', () => {
   it('accepts the --prompt long form like -p', async () => {
     const o = out();

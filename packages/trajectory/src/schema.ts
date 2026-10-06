@@ -15,9 +15,9 @@
 // runtime implementations) — the structural interfaces below are
 // snapshots of those shapes, pinned by the golden fixture test.
 
-export const SCHEMA_VERSION = '1.1';
+export const SCHEMA_VERSION = '1.2';
 export const SCHEMA_MAJOR = 1;
-export const SCHEMA_MINOR = 1;
+export const SCHEMA_MINOR = 2;
 
 // Stability promise: `stable` means additive-only within a major —
 // replay (#52) and eval (#53) pinned to major 1 keep parsing.
@@ -31,6 +31,14 @@ export interface TrajectoryChangelogEntry {
 }
 
 export const TRAJECTORY_CHANGELOG: readonly TrajectoryChangelogEntry[] = [
+  {
+    version: '1.2',
+    date: '2026-10-05',
+    changes: [
+      'Budget observability (§71, issue #285): optional top-level budget block — limits (the max* dims the run started with), usage (measured tokens/costUsd/toolCalls) and exhausted (the breaching limit with used/max when known).',
+      '1.1 records still parse: the whole budget block is optional on read.',
+    ],
+  },
   {
     version: '1.1',
     date: '2026-10-04',
@@ -253,6 +261,38 @@ export interface TrajectoryUsage {
   byModel: Record<string, TrajectoryModelUsage>;
 }
 
+// 1.2 (§71 budgets, issue #285): the optional budget block. `limits` are
+// the max* dims the run started with (absent dims were unbounded);
+// `usage` is the measured spend in the same vocabulary; `exhausted` names
+// the breach that ended a budget_exhausted run, with used/max when the
+// producer knew them (post-turn ledger reads do; mid-turn gate trips may
+// not). The whole block is absent on unbounded runs — never an empty
+// object claiming a budget that was never configured.
+export interface TrajectoryBudgetLimits {
+  maxTokens?: number;
+  maxCostUsd?: number;
+  maxRuntimeMs?: number;
+  maxToolCalls?: number;
+}
+
+export interface TrajectoryBudgetUsage {
+  tokens?: number;
+  costUsd?: number;
+  toolCalls?: number;
+}
+
+export interface TrajectoryBudgetExhausted {
+  limit: string;
+  used?: number;
+  max?: number;
+}
+
+export interface TrajectoryBudget {
+  limits: TrajectoryBudgetLimits;
+  usage?: TrajectoryBudgetUsage;
+  exhausted?: TrajectoryBudgetExhausted;
+}
+
 export interface TrajectoryResultError {
   kind: string;
   message: string;
@@ -298,6 +338,8 @@ export interface TrajectoryExport {
   usage: TrajectoryUsage;
   result: TrajectoryResult;
   eval: TrajectoryEvalSlot;
+  // 1.2 (issue #285): the §71 budget block. Absent on unbounded runs.
+  budget?: TrajectoryBudget;
 }
 
 // Closed-world field coverage: adding or removing a §46 section breaks
@@ -322,6 +364,7 @@ export const TRAJECTORY_FIELDS = {
   usage: true,
   result: true,
   eval: true,
+  budget: true,
 } satisfies Record<keyof TrajectoryExport, true>;
 
 export type TrajectorySchemaErrorCode = 'unknown-major' | 'malformed';
@@ -577,12 +620,84 @@ function checkOptionalFields(
   }
 }
 
+// 1.2 (issue #285): the budget block is wholly optional; when present
+// its leaves are type-checked. Unknown numeric limit dims are tolerated
+// (a newer minor may add dims — additive-only within the major), but a
+// non-numeric leaf is malformed.
+function checkBudgetShape(input: Record<string, unknown>): void {
+  const budget = input.budget;
+  if (budget === undefined) return;
+  if (!isRecord(budget)) {
+    malformed('budget', `must be an object (got ${describeValue(budget)})`);
+  }
+  const limits = budget.limits;
+  if (!isRecord(limits)) {
+    malformed(
+      'budget.limits',
+      `must be an object (got ${describeValue(limits)})`,
+    );
+  }
+  for (const [dim, max] of Object.entries(limits)) {
+    if (typeof max !== 'number' || !Number.isFinite(max)) {
+      malformed(
+        `budget.limits.${dim}`,
+        `must be a finite number (got ${describeValue(max)})`,
+      );
+    }
+  }
+  const usage = budget.usage;
+  if (usage !== undefined) {
+    if (!isRecord(usage)) {
+      malformed(
+        'budget.usage',
+        `must be an object (got ${describeValue(usage)})`,
+      );
+    }
+    for (const [leaf, value] of Object.entries(usage)) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        malformed(
+          `budget.usage.${leaf}`,
+          `must be a finite number (got ${describeValue(value)})`,
+        );
+      }
+    }
+  }
+  const exhausted = budget.exhausted;
+  if (exhausted !== undefined) {
+    if (!isRecord(exhausted)) {
+      malformed(
+        'budget.exhausted',
+        `must be an object (got ${describeValue(exhausted)})`,
+      );
+    }
+    if (typeof exhausted.limit !== 'string' || exhausted.limit === '') {
+      malformed(
+        'budget.exhausted.limit',
+        `must be a non-empty string (got ${describeValue(exhausted.limit)})`,
+      );
+    }
+    for (const leaf of ['used', 'max'] as const) {
+      const value = exhausted[leaf];
+      if (
+        value !== undefined &&
+        (typeof value !== 'number' || !Number.isFinite(value))
+      ) {
+        malformed(
+          `budget.exhausted.${leaf}`,
+          `must be a finite number (got ${describeValue(value)})`,
+        );
+      }
+    }
+  }
+}
+
 function checkOptionalShape(input: Record<string, unknown>): void {
   for (const [section, fields] of Object.entries(OPTIONAL_SECTION_FIELDS)) {
     const value = input[section];
     if (!isRecord(value)) continue; // the required pass already refused it
     checkOptionalFields(value, section, fields, false);
   }
+  checkBudgetShape(input);
   const model = input.model as Record<string, unknown>;
   const escalations = model.escalations;
   if (Array.isArray(escalations)) {
@@ -647,7 +762,12 @@ export function parseTrajectoryExport(input: unknown): TrajectoryExport {
       `unsupported trajectory major ${major} (this reader supports major ${SCHEMA_MAJOR}; schema_version ${JSON.stringify(version)})`,
     );
   }
+  // 1.2 (issue #285): the budget block is the first OPTIONAL top-level
+  // section — absent on unbounded runs — so the required-on-read set is
+  // TRAJECTORY_FIELDS minus budget. The closed-world map above still
+  // breaks compilation when a section is added or removed.
   for (const field of Object.keys(TRAJECTORY_FIELDS)) {
+    if (field === 'budget') continue;
     if (!(field in input)) {
       throw new TrajectorySchemaError(
         'malformed',

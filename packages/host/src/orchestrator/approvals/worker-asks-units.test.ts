@@ -22,6 +22,7 @@ import {
   summarizeCommand,
 } from '../../approval-display.js';
 import { summarizeRequest } from '../../approvals.js';
+import { readAuditLedger } from '../../policy/audit-ledger.js';
 import { OrchestratorBudgetError } from './budgets.js';
 import { buildOrchestratorRequest } from './request.js';
 import type { OrchestratorVerdict } from './routing.js';
@@ -194,6 +195,71 @@ describe('FileDecisionStore (issue #379)', () => {
       }),
     ).toThrow();
     expect(readdirSync(dir)).toEqual([DECISIONS_FILE]);
+  });
+});
+
+describe('ask ledger provenance (issue #282)', () => {
+  it('records the registry pid/generation, thinking and base the hook resolves', async () => {
+    const dir = tmpDir();
+    const seen: string[] = [];
+    const router = createWorkerAskRouter({
+      dir,
+      maxPendingMs: 1_000,
+      provenanceFor: (request) => {
+        seen.push(request.agentId);
+        return {
+          pid: 4242,
+          generation: 1,
+          thinking: 'high',
+          base: 'abc123',
+        };
+      },
+    });
+    await router.ask(input(), { autoApprove: true });
+    expect(seen).toEqual(['agent-1']);
+    const [record] = readAuditLedger(dir);
+    expect(record?.worker).toMatchObject({ pid: 4242, generation: 1 });
+    expect(record?.model.thinking).toBe('high');
+    expect(record?.workspace.base).toBe('abc123');
+  });
+
+  it('keeps the honest fallback when the hook knows nothing (e.g. a forged key)', async () => {
+    const dir = tmpDir();
+    const router = createWorkerAskRouter({
+      dir,
+      maxPendingMs: 1_000,
+      provenanceFor: () => undefined,
+    });
+    await router.ask(input(), { autoApprove: true });
+    const [record] = readAuditLedger(dir);
+    expect(record?.worker).toMatchObject({ pid: 0, generation: 0 });
+    expect(record?.model.thinking).toBe('unknown');
+    expect(record?.workspace.base).toBe('unknown');
+  });
+
+  it('a respawned worker records its new generation', async () => {
+    // The generation is read at record time, so a respawn between two asks
+    // shows 0 then 1 — the registry row, not a frozen value.
+    let generation = 0;
+    const dir = tmpDir();
+    const router = createWorkerAskRouter({
+      dir,
+      maxPendingMs: 1_000,
+      provenanceFor: () => ({
+        pid: 4242,
+        generation,
+        thinking: 'high',
+        base: 'abc123',
+      }),
+    });
+    await router.ask(input(), { autoApprove: true });
+    generation = 1;
+    await router.ask(input({ args: { command: 'echo y > /etc/y' } }), {
+      autoApprove: true,
+    });
+    expect(
+      readAuditLedger(dir).map((record) => record.worker.generation),
+    ).toEqual([0, 1]);
   });
 });
 
@@ -607,6 +673,128 @@ describe('takeTermination (issue #379)', () => {
         /^budget raise refused for worker 'agent-1': /,
       );
       expect(run.takeTermination('agent-1')).toBeUndefined();
+    } finally {
+      run.endWorker('agent-1');
+    }
+  });
+});
+
+// A worker's raise request reaches the USER's seat on an interactive run:
+// approving mints the grant and applies the raise (issue #141, §71). A
+// headless run — or any run with no seat, which is also what `--yes` means
+// at this layer (issue #323: no standing answer for worker asks) — denies
+// on the bound with a named reason, and the session skip never
+// auto-approves a raise.
+describe('user-approved budget raises (issue #141)', () => {
+  function raiseRun(
+    options: { seatAnswer?: string; fullAccess?: boolean } = {},
+  ) {
+    return createOrchestratorApprovalsRun({
+      dir: tmpDir(),
+      sessionId: 'sess-1',
+      maxPendingMs: 1_000,
+      pollMs: 5,
+      ...(options.seatAnswer === undefined
+        ? {}
+        : {
+            seat: createInteractiveSeat({
+              prompt: async () => options.seatAnswer as string,
+            }),
+          }),
+      ...(options.fullAccess === true ? { fullAccess: true } : {}),
+      budget: { maxToolCalls: 5 },
+    });
+  }
+
+  const scope = {
+    sessionId: 'sess-1',
+    agentId: 'agent-1',
+    worktree: '/wt/agent-1',
+  };
+
+  async function verifiedAnswer(
+    run: ReturnType<typeof createOrchestratorApprovalsRun>,
+    key: string,
+    nonce: string,
+  ) {
+    return until(() => {
+      const read = readWorkerAskAnswer(run.mailboxDir(), key, {
+        verifyKey: run.verifyKey(),
+        nonce,
+      });
+      return read.state === 'verified' ? read : undefined;
+    });
+  }
+
+  it('an approving seat applies the raise and audits budget-raise-approved', async () => {
+    const run = raiseRun({ seatAnswer: 'y' });
+    const published = publishWorkerAsk(
+      run.mailboxDir(),
+      input({ args: { budgetRaise: { maxToolCalls: 50 } } }),
+    );
+    run.beginWorker(scope);
+    try {
+      await expect(
+        verifiedAnswer(run, published.request.key, published.nonce),
+      ).resolves.toMatchObject({ verdict: { approved: true } });
+      // The raise took effect for this worker's gate and reads.
+      expect(run.budgetFor('agent-1')).toMatchObject({ maxToolCalls: 50 });
+      expect(
+        run.audit().some((event) => event.type === 'budget-raise-approved'),
+      ).toBe(true);
+      // An approved ask is not a termination.
+      expect(run.takeTermination('agent-1')).toBeUndefined();
+    } finally {
+      run.endWorker('agent-1');
+    }
+  });
+
+  it('a declining seat refuses the raise with a named reason', async () => {
+    const run = raiseRun({ seatAnswer: 'n' });
+    const published = publishWorkerAsk(
+      run.mailboxDir(),
+      input({ args: { budgetRaise: { maxToolCalls: 50 } } }),
+    );
+    run.beginWorker(scope);
+    try {
+      await expect(
+        verifiedAnswer(run, published.request.key, published.nonce),
+      ).resolves.toMatchObject({
+        verdict: { approved: false, reason: 'user declined' },
+      });
+      expect(run.budgetFor('agent-1')).toMatchObject({ maxToolCalls: 5 });
+      expect(
+        run.audit().some((event) => event.type === 'budget-raise-denied'),
+      ).toBe(true);
+      const termination = await until(() => run.takeTermination('agent-1'));
+      expect(termination).toMatchObject({ exitCode: 4 });
+      expect(termination.message).toMatch(
+        /^budget raise refused for worker 'agent-1': user declined/,
+      );
+    } finally {
+      run.endWorker('agent-1');
+    }
+  });
+
+  it('no seat never auto-approves a raise, even under full access', async () => {
+    // `--yes` and headless both mean no seat at this layer (issue #323) —
+    // and the session skip must not stand in for the user on a raise.
+    const run = raiseRun({ fullAccess: true });
+    const published = publishWorkerAsk(
+      run.mailboxDir(),
+      input({ args: { budgetRaise: { maxToolCalls: 50 } } }),
+    );
+    run.beginWorker(scope);
+    try {
+      await expect(
+        verifiedAnswer(run, published.request.key, published.nonce),
+      ).resolves.toMatchObject({ verdict: { approved: false } });
+      expect(run.budgetFor('agent-1')).toMatchObject({ maxToolCalls: 5 });
+      const termination = await until(() => run.takeTermination('agent-1'));
+      expect(termination).toMatchObject({ exitCode: 4 });
+      expect(termination.message).toMatch(
+        /^budget raise refused for worker 'agent-1': /,
+      );
     } finally {
       run.endWorker('agent-1');
     }

@@ -128,6 +128,26 @@ afterEach(() => {
 });
 
 describe('prod replay re-execution runner (issue #382)', () => {
+  // Issue #285 (§71): a budgeted trajectory replays like any other — the
+  // budget block is evidence of the original run's bound, never a second
+  // enforcement on the replay.
+  it('replays a budgeted trajectory without tripping on its budget block', async () => {
+    const dir = tempDir('replay-budget-');
+    const budgeted = {
+      ...fixtureTrajectory(),
+      budget: {
+        limits: { maxToolCalls: 5, maxCostUsd: 0.5 },
+        usage: { tokens: 15, costUsd: 0.01, toolCalls: 1 },
+        exhausted: { limit: 'toolCalls', used: 6, max: 5 },
+      },
+    };
+    writeFileSync(join(dir, 'traj.json'), JSON.stringify(budgeted));
+    vi.spyOn(process, 'cwd').mockReturnValue(dir);
+    const result = await runProdReplay(request());
+    expect(result.terminus).toBe('completed');
+    expect(lane.runHeadlessPrompt).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses an unregistered provider before booting the lane', async () => {
     cwdWithTrajectory();
     const result = await runProdReplay(request({ model: 'ghost/echo' }));

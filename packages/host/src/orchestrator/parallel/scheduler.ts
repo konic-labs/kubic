@@ -10,6 +10,7 @@
 
 import type { RunMode } from '../../../../agents/src/budget.js';
 import type {
+  BudgetGate,
   ConfiguredConcurrency,
   ParallelLimits,
   UsageTally,
@@ -83,6 +84,7 @@ export class ParallelScheduler {
   private readonly clock: () => number;
   private readonly log: (line: string) => void;
   private sessionOverride: number | undefined;
+  private budgetGateOverride: BudgetGate | undefined;
   private readonly configured: ConfiguredConcurrency | undefined;
   private usage: UsageTally | undefined;
   private readonly running = new Map<string, RunningEntry>();
@@ -118,6 +120,21 @@ export class ParallelScheduler {
       resolveMaxConcurrency(this.limits, value, this.configured);
     }
     this.sessionOverride = value;
+  }
+
+  // Install (or remove) the aggregate task budget gate (issue #207, §71):
+  // the run's `--budget total:<dims>` is a property of ONE run, so the run
+  // applies it to the scheduler that judges its admissions — the same
+  // surface every other gate goes through. An installed gate wins over the
+  // constructed limits; undefined removes the run's override, restoring
+  // whatever the scheduler was constructed with. Validated eagerly like
+  // every other limit: a misconfig fails the run instead of silently
+  // admitting past the gate.
+  setBudgetGate(gate: BudgetGate | undefined): void {
+    if (gate !== undefined) {
+      validateParallelLimits({ budgetGate: gate });
+    }
+    this.budgetGateOverride = gate;
   }
 
   queuedCount(): number {
@@ -200,6 +217,27 @@ export class ParallelScheduler {
       `parallel queue: agent '${request.agentId}' queued at position ${this.queue.length} (${verdict.reason})`,
     );
     return { outcome: 'queued', position: this.queue.length };
+  }
+
+  /**
+   * Abandon a queued entry the spawner no longer wants (issue #414
+   * review): a timed-out `spawn_agent` withdraws instead of leaving a
+   * ghost the next drain would admit to running with nothing to launch or
+   * complete it. Returns 'withdrawn' when an entry was removed, 'running'
+   * when the id was just admitted (the caller proceeds to launch it),
+   * 'unknown' otherwise.
+   */
+  withdraw(agentId: string): 'withdrawn' | 'running' | 'unknown' {
+    const index = this.queue.findIndex(
+      (entry) => entry.request.agentId === agentId,
+    );
+    if (index >= 0) {
+      this.queue.splice(index, 1);
+      this.log(`parallel withdraw: queued agent '${agentId}' withdrawn`);
+      return 'withdrawn';
+    }
+    if (this.running.has(agentId)) return 'running';
+    return 'unknown';
   }
 
   // Settle a running agent and FIFO-drain the queue: only the head is
@@ -350,10 +388,12 @@ export class ParallelScheduler {
       this.clock(),
     );
     if (!providerVerdict.admitted) return providerVerdict;
-    if (isBudgetGateConfigured(this.limits.budgetGate)) {
+    if (
+      isBudgetGateConfigured(this.budgetGateOverride ?? this.limits.budgetGate)
+    ) {
       const budget = checkBudgetAdmission(
         this.usage ?? {},
-        this.limits.budgetGate,
+        this.budgetGateOverride ?? this.limits.budgetGate,
       );
       if (!budget.admitted) return budget;
     }

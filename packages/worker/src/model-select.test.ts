@@ -1,35 +1,17 @@
-// Slice B: model selection, one-way escalation, thinking clamp+persist
+// Slice B: model selection, one-way escalation, thinking clamp
 // (issue #20; §38).
 // RED: selectModel/escalateModel/clampThinking do not exist yet.
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+import { describe, expect, it } from 'vitest';
 import {
   clampThinking,
-  createLadder,
+  type EscalationLadder,
   escalateModel,
-  loadThinkingLevel,
-  saveThinkingLevel,
+  parseThinkingFlag,
+  resolveThinkingLevel,
   selectModel,
   supportedThinking,
 } from './model-select.js';
 import { createModels, fauxProvider } from './pi-boundary.js';
-
-const scratchDirs: string[] = [];
-
-afterAll(() => {
-  for (const dir of scratchDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-function scratch(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'sess-'));
-  scratchDirs.push(dir);
-  return dir;
-}
 
 function modelsWithFaux(): ReturnType<typeof createModels> {
   const models = createModels();
@@ -62,9 +44,11 @@ describe('model selection + escalation + thinking (issue #20, slice B)', () => {
   });
 
   it('escalation is one-way, recorded, and bounded', () => {
-    const ladder = createLadder(['local/llama3', 'faux/big'], {
+    const ladder: EscalationLadder = {
+      steps: ['local/llama3', 'faux/big'],
       maxEscalations: 2,
-    });
+      record: [],
+    };
     const first = escalateModel(
       ladder,
       'local/llama3',
@@ -82,29 +66,87 @@ describe('model selection + escalation + thinking (issue #20, slice B)', () => {
     ).toThrow(/bounded/);
   });
 
-  it('thinking clamps to model support and persists across attach', () => {
+  // Issue #216: the thinking.json sidecar (save/loadThinkingLevel) is
+  // deleted — the level persists as durable agent state through
+  // `configure()` + `pi.agent` (issue #225: solo.test.ts pins it across
+  // close and reopen), so attach restores it from the storage and no
+  // sidecar read exists to test here.
+  it('thinking clamps to model support', () => {
     const models = modelsWithFaux();
     const model = selectModel(models, undefined);
     const levels = supportedThinking(models, model);
     expect(Array.isArray(levels)).toBe(true);
     const clamped = clampThinking(models, model, 'max');
     expect(levels.includes(clamped)).toBe(true);
-    const dir = scratch();
-    const bridge = createNodeFileBridge('/');
-    saveThinkingLevel(bridge, dir, 'high');
-    expect(loadThinkingLevel(bridge, dir)).toBe('high');
-    // Issue #361: session state is private — 0600 at creation.
-    if (process.platform !== 'win32') {
-      expect(statSync(join(dir, 'thinking.json')).mode & 0o777).toBe(0o600);
-    }
-    expect(loadThinkingLevel(bridge, scratch())).toBe(null);
-    // Tampered sidecar: unknown level reads back null, never propagates.
-    writeFileSync(
-      join(dir, 'thinking.json'),
-      JSON.stringify({ level: 'ultra' }),
+  });
+});
+
+describe('thinking level resolution at lane boot (issue #225; §38.3)', () => {
+  function reasoningModel() {
+    const models = createModels();
+    const faux = fauxProvider({
+      provider: 'think',
+      models: [{ id: 'deep', reasoning: true }],
+    });
+    models.setProvider(faux.provider);
+    return selectModel(models, { provider: 'think', id: 'deep' });
+  }
+
+  it('orders override > session > role > config', () => {
+    const model = reasoningModel();
+    const config = { level: 'high', source: 'project' };
+    expect(
+      resolveThinkingLevel(model, {
+        override: { level: 'minimal', source: 'cli' },
+        persisted: 'low',
+        role: 'medium',
+        config,
+      }),
+    ).toMatchObject({ level: 'minimal', source: 'cli' });
+    expect(
+      resolveThinkingLevel(model, {
+        persisted: 'low',
+        role: 'medium',
+        config,
+      }),
+    ).toMatchObject({ level: 'low', source: 'session' });
+    expect(
+      resolveThinkingLevel(model, { role: 'medium', config }),
+    ).toMatchObject({ level: 'medium', source: 'role' });
+    expect(resolveThinkingLevel(model, { config })).toMatchObject({
+      level: 'high',
+      source: 'project',
+    });
+    expect(resolveThinkingLevel(model, {})).toEqual({
+      level: 'off',
+      source: 'default',
+    });
+  });
+
+  it('clamps an unsupported level with a named notice', () => {
+    const models = modelsWithFaux();
+    const model = selectModel(models, undefined);
+    const resolved = resolveThinkingLevel(model, {
+      config: { level: 'high', source: 'project' },
+    });
+    expect(resolved.level).toBe('off');
+    expect(resolved.notice).toMatch(/thinking 'high'.*clamped to 'off'/);
+    expect(resolved.notice).toContain(`${model.provider}/${model.id}`);
+  });
+
+  it('refuses an unknown level by name, never silently', () => {
+    const model = reasoningModel();
+    expect(() =>
+      resolveThinkingLevel(model, {
+        override: { level: 'banana', source: 'KUBIC_MODEL_THINKING' },
+      }),
+    ).toThrow(/"banana".*KUBIC_MODEL_THINKING/);
+  });
+
+  it('parses --thinking against the known levels (issue #225)', () => {
+    expect(parseThinkingFlag('high')).toBe('high');
+    expect(() => parseThinkingFlag('banana')).toThrow(
+      /unknown thinking level 'banana'/,
     );
-    expect(loadThinkingLevel(bridge, dir)).toBe(null);
-    writeFileSync(join(dir, 'thinking.json'), 'not json');
-    expect(loadThinkingLevel(bridge, dir)).toBe(null);
   });
 });

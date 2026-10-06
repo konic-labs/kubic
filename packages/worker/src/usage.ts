@@ -10,7 +10,7 @@
 // the status bar's TTFT/tool-ms segments — Pi 1.0 reports no timing Kubic
 // can read, and dead fields are the defect.
 
-import type { EntryRecord, ModelThinkingLevel, Usage } from './pi-boundary.js';
+import type { EntryRecord, Usage } from './pi-boundary.js';
 
 export interface KubicUsageRow {
   model: string;
@@ -38,60 +38,13 @@ export function usageRowFromEntry(
   };
 }
 
-export interface ModelUsageSummary {
-  requests: number;
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  costTotal: number;
-}
-
-export interface UsageSummary extends ModelUsageSummary {
-  byModel: Record<string, ModelUsageSummary>;
-}
-
-function emptyModel(): ModelUsageSummary {
-  return {
-    requests: 0,
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    costTotal: 0,
-  };
-}
-
-function add(into: ModelUsageSummary, row: KubicUsageRow): void {
-  into.requests += 1;
-  into.input += row.usage.input;
-  into.output += row.usage.output;
-  into.cacheRead += row.usage.cacheRead;
-  into.cacheWrite += row.usage.cacheWrite;
-  into.costTotal += row.usage.cost.total;
-}
-
-export function summarizeUsage(rows: KubicUsageRow[]): UsageSummary {
-  const total = emptyModel();
-  const byModel: Record<string, ModelUsageSummary> = {};
-  for (const row of rows) {
-    add(total, row);
-    const slot = byModel[row.model] ?? emptyModel();
-    add(slot, row);
-    byModel[row.model] = slot;
-  }
-  return { ...total, byModel };
-}
+// Issue #433: the launch-layer rollup (`usageRows` dep + `launched.usage()`
+// + this module's `summarizeUsage`) was deleted — no production supplier
+// ever wired it and no caller ever read it. The single roll-up surface is
+// `kubic cost --session <run>` (#164), which reads the committed session
+// usage directly; duplicating it in the launch handle would fork the
+// numbers. Rows are still built here for the lane's usage events.
 
 export function formatCost(total: number): string {
   return `$${total.toFixed(2)}`;
-}
-
-export function formatUsageLine(
-  model: string,
-  thinking: ModelThinkingLevel,
-  summary: UsageSummary,
-): string {
-  const tokens = summary.input + summary.output;
-  return `model ${model} | thinking ${thinking} | ${summary.requests} request(s), ${tokens} tokens (${formatCost(summary.costTotal)})`;
 }

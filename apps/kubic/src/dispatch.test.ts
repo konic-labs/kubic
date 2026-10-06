@@ -9,16 +9,9 @@
 // the documented deps shapes the root wires (clean {env,out,err}, cost
 // {loadRows,out}, audit {loadRecords,loadSecrets,out}, export {readFile,out})
 // and the eval runSuite refusal message, verbatim.
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import {
   afterAll,
   afterEach,
@@ -32,6 +25,7 @@ import { RUNTIME_EXCLUDE_ENTRIES } from '../../../packages/exec/src/runtime-excl
 import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
 import {
   type CliConfigResult,
+  CONFIG_CONSUMING_COMMANDS,
   loadCliConfig,
   runtimeExcludeEntriesFor,
 } from './config-runtime.js';
@@ -46,7 +40,7 @@ import { createProdRunners } from './prod-runners.js';
 type RunnerKey = keyof DispatchRunners;
 
 // The runner roster: one entry per command seam the root wires inline
-// (22 command names, 19 runners — the four journal commands share one).
+// (27 command names, 21 runners — the four journal commands share one).
 const RUNNER_KEYS: readonly RunnerKey[] = [
   'sessions',
   'git',
@@ -55,6 +49,7 @@ const RUNNER_KEYS: readonly RunnerKey[] = [
   'run',
   'tui',
   'doctor',
+  'skills',
   'orchestrate',
   'clean',
   'cost',
@@ -87,6 +82,7 @@ const ROUTES: readonly (readonly [string, readonly string[], RunnerKey])[] = [
   ['attach', ['abc'], 'tui'],
   ['resume', ['abc'], 'tui'],
   ['doctor', [], 'doctor'],
+  ['skills', ['--json'], 'skills'],
   ['orchestrate', [], 'orchestrate'],
   ['clean', ['--dry-run'], 'clean'],
   ['cost', ['--json'], 'cost'],
@@ -117,12 +113,14 @@ const PARSED: Readonly<Record<string, unknown>> = {
   resume: { session: 'abc' },
   commit: { command: 'commit', message: 'msg' },
   doctor: { skip: [] },
+  skills: { json: true },
   config: { json: true },
   trust: {},
   // `--skill` is repeatable: commander's collector yields [] when unused.
   orchestrate: { skills: [] },
   clean: { dryRun: true },
-  workers: { json: true },
+  // Issue #167: the bare form routes as the list invocation.
+  workers: { command: 'list', json: true },
   git: { command: 'status' },
   diff: { command: 'diff', json: true },
   undo: { command: 'undo', step: true },
@@ -266,9 +264,9 @@ function loadedConfig(): CliConfigResult {
 }
 
 describe('dispatch routing (issue #135)', () => {
-  it('pins the roster: 23 commands, 20 runners, every runner exercised', () => {
-    expect(ROUTES).toHaveLength(26);
-    expect(RUNNER_KEYS).toHaveLength(20);
+  it('pins the roster: 27 commands, 21 runners, every runner exercised', () => {
+    expect(ROUTES).toHaveLength(27);
+    expect(RUNNER_KEYS).toHaveLength(21);
     const routed = new Set(ROUTES.map(([, , key]) => key));
     expect([...routed].sort()).toEqual([...RUNNER_KEYS].sort());
   });
@@ -523,8 +521,39 @@ describe('front door (issue #128 behavior, moved)', () => {
 });
 
 describe('config refusal (issue #90 policy, moved)', () => {
-  const CONSUMING = ['run', 'orchestrate', 'tui', 'replay'];
-  const REPORTING = ['config', 'doctor', 'trust'];
+  // Issue #242: clean and policy consume config projections (the
+  // orchestrator root, the installed posture a run enforces), so a
+  // refused config must stop them like the agent-executing modes.
+  // attach/resume boot the same TUI lane as tui, and eval/benchmark run
+  // agent lanes under the same projections — all fail closed here.
+  const CONSUMING = [
+    'run',
+    'orchestrate',
+    'tui',
+    'attach',
+    'resume',
+    'replay',
+    'clean',
+    'policy',
+    'eval',
+    'benchmark',
+  ];
+  const REPORTING = ['config', 'doctor', 'skills', 'trust'];
+
+  it('pins gate membership: the gate is exactly the refused commands', () => {
+    // A new command whose runner reads cliConfig.runtime must join the
+    // gate here — or be a reporting command, or take the documented
+    // sessions/journal retention fallback. Audit (issue #242): run,
+    // orchestrate, tui (+attach/resume aliases), replay, clean
+    // (orchestrator.root), policy (installed posture) and eval/benchmark
+    // (lane projections) read runtime; config/doctor/skills/trust report it;
+    // sessions/journal read only sessionRetentionDays (undefined-safe
+    // fallback); models reads only the trust report (present on refusal);
+    // git, cost, perf, audit, workers and export read no config at all.
+    expect([...CONFIG_CONSUMING_COMMANDS].sort()).toEqual(
+      [...CONSUMING].sort(),
+    );
+  });
 
   it('refuses the agent-executing modes with exit 1 and the named reason', async () => {
     for (const command of CONSUMING) {
@@ -548,12 +577,31 @@ describe('config refusal (issue #90 policy, moved)', () => {
     }
   });
 
+  it('refuses clean and policy with exit 1 and the named reason (issue #242)', async () => {
+    // `policy --tool shell` must not report the built-in `allow` posture
+    // when the operator configured `[permissions] shell = false` plus a
+    // typo; `clean --dry-run` must not scan the default root when the
+    // configured root is refused. Neither runner may run.
+    for (const [command, rest] of [
+      ['policy', ['--tool', 'shell']],
+      ['clean', ['--dry-run']],
+      ['clean', []],
+    ] as const) {
+      const h = harness({ config: refusedConfig('unknown key [nope]') });
+      expect(await dispatchCommand(command, [...rest], h.deps), command).toBe(
+        1,
+      );
+      expect(h.lines, command).toEqual(['error: unknown key [nope]']);
+      expect(h.calls, `${command} must not reach a runner`).toEqual([]);
+    }
+  });
+
   it('lets every other command proceed', async () => {
     const others = ROUTES.filter(
       ([command]) =>
         !CONSUMING.includes(command) && !REPORTING.includes(command),
     );
-    expect(others).toHaveLength(19);
+    expect(others).toHaveLength(13);
     // Each with its ROUTES argv: a bare `kubic git` is a usage error.
     for (const [command, rest] of others) {
       const h = harness({ config: refusedConfig() });
@@ -641,6 +689,8 @@ describe('config refusal (issue #90 policy, moved)', () => {
       ['orchestrate', ['-p', 'hi']],
       ['replay', ['t.json']],
       ['tui', []],
+      ['clean', ['--dry-run']],
+      ['policy', ['--tool', 'shell']],
     ];
     for (const [command, rest] of cases) {
       const h = harness({ config: refusedConfig('unknown key [nope]') });
@@ -1076,35 +1126,6 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
   });
 });
 
-describe('workers runner reads the durable record (issue #132)', () => {
-  it('constructs no WorkerRegistry: the CLI lists workersListFromRepo directly', () => {
-    // Issue #94's finding, finished: a fresh CLI process's WorkerRegistry is
-    // always empty, so a registry branch in the workers runner is
-    // structurally dead — every invocation paid the fallthrough. The rows
-    // come from the durable record (<repo>/.kubic/orchestrator/workers.json);
-    // the registry stays the orchestrator run's own in-process view
-    // (packages/worker/src/lifecycle/registry.ts). Structural pin, per the
-    // issue's acceptance: main.ts no longer constructs a WorkerRegistry and
-    // the seam lists from the record directly.
-    const srcDir = dirname(fileURLToPath(import.meta.url));
-    const seam = readFileSync(join(srcDir, 'prod-runners.ts'), 'utf8');
-    const main = readFileSync(join(srcDir, 'main.ts'), 'utf8');
-    // Non-vacuity: both reads found the real sources, not empty files.
-    expect(seam.length).toBeGreaterThan(1_000);
-    expect(main.length).toBeGreaterThan(1_000);
-    for (const [name, source] of [
-      ['prod-runners.ts', seam],
-      ['main.ts', main],
-    ] as const) {
-      expect(source, `${name} must not construct a WorkerRegistry`).not.toMatch(
-        /new WorkerRegistry\b/,
-      );
-      expect(
-        source,
-        `${name} must not import the lifecycle registry`,
-      ).not.toMatch(/lifecycle\/registry\.js/);
-    }
-    // The one list source the runner reads: the durable record, directly.
-    expect(seam).toMatch(/workersListFromRepo\(process\.cwd\(\)\)/);
-  });
-});
+// NOTE (issue #381): the workers-runner source-regex pins lived here —
+// removed; behavioural cover is prod-runners.test.ts 'kubic workers from
+// a subdirectory' (issue #281).

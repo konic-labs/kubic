@@ -143,15 +143,84 @@ describe('models.json schema (issue #223)', () => {
     expect(() => parseModelsJson(one(model))).toThrow(`'${field}'`);
   });
 
-  it('refuses a secret-ref apiKey, and apiKey together with apiKeyEnv', () => {
-    expect(() =>
-      parseModelsJson(withProvider({ apiKey: '$OPENAI_API_KEY' })),
-    ).toThrow(/apiKey/);
+  it('accepts an allowlisted $ENV apiKey ref, and still refuses apiKey together with apiKeyEnv (issue #224)', () => {
+    const env = parseModelsJson(withProvider({ apiKey: '$OPENAI_API_KEY' }));
+    expect(env[0]?.apiKey).toBe('$OPENAI_API_KEY');
+    expect(env[0]?.apiKeyRef).toEqual({
+      kind: 'env',
+      name: 'OPENAI_API_KEY',
+      raw: '$OPENAI_API_KEY',
+    });
     expect(() =>
       parseModelsJson(
         withProvider({ apiKey: 'x', apiKeyEnv: 'KUBIC_API_KEY' }),
       ),
     ).toThrow(/apiKey/);
+  });
+
+  // Issue #224 (§36.2): `apiKey` takes the full ref table — a !command or
+  // an escaped/plain literal (unescaped at parse, so the wire never sees
+  // the backslash). Refusal is for what cannot name a credential: a
+  // non-allowlisted variable, an empty command.
+  it('parses apiKey !command / escaped refs (issue #224)', () => {
+    const command = parseModelsJson(
+      withProvider({ apiKey: '!op read "my vault/item"' }),
+    );
+    expect(command[0]?.apiKeyRef).toEqual({
+      kind: 'command',
+      argv: ['op', 'read', 'my vault/item'],
+      raw: '!op read "my vault/item"',
+    });
+    const escaped = parseModelsJson(withProvider({ apiKey: '\\$literal' }));
+    expect(escaped[0]?.apiKeyRef).toEqual({
+      kind: 'literal',
+      value: '$literal',
+    });
+    const plain = parseModelsJson(withProvider({ apiKey: 'not-needed' }));
+    expect(plain[0]?.apiKeyRef).toEqual({
+      kind: 'literal',
+      value: 'not-needed',
+    });
+    expect(plain[0]?.headerRefs).toBeUndefined();
+  });
+
+  // Issue #224: the #322 allowlist guards `apiKey: "$VAR"` exactly as it
+  // guards `apiKeyEnv` — the file may not choose an arbitrary secret — and
+  // an empty command stays a named refusal.
+  it('refuses a non-allowlisted apiKey variable and empty commands (issue #224)', () => {
+    expect(() =>
+      parseModelsJson(withProvider({ apiKey: '$AWS_SECRET_ACCESS_KEY' })),
+    ).toThrow(/apiKey.*allowed key variable/);
+    expect(() => parseModelsJson(withProvider({ apiKey: '!' }))).toThrow(
+      /apiKey/,
+    );
+  });
+
+  // Issue #224: ref-valued headers leave the static map and ride the
+  // request-time auth instead — a `$TOKEN` header must never reach the
+  // wire verbatim. Literals stay static (the #113 gateway contract).
+  it('splits header refs from static headers (issue #224)', () => {
+    const specs = parseModelsJson(
+      withProvider({
+        headers: {
+          'x-static': 'kubic',
+          'x-token': '$KUBIC_GATEWAY_TOKEN',
+          'x-vault': '!vault kv get -field=password secret/api',
+        },
+      }),
+    );
+    expect(specs[0]?.headers).toEqual({ 'x-static': 'kubic' });
+    expect(specs[0]?.headerRefs?.['x-token']).toEqual({
+      kind: 'env',
+      name: 'KUBIC_GATEWAY_TOKEN',
+      raw: '$KUBIC_GATEWAY_TOKEN',
+    });
+    const vaultRef = specs[0]?.headerRefs?.['x-vault'];
+    if (vaultRef?.kind !== 'command') throw new Error('expected a command ref');
+    expect(vaultRef.argv[0]).toBe('vault');
+    expect(() =>
+      parseModelsJson(withProvider({ headers: { 'x-bad': '$HOME' } })),
+    ).toThrow(/headers.*allowed key variable/);
   });
 
   // Issue #402 (pi-ai 1.0.2): the model-level sampling defaults Pi resolves

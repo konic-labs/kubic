@@ -12,8 +12,9 @@ import type { OrchestrateCliOptions } from '../../../../packages/host/src/orches
 import type { CleanOptions } from '../../../../packages/host/src/orchestrator/worktree/clean.js';
 import type { RunCommandOptions } from '../../../../packages/host/src/run-cli.js';
 import type { SessionsInvocation } from '../../../../packages/host/src/sessions-cli.js';
+import type { SkillsCommandOptions } from '../../../../packages/host/src/skills-cli.js';
 import type { TrustCommandOptions } from '../../../../packages/host/src/trust-cli.js';
-import type { WorkersCliOptions } from '../../../../packages/host/src/workers-cli.js';
+import type { WorkersInvocation } from '../../../../packages/host/src/workers-cli.js';
 import type { AnalysisRunners } from '../commands/analysis.js';
 import type { CliConfigResult } from '../config-runtime.js';
 import type { TuiCommandOptions } from '../tui-run.js';
@@ -36,11 +37,12 @@ export interface DispatchRunners extends AnalysisRunners {
   readonly run: CommandRunner<RunCommandOptions>;
   readonly tui: CommandRunner<TuiCommandOptions>;
   readonly doctor: CommandRunner<DoctorCommandOptions>;
+  readonly skills: CommandRunner<SkillsCommandOptions>;
   readonly orchestrate: CommandRunner<OrchestrateCliOptions>;
   readonly clean: CommandRunner<CleanOptions>;
   readonly config: CommandRunner<ConfigCommandOptions>;
   readonly trust: CommandRunner<TrustCommandOptions>;
-  readonly workers: CommandRunner<WorkersCliOptions>;
+  readonly workers: CommandRunner<WorkersInvocation>;
 }
 
 // The root commander program every registrar attaches to.

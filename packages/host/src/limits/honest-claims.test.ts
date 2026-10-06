@@ -7,9 +7,25 @@
 // a token window, so trailing contrasts still fail. Every non-test
 // source plus markdown docs are scanned; violation SAMPLES live in
 // this *.test.ts file, which the scan skips.
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../../exec/src/test-support/git-sandbox.js';
 
 interface ClaimRule {
   label: string;
@@ -99,11 +115,15 @@ export function findClaimViolations(line: string): string[] {
   ).map((rule) => rule.label);
 }
 
-// Scope: every non-test source under the repo root — .ts/.tsx/.js/.mjs
+// Scope: tracked non-test sources under the repo root — .ts/.tsx/.js/.mjs
 // implementation plus .md docs (README, policies, roles, examples,
-// .kubic roles). node_modules, dist, .git, coverage, and pi (upstream
-// reference, not Kubic) are excluded. Violation SAMPLES live in this
-// *.test.ts file, which the scan skips.
+// .kubic roles). The listing comes from `git ls-files` (issue #375), so
+// untracked tool state — .claude/worktrees, .serena, .beads, a retained
+// orchestrator worktree — can never flag the gate or slow the scan, and a
+// checkout with worktrees scans exactly the fresh-clone set. `.kubic/` is
+// mixed (config.toml + roles/*.md are committed, run state is ignored),
+// so only the tracked half is a claims surface. Violation SAMPLES live in
+// this *.test.ts file, which the scan skips.
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.js', '.mjs', '.md'];
 const EXCLUDED_DIRS = new Set([
   'node_modules',
@@ -115,6 +135,12 @@ const EXCLUDED_DIRS = new Set([
   // mutation reports are not product claims surfaces.
   '.stryker-tmp',
   'reports',
+  // Agent/tooling state, never product surfaces (issue #375). These only
+  // matter to the no-git fallback walk — `git ls-files` never lists them.
+  // `.kubic/` stays listed: config.toml + roles/*.md are committed.
+  '.claude',
+  '.serena',
+  '.beads',
 ]);
 // Dev-tooling sources (design explorers, notes apps) are not product
 // claims surfaces — their UI strings describe the tool itself.
@@ -149,15 +175,120 @@ function isReviewedException(file: string, line: string): boolean {
   );
 }
 
+function findFileViolations(files: string[]): string[] {
+  const failures: string[] = [];
+  for (const file of files) {
+    const lines = readFileSync(file, 'utf8').split('\n');
+    lines.forEach((line, index) => {
+      if (isReviewedException(file, line)) {
+        return;
+      }
+      for (const label of findClaimViolations(line)) {
+        failures.push(`${file}:${index + 1} [${label}] ${line.trim()}`);
+      }
+    });
+  }
+  return failures;
+}
+
 // One walk per run: both repo-wide tests share the listing.
 const sourceFileCache = new Map<string, string[]>();
 
-function sourceFiles(root: string): string[] {
-  const cached = sourceFileCache.get(root);
-  if (cached !== undefined) {
-    return cached;
+// Temp roots for the hermetic scan-scope tests below, removed after each.
+const tempRoots: string[] = [];
+
+afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
+  vi.unstubAllEnvs();
+  for (const dir of tempRoots.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// A line that violates the isolation-guarantee rule, for scope fixtures.
+const VIOLATING_LINE = 'solo runs in an isolated sandbox for safety';
+
+// The shared git sandbox (issue #420) replaces this file's former
+// hand-rolled deterministic-git env: one scrubbed-env helper for every
+// real-git test. The driver is lazy (plain, never injected — no production
+// code here shells git) and disposed after each test.
+let driver: GitSandbox | undefined;
+
+function git(
+  args: string[],
+  opts?: { readonly cwd?: string; readonly maxBuffer?: number },
+): string {
+  driver ??= createGitSandbox();
+  return driver.git(args, opts);
+}
+
+function initFixtureRepo(): string {
+  const root = mkdtempSync(join(tmpdir(), 'honest-claims-'));
+  tempRoots.push(root);
+  git(['init', '-q', '-b', 'main'], { cwd: root });
+  return root;
+}
+
+function isSourcePath(path: string): boolean {
+  return (
+    SOURCE_EXTENSIONS.some((ext) => path.endsWith(ext)) &&
+    !TEST_FILE_SUFFIXES.some((suffix) => path.endsWith(suffix))
+  );
+}
+
+// Tracked files via git, or null when git cannot answer (not a repo,
+// Stryker's gitignored sandbox copy — see AGENTS.md Pitfalls). Null
+// means "fall back to the walk", never "scan nothing".
+function trackedSourceFiles(root: string): string[] | null {
+  if (process.env.STRYKER_MUTATOR_WORKER) {
+    return null;
+  }
+  try {
+    const out = git(['-C', root, 'ls-files', '-z'], {
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return out
+      .split('\0')
+      .filter((rel) => rel.length > 0)
+      .map((rel) => join(root, rel))
+      .filter(isSourcePath);
+  } catch {
+    return null;
+  }
+}
+
+// `.gitignore` directory patterns as a walk predicate (issue #375): the
+// no-git fallback honors the same ignores git would. Only directory
+// patterns (`foo/`, `.kubic/sessions/`) participate; file globs and `!`
+// negations are out of scope for a best-effort fallback.
+function gitignoreDirExcluded(root: string): (relPath: string) => boolean {
+  let patterns: string[] = [];
+  try {
+    patterns = readFileSync(join(root, '.gitignore'), 'utf8')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(
+        (line) =>
+          line.length > 0 &&
+          !line.startsWith('#') &&
+          !line.startsWith('!') &&
+          line.endsWith('/'),
+      )
+      .map((line) => line.replace(/^\/+|\/+$/g, ''))
+      .filter((line) => line.length > 0);
+  } catch {
+    patterns = [];
+  }
+  return (relPath: string) =>
+    patterns.some(
+      (pattern) => relPath === pattern || relPath.startsWith(`${pattern}/`),
+    );
+}
+
+function walkSourceFiles(root: string): string[] {
   const out: string[] = [];
+  const gitignored = gitignoreDirExcluded(root);
   const walk = (dir: string, rel: string): void => {
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry);
@@ -165,19 +296,31 @@ function sourceFiles(root: string): string[] {
       if (statSync(full).isDirectory()) {
         if (
           !EXCLUDED_DIRS.has(entry) &&
-          !EXCLUDED_PATH_SEGMENTS.some((segment) => relPath === segment)
+          !gitignored(relPath) &&
+          !EXCLUDED_PATH_SEGMENTS.some((segment) => relPath === segment) &&
+          // Nested git repos and linked worktrees (a `.git` file) hold
+          // other checkouts' files, never this tree's claims. (`full`
+          // is always below the root here; the root's own `.git` is
+          // already excluded above by name.)
+          !existsSync(join(full, '.git'))
         ) {
           walk(full, relPath);
         }
-      } else if (
-        SOURCE_EXTENSIONS.some((ext) => full.endsWith(ext)) &&
-        !TEST_FILE_SUFFIXES.some((suffix) => full.endsWith(suffix))
-      ) {
+      } else if (isSourcePath(full)) {
         out.push(full);
       }
     }
   };
   walk(root, '');
+  return out;
+}
+
+function sourceFiles(root: string): string[] {
+  const cached = sourceFileCache.get(root);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const out = trackedSourceFiles(root) ?? walkSourceFiles(root);
   sourceFileCache.set(root, out);
   return out;
 }
@@ -257,44 +400,83 @@ describe('honest-claims grep-gate (issue #58)', () => {
     expect(files.some((file) => file.endsWith('limits/solo-warning.ts'))).toBe(
       true,
     );
-    const failures: string[] = [];
-    for (const file of files) {
-      const lines = readFileSync(file, 'utf8').split('\n');
-      lines.forEach((line, index) => {
-        if (isReviewedException(file, line)) {
-          return;
-        }
-        for (const label of findClaimViolations(line)) {
-          failures.push(`${file}:${index + 1} [${label}] ${line.trim()}`);
-        }
-      });
-    }
-    expect(failures).toEqual([]);
+    expect(findFileViolations(files)).toEqual([]);
+  });
+
+  it('scans tracked files only: untracked tool state never flags (issue #375)', () => {
+    const root = initFixtureRepo();
+    writeFileSync(join(root, 'clean.md'), '# clean\n');
+    git(['add', 'clean.md'], { cwd: root });
+    // Untracked claim-violating files: agent tool state and a stray note.
+    mkdirSync(join(root, '.claude', 'worktrees', 'x'), { recursive: true });
+    writeFileSync(
+      join(root, '.claude', 'worktrees', 'x', 'claim.md'),
+      `${VIOLATING_LINE}\n`,
+    );
+    writeFileSync(join(root, 'scratch-note.md'), `${VIOLATING_LINE}\n`);
+    const files = sourceFiles(root);
+    // The tracked file is scanned; nothing untracked is listed — the
+    // count on a checkout with worktrees equals a fresh clone's.
+    expect(files.some((file) => file.endsWith('clean.md'))).toBe(true);
+    expect(files.some((file) => file.includes('.claude'))).toBe(false);
+    expect(files.some((file) => file.endsWith('scratch-note.md'))).toBe(false);
+    expect(findFileViolations(files)).toEqual([]);
+  });
+
+  it('falls back to a tool-state-free walk without git (issue #375)', () => {
+    // No repo here: git ls-files fails, so the walk takes over — minus
+    // dot-dir tool state and nested worktrees.
+    const root = mkdtempSync(join(tmpdir(), 'honest-claims-'));
+    tempRoots.push(root);
+    writeFileSync(join(root, 'clean.ts'), 'export const ok = 1;\n');
+    mkdirSync(join(root, '.serena'), { recursive: true });
+    writeFileSync(join(root, '.serena', 'claim.md'), `${VIOLATING_LINE}\n`);
+    mkdirSync(join(root, 'wt'), { recursive: true });
+    writeFileSync(join(root, 'wt', '.git'), 'gitdir: /elsewhere\n');
+    writeFileSync(join(root, 'wt', 'claim.md'), `${VIOLATING_LINE}\n`);
+    const files = sourceFiles(root);
+    expect(files.some((file) => file.endsWith('clean.ts'))).toBe(true);
+    expect(files.some((file) => file.includes('.serena'))).toBe(false);
+    expect(files.some((file) => file.includes(`${'wt'}/claim.md`))).toBe(false);
+    expect(findFileViolations(files)).toEqual([]);
+  });
+
+  it('falls back to the walk under Stryker, where git is unavailable (issue #375)', () => {
+    vi.stubEnv('STRYKER_MUTATOR_WORKER', 'true');
+    const root = initFixtureRepo();
+    writeFileSync(join(root, 'clean.ts'), 'export const ok = 1;\n');
+    git(['add', 'clean.ts'], { cwd: root });
+    mkdirSync(join(root, '.beads'), { recursive: true });
+    writeFileSync(join(root, '.beads', 'claim.md'), `${VIOLATING_LINE}\n`);
+    // git would list only clean.ts; the walk lists it too, minus .beads.
+    const files = sourceFiles(root);
+    expect(files.some((file) => file.endsWith('clean.ts'))).toBe(true);
+    expect(files.some((file) => file.includes('.beads'))).toBe(false);
+    expect(findFileViolations(files)).toEqual([]);
   });
 
   it('reviewed exceptions still match their justification patterns', () => {
     // Exceptions are drift-pinned: if the line changes so the denial is
     // gone, the exception stops applying and the scan re-flags it.
+    // Resolved directly, not via any listing (issue #375 review): the
+    // design doc is gitignored, so neither the tracked listing nor the
+    // gitignore-aware walk contains it — filtering a listing would pin
+    // nothing and this test would always `continue`.
     for (const entry of REVIEWED_EXCEPTIONS) {
       expect(entry.reason.length).toBeGreaterThan(0);
-      const hits = sourceFiles(process.cwd()).filter((file) =>
-        file.endsWith(entry.fileSuffix),
-      );
-      if (hits.length === 0) {
-        // File absent here (e.g. gitignored design docs in fresh
-        // clones) — nothing to pin; the scan test above still guards
-        // every file that is present.
+      const file = join(process.cwd(), entry.fileSuffix);
+      if (!existsSync(file)) {
+        // File absent here (e.g. gitignored design docs in worktrees
+        // and fresh clones) — nothing to pin.
         continue;
       }
-      const matched = hits.some((file) =>
-        readFileSync(file, 'utf8')
-          .split('\n')
-          .some(
-            (line) =>
-              new RegExp(entry.pattern).test(line) &&
-              findClaimViolations(line).length > 0,
-          ),
-      );
+      const matched = readFileSync(file, 'utf8')
+        .split('\n')
+        .some(
+          (line) =>
+            new RegExp(entry.pattern).test(line) &&
+            findClaimViolations(line).length > 0,
+        );
       expect(matched).toBe(true);
     }
   });

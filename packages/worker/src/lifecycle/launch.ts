@@ -33,8 +33,7 @@ import type { FailureCode } from '../lane/failures.js';
 import { classifyFailure } from '../lane/failures.js';
 import type { AgentResult, ResultErrorKind, ResultStatus } from '../result.js';
 import { buildAgentResult, UNRESOLVED_MODEL } from '../result.js';
-import type { KubicUsageRow, UsageSummary } from '../usage.js';
-import { summarizeUsage } from '../usage.js';
+
 import type { PerfGateResult, PerfSample } from './budgets.js';
 import { checkPerfGate } from './budgets.js';
 import type { ExitReport } from './reap.js';
@@ -137,13 +136,6 @@ export interface LaunchWorkerDeps {
   clock?: () => number;
   debug?: (line: string) => void;
   /**
-   * The child session's usage rows, read by the caller (the composition
-   * root holds the session store; this layer never attaches a session).
-   * Rolled up by `usage()` into the §39 readout. Omitted means the launch
-   * reports an empty rollup rather than inventing one.
-   */
-  usageRows?: () => KubicUsageRow[];
-  /**
    * §82 resource probes (issue #163): RSS of the worker's process group and
    * the worktree's size. The composition root supplies them (this layer never
    * reads /proc or runs `du`); absent means the corresponding limit cannot be
@@ -206,9 +198,6 @@ export interface LaunchedWorker {
    *  wall-clock metric. Validated against the contract before it is
    *  handed back — a launch that cannot describe itself cannot be replayed. */
   result: () => AgentResult;
-  /** §39 usage rollup of the child session (empty when the caller wired no
-   *  usage reader — never a fabricated rollup). */
-  usage: () => UsageSummary;
   /** Kill + drain, land the terminal §13 status, return the exit report.
    *  `reason` names the manager's terminus (issue #151/#163): `cancel`
    *  (default), `timeout`, `budget` or `resource` — a live worker settles on
@@ -685,7 +674,6 @@ export function launchWorker(
           },
     resources: () => resourceWatchdog,
     result,
-    usage: () => summarizeUsage(deps.usageRows?.() ?? []),
     reap,
     perf: () => {
       const perfSample = sample();

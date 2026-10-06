@@ -38,6 +38,17 @@ describe('gitignore-subset matcher (issues #116, #172)', () => {
     expect(ignored('build/\n', 'sub/build/out.js', false)).toBe(true);
   });
 
+  // Issue #353 (widening half): a glob dir rule matches directories by
+  // its compiled glob, per segment — `*.egg-info/` must hide the whole
+  // subtree, not hash it on every boot and sweep.
+  it('matches a glob dir rule against each directory segment', () => {
+    expect(ignored('*.egg-info/\n', 'pkg.egg-info', true)).toBe(true);
+    expect(ignored('*.egg-info/\n', 'pkg.egg-info/PKG-INFO')).toBe(true);
+    expect(ignored('*.egg-info/\n', 'sub/pkg.egg-info/PKG-INFO')).toBe(true);
+    expect(ignored('*.egg-info/\n', 'pkg.egg-info.txt')).toBe(false);
+    expect(ignored('.venv*/\n', '.venv/bin/python')).toBe(true);
+  });
+
   it('keeps anchored and bare-name rules distinct', () => {
     expect(ignored('/only-root.txt\n', 'only-root.txt')).toBe(true);
     expect(ignored('/only-root.txt\n', 'sub/only-root.txt')).toBe(false);

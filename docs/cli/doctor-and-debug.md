@@ -9,7 +9,7 @@
 ## Running it
 
 ```
-kubic doctor [--skip <id[,id…]>]... [--json]
+kubic doctor [--skip <id[,id…]>]... [--json] [--session <id>]
 ```
 
 `kubic doctor --help` prints the generated help. Each check prints one
@@ -65,11 +65,13 @@ the exit code.
 | `policy:approvals` | Does the approval policy validate? Unknown `autoApprove` capabilities (outside the known set plus `requires:<tool>` triggers), `autoApprove` entries under `route=deny` (they can never apply), or an outright invalid shape. An always-ask capability in `autoApprove` (`kubic-state-write`) is a `warn` (exit-neutral) naming it as ignored, and the line's `N auto-approved` count leaves it out. | Your `[approvals]` config — see [configuration](configuration.md). |
 | `policy:installed` | What does a run from this directory actually install? Prints the **installed** posture — `source=` (`config` or `default`), the five permission classes, the derived tool allowlist, and the named guards (`permission-wrapper`, `destructive-guard`, `network-guard`, `confine-guard`, `approval`), plus `route=`. A posture that contradicts itself (no interceptors, `ask-user` without an approval interceptor) fails with `policy-mismatch`: the line can never describe a policy no run enforces. | A `policy-mismatch` here is an install bug, not a config typo — the classes come from `[permissions]` when the config supplies them and from the documented solo defaults otherwise. |
 | `policy:detection-only` | Which installed classes are **lexical detection, not enforcement** (issue #289, §58/§59.1): `network=none` is a bash command detector (a script the agent writes and runs can reach the network), `filesystem=…` is lexical path confinement (symlinks are not resolved), `credentials=none` is a lexical credential-path detector (only the listed paths are challenged). Always `warn` (exit-neutral); omitted entirely when nothing is detection-only. | Nothing to fix — it is a disclosure. If it matters for your threat model, the run needs OS-level isolation, which solo mode does not have (§59.1). |
-| `policy:enterprise-sinks` | Audit-sink posture from the resolved `[policy]`: syslog-first order and availability. Fails when no sink is configured, when syslog is not first, or when the syslog sink cannot be written — sink construction is a named follow-up, so a configured syslog sink is unenforceable today and the check says so instead of claiming an audit trail. Only appears when a `[policy]` section is configured. | Add/fix the `[[audit]]` tables — see [configuration](configuration.md#enterprise-policy-policy-58). |
+| `policy:enterprise-sinks` | Audit-sink posture from the resolved `[policy]`: syslog-first order and availability. Fails when no sink is configured, when syslog is not first, or when the syslog target is unreachable (the target is probed for real now). Only appears when a `[policy]` section is configured. | Add/fix the `[[audit]]` tables — see [configuration](configuration.md#enterprise-policy-policy-58). |
+| `audit:sink:<kind>-<n>` | One check per configured `[[audit]]` table: reachable sinks pass naming target and level; a missing unix socket, an unbuilt table, or a runtime failure the process recorded fails with `sink-unreachable`. Only appears when `[[audit]]` tables are configured. | Fix the target the detail names, or remove the table — see [configuration](configuration.md#audit-sinks-audit). |
 | `policy:enterprise-network` | The resolved `[policy]` network mode: fails when it is `allowlist` with no domains, which allows nothing and is unenforceable. Only appears when a `[policy]` section is configured. | Give the allowlist its domains, or use `none`/`full` — see [configuration](configuration.md#enterprise-policy-policy-58). |
 | `policy:enterprise-enforceability` | Aggregate over the two enterprise items above: `fail` when any of them is unenforceable, `pass` when the configured policy is enforceable on this host. Only appears when a `[policy]` section is configured. | Fix the named failing item. |
-| `role:<name>` | One check per role — the five §12 presets embedded in the binary (issue [#203](https://github.com/konic-labs/kubic/issues/203)) plus any `.kubic/roles/<name>.md` document, which replaces its preset of the same name — judged the way `kubic run --role <name>` resolves it: the winning document merged under the config `[roles.<name>]` layers. `pass` names the layer the role came from and lists the resolved tool set (`builtin role — 15 tool(s): …`, `repo role — …`). Fails (`policy-mismatch`) with the resolver's named reason for a contradictory document (§40.3) and, under an enterprise `[policy]` tool gate (§58), for a role that declares a denied tool or one outside `allowed_tools` — `role 'implementer' refused: tool 'bash' denied … enterprise denial holds`; a `[roles.<name>]` layer that narrows the denied tool away keeps it green. `kubic orchestrate` refuses the same assignment (`role_refused`) before anything spawns. An unparseable role directory reports as `role:documents`; an absent one is not a failure — the embedded presets report instead. | Fix the document (or the layer) the detail names; a denial is the enterprise policy working — see [configuration](configuration.md#enterprise-policy-policy-58). |
+| `role:<name>` | One check per role — the five §12 presets embedded in the binary (issue [#203](https://github.com/konic-labs/kubic/issues/203)) plus any `.kubic/roles/<name>.md` document, which replaces its preset of the same name — judged the way `kubic run --role <name>` resolves it: the winning document merged under the config `[roles.<name>]` layers. `pass` names the layer the role came from and lists the resolved tool set (`builtin role — 15 tool(s): …`, `repo role — …`). Fails (`policy-mismatch`) with the resolver's named reason for a contradictory document (§40.3) and, under an enterprise `[policy]` tool gate (§58), for a role that declares a denied tool or one outside `allowed_tools` — `role 'implementer' refused: tool 'bash' denied … enterprise denial holds`; a `[roles.<name>]` layer that narrows the denied tool away keeps it green. `kubic orchestrate` refuses the same assignment (`role_refused`) before anything spawns. A document that fails to parse fails as `role:<file-stem>` naming the file and the parse error (issue #236) — it never blocks the other roles; two documents declaring the same name fail as `role:<name>` listing both files. An unreadable role directory still reports as `role:documents`; an absent one is not a failure — the embedded presets report instead. | Fix the document (or the layer) the detail names; a denial is the enterprise policy working — see [configuration](configuration.md#enterprise-policy-policy-58). |
 | `session:overlap` | How many sessions are recorded against this cwd in the local session store? Two or more prints `warn` with the session ids (issue #118): concurrent **different**-session runs stay legal, but each run's end-of-run sweep compares against its own boot baseline, so a live sibling's in-flight changes are recorded as unattributed, non-reversible journal entries. The store lists sessions, so the note is a possible overlap, never a verified one. | Nothing to fix — the overlap is disclosed, not blocked (`warn` never flips the exit). If the journal accounting matters, run the sessions one at a time. |
+| `session:full-access:<id>` | Is a live session in this workspace running with approvals off? One `warn` per session whose `posture.json` records `fullAccess` (§41.4, issue #310) — the detail names the grant (`enabled <time> by <operator>`, when the posture recorded it) and the way back (`end the session or switch approvals back on; new sessions start enforced`). Only live sessions are listed (a released session's grant expired with it), so a quiet matrix means no live session has approvals off — an unlistable store warns once as `session:full-access` instead of crashing. `doctor --session <id>` checks exactly one session (workspace filter bypassed) and its `policy:installed` line reads that session's `posture.json`, so a full-access session reports `FULL ACCESS recorded for this session`. The same sessions appear under `doctor --json` as `session:full-access:<id>` checks. | Nothing to fix unless the access is unintended — `warn` never flips the exit. Full access is operator intent (`--dangerously-skip-approvals` or the in-session toggle); to revoke it, end the session or switch approvals back on. |
 | `extension:bundle` | Did the first-party bundle (`kubic/budget`, under `skills/budget/`) load through the trust gates? Reports `loaded N (…)` plus `refused M (…)` — the two live bypass probes (owned-path traversal, truthy remote flag) are refused on every run. | `reason: extension-posture` → the bundle dir is missing/unreadable, the manifest failed the trust gates, or (tripwire) a bypass was admitted: fix the install (`skills/budget/manifest.json`), never `--skip` it into silence. A fail exits 1. |
 | `license:kubic` | License identity (`MIT`). Always passes; reported, never skipped implicitly (explicit `--skip license:kubic` still works). | Nothing — informational. |
 | `policy:enforceability` | Can v1 actually honor the policy? `[mcp]` keys and `mcp:`/`extensions:`/`third-party:` autoApprove values fail here with the refusal. Invalid shapes are **not** double-failed — they point at `policy:approvals`. | Remove the v1-unsupported key (MCP arrives in Phase 4). |
@@ -86,6 +88,47 @@ a typo fails closed instead of silently passing.
 `--skip extension:bundle` is an explicit operator override for a
 known-broken install, not a recovery — the bundle stays unloaded while
 skipped.
+
+Skipping a failing item also clears the aggregate over it: each probe
+runs once per `doctor` call and the `limit:` aggregates derive from the
+post-skip items, so `--skip dep:config-load` leaves
+`limit:deps-present` skipped (exit 0 when nothing else fails) instead of
+still failing it. Skipping every input of a section reports that
+aggregate as skipped, never as a failure.
+
+## What each path emits on `--debug` (§50, issue #246)
+
+The §50 vocabulary is eight line classes (`[policy]`, `[worker]`,
+`[session]`, `[tool]`, `[model]`, `[agent]`, `[exit]`, `handler_error`):
+
+- **`kubic run --debug`** (stderr): the boot `[session] id=<id>
+  parent=<id|none>` and `[policy] role=<name> tools=<…>` lines (a stock
+  run names `role=solo (default)`), then per turn the `[agent]` run/lane
+  spans, one `[tool] in/out` pair per tool call, one `[model]
+  in=<n> out=<n> cached=<n> <provider>/<model>` line per committed
+  response, and retry/compaction `[lane]` lines. A faulted harness task
+  (pi-durable `task_failed` — Pi 1.0 has no `handler_error` event)
+  surfaces as `handler_error hook=<kind> error=<message> verdict=deny`.
+- **`kubic orchestrate --debug`** (stderr): one `[agent] worker start
+  session=<worker-session>` line per launch plus the worker end line,
+  alongside the existing `[worker] spawn …` rows. The per-launch
+  `kubic.worker.start` span (with its nested `kubic.worker.startup`
+  span, pinned to the registry's `startupMs`) is appended per settled
+  worker to `<repo>/.kubic/orchestrator/<session>.spans.jsonl`; the
+  worker child itself writes its session's `spans.jsonl` like a headless
+  run, so both traces join on the worker session id.
+- **`kubic tui`** has no `--debug` flag, so its lines are dropped — with
+  two exceptions that always surface: a lane fault renders as a
+  transcript notice (the `handler_error …` line; the TUI has no other
+  failure channel), and every settled turn appends its spans to the
+  session's `spans.jsonl` exactly like a headless run. The per-response
+  spend stays on the status bar; the boot's `[session]`/`[policy]` lines
+  and the per-response `[model]` line go to the (currently unwired)
+  debug sink a test boot injects.
+- **Dropped by design** (see [design drift](../design-drift.md)): the
+  `(0 leaked handles)` count (nothing ever measured it) and `[tool]
+  allowed` verdict lines (admission is enforced by the policy
+  interceptor, which reports on the approval surface).
 
 ## When a command dies unexpectedly (`KUBIC_DEBUG`)
 

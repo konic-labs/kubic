@@ -6,7 +6,11 @@
 // structured code `not_a_repo` (unavailable-with-reason, §43.2) — the
 // journal path keeps working without git (VCS-independent).
 
-import type { ExecutionEnv, Provenance } from '../../../exec/src/env.js';
+import {
+  BASH_RESULT_MAX_CHARS,
+  BASH_RESULT_MAX_LINES,
+  clipStream,
+} from './bash.js';
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError, rejectUnknownArgs } from './types.js';
 
@@ -14,24 +18,130 @@ export interface GitRun {
   exitCode: number;
   stdout: string;
   stderr: string;
+  timedOut: boolean;
+}
+
+// Kill bound for git children (issue #190): a commit hook that blocks on
+// stdin must never hang the op forever. Same ceiling as bash (120s
+// default, 600s max); unlike bash there is no model timeout argument (git
+// argument contracts are frozen), so the default always applies unless a
+// direct runGit caller passes its own.
+export const GIT_DEFAULT_TIMEOUT_SEC = 120;
+export const GIT_MAX_TIMEOUT_SEC = 600;
+
+export interface GitRunOptions {
+  /** Seconds before the child is killed; clamped to GIT_MAX_TIMEOUT_SEC. */
+  timeoutSec?: number;
 }
 
 export function isNotARepo(stderr: string): boolean {
   return /not a git repository/i.test(stderr);
 }
 
+/**
+ * Spawn git through the shell seam with lane abort + timeout wired like
+ * bash (issue #190): the kill lands in the lane's kill registry under
+ * this invocation and leaves it once settled (issue #142); the timeout or
+ * an aborted signal kills the child. Throws `tool_failed` on timeout, or
+ * on abort when the child did not exit cleanly — every other exit comes
+ * back for the op to classify (not_a_repo, reason-bounded tool_failed).
+ */
 export async function runGit(
-  env: ExecutionEnv,
+  ctx: OpContext,
+  inv: ToolInvocation,
+  operation: string,
   args: string[],
-  provenance: Provenance,
+  options?: GitRunOptions,
 ): Promise<GitRun> {
-  const handle = env.shell.spawn('git', args, { provenance });
-  const done = await handle.wait();
+  const handle = ctx.env.shell.spawn('git', args, {
+    provenance: {
+      sessionId: ctx.sessionId,
+      agentId: ctx.agentId,
+      toolCallId: inv.invocationId,
+      turnId: 0,
+      operation,
+    },
+    onUpdate: ctx.onUpdate,
+  });
+  const untrack = ctx.trackHandle?.(() => handle.kill(), inv);
+  const timeoutSec = Math.min(
+    options?.timeoutSec ?? GIT_DEFAULT_TIMEOUT_SEC,
+    GIT_MAX_TIMEOUT_SEC,
+  );
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    handle.kill();
+  }, timeoutSec * 1000);
+  const onAbort = () => handle.kill();
+  if (ctx.signal !== undefined) {
+    if (ctx.signal.aborted) handle.kill();
+    else ctx.signal.addEventListener('abort', onAbort, { once: true });
+  }
+  // Issue #432: the untrack, timer clear and listener removal sit in a
+  // finally — a rejecting wait() must not leak the timer or the registry
+  // entry (bash parity).
+  let done: Awaited<ReturnType<typeof handle.wait>>;
+  try {
+    done = await handle.wait();
+  } finally {
+    untrack?.();
+    clearTimeout(timer);
+    ctx.signal?.removeEventListener('abort', onAbort);
+  }
+  // bash parity: a success that won the race against the abort stays a
+  // success; anything else the interruption touched is a named failure.
+  if (timedOut) {
+    throw new OpError(
+      'tool_failed',
+      `git ${operation} timed out after ${timeoutSec} seconds`,
+    );
+  }
+  if (done.exitCode !== 0 && ctx.signal?.aborted === true) {
+    throw new OpError('tool_failed', `git ${operation} aborted`);
+  }
   return {
     exitCode: done.exitCode,
     stdout: done.stdout,
     stderr: done.stderr,
+    timedOut,
   };
+}
+
+// Maximum --stat lines carried inline on a clipped result (issue #432):
+// the file rows that fit plus the `N files changed` summary, so the model
+// knows what the clip dropped without re-inflating to the clipped size.
+const STAT_MAX_LINES = 40;
+
+function capStat(out: string): string {
+  const lines = out.split('\n').filter((line) => line !== '');
+  if (lines.length <= STAT_MAX_LINES) return lines.join('\n');
+  const summary = lines[lines.length - 1] ?? '';
+  const kept = lines.slice(0, STAT_MAX_LINES - 1);
+  return [
+    ...kept,
+    `... (${lines.length - kept.length - 1} more stat lines)`,
+    summary,
+  ].join('\n');
+}
+
+// Best-effort `--stat` twin of a clipped query (issue #432): undefined
+// when the stat query itself fails, so a summary can never fail the op —
+// a twin timeout or abort-throw degrades the same way as a non-zero exit.
+async function gitStatSummary(
+  ctx: OpContext,
+  inv: ToolInvocation,
+  operation: string,
+  statArgs: string[],
+): Promise<string | undefined> {
+  try {
+    const run = await runGit(ctx, inv, operation, statArgs);
+    if (run.exitCode !== 0) return undefined;
+    const capped = capStat(run.stdout);
+    return capped === '' ? undefined : capped;
+  } catch {
+    return undefined;
+  }
 }
 
 export function notARepoError(op: string, stderr: string): OpError {
@@ -58,6 +168,13 @@ export interface GitStatus {
   staged: string[];
   unstaged: string[];
   untracked: string[];
+  // Issue #380: paths with unresolved merge conflicts (UU, AA, DD, and
+  // the U-in-either-slot pairs). A conflicted path is conflict work, not
+  // staged or unstaged work — it appears here only.
+  conflicts: string[];
+  // Issue #380: the repo root, and one record per submodule.
+  repoRoot: string;
+  submodules: GitSubmodule[];
   /** Rename/copy records: the new path plus the optional old path. */
   renames: GitRename[];
   clean: boolean;
@@ -70,7 +187,12 @@ export interface GitStatus {
 // the branch headers separate a detached HEAD (`# branch.head (detached)`)
 // from a branch name — never guessed from one — while an unborn branch is
 // just a name next to `# branch.oid (initial)`.
-function parsePorcelainStatus(out: string): GitStatus {
+/**
+ * Shared with the host worktree reader (issue #388): it parses the same
+ * `git status --porcelain=v2 -z -b` output `git_status` classifies, so the
+ * orchestrator never grows a second status parser.
+ */
+export function parsePorcelainStatus(out: string): GitStatus {
   const staged: string[] = [];
   const unstaged: string[] = [];
   const untracked: string[] = [];
@@ -79,12 +201,20 @@ function parsePorcelainStatus(out: string): GitStatus {
   let ahead = 0;
   let behind = 0;
 
+  const conflicts: string[] = [];
   const pushChange = (xy: string, path: string, oldPath?: string): void => {
     if (path === '') return;
     const x = xy[0] ?? '';
     const y = xy[1] ?? '';
-    if (x !== '' && x !== '.') staged.push(path);
-    if (y !== '' && y !== '.') unstaged.push(path);
+    // Unmerged XY codes (issue #380): a `U` in either slot, or the
+    // both-added / both-deleted pairs. Conflict work only — never staged
+    // or unstaged. The rename relation still records when git reports one.
+    if (x === 'U' || y === 'U' || xy === 'AA' || xy === 'DD') {
+      conflicts.push(path);
+    } else {
+      if (x !== '' && x !== '.') staged.push(path);
+      if (y !== '' && y !== '.') unstaged.push(path);
+    }
     if (oldPath !== undefined && oldPath !== '') {
       renames.push({ path, oldPath, staged: x === 'R' || x === 'C' });
     }
@@ -145,10 +275,50 @@ function parsePorcelainStatus(out: string): GitStatus {
     staged,
     unstaged,
     untracked,
+    conflicts,
+    // The parser sees no repo root and no submodules (issue #380): the
+    // status op fills them from its own queries; other consumers
+    // (orchestrator worktree status) keep the empty defaults.
+    repoRoot: '',
+    submodules: [],
     renames,
+    // A conflicted tree is not clean: there is resolver work outstanding.
     clean:
-      staged.length === 0 && unstaged.length === 0 && untracked.length === 0,
+      staged.length === 0 &&
+      unstaged.length === 0 &&
+      untracked.length === 0 &&
+      conflicts.length === 0,
   };
+}
+
+export interface GitSubmodule {
+  path: string;
+  state: 'clean' | 'modified' | 'uninitialized' | 'conflict';
+}
+
+// One `git submodule status` line: a flag char, the sha, the path, and an
+// optional describe suffix. `+` checked out at a different commit,
+// `-` uninitialized, `U` conflicted, anything else clean.
+export function parseSubmoduleStatus(out: string): GitSubmodule[] {
+  const rows: GitSubmodule[] = [];
+  for (const line of out.split('\n')) {
+    if (line === '') continue;
+    const flag = line[0] ?? ' ';
+    const path = (line.slice(1).trim().split(/\s+/)[1] ?? '').trim();
+    if (path === '') continue;
+    rows.push({
+      path,
+      state:
+        flag === '+'
+          ? 'modified'
+          : flag === '-'
+            ? 'uninitialized'
+            : flag === 'U'
+              ? 'conflict'
+              : 'clean',
+    });
+  }
+  return rows;
 }
 
 export type GitStatusResult = GitStatus;
@@ -159,7 +329,7 @@ export const gitStatusOperation: Operation<
 > = {
   name: 'git_status',
   description:
-    'Structured working-tree status (branch or detached HEAD, ahead/behind, staged/unstaged/untracked, renames)',
+    'Structured working-tree status (branch or detached HEAD, ahead/behind, staged/unstaged/untracked, conflicts, renames)',
   replay: 'safe',
   validateArgs: (raw: unknown) => {
     if (typeof raw !== 'object' || raw === null)
@@ -172,17 +342,12 @@ export const gitStatusOperation: Operation<
     _args: Record<string, never>,
     ctx: OpContext,
   ): Promise<GitStatusResult> => {
-    const run = await runGit(
-      ctx.env,
-      ['status', '--porcelain=v2', '-z', '-b'],
-      {
-        sessionId: ctx.sessionId,
-        agentId: ctx.agentId,
-        toolCallId: inv.invocationId,
-        turnId: 0,
-        operation: 'git_status',
-      },
-    );
+    const run = await runGit(ctx, inv, 'git_status', [
+      'status',
+      '--porcelain=v2',
+      '-z',
+      '-b',
+    ]);
     if (run.exitCode !== 0) {
       if (isNotARepo(run.stderr)) throw notARepoError('git_status', run.stderr);
       throw new OpError(
@@ -190,7 +355,20 @@ export const gitStatusOperation: Operation<
         `git_status failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
       );
     }
-    return parsePorcelainStatus(run.stdout);
+    // The root and submodule summary ride along: both are cheap, local,
+    // read-only queries, and a status without them drops the context a
+    // worker needs to interpret the paths. Either may fail on an exotic
+    // repo — the status itself still stands.
+    let repoRoot = '';
+    const root = await runGit(ctx, inv, 'git_status', [
+      'rev-parse',
+      '--show-toplevel',
+    ]);
+    if (root.exitCode === 0) repoRoot = root.stdout.trim();
+    let submodules: GitSubmodule[] = [];
+    const subs = await runGit(ctx, inv, 'git_status', ['submodule', 'status']);
+    if (subs.exitCode === 0) submodules = parseSubmoduleStatus(subs.stdout);
+    return { ...parsePorcelainStatus(run.stdout), repoRoot, submodules };
   },
 };
 
@@ -208,14 +386,20 @@ export interface GitLogArgs {
 
 export interface GitLogResult {
   entries: GitLogEntry[];
+  /** True when the raw log was clipped to the model cap (issue #190). */
+  truncated: boolean;
+  /** Spill path holding the full log, when the lane provided a sink. */
+  spillPath?: string;
+  // Issue #432: capped `--stat` summary, present only when truncated —
+  // the shape of what the clip dropped.
+  stat?: string;
 }
 
 const LOG_FORMAT = '%H%x1f%an%x1f%ad%x1f%s';
 
 export const gitLogOperation: Operation<GitLogArgs, GitLogResult> = {
   name: 'git_log',
-  description:
-    'Recent commits (sha, author, date, message), optionally only those touching path; max defaults to 20 and is capped at 100',
+  description: `Recent commits (sha, author, date, message), optionally only those touching path; max defaults to 20 and is capped at 100. Output clips to the shared model cap (last ${BASH_RESULT_MAX_LINES} lines, at most ${BASH_RESULT_MAX_CHARS} chars, tail-kept; truncated reports the cut and the full text is spilled when the lane provides a sink)`,
   replay: 'safe',
   validateArgs: (raw: unknown): GitLogArgs => {
     if (typeof raw !== 'object' || raw === null)
@@ -259,13 +443,7 @@ export const gitLogOperation: Operation<GitLogArgs, GitLogResult> = {
       String(max),
     ];
     if (args.path !== undefined) argv.push('--', args.path);
-    const run = await runGit(ctx.env, argv, {
-      sessionId: ctx.sessionId,
-      agentId: ctx.agentId,
-      toolCallId: inv.invocationId,
-      turnId: 0,
-      operation: 'git_log',
-    });
+    const run = await runGit(ctx, inv, 'git_log', argv);
     if (run.exitCode !== 0) {
       if (isNotARepo(run.stderr)) throw notARepoError('git_log', run.stderr);
       throw new OpError(
@@ -273,8 +451,12 @@ export const gitLogOperation: Operation<GitLogArgs, GitLogResult> = {
         `git_log failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
       );
     }
+    // Clip the raw log before parsing (issue #190): a cut first line
+    // carries fewer than four fields and is skipped below, so a clipped
+    // tail still parses cleanly.
+    const clipped = clipStream('stdout', run.stdout, ctx);
     const entries: GitLogEntry[] = [];
-    for (const line of run.stdout.split('\n')) {
+    for (const line of clipped.text.split('\n')) {
       if (line.trim() === '') continue;
       const [sha, author, date, message] = line.split('');
       if (
@@ -286,7 +468,25 @@ export const gitLogOperation: Operation<GitLogArgs, GitLogResult> = {
         continue;
       entries.push({ sha, author, date, message });
     }
-    return { entries };
+    const stat = clipped.truncated
+      ? await gitStatSummary(ctx, inv, 'git_log', [
+          'log',
+          '--stat',
+          `--format=${LOG_FORMAT}`,
+          '--date=short',
+          '-n',
+          String(max),
+          ...(args.path === undefined ? [] : ['--', args.path]),
+        ])
+      : undefined;
+    return {
+      entries,
+      truncated: clipped.truncated,
+      ...(clipped.spillPath === undefined
+        ? {}
+        : { spillPath: clipped.spillPath }),
+      ...(stat === undefined ? {} : { stat }),
+    };
   },
 };
 
@@ -296,11 +496,17 @@ export interface GitShowArgs {
 
 export interface GitShowResult {
   patch: string;
+  /** True when the patch was clipped to the model cap (issue #190). */
+  truncated: boolean;
+  // Issue #432: capped `--stat` summary, present only when truncated.
+  stat?: string;
+  /** Spill path holding the full patch, when the lane provided a sink. */
+  spillPath?: string;
 }
 
 export const gitShowOperation: Operation<GitShowArgs, GitShowResult> = {
   name: 'git_show',
-  description: 'Patch (diff) of a commit or other ref',
+  description: `Patch (diff) of a commit or other ref. Output clips to the shared model cap (last ${BASH_RESULT_MAX_LINES} lines, at most ${BASH_RESULT_MAX_CHARS} chars, tail-kept; truncated reports the cut and the full text is spilled when the lane provides a sink)`,
   replay: 'safe',
   validateArgs: (raw: unknown): GitShowArgs => {
     if (typeof raw !== 'object' || raw === null)
@@ -325,17 +531,12 @@ export const gitShowOperation: Operation<GitShowArgs, GitShowResult> = {
     args: GitShowArgs,
     ctx: OpContext,
   ): Promise<GitShowResult> => {
-    const run = await runGit(
-      ctx.env,
-      ['show', '--format=', '--patch', args.ref],
-      {
-        sessionId: ctx.sessionId,
-        agentId: ctx.agentId,
-        toolCallId: inv.invocationId,
-        turnId: 0,
-        operation: 'git_show',
-      },
-    );
+    const run = await runGit(ctx, inv, 'git_show', [
+      'show',
+      '--format=',
+      '--patch',
+      args.ref,
+    ]);
     if (run.exitCode !== 0) {
       if (isNotARepo(run.stderr)) throw notARepoError('git_show', run.stderr);
       throw new OpError(
@@ -343,7 +544,23 @@ export const gitShowOperation: Operation<GitShowArgs, GitShowResult> = {
         `git_show failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
       );
     }
-    return { patch: run.stdout };
+    const clipped = clipStream('stdout', run.stdout, ctx);
+    const stat = clipped.truncated
+      ? await gitStatSummary(ctx, inv, 'git_show', [
+          'show',
+          '--format=',
+          '--stat',
+          args.ref,
+        ])
+      : undefined;
+    return {
+      patch: clipped.text,
+      truncated: clipped.truncated,
+      ...(clipped.spillPath === undefined
+        ? {}
+        : { spillPath: clipped.spillPath }),
+      ...(stat === undefined ? {} : { stat }),
+    };
   },
 };
 export interface GitDiffArgs {
@@ -354,11 +571,17 @@ export interface GitDiffArgs {
 
 export interface GitDiffResult {
   diff: string;
+  /** True when the diff was clipped to the model cap (issue #190). */
+  truncated: boolean;
+  /** Spill path holding the full diff, when the lane provided a sink. */
+  spillPath?: string;
+  // Issue #432: capped `--stat` summary, present only when truncated.
+  stat?: string;
 }
 
 export const gitDiffOperation: Operation<GitDiffArgs, GitDiffResult> = {
   name: 'git_diff',
-  description: 'Scoped diff of staged changes, a revision range, or a path',
+  description: `Scoped diff of staged changes, a revision range, or a path. Output clips to the shared model cap (last ${BASH_RESULT_MAX_LINES} lines, at most ${BASH_RESULT_MAX_CHARS} chars, tail-kept; truncated reports the cut and the full text is spilled when the lane provides a sink)`,
   replay: 'safe',
   validateArgs: (raw: unknown): GitDiffArgs => {
     if (typeof raw !== 'object' || raw === null)
@@ -409,13 +632,7 @@ export const gitDiffOperation: Operation<GitDiffArgs, GitDiffResult> = {
     if (args.staged === true) argv.push('--staged');
     if (args.range !== undefined) argv.push(args.range);
     if (args.path !== undefined) argv.push('--', args.path);
-    const run = await runGit(ctx.env, argv, {
-      sessionId: ctx.sessionId,
-      agentId: ctx.agentId,
-      toolCallId: inv.invocationId,
-      turnId: 0,
-      operation: 'git_diff',
-    });
+    const run = await runGit(ctx, inv, 'git_diff', argv);
     if (run.exitCode !== 0) {
       if (isNotARepo(run.stderr)) throw notARepoError('git_diff', run.stderr);
       throw new OpError(
@@ -423,7 +640,24 @@ export const gitDiffOperation: Operation<GitDiffArgs, GitDiffResult> = {
         `git_diff failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
       );
     }
-    return { diff: run.stdout };
+    const clipped = clipStream('stdout', run.stdout, ctx);
+    const stat = clipped.truncated
+      ? await gitStatSummary(ctx, inv, 'git_diff', [
+          'diff',
+          ...(args.staged === true ? ['--staged'] : []),
+          ...(args.range === undefined ? [] : [args.range]),
+          '--stat',
+          ...(args.path === undefined ? [] : ['--', args.path]),
+        ])
+      : undefined;
+    return {
+      diff: clipped.text,
+      truncated: clipped.truncated,
+      ...(clipped.spillPath === undefined
+        ? {}
+        : { spillPath: clipped.spillPath }),
+      ...(stat === undefined ? {} : { stat }),
+    };
   },
 };
 
@@ -433,26 +667,6 @@ export interface GitStageArgs {
 
 export interface GitStageResult {
   staged: string[];
-}
-
-function gitEffectProvenance(
-  inv: ToolInvocation,
-  ctx: OpContext,
-  operation: string,
-): {
-  sessionId: string;
-  agentId: string;
-  toolCallId: string;
-  turnId: number;
-  operation: string;
-} {
-  return {
-    sessionId: ctx.sessionId,
-    agentId: ctx.agentId,
-    toolCallId: inv.invocationId,
-    turnId: 0,
-    operation,
-  };
 }
 
 function rejectPathEscape(path: string, op: string): void {
@@ -515,11 +729,11 @@ export const gitStageOperation: Operation<GitStageArgs, GitStageResult> = {
     args: GitStageArgs,
     ctx: OpContext,
   ): Promise<GitStageResult> => {
-    const run = await runGit(
-      ctx.env,
-      ['add', '--', ...args.paths],
-      gitEffectProvenance(inv, ctx, 'git_stage'),
-    );
+    const run = await runGit(ctx, inv, 'git_stage', [
+      'add',
+      '--',
+      ...args.paths,
+    ]);
     if (run.exitCode !== 0) {
       if (isNotARepo(run.stderr)) throw notARepoError('git_stage', run.stderr);
       throw new OpError(
@@ -572,11 +786,7 @@ export const gitCommitOperation: Operation<GitCommitArgs, GitCommitResult> = {
   ): Promise<GitCommitResult> => {
     const argv = ['commit', '-m', args.message];
     if (args.amend === true) argv.push('--amend');
-    const run = await runGit(
-      ctx.env,
-      argv,
-      gitEffectProvenance(inv, ctx, 'git_commit'),
-    );
+    const run = await runGit(ctx, inv, 'git_commit', argv);
     if (run.exitCode !== 0) {
       if (isNotARepo(run.stderr)) throw notARepoError('git_commit', run.stderr);
       // `git commit` with nothing staged exits 1 having written "nothing to
@@ -588,22 +798,20 @@ export const gitCommitOperation: Operation<GitCommitArgs, GitCommitResult> = {
         `git_commit failed (exit ${run.exitCode}): ${reason.trim().slice(0, 200)}`,
       );
     }
-    const head = await runGit(
-      ctx.env,
-      ['rev-parse', 'HEAD'],
-      gitEffectProvenance(inv, ctx, 'git_commit'),
-    );
+    const head = await runGit(ctx, inv, 'git_commit', ['rev-parse', 'HEAD']);
     const sha = head.stdout.trim();
     if (sha === '')
       throw new OpError(
         'tool_failed',
         'git_commit succeeded but rev-parse HEAD is empty',
       );
-    const files = await runGit(
-      ctx.env,
-      ['show', '-z', '--name-only', '--format=', sha],
-      gitEffectProvenance(inv, ctx, 'git_commit'),
-    );
+    const files = await runGit(ctx, inv, 'git_commit', [
+      'show',
+      '-z',
+      '--name-only',
+      '--format=',
+      sha,
+    ]);
     // `-z` means NUL-separated and never quoted: non-ASCII and newline
     // paths come back exactly as committed (same parity as git_status).
     return {
@@ -655,11 +863,11 @@ export const gitCheckpointOperation: Operation<
     // without the checkpoint itself destroying work. The message is the
     // positional argument `stash create [<message>]` takes; `-m` is a
     // `stash push` option and would become part of the subject here.
-    const run = await runGit(
-      ctx.env,
-      ['stash', 'create', args.message],
-      gitEffectProvenance(inv, ctx, 'git_checkpoint'),
-    );
+    const run = await runGit(ctx, inv, 'git_checkpoint', [
+      'stash',
+      'create',
+      args.message,
+    ]);
     if (run.exitCode !== 0) {
       if (isNotARepo(run.stderr))
         throw notARepoError('git_checkpoint', run.stderr);
@@ -715,11 +923,7 @@ export const gitBranchOperation: Operation<GitBranchArgs, GitBranchResult> = {
     ctx: OpContext,
   ): Promise<GitBranchResult> => {
     if (args.create !== undefined) {
-      const run = await runGit(
-        ctx.env,
-        ['branch', args.create],
-        gitEffectProvenance(inv, ctx, 'git_branch'),
-      );
+      const run = await runGit(ctx, inv, 'git_branch', ['branch', args.create]);
       if (run.exitCode !== 0) {
         if (isNotARepo(run.stderr))
           throw notARepoError('git_branch', run.stderr);
@@ -731,13 +935,14 @@ export const gitBranchOperation: Operation<GitBranchArgs, GitBranchResult> = {
       return { created: args.create };
     }
     const run = await runGit(
-      ctx.env,
+      ctx,
+      inv,
+      'git_branch',
       // for-each-ref over refs/heads, not `git branch`: on a detached HEAD
       // `git branch` prints a "(HEAD detached at …)" pseudo-entry, and
       // `:short` would render a branch that shares its name with a tag as
       // `heads/<name>`. lstrip=2 drops exactly `refs/heads/`.
       ['for-each-ref', '--format=%(refname:lstrip=2)', 'refs/heads'],
-      gitEffectProvenance(inv, ctx, 'git_branch'),
     );
     if (run.exitCode !== 0) {
       if (isNotARepo(run.stderr)) throw notARepoError('git_branch', run.stderr);
@@ -752,5 +957,184 @@ export const gitBranchOperation: Operation<GitBranchArgs, GitBranchResult> = {
         .map((b) => b.trim())
         .filter((b) => b !== ''),
     };
+  },
+};
+
+export interface GitMergeArgs {
+  branch: string;
+}
+
+export interface GitMergeResult {
+  merged: boolean;
+  /** Conflicted paths, when the merge stopped on conflicts. */
+  conflicts: string[];
+}
+
+export const gitMergeOperation: Operation<GitMergeArgs, GitMergeResult> = {
+  name: 'git_merge',
+  description:
+    'Merge a local branch into the current one (local refs only, never fetches); on conflict returns the conflicted paths and leaves the merge state for the resolver',
+  replay: 'never',
+  validateArgs: (raw: unknown): GitMergeArgs => {
+    if (typeof raw !== 'object' || raw === null)
+      throw new OpError('invalid_args', 'git_merge args must be an object');
+    rejectUnknownArgs('git_merge', raw, ['branch']);
+    const branch = (raw as Record<string, unknown>).branch;
+    if (typeof branch !== 'string' || !isValidBranchName(branch)) {
+      throw new OpError(
+        'invalid_args',
+        'git_merge branch must be a plain branch name',
+      );
+    }
+    return { branch };
+  },
+  execute: async (
+    inv: ToolInvocation,
+    args: GitMergeArgs,
+    ctx: OpContext,
+  ): Promise<GitMergeResult> => {
+    const run = await runGit(ctx, inv, 'git_merge', ['merge', args.branch]);
+    if (run.exitCode !== 0) {
+      if (isNotARepo(run.stderr)) throw notARepoError('git_merge', run.stderr);
+      // A conflicting merge exits non-zero with the tree in merge state:
+      // report the conflicted paths and leave the state for the resolver
+      // (no abort — resolving is the caller's job). Any other failure is
+      // git's own words.
+      const status = await runGit(ctx, inv, 'git_merge', [
+        'status',
+        '--porcelain=v2',
+        '-z',
+        '-b',
+      ]);
+      if (status.exitCode === 0) {
+        const conflicts = parsePorcelainStatus(status.stdout).conflicts;
+        if (conflicts.length > 0) return { merged: false, conflicts };
+      }
+      throw new OpError(
+        'tool_failed',
+        `git_merge failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
+      );
+    }
+    return { merged: true, conflicts: [] };
+  },
+};
+
+export interface GitConflictStatusResult {
+  conflicts: string[];
+}
+
+export const gitConflictStatusOperation: Operation<
+  Record<string, never>,
+  GitConflictStatusResult
+> = {
+  name: 'git_conflict_status',
+  description: 'List paths with unresolved merge conflicts',
+  replay: 'safe',
+  validateArgs: (raw: unknown) => {
+    if (typeof raw !== 'object' || raw === null)
+      throw new OpError(
+        'invalid_args',
+        'git_conflict_status args must be an object',
+      );
+    rejectUnknownArgs('git_conflict_status', raw, []);
+    return {};
+  },
+  execute: async (
+    inv: ToolInvocation,
+    _args: Record<string, never>,
+    ctx: OpContext,
+  ): Promise<GitConflictStatusResult> => {
+    const run = await runGit(ctx, inv, 'git_conflict_status', [
+      'status',
+      '--porcelain=v2',
+      '-z',
+      '-b',
+    ]);
+    if (run.exitCode !== 0) {
+      if (isNotARepo(run.stderr))
+        throw notARepoError('git_conflict_status', run.stderr);
+      throw new OpError(
+        'tool_failed',
+        `git_conflict_status failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
+      );
+    }
+    return { conflicts: parsePorcelainStatus(run.stdout).conflicts };
+  },
+};
+
+export interface GitWorktreeRow {
+  path: string;
+  head: string;
+  /** Branch short name, or null when detached or bare. */
+  branch: string | null;
+  bare: boolean;
+  detached: boolean;
+}
+
+export interface GitWorktreeListResult {
+  worktrees: GitWorktreeRow[];
+}
+
+// One `git worktree list --porcelain` block per worktree: `worktree <path>`,
+// `HEAD <sha>`, then `branch <ref>` or `detached` or `bare`. Blocks are
+// blank-line separated; paths are never quoted in this format.
+export function parseWorktreeList(out: string): GitWorktreeRow[] {
+  const rows: GitWorktreeRow[] = [];
+  for (const block of out.split('\n\n')) {
+    let path = '';
+    let head = '';
+    let branch: string | null = null;
+    let bare = false;
+    let detached = false;
+    for (const line of block.split('\n')) {
+      if (line.startsWith('worktree ')) path = line.slice('worktree '.length);
+      else if (line.startsWith('HEAD ')) head = line.slice('HEAD '.length);
+      else if (line.startsWith('branch ')) {
+        branch = line.slice('branch '.length).replace(/^refs\/heads\//, '');
+      } else if (line === 'detached') detached = true;
+      else if (line === 'bare') bare = true;
+    }
+    if (path === '') continue;
+    if (detached || bare) branch = null;
+    rows.push({ path, head, branch, bare, detached });
+  }
+  return rows;
+}
+
+export const gitWorktreeListOperation: Operation<
+  Record<string, never>,
+  GitWorktreeListResult
+> = {
+  name: 'git_worktree_list',
+  description: 'List attached worktrees (path, branch, HEAD)',
+  replay: 'safe',
+  validateArgs: (raw: unknown) => {
+    if (typeof raw !== 'object' || raw === null)
+      throw new OpError(
+        'invalid_args',
+        'git_worktree_list args must be an object',
+      );
+    rejectUnknownArgs('git_worktree_list', raw, []);
+    return {};
+  },
+  execute: async (
+    inv: ToolInvocation,
+    _args: Record<string, never>,
+    ctx: OpContext,
+  ): Promise<GitWorktreeListResult> => {
+    const run = await runGit(ctx, inv, 'git_worktree_list', [
+      'worktree',
+      'list',
+      '--porcelain',
+    ]);
+    if (run.exitCode !== 0) {
+      if (isNotARepo(run.stderr))
+        throw notARepoError('git_worktree_list', run.stderr);
+      throw new OpError(
+        'tool_failed',
+        `git_worktree_list failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
+      );
+    }
+    return { worktrees: parseWorktreeList(run.stdout) };
   },
 };

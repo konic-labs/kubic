@@ -3,7 +3,7 @@
 // suite's fixture through the real solo lane and score the trajectory it
 // writes. Faux provider only (scripted fixture prompts, real tool calls);
 // temp workspaces and a fixture git repo; zero network.
-import { spawnSync } from 'node:child_process';
+
 import {
   existsSync,
   mkdtempSync,
@@ -14,6 +14,11 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '../../../packages/exec/src/test-support/git-sandbox.js';
 import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
 import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
 import { buildTrajectoryExport } from '../../../packages/trajectory/src/export.js';
@@ -35,12 +40,24 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   for (const dir of made.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// The test's git driver (issue #420): one injected sandbox per test, so
+// the fixture setup and the worktree git the benchmark path shells share
+// the scrubbed view. The fixture keeps its own tmp dir.
+let driver: GitSandbox | undefined;
+
+function ensureDriver(): GitSandbox {
+  driver ??= createGitSandbox({ injectProcessEnv: true });
+  return driver;
+}
 
 function cliConfig(): CliConfigResult {
   const runtime = loadRuntimeConfig({
@@ -74,10 +91,7 @@ function runners(workspace: string) {
 }
 
 function git(dir: string, args: string[]): void {
-  const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
-  if (result.status !== 0) {
-    throw new Error(`git ${args.join(' ')}: ${result.stderr}`);
-  }
+  ensureDriver().git(args, { cwd: dir });
 }
 
 function fixtureRepo(): string {
@@ -364,10 +378,9 @@ describe('the live suite runner runs the built-in suites (issue #262)', () => {
     );
     expect(code).toBe(0);
     // The throwaway checkout is gone: only the fixture's own worktree.
-    const list = spawnSync('git', ['worktree', 'list', '--porcelain'], {
+    const list = ensureDriver().git(['worktree', 'list', '--porcelain'], {
       cwd: repo,
-      encoding: 'utf8',
-    }).stdout;
+    });
     expect(
       list.split('\n').filter((line) => line.startsWith('worktree ')),
     ).toHaveLength(1);

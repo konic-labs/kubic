@@ -58,6 +58,56 @@ describe('lane journal wiring (issue #17, slice D)', () => {
     expect(entries[0]?.toolCallId).toBe('call-write-1');
     expect(lane.env.fs.readFile('n.txt')).toBe('hi\n');
   });
+
+  it('carries the lane turn supplier value on tool entries (#436)', async () => {
+    const journal = new FileJournalStore(scratch('j-'));
+    const lane = await bootFauxLane({
+      journal,
+      // The TUI's reconcileTurn, sampled per call: the sweep of turn 7
+      // and this write share one numbering.
+      currentTurn: () => 7,
+      responses: [
+        fauxToolUse([
+          fauxToolCall(
+            'write',
+            { path: 'n.txt', content: 'hi\n' },
+            { id: 'call-write-7' },
+          ),
+        ]),
+        fauxAssistantMessage('wrote it'),
+      ],
+    });
+    lanes.push(lane);
+    const outcome = await lane.run('write the file');
+    expect(outcome.status).toBe('completed');
+    const entries = journal.entries();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.turn).toBe(7);
+  });
+
+  it('leaves tool entries turn-less with no supplier: headless by design (#436)', async () => {
+    const journal = new FileJournalStore(scratch('j-'));
+    const lane = await bootFauxLane({
+      journal,
+      responses: [
+        fauxToolUse([
+          fauxToolCall(
+            'write',
+            { path: 'n.txt', content: 'hi\n' },
+            { id: 'call-write-0' },
+          ),
+        ]),
+        fauxAssistantMessage('wrote it'),
+      ],
+    });
+    lanes.push(lane);
+    const outcome = await lane.run('write the file');
+    expect(outcome.status).toBe('completed');
+    const entries = journal.entries();
+    expect(entries).toHaveLength(1);
+    // No `turn` field at all — not null, not zero.
+    expect(entries[0]).not.toHaveProperty('turn');
+  });
 });
 
 describe('durable next-day undo (issue #17, slice D)', () => {

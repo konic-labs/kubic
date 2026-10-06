@@ -17,8 +17,12 @@ import {
   DEFAULT_RESERVE_TOKENS,
   soloCompactionSettings,
 } from '../compaction.js';
-import type { EscalationLadder } from '../model-select.js';
-import { ModelSelectError, validateEscalation } from '../model-select.js';
+import type { EscalationLadder, ThinkingInputs } from '../model-select.js';
+import {
+  ModelSelectError,
+  resolveThinkingLevel,
+  validateEscalation,
+} from '../model-select.js';
 import {
   AgentDoc,
   BACKGROUND_CONTEXT,
@@ -38,13 +42,12 @@ import {
 import {
   assembleSystemPrompt,
   escalatePinnedModel,
-  type LaneBinding,
-  type LaneRegistry,
   type ModelEscalationEvent,
   PromptCacheError,
   pinModelForTask,
   type SystemPromptInput,
   type TaskAffinity,
+  taskModelForTurn,
 } from '../prompts.js';
 import { createSessionSpillSink } from '../spill.js';
 import { OperationKillRegistry } from './abort.js';
@@ -119,15 +122,8 @@ export function defaultSoloModelId(model: {
   return `${model.provider}/${model.id}`;
 }
 
-export function defaultSoloPrompt(cwd: string): string {
-  return [
-    'You are a coding agent working in a terminal.',
-    `Working directory: ${cwd}.`,
-    'Use the read, write, edit, grep, find, ls, and bash tools to inspect and change files.',
-    'Keep answers short and technical.',
-  ].join('\n');
-}
-
+// NOTE (issue #215): defaultSoloPrompt lived here — deleted, it had no
+// callers (the run paths always assemble an explicit prompt).
 export interface SoloPolicyOptions {
   classes?: PermissionClasses;
   interceptors?: PolicyInterceptorOptions;
@@ -207,10 +203,6 @@ export interface SoloBootOptions {
   systemPrompt?: string;
   context?: Context;
   policy?: SoloPolicyOptions;
-  // LaneRegistry binding (issue #82, rule 5): when set, boot spawns the
-  // session/conversation binding; a repeat boot for the same key reuses the
-  // continuation instead of re-spawning (which the registry rejects).
-  registry?: LaneRegistry;
   // Model affinity pin (issue #82, rule 6): when set, boot pins the
   // boot model for the task; escalateSoloModel is the only path off it.
   taskId?: string;
@@ -221,6 +213,13 @@ export interface SoloBootOptions {
   // Session journal for interception (issue #17): when set, every
   // write/edit through the lane is recorded with its tool call id.
   journal?: FileJournalStore;
+  // Interactive turn supplier (issue #436): sampled per tool call, so
+  // tool-journaled entries carry the same turn as that turn's sweep
+  // entries. Absent on headless runs by design — their entries carry no
+  // `turn` field at all (pi-durable exposes no numeric turn). A supplier
+  // that returns `undefined` (the TUI's cell before its counter is
+  // installed) also writes no field.
+  currentTurn?: () => number | undefined;
   // Appended prompt sections (issue #99; §29.3 skills first): the caller
   // composes context blocks (skill listings, role prompt) and the lane
   // appends them to the assembled system prompt. Ordered, so the
@@ -268,6 +267,18 @@ export interface SoloBootOptions {
   // here it is written on boot; absent, a resumed session keeps its stored
   // level (and #225 becomes a config/flag issue only).
   thinkingLevel?: ModelThinkingLevel;
+  // Issue #225 (§38.3): the lane's thinking-level request. `override` is a
+  // per-run level (cli `--thinking` / `KUBIC_MODEL_THINKING`, source named);
+  // `role` is the `[roles.<name>] thinking` default; `config` is the
+  // `[model].thinking` file default with its layer. `persisted` is never
+  // passed — the lane reads the session's stored level itself, so the
+  // precedence (override > session > role > config) holds on attach too.
+  // An explicit `thinkingLevel` above is the same level as `override`.
+  thinking?: Omit<ThinkingInputs, 'persisted'>;
+  // The one-line clamp notice for the resolved level (issue #225): a
+  // request the model does not support is never silently rewritten.
+  // Absent means `onModelNotice` — both name stderr on `kubic run`.
+  onThinkingNotice?: (line: string) => void;
   // Harness-wide run policy (retry, stream, toolExecution, steering/follow
   // up). Compaction is NOT passable: it is built from `compaction` through
   // soloCompactionSettings so the Kubic clamp cannot be bypassed. Extension
@@ -316,7 +327,6 @@ export interface SoloLane {
   // this one; a later configure is read live through `conversation.agent()`.
   model: Model<string>;
   sessionId: string;
-  binding?: LaneBinding;
   affinity?: TaskAffinity;
   // The configured (unclamped) compaction reserve and a window lookup, so a
   // model switch re-clamps the harness reserve to the NEW model's window
@@ -365,7 +375,9 @@ export async function escalateSoloModel(
       'no pinned affinity: boot with taskId before escalating',
     );
   }
-  const from = solo.affinity.modelId;
+  // Issue #215: the per-turn model read goes through the affinity helper,
+  // so the helper has a lane-level caller (not a test-only export).
+  const from = taskModelForTurn(solo.affinity);
   if (to === from) {
     throw new PromptCacheError(
       `refusing no-op escalation: already on '${to}' (same-model step)`,
@@ -396,6 +408,11 @@ export async function bootSoloLane(
     agentId: options.agentId,
     kills,
     ...(options.journal === undefined ? {} : { journal: options.journal }),
+    // Issue #436: the interactive turn supplier rides the tool context so
+    // every intercepted write/edit samples the live turn at call time.
+    ...(options.currentTurn === undefined
+      ? {}
+      : { currentTurn: options.currentTurn }),
     // Issue #182: clipped bash output spills into the session directory, so
     // it is pruned with the session and never lands in the workspace.
     spill: createSessionSpillSink(options.session.dir),
@@ -643,15 +660,38 @@ export async function bootSoloLane(
     }),
   );
 
+  // Issue #225 (§38.3): resolve the thinking request against the session's
+  // stored level and clamp it to the EFFECTIVE model (the #148 rule above
+  // may keep the session's own model, so clamping to the selection would
+  // answer for the wrong model). A clamp is never silent.
+  const resolvedThinking = resolveThinkingLevel(effectiveModel, {
+    ...(options.thinking === undefined ? {} : options.thinking),
+    // The explicit level is the same level as `override`, and wins over
+    // it: one variable, two spellings, no silent double application.
+    ...(options.thinkingLevel === undefined
+      ? {}
+      : {
+          override: {
+            level: options.thinkingLevel,
+            source: 'override',
+          },
+        }),
+    persisted: storedAgent?.thinkingLevel ?? null,
+  });
+  if (resolvedThinking.notice !== undefined) {
+    (options.onThinkingNotice ?? options.onModelNotice)?.(
+      resolvedThinking.notice,
+    );
+  }
   // Model and thinking level are one durable agent change; unset fields
   // keep their stored value (a resumed session keeps its stored level).
   // The offered tools follow below (class policy, then role narrowing).
   await conversation.configure(
     {
       model: { provider: effectiveModel.provider, modelId: effectiveModel.id },
-      ...(options.thinkingLevel === undefined
+      ...(resolvedThinking.source === 'default'
         ? {}
-        : { thinkingLevel: options.thinkingLevel }),
+        : { thinkingLevel: resolvedThinking.level }),
     },
     context,
   );
@@ -698,51 +738,6 @@ export async function bootSoloLane(
     await conversation.configure({ tools: null }, context);
   }
 
-  let binding: LaneBinding | undefined;
-  // NIT (review, issue #82): the harness above boots BEFORE the registry
-  // continuation check, so a re-boot builds a second harness even when the
-  // lane is reused. Reordering to check-first was left alone: the harness
-  // owns policy/hook wiring with side effects, and a check-first reorder
-  // is not trivially safe.
-  if (options.registry !== undefined) {
-    const candidate: LaneBinding = {
-      sessionId: options.sessionId,
-      lane: SOLO_LANE_NAME,
-      modelId: effectiveId,
-    };
-    let existing: LaneBinding | undefined;
-    try {
-      existing = options.registry.continuation(
-        options.sessionId,
-        SOLO_LANE_NAME,
-      );
-    } catch (err) {
-      // Absence-only catch: a missing lane falls through to spawn, but any
-      // other continuation failure (backend errors, programming errors)
-      // propagates instead of being masked as "no lane yet".
-      if (
-        err instanceof PromptCacheError &&
-        /no active lane/.test(err.message)
-      ) {
-        options.registry.spawn(candidate);
-        binding = { ...candidate };
-      } else {
-        throw err;
-      }
-    }
-    if (existing !== undefined) {
-      // Model agreement on reuse: the new conversation runs the boot model,
-      // so a stale bound modelId must never be handed back silently.
-      if (existing.modelId !== candidate.modelId) {
-        throw new PromptCacheError(
-          `lane model mismatch for '${options.sessionId}/${SOLO_LANE_NAME}': ` +
-            `bound to '${existing.modelId}' but boot requested '${candidate.modelId}'`,
-        );
-      }
-      binding = existing;
-    }
-  }
-
   const solo: SoloLane = {
     harness,
     conversation,
@@ -757,7 +752,6 @@ export async function bootSoloLane(
       agentState?.dispose();
       await harness.close(closeContext);
     },
-    ...(binding === undefined ? {} : { binding }),
     ...(options.taskId === undefined
       ? {}
       : {

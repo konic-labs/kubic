@@ -168,3 +168,105 @@ describe('spawnWorker (issue #42)', () => {
     expect(Object.values(worker.env)).not.toContain('s3cr3t-value');
   });
 });
+
+describe('spawnWorker readiness scan (issue #187)', () => {
+  function chunkedShell(): {
+    shell: Shell;
+    update: (stdout: unknown, stderr?: unknown) => void;
+  } {
+    let onUpdate:
+      | ((snapshot: {
+          stdout: string;
+          stderr: string;
+          exitCode: number | null;
+        }) => void)
+      | undefined;
+    const shell: Shell = {
+      spawn: (_cmd, _args, options) => {
+        onUpdate = options.onUpdate as typeof onUpdate;
+        return {
+          pid: 4242,
+          wait: () =>
+            Promise.resolve({
+              exitCode: 0,
+              stdout: '',
+              stderr: '',
+              signal: null,
+              forced: false,
+              provenance: ROOT_PROVENANCE,
+            }),
+          kill: () => undefined,
+        };
+      },
+    };
+    return {
+      shell,
+      update: (stdout: unknown, stderr: unknown = '') =>
+        onUpdate?.({
+          stdout: stdout as string,
+          stderr: stderr as string,
+          exitCode: null,
+        }),
+    };
+  }
+
+  function spawnOn(shell: Shell) {
+    return spawnWorker(
+      shell,
+      {
+        workerId: 'w-1',
+        sessionId: 's-1',
+        generation: 1,
+        role: 'reviewer',
+        cmd: 'worker',
+        args: ['--run'],
+        baseEnv: {},
+        provenance: ROOT_PROVENANCE,
+      },
+      { clock: () => 0 },
+    );
+  }
+
+  // A snapshot whose text explodes on contact: template/concat/includes
+  // all route through toString/valueOf, while length/slice do not.
+  function unreadable(text: string): string {
+    const boxed = new String(text) as unknown as {
+      toString(): string;
+      valueOf(): string;
+    };
+    const bomb = (): string => {
+      throw new Error('snapshot scanned after readiness');
+    };
+    boxed.toString = bomb;
+    boxed.valueOf = bomb;
+    return boxed as unknown as string;
+  }
+
+  it('does not scan snapshot text once past spawning', async () => {
+    const { shell, update } = chunkedShell();
+    const worker = spawnOn(shell);
+    update(`${READY_LINE}\n`);
+    await worker.ready;
+    expect(worker.status).toBe('ready');
+    // Must not throw: the text is never touched after readiness.
+    update(unreadable('x'.repeat(1_000_000)), unreadable('y'.repeat(1000)));
+    expect(worker.status).toBe('ready');
+  });
+
+  it('still detects a marker split across two chunks', async () => {
+    const { shell, update } = chunkedShell();
+    const worker = spawnOn(shell);
+    // Delta-shaped second snapshot (only the new bytes), as a trimming
+    // accumulator or a delta-seam would deliver it.
+    update('KUBIC_WORKER_REA');
+    const winner = await Promise.race([
+      worker.ready.then(() => 'ready'),
+      Promise.resolve().then(() => 'pending'),
+    ]);
+    expect(winner).toBe('pending');
+    update('DY w-1\n');
+    await worker.ready;
+    expect(worker.status).toBe('ready');
+    expect(worker.startupMs).toBe(0);
+  });
+});

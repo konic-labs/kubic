@@ -7,6 +7,7 @@
 // every failed one with its own §78 code, and exits the partial-failure code
 // (7). `stop` stays the default and the shipped behaviour.
 import { describe, expect, it } from 'vitest';
+import { SOLO_DEFAULTS } from '../../../packages/agents/src/policy.js';
 import type {
   OrchestrateCommandDeps,
   OrchestrateWorktree,
@@ -310,6 +311,8 @@ describe('orchestrate --on-failure policy and unwakeable queues (issue #169 revi
           promptText: '',
           tools: [],
           modelRef: 'prov/m1',
+          classes: { ...SOLO_DEFAULTS },
+          requires: [],
           thinking: undefined,
         })),
         refused: [],

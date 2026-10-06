@@ -7,6 +7,8 @@ export interface BudgetUsage {
   tokens?: number;
   costUsd?: number;
   toolCalls?: number;
+  // Issue #283 (§71): wall-clock milliseconds for `maxRuntimeMs`.
+  runtimeMs?: number;
 }
 
 export function checkBudgetExhausted(
@@ -33,6 +35,16 @@ export function checkBudgetExhausted(
     usage.toolCalls > limits.maxToolCalls
   ) {
     return 'toolCalls';
+  }
+  // Issue #283 (§71): elapsed wall-clock past `maxRuntimeMs` exhausts
+  // as 'wallClock' — checked last so a count breach names its own
+  // dimension first.
+  if (
+    limits.maxRuntimeMs !== undefined &&
+    usage.runtimeMs !== undefined &&
+    usage.runtimeMs > limits.maxRuntimeMs
+  ) {
+    return 'wallClock';
   }
   return undefined;
 }

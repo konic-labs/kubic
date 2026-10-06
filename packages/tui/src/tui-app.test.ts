@@ -1194,3 +1194,36 @@ describe('lane activity on the footer (issue #150)', () => {
     );
   });
 });
+
+describe('tui budget burn-down (issue #285; §71)', () => {
+  function budgetedApp(limits?: {
+    maxToolCalls?: number;
+  }): ReturnType<typeof createTuiApp> {
+    return createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+      ...(limits === undefined ? {} : { budgetLimits: limits }),
+    });
+  }
+
+  it('shows limits from the first frame and burn-down as attempts land', () => {
+    const app = budgetedApp({ maxToolCalls: 10 });
+    expect(app.status.getState().budget).toEqual({
+      limits: { maxToolCalls: 10 },
+      toolCalls: 0,
+    });
+    expect(app.render(120).join('\n')).toContain('budget tools 0/10');
+    app.setBudgetSpend(3);
+    expect(app.status.getState().budget?.toolCalls).toBe(3);
+    expect(app.render(120).join('\n')).toContain('budget tools 3/10');
+  });
+
+  it('ignores spend without seeded limits (unbounded run, silent bar)', () => {
+    const app = budgetedApp();
+    app.setBudgetSpend(3);
+    expect(app.status.getState().budget).toBeUndefined();
+    expect(app.render(120).join('\n')).not.toContain('budget');
+  });
+});

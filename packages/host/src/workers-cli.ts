@@ -119,7 +119,7 @@ export interface WorkersCommandDeps {
   // Colour of the stderr diagnostics, from stderr's own TTY state (never
   // stdout's); absent means plain.
   errTheme?: CliTheme;
-  // Box-drawn table (an interactive, coloured stdout); plain otherwise.
+  // Kit table (an interactive, coloured stdout); plain otherwise.
   fancy?: boolean;
 }
 

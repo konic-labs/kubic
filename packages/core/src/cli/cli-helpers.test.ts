@@ -232,15 +232,33 @@ describe('table', () => {
     ).toBe('  N\n  1\n100');
   });
 
-  it('renders a box-drawn table when fancy', () => {
+  it('renders the borderless kit table when fancy (issue #445)', () => {
     const out = renderTable(rows, columns, {
       fancy: true,
       theme: createCliTheme('none'),
     });
-    expect(out).toContain('┌');
-    expect(out).toContain('│ bbbb │');
-    expect(out).toContain('second');
+    expect(out.split('\n')).toEqual([
+      'ID    COST  NAME',
+      '─'.repeat(18),
+      'a      1.5  first',
+      'bbbb    10  second',
+    ]);
+    expect(out).not.toContain('┌');
     expect(renderTable(rows, columns, { fancy: true })).toContain('NAME');
+  });
+
+  it('styles the kit header and rule, and draws row markers', () => {
+    const theme = createCliTheme('truecolor');
+    const out = renderTable(rows, columns, {
+      fancy: true,
+      theme,
+      markers: ['●', undefined],
+    });
+    const lines = out.split('\n');
+    expect(lines[0]).toContain(theme.ui.style({ fg: 'fg2', bold: true })('ID'));
+    expect(lines[1]).toBe(theme.ui.fg('fg3')('─'.repeat(20)));
+    expect(lines[2]?.startsWith('● a')).toBe(true);
+    expect(lines[3]?.startsWith('  bbbb')).toBe(true);
   });
 });
 

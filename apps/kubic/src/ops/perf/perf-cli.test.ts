@@ -77,10 +77,11 @@ describe('kubic perf pass (issue #79)', () => {
     expect(cap.lines.join('\n')).not.toMatch(/regression/);
   });
 
-  it('draws a box table only when fancy', async () => {
+  it('draws the kit table only when fancy', async () => {
     const cap = capture({ fancy: true });
     await runPerfCommand({ budget: 'attach', samples: PASS }, cap.deps);
-    expect(cap.lines[0]).toContain('┌');
+    expect(cap.lines.join('\n')).toMatch(/\n─+\n/);
+    expect(cap.lines.join('\n')).not.toContain('┌');
   });
 });
 

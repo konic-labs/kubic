@@ -220,7 +220,7 @@ export interface ProdRunners extends DispatchRunners {
 // The presentation seams of one solo-command invocation, derived once from
 // the real streams: colour for stdout data (none off a TTY, under NO_COLOR,
 // or for --json), the stderr diagnostics logger (debug lines under
-// KUBIC_DEBUG=1), box-drawn tables and prompts only on an interactive
+// KUBIC_DEBUG=1), kit tables and prompts only on an interactive
 // terminal. `--json` keeps stdout to exactly one document.
 function presentation(
   out: (line: string) => void,
@@ -295,7 +295,7 @@ const auditProbes = {
 
 // Report colours and table style for a migrated command, decided once from
 // the real stdout: colour only on a TTY that allows it (NO_COLOR,
-// FORCE_COLOR, TERM=dumb honoured), box-drawn tables only there too, and
+// FORCE_COLOR, TERM=dumb honoured), kit tables only there too, and
 // neither under `--json`.
 function reportStyle(json: boolean): { theme: CliTheme; fancy: boolean } {
   const theme = json ? PLAIN : themeFor(process.stdout);
@@ -698,7 +698,7 @@ function prodInspectRun(repoRoot: string, row: WorkerListRow): WorkerRunView {
 export function createProdRunners(io: ProdRunnerIo): ProdRunners {
   const { out, debug } = io;
   // The analysis handlers' channels: the report on stdout, diagnostics on
-  // stderr (the `debug` channel), report colour and box drawing from the
+  // stderr (the `debug` channel), report colour and the kit table from the
   // real stdout, diagnostics colour from the real stderr (each off on a
   // pipe and under NO_COLOR; each handler also drops them under --json).
   const report = () => {
@@ -1394,7 +1394,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       // a fresh CLI process's registry is always empty, so a registry
       // branch here could only ever be dead (issue #94's finding, finished
       // in #132): the CLI reads the durable record directly. The table is
-      // box-drawn only on an interactive, coloured stdout; `--debug` (or
+      // the kit table only on an interactive, coloured stdout; `--debug` (or
       // KUBIC_DEBUG=1) adds the §50 spawn/exit lines on stderr.
       const theme = stdoutTheme();
       const mode = outputModeFor({

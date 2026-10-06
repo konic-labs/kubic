@@ -94,7 +94,7 @@ export interface CostCommandDeps {
   out: (line: string) => void;
   // stderr: diagnostics, one `error: …` line each (core/cli/logger).
   err: (line: string) => void;
-  // Colour and box drawing for the human report; absent means plain.
+  // Colour and the kit table for the human report; absent means plain.
   theme?: CliTheme;
   // Colour of the stderr diagnostics, from stderr's own TTY state (never
   // stdout's); absent means plain.
@@ -581,7 +581,7 @@ export async function readSessionRunUsage(
 // Presentation over the grouped rows (issue #250; §39): the group column
 // names the `--by` level, then the worker's role, the model, and the
 // separate in/out/cacheRead/cacheWrite counters the old combined-tokens
-// column hid. Box-drawn only on a coloured terminal, plain aligned text
+// column hid. The kit table only on a coloured terminal, plain aligned text
 // otherwise. Role/agent/model values are operator- or model-authored, so
 // the display strips control characters (the stored rows keep them raw,
 // exactly like `sessions attach`).

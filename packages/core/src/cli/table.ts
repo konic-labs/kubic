@@ -1,6 +1,7 @@
 // Tabular output for CLI reports. Two renderings of one input:
 //
-// - fancy (cli-table3 box drawing, accent headers) on an interactive,
+// - fancy (the output kit's borderless table, issue #445): a fg2 header, a
+//   faint rule, aligned columns and optional row markers, on an interactive,
 //   coloured terminal;
 // - plain, space-aligned columns everywhere else (pipes, CI logs,
 //   NO_COLOR) — stable, grep/awk-friendly, and free of box characters.
@@ -8,10 +9,8 @@
 // Returns the table as a string with no trailing newline; the caller
 // prints it through its `out` channel. Never used for `--json` output.
 
-import { createRequire } from 'node:module';
-import { stripVTControlCharacters } from 'node:util';
-import type CliTable from 'cli-table3';
 import type { CliTheme } from './theme.js';
+import { padVisible, visibleWidth } from './width.js';
 
 export interface TableColumn {
   readonly header: string;
@@ -19,87 +18,94 @@ export interface TableColumn {
 }
 
 export interface TableOptions {
-  // Box-drawn rendering; false (the default) is the plain aligned text.
+  // The kit rendering; false (the default) is the plain aligned text.
   readonly fancy?: boolean;
-  // Colours the fancy headers; ignored by the plain rendering.
+  // Colours the fancy rendering; ignored by the plain rendering.
   readonly theme?: CliTheme;
+  // Fancy only: one marker per row (e.g. `●` for the default row), drawn in a
+  // leading two-cell column. Rows without a marker get blank cells.
+  readonly markers?: readonly (string | undefined)[];
 }
 
 const GAP = '  ';
 
-// Zero-width: combining marks, format/ignorable code points (ZWJ,
-// variation selectors) and C0/C1 controls.
-const ZERO_WIDTH = /^[\p{Mark}\p{Default_Ignorable_Code_Point}\p{Cc}]$/u;
-// Emoji shown as pictures take two cells.
-const WIDE_EMOJI = /^\p{Emoji_Presentation}$/u;
-
-// East Asian Wide/Fullwidth blocks (the ranges `is-fullwidth-code-point`,
-// cli-table3's own measure, uses): two terminal cells each.
-function isWide(code: number): boolean {
-  return (
-    code >= 0x1100 &&
-    (code <= 0x115f ||
-      code === 0x2329 ||
-      code === 0x232a ||
-      (code >= 0x2e80 && code <= 0x3247 && code !== 0x303f) ||
-      (code >= 0x3250 && code <= 0x4dbf) ||
-      (code >= 0x4e00 && code <= 0xa4c6) ||
-      (code >= 0xa960 && code <= 0xa97c) ||
-      (code >= 0xac00 && code <= 0xd7a3) ||
-      (code >= 0xf900 && code <= 0xfaff) ||
-      (code >= 0xfe10 && code <= 0xfe19) ||
-      (code >= 0xfe30 && code <= 0xfe6b) ||
-      (code >= 0xff01 && code <= 0xff60) ||
-      (code >= 0xffe0 && code <= 0xffe6) ||
-      (code >= 0x1b000 && code <= 0x1b001) ||
-      (code >= 0x1f200 && code <= 0x1f251) ||
-      (code >= 0x20000 && code <= 0x3fffd))
+function columnWidths(
+  rows: readonly (readonly string[])[],
+  columns: readonly TableColumn[],
+): number[] {
+  return columns.map((column, index) =>
+    Math.max(
+      visibleWidth(column.header),
+      ...rows.map((row) => visibleWidth(row[index] ?? '')),
+    ),
   );
 }
 
-// Terminal display width (cells), not UTF-16 length: ANSI escapes and
-// zero-width code points count 0, wide CJK and emoji count 2.
-function visibleWidth(text: string): number {
-  let width = 0;
-  for (const char of stripVTControlCharacters(text)) {
-    if (ZERO_WIDTH.test(char)) continue;
-    const code = char.codePointAt(0) ?? 0;
-    width += isWide(code) || WIDE_EMOJI.test(char) ? 2 : 1;
-  }
-  return width;
-}
-
-function pad(text: string, width: number, align: 'left' | 'right'): string {
-  const fill = ' '.repeat(Math.max(0, width - visibleWidth(text)));
-  return align === 'right' ? `${fill}${text}` : `${text}${fill}`;
+function alignedLine(
+  cells: readonly string[],
+  columns: readonly TableColumn[],
+  widths: readonly number[],
+): string {
+  return columns
+    .map((column, index) => {
+      const cell = cells[index] ?? '';
+      // The last left-aligned column is not padded: no trailing spaces.
+      const last = index === columns.length - 1;
+      const align = column.align ?? 'left';
+      return last && align === 'left'
+        ? cell
+        : padVisible(cell, widths[index] ?? 0, align);
+    })
+    .join(GAP)
+    .trimEnd();
 }
 
 function plainTable(
   rows: readonly (readonly string[])[],
   columns: readonly TableColumn[],
 ): string {
-  const widths = columns.map((column, index) =>
-    Math.max(
-      visibleWidth(column.header),
-      ...rows.map((row) => visibleWidth(row[index] ?? '')),
+  const widths = columnWidths(rows, columns);
+  return [
+    alignedLine(
+      columns.map((column) => column.header),
+      columns,
+      widths,
     ),
-  );
-  const line = (cells: readonly string[]): string =>
-    columns
-      .map((column, index) => {
-        const cell = cells[index] ?? '';
-        // The last left-aligned column is not padded: no trailing spaces.
-        const last = index === columns.length - 1;
-        const align = column.align ?? 'left';
-        return last && align === 'left'
-          ? cell
-          : pad(cell, widths[index] ?? 0, align);
-      })
-      .join(GAP)
-      .trimEnd();
-  return [line(columns.map((column) => column.header)), ...rows.map(line)].join(
-    '\n',
-  );
+    ...rows.map((row) => alignedLine(row, columns, widths)),
+  ].join('\n');
+}
+
+function kitTable(
+  rows: readonly (readonly string[])[],
+  columns: readonly TableColumn[],
+  options: TableOptions,
+): string {
+  const ui = options.theme?.ui;
+  const header = ui?.style({ fg: 'fg2', bold: true }) ?? ((text) => text);
+  const rule = ui?.fg('fg3') ?? ((text: string): string => text);
+  const widths = columnWidths(rows, columns);
+  const markers = options.markers;
+  const gutter = markers === undefined ? '' : '  ';
+  const headerLine = `${gutter}${alignedLine(
+    columns.map((column) => header(column.header)),
+    columns,
+    widths,
+  )}`;
+  const total =
+    visibleWidth(gutter) +
+    widths.reduce((sum, width) => sum + width, 0) +
+    GAP.length * Math.max(0, columns.length - 1);
+  const body = rows.map((row, index) => {
+    const marker = markers?.[index];
+    const lead =
+      markers === undefined
+        ? ''
+        : marker === undefined
+          ? '  '
+          : `${padVisible(marker, 1)} `;
+    return `${lead}${alignedLine(row, columns, widths)}`;
+  });
+  return [headerLine, rule('─'.repeat(total)), ...body].join('\n');
 }
 
 export function renderTable(
@@ -108,20 +114,5 @@ export function renderTable(
   options: TableOptions = {},
 ): string {
   if (options.fancy !== true) return plainTable(rows, columns);
-  // cli-table3 loads only for a box-drawn table (an interactive, coloured
-  // terminal): pipes, CI and `--json` never pay its import.
-  const Table = createRequire(import.meta.url)('cli-table3') as typeof CliTable;
-  const theme = options.theme;
-  const table = new Table({
-    head: columns.map((column) =>
-      theme === undefined ? column.header : theme.accent(column.header),
-    ),
-    colAligns: columns.map((column) => column.align ?? 'left'),
-    // Colour comes from the theme, never cli-table3's own defaults.
-    style: { head: [], border: [] },
-  });
-  for (const row of rows) {
-    table.push(columns.map((_, index) => row[index] ?? ''));
-  }
-  return table.toString();
+  return kitTable(rows, columns, options);
 }

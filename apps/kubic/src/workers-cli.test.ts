@@ -83,12 +83,13 @@ describe('kubic workers (issue #42)', () => {
     expect(lines[1]?.split('\n')[1]).toMatch(/^w-2\s+-\s+exiting\s+1\s/);
   });
 
-  it('colours the status through the theme and boxes the table when fancy', async () => {
+  it('colours the status through the theme and draws the kit table when fancy', async () => {
     const lines: string[] = [];
     const theme = createCliTheme('16');
     await runWorkersCommand({}, { ...deps(lines), theme, fancy: true });
     const text = lines.join('\n');
-    expect(text).toContain('┌');
+    expect(text).toContain('──');
+    expect(text).not.toContain('┌');
     expect(text).toContain(theme.success('running'));
   });
 

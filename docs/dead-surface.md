@@ -135,6 +135,8 @@ file that no longer exists, or when a row's file has become reachable
 
 | LOC | file | owner | disposition |
 | --- | --- | --- | --- |
+| 257 | `packages/core/src/cli/kit.ts` | #446 | keep: EPIC N output kit (#445), wired by the CLI issues #446–#451 |
+| 122 | `packages/core/src/cli/spinner.ts` | #447 | keep: EPIC N TTY spinner (#445), wired by `kubic run` progress (#447) |
 | 4 | `packages/agents/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/agents/src/lifecycle.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/agents/src/roles.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |

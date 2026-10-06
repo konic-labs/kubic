@@ -42,7 +42,7 @@ describe('kubic models (issue #20, slice C)', () => {
     expect(lines[0]).not.toMatch(/[│┌]/);
   });
 
-  it('draws a boxed table only in fancy mode', async () => {
+  it('draws the kit table (header rule) only in fancy mode', async () => {
     const models = createModels();
     models.setProvider(fauxProvider().provider);
     const lines: string[] = [];
@@ -50,7 +50,8 @@ describe('kubic models (issue #20, slice C)', () => {
       {},
       { models, fancy: true, out: (l: string) => lines.push(l) },
     );
-    expect(lines.join('\n')).toMatch(/┌/);
+    expect(lines.join('\n')).toMatch(/\n─+\n/);
+    expect(lines.join('\n')).not.toMatch(/┌/);
   });
 
   it('reports an empty catalog on the diagnostics channel, not stdout', async () => {

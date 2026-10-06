@@ -79,10 +79,12 @@ describe('kubic tui (issue #75)', () => {
     );
     expect(terminal.stopped).toBe(1);
     const doc = lines.join('\n');
+    // Issue #453: header, transcript, status line, key hints.
     const order = [
-      '◌ solo',
+      '[SOLO] approvals on',
       'Kubic — terminal coding agent',
-      'approvals:on',
+      ' ready ',
+      '⏎ send',
     ].map((m) => doc.indexOf(m));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
@@ -109,7 +111,7 @@ describe('kubic tui (issue #75)', () => {
     expect(seen).toEqual(['abc']);
   });
 
-  it('hides the tree only on narrow terminals', async () => {
+  it('keeps the chrome on narrow terminals with the tree hidden', async () => {
     const lines: string[] = [];
     let input!: (data: string) => void;
     const terminal = fakeTerminal(70, (cb) => {
@@ -123,9 +125,9 @@ describe('kubic tui (issue #75)', () => {
     input('\x03');
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
-    expect(doc).not.toMatch(/[✓●◌]/);
-    expect(doc).toContain('session s1');
-    expect(doc).toContain('approvals:on');
+    expect(doc).not.toMatch(/[✓●◌] solo/);
+    expect(doc).toContain('[SOLO] approvals on');
+    expect(doc).toContain(' ready ');
   });
 
   it('rejects path-unsafe --session ids before the lane boots', async () => {
@@ -238,7 +240,7 @@ describe('kubic tui colour isolation (issue #319)', () => {
     await waitFor(() => terminal.started === 1);
     input('\x03');
     expect(await pending).toBe(0);
-    expect(lines.join('\n')).toContain('◌ solo');
+    expect(lines.join('\n')).toContain('[SOLO] approvals on');
     // No Konic palette colour reached the document (truecolor SGR 38;2).
     expect(lines.join('\n')).not.toContain('38;2;');
   });

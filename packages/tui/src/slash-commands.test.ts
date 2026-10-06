@@ -38,6 +38,7 @@ describe('slash-command registry (issue #305)', () => {
       'scoped-models',
       'thinking',
       'compact',
+      'safety',
     ]) {
       expect(findSlashCommand(name)?.name).toBe(name);
     }

@@ -2,6 +2,7 @@
 // working indicator, header, compact tree. Headless snapshots of pure
 // render functions only (no terminal, no network).
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderHeader } from '../../../packages/tui/src/chrome.js';
 import { sanitizeLaneText } from '../../../packages/tui/src/lane-cells.js';
 import {
   buildLayoutRoot,
@@ -15,6 +16,7 @@ import {
   formatElapsed,
   setTuiTheme,
   spinnerFrame,
+  tuiTheme,
 } from '../../../packages/tui/src/theme.js';
 import {
   createTranscriptView,
@@ -28,7 +30,6 @@ import {
 } from '../../../packages/tui/src/tree.js';
 import {
   createTuiApp,
-  renderHeader,
   renderKeyHints,
   renderWorkingLine,
 } from '../../../packages/tui/src/tui-app.js';
@@ -226,12 +227,17 @@ describe('app chrome', () => {
       mode: 'solo',
       approvalsSkipped: false,
     });
-    expect(app.render(100).at(-1)).toContain('enter send');
+    expect(app.render(100).at(-1)).toContain('⏎ send');
     app.setBusy(true);
     expect(app.busyElapsedMs()).toBeGreaterThanOrEqual(0);
-    expect(app.render(100).at(-1)).toMatch(
+    // Issue #453: the working line sits on the notice row above the editor;
+    // the hint row switches to the keys that act on a running turn.
+    const rows = app.render(100);
+    expect(rows.join('\n')).toMatch(
       /working… \ds · enter queues · alt\+enter steers · ctrl\+c cancels/,
     );
+    expect(rows.at(-1)).toContain('esc interrupt');
+    expect(rows.at(-2)?.endsWith(' working ')).toBe(true);
     app.setBusy(false);
     expect(app.busyElapsedMs()).toBeUndefined();
   });
@@ -244,7 +250,7 @@ describe('app chrome', () => {
       approvalsSkipped: false,
     });
     solo.setBusy(true);
-    expect(solo.render(100).at(-1)).toContain(
+    expect(solo.render(100).join('\n')).toContain(
       'enter queues · alt+enter steers',
     );
     const orchestrator = createTuiApp({
@@ -254,7 +260,8 @@ describe('app chrome', () => {
       approvalsSkipped: false,
     });
     orchestrator.setBusy(true);
-    const line = orchestrator.render(100).at(-1) ?? '';
+    const line =
+      orchestrator.render(100).find((row) => row.includes('working…')) ?? '';
     // The orchestrator lane has no inbox and refuses both keys: naming them
     // would promise a queue that does not exist.
     expect(line).toMatch(/working… \ds · ctrl\+c cancels/);
@@ -287,18 +294,18 @@ describe('app chrome', () => {
       approvalsSkipped: false,
     });
     app.setEditorFooter(`solo: ${'word '.repeat(20)}end`);
-    const tail = app.render(60).slice(-2);
-    expect(tail[0]).toContain('solo:');
-    expect(tail[1]).toContain('end');
+    const rows = app.render(60);
+    const at = rows.findIndex((row) => row.includes('solo:'));
+    expect(at).toBeGreaterThan(0);
+    expect(rows[at + 1]).toContain('end');
   });
 
   it('renders the header, hints and working line within the width', () => {
-    expect(renderHeader(60, { mode: 'solo', model: 'faux/m' })).toBe(
-      `■ kubic by konic${' '.repeat(60 - 16 - 13)}solo · faux/m`,
+    const info = { mode: 'solo', approvalsSkipped: false } as const;
+    expect(renderHeader(tuiTheme().ui, info, 60)).toBe(
+      ` ■ KUBIC ${' '.repeat(60 - 9 - 20)}[SOLO] approvals on `,
     );
-    expect(renderHeader(20, { mode: 'solo', model: 'faux/m' })).toBe(
-      '■ kubic by konic',
-    );
+    expect(renderHeader(tuiTheme().ui, info, 20)).toBe(' ■ KUBIC     [SOLO] ');
     expect(renderKeyHints(20)).toBe('enter send');
     expect(plain(renderWorkingLine(1500, 80))).toBe(
       `${spinnerFrame(1500)} working… 1s · enter queues · alt+enter steers · ctrl+c cancels`,
@@ -340,8 +347,8 @@ describe('compact tree', () => {
       'head',
       'tree',
       'body',
-      'status',
       'editor',
+      'status',
     ]);
   });
 });
@@ -380,7 +387,11 @@ describe('review fixes', () => {
   });
 
   it('measures the header by visible width', () => {
-    const line = renderHeader(60, { mode: 'solo', model: 'faux/m' });
+    const line = renderHeader(
+      tuiTheme().ui,
+      { mode: 'solo', approvalsSkipped: false, project: 'kubic-playground' },
+      60,
+    );
     expect(visibleWidth(line)).toBe(60);
   });
 

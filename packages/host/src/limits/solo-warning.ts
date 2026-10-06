@@ -7,8 +7,8 @@
 // emission decision so both surfaces read and behave identically; the
 // sinks themselves live at the composition root (issue #89):
 // apps/kubic/src/headless-run.ts writes the block to stderr before the
-// first turn, apps/kubic/src/tui-run.ts carries the one-line statement as
-// the editor footer from the first render.
+// first turn; apps/kubic/src/tui-run.ts shows the one-line statement in the
+// welcome block from the first render and the full block on `/safety`.
 export function soloTuiLine(): string {
   return 'solo: no isolation - in-process with your authority (files, network, credentials); controls: approvals + journal';
 }

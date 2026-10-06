@@ -12,6 +12,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { buildOrchestratorWorktreeNotice } from '../../../packages/host/src/limits/orchestrator-notice.js';
 import type {
   OrchestrateCliOptions,
   OrchestrateCommandDeps,
@@ -125,13 +126,13 @@ function fakeDrive(): FakeDrive {
 }
 
 describe('orchestrator entry: mode resolution (issue #327)', () => {
-  it('--orchestrator boots the TUI with the mode in the header and status bar', async () => {
+  it('--orchestrator boots the TUI with the mode in the header', async () => {
     const terminal = fakeTerminal(100);
     const pending = runTuiCommand({ orchestrator: true }, deps(terminal));
     await waitFor(() => terminal.started === 1);
     const frame = terminal.writes.join('');
-    expect(frame).toContain('orchestrator · faux/test');
-    expect(frame).toContain('orchestrator • approvals:on');
+    expect(frame).toContain('[ORCHESTRATOR] approvals on');
+    expect(frame).toContain('faux/test · off');
     terminal.feed('\x03');
     expect(await pending).toBe(0);
   });
@@ -144,8 +145,8 @@ describe('orchestrator entry: mode resolution (issue #327)', () => {
     );
     await waitFor(() => terminal.started === 1);
     const frame = terminal.writes.join('');
-    expect(frame).toContain('orchestrator · faux/test');
-    expect(frame).toContain('orchestrator • approvals:on');
+    expect(frame).toContain('[ORCHESTRATOR] approvals on');
+    expect(frame).toContain('faux/test · off');
     terminal.feed('\x03');
     expect(await pending).toBe(0);
   });
@@ -157,7 +158,7 @@ describe('orchestrator entry: mode resolution (issue #327)', () => {
       deps(flagged, { modes: { orchestrator: false } }),
     );
     await waitFor(() => flagged.started === 1);
-    expect(flagged.writes.join('')).toContain('orchestrator • approvals:on');
+    expect(flagged.writes.join('')).toContain('[ORCHESTRATOR] approvals on');
     flagged.feed('\x03');
     await run;
 
@@ -168,8 +169,8 @@ describe('orchestrator entry: mode resolution (issue #327)', () => {
     );
     await waitFor(() => plain.started === 1);
     const frame = plain.writes.join('');
-    expect(frame).toContain('solo • approvals:on');
-    expect(frame).not.toContain('orchestrator ·');
+    expect(frame).toContain('[SOLO] approvals on');
+    expect(frame).not.toContain('[ORCHESTRATOR]');
     plain.feed('\x03');
     await solo;
   });
@@ -230,7 +231,7 @@ describe('orchestrator entry: the toggle routes the next submit (issue #327)', (
     );
     await waitFor(() => terminal.started === 1);
     terminal.feed('\x07');
-    await waitFor(() => terminal.writes.join('').includes('orchestrator •'));
+    await waitFor(() => terminal.writes.join('').includes('[ORCHESTRATOR]'));
     terminal.feed('do it');
     terminal.feed('\r');
     await waitFor(() => drive.objectives.length === 1);
@@ -711,5 +712,46 @@ describe('mergeSeatFromAnswer (issue #327)', () => {
     expect(await seat({ agentId: 'a', branch: 'b' })).toEqual({
       verdict: 'deny',
     });
+  });
+});
+
+// Issue #453: `/safety` prints the CURRENT mode's honest limits, verbatim
+// from the limits module — here the orchestrator's, never the solo text.
+describe('/safety in orchestrator mode (issue #453)', () => {
+  it("prints the orchestrator's limits, not the solo notice", async () => {
+    const terminal = fakeTerminal(200);
+    const admitted: string[] = [];
+    const drive = fakeDrive();
+    const pending = runTuiCommand(
+      { orchestrator: true },
+      deps(terminal, {
+        bootLane: async (sessionId?: string) => ({
+          sessionId: sessionId ?? 's1',
+          model: 'faux/test',
+          loop: fakeLoop(admitted),
+          orchestrator: drive,
+        }),
+      }),
+    );
+    await waitFor(() => terminal.started === 1);
+    const mark = terminal.writes.length;
+    for (const ch of '/safety') terminal.feed(ch);
+    terminal.feed('\r');
+    await waitFor(() =>
+      terminal.writes
+        .slice(mark)
+        .join('')
+        .includes('safety: orchestrator mode'),
+    );
+    const after = terminal.writes.slice(mark).join('');
+    for (const line of buildOrchestratorWorktreeNotice()) {
+      expect(after).toContain(line.slice(0, 40));
+    }
+    expect(after).not.toContain('solo mode has no isolation');
+    // A local read: nothing reached the lane or the manager.
+    expect(admitted).toEqual([]);
+    expect(drive.objectives).toEqual([]);
+    terminal.feed('\x03');
+    expect(await pending).toBe(0);
   });
 });

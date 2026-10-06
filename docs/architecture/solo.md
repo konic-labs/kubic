@@ -21,11 +21,13 @@ never imply otherwise (§59.1).
 This is announced, not buried: every process start announces it from one
 source (`packages/host/src/limits/solo-warning.ts`), so the two surfaces
 cannot drift apart. `kubic run` prints the three-line warning block on
-stderr before the first turn; `kubic tui` carries the one-line form in the
-editor footer from the first render. Suppressed for orchestrator-managed
-worker children (`KUBIC_WORKER_ID` set — `kubic doctor` reports that mode's
-own worktree limit) and by the opt-out `KUBIC_NO_NOTICE=1`; a `--session`
-resume still announces, because the rule is per process start, not per
+stderr before the first turn; `kubic tui` shows the one-line form in the
+welcome block from the first render, keeps the `SOLO` badge in its header on
+every frame, and prints the full text on `/safety`. Suppressed for
+orchestrator-managed worker children (`KUBIC_WORKER_ID` set — `kubic doctor`
+reports that mode's own worktree limit) and by the opt-out
+`KUBIC_NO_NOTICE=1`; a `--session` resume still announces, because the rule
+is per process start, not per
 session.
 
 ## The controls that exist instead

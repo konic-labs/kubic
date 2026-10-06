@@ -224,6 +224,8 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     // (The main-screen `lines` document is only printed at quit, so the
     // live frame is the only place the settled turn can show up yet.)
     await waitFor(() => fake.frame.includes('approved turn done'));
+    // Issue #453: the solo tree row opens on Ctrl-T.
+    fake.feed('\x14');
     // Quit cleanly (criterion 6): restore + exit 0.
     fake.feed('\x03');
     expect(await pending).toBe(0);

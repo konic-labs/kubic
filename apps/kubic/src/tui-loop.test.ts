@@ -12,7 +12,7 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../packages/exec/src/journal.js';
@@ -43,6 +43,7 @@ import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   runTuiCommand,
   soloTuiLoop,
+  TUI_CLOCK_TICK_MS,
   TuiCompactionTurn,
   type TuiLaneLoop,
   type TuiRunDeps,
@@ -239,6 +240,12 @@ describe('kubic tui prompt loop (issue #88)', () => {
     for (const ch of 'run it') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('tool turn done'));
+    // Issue #453: the solo tree row opens on Ctrl-T; `/session` reports the
+    // usage rows the status bar holds.
+    fake.feed('\x14');
+    for (const ch of '/session') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => /in [1-9]\d* out [1-9]\d*/.test(fake.writes.join('')));
     fake.feed('\x03');
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
@@ -994,15 +1001,14 @@ describe('kubic tui prompt loop (issue #88)', () => {
     // Ctrl-G (0x07): the app refuses the toggle only while it is busy.
     fake.feed('\x07');
     await waitFor(() =>
-      fake.writes.slice(mark).join('').includes('orchestrator ·'),
+      fake.writes.slice(mark).join('').includes('[ORCHESTRATOR]'),
     );
     expect(fake.writes.slice(mark).join('')).not.toContain(
       'mode: finish the current turn',
     );
+    const back = fake.writes.length;
     fake.feed('\x07');
-    await waitFor(() =>
-      fake.writes.slice(mark).join('').includes('solo · faux'),
-    );
+    await waitFor(() => fake.writes.slice(back).join('').includes('[SOLO]'));
     // The next submit places the queue: the waiting follow-up runs first,
     // and the new prompt follows it (oldest first, one per boundary).
     for (const ch of 'third prompt') fake.feed(ch);
@@ -1129,7 +1135,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     await waitFor(() => fake.counts.started === 1);
     // Ctrl-G (0x07) switches the session mode to orchestrator.
     fake.feed('\x07');
-    await waitFor(() => fake.writes.join('').includes('orchestrator ·'));
+    await waitFor(() => fake.writes.join('').includes('[ORCHESTRATOR]'));
     for (const ch of '/compact') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() =>
@@ -1241,7 +1247,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     );
     expect(calls()).toBe(0);
     run('/help');
-    await waitFor(() => fake.writes.join('').includes('help: 18 commands'));
+    await waitFor(() => fake.writes.join('').includes('help: 19 commands'));
     // The list itself landed in the transcript, generated from the registry.
     expect(fake.writes.join('')).toContain('/quit — leave the TUI');
     run('/help resume');
@@ -1305,7 +1311,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     run('/session');
     await waitFor(() => fake.writes.join('').includes('in 0 out 0 (cached 0)'));
     run('/help');
-    await waitFor(() => fake.writes.join('').includes('help: 18 commands'));
+    await waitFor(() => fake.writes.join('').includes('help: 19 commands'));
     release();
     await waitFor(() => fake.writes.join('').includes('first answer'));
     fake.feed('\x03');
@@ -1335,7 +1341,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(fake.writes.join('')).toContain('/session');
     // Enter takes the first row: /help runs exactly as if it were typed.
     fake.feed('\r');
-    await waitFor(() => fake.writes.join('').includes('help: 18 commands'));
+    await waitFor(() => fake.writes.join('').includes('help: 19 commands'));
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(calls()).toBe(0);
@@ -1586,7 +1592,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
       fake.feed(key);
       expect(await pending).toBe(0);
       expect(fake.counts.stopped).toBe(1);
-      expect(lines.join('\n')).toContain('approvals:on');
+      expect(lines.join('\n')).toContain('[SOLO] approvals on');
     }
   });
 
@@ -1611,9 +1617,13 @@ describe('kubic tui prompt loop (issue #88)', () => {
     fake.feed('\x03');
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
-    const order = ['› a question', 'answered', 'approvals:on'].map((marker) =>
-      doc.indexOf(marker),
-    );
+    // Issue #453: the header above the transcript, the status line below.
+    const order = [
+      '[SOLO] approvals on',
+      '› a question',
+      'answered',
+      ' ready ',
+    ].map((marker) => doc.indexOf(marker));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
@@ -1644,5 +1654,78 @@ describe('kubic tui docs contract (issue #88)', () => {
       expect(section).toContain(key);
     }
     expect(section).toMatch(/submit/i);
+  });
+});
+
+// Issue #453: the header's live facts — the workspace the composition root
+// reads (at boot and after every settled turn) and the wall clock.
+describe('the header facts on the live loop (issue #453)', () => {
+  it('reads the workspace at boot and again after a settled turn', async () => {
+    const root = tmpRoot();
+    const fake = fakeTerminal(120);
+    const { models } = fauxModels(['first done']);
+    let reads = 0;
+    const pending = runTuiCommand(
+      {},
+      {
+        out: () => {},
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+        readWorkspace: async () => {
+          reads += 1;
+          return { project: 'playground', branch: 'main', dirty: reads };
+        },
+      },
+    );
+    await waitFor(() =>
+      fake.writes.join('').includes('│ playground  ⎇ main ●1'),
+    );
+    for (const ch of 'go') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('first done'));
+    await waitFor(() => fake.writes.join('').includes('⎇ main ●2'));
+    expect(reads).toBe(2);
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+
+  it('repaints the clock only when its minute changes, and stops it on quit', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      let now = new Date(2026, 9, 6, 9, 59, 10);
+      const fake = fakeTerminal(120);
+      const pending = runTuiCommand(
+        {},
+        {
+          out: () => {},
+          createTerminal: () => fake.terminal,
+          colorLevel: 'none',
+          bootLane: async (sessionId?: string) => ({
+            sessionId: sessionId ?? 's1',
+            model: 'faux/test',
+          }),
+          clock: () => now,
+        },
+      );
+      await waitFor(() => fake.writes.join('').includes('│ 09:59 '));
+      // Let the boot frames settle, then tick within the same minute.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const mark = fake.writes.length;
+      now = new Date(2026, 9, 6, 9, 59, 40);
+      vi.advanceTimersByTime(TUI_CLOCK_TICK_MS);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(fake.writes.length).toBe(mark);
+      now = new Date(2026, 9, 6, 10, 0, 5);
+      vi.advanceTimersByTime(TUI_CLOCK_TICK_MS);
+      await waitFor(() =>
+        fake.writes.slice(mark).join('').includes('│ 10:00 '),
+      );
+      fake.feed('\x03');
+      expect(await pending).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

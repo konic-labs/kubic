@@ -49,36 +49,55 @@ function presentation(
 }
 
 describe('tui app root (issue #75)', () => {
-  it('orders tree / transcript / status top to bottom at 100 cols', () => {
+  it('orders header / transcript / status / hints top to bottom (#453)', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
       mode: 'solo',
       approvalsSkipped: false,
     });
-    const doc = app.render(100).join('\n');
+    const rows = app.render(100);
+    const doc = rows.join('\n');
     const order = [
-      '◌ solo',
+      '■ KUBIC',
       'Kubic — terminal coding agent',
-      'approvals:on',
+      `${MODEL} · off`,
+      '⏎ send',
     ].map((marker) => doc.indexOf(marker));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // The header is the first row; the status line and the hints the last.
+    expect(rows[0]).toContain(`session ${SESSION} │ [SOLO] approvals on`);
+    expect(rows.at(-2)?.endsWith(' ready ')).toBe(true);
+    expect(rows.at(-1)).toContain('^C quit');
   });
 
-  it('hides the tree only below 80 columns', () => {
+  it('hides the solo tree row until Ctrl-T, and always below 80 columns', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
       mode: 'solo',
       approvalsSkipped: false,
     });
-    const wide = app.render(100).join('\n');
-    expect(wide).toContain('◌ solo');
+    expect(app.render(100).join('\n')).not.toContain('◌ solo');
+    app.handleInput('\x14');
+    expect(app.render(100).join('\n')).toContain('◌ solo');
     const narrow = app.render(70).join('\n');
-    expect(narrow).not.toMatch(/[✓●◌]/);
-    expect(narrow).toContain(`session ${SESSION}`);
-    expect(narrow).toContain('approvals:on');
+    expect(narrow).not.toMatch(/[✓◌]/);
+    expect(narrow).toContain('[SOLO] approvals on');
+  });
+
+  it('keeps the orchestrator tree row and collapses it with Ctrl-T', () => {
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'orchestrator',
+      approvalsSkipped: false,
+    });
+    expect(app.render(100).join('\n')).toContain('◌ solo');
+    app.handleInput('\x14');
+    expect(app.tree.isCollapsed()).toBe(true);
+    expect(app.render(100).join('\n')).toContain('◌ solo');
   });
 
   it('routes Ctrl-T to the tree toggle and keeps T/t for the draft', () => {
@@ -100,7 +119,8 @@ describe('tui app root (issue #75)', () => {
         ],
       }),
     );
-    expect(app.render(100).join('\n')).toContain('● read');
+    // Issue #453: the solo tree row starts hidden.
+    expect(app.render(100).join('\n')).not.toContain('● read');
     // Issue #88: Ctrl-T toggles the tree. Sent in BOTH encodings, because
     // the classification goes through parseKey — the legacy byte here and
     // the Kitty CSI-u form ('\x1b[116;5u') below.
@@ -109,15 +129,14 @@ describe('tui app root (issue #75)', () => {
       consumed: true,
       cancel: false,
     });
-    expect(app.render(100).join('\n')).toContain('…1 call');
-    expect(app.render(100).join('\n')).not.toContain('● read');
+    expect(app.render(100).join('\n')).toContain('● read');
     expect(app.handleInput('\x1b[116;5u')).toEqual({
       quit: false,
       consumed: true,
       cancel: false,
     });
-    expect(app.render(100).join('\n')).toContain('● read');
-    expect(app.render(100).join('\n')).not.toContain('…1 call');
+    expect(app.render(100).join('\n')).not.toContain('● read');
+    app.handleInput('\x14');
     // Issue #88: the editor owns plain characters — T/t are prompt text,
     // never toggles (a coding-agent prompt must be able to spell "test").
     for (const ch of 'Tt') app.handleInput(ch);
@@ -250,6 +269,7 @@ describe('tui app root (issue #75)', () => {
       approvalsSkipped: false,
     });
     app.applyPresentation(presentation());
+    app.handleInput('\x14');
     expect(app.render(100).join('\n')).toContain('● solo');
     app.setUsage([
       {
@@ -271,7 +291,7 @@ describe('tui app root (issue #75)', () => {
         },
       },
     ]);
-    expect(app.render(100).join('\n')).toContain('$0.02');
+    expect(app.render(100).join('\n')).toContain('$0.020');
   });
 
   it('renders the context gauge from the seed and follows setContextLimits (#347)', () => {
@@ -305,10 +325,10 @@ describe('tui app root (issue #75)', () => {
         },
       },
     ]);
-    expect(app.render(120).join('\n')).toContain('ctx 42%');
+    expect(app.render(120).join('\n')).toContain('42% of 1k');
     // A switch to a model with a wider window moves the gauge.
     app.setContextLimits({ contextWindow: 4000, compactionThreshold: 3000 });
-    expect(app.render(120).join('\n')).toContain('ctx 11%');
+    expect(app.render(120).join('\n')).toContain('11% of 4k');
     // A model whose window is unknown clears it: no made-up percentage.
     app.setContextLimits({});
     expect(app.render(120).join('\n')).not.toContain('ctx ');
@@ -334,11 +354,12 @@ describe('tui app root (issue #75)', () => {
     ]);
     const doc = app.finalDocument(100).join('\n');
     expect(doc).toContain('final words');
-    expect(doc).toContain(`session ${SESSION}`);
-    expect(doc.indexOf('final words')).toBeLessThan(
-      doc.indexOf(`session ${SESSION}`),
+    // Issue #453: the header above the transcript, the status line below.
+    expect(doc.indexOf(`session ${SESSION}`)).toBeLessThan(
+      doc.indexOf('final words'),
     );
-    expect(doc).toContain('approvals:on');
+    expect(doc.indexOf('final words')).toBeLessThan(doc.indexOf(' ready '));
+    expect(doc).toContain('[SOLO] approvals on');
   });
 });
 
@@ -656,23 +677,16 @@ describe('lane snapshot feed (issue #88)', () => {
     expect(app.status.getState().model).toBe(MODEL);
     expect(app.status.getState().thinking).toBe('high');
     const before = app.render(100).join('\n');
-    expect(before).toContain(MODEL);
     expect(before).toContain(`model ${MODEL}`);
-    expect(
-      before.split('\n').some((l) => l.includes('solo') && l.includes(MODEL)),
-    ).toBe(true);
+    expect(app.status.render(100).join('\n')).toContain(`${MODEL} · high`);
 
     app.setModel('alt/m1', 'medium');
 
     expect(app.status.getState().model).toBe('alt/m1');
     expect(app.status.getState().thinking).toBe('medium');
     const doc = app.render(100).join('\n');
-    expect(doc).toContain('alt/m1');
     expect(doc).toContain('model alt/m1');
-    expect(
-      doc.split('\n').some((l) => l.includes('solo') && l.includes('alt/m1')),
-    ).toBe(true);
-    expect(app.status.render(100).join('\n')).toContain('alt/m1');
+    expect(app.status.render(100).join('\n')).toContain('alt/m1 · medium');
     expect(doc).not.toContain(MODEL);
   });
 

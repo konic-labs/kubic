@@ -165,9 +165,9 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
 
     type(fake, '/model alt/m1');
     await waitFor(() => fake.frame.includes('model: alt/m1'));
-    // The status bar moved too, not only the footer: its model line is
-    // `<model> • thinking …`.
-    await waitFor(() => fake.frame.includes('alt/m1 • thinking'));
+    // The status line moved too, not only the notice row: it reads
+    // `● <model> · <thinking>` (issue #453).
+    await waitFor(() => fake.frame.includes('● alt/m1 · '));
     // The switch is real: the next request is answered on the alt provider.
     type(fake, 'hello');
     await waitFor(() => fake.frame.includes('from alt'));
@@ -265,8 +265,8 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     );
     fake.feed('\x03');
     expect(await pending).toBe(0);
-    // The status bar carries the live level, not the boot one.
-    expect(lines.join('\n')).toContain('thinking off');
+    // The status line carries the live level, not the boot one.
+    expect(lines.join('\n')).toMatch(/● \S+ · off/);
   });
 
   it('picks a model from the Alt+M overlay (#328)', async () => {
@@ -421,7 +421,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
 
     fake.feed('\x03');
     expect(await pending).toBe(0);
-    expect(lines.join('\n')).toContain('approvals:on');
+    expect(lines.join('\n')).toContain('[SOLO] approvals on');
   });
 });
 

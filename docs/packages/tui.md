@@ -55,39 +55,58 @@ Widths always come from Pi's grapheme-aware helpers through
 
 ### Layout (`layout.ts`, §16.2)
 
-VStack root, four rows in order:
+VStack root, rows in order (issue #453 order; optional slots in italics):
 
 | Row | Slot | Sizing |
 | --- | --- | --- |
-| `AgentTreeView` | `tree` | basis 12, collapses below 80 columns |
+| *one-row header* (`chrome.ts`) | `header` | basis 1 |
+| `AgentTreeView` | `tree` | auto, at most `TREE_MAX_ROWS`; hidden below 80 columns and while `treeVisible()` is false |
 | ScrollView transcript | `transcript` | grow 1, follow-end |
-| `StatusBar` | `status` | basis 2 |
-| editor + footer | `editor` | auto |
+| *diff / journal panel* | `panel` | basis 12 while open |
+| *notice row* | `notice` | auto — no row when empty |
+| editor | `editor` | auto |
+| one-row status line | `status` | auto |
+| *key-hint row* | `hints` | auto |
 
 `Viewport` is `{ width: number, height: number }` (matches Pi's
 `LayoutViewport` without importing layout internals through the seam);
-`LayoutSlots` is `{ tree, transcript, status, editor: Component }`;
 `NARROW_COLUMNS` is 80 (the tree hides below it — proven by the narrow
 snapshot test); `renderLayout(root, width)` renders headless (pure, no
-terminal). Slots are `Component`s — contents belong to #23–#28; this
-module owns arrangement only.
+terminal). Slots are `Component`s; this module owns arrangement only.
+
+### Chrome (`chrome.ts`, issue #453)
+
+`renderHeader(ui, info, width)` is the one-row header
+(`■ KUBIC │ <project> ⎇ <branch> ●<dirty> … session <title> │ SOLO approvals
+on │ HH:MM`, on bg1) with its drop ladder (clock, session, approvals when on,
+branch; the project name is cut last; `approvals OFF` never drops).
+`keyHintSet(context, keys, options)` returns the hint row for `idle`,
+`working`, `approval` or `overlay`, built from the key registry
+(`keyCap('ctrl+p')` is `^P`); `sessionTitle`, `shortSessionId` and
+`formatClock` produce the header's session and clock text. The app
+(`tui-app.ts`) takes the workspace facts, the clock and the per-mode lane
+notice from its seed (`workspace`, `clock`, `laneNotice`) and
+`setWorkspace`; the composition root reads git through the exec seam
+(`apps/kubic/src/tui-workspace.ts`).
 
 ### Views
 
-- **Status bar** (`status-bar.ts`): `StatusMode` is `solo|orchestrator`;
-  usage/cost rollups (`StatusUsage`, `StatusUsageRow`,
-  `StatusUsageCost`, `StatusSummary`, `summarizeStatusRows`,
-  `formatStatusCost`) feed `StatusBarState`, rendered by
-  `renderStatusLines` under `DEFAULT_STATUS_THEME`. The bar shows
-  model/thinking/tokens/cache/cost only: the TTFT and tool-ms segments
-  were deleted in #346 (Pi 1.0 routes no timing Kubic could read), and
-  `kubic tui --session` seeds the rows from the session's `pi.usage`
-  ledger before the first frame. Issue #347 adds the context gauge: when
+- **Status line** (`status-bar.ts`): one row since issue #453.
+  `StatusMode` is `solo|orchestrator`; usage/cost rollups (`StatusUsage`,
+  `StatusUsageRow`, `StatusUsageCost`, `StatusSummary`,
+  `summarizeStatusRows`, `formatStatusCost`) feed `StatusBarState`, rendered
+  by `renderStatusLine(state, width, ui, now)`: `● model · thinking │ ctx
+  gauge NN% of <window> │ cost │ journal N changes │ budget …` and the
+  `StatusTurnState` word (`ready`, `working`, `needs approval`,
+  `cancelling…`, `error`) on the right; the `StatusBar` component reads the
+  live turn facts through its `live` option. The state also holds the mode
+  and the approvals posture, which the header renders. The TTFT and tool-ms
+  segments were deleted in #346 (Pi 1.0 routes no timing Kubic could read),
+  and `kubic tui --session` seeds the rows from the session's `pi.usage`
+  ledger before the first frame. Issue #347's context gauge shows when
   `StatusBarState.contextWindow` is known and a committed request reported
-  its prompt size (`StatusSummary.contextTokens`), row 1 carries
-  `ctx NN%` — warning-coloured at or above
-  `StatusBarState.compactionThreshold` — and drops before the model when
-  the terminal narrows.
+  its prompt size (`StatusSummary.contextTokens`) — warning-coloured at or
+  above `StatusBarState.compactionThreshold`.
 - **Transcript** (`transcript.ts`): `TranscriptEntryKind` is
   `prompt|text|tool|output|compaction`; `TranscriptView` applies snapshot/delta ops
   (`TranscriptOp`) and replays via `replayTranscript`. The in-flight

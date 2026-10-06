@@ -70,7 +70,9 @@ describe('key-release events are presses only once (issue #306)', () => {
   > = [
     ['ctrl+o', 'o', (t) => t.panelMode(), 'diff'],
     ['ctrl+r', 'r', (t) => t.panelMode(), 'journal'],
-    ['ctrl+t', 't', (t) => t.tree.isCollapsed(), true],
+    // Issue #453: solo starts with the tree collapsed (hidden), so exactly
+    // one toggle opens it.
+    ['ctrl+t', 't', (t) => t.tree.isCollapsed(), false],
     ['ctrl+x', 'x', (t) => t.transcript.expanded, true],
   ];
 

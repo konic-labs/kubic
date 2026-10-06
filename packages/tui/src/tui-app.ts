@@ -26,7 +26,8 @@
 // Key map (the shipped loop; docs/cli/commands.md mirrors it):
 //   Enter            submit the draft
 //   Ctrl-J, Shift+Enter, `\`+Enter   newline (multi-line entry)
-//   Ctrl-T           toggle the tree
+//   Ctrl-T           show / hide the tree (solo starts with it hidden;
+//                    the orchestrator collapses it to one line)
 //   Ctrl-G           switch the session mode (solo ↔ orchestrator;
 //                    refused while a turn runs)
 //   Ctrl-O           toggle the diff panel (this run's changes)
@@ -38,6 +39,12 @@
 //                    idle; issue #334)
 //   Esc              quit
 //   Ctrl-D           quit on an empty draft (delete-forward while typing)
+//
+// Issue #453 (EPIC N; docs/ui 01-A/L/M) cut the chrome to three one-row
+// surfaces: the header (project, branch, session, mode, posture, clock), the
+// status line (model, context, cost, journal, state word) and the
+// context-aware key-hint row. Command replies, turn outcomes and the working
+// line sit on a transient notice row above the editor.
 
 import type {
   KubicPresentationState,
@@ -63,6 +70,13 @@ import {
   approvalOverlayWidth,
   showApprovalOverlay,
 } from './approval-view.js';
+import {
+  type HintContext,
+  keyHintSet,
+  renderHeader,
+  sessionTitle,
+  shortSessionId,
+} from './chrome.js';
 import { PromptEditor } from './editor-view.js';
 import {
   CombinedAutocomplete,
@@ -76,6 +90,7 @@ import {
 import {
   entriesToCells,
   type LaneEntryLike,
+  PROMPT_PREFIX,
   sanitizeLaneText,
 } from './lane-cells.js';
 import { buildLayoutRoot, type Viewport } from './layout.js';
@@ -91,6 +106,7 @@ import {
   type StatusBarState,
   type StatusBudgetLimits,
   type StatusMode,
+  type StatusTurnState,
   type StatusUsageRow,
   summarizeStatusRows,
 } from './status-bar.js';
@@ -99,8 +115,6 @@ import {
   spinnerFrame,
   tuiTheme,
   WORDMARK_GLYPH,
-  WORDMARK_NAME,
-  WORDMARK_TAGLINE,
 } from './theme.js';
 import {
   createTranscriptView,
@@ -123,13 +137,14 @@ import type {
 import {
   isKeyRelease,
   isKeyRepeat,
+  isKittyProtocolActive,
   parseKey,
   ScrollView,
   SelectList,
   truncateToWidth,
-  visibleWidth,
   wrapTextWithAnsi,
 } from './tui-boundary.js';
+import { renderKeyHintRow } from './ui/key-hints.js';
 
 // The editor footer wraps to at most this many rows.
 export const FOOTER_MAX_ROWS = 2;
@@ -146,6 +161,17 @@ export type { JournalChangeLike, LaneEntryLike, PanelMode, Viewport };
 // The request the overlay answers: approval-view.ts's own request shape, named
 // here so the composition root and the app agree on one type.
 export type TuiApprovalRequest = ApprovalViewRequest;
+
+// Issue #453: the header's workspace facts, read by the composition root
+// (the TUI package runs no git of its own).
+export interface TuiWorkspace {
+  /** Basename of the project root. */
+  readonly project: string;
+  /** Current branch; absent outside a repository. */
+  readonly branch?: string;
+  /** Changed files in the working tree. */
+  readonly dirty?: number;
+}
 
 export interface TuiAppSeed {
   readonly sessionId: string;
@@ -189,6 +215,14 @@ export interface TuiAppSeed {
   // Issue #276: told of every real session-mode change (Ctrl-G, /tree…), so
   // the composition root persists it with the session.
   readonly onModeChange?: (mode: StatusMode) => void;
+  // Issue #453: the header's project / branch / dirty count (setWorkspace
+  // refreshes it after a settled turn).
+  readonly workspace?: TuiWorkspace;
+  // Issue #453: the header clock (`HH:MM`); absent leaves it off.
+  readonly clock?: () => string;
+  // Issue #453: the honest lane notice for a mode, shown in the welcome
+  // block ('' when suppressed). The composition root owns the text.
+  readonly laneNotice?: (mode: StatusMode) => string;
 }
 
 // §66 replication: the TUI holds no authority — it reads the replicated
@@ -394,7 +428,16 @@ export interface TuiApp {
   onSubmit(handler: (prompt: string) => TuiSubmitOutcome | undefined): void;
   setBusy(busy: boolean): void;
   isBusy(): boolean;
+  // Issue #453: the transient notice row above the editor (the name is the
+  // pre-#453 one: the row used to sit under the editor). Empty clears it.
   setEditorFooter(text: string): void;
+  // Issue #453: the status line's state word. A cancel the loop asked for
+  // reads `cancelling…` until the turn settles; a failed turn reads `error`
+  // until the next one starts.
+  setCancelling(cancelling: boolean): void;
+  setTurnOutcome(outcome: 'completed' | 'cancelled' | 'failed'): void;
+  // Issue #453: the header's project / branch / dirty count.
+  setWorkspace(workspace: TuiWorkspace): void;
   // Issue #334: the echo row for a prompt whose turn has STARTED but whose
   // user entry is not committed yet — a queued follow-up the inbox placed.
   // A later committed prompt cell clears it, exactly like a direct submit.
@@ -581,26 +624,6 @@ export function renderWorkingLine(
   return truncateToWidth(line, Math.max(0, width), '…');
 }
 
-// The one-line brand header: the Konic mark and wordmark on the left, the
-// mode and model on the right.
-export function renderHeader(
-  width: number,
-  info: { mode: string; model: string; cwd?: string },
-): string {
-  const theme = tuiTheme();
-  const left = `${theme.accentBold(`${WORDMARK_GLYPH} ${WORDMARK_NAME}`)} ${theme.muted(WORDMARK_TAGLINE)}`;
-  const leftWidth = visibleWidth(
-    `${WORDMARK_GLYPH} ${WORDMARK_NAME} ${WORDMARK_TAGLINE}`,
-  );
-  const rightPlain = `${info.mode} · ${info.model}`;
-  const right = `${theme.accent(info.mode)} ${theme.muted('·')} ${info.model}`;
-  const room = width - leftWidth - 2;
-  if (room >= visibleWidth(rightPlain)) {
-    return `${left}${' '.repeat(width - leftWidth - visibleWidth(rightPlain))}${right}`;
-  }
-  return truncateToWidth(left, Math.max(0, width), '…');
-}
-
 // The welcome block at the top of the transcript: what this is, where it
 // runs, and the solo notice in full.
 export function welcomeLines(info: {
@@ -649,29 +672,23 @@ export function laneActivityLine(lane: {
   return lane.compacting ? '⟳ compacting context…' : undefined;
 }
 
-// The layout's fourth row is one component (issue #22 owns arrangement
-// only), so the editor and its one-line hint slot are composed here rather
-// than widening the layout. The slot shows, in order of precedence: an
-// explicit footer (outcome / error / cancelling), the working indicator
-// while a turn runs, else the key hints.
-class EditorRow implements Component {
-  private readonly editor: PromptEditor;
+// Issue #453: the transient notice row above the editor. It shows, in
+// order of precedence: the lane's activity (a retry, a compaction), an
+// explicit footer (a turn outcome, a command's reply, an error), the working
+// line while a turn runs — else nothing, and the row takes no space.
+class NoticeRow implements Component {
   // Issue #334: the busy line names the keys that act on a running turn,
   // which differ by lane (the orchestrator lane queues nothing).
   private readonly mode: () => StatusMode;
-  private footer: string;
-  private readonly hints: ReadonlyArray<readonly [string, string]>;
+  private footer = '';
+  // Issue #150: the lane's transient activity (a retry backoff, a
+  // compaction). It outranks every other notice while it lasts — it is the
+  // reason the turn looks idle — and clears the moment the state does.
+  private activity = '';
   busySince: number | undefined;
 
-  constructor(
-    editor: PromptEditor,
-    mode: () => StatusMode,
-    hints: ReadonlyArray<readonly [string, string]> = KEY_HINTS,
-  ) {
-    this.editor = editor;
+  constructor(mode: () => StatusMode) {
     this.mode = mode;
-    this.hints = hints;
-    this.footer = '';
     this.busySince = undefined;
   }
 
@@ -679,59 +696,41 @@ class EditorRow implements Component {
     this.footer = sanitizeLaneText(text);
   }
 
-  // Issue #150: the lane's transient activity (a retry backoff, a
-  // compaction). It outranks every other footer line while it lasts — it is
-  // the reason the turn looks idle — and clears the moment the state does.
-  private activity = '';
-
   setActivity(text: string | undefined): void {
     this.activity = text === undefined ? '' : sanitizeLaneText(text);
   }
 
   render(width: number): string[] {
-    const lines = this.editor.render(width);
     const theme = tuiTheme();
+    const w = Math.max(0, width);
     if (this.activity !== '') {
-      return [
-        ...lines,
-        truncateToWidth(theme.warning(this.activity), Math.max(0, width), '…'),
-      ];
+      return [truncateToWidth(theme.warning(this.activity), w, '…')];
     }
     if (this.footer !== '') {
       const styled = this.footer.startsWith('error')
         ? theme.error(this.footer)
         : theme.muted(this.footer);
-      // Wrapped, not cut: the trust statement and error reports are the
-      // text an operator most needs whole. Capped at two rows.
+      // Wrapped, not cut: an error report is the text an operator most
+      // needs whole. Capped at two rows.
       const wrapped = wrapTextWithAnsi(styled, Math.max(1, width));
       const shown = wrapped.slice(0, FOOTER_MAX_ROWS);
       if (wrapped.length > FOOTER_MAX_ROWS) {
         const last = shown.length - 1;
-        shown[last] = truncateToWidth(
-          `${shown[last] ?? ''} …`,
-          Math.max(0, width),
-          '…',
-        );
+        shown[last] = truncateToWidth(`${shown[last] ?? ''} …`, w, '…');
       }
-      return [
-        ...lines,
-        ...shown.map((line) => truncateToWidth(line, Math.max(0, width), '…')),
-      ];
+      return shown.map((line) => truncateToWidth(line, w, '…'));
     }
     if (this.busySince !== undefined) {
       return [
-        ...lines,
         renderWorkingLine(Date.now() - this.busySince, width, {
           queues: this.mode() === 'solo',
         }),
       ];
     }
-    return [...lines, renderKeyHints(width, this.hints)];
+    return [];
   }
 
-  invalidate(): void {
-    this.editor.invalidate();
-  }
+  invalidate(): void {}
 }
 
 // A single-line component over a render function.
@@ -768,7 +767,12 @@ function treeWorkersOf(
 
 export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const keys = seed.keys ?? DEFAULT_KEY_REGISTRY;
-  const tree = new AgentTreeView(undefined, { label: seed.label ?? 'solo' });
+  // Issue #453: solo starts with the tree row hidden (collapsed); Ctrl-T
+  // opens it. The orchestrator shows it (collapsed, it is one summary line).
+  const tree = new AgentTreeView(undefined, {
+    label: seed.label ?? 'solo',
+    collapsed: seed.mode === 'solo',
+  });
   // Issue #96 — the approval's inline slot. Below APPROVAL_MIN_WIDTH the
   // overlay cannot be composited (Pi's visible() gate refuses), so the
   // request renders in the transcript's own document. The document decides
@@ -791,20 +795,25 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // shows, so the id every lane apply, report cell and the welcome block are
   // keyed by is state (declared before the first welcome render).
   let sessionId = seed.sessionId;
-  const refreshWelcome = (): void => {
-    // Issue #320: no `notice` argument — the app had a `setNotice` setter with
-    // zero callers (the boot's notices go to stderr before the alt-screen
-    // opens, #308), so it was deleted rather than tested. `welcomeLines` keeps
-    // its optional parameter for a host that does have one to render.
-    transcript.setWelcome(
-      welcomeLines({ sessionId, model: modelLabel, hints: keyHints(keys) }),
-    );
-  };
-  refreshWelcome();
   // Issue #327: the session mode is live state, not a boot-time literal:
   // the header and the status bar both read this cell, and Ctrl-G writes it
   // (refused while a turn runs). The seed is only the starting value.
   const sessionMode: { current: StatusMode } = { current: seed.mode };
+  const refreshWelcome = (): void => {
+    // Issue #453: the honest lane notice rides the welcome block now that
+    // the permanent footer is gone; the header keeps the mode badge on every
+    // frame and `/safety` prints the full text. The composition root owns
+    // the wording (and its suppression), per mode.
+    transcript.setWelcome(
+      welcomeLines({
+        sessionId,
+        model: modelLabel,
+        notice: seed.laneNotice?.(sessionMode.current),
+        hints: keyHints(keys),
+      }),
+    );
+  };
+  refreshWelcome();
   const barState: StatusBarState = {
     model: modelLabel,
     thinking: thinkingLabel,
@@ -824,7 +833,10 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       ? {}
       : { budget: { limits: seed.budgetLimits, toolCalls: 0 } }),
   };
-  const status = new StatusBar(barState);
+  // Issue #453: the state word reads the app's live turn facts per frame.
+  const status = new StatusBar(barState, {
+    live: () => ({ turn: turnState(), busySince: noticeRow.busySince }),
+  });
   // The live model label the header, welcome block and status bar show; one
   // path for the boot, a `/model` switch and a session reset (#305).
   const applyModel = (next: string, thinking?: string): void => {
@@ -841,6 +853,10 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     if (next === sessionMode.current) return;
     sessionMode.current = next;
     status.setMode(next);
+    // Issue #453: each mode starts from its own tree default (solo hidden,
+    // orchestrator shown) and its own welcome notice.
+    if (tree.isCollapsed() !== (next === 'solo')) tree.toggle();
+    refreshWelcome();
     seed.onModeChange?.(next);
   };
   const editor = new PromptEditor();
@@ -864,11 +880,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
           new FileMentionAutocomplete(seed.listFiles),
         ]),
   );
-  const editorRow = new EditorRow(
-    editor,
-    () => sessionMode.current,
-    keyHints(keys),
-  );
+  const noticeRow = new NoticeRow(() => sessionMode.current);
   // Issue #96 — the panel row. Both panels stay mounted and keep their rows;
   // the layout hides the row entirely while the mode is 'closed', so a
   // keypress never leaves blank space behind.
@@ -921,17 +933,59 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     panelFile = 0;
     panelScroll.scrollTo(0);
   };
+  // Issue #453: the header's session title — the first committed prompt
+  // (fresh or resumed alike), else the short id; cleared with the session.
+  let title: string | undefined;
+  // Sanitized at ingress like lane text: a directory name is local data, but
+  // it is still printed into the operator's terminal.
+  const cleanWorkspace = (next: TuiWorkspace | undefined) =>
+    next === undefined
+      ? undefined
+      : {
+          project: sanitizeLaneText(next.project),
+          ...(next.branch === undefined
+            ? {}
+            : { branch: sanitizeLaneText(next.branch) }),
+          ...(next.dirty === undefined ? {} : { dirty: next.dirty }),
+        };
+  let workspace = cleanWorkspace(seed.workspace);
   const root = buildLayoutRoot({
-    tree,
     header: lineComponent((width) =>
-      renderHeader(width, { mode: sessionMode.current, model: modelLabel }),
+      renderHeader(
+        tuiTheme().ui,
+        {
+          mode: sessionMode.current,
+          approvalsSkipped: status.getState().approvalsSkipped,
+          ...workspace,
+          session: title ?? shortSessionId(sessionId),
+          ...(seed.clock === undefined ? {} : { clock: seed.clock() }),
+        },
+        width,
+      ),
     ),
+    tree,
+    treeVisible: () =>
+      sessionMode.current === 'orchestrator' || !tree.isCollapsed(),
     transcript: transcript.component,
-    status,
-    editor: editorRow,
     panel: { component: panelScroll, isOpen: () => mode !== 'closed' },
+    notice: noticeRow,
+    editor,
+    status,
+    hints: lineComponent((width) => {
+      const set = keyHintSet(hintContext(), keys, {
+        queues: sessionMode.current === 'solo',
+        files: seed.listFiles !== undefined,
+        // Shift+Enter is a newline only where the terminal reports it.
+        newline: isKittyProtocolActive() ? '⇧⏎' : '^J',
+      });
+      return renderKeyHintRow(tuiTheme().ui, set.hints, width, set.right);
+    }),
   });
   let busy = false;
+  // Issue #453: the status line's state word inputs — a cancel the loop
+  // asked for, and whether the last settled turn failed.
+  let cancelling = false;
+  let failed = false;
   let revision = 0;
   // Issue #327: the orchestrator report's own cells. The solo lane's
   // entries own the transcript while that lane drives; applying a lane
@@ -1216,6 +1270,24 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const settleApproval = (): void => {
     syncOverlay();
   };
+  // Issue #453: what the status line's state word and the key-hint row
+  // follow. An approval outranks everything: it is what the turn waits on.
+  const turnState = (): StatusTurnState => {
+    if (approvalSurface.isShowing()) return 'approval';
+    if (busy) return cancelling ? 'cancelling' : 'working';
+    return failed ? 'error' : 'ready';
+  };
+  const hintContext = (): HintContext => {
+    if (approvalSurface.isShowing()) return 'approval';
+    if (
+      modelPicker !== undefined ||
+      confirmOverlay !== undefined ||
+      questionOpen !== undefined
+    ) {
+      return 'overlay';
+    }
+    return busy ? 'working' : 'idle';
+  };
   return {
     root,
     tree,
@@ -1337,7 +1409,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
           const key = keys.label(
             action === 'app.exit' ? 'app.exit' : 'app.interrupt',
           );
-          editorRow.setFooter(
+          noticeRow.setFooter(
             `${key}: draft cleared — press ${key} again on an empty draft to quit`,
           );
           return { quit: false, consumed: true, cancel: false };
@@ -1373,7 +1445,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // refused there — with the reason on the footer, never a silent no-op.
       if (action === 'session.mode') {
         if (busy) {
-          editorRow.setFooter('mode: finish the current turn before switching');
+          noticeRow.setFooter('mode: finish the current turn before switching');
           return { quit: false, consumed: true, cancel: false };
         }
         setMode(sessionMode.current === 'solo' ? 'orchestrator' : 'solo');
@@ -1449,7 +1521,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     }),
     applyPresentation: (state: KubicPresentationState): void => {
       const lane = state.lanes.get(seed.sessionId);
-      editorRow.setActivity(
+      noticeRow.setActivity(
         lane === undefined ? undefined : laneActivityLine(lane),
       );
       // Issue #342 (§18): the orchestrator's workers become nodes under the
@@ -1504,6 +1576,17 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // prompt cell (counted, not matched by text: an identical resubmit
       // must not clear on the previous turn's cell).
       promptCells = cells.filter((cell) => cell.kind === 'prompt').length;
+      if (title === undefined) {
+        const first = cells
+          .filter((cell) => cell.kind === 'prompt')
+          .map((cell) =>
+            cell.markdown.startsWith(PROMPT_PREFIX)
+              ? cell.markdown.slice(PROMPT_PREFIX.length)
+              : cell.markdown,
+          )
+          .find((text) => text.trim() !== '');
+        if (first !== undefined) title = sessionTitle(first);
+      }
       if (pendingPrompt !== undefined && promptCells > promptCellsAtSubmit) {
         pendingPrompt = undefined;
         pendingImages = [];
@@ -1561,11 +1644,15 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     },
     setBusy: (next: boolean): void => {
       busy = next;
+      // Issue #453: a settled turn ends any cancel; a new one clears the
+      // last turn's error.
+      cancelling = false;
+      if (next) failed = false;
       // Issue #334: the editor stays ENABLED through a turn. Enter is no
       // longer a silent no-op while the lane works: the loop submits it as
       // a follow-up into the conversation's inbox, and Alt+Enter steers.
-      editorRow.busySince = next ? Date.now() : undefined;
-      editorRow.setFooter('');
+      noticeRow.busySince = next ? Date.now() : undefined;
+      noticeRow.setFooter('');
       if (!next && pendingPrompt !== undefined) {
         pendingPrompt = undefined;
         pendingImages = [];
@@ -1573,9 +1660,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       }
     },
     busyElapsedMs: (now: number = Date.now()): number | undefined =>
-      editorRow.busySince === undefined
+      noticeRow.busySince === undefined
         ? undefined
-        : Math.max(0, now - editorRow.busySince),
+        : Math.max(0, now - noticeRow.busySince),
     toggleToolOutput: (): boolean => transcript.toggleExpanded(),
     setApprovalsSkipped: (skipped: boolean): void => {
       status.setApprovalsSkipped(skipped);
@@ -1584,7 +1671,17 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     setMode,
     isBusy: (): boolean => busy,
     setEditorFooter: (text: string): void => {
-      editorRow.setFooter(text);
+      noticeRow.setFooter(text);
+    },
+    setCancelling: (next: boolean): void => {
+      cancelling = busy && next;
+    },
+    setTurnOutcome: (outcome): void => {
+      failed = outcome === 'failed';
+      cancelling = false;
+    },
+    setWorkspace: (next: TuiWorkspace): void => {
+      workspace = cleanWorkspace(next);
     },
     restoreDraft: (prompt: string): void => {
       restoreDraft(prompt);
@@ -1668,17 +1765,21 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       promptCellsAtSubmit = 0;
       transcript.setPendingPrompt(undefined);
       transcript.setQueuedPrompts([]);
-      tree.reset();
+      tree.reset(undefined, sessionMode.current === 'solo');
+      title = undefined;
+      failed = false;
+      cancelling = false;
       mode = 'closed';
       diffPanel.setChanges([]);
       journalPanel.setChanges([]);
       diffPanel.setToolCall(null);
       editor.setText('');
-      editorRow.setFooter('');
+      noticeRow.setFooter('');
       applyModel(options.model, options.thinking);
       status.setState({
         ...status.getState(),
         sessionId: options.sessionId,
+        journalChanges: 0,
       });
       status.setRows([...(options.usage ?? [])]);
       refreshWelcome();
@@ -1708,6 +1809,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     setJournalChanges: (rows: ReadonlyArray<JournalChangeLike>): void => {
       diffPanel.setChanges(rows);
       journalPanel.setChanges(rows);
+      status.setState({ ...status.getState(), journalChanges: rows.length });
     },
     setJournalFilter: (filter: JournalFilterLike): void => {
       journalPanel.setFilter(filter);

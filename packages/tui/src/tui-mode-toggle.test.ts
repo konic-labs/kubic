@@ -33,13 +33,12 @@ describe('session mode toggle (issue #327)', () => {
     expect(target.mode()).toBe('solo');
   });
 
-  it('flips the header and the status indicator, not just the state', () => {
+  it('flips the header badge, not just the state', () => {
     const target = app();
-    expect(target.render(100).join('\n')).not.toContain('orchestrator');
+    expect(target.render(100).join('\n')).not.toMatch(/orchestrator/i);
     target.handleInput(CTRL_G);
     const frame = target.render(100);
-    expect(frame[0]).toContain('orchestrator');
-    expect(frame.join('\n')).toContain('orchestrator • approvals:on');
+    expect(frame[0]).toContain('[ORCHESTRATOR] approvals on');
   });
 
   it('refuses the switch while a turn runs, and says why', () => {
@@ -64,7 +63,8 @@ describe('session mode toggle (issue #327)', () => {
     expect(target.mode()).toBe('orchestrator');
     target.handleInput(CTRL_G);
     expect(target.mode()).toBe('solo');
-    expect(target.render(100)[0]).not.toContain('orchestrator');
+    expect(target.render(100)[0]).not.toMatch(/orchestrator/i);
+    expect(target.render(100)[0]).toContain('[SOLO]');
   });
 
   it('the footer hint names the toggle key', () => {
@@ -75,9 +75,7 @@ describe('session mode toggle (issue #327)', () => {
     const target = app();
     target.setMode('orchestrator');
     expect(target.mode()).toBe('orchestrator');
-    expect(target.render(100).join('\n')).toContain(
-      'orchestrator • approvals:on',
-    );
+    expect(target.render(100)[0]).toContain('[ORCHESTRATOR] approvals on');
   });
 });
 
@@ -103,7 +101,7 @@ describe('the app owns its own mode and posture (issue #333 review)', () => {
     expect(target.mode()).toBe('orchestrator');
     target.applyPresentation(staleSeed());
     expect(target.mode()).toBe('orchestrator');
-    expect(target.render(100)[0]).toContain('orchestrator');
+    expect(target.render(100)[0]).toContain('[ORCHESTRATOR]');
   });
 
   it('keeps the posture the policy installed across a presentation apply', () => {

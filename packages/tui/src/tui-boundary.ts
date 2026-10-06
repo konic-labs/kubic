@@ -58,6 +58,15 @@ export type {
 //   why Pi has no alternative: Input is Pi's own line editor (cursor, kill
 //     ring, bracketed paste, undo); a Kubic copy would fork key handling
 //   review: issue #154
+// --- #453 additions ---
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-tui isKittyProtocolActive (whether the Kitty
+//     keyboard protocol was negotiated with the terminal)
+//   used by: packages/tui/src/tui-app.ts (the key-hint row names Shift+Enter
+//     as the newline key only where the terminal can report it, else Ctrl-J)
+//   why Pi has no alternative: Pi negotiates the protocol and owns the flag;
+//     Kubic only reads it, never sets it
+//   review: issue #453
 export {
   CURSOR_MARKER,
   Editor,
@@ -66,6 +75,7 @@ export {
   Input,
   isKeyRelease,
   isKeyRepeat,
+  isKittyProtocolActive,
   Markdown,
   MouseRegion,
   matchesKey,

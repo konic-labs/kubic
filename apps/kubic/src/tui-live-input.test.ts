@@ -198,7 +198,7 @@ describe('idle input repaints (issue #274)', () => {
     expect(await exit).toBe(0);
   });
 
-  it('Ctrl-T repaints the tree collapsed and Ctrl-X repaints the expanded output', async () => {
+  it('Ctrl-T repaints the opened tree and Ctrl-X repaints the expanded output', async () => {
     const root = tmpRoot();
     const out = Array.from({ length: 9 }, (_, i) => `row-${i + 1}`).join('\n');
     const script = { exitCode: 0, stdout: `${out}\n`, stderr: '' };
@@ -222,9 +222,10 @@ describe('idle input repaints (issue #274)', () => {
     // The turn settled: the spinner is gone, so only the key can paint.
     await new Promise((resolve) => setTimeout(resolve, 150));
     let mark = fake.mark();
+    // Issue #453: the solo tree row starts hidden; Ctrl-T opens it.
     fake.feed('\x14');
     await waitFor(
-      () => fake.since(mark).includes('…1 call'),
+      () => fake.since(mark).includes('✓ bash rows'),
       RENDER_TICK_STEPS,
     );
     mark = fake.mark();

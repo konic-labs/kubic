@@ -453,8 +453,9 @@ describe('panel content is untrusted (issue #96, criterion 3 sanitisation)', () 
     app.handleInput(OPEN_DIFF);
     const frame = app.render(70).join('\n');
     expect(frame).toContain('--- a/src/app.ts');
-    // The tree itself is still hidden by the #22 rule.
-    expect(frame).not.toMatch(/[✓●◌]/);
+    // The tree itself is still hidden by the #22 rule (the status line's own
+    // `●` mark is not a tree node).
+    expect(frame).not.toMatch(/[✓●◌] solo/);
   });
 });
 

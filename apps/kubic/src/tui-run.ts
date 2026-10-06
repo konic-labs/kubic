@@ -78,6 +78,7 @@ import { buildOrchestratorWorktreeNotice } from '../../../packages/host/src/limi
 import {
   shouldEmitSoloNotice,
   soloTuiLine,
+  soloWarningLines,
 } from '../../../packages/host/src/limits/solo-warning.js';
 import {
   type AssembledModels,
@@ -147,6 +148,7 @@ import {
   scanInlineImageChunk,
   validateImageAttachment,
 } from '../../../packages/tui/src/attachments.js';
+import { formatClock } from '../../../packages/tui/src/chrome.js';
 import {
   createKeyRegistry,
   KeybindingsError,
@@ -191,6 +193,7 @@ import {
   type JournalChangeLike,
   type TuiApp,
   type TuiSubmitOutcome,
+  type TuiWorkspace,
 } from '../../../packages/tui/src/tui-app.js';
 import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
 import {
@@ -312,6 +315,7 @@ import {
   mergeSeatFromAnswer,
   workerAskSeatFromAnswer,
 } from './tui-orchestrator.js';
+import { readTuiWorkspace } from './tui-workspace.js';
 
 // The interaction surface the root shares with the app (issue #96): the seat
 // the installed policy consults and the surface the loop renders are the SAME
@@ -992,6 +996,12 @@ export interface TuiRunDeps {
   // (exit 5). Consulted only when the resolved mode IS orchestrator; absent
   // means the caller owns the check (viewer boots and injected fakes).
   isGitRepo?: () => boolean | Promise<boolean>;
+  // Issue #453: the header's project / branch / dirty count, read after the
+  // screen opens and again after every settled turn. Absent leaves the
+  // header without them (injected fakes).
+  readWorkspace?: () => Promise<TuiWorkspace>;
+  // Issue #453: the header clock's time source; absent hides the clock.
+  clock?: () => Date;
 }
 
 export type TuiSignal = 'SIGINT' | 'SIGTERM' | 'SIGHUP';
@@ -1019,6 +1029,9 @@ export function signalExitCode(signal: TuiSignal): number {
 // have already run by then; the wait only lets the lane record its terminal
 // status and the killed tool finish its last write before the §42.5 sweep.
 export const TUI_DRAIN_TIMEOUT_MS = 3000;
+
+// Issue #453: how often the header clock checks whether its minute changed.
+export const TUI_CLOCK_TICK_MS = 30_000;
 
 function defaultDrainTimer(ms: number, fire: () => void): () => void {
   const timer = setTimeout(fire, ms);
@@ -2687,6 +2700,13 @@ export function tuiDepsWithDefaults(
     // Issue #327: the non-git orchestrator refusal needs a real probe before
     // the alt-screen opens. Lazy: solo sessions never call it.
     isGitRepo: () => defaultIsGitRepo(),
+    // Issue #453: the header's workspace facts and clock.
+    readWorkspace: () =>
+      readTuiWorkspace(
+        new NodeExecutionEnv(process.cwd()).shell,
+        process.cwd(),
+      ),
+    clock: () => new Date(),
     // The seat arrives as an argument from runTuiCommand — see TuiRunDeps.
     bootLane: (
       sessionId?: string,
@@ -4044,6 +4064,30 @@ export async function runTuiCommand(
       'warning: this session was saved in orchestrator mode, which needs a git repository — starting solo',
     );
   }
+  // Solo no-isolation notice (issue #89): the trust statement is in the
+  // welcome block from the first frame (issue #453 retired the permanent
+  // two-row footer that carried it; the header keeps the mode badge on every
+  // frame and `/safety` prints the full text on demand). Suppressed for
+  // orchestrator-managed children (KUBIC_WORKER_ID set) and for the
+  // documented KUBIC_NO_NOTICE opt-out; the text is solo-warning.ts's, never
+  // re-worded here.
+  const soloNotice = shouldEmitSoloNotice(process.env) ? soloTuiLine() : '';
+  // Issue #327: an orchestrator session gets the orchestrator's own honest
+  // limits, not the solo statement — the notice must never describe the
+  // wrong lane. The text is orchestrator-notice.ts's, verbatim.
+  const orchestratorNotice = buildOrchestratorWorktreeNotice()
+    .slice(0, 2)
+    .join(' · ');
+  const laneNotice = (laneMode: StatusMode): string =>
+    laneMode === 'orchestrator' ? orchestratorNotice : soloNotice;
+  // The faux testing provider is never silent: while it answers, the
+  // welcome block says so next to (or instead of) the lane notice.
+  const noticeFor = (laneMode: StatusMode): string => {
+    const base = laneNotice(laneMode);
+    return boot.model === `${FAUX_PROVIDER_ID}/${FAUX_MODEL_ID}`
+      ? [FAUX_FOOTER, base].filter((part) => part !== '').join(' · ')
+      : base;
+  };
   const app = createTuiApp({
     sessionId: boot.sessionId,
     model: boot.model,
@@ -4078,6 +4122,12 @@ export async function runTuiCommand(
     // first frame; the attempt half arrives via setBudgetSpend as
     // tool-start events land. Absent means unbounded (silent bar).
     ...(options.budget === undefined ? {} : { budgetLimits: options.budget }),
+    // Issue #453: the welcome block's honest notice per mode, and the
+    // header clock.
+    laneNotice: noticeFor,
+    ...(deps.clock === undefined
+      ? {}
+      : { clock: () => formatClock(deps.clock?.() ?? new Date()) }),
   });
   // Issue #346: the resumed session's committed spend is on the bar from the
   // first frame, not only after the next turn's usage event.
@@ -4106,30 +4156,6 @@ export async function runTuiCommand(
       app.setApprovalsSkipped(boot.approvalsSkipped());
   };
   const terminal = deps.createTerminal();
-  // Solo no-isolation notice (issue #89): the trust statement is carried in
-  // the editor footer — the loop's always-visible status surface — from the
-  // first render, and it returns after every turn that has no outcome of its
-  // own to report. Suppressed for orchestrator-managed children
-  // (KUBIC_WORKER_ID set) and for the documented KUBIC_NO_NOTICE opt-out;
-  // the text is solo-warning.ts's, never re-worded here.
-  const soloNotice = shouldEmitSoloNotice(process.env) ? soloTuiLine() : '';
-  // Issue #327: an orchestrator session gets the orchestrator's own honest
-  // limits, not the solo statement — the footer must never describe the
-  // wrong lane. The text is orchestrator-notice.ts's, verbatim.
-  const orchestratorNotice = buildOrchestratorWorktreeNotice()
-    .slice(0, 2)
-    .join(' · ');
-  const laneNotice = (laneMode: StatusMode): string =>
-    laneMode === 'orchestrator' ? orchestratorNotice : soloNotice;
-  // The faux testing provider is never silent: while it answers, the
-  // footer says so next to (or instead of) the lane notice.
-  const noticeFor = (laneMode: StatusMode): string => {
-    const base = laneNotice(laneMode);
-    return boot.model === `${FAUX_PROVIDER_ID}/${FAUX_MODEL_ID}`
-      ? [FAUX_FOOTER, base].filter((part) => part !== '').join(' · ')
-      : base;
-  };
-  const notice = noticeFor(initialMode);
   // Issue #311: the Ctrl-O / Ctrl-R panels read the session journal the
   // boot created — loaded once now (a resumed session shows its earlier
   // turns), after each tool call (throttled) and at every settlement.
@@ -4332,6 +4358,45 @@ export async function runTuiCommand(
     }, 100);
     spinner.unref?.();
   };
+  // Issue #453: the header clock repaints only when the shown minute
+  // changes; a 30 s tick lands within half a minute of it.
+  let clockTimer: ReturnType<typeof setInterval> | undefined;
+  const stopClock = (): void => {
+    if (clockTimer !== undefined) clearInterval(clockTimer);
+    clockTimer = undefined;
+  };
+  const startClock = (): void => {
+    const clock = deps.clock;
+    if (clock === undefined) return;
+    stopClock();
+    let shown = formatClock(clock());
+    clockTimer = setInterval(() => {
+      if (stopped) {
+        stopClock();
+        return;
+      }
+      const now = formatClock(clock());
+      if (now === shown) return;
+      shown = now;
+      screen?.update();
+    }, TUI_CLOCK_TICK_MS);
+    clockTimer.unref?.();
+  };
+  // Issue #453: the header's project / branch / dirty count — read once the
+  // screen is up and after every settled turn. A failed read keeps the last
+  // facts (the reader itself never throws).
+  const refreshWorkspace = (): void => {
+    const read = deps.readWorkspace;
+    if (read === undefined) return;
+    void read().then(
+      (next) => {
+        if (stopped) return;
+        app.setWorkspace(next);
+        screen?.update();
+      },
+      () => {},
+    );
+  };
   let exitCode = RUN_EXIT_OK;
   let resolveExit: () => void = () => {};
   const exited = new Promise<void>((resolve) => {
@@ -4373,6 +4438,7 @@ export async function runTuiCommand(
     stopped = true;
     exitCode = RUN_EXIT_FAILED;
     stopSpinner();
+    stopClock();
     endDrain?.();
     try {
       screen?.restore();
@@ -4424,6 +4490,7 @@ export async function runTuiCommand(
     }
     stopped = true;
     stopSpinner();
+    stopClock();
     // Issue #96: a quit (SIGINT, stdin EOF, or the loop's own quit path) must
     // settle a pending approval as a deny — the turn that is waiting on it
     // would otherwise sit until the lane's timeout, and the operator gets no
@@ -4454,6 +4521,7 @@ export async function runTuiCommand(
         );
       });
       app.setEditorFooter('cancelling…');
+      app.setCancelling(true);
       screen?.render();
     }
     void (async () => {
@@ -4520,19 +4588,19 @@ export async function runTuiCommand(
     // live alt-screen from here on; on a terminal too narrow for the overlay
     // (its own visible() gate) the inline body is the surface instead.
     app.attachApprovalOverlay(booted.tui);
-    // The trust statement is on screen before the operator types anything
-    // (issue #89): the footer is set before the first render, so the very
-    // first frame carries it. Empty when suppressed.
-    // Issue #147: a pending operation settled at boot is reported first;
-    // the trust statement returns as the idle footer after the next turn.
+    // Issue #147: a pending operation settled at boot (and a model notice)
+    // is on the notice row from the first frame. The trust statement is the
+    // welcome block's (issue #89, #453).
     app.setEditorFooter(
       [boot.pendingNotice, boot.modelNotice]
         .filter((line): line is string => line !== undefined)
-        .join(' · ') || notice,
+        .join(' · '),
     );
     attachFatal();
 
     booted.render();
+    startClock();
+    refreshWorkspace();
     attachSignals();
     stdin?.once('end', onStdinEnd);
     stdin?.once('close', onStdinEnd);
@@ -4796,6 +4864,7 @@ export async function runTuiCommand(
             // the prompts silently vanishing.
             droppedOnCancel = queuedCount();
             app.setEditorFooter('cancelling…');
+            app.setCancelling(true);
             screen?.render();
             void cancelling
               .cancel()
@@ -4807,12 +4876,14 @@ export async function runTuiCommand(
                 // a no-op key with no explanation. The loop keeps running.
                 if (!accepted) {
                   droppedOnCancel = 0;
+                  app.setCancelling(false);
                   app.setEditorFooter('cancel failed — turn still running');
                 }
                 screen?.render();
               })
               .catch((error: unknown) => {
                 if (stopped) return;
+                app.setCancelling(false);
                 app.setEditorFooter(
                   `cancel failed: ${error instanceof Error ? error.message : String(error)}`,
                 );
@@ -4917,7 +4988,7 @@ export async function runTuiCommand(
         app.setEditorFooter(
           [next.pendingNotice, next.modelNotice]
             .filter((line): line is string => line !== undefined)
-            .join(' · ') || noticeFor(app.mode()),
+            .join(' · '),
         );
         journalFeed?.now();
         await turn?.refreshTranscript();
@@ -5202,6 +5273,25 @@ export async function runTuiCommand(
             );
             if (!stopped) screen?.render();
             return 'accepted';
+          }
+          case 'safety': {
+            // Issue #453: the honest limits of the CURRENT mode, in full. The
+            // wording is the limits modules' (never re-worded here), and an
+            // explicit ask is answered even where the startup notice is
+            // suppressed.
+            const limits =
+              app.mode() === 'orchestrator'
+                ? buildOrchestratorWorktreeNotice()
+                : soloWarningLines().map((line) =>
+                    line.replace(/^warning: /, ''),
+                  );
+            app.appendNotice(limits);
+            app.setEditorFooter(
+              `safety: ${app.mode()} mode — the limits are in the transcript`,
+            );
+            if (!stopped) screen?.render();
+            // A local read with its own output: no prompt echo under it.
+            return 'command';
           }
           case 'session': {
             const report = app.sessionReport(boot.cwd);
@@ -5714,11 +5804,12 @@ export async function runTuiCommand(
               }
             }
             journalFeed?.now();
-            // A completed turn has no outcome line of its own, so the footer
-            // falls back to the lane's trust statement instead of going
-            // blank (issue #89) — a cancelled/failed turn keeps its own
-            // report.
-            footer = footerForOutcome(outcome) || noticeFor(app.mode());
+            // Issue #453: the state word follows the outcome; a completed
+            // turn clears the notice row (the trust statement lives in the
+            // welcome block and behind `/safety`), a cancelled or failed one
+            // keeps its own report there.
+            app.setTurnOutcome(outcome.status);
+            footer = footerForOutcome(outcome);
             if (outcome.status === 'cancelled' && droppedOnCancel > 0) {
               footer = `${footer} · dropped ${droppedOnCancel} queued prompt${droppedOnCancel === 1 ? '' : 's'}`;
             }
@@ -5729,6 +5820,7 @@ export async function runTuiCommand(
           .catch((error: unknown) => {
             const message =
               error instanceof Error ? error.message : String(error);
+            app.setTurnOutcome('failed');
             footer = `error: ${message}`;
           })
           .finally(() => {
@@ -5740,6 +5832,8 @@ export async function runTuiCommand(
             // Sync BEFORE the footer: `setBusy(false)` clears the footer row.
             syncBusy();
             if (footer !== undefined && !stopped) app.setEditorFooter(footer);
+            // Issue #453: the turn may have changed files or the branch.
+            if (inFlightTurns === 0) refreshWorkspace();
             if (!stopped) screen?.render();
           });
       };
@@ -5993,6 +6087,7 @@ export async function runTuiCommand(
     // after the alt-screen went active — restore the main screen and
     // close the lane so the reject never strands either. The setup
     // error stands.
+    stopClock();
     detachSignals();
     detachFatal();
     stdin?.removeListener('end', onStdinEnd);

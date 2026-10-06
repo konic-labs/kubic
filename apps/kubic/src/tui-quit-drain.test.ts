@@ -621,6 +621,8 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     await submit(fake, 'run bash then hold');
     await waitFor(() => h.admitted.length === 1);
     const opId = h.admitted[0] ?? '';
+    // Issue #453: the solo tree row opens on Ctrl-T.
+    fake.feed('\x14');
     // The bash call has ended (the tree row turns ✓): the model's second step
     // is the gated one, so the turn is still running.
     await waitFor(() => fake.writes.join('').includes('✓ bash'));

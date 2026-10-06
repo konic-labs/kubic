@@ -206,8 +206,13 @@ describe('a light theme on the status bar (issue #304)', () => {
     const before = new StatusBar(state).render(100).join('\n');
     setTuiTheme(createThemeFromPalette(LIGHT_PALETTE, 'truecolor'));
     const after = new StatusBar(state).render(100).join('\n');
-    expect(before).toContain('\u001b[38;2;255;0;77m');
-    expect(after).toContain('\u001b[38;2;208;0;63m');
+    // Issue #453: the line is painted on each palette's own bg1 surface.
+    expect(before).toContain(
+      createThemeFromPalette(DARK_PALETTE, 'truecolor').ui.open({ bg: 'bg1' }),
+    );
+    expect(after).toContain(
+      createThemeFromPalette(LIGHT_PALETTE, 'truecolor').ui.open({ bg: 'bg1' }),
+    );
     expect(after).not.toBe(before);
     expect(tuiTheme().level).toBe('truecolor');
   });

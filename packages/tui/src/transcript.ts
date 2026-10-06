@@ -245,7 +245,13 @@ class TranscriptDocument implements Component {
     const inline = this.inline?.(w);
     if (inline !== undefined) return inline;
     const theme = tuiTheme();
-    const out: string[] = this.welcome.map((line) => fit(line, w));
+    // Issue #453: welcome lines wrap rather than cut — the honest lane
+    // notice they carry is read whole.
+    const out: string[] = this.welcome.flatMap((line) =>
+      line === ''
+        ? ['']
+        : wrapTextWithAnsi(line, w).map((part) => fit(part, w)),
+    );
     const outputs = new Map<string, TranscriptEntry>();
     for (const cell of this.cells) {
       if (cell.kind === 'output' && cell.toolCallId !== undefined) {

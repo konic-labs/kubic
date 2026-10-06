@@ -103,10 +103,10 @@ describe('kubic tui seeds the thinking indicator from the boot (issue #225)', ()
     );
     await waitFor(() => fake.counts.started === 1);
     // The FIRST frame already carries the booted level — before the fix it
-    // read `thinking off` here until a turn refreshed it.
+    // read `off` here until a turn refreshed it.
     expect(boots).toHaveLength(1);
     expect(boots[0]?.thinking).toBe('high');
-    expect(fake.writes.join('')).toContain('thinking high');
+    expect(fake.writes.join('')).toContain('faux/deep · high');
     fake.feed('\x03');
     expect(await exit).toBe(0);
   });

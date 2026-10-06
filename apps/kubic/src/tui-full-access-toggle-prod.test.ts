@@ -87,7 +87,7 @@ describe('the TUI full-access toggle (issue #309)', () => {
     );
     await waitFor(() => fake.started === 1);
     // Enforced from the first frame.
-    await waitFor(() => fake.output().includes('approvals:on'));
+    await waitFor(() => fake.output().includes('[SOLO] approvals on'));
 
     // Alt+A asks: the dialog names the consequence and its deliberate key.
     fake.inject('\u001ba');
@@ -125,7 +125,7 @@ describe('the TUI full-access toggle (issue #309)', () => {
     expect(fake.writes.slice(before).join('')).not.toContain(
       'enable full access',
     );
-    expect(fake.output()).toContain('approvals:on');
+    expect(fake.output()).toContain('[SOLO] approvals on');
     expect(
       new FileApprovalStore(join(sessionsRoot, sessionId)).loadPosture()
         .fullAccess,
@@ -188,7 +188,7 @@ describe('the TUI full-access toggle (issue #309)', () => {
     // Esc cancels: still enforced, nothing written.
     fake.inject('\u001b');
     await waitFor(() => fake.output().includes('approvals: unchanged'));
-    expect(fake.output()).toContain('approvals:on');
+    expect(fake.output()).toContain('[SOLO] approvals on');
     expect(postureRows(workspace)).toHaveLength(0);
 
     fake.inject('\u0003');

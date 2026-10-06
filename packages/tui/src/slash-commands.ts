@@ -102,6 +102,13 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     argumentHint: 'on|off',
   },
   {
+    // Issue #453: the honest limits on demand — the permanent footer that
+    // carried them is gone (the header keeps the mode badge on every frame).
+    name: 'safety',
+    summary: 'what this mode does and does not protect',
+    usage: '/safety',
+  },
+  {
     name: 'diff',
     summary: 'the current run’s changes',
     usage: '/diff',

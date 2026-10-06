@@ -149,6 +149,23 @@ describe('first-party bundle startup gate (issue #93)', () => {
     expect(runs).toBe(1);
   });
 
+  it('continues from the tool calls a resumed session already spent (issue #440)', async () => {
+    const startup = await startFirstPartyExtensions({
+      ...options({ dir: true, manifest: MANIFEST_JSON }),
+      limits: { maxToolCalls: 3 },
+    });
+    const breaches: string[] = [];
+    const gate = budgetToolGate(startup, (limit) => breaches.push(limit), {
+      priorToolCalls: 2,
+    });
+    const call = gate.wrap(async () => 'ran', 'read') as (
+      ...args: unknown[]
+    ) => Promise<string>;
+    await expect(call()).resolves.toBe('ran');
+    await expect(call()).rejects.toThrow(ExtensionBudgetError);
+    expect(breaches).toEqual(['toolCalls']);
+  });
+
   it('lets tool calls through when the loaded budget has no tool-call limit', async () => {
     const startup = await startFirstPartyExtensions(
       options({ dir: true, manifest: MANIFEST_JSON }),

@@ -157,12 +157,15 @@ export function budgetLimitsOf(startup: BundleLoad): BudgetLimits {
 // throw), so a headless run can trip its guard and end budget_exhausted
 // instead of letting the model talk past the refusal. Lanes without the
 // callback (the TUI) keep refusal-as-tool-error semantics.
+// Issue #440: `priorToolCalls` is what a resumed session already spent, so
+// the allowance spans the session instead of restarting at every boot.
 export function budgetToolGate(
   startup: BundleLoad,
   onBreach?: (limit: string) => void,
+  options: { readonly priorToolCalls?: number } = {},
 ): ToolGateContribution {
   const limits = budgetLimitsOf(startup);
-  let attempts = 0;
+  let attempts = options.priorToolCalls ?? 0;
   return {
     id: 'extension-budget',
     wrap:

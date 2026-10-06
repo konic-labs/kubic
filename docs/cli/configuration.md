@@ -112,7 +112,9 @@ manager writes the resolved spec into the child's environment (and clears it
 when the worker has no budget, so an ambient value in the manager's own
 environment never leaks into a child the manager did not budget). It is not a
 config key and has no file-layer form; export it yourself to budget one solo
-run.
+run. The budget covers the session: a run that resumes one with `--session`
+continues from the tool calls, tokens and cost it already committed, and a
+breach is recorded in the run's trajectory (issue #440).
 
 ```sh
 KUBIC_BUDGET='{"maxToolCalls":20,"maxTokens":200000,"maxCostUsd":1.5}' kubic run -p "…"

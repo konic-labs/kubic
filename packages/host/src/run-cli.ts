@@ -247,7 +247,8 @@ export interface HeadlessRunResult {
   // `wallClock`), with the measured spend and the bound when the breach
   // site knew them (a post-turn ledger breach does; a mid-turn gate trip
   // names the limit only). Present exactly on `budget_exhausted` runs
-  // that tripped a configured solo budget.
+  // that tripped a configured solo budget or, since issue #440, a worker
+  // child's KUBIC_BUDGET.
   budgetBreach?: { limit: string; used?: number; max?: number };
 }
 

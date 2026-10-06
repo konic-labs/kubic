@@ -50,7 +50,10 @@ import {
   planUndo,
 } from '../../../packages/exec/src/journal-undo.js';
 import { createSecretCommandRunner } from '../../../packages/exec/src/secret-runner.js';
-import { budgetToolGate } from '../../../packages/extensions/src/runtime.js';
+import {
+  budgetLimitsOf,
+  budgetToolGate,
+} from '../../../packages/extensions/src/runtime.js';
 import type { BundleLoad } from '../../../packages/extensions/src/startup.js';
 import {
   type ApprovalRequest,
@@ -86,6 +89,7 @@ import {
   assembleModels,
 } from '../../../packages/host/src/models-cli.js';
 import {
+  readSessionToolCalls,
   readSessionUsage,
   type SessionUsageRow,
 } from '../../../packages/host/src/ops/cost/cost-cli.js';
@@ -952,6 +956,9 @@ export interface TuiLaneBoot {
   // ledger before the first frame, so a resumed session never renders
   // $0.00. Absent for a fresh session and for injected viewer boots.
   usageRows?: StatusUsageRow[];
+  // Issue #440 (§71): the session's committed tool calls when a tool-call
+  // budget is set, so the bar continues the count the gate continues.
+  toolCalls?: number;
   // Issue #347: the running model's context window and compaction threshold,
   // so the status bar's gauge can render from the first committed request.
   // Absent when the catalog does not know the window.
@@ -1813,6 +1820,16 @@ export async function bootTuiLane(
       model.provider,
       model.id,
     );
+    // Issue #440 (§71): a resumed session's committed tool calls, so the
+    // `maxToolCalls` gate and the bar continue its count instead of a fresh
+    // allowance at every boot. A fresh session has spent nothing, and a
+    // boot without that limit never reads.
+    const toolCalls =
+      sessionId !== undefined &&
+      options.extensions !== undefined &&
+      budgetLimitsOf(options.extensions).maxToolCalls !== undefined
+        ? await readSessionToolCalls(session.storage, context)
+        : 0;
     const booted = await bootSoloLane({
       session,
       models,
@@ -1958,7 +1975,11 @@ export async function bootTuiLane(
                 // operator watches it happen.
                 ...(options.extensions === undefined
                   ? []
-                  : [budgetToolGate(options.extensions)]),
+                  : [
+                      budgetToolGate(options.extensions, undefined, {
+                        priorToolCalls: toolCalls,
+                      }),
+                    ]),
               ],
             }),
         // §58 enterprise tool gate (issue #288): the same active-tools /
@@ -2161,6 +2182,7 @@ export async function bootTuiLane(
         : { pendingNotice: pendingNotices.join('; ') }),
       fullAccess,
       usageRows,
+      toolCalls,
       // Issue #238: the loader lines the TUI used to drop — skipped
       // skills as one boot notice (warning on stderr before the
       // alt-screen opens, via the runner below). A clean boot stays
@@ -3049,7 +3071,7 @@ export class TuiTurnRunner {
   // segment. Every `tool-start` names an attempt — the slot goes running
   // before the tool wrappers (including the §71 gate) execute — so a
   // gate-refused call counts exactly like the gate counted it.
-  private budgetToolCalls = 0;
+  private budgetToolCalls: number;
 
   constructor(
     app: TuiApp,
@@ -3066,6 +3088,9 @@ export class TuiTurnRunner {
     // Issue #246: the §50 debug sink; absent drops the lines (the fault
     // notice below still renders — it does not need the sink).
     debug?: DebugSink,
+    // Issue #440 (§71): the session's committed tool calls, so a resumed
+    // session's budget bar continues its count instead of restarting.
+    budgetToolCalls = 0,
   ) {
     this.app = app;
     this.loop = loop;
@@ -3075,6 +3100,7 @@ export class TuiTurnRunner {
     this.usageRows = [...usageRows];
     this.spans = spans;
     this.debug = debug;
+    this.budgetToolCalls = budgetToolCalls;
     this.projector = new PresentationProjector(app.presentationSeed());
   }
 
@@ -4408,6 +4434,8 @@ export async function runTuiCommand(
   // Issue #346: the resumed session's committed spend is on the bar from the
   // first frame, not only after the next turn's usage event.
   app.setUsage(boot.usageRows ?? []);
+  // Issue #440 (§71): and its committed tool calls are on the budget bar.
+  app.setBudgetSpend(boot.toolCalls ?? 0);
   // Issue #340 (§16.5): a resumed session's committed prompts seed the
   // editor's Up history before the screen opens. Best-effort: a read that
   // fails leaves the history empty, never the boot.
@@ -4573,6 +4601,7 @@ export async function runTuiCommand(
       boot.usageRows,
       boot.turnSpans,
       boot.debug,
+      boot.toolCalls,
     );
     // Issue #333 (review round 2): EVERY runner gets the loop's in-place queue
     // map, not just the initial one — `/new` and `/resume` rebuild the runner
@@ -5325,6 +5354,9 @@ export async function runTuiCommand(
           model: next.model,
           usage: next.usageRows ?? [],
         });
+        // Issue #440 (§71): the bar shows the next session's tool calls,
+        // never the previous session's count.
+        app.setBudgetSpend(next.toolCalls ?? 0);
         // Issue #276: the session now shown restores its own saved mode, or
         // the config default when it was never switched.
         app.setMode(next.savedMode ?? mode);

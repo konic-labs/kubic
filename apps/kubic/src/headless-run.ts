@@ -84,6 +84,7 @@ import {
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import {
   readSessionRunUsage,
+  readSessionToolCalls,
   readSessionUsage,
   totalSessionUsage,
 } from '../../../packages/host/src/ops/cost/cost-cli.js';
@@ -99,6 +100,7 @@ import {
   type OrchestratorBudget,
   parseWorkerBudgetEnv,
   RUN_EXIT_BUDGET,
+  type RunBudgetPrior,
 } from '../../../packages/host/src/orchestrator/approvals/budgets.js';
 import {
   createWorkerMailboxSeat,
@@ -641,10 +643,55 @@ function stoppedResult(
   );
   // Issue #285 (§71 observability): a tripped §71 gate names its limit
   // on the result, so the trajectory can record the breach without
-  // parsing the message. Other guards (e.g. --max-turns) carry no limit.
-  return error instanceof ExtensionBudgetError
+  // parsing the message. Issue #440: the worker child's KUBIC_BUDGET meter
+  // trips its own error, and names its limit the same way. Other guards
+  // (e.g. --max-turns) carry no limit.
+  return error instanceof ExtensionBudgetError ||
+    error instanceof BudgetExceededError
     ? { ...stopped, budgetBreach: { limit: error.limit } }
     : stopped;
+}
+
+// Issue #440 (§71): the limits a run started with, as its trajectory records
+// them: the solo `--budget`, a worker child's KUBIC_BUDGET, or under both
+// the tighter bound of each dimension. Undefined when neither is set.
+const BUDGET_LIMIT_KEYS = [
+  'maxTokens',
+  'maxCostUsd',
+  'maxRuntimeMs',
+  'maxToolCalls',
+] as const;
+
+function runBudgetLimits(
+  flag: SoloBudgetLimits | undefined,
+  worker: OrchestratorBudget | undefined,
+): SoloBudgetLimits | undefined {
+  if (flag === undefined && worker === undefined) return undefined;
+  const limits: SoloBudgetLimits = {};
+  for (const key of BUDGET_LIMIT_KEYS) {
+    const bounds = [flag?.[key], worker?.[key]].filter(
+      (bound): bound is number => bound !== undefined,
+    );
+    if (bounds.length > 0) limits[key] = Math.min(...bounds);
+  }
+  return limits;
+}
+
+// Issue #440 (§71): what a resumed session already spent (its billed tokens
+// and cost, and its committed tool calls), read from the run's own open
+// storage, so its budget continues instead of restarting.
+async function sessionSpend(
+  session: SessionHandle,
+  context: Context,
+): Promise<RunBudgetPrior> {
+  const totals = totalSessionUsage(
+    await readSessionUsage(session.storage, context),
+  );
+  return {
+    tokens: totals.input + totals.output,
+    costUsd: totals.costUsd,
+    toolCalls: await readSessionToolCalls(session.storage, context),
+  };
 }
 
 // §46 capture of the run's transcript (#400's readers): the live conversation
@@ -857,6 +904,8 @@ interface RunCapture {
   role?: string;
   /** §67 (issue #191): the manager's task, when this run was handed one. */
   task?: AgentTask;
+  /** Issue #440 (§71): the KUBIC_BUDGET a worker child ran under. */
+  workerBudget?: OrchestratorBudget;
   skills: string[];
   entries: unknown[];
   lane?: RunOutcome['lane'];
@@ -1033,25 +1082,14 @@ export async function runHeadlessPrompt(
   }
   // Issue #285 (§71 observability): the trajectory names the §71
   // budget the run started with, the measured spend and — on a tripped
-  // run — the breach. Unbounded runs carry no block at all.
+  // run — the breach. Issue #440: a worker child's KUBIC_BUDGET is recorded
+  // the same way. Unbounded runs carry no block at all.
+  const limits = runBudgetLimits(options.budget, capture.workerBudget);
   const trajectoryBudget =
-    options.budget === undefined
+    limits === undefined
       ? undefined
       : {
-          limits: {
-            ...(options.budget.maxTokens === undefined
-              ? {}
-              : { maxTokens: options.budget.maxTokens }),
-            ...(options.budget.maxCostUsd === undefined
-              ? {}
-              : { maxCostUsd: options.budget.maxCostUsd }),
-            ...(options.budget.maxRuntimeMs === undefined
-              ? {}
-              : { maxRuntimeMs: options.budget.maxRuntimeMs }),
-            ...(options.budget.maxToolCalls === undefined
-              ? {}
-              : { maxToolCalls: options.budget.maxToolCalls }),
-          },
+          limits,
           ...(settled.usage === undefined
             ? {}
             : {
@@ -1257,6 +1295,7 @@ async function runHeadlessPromptImpl(
     const invalid = error instanceof Error ? error.message : String(error);
     return finished('unassigned', 'usage', invalid, invalid);
   }
+  if (runBudget !== undefined) capture.workerBudget = runBudget;
   const root = deps.sessionsRoot ?? defaultSessionsRoot();
   const context = deps.context ?? BACKGROUND_CONTEXT;
   // §50 debug channel: `--debug` routes the span lines AND the run's
@@ -2016,6 +2055,21 @@ async function runHeadlessPromptImpl(
         `reconcile: overlap probe failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+    // Issue #440 (§71): a resumed session's budget continues from what the
+    // session already spent, so a resume never restarts the allowance. The
+    // gate and the worker child's meter start at its committed tool calls,
+    // and the meter at its billed tokens and cost too (the solo flag reads
+    // those from the same ledger after each turn). A fresh session has
+    // spent nothing, and a run without a budget never reads.
+    const gateToolLimit =
+      extensions === undefined
+        ? undefined
+        : budgetLimitsOf(extensions).maxToolCalls;
+    const spent =
+      options.sessionId !== undefined &&
+      (runBudget !== undefined || gateToolLimit !== undefined)
+        ? await sessionSpend(session, context)
+        : undefined;
     // Live facet consumption (issue #93): the loaded worker facet becomes a
     // real tool-wrap contribution on the solo lane's tool stack, so the
     // budget the CLI started with bounds every tool call. The contribution
@@ -2031,8 +2085,10 @@ async function runHeadlessPromptImpl(
       ...(extensions === undefined
         ? []
         : [
-            budgetToolGate(extensions, (limit) =>
-              tripGuard(new ExtensionBudgetError(limit)),
+            budgetToolGate(
+              extensions,
+              (limit) => tripGuard(new ExtensionBudgetError(limit)),
+              { priorToolCalls: spent?.toolCalls ?? 0 },
             ),
           ]),
     ];
@@ -2122,9 +2178,13 @@ async function runHeadlessPromptImpl(
     const budgetEnforcer =
       budgetPlan === undefined
         ? undefined
-        : createRunBudgetEnforcer(budgetPlan, (termination) => {
-            tripGuard(new BudgetExceededError(termination.limit));
-          });
+        : createRunBudgetEnforcer(
+            budgetPlan,
+            (termination) => {
+              tripGuard(new BudgetExceededError(termination.limit));
+            },
+            spent,
+          );
     // §37.4 request options (issue #257): the merged `[model]` tuning with
     // the run's role layered over it becomes this lane's `settings.stream`.
     // A task names its own role (a worker child's assignment); otherwise

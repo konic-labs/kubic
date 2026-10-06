@@ -93,8 +93,9 @@ file that no longer exists, or when a row's file has become reachable
   session journal through `diffEntries` into `setJournalChanges`; before that
   both panels always showed `no changes`); `approval-view.ts` through
   `approval-surface.ts`, which is the answer seat the installed policy consults
-  when a challenged call is deferred — the overlay the TUI was designed around
-  and the inline fallback both render from it.
+  when a challenged call is deferred (since issue #459 the ask renders as the
+  inline card, `approval-card.ts`; the old overlay and inline renderers were
+  removed with it).
 - Issue #106 executed all three of its rows: **wired**
   `packages/host/src/orchestrator/parallel/visibility.ts` (the live run builds
   the §49.1 tree line, the §50 workers-extra row — running/queued/cap — and

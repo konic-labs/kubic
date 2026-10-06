@@ -10,14 +10,10 @@
 // the next queued ask, and the keys that answer it. Pure over a UiTheme.
 
 import type { UiTheme } from '../../core/src/ui/style.js';
-import {
-  APPROVAL_COMMAND_PAGE_LINES,
-  type ApprovalAction,
-  type ApprovalViewRequest,
-} from './approval-view.js';
+import type { ApprovalAction, ApprovalViewRequest } from './approval-view.js';
 import { keyCap } from './chrome.js';
 import type { CellDisplay } from './transcript.js';
-import { wrapTextWithAnsi } from './tui-boundary.js';
+import { visibleWidth, wrapTextWithAnsi } from './tui-boundary.js';
 import {
   type DiffRow,
   parseDisplayDiff,
@@ -92,14 +88,42 @@ export interface ApprovalCardOptions {
   readonly explainKey: string;
 }
 
+// Issue #316: the card shows what will actually run. A command wraps across
+// rows; one page holds this many, and a taller command says which rows are
+// shown (`… lines a–b of n`) — the height is capped honestly, never by a
+// silent cut.
+export const APPROVAL_COMMAND_PAGE_LINES = 8;
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+// Issue #316: one command line as rows of at most `room` terminal COLUMNS,
+// cut exactly where the room ends — never at a space, so a row break never
+// hides one (`rm -rf /` + `tmp` reads the same as `rm -rf /tmp` under word
+// wrap). The unit is the grapheme cluster (a combining or emoji ZWJ sequence
+// is one unit) measured with pi-tui's own width; a unit wider than the room
+// still gets a row of its own — nothing is skipped.
+export function wrapByColumns(line: string, room: number): string[] {
+  const rows: string[] = [];
+  let row = '';
+  let used = 0;
+  for (const { segment } of graphemes.segment(line)) {
+    const cells = visibleWidth(segment);
+    if (used > 0 && used + cells > room) {
+      rows.push(row);
+      row = '';
+      used = 0;
+    }
+    row += segment;
+    used += cells;
+  }
+  rows.push(row);
+  return rows;
+}
+
 function commandRows(command: string, room: number): string[] {
   const rows: string[] = [];
   for (const line of command.split('\n')) {
-    if (line === '') {
-      rows.push('');
-      continue;
-    }
-    rows.push(...wrapTextWithAnsi(line, Math.max(1, room)));
+    rows.push(...(line === '' ? [''] : wrapByColumns(line, Math.max(1, room))));
   }
   return rows;
 }
@@ -233,13 +257,18 @@ export function renderApprovalCard(
   const escDeny = options.keys.deny.includes('escape')
     ? `${ui.fg('fg2')('esc = deny')} `
     : '';
-  let actions: string;
+  let parts: string[];
   if (!options.allowable) {
-    actions = `${ui.fg('warn')('the terminal is too short to show this command — enlarge it')}   ${key(cap('deny'), 'deny')}`;
+    parts = [
+      ui.fg('warn')(
+        'the terminal is too short to show this command — enlarge it',
+      ),
+      key(cap('deny'), 'deny'),
+    ];
   } else if (!options.armed) {
-    actions = ui.fg('fg2')('… keys unlock in a moment');
+    parts = [ui.fg('fg2')('… keys unlock in a moment')];
   } else {
-    actions = [
+    parts = [
       key(cap('allow-once'), 'allow once'),
       key(cap('allow-session'), 'allow for session'),
       key(cap('deny'), 'deny'),
@@ -250,15 +279,36 @@ export function renderApprovalCard(
           )
         : '',
       key(options.explainKey, 'explain'),
-    ]
-      .filter((part) => part !== '')
-      .join('    ');
+    ].filter((part) => part !== '');
   }
-  if (narrow) {
-    body.push(`${indent}${actions}`);
+  const gap = '    ';
+  const oneRow = `${indent}${parts.join(gap)}`;
+  if (narrow || visibleWidth(oneRow) + visibleWidth(escDeny) + 1 > inner) {
+    // Whole keys per row: a key is never cut off (a part wider than a row
+    // wraps on its own), and `esc = deny` takes the last row.
+    const keyRoom = Math.max(1, inner - indent.length);
+    let row = '';
+    for (const part of parts) {
+      const pieces =
+        visibleWidth(part) > keyRoom ? wrapTextWithAnsi(part, keyRoom) : [part];
+      for (const piece of pieces) {
+        if (row === '') {
+          row = piece;
+        } else if (
+          visibleWidth(row) + gap.length + visibleWidth(piece) <=
+          keyRoom
+        ) {
+          row += `${gap}${piece}`;
+        } else {
+          body.push(`${indent}${row}`);
+          row = piece;
+        }
+      }
+    }
+    if (row !== '') body.push(`${indent}${row}`);
     if (escDeny !== '') body.push(`${indent}${escDeny}`);
   } else {
-    body.push(leftRight(`${indent}${actions}`, escDeny, inner));
+    body.push(leftRight(oneRow, escDeny, inner));
   }
   const title = `${badge(ui, 'APPROVAL', 'waiting')}${ui.fg('warn')(' ━ ')}${ui.style({ fg: 'fg0', bold: true })(request.toolName)}${
     preview === undefined ? '' : ` ${previewCounts(ui, preview)}`

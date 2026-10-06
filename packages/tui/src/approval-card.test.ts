@@ -146,6 +146,38 @@ describe('approval card (issue #459; 02-A … 02-D)', () => {
     const trimmed = lines.map((line) => line.trimEnd());
     expect(trimmed).toContain(' ┃   ▲ destructive');
     expect(trimmed).toContain(' ┃   esc = deny');
+    // Every key is whole: the row wraps instead of cutting a key off.
+    const doc = trimmed.join('\n');
+    for (const hint of [
+      'a  allow once',
+      '^S  allow for session',
+      'd  deny',
+      '?  explain',
+    ]) {
+      expect(doc).toContain(hint);
+    }
+    expect(doc).not.toContain('…');
+  });
+
+  it('wraps the keys wherever one row cannot hold them', () => {
+    const long = { ...shell, command: Array(20).fill('step').join('\n') };
+    for (const width of [50, 64, 80]) {
+      const lines = renderApprovalCard(plain, long, width, base);
+      for (const line of lines) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+      const doc = lines.join('\n');
+      for (const hint of ['d  deny', 'v  next page', '?  explain']) {
+        expect(doc).toContain(hint);
+      }
+    }
+    // A terminal too short to allow still shows the one key that acts.
+    const short = renderApprovalCard(plain, shell, 50, {
+      ...base,
+      allowable: false,
+    }).join('\n');
+    expect(short).toContain('d  deny');
+    expect(short).toContain('enlarge it');
   });
 
   it('maps capabilities to plain reasons, unknown ones to their name', () => {

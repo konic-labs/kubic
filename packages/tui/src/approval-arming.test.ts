@@ -11,7 +11,6 @@ import {
   APPROVAL_QUIET_MS,
   APPROVAL_REPEAT_MS,
   type ApprovalViewRequest,
-  renderApprovalLines,
 } from './approval-view.js';
 import { createTuiApp } from './tui-app.js';
 
@@ -194,18 +193,6 @@ describe('the overlay captures input (issue #315)', () => {
     await expect(pending).resolves.toMatchObject({ approved: false });
     app.handleInput('x');
     expect(app.editor.getText()).toBe('add x');
-  });
-
-  it('renders dimmed hints before arming and the live keys after', () => {
-    const before = renderApprovalLines(REQUEST, 72, { armed: false });
-    const after = renderApprovalLines(REQUEST, 72, { armed: true });
-    expect(before.at(-1)).toMatchInlineSnapshot(
-      `"… keys unlock in a moment · [Esc] deny now"`,
-    );
-    expect(after.at(-1)).toMatchInlineSnapshot(
-      `"[a] allow once   [Ctrl-S] allow session   [d]/[Esc] deny"`,
-    );
-    expect(before.slice(0, -1)).toEqual(after.slice(0, -1));
   });
 
   it('the card follows the surface arming state (issue #459)', () => {

@@ -255,8 +255,8 @@ credential path raises the credential trigger, issue #275), filesystem
 `full` as `workspace-write`, git `full` as `workspace`.
 
 A destructive or network-raising call needs an approval. `kubic run` has
-no TTY, and the TUI approval overlay has not landed, so a challenged call
-is **refused rather than executed**, and the run ends `approval_denied`
+no TTY to ask on and no approval card (the card is the TUI's), so a
+challenged call is **refused rather than executed**, and the run ends `approval_denied`
 (exit 4) with the refusal named on the `error:` line. Both labels map to
 exit 4 — the `status` string is the honest half: `approval_denied` for a
 recorded refusal (no installed approval surface, a policy route, a
@@ -1555,7 +1555,7 @@ the same secret-shape table the audit backstop uses (`sk-…`, `AKIA…`,
 header or a bare `bearer`/`basic` scheme, a `-u`/`--user`/`--proxy-user`
 `user:password` operand, and URL userinfo (`https://user:pw@host`) — and, when
 they shorten a command, say so: `… (+N chars)`. The narrow redaction is what
-the approval dialog's `command` field shows, and the same field in an
+the approval card's command shows, and the same field in an
 orchestrator worker ask — both carry the full command to the seat that decides,
 with the operator still seeing the host and the flag. The summary's broad
 redaction is the safe over-redacting one.

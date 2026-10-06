@@ -202,6 +202,7 @@ import {
   ProcessTerminal,
   parseKey,
 } from '../../../packages/tui/src/tui-boundary.js';
+import { loadHighlighter } from '../../../packages/tui/src/ui/highlight.js';
 import {
   DEFAULT_RESERVE_TOKENS,
   effectiveReserveTokens,
@@ -4107,6 +4108,8 @@ export async function runTuiCommand(
     approvalSurface: surface,
     keys,
     ...(boot.listFiles === undefined ? {} : { listFiles: boot.listFiles }),
+    // Issue #458: file references link under the workspace root.
+    fileRoot: boot.cwd ?? process.cwd(),
     // Issue #183 (§29.4): the boot's skill names complete `/skill:` in the
     // editor's popup.
     ...(boot.skillInvocation === undefined
@@ -4163,6 +4166,9 @@ export async function runTuiCommand(
     if (boot.approvalsSkipped !== undefined)
       app.setApprovalsSkipped(boot.approvalsSkipped());
   };
+  // Issue #458: code highlighting's grammars load once, before the first
+  // frame — the other commands never pay for them.
+  await loadHighlighter();
   const terminal = deps.createTerminal();
   // Issue #311: the Ctrl-O / Ctrl-R panels read the session journal the
   // boot created — loaded once now (a resumed session shows its earlier

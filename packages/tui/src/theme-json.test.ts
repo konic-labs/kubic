@@ -222,8 +222,12 @@ describe('a light theme on the status bar (issue #304)', () => {
   it('reaches the pi-tui per-component theme interfaces', () => {
     const theme = createThemeFromPalette(LIGHT_PALETTE, 'truecolor');
     setTuiTheme(theme);
+    // Issue #458: headings fg0 bold, links info — on the light palette.
     expect(markdownThemeFor(theme).heading('x')).toBe(
-      '\u001b[1;38;2;208;0;63mx\u001b[22;39m',
+      '\u001b[1;38;2;24;24;27mx\u001b[22;39m',
+    );
+    expect(markdownThemeFor(theme).link('x')).toBe(
+      '\u001b[38;2;29;78;216mx\u001b[39m',
     );
     // Issue #454: the editor's autocomplete list takes the palette (its
     // rules only carry the frame's marker).

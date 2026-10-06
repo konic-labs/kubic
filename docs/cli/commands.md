@@ -1277,7 +1277,14 @@ a large workspace pays it (and the screen pauses) after every turn that used
   (issue #455; `docs/ui/01-session.html`). Your prompt is a full-width block
   with a red `▌` edge and `you · HH:MM:SS` on the right (it shows the moment
   you submit, before the lane commits it); assistant prose renders as
-  markdown behind a `◆` mark. Each tool call is one card: a header with its
+  markdown behind a `◆` mark (issue #458): bold headings, inline code on a
+  raised surface, `•` bullets, quotes behind a `│`, and fenced code in a
+  `┌ ts` / `└` frame with syntax highlighting (highlight.js grammars via
+  `lowlight`, loaded when the TUI starts; a block over 2,000 lines or
+  200 KB, or in an unknown language, stays plain). A path to a file in the
+  project — `src/cart.js:10`, in prose or inline code — becomes a clickable
+  `file://` link on terminals that support OSC 8 hyperlinks (elsewhere it
+  stays text). Each tool call is one card: a header with its
   state (`●` green done, red failed; the accent spinner and
   `running · 3.00s` while it runs; `◆ … waiting for approval` while an
   approval holds it), the tool name, its target (the command or path) and,

@@ -33,6 +33,16 @@ Their transitive dependencies are MIT as well; `scripts/license.test.mjs`
 fails CI if any shipped (non-dev) package in `package-lock.json` carries a
 non-permissive licence.
 
+## TUI code highlighting (runtime dependency)
+
+Fenced code in `kubic tui` answers is highlighted with (issue #458):
+
+- `lowlight` (MIT) — highlight.js grammars as a syntax tree, loaded when the
+  TUI starts
+- `highlight.js` (BSD-3-Clause, a dependency of `lowlight`) — the grammars
+
+Both ship their licence texts under `node_modules/`.
+
 The `pi/` read-only reference clone used during design (see `README.md`) is
 upstream code, gitignored, and not part of Kubic — it must be absent from any
 published tree (see `docs/publish-checklist.md`).

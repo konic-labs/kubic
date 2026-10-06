@@ -149,6 +149,7 @@ import {
   truncateToWidth,
   wrapTextWithAnsi,
 } from './tui-boundary.js';
+import { fileUrl } from './ui/file-links.js';
 import { renderKeyHintRow } from './ui/key-hints.js';
 
 // The editor footer wraps to at most this many rows.
@@ -273,6 +274,9 @@ export interface TuiAppSeed {
   // Issue #453: the honest lane notice for a mode, shown in the welcome
   // block ('' when suppressed). The composition root owns the text.
   readonly laneNotice?: (mode: StatusMode) => string;
+  // Issue #458: the project's absolute root; with `listFiles`, file
+  // references in answers link to `file://<root>/<path>`.
+  readonly fileRoot?: string;
 }
 
 // §66 replication: the TUI holds no authority — it reads the replicated
@@ -812,6 +816,27 @@ function treeWorkersOf(
 
 export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const keys = seed.keys ?? DEFAULT_KEY_REGISTRY;
+  // Issue #458: project paths that exist get a `file://` link. The lister
+  // is the @-mention one (cached by the composition root); the set is
+  // rebuilt only when it hands back a new list.
+  const listFiles = seed.listFiles;
+  const fileRoot = seed.fileRoot;
+  const projectFileUrl =
+    listFiles === undefined || fileRoot === undefined
+      ? undefined
+      : (() => {
+          let source: readonly string[] | undefined;
+          let known = new Set<string>();
+          return (path: string): string | undefined => {
+            const files = listFiles();
+            if (files !== source) {
+              source = files;
+              known = new Set(files);
+            }
+            const clean = path.replace(/^\.\//u, '');
+            return known.has(clean) ? fileUrl(fileRoot, clean) : undefined;
+          };
+        })();
   // Issue #453: solo starts with the tree row hidden (collapsed); Ctrl-T
   // opens it. The orchestrator shows it (collapsed, it is one summary line).
   const tree = new AgentTreeView(undefined, {
@@ -834,6 +859,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     // and the expand key's real cap.
     toolState: (toolCallId: string) => toolStateOf(toolCallId),
     expandKey: () => keyCap(keys.label('transcript.expand')),
+    ...(projectFileUrl === undefined ? {} : { fileUrl: projectFileUrl }),
   });
   // Issue #227: the live model label (seed = the boot's model, replaced by
   // `/model`). The header, welcome block and status bar all read it, so one

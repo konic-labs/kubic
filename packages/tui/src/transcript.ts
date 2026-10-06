@@ -15,6 +15,7 @@ import { type TuiTheme, tuiTheme } from './theme.js';
 import { formatToolDuration, renderToolCard } from './tool-card.js';
 import type { Component } from './tui-boundary.js';
 import {
+  getCapabilities,
   Markdown,
   type MarkdownTheme,
   ScrollView,
@@ -22,6 +23,8 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from './tui-boundary.js';
+import { linkFileReferences } from './ui/file-links.js';
+import { highlightCode } from './ui/highlight.js';
 import { leftRight } from './ui/line.js';
 import { fillLine } from './ui/surface.js';
 
@@ -207,22 +210,42 @@ export function formatPromptTime(timestamp: number): string {
 // confused with a committed prompt row (`›`).
 export const QUEUED_LABEL = 'queued:';
 
+// Issue #458 (01-I): markdown on the design tokens — calm headings, inline
+// code on bg2, fenced code in a fg3 `┌ lang` / `└` frame with highlighted
+// lines behind a `│` gutter, info links, fg2 `•` bullets, fg3 quote gutters.
 export function markdownThemeFor(theme: TuiTheme): MarkdownTheme {
+  const ui = theme.ui;
+  // Pi draws a fence's opening and closing border through one hook; the two
+  // calls alternate, and a fence with no language passes the same text both
+  // times, so the side is tracked here.
+  let inFence = false;
   return {
-    heading: theme.accentBold,
-    link: theme.underline,
-    linkUrl: theme.muted,
-    code: theme.code,
-    codeBlock: theme.code,
-    codeBlockBorder: theme.muted,
-    quote: theme.italic,
-    quoteBorder: theme.accent,
-    hr: theme.muted,
-    listBullet: theme.accent,
-    bold: theme.bold,
-    italic: theme.italic,
-    strikethrough: theme.strike,
-    underline: theme.underline,
+    heading: ui.style({ fg: 'fg0', bold: true }),
+    link: ui.fg('info'),
+    linkUrl: ui.fg('fg2'),
+    code: (text: string): string =>
+      ui.style({ fg: 'fg0', bg: 'bg2' })(` ${text} `),
+    codeBlock: ui.fg('fg1'),
+    codeBlockBorder: (text: string): string => {
+      const opening = !inFence;
+      inFence = !inFence;
+      const language = text.replace(/^`+/u, '').trim();
+      return ui.fg('fg3')(
+        opening ? (language === '' ? '┌' : `┌ ${language}`) : '└',
+      );
+    },
+    codeBlockIndent: ui.fg('fg3')('│ '),
+    highlightCode: (code: string, language?: string): string[] =>
+      highlightCode(ui, code, language),
+    quote: ui.fg('fg1'),
+    quoteBorder: ui.fg('fg3'),
+    hr: ui.fg('fg3'),
+    listBullet: (marker: string): string =>
+      ui.fg('fg2')(marker.replace(/^[-*+](?=\s|$)/u, '•')),
+    bold: ui.style({ fg: 'fg0', bold: true }),
+    italic: ui.style({ fg: 'fg1', italic: true }),
+    strikethrough: ui.style({ fg: 'fg2', strike: true }),
+    underline: ui.style({ underline: true }),
   };
 }
 
@@ -279,6 +302,8 @@ class TranscriptDocument implements Component {
   // key's cap for the card footers.
   toolState: ((toolCallId: string) => ToolCallState | undefined) | undefined;
   expandKey: (() => string) | undefined;
+  // Issue #458: a project file's `file://` URL (undefined: not a file).
+  fileUrl: ((path: string) => string | undefined) | undefined;
   private readonly markdownCache = new Map<string, Markdown>();
   // Issue #298: the text each cached Markdown was built from, and the final
   // rendered lines of each cell. pi-tui's `setText` invalidates
@@ -338,7 +363,19 @@ class TranscriptDocument implements Component {
     const key = `${theme.level}\u0000${cell.id}`;
     let md = this.markdownCache.get(key);
     if (md === undefined) {
-      md = new Markdown(cell.markdown, 0, 0, markdownThemeFor(theme));
+      // Issue #458: file references become OSC 8 links — only where the
+      // terminal opens them (Pi's fallback would print every URL inline).
+      const resolve = this.fileUrl;
+      md = new Markdown(
+        cell.markdown,
+        0,
+        0,
+        markdownThemeFor(theme),
+        undefined,
+        resolve !== undefined && getCapabilities().hyperlinks
+          ? { transform: (text: string) => linkFileReferences(text, resolve) }
+          : undefined,
+      );
       this.markdownCache.set(key, md);
       this.parses += 1;
     } else if (this.markdownText.get(key) !== cell.markdown) {
@@ -778,6 +815,8 @@ export interface TranscriptViewOptions {
   // approval) and the expand key's cap for the card footers.
   readonly toolState?: (toolCallId: string) => ToolCallState | undefined;
   readonly expandKey?: () => string;
+  // Issue #458: resolves a project path to its `file://` URL.
+  readonly fileUrl?: (path: string) => string | undefined;
 }
 
 // Issue #297: two cells are the same entry when every field the transcript
@@ -804,6 +843,7 @@ export function createTranscriptView(
   document.inline = options.inline;
   document.toolState = options.toolState;
   document.expandKey = options.expandKey;
+  document.fileUrl = options.fileUrl;
   const scroll = new ScrollView(document, {
     follow: 'end',
     primary: true,

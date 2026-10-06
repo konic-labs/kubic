@@ -74,6 +74,19 @@ VStack root, rows in order (issue #453 order; optional slots in italics):
 snapshot test); `renderLayout(root, width)` renders headless (pure, no
 terminal). Slots are `Component`s; this module owns arrangement only.
 
+### Markdown, highlighting and file links (issue #458)
+
+`markdownThemeFor(theme)` maps Pi's `MarkdownTheme` onto the tokens and
+plugs `ui/highlight.ts` into its `highlightCode` hook: lowlight's scopes on
+calm roles (keywords fg0 bold, strings add, numbers warn, comments fg2
+italic, titles info, types fg1), the grammars loaded once by
+`loadHighlighter()` at TUI boot, plain beyond `HIGHLIGHT_MAX_LINES` /
+`HIGHLIGHT_MAX_CHARS` or on any error. `ui/file-links.ts`
+(`linkFileReferences`, `fileUrl`) rewrites project paths into markdown links
+through Pi's `transform` option — only when `getCapabilities().hyperlinks`,
+so Pi emits OSC 8 instead of printing the URL; the app resolves paths
+against `TuiAppSeed.listFiles` + `fileRoot`.
+
 ### Editor frame (`editor-frame.ts`, issue #454)
 
 `frameEditorLines(ui, lines, width, options)` closes Pi's editor into the

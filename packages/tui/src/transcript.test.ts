@@ -18,7 +18,12 @@ import {
   replayTranscript,
   TOOL_OUTPUT_PREVIEW_LINES,
 } from './transcript.js';
-import { Text, visibleWidth } from './tui-boundary.js';
+import {
+  resetCapabilitiesCache,
+  setCapabilities,
+  Text,
+  visibleWidth,
+} from './tui-boundary.js';
 
 afterEach(() => {
   setTuiTheme(createTuiTheme('none'));
@@ -804,5 +809,91 @@ describe('thinking and turn receipts (issue #457; 01-F, 01-J)', () => {
       60,
     );
     expect(narrow).toBe(left);
+  });
+});
+
+describe('markdown on the tokens (issue #458; 01-I)', () => {
+  const answer = [
+    '# Fixed',
+    '',
+    'Use `existing.qty += qty` in **src/cart.js:10**.',
+    '',
+    '- one',
+    '- two',
+    '',
+    '```ts',
+    'const total = 42;',
+    '```',
+    '',
+    '> quoted',
+  ].join('\n');
+
+  const render = (width: number): string[] => {
+    const view = createTranscriptView();
+    view.applyLaneSnapshot(
+      { laneId: 'l' },
+      [{ id: 't', kind: 'text', markdown: answer }],
+      1,
+    );
+    return view.render(width);
+  };
+
+  it('frames fenced code, bullets lists and pads inline code', () => {
+    const doc = render(80).join('\n');
+    expect(doc).toContain('  ◆ Fixed');
+    expect(doc).toContain('Use  existing.qty += qty  in src/cart.js:10.');
+    expect(doc).toContain('    • one');
+    expect(doc).toContain('    ┌ ts');
+    expect(doc).toContain('    │ const total = 42;');
+    expect(doc).toContain('    └');
+  });
+
+  it('highlights fenced code at colour', async () => {
+    const { loadHighlighter } = await import('./ui/highlight.js');
+    await loadHighlighter();
+    const theme = createTuiTheme('truecolor');
+    setTuiTheme(theme);
+    const doc = render(80).join('\n');
+    expect(doc).toContain(theme.ui.fg('warn')('42'));
+    expect(doc).toContain(
+      theme.ui.style({ fg: 'fg0', bg: 'bg2' })(' existing.qty += qty '),
+    );
+  });
+});
+
+describe('file links in answers (issue #458)', () => {
+  afterEach(() => {
+    resetCapabilitiesCache();
+  });
+
+  const view = () => {
+    const transcript = createTranscriptView({
+      fileUrl: (path) =>
+        path === 'src/cart.js' ? 'file:///work/pg/src/cart.js' : undefined,
+    });
+    transcript.applyLaneSnapshot(
+      { laneId: 'l' },
+      [{ id: 't', kind: 'text', markdown: 'See src/cart.js:10 now.' }],
+      1,
+    );
+    return transcript;
+  };
+
+  it('links project files where the terminal supports hyperlinks', () => {
+    setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+    const lines = view().render(80);
+    const line = lines.find((row) => row.includes('src/cart.js')) ?? '';
+    expect(line).toContain('\u001b]8;;file:///work/pg/src/cart.js');
+    // The link is zero width: the row reads exactly like the text.
+    expect(visibleWidth(line)).toBe(
+      visibleWidth('  ◆ See src/cart.js:10 now.'),
+    );
+  });
+
+  it('leaves the text alone where it does not', () => {
+    setCapabilities({ images: null, trueColor: false, hyperlinks: false });
+    const doc = view().render(80).join('\n');
+    expect(doc).toContain('See src/cart.js:10 now.');
+    expect(doc).not.toContain('file://');
   });
 });

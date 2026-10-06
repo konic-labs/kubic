@@ -238,7 +238,7 @@ describe('kubic tui: the audit row names the model the lane runs (issues #148, #
     type(fake, '/model alt/m1');
     await waitFor(() => fake.frame.includes('model: alt/m1'));
     type(fake, 'clean up');
-    await waitFor(() => fake.frame.includes('Approval required'));
+    await waitFor(() => fake.frame.includes('APPROVAL'));
     fake.feed('d');
     await waitFor(() => fake.frame.includes('after deny'));
     fake.feed('\x03');
@@ -273,7 +273,7 @@ describe('kubic tui: the audit row names the model the lane runs (issues #148, #
     );
     await waitFor(() => fake.counts.started === 1);
     type(fake, 'clean up');
-    await waitFor(() => fake.frame.includes('Approval required'));
+    await waitFor(() => fake.frame.includes('APPROVAL'));
     fake.feed('d');
     await waitFor(() => fake.frame.includes('after deny'));
     fake.feed('\x03');

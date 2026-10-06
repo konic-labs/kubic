@@ -16,7 +16,7 @@ import {
   approvalOverlayWidth,
   renderApprovalLines,
 } from './approval-view.js';
-import { createTuiApp } from './tui-app.js';
+import { CARD_CHROME_ROWS, createTuiApp } from './tui-app.js';
 import { visibleWidth } from './tui-boundary.js';
 
 const PREFIX = 'command: ';
@@ -93,10 +93,19 @@ describe('approval dialog command display (issue #316)', () => {
     expect(lines).toContain('summary: outside-write: write /etc/hosts');
   });
 
-  it('control characters in the command are sanitized in the dialog', async () => {
+  it('control characters in the command are sanitized in the card', async () => {
     const surface = createApprovalSurface({ armingMs: 0 });
-    const pending = surface.ask(request('echo \u001b[2Jhi\u0007; rm -rf x'));
-    const body = surface.renderOverlayBody(80).join('\n');
+    const app = createTuiApp({
+      sessionId: 's',
+      model: 'm',
+      mode: 'solo',
+      approvalsSkipped: false,
+      approvalSurface: surface,
+    });
+    const pending = app.requestApproval(
+      request('echo \u001b[2Jhi\u0007; rm -rf x'),
+    );
+    const body = app.render(80).join('\n');
     // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting none survive
     expect(body).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/);
     expect(body).toContain('rm -rf x');
@@ -115,12 +124,12 @@ describe('approval dialog command display (issue #316)', () => {
       approvalSurface: surface,
     });
     const pending = app.requestApproval(request(long));
-    expect(surface.renderOverlayBody(80).join('\n')).toContain('step-0');
+    expect(app.render(80).join('\n')).toMatch(/\bstep-0(?!\d)/);
     expect(app.handleInput('v').consumed).toBe(true);
     expect(app.hasPendingApproval()).toBe(true);
-    const paged = surface.renderOverlayBody(80).join('\n');
+    const paged = app.render(80).join('\n');
     expect(paged).toContain(`step-${APPROVAL_COMMAND_PAGE_LINES}`);
-    expect(paged).not.toContain('step-0\n');
+    expect(paged).not.toMatch(/\bstep-0(?!\d)/);
     expect(app.editor.getText()).toBe('');
     surface.cancelPending();
     await pending;
@@ -461,7 +470,7 @@ describe('approval dialog fits the overlay height (issue #316)', () => {
     expect(approvalOverlayRows(0)).toBe(1);
   });
 
-  it('the overlay the app shows follows the terminal it is composited on', () => {
+  it('the card pages the command at its fixed page size (issue #459)', () => {
     const surface = createApprovalSurface({ armingMs: 0 });
     const app = createTuiApp({
       sessionId: 's',
@@ -470,48 +479,12 @@ describe('approval dialog fits the overlay height (issue #316)', () => {
       approvalsSkipped: false,
       approvalSurface: surface,
     });
-    const shown: Array<{ render: (w: number) => string[] }> = [];
-    let rows = 12;
-    app.attachApprovalOverlay({
-      terminal: {
-        columns: 100,
-        get rows() {
-          return rows;
-        },
-      },
-      showOverlay: (component) => {
-        shown.push(component as { render: (w: number) => string[] });
-        return { unfocus: () => {}, hide: () => {} };
-      },
-    });
-    void app.requestApproval(request(PADDED));
-    const short = shown[0]?.render(70) ?? [];
-    expect(short).toHaveLength(7);
-    expect(short.at(-1)).toContain('[a] allow once');
-    // A taller terminal is read on the next frame: the whole command fits.
-    rows = 30;
-    expect(shown[0]?.render(70)).toHaveLength(11);
-    surface.cancelPending();
-  });
-
-  it('a host that exposes no terminal keeps the fixed page size', () => {
-    const surface = createApprovalSurface({ armingMs: 0 });
-    const app = createTuiApp({
-      sessionId: 's',
-      model: 'm',
-      mode: 'solo',
-      approvalsSkipped: false,
-      approvalSurface: surface,
-    });
-    const shown: Array<{ render: (w: number) => string[] }> = [];
-    app.attachApprovalOverlay({
-      showOverlay: (component) => {
-        shown.push(component as { render: (w: number) => string[] });
-        return { unfocus: () => {}, hide: () => {} };
-      },
-    });
-    void app.requestApproval(request(PADDED));
-    expect(shown[0]?.render(70)).toHaveLength(11);
+    const long = Array.from({ length: 20 }, (_, i) => `step-${i}`).join('\n');
+    void app.requestApproval(request(long));
+    const doc = app.render(100).join('\n');
+    expect(doc).toContain('$ step-0');
+    expect(doc).toContain(`… lines 1–${APPROVAL_COMMAND_PAGE_LINES} of 20`);
+    expect(doc).not.toContain(`step-${APPROVAL_COMMAND_PAGE_LINES}\n`);
     surface.cancelPending();
   });
 });
@@ -563,12 +536,13 @@ describe('a terminal too short to show the command cannot allow it (issue #316)'
     };
   }
 
-  it('a and Ctrl-S are inert on a 9-row terminal, and the dialog says why', async () => {
-    const { app, shown, advance } = setup({ rows: 9, columns: 100 });
+  it('a and Ctrl-S are inert on a 9-row terminal, and the card says why', async () => {
+    const { app, advance } = setup({ rows: 9, columns: 100 });
     const pending = app.requestApproval(REQUEST);
-    const rendered = shown[0]?.render(70) ?? [];
-    expect(rendered.length).toBeLessThanOrEqual(approvalOverlayRows(9));
-    expect(rendered[0]).toBe('Too short to show this command — [d]/[Esc] deny');
+    // Issue #459: the card itself says the terminal is too short.
+    expect(app.render(100).join('\n')).toContain(
+      'the terminal is too short to show this command',
+    );
     advance(APPROVAL_QUIET_MS * 2);
     app.handleInput('a');
     advance(APPROVAL_QUIET_MS * 2);
@@ -588,14 +562,14 @@ describe('a terminal too short to show the command cannot allow it (issue #316)'
   });
 
   it('growing the terminal unlocks allow after the quiet period', async () => {
-    const { app, term, shown, advance } = setup({ rows: 9, columns: 100 });
+    const { app, term, advance } = setup({ rows: 9, columns: 100 });
     const pending = app.requestApproval(REQUEST);
     advance(APPROVAL_QUIET_MS * 2);
     app.handleInput('a');
     expect(app.hasPendingApproval()).toBe(true);
-    term.rows = 30;
+    term.rows = 40;
     advance(APPROVAL_QUIET_MS);
-    expect(shown[0]?.render(70).at(-1)).toContain('[a] allow once');
+    expect(app.render(100).join('\n')).toContain('a  allow once');
     app.handleInput('a');
     await expect(pending).resolves.toEqual({
       approved: true,
@@ -618,17 +592,27 @@ describe('a terminal too short to show the command cannot allow it (issue #316)'
     await expect(pending).resolves.toMatchObject({ approved: false });
   });
 
-  it('a terminal exactly tall enough to show the command allows normally', async () => {
-    // 10 rows -> 6 overlay rows: 4 fixed + 1 command row + the marker.
-    const { app, advance } = setup({ rows: 10, columns: 100 });
+  it('a terminal exactly tall enough for the card allows normally', async () => {
+    // Issue #459: the card and CARD_CHROME_ROWS (header, status, hints and
+    // three transcript rows) must fit; one row less keeps allow inert.
+    const { app, term, advance } = setup({ rows: 60, columns: 100 });
     const pending = app.requestApproval(REQUEST);
+    const frame = app.render(100);
+    const top = frame.findIndex((line) => line.startsWith(' ┏'));
+    const bottom = frame.findIndex((line) => line.startsWith(' ┗'));
+    const cardRows = bottom - top + 1;
+    term.rows = cardRows + CARD_CHROME_ROWS - 1;
     advance(APPROVAL_ARMING_MS);
+    app.handleInput('a');
+    expect(app.hasPendingApproval()).toBe(true);
+    term.rows = cardRows + CARD_CHROME_ROWS;
+    advance(APPROVAL_QUIET_MS);
     app.handleInput('a');
     await expect(pending).resolves.toMatchObject({ approved: true });
   });
 
-  it('below 80 columns the inline slot has no height cap, so allow works', async () => {
-    const { app, advance } = setup({ rows: 5, columns: 60 });
+  it('a narrow terminal shows the card and judges its fit the same way', async () => {
+    const { app, advance } = setup({ rows: 40, columns: 60 });
     const pending = app.requestApproval(REQUEST);
     advance(APPROVAL_ARMING_MS);
     app.handleInput('a');

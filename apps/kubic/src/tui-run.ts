@@ -4110,6 +4110,8 @@ export async function runTuiCommand(
     ...(boot.listFiles === undefined ? {} : { listFiles: boot.listFiles }),
     // Issue #458: file references link under the workspace root.
     fileRoot: boot.cwd ?? process.cwd(),
+    // Issue #459: the workspace as the approval card names it.
+    cwdLabel: tildePath(boot.cwd ?? process.cwd()),
     // Issue #183 (§29.4): the boot's skill names complete `/skill:` in the
     // editor's popup.
     ...(boot.skillInvocation === undefined
@@ -6152,4 +6154,11 @@ export async function runTuiCommand(
   await exited;
   setTuiTheme(previousTheme);
   return exitCode;
+}
+
+// Issue #459: a path under the home directory, written `~/…`.
+export function tildePath(path: string, home: string = homedir()): string {
+  if (home === '' || home === '/') return path;
+  if (path === home) return '~';
+  return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
 }

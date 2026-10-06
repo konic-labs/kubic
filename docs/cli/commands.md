@@ -718,7 +718,7 @@ starvation-safe — and start when a settled worker releases its slot. §45's
 recorded in [design drift](../design-drift.md).
 
 **Requesting more workers than the cap asks** (issue #277; §41.1). On a run
-with a user attached (a TTY, or the TUI's own overlay) `--agents` naming more
+with a user attached (a TTY, or the TUI's own approval card) `--agents` naming more
 workers than the resolved cap raises ONE `spawn-agents` ask before anything
 spawns, naming the requested count, the cap and the excess worker ids. The
 verdict is a §60 row (`trigger:spawn-agents`, mode orchestrator): approving
@@ -1045,7 +1045,7 @@ is the `cli` layer of the one config load (never patched over the projected
 pin), so a frozen enterprise `[model]` beats it — announced by one stderr
 note at boot — exactly as it does for `kubic run`. A session left with pending work
 by a crashed run (issue #147) has it durably aborted at boot — its
-approvals would need the overlay, which is not on screen yet, and the
+approvals would need the approval card, which is not on screen yet, and the
 operator is present to re-send — and the notice row names the outcome
 (`pending work: <kind> <id> (<status>) aborted after an
 interrupted run`) from the first render, together with the prompt the dead
@@ -1087,10 +1087,10 @@ approval ask. Each decision lands in the §60 ledger with the session id
 and the model the lane runs **when the ask resolves** (`provider/id`) —
 after the stored-model rule of a `--session` resume and after any `/model`
 switch, never the pre-boot pick — the same audit identity the headless
-runner records. A challenged call surfaces the approval overlay — the
+runner records. A challenged call surfaces the approval card — the
 interactive path can actually collect a verdict on it — and an unanswered
 ask denies on the same bounded wait. That bound also **withdraws the
-question** (issue #232): when it elapses the dialog for exactly that ask
+question** (issue #232): when it elapses the card for exactly that ask
 closes, the next queued ask takes the screen, and a decision pressed later
 settles the next ask — never the one nobody is waiting for anymore.
 
@@ -1116,7 +1116,7 @@ non-repo message on stderr as one `error: …` line, and exits **5** — it
 never falls back to solo. Solo sessions never pay the git probe.
 
 Worker approval asks (a worker's challenged call it cannot answer itself)
-route to the same approval overlay as a solo challenge: the dialog names the
+route to the same approval card as a solo challenge: the card names the
 worker and the full command, and the decision is written back to the run's
 mailbox, which is what unblocks the worker's bounded wait. A denied ask ends
 that worker's step (exit 4 on the CLI path) instead of hanging. The run's
@@ -1131,7 +1131,7 @@ a session id that already has state (`session_exists`, exit 2), so a prompt can
 never reuse an earlier prompt's id. List or dispose of them with
 `kubic clean` (`--session <tui-session>-o<stamp>` for one). The merge approval
 `kubic orchestrate` asks per worker (there is no `--yes` here) reaches the
-same approval overlay as a worker ask, naming the worker and its branch —
+same approval card as a worker ask, naming the worker and its branch —
 never a terminal prompt, which would corrupt the alt-screen. A merge with no
 seat to answer it is denied closed (exit 4), not asked on stdio, and the refusal message does not point at a `--yes` flag the TUI does not have.
 
@@ -1405,10 +1405,11 @@ the built-in palette; see `[ui] theme` under
 | `Ctrl-X` | Expand / collapse every tool output block. Collapsed, a block shows the first 5 lines, each cut at the terminal width, with a `… +N lines · lines clipped (ctrl+x to expand)` hint whenever anything is hidden or cut. Expanded, every output line **wraps** (hanging indent under the `⎿`) and the tool call's args summary wraps too, so a long diagnostic, stack frame or path is readable in full. |
 | `alt+down` | With a panel open: the diff panel's next file (wrapping), or the journal panel's next page. Ignored while both panels are closed. |
 | `alt+up` | With a panel open: the diff panel's previous file (wrapping), or the journal panel's previous page. Ignored while both panels are closed. |
-| `a` | Approval overlay: **allow once** — this call only, after the arming delay and the quiet period, and only while the overlay can show the whole command. Nothing is stored: the next identical call asks again. |
-| `Ctrl-S` | Approval overlay: **allow for the session** — after the arming delay and the quiet period, and only while the overlay can show the whole command; never a bare letter. Latched in `<session>/approvals.json`; identical calls in this session are not asked again (also after re-attach). |
-| `d`, `Esc` | Approval overlay: **deny** the challenged call. `Esc` acts at once (the only immediate action), `d` after the arming delay. A denial latches for the session like `Ctrl-S`, so the same operation is refused without asking again. |
-| `v` | Approval overlay: show the next page of a command too tall for the dialog (never decides). |
+| `a` | Approval card: **allow once** — this call only, after the arming delay and the quiet period, and only while the card can show the whole command. Nothing is stored: the next identical call asks again. |
+| `Ctrl-S` | Approval card: **allow for the session** — after the arming delay and the quiet period, and only while the card can show the whole command; never a bare letter. Latched in `<session>/approvals.json`; identical calls in this session are not asked again (also after re-attach). |
+| `d`, `Esc` | Approval card: **deny** the challenged call. `Esc` acts at once (the only immediate action), `d` after the arming delay. A denial latches for the session like `Ctrl-S`, so the same operation is refused without asking again. |
+| `v` | Approval card: show the next page of a command too tall for the card, or an edit's whole diff (never decides). |
+| `?` | Approval card: open (and close) the model's explanation for the ask (never decides). |
 | `Ctrl-C` | **Interrupt** the in-flight turn and keep the session; a second press while the interrupt drains quits. Idle, **a composed draft is never discarded**: the first press clears it (`^C: draft cleared`); on an empty editor a press shows `press ^C again to quit` on the notice row for 2 s, and a second press inside that window quits (issue #454). **Cancelling clears the queue**: the abort withdraws every queued follow-up, and the footer names the count (`cancelled · dropped 2 queued prompts`). A prompt queued after a *failed* run stays in the inbox and is placed by the next submit (pi-durable's own rule). During an **orchestrator** run (which cannot be cancelled from the TUI) it quits directly — the manager's signal guard reaps its live workers as the process exits. |
 | `Esc` | **Never quits** (issue #454). It closes the editor's dropdown or an open picker or dialog; during a turn it **interrupts** it like the first `Ctrl-C` — the session and the draft stay, and a second `Esc` while the interrupt drains does nothing (an orchestrator run, which cannot be interrupted here, says so on the footer). Idle on an empty editor it does nothing yet (block mode, #463). While an approval is pending it denies. For a one-press quit key, bind `app.exit` in `~/.kubic/keybindings.json`. |
 | `Ctrl-D` | Quit on an empty draft; while typing it stays delete-forward. |
@@ -1489,6 +1490,7 @@ shipped bindings.
 | `approval.allowOnce` | `a` | approval: allow once |
 | `approval.allowSession` | `ctrl+s` | approval: allow for the session |
 | `approval.deny` | `d`, `escape` | approval: deny |
+| `approval.explain` | `?` | approval: show why the model asked (the card's explanation row) |
 | `approval.page` | `v` | approval: next page of a long command |
 
 Both panels read the session's own journal through the same projection
@@ -1507,9 +1509,20 @@ chain to the transcript while the panel can still scroll), and
 page of the journal panel. A freshly opened panel starts at its first file,
 and a repaint (new journal rows arriving) never yanks the viewport.
 
-A challenged call opens the **approval overlay** instead of being refused: it
-names the tool class and the exact command, so the decision is made on what
-was actually asked, not on the tool's name. The command is shown **whole**:
+A challenged call turns the editor into an **approval card** instead of being
+refused (issue #459; `docs/ui/02-approval.html`): an amber frame with the
+`APPROVAL` badge, the tool and `1 of N`; the exact command (`$ …`, its
+destructive words bold) — or, for an `edit` or `write`, the diff it would make
+against the file on disk (`+A −R` in the frame); one plain-language row for the
+reason (`▲ destructive   it can delete or overwrite files`), the working
+directory (and, for a file change, that the journal keeps the old file), the
+next waiting ask (`next: …`), and the keys. `?` opens the model's own
+explanation. The transcript above stays readable — `PgUp` scrolls it — while
+the header shows `1 WAITING`, the call's card `◆ waiting for you` and the
+status line `needs approval`. Each capability a call trips is asked on its
+own, so a command that is both destructive and networked is `1 of 2`, then
+`2 of 2`. The card names the tool class and the exact command, so the decision
+is made on what was actually asked, not on the tool's name. The command is shown **whole**:
 it is the same text the approval key is computed from, wrapped across rows and
 never silently cut, with three display-only changes. Control, bidi, zero-width
 and other default-ignorable characters (including the Hangul fillers
@@ -1550,28 +1563,24 @@ redaction is the safe over-redacting one.
 Rows wrap by terminal **display columns**, not by character count: wide (CJK)
 characters count two columns, and a combining sequence or an emoji cluster is
 never split, so every character of the command appears in the rows and none is
-cut by the overlay's edge. A command taller than a page (8 rows, fewer when
-the terminal is short — the dialog fits the 60 % of the terminal height the
-overlay may use) shows one page at a time with an explicit
-`… command lines 1–8 of N · [v] next page` marker, and `v` pages through it.
-When even that does not fit — the overlay needs the fixed rows, the
-justification, the hint row and either the whole command or one page with its
-marker (about 10 terminal rows for a long command, 9 for a one-line one) — the
-dialog **fails closed**: it shows `Too short to show this command — [d]/[Esc]
-deny` (plus the tool and an enlarge hint when there are rows for them) and every
-allow key (`a`, `Ctrl-S`) is inert until the terminal is tall enough, so you can
-never allow what you cannot see. `d` (after arming) and `Esc` (at once) still
-deny, and the dialog re-checks on every frame and key, so enlarging the
-terminal restores it. Below 80 columns the overlay falls back to an inline slot
-in the transcript (`! approval (inline)`) rather than rendering an unusable
-box; the slot has no height cap, so it always shows the whole command. Denying
+cut by the card's edge. A command taller than a page (8 rows) shows one page at
+a time with an explicit `… lines 1–8 of N` marker, and `v` pages through it;
+on an edit, `v` opens the whole diff (twelve rows show by default). When the
+card does not fit — it needs its own rows plus six more for the header, the
+status line, the key hints and three rows of transcript — it **fails closed**:
+it says `the terminal is too short to show this command — enlarge it` and
+every allow key (`a`, `Ctrl-S`) is inert until the terminal is tall enough, so
+you can never allow what you cannot see. `d` (after arming) and `Esc` (at
+once) still deny, and the card re-checks on every frame and key, so enlarging
+the terminal restores it. The card is the same at every width; below 60
+columns its reason rows keep only their labels and the keys wrap. Denying
 leaves the session running; the transcript shows the refusal instead of the
 call's result. Quitting with an ask still pending denies it, so a shutdown
 cannot strand the turn.
 
 An approval is consent to run code with your authority, so keys typed for
 the editor can never produce one. Asks arrive while you may be typing the
-next prompt, so the overlay is a capturing modal: while it shows, printable
+next prompt, so the card is a capturing modal: while it shows, printable
 keys are dropped instead of reaching your draft (the global keys `Ctrl-C`,
 `Ctrl-D`, `Ctrl-T`, `Ctrl-G`, `Ctrl-O`, `Ctrl-R` and `Ctrl-X` still work —
 `Ctrl-G` answers with its usual footer refusal, since an approval only arises

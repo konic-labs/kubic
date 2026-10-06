@@ -451,7 +451,7 @@ describe('tui audit identity (issue #227, criterion 4)', () => {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
         // Issue #315's arming delay is pinned off so the deny keypress below
-        // registers the moment the overlay appears (as the HEAD approval
+        // registers the moment the card appears (as the HEAD approval
         // tests do).
         approvalArmingMs: 0,
         bootLane: async (sid, answer) => {
@@ -470,7 +470,7 @@ describe('tui audit identity (issue #227, criterion 4)', () => {
     await waitFor(() => fake.counts.started === 1);
 
     type(fake, 'clean up');
-    await waitFor(() => fake.frame.includes('Approval required'));
+    await waitFor(() => fake.frame.includes('APPROVAL'));
     fake.feed('d'); // deny: the command never runs, the decision is audited
     await waitFor(() => fake.frame.includes('after deny'));
     fake.feed('\x03');

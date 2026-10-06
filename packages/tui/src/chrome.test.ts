@@ -202,11 +202,17 @@ describe('key-hint sets (01-M)', () => {
   });
 
   it('approval and overlay contexts show the keys that act there', () => {
-    expect(keyHintSet('approval', DEFAULT_KEY_REGISTRY).hints).toEqual([
-      ['a', 'allow once'],
-      ['^S', 'allow for session'],
-      ['d', 'deny'],
-    ]);
+    // Issue #459: the card's keys, its explanation and the way back up.
+    expect(keyHintSet('approval', DEFAULT_KEY_REGISTRY)).toEqual({
+      hints: [
+        ['a', 'allow once'],
+        ['^S', 'allow for session'],
+        ['d', 'deny'],
+        ['?', 'explain'],
+        ['PgUp', 'read transcript'],
+      ],
+      right: ['^C ^C', 'quit'],
+    });
     expect(keyHintSet('overlay', DEFAULT_KEY_REGISTRY)).toEqual({
       hints: [
         ['↑↓', 'move'],

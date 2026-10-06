@@ -208,7 +208,7 @@ describe('the overlay captures input (issue #315)', () => {
     expect(before.slice(0, -1)).toEqual(after.slice(0, -1));
   });
 
-  it('the overlay view follows the surface arming state', () => {
+  it('the card follows the surface arming state (issue #459)', () => {
     const time = clock();
     const surface = createApprovalSurface({
       now: time.now,
@@ -221,17 +221,10 @@ describe('the overlay captures input (issue #315)', () => {
       approvalsSkipped: false,
       approvalSurface: surface,
     });
-    const shown: Array<{ render: (w: number) => string[] }> = [];
-    app.attachApprovalOverlay({
-      showOverlay: (component) => {
-        shown.push(component as { render: (w: number) => string[] });
-        return { unfocus: () => {}, hide: () => {} };
-      },
-    });
     void app.requestApproval(REQUEST);
-    expect(shown[0]?.render(80).join('\n')).toContain('keys unlock');
+    expect(app.render(100).join('\n')).toContain('keys unlock');
     time.advance(APPROVAL_ARMING_MS);
-    expect(shown[0]?.render(80).join('\n')).toContain('[a] allow once');
+    expect(app.render(100).join('\n')).toContain('a  allow once');
     surface.cancelPending();
   });
 });

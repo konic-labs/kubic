@@ -308,7 +308,7 @@ export function renderToolCard(
   let outcome: string;
   if (card.waiting === true) {
     mark = ui.fg('warn')(WAITING_MARK);
-    outcome = ui.fg('warn')('waiting for approval');
+    outcome = ui.fg('warn')('waiting for you');
   } else if (!done) {
     mark = ui.fg('accent')(spinnerFrame(card.runningMs ?? 0));
     outcome = ui.fg('fg2')(

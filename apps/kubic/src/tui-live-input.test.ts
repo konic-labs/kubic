@@ -236,7 +236,7 @@ describe('idle input repaints (issue #274)', () => {
     expect(await exit).toBe(0);
   });
 
-  it('an approval decision key while idle repaints with the overlay gone', async () => {
+  it('an approval decision key while idle repaints with the card gone', async () => {
     let seat: TuiApprovalSeat | undefined;
     const { fake, exit } = await startTui(
       viewerBoot((captured) => {
@@ -250,12 +250,12 @@ describe('idle input repaints (issue #274)', () => {
       toolName: 'bash',
       summary: 'rm -rf /tmp/x',
     });
-    await waitFor(() => fake.since(0).includes('Approval required'));
+    await waitFor(() => fake.since(0).includes('APPROVAL'));
     await new Promise((resolve) => setTimeout(resolve, 40));
     const mark = fake.mark();
     fake.feed('a');
     await waitFor(() => fake.since(mark).length > 0, RENDER_TICK_STEPS);
-    expect(fake.since(mark)).not.toContain('Approval required');
+    expect(fake.since(mark)).not.toContain('APPROVAL');
     expect(await verdict).toMatchObject({ approved: true });
     fake.feed('\x04');
     expect(await exit).toBe(0);

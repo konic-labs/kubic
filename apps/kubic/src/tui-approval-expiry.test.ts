@@ -1,7 +1,7 @@
 // Issue #409 (§41: a time-bounded ask denies on timeout): on the TUI
 // `--orchestrator` path the router races the TUI seat against its own bound.
 // When the bound expires the router denies — and the seat is now told (an
-// AbortSignal), so the overlay withdraws exactly that ask, the next queued ask
+// AbortSignal), so the card withdraws exactly that ask, the next queued ask
 // takes the screen, and a late answer is never recorded as a decision.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildOrchestratorRequest } from '../../../packages/host/src/orchestrator/approvals/request.js';
@@ -49,7 +49,7 @@ describe('router-bound expiry on the TUI seat (issue #409)', () => {
     expect(verdict.approved).toBe(false);
     if (!verdict.approved)
       expect(verdict.reason).toContain(TIMEOUT_REASON_MARKER);
-    // The overlay no longer shows the denied ask: the queued one took over.
+    // The card no longer shows the denied ask: the queued one took over.
     expect(surface.pending()?.summary).toContain('two.example');
     // The operator answers what is on screen — the SECOND ask — and the
     // first stays denied: the late key never lands on the expired request.
@@ -59,7 +59,7 @@ describe('router-bound expiry on the TUI seat (issue #409)', () => {
     expect(surface.isShowing()).toBe(false);
   });
 
-  it('the overlay frame drops the expired ask and shows the next one', async () => {
+  it('the inline card drops the expired ask and shows the next one', async () => {
     vi.useFakeTimers();
     const surface = createApprovalSurface({ armingMs: 0 });
     const app = createTuiApp({
@@ -69,40 +69,24 @@ describe('router-bound expiry on the TUI seat (issue #409)', () => {
       approvalsSkipped: false,
       approvalSurface: surface,
     });
-    // A recording overlay host: the frame is whatever overlay is shown and
-    // not yet hidden (the live alt-screen composites exactly that).
-    const overlays: Array<{
-      render: (width: number) => string[];
-      hidden: boolean;
-    }> = [];
+    // The card sits in the editor's slot (#459): nothing is overlaid, so the
+    // frame is the app's own render.
+    let overlays = 0;
     app.attachApprovalOverlay({
       terminal: { columns: 120, rows: 30 },
-      showOverlay: (component) => {
-        const entry = {
-          render: (width: number) =>
-            (component as { render: (w: number) => string[] }).render(width),
-          hidden: false,
-        };
-        overlays.push(entry);
-        return {
-          unfocus: () => {},
-          hide: () => {
-            entry.hidden = true;
-          },
-        };
+      showOverlay: () => {
+        overlays += 1;
+        return { unfocus: () => {}, hide: () => {} };
       },
     });
-    const frame = (): string =>
-      overlays
-        .filter((overlay) => !overlay.hidden)
-        .flatMap((overlay) => overlay.render(100))
-        .join('\n');
+    const frame = (): string => app.render(100).join('\n');
     const router = createOrchestratorRouter({
       maxPendingMs: 50,
       awaitAnswer: workerAskSeatFromAnswer(surface.seat),
     });
     const first = router.request(ask('curl https://one.example'));
     await vi.advanceTimersByTimeAsync(30);
+    expect(frame()).toContain('APPROVAL');
     expect(frame()).toContain('one.example');
     const second = router.request(ask('curl https://two.example'));
     await vi.advanceTimersByTimeAsync(25);
@@ -111,7 +95,9 @@ describe('router-bound expiry on the TUI seat (issue #409)', () => {
     expect(frame()).toContain('two.example');
     surface.decide('\x1b');
     await second;
-    expect(frame()).toBe('');
+    expect(frame()).not.toContain('APPROVAL');
+    expect(frame()).not.toContain('two.example');
+    expect(overlays).toBe(0);
   });
 
   it('the seat receives an AbortSignal that aborts when the router bound expires', async () => {

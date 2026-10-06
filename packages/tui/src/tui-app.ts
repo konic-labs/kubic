@@ -52,25 +52,21 @@ import type {
   LaneImagePart,
 } from '../../core/src/presentation.js';
 import {
+  type ApprovalCardOptions,
+  renderApprovalCard,
+} from './approval-card.js';
+import {
   type ApprovalSurface,
   createApprovalSurface,
 } from './approval-surface.js';
 import type {
   ApprovalDecision,
-  ApprovalKeyOverrides,
   ApprovalOverlayHandle,
   ApprovalOverlayOptions,
   ApprovalOverlayTui,
   ApprovalViewRequest,
 } from './approval-view.js';
-import {
-  ApprovalView,
-  approvalFitsOverlay,
-  approvalOverlayOptions,
-  approvalOverlayRows,
-  approvalOverlayWidth,
-  showApprovalOverlay,
-} from './approval-view.js';
+import { approvalOverlayOptions } from './approval-view.js';
 import {
   type HintContext,
   keyCap,
@@ -158,6 +154,10 @@ export const FOOTER_MAX_ROWS = 2;
 // Issue #454: an idle, empty Ctrl-C arms the quit for this long; a second
 // press inside the window quits.
 export const QUIT_ARM_MS = 2000;
+
+// Issue #459: the rows an approval card leaves for the rest of the screen —
+// the header, status and hint rows and three rows of transcript.
+export const CARD_CHROME_ROWS = 6;
 
 // Issue #454: the queue box's prompt mid-turn (solo lane), and the
 // orchestrator lane's no-queue variant.
@@ -277,6 +277,8 @@ export interface TuiAppSeed {
   // Issue #458: the project's absolute root; with `listFiles`, file
   // references in answers link to `file://<root>/<path>`.
   readonly fileRoot?: string;
+  // Issue #459: the workspace as the approval card shows it (`~/proj`).
+  readonly cwdLabel?: string;
 }
 
 // §66 replication: the TUI holds no authority — it reads the replicated
@@ -843,18 +845,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     label: seed.label ?? 'solo',
     collapsed: seed.mode === 'solo',
   });
-  // Issue #96 — the approval's inline slot. Below APPROVAL_MIN_WIDTH the
-  // overlay cannot be composited (Pi's visible() gate refuses), so the
-  // request renders in the transcript's own document. The document decides
-  // for ITSELF at render time: the live alt-screen renders `root`, and the
-  // transcript row must stay the ScrollView itself so the layout engine
+  // The transcript row must stay the ScrollView itself so the layout engine
   // sizes it (follow-end only works when the ScrollView is the row).
   const transcript = createTranscriptView({
-    inline: (width: number): string[] | undefined =>
-      approvalSurface.pending() !== undefined &&
-      approvalSurface.usesInlineFallback(width)
-        ? approvalSurface.renderInline(width)
-        : undefined,
     // Issue #455: the cards' duration, running clock and waiting state,
     // and the expand key's real cap.
     toolState: (toolCallId: string) => toolStateOf(toolCallId),
@@ -975,9 +968,33 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       interruptKey: keyCap(keys.label('app.cancel')),
     };
   });
+  // Issue #459: the card's state, read from the surface per frame.
+  const cardOptions = (
+    allowable = approvalSurface.isAllowable(),
+  ): ApprovalCardOptions => {
+    const queued = approvalSurface.queued();
+    return {
+      armed: approvalSurface.isArmed(),
+      allowable,
+      keys: approvalSurface.keys(),
+      commandPage: approvalSurface.commandPage(),
+      position: 1,
+      total: 1 + queued.length,
+      ...(queued[0] === undefined ? {} : { next: queued[0] }),
+      explain: approvalSurface.explaining(),
+      ...(seed.cwdLabel === undefined ? {} : { cwd: seed.cwdLabel }),
+      pageKey: keyCap(keys.label('approval.page')),
+      explainKey: keyCap(keys.label('approval.explain')),
+    };
+  };
   // Issue #454: Pi's editor inside the kit's box (editor-frame.ts).
+  // Issue #459: an approval takes the slot as a blocking card.
   const editorSlot: Component = {
     render: (width: number): string[] => {
+      const request = approvalSurface.pending();
+      if (request !== undefined) {
+        return renderApprovalCard(tuiTheme().ui, request, width, cardOptions());
+      }
       const inner = width - EDITOR_FRAME_CELLS;
       return frameEditorLines(
         tuiTheme().ui,
@@ -1075,6 +1092,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
           approvalsSkipped: status.getState().approvalsSkipped,
           ...workspace,
           session: title ?? shortSessionId(sessionId),
+          waiting: approvalSurface.isShowing()
+            ? 1 + approvalSurface.queued().length
+            : 0,
           ...(seed.clock === undefined ? {} : { clock: seed.clock() }),
         },
         width,
@@ -1169,11 +1189,8 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     cancel: false,
   });
   // ── Issue #96: the approval surface ───────────────────────────────────────
-  // The surface collects the verdict; the app owns the two places it can be
-  // SEEN from (the overlay seat handed in by the composition root, and the
-  // inline body below APPROVAL_MIN_WIDTH). pi-tui's hide() is permanent
-  // ("cannot be shown again"), so each request gets a fresh ApprovalView and
-  // the old one is dismissed first.
+  // The surface collects the verdict; the app shows it as the inline card in
+  // the editor's slot (issue #459), at every width.
   const approvalSurface =
     seed.approvalSurface ??
     createApprovalSurface({ keyOverrides: keys.approvalOverrides() });
@@ -1193,7 +1210,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // Issue #315: an approval key may not shadow a loop key either.
   approvalSurface.checkKeys([...keys.globalKeys()]);
   let overlayHost: ApprovalOverlayTui | undefined;
-  let overlayHandle: ApprovalOverlayHandle | undefined;
   // Issue #328: the model picker overlay (at most one at a time).
   let modelPicker:
     | {
@@ -1335,54 +1351,10 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     }
     if (notifyCancel) open.onCancel?.();
   };
-  let overlayView: ApprovalView | undefined;
-  const dismissOverlay = (): void => {
-    if (overlayView !== undefined && overlayHandle !== undefined) {
-      // unfocus-first: after hide() Pi's unfocus early-returns (the entry is
-      // gone), so the explicit editor target would be lost.
-      overlayHandle.unfocus({ target: editor });
-      overlayView.focused = false;
-      overlayHandle.hide();
-    }
-    overlayView = undefined;
-    overlayHandle = undefined;
-  };
-  // Bring the overlay in line with the surface. Called after every decision
-  // and after every ask, so the shown request is always the pending one.
+  // Issue #459: an approval is a card in the editor slot, not an overlay —
+  // a change only needs a frame.
   const syncOverlay = (): void => {
-    const request = approvalSurface.pending();
-    if (request === undefined) {
-      if (overlayView !== undefined) dismissOverlay();
-      return;
-    }
-    if (overlayHandle !== undefined) {
-      // A different request while one was shown: the previous view is spent.
-      if (overlayView?.getRequest().key === request.key) return;
-      dismissOverlay();
-    }
-    const host = overlayHost;
-    if (host === undefined) return;
-    const view = new ApprovalView({
-      request,
-      // The decision itself is taken by the app (it owns the loop); this
-      // callback exists because ApprovalView requires the seat, and it must
-      // not double-apply — the loop's own handler is the single path, and it
-      // is where allow keys are gated while the dialog cannot show the whole
-      // command (the surface's fitCheck, issue #316).
-      onDecision: () => {},
-      // Issue #315: the hints stay locked until the surface arms.
-      isArmed: () => approvalSurface.isArmed(),
-      commandPage: () => approvalSurface.commandPage(),
-      // Issue #316: Pi cuts the overlay from the bottom at its height cap, so
-      // the dialog fits the rows the live terminal leaves it.
-      maxRows: () =>
-        host.terminal === undefined
-          ? undefined
-          : approvalOverlayRows(host.terminal.rows),
-      keyOverrides: approvalSurface.keys() as ApprovalKeyOverrides,
-    });
-    overlayView = view;
-    overlayHandle = showApprovalOverlay(host, view);
+    overlayHost?.requestRender?.();
   };
   const settleApproval = (): void => {
     syncOverlay();
@@ -1551,6 +1523,14 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         approvalSurface.isShowing() &&
         keys.actionFor('approval', keyId) === 'approval.page' &&
         approvalSurface.nextCommandPage()
+      ) {
+        return { quit: false, consumed: true, cancel: false };
+      }
+      // Issue #459: `?` opens (and closes) the card's explanation row.
+      if (
+        approvalSurface.isShowing() &&
+        keys.actionFor('approval', keyId) === 'approval.explain' &&
+        approvalSurface.toggleExplain()
       ) {
         return { quit: false, consumed: true, cancel: false };
       }
@@ -2206,21 +2186,22 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       approvalSurface.renderRequest = (): void => {
         host.requestRender?.();
       };
-      // Issue #316: whether the shown dialog fits the overlay the live
-      // terminal leaves it (the same width and row rule Pi applies). Below
-      // APPROVAL_MIN_WIDTH the inline slot takes its place in the transcript,
-      // which has no height cap; a host that reports no size keeps the fixed
-      // layout.
+      // Issue #316: whether the shown ask fits the live terminal; a host
+      // that reports no size keeps the fixed layout.
+      // Issue #459: the card, the header, status and hint rows and three
+      // rows of transcript must fit the terminal; until they do, only deny
+      // acts (the card says so). Measured with the allow keys showing.
       approvalSurface.fitCheck = (): boolean => {
         const request = approvalSurface.pending();
         const terminal = host.terminal;
         if (request === undefined || terminal === undefined) return true;
-        if (approvalSurface.usesInlineFallback(terminal.columns)) return true;
-        return approvalFitsOverlay(
+        const rows = renderApprovalCard(
+          tuiTheme().ui,
           request,
-          approvalOverlayWidth(terminal.columns),
-          approvalOverlayRows(terminal.rows),
-        );
+          terminal.columns,
+          cardOptions(true),
+        ).length;
+        return rows + CARD_CHROME_ROWS <= terminal.rows;
       };
       // A request that arrived before boot finished is shown now.
       syncOverlay();

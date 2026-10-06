@@ -31,6 +31,8 @@ export interface HeaderInfo {
   readonly session?: string;
   /** Local `HH:MM`. */
   readonly clock?: string;
+  /** Approvals waiting for the operator (#459: the amber badge). */
+  readonly waiting?: number;
 }
 
 interface HeaderRung {
@@ -80,8 +82,14 @@ export function renderHeader(
     info.clock === undefined || info.clock === ''
       ? ''
       : ui.fg('fg2')(info.clock);
+  // Issue #459: what waits for the operator outranks the session name.
+  const waiting =
+    info.waiting !== undefined && info.waiting > 0
+      ? badge(ui, `${info.waiting} WAITING`, 'waiting')
+      : '';
   const right = (rung: HeaderRung): string => {
     const parts = [
+      waiting,
       rung.session ? session : '',
       `${mode}${rung.approvals ? approvals : ''}`,
       rung.clock ? clock : '',
@@ -204,7 +212,10 @@ export function keyHintSet(
         ...bound('approval.allowOnce', 'allow once'),
         ...bound('approval.allowSession', 'allow for session'),
         ...bound('approval.deny', 'deny'),
+        ...bound('approval.explain', 'explain'),
+        ['PgUp', 'read transcript'],
       ],
+      ...quitHint(),
     };
   }
   if (context === 'overlay') {

@@ -13,9 +13,6 @@
 //     be asked again before the previous verdict is consumed, so asks queue and
 //     are answered in order (a request is never dropped: dropping one would
 //     hang a turn);
-//   - the width rule (§16.4, criterion 2): at/above APPROVAL_MIN_WIDTH the
-//     overlay is the surface, below it the inline body is, and the two are
-//     mutually exclusive by construction;
 //   - the boot key check: the shipped key map is verified against
 //     approval-view.ts's own conflict detector, so a conflicting map is
 //     refused by name instead of silently binding one action to two keys;
@@ -36,23 +33,15 @@ import {
   APPROVAL_ARMING_MS,
   APPROVAL_DEFAULT_KEYS,
   APPROVAL_IMMEDIATE_KEY,
-  APPROVAL_MIN_WIDTH,
   APPROVAL_QUIET_MS,
   APPROVAL_REPEAT_MS,
   approvalKeyConflicts,
   approvalKeyProblems,
-  renderApprovalInline,
-  renderApprovalLines,
   resolveApprovalKey,
-  shouldUseInlineFallback,
 } from './approval-view.js';
 import { sanitizeLaneText } from './lane-cells.js';
 
-export { APPROVAL_DEFAULT_KEYS, APPROVAL_MIN_WIDTH };
-
-// The inline body's own header (approval-view.ts renders it): named here so
-// callers and tests assert the same string instead of a literal.
-export const INLINE_APPROVAL_HEADER = '! approval (inline) — narrow terminal';
+export { APPROVAL_DEFAULT_KEYS };
 
 // The reason recorded when the session can no longer collect a verdict. Named
 // once: the deny that a quit produces must read the same everywhere.
@@ -124,14 +113,15 @@ export interface ApprovalSurface {
   // `v` key that advances it (wrapping back to the first page).
   commandPage(): number;
   nextCommandPage(): boolean;
+  // Issue #459: the asks waiting behind the shown one (the card's `i of n`
+  // and its `next:` row), and the `?` explanation row, closed again for
+  // every new ask.
+  queued(): readonly SurfaceRequest[];
+  explaining(): boolean;
+  toggleExplain(): boolean;
   // Settles every queued and shown request as a deny. Used by the quit path
   // and by the in-flight cancel path, so nothing is left hanging.
   cancelPending(reason?: string): void;
-  // The body to render instead of an overlay at this width.
-  renderInline(width: number): string[];
-  // The body an overlay composites at this width.
-  renderOverlayBody(width: number): string[];
-  usesInlineFallback(width: number): boolean;
   // Settable change hooks (see ApprovalSurfaceOptions.onChange): the surface
   // is created by the composition root before the lane boots, so the app
   // attaches its overlay sync and render request after creation.
@@ -173,7 +163,7 @@ interface PendingAsk {
 // Sanitise a request at ingress: capability, tool name, command, paths and
 // justification are all model/tool-supplied strings, and renderApprovalLines
 // renders them raw (its own tests pin that). Cleaning here means every render
-// path downstream — overlay and inline both — is covered by one choke point.
+// path downstream — the card and the transcript — is covered by one choke point.
 function sanitizeRequest(request: SurfaceRequest): SurfaceRequest {
   const paths =
     request.paths === undefined
@@ -193,6 +183,32 @@ function sanitizeRequest(request: SurfaceRequest): SurfaceRequest {
     ...(request.summary === undefined
       ? {}
       : { summary: sanitizeLaneText(request.summary) }),
+    ...(request.preview === undefined
+      ? {}
+      : { preview: sanitizePreview(request.preview) }),
+  };
+}
+
+// Issue #459: a preview carries file content — untrusted like the rest.
+// Each diff row is cleaned after its number prefix, so tabs expand from the
+// content's own first column.
+function sanitizePreview(
+  preview: NonNullable<SurfaceRequest['preview']>,
+): NonNullable<SurfaceRequest['preview']> {
+  if (preview.kind === 'write') {
+    return { ...preview, preview: sanitizeLaneText(preview.preview) };
+  }
+  return {
+    ...preview,
+    text: preview.text
+      .split('\n')
+      .map((row) => {
+        const hit = /^([-+ ] *\d+ )(.*)$/u.exec(row);
+        return hit === null
+          ? sanitizeLaneText(row)
+          : `${hit[1]}${sanitizeLaneText(hit[2] ?? '')}`;
+      })
+      .join('\n'),
   };
 }
 
@@ -237,6 +253,7 @@ export function createApprovalSurface(
   // The previous key the surface saw, for the terminal-repeat rule.
   let lastKey: { readonly data: string; readonly at: number } | undefined;
   let page = 0;
+  let explain = false;
   let cancelArmTimer: (() => void) | undefined;
   // Bumped on every (re)start of the window, so a timer that outlived its
   // window (an injected timer may ignore its cancel) never repaints for it.
@@ -280,6 +297,7 @@ export function createApprovalSurface(
     // own arming window, and the frame repaints when it arms so the key
     // hints unlock visibly.
     page = 0;
+    explain = false;
     startArming(shown, armingMs);
     notify();
   };
@@ -389,6 +407,14 @@ export function createApprovalSurface(
     set fitCheck(next: (() => boolean) | undefined) {
       hooks.fitCheck = next;
     },
+    queued: (): readonly SurfaceRequest[] => queue.map((ask) => ask.request),
+    explaining: (): boolean => shown !== undefined && explain,
+    toggleExplain: (): boolean => {
+      if (shown === undefined) return false;
+      explain = !explain;
+      notify();
+      return true;
+    },
     decide: (data: string): boolean => {
       const current = shown;
       if (current === undefined) return false;
@@ -427,26 +453,6 @@ export function createApprovalSurface(
       }
       if (current !== undefined || waiting.length > 0) notify();
     },
-    renderInline: (width: number): string[] => {
-      const current = shown;
-      if (current === undefined) return [];
-      return renderApprovalInline(current.request, width, {
-        armed: isArmed(),
-        commandPage: page,
-        keys: surface.keys(),
-      });
-    },
-    renderOverlayBody: (width: number): string[] => {
-      const current = shown;
-      if (current === undefined) return [];
-      return renderApprovalLines(current.request, width, {
-        armed: isArmed(),
-        commandPage: page,
-        keys: surface.keys(),
-      });
-    },
-    usesInlineFallback: (width: number): boolean =>
-      shouldUseInlineFallback(width),
     checkKeys: (reserved?: ReadonlyArray<string>): boolean => {
       const conflicts = approvalKeyConflicts(overrides);
       const first = conflicts[0];

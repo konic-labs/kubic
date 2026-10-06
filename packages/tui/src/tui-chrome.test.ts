@@ -222,9 +222,7 @@ describe('tool cards on the app (issue #455)', () => {
       summary: 'rm -rf dist',
     });
     expect(app.transcript.render(100).join('\n')).toContain('◆ bash');
-    expect(app.transcript.render(100).join('\n')).toContain(
-      'waiting for approval',
-    );
+    expect(app.transcript.render(100).join('\n')).toContain('waiting for you');
     app.handleInput('\x1b');
     await decision;
     app.applyLaneEntries([

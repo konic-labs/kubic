@@ -16,10 +16,8 @@ import {
   approvalOverlayOptions,
   createApprovalMemo,
   dismissApprovalOverlay,
-  renderApprovalInline,
   renderApprovalLines,
   resolveApprovalAction,
-  shouldUseInlineFallback,
   showApprovalOverlay,
   waitForApproval,
 } from './approval-view.js';
@@ -114,16 +112,6 @@ describe('approval overlay geometry (issue #26; §16.4)', () => {
       row: 6,
       col: 15,
     });
-  });
-
-  it('falls back inline below 80 columns', () => {
-    expect(shouldUseInlineFallback(100)).toBe(false);
-    expect(shouldUseInlineFallback(70)).toBe(true);
-    const lines = renderApprovalInline(request(), 70);
-    const doc = lines.join('\n');
-    expect(doc).toContain('destructive-shell');
-    expect(doc).toContain('deny');
-    for (const line of lines) expect(line.length).toBeLessThanOrEqual(70);
   });
 });
 
@@ -322,12 +310,6 @@ describe('approval timeout + memoOnce (issue #26; §41)', () => {
 });
 
 describe('approval mutation hardening (issue #68)', () => {
-  it('uses the inline fallback exactly below 80 columns', () => {
-    expect(shouldUseInlineFallback(80)).toBe(false);
-    expect(shouldUseInlineFallback(79)).toBe(true);
-    expect(shouldUseInlineFallback(0)).toBe(true);
-  });
-
   it('floors fractional overlay geometry instead of returning floats', () => {
     expect(approvalOverlayBounds(99, 29)).toEqual({
       width: 69,

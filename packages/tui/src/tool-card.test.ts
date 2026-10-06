@@ -262,7 +262,7 @@ describe('tool cards (issue #455; 01-D, 01-H)', () => {
       80,
     );
     expect(waiting[0]).toContain(rich.fg('warn')('◆'));
-    expect(waiting[0]).toContain(rich.fg('warn')('waiting for approval'));
+    expect(waiting[0]).toContain(rich.fg('warn')('waiting for you'));
   });
 
   it('cuts the target before the outcome on a narrow terminal', () => {

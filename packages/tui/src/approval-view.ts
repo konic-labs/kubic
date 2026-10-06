@@ -8,6 +8,7 @@
 // dep-lint forbids tui → host. Pi is touched ONLY through
 // ./tui-boundary.js. No node:fs in prod src (I/O confinement).
 
+import type { CellDisplay } from './transcript.js';
 import type { Component, Focusable } from './tui-boundary.js';
 import { CURSOR_MARKER, matchesKey, visibleWidth } from './tui-boundary.js';
 
@@ -23,6 +24,9 @@ export interface ApprovalViewRequest {
   readonly paths?: ReadonlyArray<string>;
   readonly justification?: string;
   readonly summary?: string;
+  // Issue #459: an edit or write ask's change, as the inline diff the card
+  // shows (the host computes it against the file on disk).
+  readonly preview?: CellDisplay;
 }
 
 export type ApprovalDecision =
@@ -30,12 +34,9 @@ export type ApprovalDecision =
   | { approved: false; reason: string };
 
 // Overlay geometry (§16.4): centered 70% width / 60% height, visible at
-// 80+ columns, inline fallback below.
+// 80+ columns. Approvals are an inline card now (issue #459); the question
+// and confirm dialogs still use this overlay.
 export const APPROVAL_MIN_WIDTH = 80;
-
-export function shouldUseInlineFallback(width: number): boolean {
-  return width < APPROVAL_MIN_WIDTH;
-}
 
 // Structural overlay options mirroring Pi's OverlayOptions (§16.4) without
 // importing Pi past the seam: OverlayOptions is not a boundary export and
@@ -363,20 +364,6 @@ export function approvalFitsOverlay(
   maxRows: number | undefined,
 ): boolean {
   return layoutApproval(request, width, { maxRows }).fits;
-}
-
-// Narrow-terminal fallback (w < 80): same body under an inline header so
-// the approval never depends on overlay space being available.
-export function renderApprovalInline(
-  request: ApprovalViewRequest,
-  width: number,
-  options: ApprovalRenderOptions = {},
-): string[] {
-  const w = Math.max(0, Math.floor(width));
-  return [
-    truncateLine('! approval (inline) — narrow terminal', w),
-    ...renderApprovalLines(request, w, options),
-  ];
 }
 
 // Keybinding registry (§16.6/§16.9). Defaults live here (not in Pi's

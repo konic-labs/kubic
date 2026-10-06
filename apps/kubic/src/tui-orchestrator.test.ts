@@ -289,7 +289,7 @@ describe('orchestrator worker asks reach the TUI surface and the worker (issue #
     provenance: { parentSessionId: 'orch-327' },
   } as const;
 
-  it('a published worker ask is rendered by the surface and the allow decision reaches the mailbox', async () => {
+  it('a published worker ask reaches the surface and the allow decision reaches the mailbox', async () => {
     const dir = tmpRoot();
     const surface = createApprovalSurface({ armingMs: 0 });
     const approvals = createOrchestratorApprovalsRun({
@@ -307,12 +307,11 @@ describe('orchestrator worker asks reach the TUI surface and the worker (issue #
     });
     await waitFor(() => surface.isShowing());
     const shown = surface.pending();
-    // The overlay names the worker, the tool and the full command: the
+    // The card names the worker, the tool and the full command: the
     // operator decides on what will run, not on a bare tool name.
     expect(shown?.toolName).toBe('bash');
     expect(shown?.summary).toContain("worker 'worker-1'");
     expect(shown?.command).toContain('rm -rf /tmp/kubic-327-scratch');
-    expect(surface.renderOverlayBody(90).join('\n')).toContain('bash');
     // The operator answers through the same key path the TUI routes.
     expect(surface.decide('a')).toBe(true);
     expect(await pumped).toBeUndefined();

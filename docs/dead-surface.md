@@ -135,7 +135,6 @@ file that no longer exists, or when a row's file has become reachable
 
 | LOC | file | owner | disposition |
 | --- | --- | --- | --- |
-| 122 | `packages/tui/src/ui/frame.ts` | #454 | keep: EPIC N TUI kit (#452), wired by the TUI issues #453–#466 |
 | 98 | `packages/tui/src/ui/match.ts` | #460 | keep: EPIC N TUI kit (#452), wired by the TUI issues #453–#466 |
 | 4 | `packages/agents/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/agents/src/lifecycle.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |

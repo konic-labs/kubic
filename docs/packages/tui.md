@@ -27,7 +27,8 @@ TUI-side analogue of the worker Pi boundary.
 | `lane-cells.ts` | `LaneEntryLike`, `PROMPT_PREFIX`, `TOOL_CALL_PREFIX`, `TOOL_RESULT_MAX_CHARS`, `TOOL_DETAIL_MAX_CHARS`, `TOOL_OUTCOME_MAX_CHARS`, `sanitizeLaneText`, `summarizeToolArguments`, `summarizeToolOutcome`, `entriesToCells` — committed lane entries → coarse transcript cells (§15.2); every cell's text (user, assistant, tool result, tool name) is sanitized here so model-supplied content cannot drive the terminal. `sanitizeLaneText` strips complete ECMA-48 sequences (CSI, OSC, C1 CSI, 2-byte ESC forms — not just the ESC byte, #299), collapses carriage-return overwrites to the text after the last `\r`, expands tabs by visible column width, and drops the remaining C0/C1 controls |
 | `tui-app.ts` | `TuiAppSeed`, `TuiInputResult`, `TuiApp`, `createTuiApp`, `seedFromPresentation` — the global keys (Ctrl-C/Esc/Ctrl-D/Ctrl-T) are classified through Pi's `parseKey` (see `tui-boundary.ts`), so both legacy-byte and Kitty CSI-u encodings are honoured |
 | `diff-view.ts` | `DiffOp`, `DiffFileChange`, `DiffRenderOptions`, `isBinaryText`, `unifiedHunks`, `renderDiffHeader`, `renderDiffLines` (pure render functions; the panel owns the document and its scrolling, #301) |
-| `approval-view.ts` | `ApprovalAction`, `ApprovalViewRequest`, `ApprovalDecision`, `APPROVAL_MIN_WIDTH`, `shouldUseInlineFallback`, `ApprovalOverlayOptions`, `approvalOverlayOptions`, `ApprovalOverlayBounds`, `approvalOverlayBounds`, `renderApprovalLines`, `renderApprovalInline`, `APPROVAL_DEFAULT_KEYS`, `ApprovalKeyOverrides`, `resolveApprovalAction`, `ApprovalKeyConflict`, `approvalKeyConflicts`, `ApprovalOverlayHandle`, `ApprovalOverlayTui`, `showApprovalOverlay`, `dismissApprovalOverlay` |
+| `approval-view.ts` | `ApprovalAction`, `ApprovalViewRequest`, `ApprovalDecision`, `APPROVAL_MIN_WIDTH`, `ApprovalOverlayOptions`, `approvalOverlayOptions`, `ApprovalOverlayBounds`, `approvalOverlayBounds`, `renderApprovalLines`, `APPROVAL_DEFAULT_KEYS`, `ApprovalKeyOverrides`, `resolveApprovalAction`, `ApprovalKeyConflict`, `approvalKeyConflicts`, `ApprovalOverlayHandle`, `ApprovalOverlayTui`, `showApprovalOverlay`, `dismissApprovalOverlay` |
+| `approval-card.ts` | `approvalReason`, `ApprovalCardOptions`, `renderApprovalCard` (the inline approval card, issue #459) |
 | `journal-view.ts` | `JournalFilter`, `filterJournalChanges`, `renderJournalLines`, `JournalViewOptions`, `JournalView` |
 | `views.ts`, `components.ts` | Pointer | View assembly lives in `layout.ts` / `*-view.ts` / `tui-app.ts` (#23–#28); no shared or aggregated module |
 | `index.ts` | Pointer | No barrel — import per-module paths (`tui-boundary.js` seam + views); `tui/` stays presentation-only |
@@ -189,12 +190,21 @@ notice from its seed (`workspace`, `clock`, `laneNotice`) and
   (`write|edit|create|delete|rename`); `DiffFileChange` renders headers
   + unified hunks (`renderDiffHeader`, `renderDiffLines`,
   `unifiedHunks`); binary text detected by `isBinaryText`.
-- **Approval overlay** (`approval-view.ts`): `ApprovalAction` is
+- **Approval keys** (`approval-view.ts`): `ApprovalAction` is
   `allow-once|allow-session|deny`; `ApprovalViewRequest` resolves to an
   `ApprovalDecision` via `resolveApprovalAction` (defaults in
   `APPROVAL_DEFAULT_KEYS`, overridable, conflicts reported by
-  `approvalKeyConflicts`); `APPROVAL_MIN_WIDTH` is 80 — narrower falls
-  back to inline (`shouldUseInlineFallback`, `renderApprovalInline`).
+  `approvalKeyConflicts`). `approvalOverlayOptions` (visible at
+  `APPROVAL_MIN_WIDTH` = 80 columns) still frames the question and confirm
+  dialogs.
+- **Approval card** (`approval-card.ts`, issue #459): `renderApprovalCard`
+  draws the ask in the editor's slot at every width — heavy warn frame,
+  `APPROVAL` badge, the tool and `i of n`; the command (paged by `v`, its
+  destructive words bold) or the edit/write diff preview (`v` opens the
+  whole diff); one `▲` reason row per capability (`approvalReason`), the
+  working directory, the model's explanation on `?`, the next queued ask,
+  and the keys. `approval-surface.ts` queues the asks, sanitises them at
+  ingress and arms the keys (`queued`, `explaining`, `toggleExplain`).
 - **Journal** (`journal-view.ts`): `JournalFilter` selects changes
   (`filterJournalChanges`), rendered as diff lines
   (`renderJournalLines`) under `DiffRenderOptions`.
@@ -211,8 +221,10 @@ notice from its seed (`workspace`, `clock`, `laneNotice`) and
   re-applies after every turn.
 - **App** (`tui-app.ts`): `createTuiApp` arranges the views and routes
   input. The shipped key map is Enter (submit), Ctrl-J / Shift+Enter /
-  `\`+Enter (newline), Ctrl-T (tree toggle), Ctrl-C (cancel while a turn
-  runs, else quit), Esc (quit), Ctrl-D (quit on an empty draft). Plain
+  `\`+Enter (newline), Ctrl-T (tree toggle), Esc (close a dropdown or
+  overlay, else interrupt the turn — never quits), Ctrl-C (cancel while a
+  turn runs, clear a draft, else arm: a second press within 2 s quits),
+  Ctrl-D (quit on an empty draft). Plain
   characters — including `t`/`T` — belong to the editor.
 
 ### Presentation state

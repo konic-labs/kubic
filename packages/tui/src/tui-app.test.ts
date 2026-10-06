@@ -1143,9 +1143,11 @@ describe('app-level wiring that no test executed (issue #320)', () => {
     const before = seatState.renders;
     const pending = ui.requestApproval(REQUEST);
     // The ask itself asks for a frame: an async lane turn must not wait for
-    // the next keypress to show its dialog.
+    // the next keypress to show its card (issue #459: in the editor slot,
+    // no overlay).
     expect(seatState.renders).toBeGreaterThan(before);
-    expect(seatState.shown).toHaveLength(1);
+    expect(seatState.shown).toHaveLength(0);
+    expect(ui.render(120).join('\n')).toContain('[APPROVAL] ━ bash');
     expect(ui.hasPendingApproval()).toBe(true);
     surface.decide('d');
     await pending;
@@ -1164,8 +1166,9 @@ describe('app-level wiring that no test executed (issue #320)', () => {
     const pending = ui.requestApproval(REQUEST);
     const seatState = seat();
     ui.attachApprovalOverlay(seatState.host);
-    // Attaching syncs the overlay to the surface's pending request.
-    expect(seatState.shown).toHaveLength(1);
+    // Attaching repaints: the card of the pending request is on screen.
+    expect(seatState.renders).toBeGreaterThan(0);
+    expect(ui.render(120).join('\n')).toContain('$ rm -rf build');
     expect(ui.hasPendingApproval()).toBe(true);
     surface.decide('d');
     await pending;

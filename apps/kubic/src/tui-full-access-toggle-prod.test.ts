@@ -325,8 +325,8 @@ describe('the TUI full-access toggle (issue #309)', () => {
     await waitFor(() => fake.started === 1);
     for (const ch of 'clean up') fake.inject(ch);
     fake.inject('\r');
-    // The approval overlay owns the keys: the challenged command is on it.
-    await waitFor(() => fake.output().includes('Approval required'));
+    // The approval card owns the keys: the challenged command is on it.
+    await waitFor(() => fake.output().includes('APPROVAL'));
     const before = fake.writes.length;
     fake.inject('\u001ba');
     await waitFor(() =>

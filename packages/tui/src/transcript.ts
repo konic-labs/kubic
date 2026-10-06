@@ -67,7 +67,7 @@ export type CellDisplay =
       readonly firstChangedLine: number;
       readonly added: number;
       readonly removed: number;
-      readonly truncated: boolean;
+      readonly truncated?: boolean;
     }
   | {
       readonly kind: 'write';

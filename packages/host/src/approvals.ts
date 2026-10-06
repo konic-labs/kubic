@@ -36,7 +36,9 @@ import {
 } from '../../worker/src/lane/interceptors.js';
 import type { ToolContribution } from '../../worker/src/lane/wrap.js';
 import { withTelemetry } from '../../worker/src/lane/wrap.js';
+import type { ToolDisplay } from '../../worker/src/ops/display-diff.js';
 import { approvalCommandText, summarizeCommand } from './approval-display.js';
+import { approvalPreview } from './approval-preview.js';
 import {
   credentialAccessInCommand,
   credentialAccessInNameFilter,
@@ -174,6 +176,9 @@ export interface ApprovalRequest {
   // carry no command (file tools): their summary names the path.
   command?: string;
   justification?: string;
+  // Issue #459: an edit or write ask's change against the file on disk (the
+  // TUI card's diff preview). Absent when it could not be computed.
+  preview?: ToolDisplay;
 }
 
 // The `by` a seat answers for a single-call approval (the TUI overlay's 'a',
@@ -2508,11 +2513,22 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       // The wait is bounded by maxPendingMs inside the service — a seat that
       // never answers denies on timeout rather than hanging the turn.
       if (input.answer !== undefined) {
+        // Issue #459: a solo ask carries the file change it would make (a
+        // worker child's ask goes to the manager's mailbox without one).
+        const preview =
+          worker === undefined
+            ? approvalPreview(
+                createNodeFileBridge(input.workspace),
+                call.toolName,
+                call.args,
+              )
+            : undefined;
         const verdict = await service.request({
           key,
           capability,
           toolName: call.toolName,
           ...approvalRequestDisplay(call.toolName, capability, call.args),
+          ...(preview === undefined ? {} : { preview }),
         });
         // A worker child's seat IS the manager (issue #279): the manager's
         // worker-asks record is the one §60 record for this decision.

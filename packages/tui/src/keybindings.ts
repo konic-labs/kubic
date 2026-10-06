@@ -137,6 +137,12 @@ export const KEY_ACTIONS = {
     keys: [APPROVAL_PAGE_KEY],
     description: 'approval: next page of a long command',
   },
+  // Issue #459: the card's explanation row (the model's justification).
+  'approval.explain': {
+    scope: 'approval',
+    keys: ['?'],
+    description: 'approval: show why the model asked',
+  },
 } as const satisfies Record<string, ActionSpec>;
 
 export type KeyAction = keyof typeof KEY_ACTIONS;

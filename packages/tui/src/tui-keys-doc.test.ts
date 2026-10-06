@@ -12,8 +12,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { INLINE_APPROVAL_HEADER } from './approval-surface.js';
-import { APPROVAL_MIN_WIDTH } from './approval-view.js';
+import { APPROVAL_PAGE_KEY } from './approval-view.js';
 import {
   DEFAULT_KEY_REGISTRY,
   KEY_ACTION_IDS,
@@ -134,18 +133,14 @@ describe.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(
       expect(section).toMatch(/\| `d`, `Esc` \|[^|]*deny/i);
     });
 
-    it('documents the narrow-terminal threshold the code uses', () => {
-      // The doc says "below N columns" — the code's number, in prose.
-      expect(tuiSection()).toMatch(
-        new RegExp(`below ${APPROVAL_MIN_WIDTH} columns`, 'i'),
+    it('documents the card keys the code binds (issue #459)', () => {
+      const section = tuiSection();
+      expect(section).toMatch(
+        new RegExp(`\\| \`${APPROVAL_PAGE_KEY}\` \\|[^|]*next page`, 'i'),
       );
-    });
-
-    it('documents the inline fallback by the header the code renders', () => {
-      // The doc quotes the header's leading, width-independent part.
-      const quoted = INLINE_APPROVAL_HEADER.split(' — ')[0] as string;
-      expect(quoted).toBe('! approval (inline)');
-      expect(tuiSection()).toContain(`\`${quoted}\``);
+      const explain = KEY_ACTIONS['approval.explain'].keys[0] as string;
+      expect(explain).toBe('?');
+      expect(section).toMatch(/\| `\?` \|[^|]*explanation/i);
     });
   },
 );

@@ -182,6 +182,13 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     command: 'thinking.cycle',
   },
   {
+    // Issue #461: the theme picker — previewed live, kept for the session.
+    name: 'theme',
+    summary: 'pick a colour theme for this session (previewed live)',
+    usage: '/theme [name]',
+    argumentHint: 'name',
+  },
+  {
     name: 'compact',
     summary: 'compact the session’s context',
     usage: '/compact [instructions]',

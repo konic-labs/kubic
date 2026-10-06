@@ -842,10 +842,12 @@ describe('model picker and thinking cycle (issue #328)', () => {
     ).toBe(true);
     expect(ui.isModelPickerOpen()).toBe(true);
     const frame = seat.shown[0]?.render(80).join('\n') ?? '';
-    // The live model is marked and the note renders as its description.
-    expect(frame).toContain('faux/big (current)');
-    expect(frame).toContain('alt/m1');
-    expect(frame).toContain('models.json');
+    // Issue #461: one group per provider, the live model marked, a
+    // provider's origin in its header.
+    expect(frame).toContain('┌─ Model');
+    expect(frame).toContain('● big  current');
+    expect(frame).toContain('ALT  ● models.json');
+    expect(frame).toContain('m1');
     // The picker is modal: arrows move it and Enter selects the second row.
     ui.handleInput('\u001b[B');
     ui.handleInput('\r');

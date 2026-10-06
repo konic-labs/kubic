@@ -167,12 +167,15 @@ describe('/new, /resume and /undo on the kubic tui path (issue #305)', () => {
     expect(first).toBeDefined();
     expect(second).toBeDefined();
 
-    // `/resume` lists the OTHER session (the current one is not a choice).
+    // `/resume` lists the OTHER session (the current one is not a choice),
+    // titled by its first prompt with its turns (issue #461).
     const mark = fake.writes.length;
     type(fake, '/resume');
-    // The picker's selected row (`→`, Pi's list marker): the overlay
-    // truncates the session id, so the marker is the picker's own signal.
-    await waitFor(() => fake.writes.slice(mark).join('').includes('→ '));
+    await waitFor(() =>
+      fake.writes.slice(mark).join('').includes('the first session prompt'),
+    );
+    expect(fake.writes.slice(mark).join('')).toContain('┌─ Session');
+    expect(fake.writes.slice(mark).join('')).toContain('1 turn');
     // Select the first row: the older session.
     fake.feed('\r');
     await waitFor(() => fake.frame.includes('(resumed)'));

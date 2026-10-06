@@ -861,6 +861,37 @@ describe('markdown on the tokens (issue #458; 01-I)', () => {
   });
 });
 
+describe('a live theme switch (issue #461)', () => {
+  it('repaints cached markdown in the new theme at the same depth', async () => {
+    const { builtinThemePalette, createThemeFromPalette } = await import(
+      './theme.js'
+    );
+    const transcript = createTranscriptView();
+    transcript.applyLaneSnapshot(
+      { laneId: 'l' },
+      [{ id: 't', kind: 'text', markdown: 'Use `qty` here.' }],
+      1,
+    );
+    const dark = createThemeFromPalette(
+      builtinThemePalette('dark'),
+      'truecolor',
+      'dark',
+    );
+    const light = createThemeFromPalette(
+      builtinThemePalette('light'),
+      'truecolor',
+      'light',
+    );
+    setTuiTheme(dark);
+    const before = transcript.render(60).join('\n');
+    expect(before).toContain(dark.ui.style({ fg: 'fg0', bg: 'bg2' })(' qty '));
+    setTuiTheme(light);
+    const after = transcript.render(60).join('\n');
+    expect(after).toContain(light.ui.style({ fg: 'fg0', bg: 'bg2' })(' qty '));
+    expect(after).not.toBe(before);
+  });
+});
+
 describe('file links in answers (issue #458)', () => {
   afterEach(() => {
     resetCapabilitiesCache();

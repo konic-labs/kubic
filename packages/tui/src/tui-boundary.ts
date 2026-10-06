@@ -20,8 +20,6 @@ export type {
   ImageTheme,
   MarkdownTheme,
   MouseRegionHandler,
-  SelectItem,
-  SelectListTheme,
   StackEntryOptions,
   Terminal,
   TerminalCapabilities,
@@ -29,11 +27,10 @@ export type {
 } from '@earendil-works/pi-tui';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-tui values (Editor, Markdown, ScrollView, Text,
-//     VStack, TuiAltScreen, ProcessTerminal, SelectList, key helpers, width
-//     helpers)
-//   used by: packages/tui/src/* (the rendered views, the `/model` picker
-//     overlay of issue #328, and the headless snapshot tests; issue #403
-//     re-verifies them on pi-tui 1.0.2)
+//     VStack, TuiAltScreen, ProcessTerminal, key helpers, width helpers)
+//   used by: packages/tui/src/* (the rendered views and the headless
+//     snapshot tests; issue #403 re-verifies them on pi-tui 1.0.2; the
+//     pickers are Kubic's own list since issue #461)
 //   why Pi has no alternative: these are the upstream implementations of the
 //     layout and render primitives above; Kubic re-implementing them would
 //     fork terminal handling, wrapping and key parsing (§16)
@@ -94,7 +91,6 @@ export {
   parseKey,
   resetCapabilitiesCache,
   ScrollView,
-  SelectList,
   setCapabilities,
   Text,
   TuiAltScreen,

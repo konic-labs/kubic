@@ -220,6 +220,14 @@ describe('key-hint sets (01-M)', () => {
         ['esc', 'cancel'],
       ],
     });
+    expect(keyHintSet('model', DEFAULT_KEY_REGISTRY)).toEqual({
+      hints: [
+        ['↑↓', 'move'],
+        ['⏎', 'switch'],
+        ['→', 'expand provider'],
+      ],
+      right: ['esc', 'keep current'],
+    });
     // Issue #460: the palette's own keys (03-A).
     expect(keyHintSet('palette', DEFAULT_KEY_REGISTRY)).toEqual({
       hints: [

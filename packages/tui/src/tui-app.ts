@@ -100,6 +100,7 @@ import {
 } from './lane-cells.js';
 import { buildLayoutRoot, type Viewport } from './layout.js';
 import { PaletteView } from './palette-view.js';
+import { PickerView } from './picker-view.js';
 import { QuestionView, type WorkerQuestionLike } from './question-view.js';
 import {
   findSlashCommand,
@@ -136,8 +137,6 @@ import {
 import type {
   AutocompleteProvider,
   Component,
-  SelectItem,
-  SelectListTheme,
   VStack,
 } from './tui-boundary.js';
 import {
@@ -146,20 +145,22 @@ import {
   isKittyProtocolActive,
   parseKey,
   ScrollView,
-  SelectList,
   truncateToWidth,
   wrapTextWithAnsi,
 } from './tui-boundary.js';
 import { dimFrame } from './ui/dim.js';
 import { fileUrl } from './ui/file-links.js';
 import { renderKeyHintRow } from './ui/key-hints.js';
+import { leftRight } from './ui/line.js';
 import {
   formatAge,
+  formatContextWindow,
   PALETTE_FILES_MAX,
   PALETTE_GROUP_ROWS,
   type PaletteItem,
   paletteModelMeta,
 } from './ui/palette.js';
+import type { PickerGroup } from './ui/picker.js';
 
 // The editor footer wraps to at most this many rows.
 export const FOOTER_MAX_ROWS = 2;
@@ -379,8 +380,24 @@ export interface TuiModelPickerRow {
   readonly label: string;
   /** Marked as the live model (the picker highlights it). */
   readonly current?: boolean;
-  /** A short note (provider origin), rendered dim under the label. */
+  /** A short note (provider origin). */
   readonly note?: string;
+  /** Issue #461: the row's `200k ctx · thinking`. */
+  readonly contextWindow?: number;
+  readonly reasoning?: boolean;
+  /** The thinking levels the model supports (the picker's thinking row). */
+  readonly thinking?: readonly string[];
+}
+
+// Issue #461: a provider's header in the model picker. A provider without
+// a key is listed with what to set, its models never offered.
+export interface TuiModelPickerProvider {
+  readonly id: string;
+  readonly usable: boolean;
+  /** Where its key comes from (`ANTHROPIC_API_KEY`). */
+  readonly keySource?: string;
+  /** What to set when it has none (`OPENAI_API_KEY`). */
+  readonly keyVar?: string;
 }
 
 // Issue #305: the generic picker (the model picker, the command palette and
@@ -388,15 +405,23 @@ export interface TuiModelPickerRow {
 export interface TuiPickerRow {
   readonly value: string;
   readonly label: string;
+  /** Right-aligned (`2m ago · 4 turns · $0.03`). */
   readonly description?: string;
   /** Start the list on this row (the live model, the current session). */
   readonly current?: boolean;
+  /** Shown greyed and never chosen (a legacy session), with why. */
+  readonly disabled?: boolean;
+  readonly note?: string;
 }
 
 export interface TuiPickerOptions {
+  /** The frame's title (`Session`, `Theme`). */
+  readonly title?: string;
   readonly rows: readonly TuiPickerRow[];
   readonly onSelect: (value: string) => void;
   readonly onCancel?: () => void;
+  /** The selection moved (the theme picker previews it). */
+  readonly onMove?: (value: string | undefined) => void;
 }
 
 // Issue #460: the ^P palette's sources. The app owns the command rows (the
@@ -413,8 +438,11 @@ export interface TuiPaletteModel {
 
 export interface TuiPaletteSession {
   readonly id: string;
+  /** Its first prompt (issue #461); the id when absent. */
+  readonly title?: string;
   /** When the session was created (ISO), shown as its age. */
   readonly createdAt?: string;
+  readonly turns?: number;
 }
 
 export interface TuiPaletteSources {
@@ -450,42 +478,41 @@ export interface TuiConfirmOptions {
 
 export interface TuiModelPickerOptions {
   readonly rows: readonly TuiModelPickerRow[];
-  readonly onSelect: (row: TuiModelPickerRow) => void;
+  /** Issue #461: every provider, keyless ones included (headers only). */
+  readonly providers?: readonly TuiModelPickerProvider[];
+  /** The live thinking level: where the thinking row starts. */
+  readonly thinking?: string;
+  /** The chosen model and the thinking level chosen with it. */
+  readonly onSelect: (row: TuiModelPickerRow, thinking?: string) => void;
   readonly onCancel?: () => void;
 }
 
-// How many picker rows fit at once; the list scrolls beyond it.
-export const MODEL_PICKER_MAX_ROWS = 10;
-// The overlay's share of the terminal: wide enough for `provider/id` rows,
-// tall enough for MODEL_PICKER_MAX_ROWS plus the list's scroll hint.
-export const MODEL_PICKER_WIDTH_PERCENT = 60;
-export const MODEL_PICKER_HEIGHT_PERCENT = 60;
 // Below this the overlay cannot composite (Pi's own visible() gate refuses),
 // so the picker stays closed and the loop reports it on the footer.
 export const MODEL_PICKER_MIN_WIDTH = 60;
 
-// The picker's overlay placement: centered, capturing, and hidden on
-// terminals too narrow to composite it (the same rule the approval dialog
-// uses, with its own minimum).
-function modelPickerOverlayOptions(): ApprovalOverlayOptions {
-  return {
-    width: `${MODEL_PICKER_WIDTH_PERCENT}%`,
-    maxHeight: `${MODEL_PICKER_HEIGHT_PERCENT}%`,
-    anchor: 'center',
-    visible: (termWidth: number): boolean =>
-      termWidth >= MODEL_PICKER_MIN_WIDTH,
-  };
-}
+// Issue #461: the thinking levels in order, for the picker's thinking row
+// (a requested level the model lacks is clamped down to one it has).
+const THINKING_ORDER = [
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+];
 
-function modelPickerTheme(): SelectListTheme {
-  const theme = tuiTheme();
-  return {
-    selectedPrefix: (text: string): string => theme.accent(text),
-    selectedText: (text: string): string => theme.accentBold(text),
-    description: (text: string): string => theme.muted(text),
-    scrollInfo: (text: string): string => theme.muted(text),
-    noMatch: (text: string): string => theme.muted(text),
-  };
+export function clampThinking(
+  level: string,
+  supported: readonly string[],
+): string {
+  if (supported.length === 0 || supported.includes(level)) return level;
+  const rank = THINKING_ORDER.indexOf(level);
+  const below = supported.filter(
+    (candidate) => THINKING_ORDER.indexOf(candidate) <= rank,
+  );
+  return below.at(-1) ?? supported[0] ?? level;
 }
 
 export interface TuiApp {
@@ -1276,7 +1303,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // Issue #328: the model picker overlay (at most one at a time).
   let modelPicker:
     | {
-        readonly list: SelectList;
+        readonly view: PickerView;
+        /** The model picker has its own hint row (03-D). */
+        readonly kind: 'model' | 'list';
         readonly handle: ApprovalOverlayHandle;
         readonly onCancel?: (() => void) | undefined;
       }
@@ -1326,38 +1355,178 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     if (verdict === 'confirm') open.options.onConfirm();
     else open.options.onCancel?.();
   };
+  // Issue #461: every "choose one" is a PickerView in the palette's box.
+  const pickerMaxRows = (): number =>
+    Math.max(
+      6,
+      Math.floor(
+        ((overlayHost?.terminal?.rows ?? 30) * PALETTE_HEIGHT_PERCENT) / 100,
+      ),
+    );
+  const showPicker = (
+    view: PickerView,
+    kind: 'model' | 'list',
+    onCancel: (() => void) | undefined,
+  ): boolean => {
+    const host = overlayHost;
+    if (host === undefined || !pickerFits()) return false;
+    closeModelPicker();
+    closePalette();
+    modelPicker = {
+      view,
+      kind,
+      handle: host.showOverlay(view, paletteOverlayOptions()),
+      onCancel,
+    };
+    host.requestRender?.();
+    return true;
+  };
   const openPickerOverlay = (options: TuiPickerOptions): boolean => {
     if (overlayHost === undefined || !pickerFits()) return false;
-    closeModelPicker();
-    const rows = options.rows;
-    const items: SelectItem[] = rows.map((row) => ({
-      value: row.value,
-      label: row.current === true ? `${row.label} (current)` : row.label,
-      ...(row.description === undefined
+    const view = new PickerView({
+      title: options.title ?? 'Choose',
+      groups: [
+        {
+          id: 'rows',
+          rows: options.rows.map((row) => ({
+            value: row.value,
+            text: sanitizeLaneText(row.label),
+            ...(row.description === undefined
+              ? {}
+              : { right: sanitizeLaneText(row.description) }),
+            ...(row.current === true ? { current: true } : {}),
+            ...(row.disabled === true ? { disabled: true } : {}),
+            ...(row.note === undefined ? {} : { note: row.note }),
+          })),
+        },
+      ],
+      maxRows: pickerMaxRows,
+      onSelect: (row) => {
+        closeModelPicker();
+        options.onSelect(row.value);
+      },
+      onClose: () => closeModelPicker(true),
+      ...(options.onMove === undefined
         ? {}
-        : { description: row.description }),
-    }));
-    const list = new SelectList(
-      items,
-      MODEL_PICKER_MAX_ROWS,
-      modelPickerTheme(),
+        : { onMove: (row) => options.onMove?.(row?.value) }),
+    });
+    return showPicker(view, 'list', options.onCancel);
+  };
+  // Issue #461: the model picker (03-D, 03-E) — one group per provider
+  // with where its key comes from, keyless providers greyed with what to
+  // set, large providers folded, and the thinking row: ←→ steps the levels
+  // the selected model supports, ⏎ takes model and level together.
+  const openModelPickerOverlay = (options: TuiModelPickerOptions): boolean => {
+    if (overlayHost === undefined || !pickerFits()) return false;
+    const byValue = new Map<string, TuiModelPickerRow>(
+      options.rows.map((row) => [`${row.provider}/${row.id}`, row]),
     );
-    const current = rows.findIndex((row) => row.current === true);
-    if (current >= 0) list.setSelectedIndex(current);
-    list.onSelect = (item: SelectItem): void => {
-      closeModelPicker();
-      options.onSelect(item.value);
+    const providers: TuiModelPickerProvider[] = [...(options.providers ?? [])];
+    for (const row of options.rows) {
+      if (!providers.some((provider) => provider.id === row.provider)) {
+        providers.push({ id: row.provider, usable: true });
+      }
+    }
+    // The live model's provider first, then the usable ones, keyless last.
+    const live = options.rows.find((row) => row.current === true)?.provider;
+    const rank = (provider: TuiModelPickerProvider): number =>
+      provider.id === live ? 0 : provider.usable ? 1 : 2;
+    const ordered = providers
+      .map((provider, index) => ({ provider, index }))
+      .sort((a, b) => rank(a.provider) - rank(b.provider) || a.index - b.index)
+      .map((entry) => entry.provider);
+    const right = (row: TuiModelPickerRow): string | undefined => {
+      const parts = [
+        row.contextWindow === undefined
+          ? undefined
+          : `${formatContextWindow(row.contextWindow)} ctx`,
+        row.reasoning === true ? 'thinking' : undefined,
+      ].filter((part): part is string => part !== undefined);
+      return parts.length === 0 ? undefined : parts.join(' · ');
     };
-    list.onCancel = (): void => {
-      closeModelPicker(true);
+    // Where a provider came from (built-in, models.json …), from its rows.
+    const originOf = (provider: string): string | undefined =>
+      options.rows.find((row) => row.provider === provider && row.note)?.note;
+    const groups: PickerGroup[] = ordered.map((provider) => {
+      const keyVar =
+        provider.keyVar === undefined
+          ? undefined
+          : sanitizeLaneText(provider.keyVar);
+      return {
+        id: provider.id,
+        title: sanitizeLaneText(provider.id).replaceAll('-', ' '),
+        status: provider.usable
+          ? {
+              text:
+                provider.keySource !== undefined
+                  ? `● key from ${sanitizeLaneText(provider.keySource)}`
+                  : `● ${sanitizeLaneText(originOf(provider.id) ?? 'ready')}`,
+              ok: true,
+            }
+          : { text: '○ no key', ok: false },
+        ...(provider.usable || keyVar === undefined
+          ? {}
+          : { right: `set ${keyVar}` }),
+        unit: 'models',
+        ...(provider.usable ? {} : { disabled: true }),
+        rows: options.rows
+          .filter((row) => row.provider === provider.id)
+          .map((row) => {
+            const detail = right(row);
+            return {
+              value: `${row.provider}/${row.id}`,
+              text: sanitizeLaneText(row.id),
+              match: sanitizeLaneText(`${row.provider}/${row.id}`),
+              ...(row.current === true ? { current: true } : {}),
+              ...(detail === undefined ? {} : { right: detail }),
+            };
+          }),
+      };
+    });
+    const liveThinking = options.thinking ?? 'off';
+    let chosen = liveThinking;
+    const levelsOf = (value: string | undefined): readonly string[] => {
+      const row = value === undefined ? undefined : byValue.get(value);
+      return row?.thinking ?? ['off'];
     };
-    modelPicker = {
-      list,
-      handle: overlayHost.showOverlay(list, modelPickerOverlayOptions()),
-      onCancel: options.onCancel,
-    };
-    overlayHost.requestRender?.();
-    return true;
+    const view: PickerView = new PickerView({
+      title: 'Model',
+      groups,
+      maxRows: pickerMaxRows,
+      onSelect: (row) => {
+        const picked = byValue.get(row.value);
+        closeModelPicker();
+        if (picked === undefined) return;
+        options.onSelect(picked, clampThinking(chosen, levelsOf(row.value)));
+      },
+      onClose: () => closeModelPicker(true),
+      onSide: (direction, row) => {
+        const levels = levelsOf(row?.value);
+        const at = levels.indexOf(clampThinking(chosen, levels));
+        const next =
+          levels[Math.min(levels.length - 1, Math.max(0, at + direction))];
+        if (next !== undefined) chosen = next;
+      },
+      footer: (ui, row, width) => {
+        const levels = levelsOf(row?.value);
+        const shown = clampThinking(chosen, levels);
+        const cells = levels.map((level) =>
+          level === shown
+            ? ui.style({ fg: 'fg0', bg: 'bg3' })(` ${level} `)
+            : level === liveThinking
+              ? ui.style({ fg: 'accent', bold: true })(level)
+              : ui.fg('fg3')(level),
+        );
+        return [
+          leftRight(
+            `${ui.fg('fg2')(' thinking  ')}${cells.join('  ')}`,
+            `${ui.fg('fg1')('←→')}${ui.fg('fg2')(' change ')}`,
+            width,
+          ),
+        ];
+      },
+    });
+    return showPicker(view, 'model', options.onCancel);
   };
   // Issue #154: the open worker question, and the ones waiting behind it.
   let questionOpen: { readonly view: QuestionView } | undefined;
@@ -1478,13 +1647,17 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       session.createdAt === undefined
         ? Number.NaN
         : Date.parse(session.createdAt);
+    const meta = [
+      Number.isNaN(created) ? undefined : formatAge(Date.now() - created),
+      session.turns === undefined
+        ? undefined
+        : `${session.turns} turn${session.turns === 1 ? '' : 's'}`,
+    ].filter((part): part is string => part !== undefined);
     return {
       group: 'sessions',
       value: session.id,
-      text: sanitizeLaneText(session.id),
-      ...(Number.isNaN(created)
-        ? {}
-        : { meta: formatAge(Date.now() - created) }),
+      text: sanitizeLaneText(session.title ?? session.id),
+      ...(meta.length === 0 ? {} : { meta: meta.join(' · ') }),
     };
   };
   const fileItems = (): PaletteItem[] =>
@@ -1715,6 +1888,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const hintContext = (): HintContext => {
     if (approvalSurface.isShowing()) return 'approval';
     if (palette !== undefined) return 'palette';
+    if (modelPicker?.kind === 'model') return 'model';
     if (
       modelPicker !== undefined ||
       confirmOverlay !== undefined ||
@@ -1858,7 +2032,8 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
           closeModelPicker(true);
           return { quit: false, consumed: true, cancel: false };
         }
-        modelPicker.list.handleInput(data);
+        modelPicker.view.handleInput(data);
+        overlayHost?.requestRender?.();
         return { quit: false, consumed: true, cancel: false };
       }
       const consumed: TuiInputResult = {
@@ -2275,26 +2450,8 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     restoreDraft: (prompt: string): void => {
       restoreDraft(prompt);
     },
-    openModelPicker: (options: TuiModelPickerOptions): boolean => {
-      const rows = options.rows;
-      return openPickerOverlay({
-        rows: rows.map((row) => ({
-          value: `${row.provider}/${row.id}`,
-          label: row.label,
-          ...(row.note === undefined ? {} : { description: row.note }),
-          ...(row.current === true ? { current: true } : {}),
-        })),
-        onSelect: (value) => {
-          const picked = rows.find(
-            (row) => `${row.provider}/${row.id}` === value,
-          );
-          if (picked !== undefined) options.onSelect(picked);
-        },
-        ...(options.onCancel === undefined
-          ? {}
-          : { onCancel: options.onCancel }),
-      });
-    },
+    openModelPicker: (options: TuiModelPickerOptions): boolean =>
+      openModelPickerOverlay(options),
     openPicker: (options: TuiPickerOptions): boolean =>
       openPickerOverlay(options),
     openPalette: (sources: TuiPaletteSources): boolean =>

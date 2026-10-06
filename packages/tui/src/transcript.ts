@@ -266,6 +266,13 @@ function fit(line: string, width: number): string {
 
 // Cache keys are `${theme.level}\u0000${cell.id}`: the id is everything after
 // the first NUL (entry ids never contain one).
+// Issue #461: cache entries are per theme AND depth — a live theme switch
+// at the same depth must repaint, not reuse the old colours. Names hold no
+// NUL, so the cell id is still everything after the first one.
+function themeKey(theme: TuiTheme): string {
+  return `${theme.ui.name} ${theme.level}`;
+}
+
 function cellIdOf(key: string): string {
   const at = key.indexOf('\u0000');
   return at === -1 ? key : key.slice(at + 1);
@@ -360,7 +367,7 @@ class TranscriptDocument implements Component {
   }
 
   private markdown(cell: TranscriptEntry, theme: TuiTheme): Markdown {
-    const key = `${theme.level}\u0000${cell.id}`;
+    const key = `${themeKey(theme)}\u0000${cell.id}`;
     let md = this.markdownCache.get(key);
     if (md === undefined) {
       // Issue #458: file references become OSC 8 links — only where the
@@ -394,7 +401,7 @@ class TranscriptDocument implements Component {
     width: number,
     theme: TuiTheme,
   ): string[] | undefined {
-    const cached = this.lineCache.get(`${theme.level}\u0000${cell.id}`);
+    const cached = this.lineCache.get(`${themeKey(theme)}\u0000${cell.id}`);
     if (cached === undefined) return undefined;
     if (cached.text !== cell.markdown || cached.width !== width) {
       return undefined;
@@ -408,7 +415,7 @@ class TranscriptDocument implements Component {
     theme: TuiTheme,
     lines: string[],
   ): void {
-    this.lineCache.set(`${theme.level}\u0000${cell.id}`, {
+    this.lineCache.set(`${themeKey(theme)}\u0000${cell.id}`, {
       text: cell.markdown,
       width,
       lines,

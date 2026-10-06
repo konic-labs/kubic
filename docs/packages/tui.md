@@ -29,6 +29,7 @@ TUI-side analogue of the worker Pi boundary.
 | `diff-view.ts` | `DiffOp`, `DiffFileChange`, `DiffRenderOptions`, `isBinaryText`, `unifiedHunks`, `renderDiffHeader`, `renderDiffLines` (pure render functions; the panel owns the document and its scrolling, #301) |
 | `approval-view.ts` | `ApprovalAction`, `ApprovalViewRequest`, `ApprovalDecision`, `APPROVAL_MIN_WIDTH`, `ApprovalOverlayOptions`, `approvalOverlayOptions`, `ApprovalOverlayBounds`, `approvalOverlayBounds`, `APPROVAL_PAGE_KEY`, `APPROVAL_DEFAULT_KEYS`, `APPROVAL_ARMING_MS`, `APPROVAL_QUIET_MS`, `APPROVAL_REPEAT_MS`, `APPROVAL_IMMEDIATE_KEY`, `ApprovalKeyOverrides`, `resolveApprovalAction`, `resolveApprovalKey`, `isProseKey`, `approvalKeyProblems`, `ApprovalKeyConflict`, `approvalKeyConflicts`, `ApprovalOverlayHandle`, `ApprovalOverlayTui`, `ApprovalDecisionStore`, `MemoryApprovalDecisionStore`, `ApprovalMemo`, `createApprovalMemo`, `ApprovalWaitOptions`, `waitForApproval` |
 | `approval-card.ts` | `APPROVAL_COMMAND_PAGE_LINES`, `wrapByColumns`, `approvalReason`, `ApprovalCardOptions`, `renderApprovalCard` (the inline approval card, issue #459) |
+| `picker-view.ts` | `PickerViewOptions`, `PickerView` (every "choose one" overlay — model, session, theme, thinking, prompt — over `ui/picker.ts`, Pi's `Input` for the filter; issue #461) |
 | `palette-view.ts` | `PaletteViewOptions`, `PaletteView` (the ^P overlay: Pi's `Input` for the query, `ui/palette.ts` for the rest; issue #460) |
 | `journal-view.ts` | `JournalFilter`, `filterJournalChanges`, `renderJournalLines`, `JournalViewOptions`, `JournalView` |
 | `views.ts`, `components.ts` | Pointer | View assembly lives in `layout.ts` / `*-view.ts` / `tui-app.ts` (#23–#28); no shared or aggregated module |
@@ -50,6 +51,7 @@ depth `none`, so snapshots stay readable.
 | `ui/key-hints.ts` | `renderKeyHintRow`: keys fg1, labels fg2, whole hints dropped from the end when narrow, a right-aligned hint |
 | `ui/match.ts` | `fuzzyPositions` (contiguous run, else word starts) and `highlightPositions` (matched runs styled, the rest optionally too) |
 | `ui/palette.ts` | the ^P palette (issue #460): `PaletteItem`/`PaletteState`, grouping and ranking with Pi's `fuzzyMatch` (`paletteGroups`, `paletteRows`, `paletteResultCount`), navigation (`movePalette`, `cyclePaletteGroup`, `togglePaletteDetails`, `setPaletteQuery`, `setPaletteItems`), `renderPalette`, and the row helpers `paletteModelMeta`, `formatContextWindow`, `formatAge` |
+| `ui/picker.ts` | the grouped picker list (issue #461): `PickerRow`/`PickerGroup`/`PickerState`, `PICKER_FOLD_ROWS`, `createPicker`, `setPickerQuery`, `movePicker`, `onExpandRow`, `expandPickerGroup`, `selectedPickerRow`, `renderPicker` (headers with a key status, greyed disabled groups and rows, folding, a footer row) |
 | `ui/dim.ts` | `dimLine` / `dimFrame`: a row without colours, links or markers in fg3; a frame dimmed but for its key-hint row |
 
 Widths always come from Pi's grapheme-aware helpers through

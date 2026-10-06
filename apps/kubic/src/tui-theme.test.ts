@@ -241,3 +241,76 @@ describe('kubic tui rejects a bad theme at boot (issue #304)', () => {
     expect(await exit).toBe(0);
   });
 });
+
+describe('/theme in the TUI (issue #461)', () => {
+  const type = (
+    fake: ReturnType<typeof recordingTerminal>,
+    text: string,
+  ): void => {
+    for (const ch of text) fake.feed(ch);
+    fake.feed('\r');
+  };
+
+  it('previews as the selection moves, restores on esc, keeps on enter', {
+    timeout: 20000,
+  }, async () => {
+    const root = tmpRoot();
+    const fake = recordingTerminal();
+    const faux = fauxProvider({ models: [{ id: 'solo', input: ['text'] }] });
+    const registry = createModels();
+    registry.setProvider(faux.provider);
+    const exit = runTuiCommand(
+      {},
+      {
+        out: () => {},
+        createTerminal: () => fake.terminal,
+        // Depth none keeps the frames plain; the theme still switches.
+        colorLevel: 'none',
+        bootLane: async (sessionId) =>
+          await bootTuiLane(sessionId, {
+            sessionsRoot: root,
+            models: registry,
+            env: new FakeExecutionEnv({}),
+            model: { provider: 'faux', id: 'solo' },
+          }),
+      },
+    );
+    const since = (mark: number): string => fake.writes.slice(mark).join('');
+    await waitFor(() => fake.writes.length > 0);
+    let mark = fake.writes.length;
+    type(fake, '/theme');
+    await waitFor(() => since(mark).includes('┌─ Theme'));
+    expect(since(mark)).toContain('● dark  current');
+    expect(tuiTheme().ui.name).toBe('dark');
+    // Moving previews the theme live; esc puts the one before back.
+    fake.feed('\u001b[B');
+    expect(tuiTheme().ui.name).toBe('light');
+    mark = fake.writes.length;
+    fake.feed('\u001b');
+    await waitFor(() => since(mark).includes('theme: dark (kept)'));
+    expect(tuiTheme().ui.name).toBe('dark');
+    // Enter keeps it for the session and says how to keep it for good.
+    mark = fake.writes.length;
+    type(fake, '/theme');
+    await waitFor(() => since(mark).includes('┌─ Theme'));
+    fake.feed('\u001b[B');
+    fake.feed('\r');
+    await waitFor(() =>
+      since(mark).includes('to keep it: [ui] theme = "light"'),
+    );
+    expect(tuiTheme().ui.name).toBe('light');
+    // By name, and an unknown name is refused with the choices.
+    mark = fake.writes.length;
+    type(fake, '/theme terminal');
+    await waitFor(() => since(mark).includes('theme: terminal'));
+    expect(tuiTheme().ui.name).toBe('terminal');
+    mark = fake.writes.length;
+    type(fake, '/theme nope');
+    await waitFor(() => since(mark).includes("unknown theme 'nope'"));
+    // The refused draft is back in the editor: clear, arm, quit.
+    fake.feed('\x03');
+    fake.feed('\x03');
+    fake.feed('\x03');
+    expect(await exit).toBe(0);
+  });
+});

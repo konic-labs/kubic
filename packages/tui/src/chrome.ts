@@ -177,7 +177,8 @@ export type HintContext =
   | 'working'
   | 'approval'
   | 'overlay'
-  | 'palette';
+  | 'palette'
+  | 'model';
 
 export interface HintSetOptions {
   /** Whether a busy turn takes follow-ups (the solo lane's inbox). */
@@ -233,6 +234,17 @@ export function keyHintSet(
         ['→', 'details'],
       ],
       right: ['esc', 'close'],
+    };
+  }
+  // Issue #461: the model picker (03-D).
+  if (context === 'model') {
+    return {
+      hints: [
+        ['↑↓', 'move'],
+        ['⏎', 'switch'],
+        ['→', 'expand provider'],
+      ],
+      right: ['esc', 'keep current'],
     };
   }
   if (context === 'overlay') {

@@ -28,6 +28,7 @@ import {
   expandSkillInvocation,
   type LoadedSkill,
 } from '../../../packages/agents/src/skills/skills.js';
+import { formatCost } from '../../../packages/core/src/cli/kit.js';
 import type { LaneImagePart } from '../../../packages/core/src/presentation.js';
 import {
   type FileSystem,
@@ -113,6 +114,7 @@ import {
   type WorkerProjectionEvent,
 } from '../../../packages/host/src/presentation/projector.js';
 import { findProjectRoot } from '../../../packages/host/src/project-root.js';
+import { providerKeyHints } from '../../../packages/host/src/provider-key-hints.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
 import { effectiveRoleClasses } from '../../../packages/host/src/roles/resolver.js';
 import {
@@ -130,6 +132,10 @@ import {
   SESSION_ID_PATTERN,
   type SoloBudgetLimits,
 } from '../../../packages/host/src/run-cli.js';
+import {
+  type SessionSummary,
+  summarizeProjectSessions,
+} from '../../../packages/host/src/session-summaries.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import type { SkippedSkill } from '../../../packages/host/src/skills-boot.js';
 import {
@@ -191,6 +197,7 @@ import {
   createTuiApp,
   type JournalChangeLike,
   type TuiApp,
+  type TuiPickerRow,
   type TuiSubmitOutcome,
   type TuiWorkspace,
 } from '../../../packages/tui/src/tui-app.js';
@@ -202,6 +209,7 @@ import {
   parseKey,
 } from '../../../packages/tui/src/tui-boundary.js';
 import { loadHighlighter } from '../../../packages/tui/src/ui/highlight.js';
+import { formatAge } from '../../../packages/tui/src/ui/palette.js';
 import {
   DEFAULT_RESERVE_TOKENS,
   effectiveReserveTokens,
@@ -446,6 +454,8 @@ export interface TuiLaneLoop {
    * only), the live model marked. Absent means this boot cannot list them.
    */
   listModels?: (context: Context) => Promise<readonly TuiModelChoice[]>;
+  /** Issue #461: every provider, usable or not, for the picker's headers. */
+  listProviders?: (context: Context) => Promise<readonly TuiProviderChoice[]>;
   // §46 trajectory per settled turn (issue #383): the prod boot persists
   // <sessions-root>/<id>/trajectory.json here. Absent (injected test loops)
   // means no trajectory; a failure never changes the turn's outcome.
@@ -467,6 +477,19 @@ export interface TuiModelChoice {
   /** Issue #460: the palette's model columns (context, thinking). */
   readonly contextWindow?: number;
   readonly reasoning?: boolean;
+  /** Issue #461: the thinking levels the model supports. */
+  readonly thinking?: readonly ModelThinkingLevel[];
+}
+
+// Issue #461: one provider of the model picker — keyless ones included, so
+// the picker can say what to set instead of hiding them.
+export interface TuiProviderChoice {
+  readonly id: string;
+  readonly usable: boolean;
+  /** Where the key comes from (`ANTHROPIC_API_KEY`). */
+  readonly keySource?: string;
+  /** What to set when there is none (`OPENAI_API_KEY`). */
+  readonly keyVar?: string;
 }
 
 // One settled turn as the runner saw it: the prompt, when it started, the
@@ -850,6 +873,10 @@ export interface TuiLaneBoot {
   // Issue #305: `/resume`'s rows — the sessions store this boot belongs to,
   // newest first. Absent (injected boots) means `/resume` refuses by name.
   listSessions?: () => Promise<readonly TuiSessionChoice[]>;
+  // Issue #461: this project's other sessions with their first prompt,
+  // turns, cost and age (read without a lock; a held one is listed, never
+  // opened). Absent means `/resume` falls back to `listSessions`.
+  summarizeSessions?: (exclude?: string) => Promise<readonly SessionSummary[]>;
   // Issue #305: the workspace root the journal (and `/undo`) resolves paths
   // against. Absent means `/undo` refuses by name rather than guessing.
   cwd?: string;
@@ -1971,6 +1998,18 @@ export async function bootTuiLane(
       journal,
       // Issue #305: `/resume` lists THIS boot's sessions store; `/undo`
       // resolves journal paths against the same workspace root.
+      // The workspace a TUI session records is the process cwd (see the
+      // createSession above), so "this project" is matched against it. Each
+      // summary parses a session file, so one read serves the palette and
+      // `/resume` for SESSION_SUMMARY_TTL_MS.
+      summarizeSessions: cachedSummaries((exclude) =>
+        summarizeProjectSessions({
+          sessionsRoot: root,
+          workspace: process.cwd(),
+          ...(exclude === undefined ? {} : { exclude }),
+          context,
+        }),
+      ),
       listSessions: async () => {
         const rows = await listSessions(store, context);
         return rows.map((row) => ({
@@ -2288,10 +2327,37 @@ export async function bootTuiLane(
                 ...(note === undefined ? {} : { note }),
                 contextWindow: model.contextWindow,
                 reasoning: model.reasoning,
+                thinking: supportedThinking(models, model as AnyModel),
               });
             }
           }
           return rows;
+        },
+        // Issue #461: the picker's provider headers. A keyless built-in is
+        // listed with the variable Pi's auth check would read; an injected
+        // test catalog has no receipt, so every provider counts as usable.
+        listProviders: async () => {
+          const providers = models.getProviders().map((provider) => {
+            const info = assembled?.providers.get(provider.id);
+            return {
+              id: provider.id,
+              usable: info?.usable ?? true,
+              ...(info?.authSource === undefined
+                ? {}
+                : { keySource: info.authSource }),
+            };
+          });
+          const keyless = providers
+            .filter((provider) => !provider.usable)
+            .map((provider) => provider.id);
+          const hints =
+            keyless.length === 0
+              ? new Map<string, string>()
+              : await providerKeyHints(keyless);
+          return providers.map((provider) => {
+            const keyVar = hints.get(provider.id);
+            return keyVar === undefined ? provider : { ...provider, keyVar };
+          });
         },
         // §46 trajectory per settled turn (issue #383): the same record
         // `kubic run` writes, holding the session's latest settled turn.
@@ -3035,6 +3101,11 @@ export class TuiTurnRunner {
     return list(this.loop.context);
   }
 
+  /** #461: every provider, keyless ones included (none: an empty list). */
+  async listProviders(): Promise<readonly TuiProviderChoice[]> {
+    return (await this.loop.listProviders?.(this.loop.context)) ?? [];
+  }
+
   // Busy from the moment a submit is accepted by the loop — not from the
   // moment the durable turn lands — so the Ctrl-C that follows Enter by a
   // keystroke still cancels instead of quitting. Busy means PLACED work
@@ -3568,6 +3639,39 @@ export class TuiTurnRunner {
   }
 }
 
+// Issue #461: how long one read of the session summaries serves the palette
+// and `/resume` (a summary parses a whole session file).
+export const SESSION_SUMMARY_TTL_MS = 30_000;
+
+export function cachedSummaries(
+  read: (exclude?: string) => Promise<readonly SessionSummary[]>,
+  now: () => number = Date.now,
+): (exclude?: string) => Promise<readonly SessionSummary[]> {
+  let cached:
+    | {
+        readonly exclude: string | undefined;
+        readonly at: number;
+        readonly rows: Promise<readonly SessionSummary[]>;
+      }
+    | undefined;
+  return (exclude) => {
+    if (
+      cached !== undefined &&
+      cached.exclude === exclude &&
+      now() - cached.at < SESSION_SUMMARY_TTL_MS
+    ) {
+      return cached.rows;
+    }
+    const rows = read(exclude);
+    cached = { exclude, at: now(), rows };
+    // A failed read is not kept: the next ask tries again.
+    rows.catch(() => {
+      if (cached?.rows === rows) cached = undefined;
+    });
+    return rows;
+  };
+}
+
 // Issue #304 (§16.9): the `[ui] theme` reference → the active theme. A
 // built-in name (`default`, `dark`, `light`, `terminal` — issue #444) needs
 // no file; anything else is a JSON theme path, read through the exec bridge
@@ -3793,11 +3897,11 @@ export function readImageFile(files: FileBridge, path: string): ImageFileRead {
 }
 
 // The `/model` command of the interactive loop (issue #227; §38.1). One
-// parser for the three forms the loop acts on — report, switch, invalid —
-// so the submit path and its tests agree on what is a command and what is a
-// prompt handed to the lane.
+// parser for the three forms the loop acts on — pick (bare: the picker,
+// issue #461), switch, invalid — so the submit path and its tests agree on
+// what is a command and what is a prompt handed to the lane.
 export type TuiModelCommand =
-  | { kind: 'report' }
+  | { kind: 'pick' }
   | { kind: 'switch'; selection: ModelSelection }
   | { kind: 'invalid'; message: string };
 
@@ -3805,7 +3909,7 @@ export function parseModelCommand(prompt: string): TuiModelCommand | undefined {
   if (prompt !== '/model' && !prompt.startsWith('/model ')) return undefined;
   const argument =
     prompt === '/model' ? '' : prompt.slice('/model '.length).trim();
-  if (argument === '') return { kind: 'report' };
+  if (argument === '') return { kind: 'pick' };
   try {
     return { kind: 'switch', selection: parseModelFlag(argument) };
   } catch (error) {
@@ -3878,7 +3982,7 @@ export function parseTuiCompactCommand(
 // the level vocabulary is the config layer's own (`THINKING_LEVELS`), so
 // `/thinking bogus` is refused by name with the levels that exist.
 export type TuiThinkingCommand =
-  | { kind: 'report' }
+  | { kind: 'pick' }
   | { kind: 'switch'; level: ModelThinkingLevel }
   | { kind: 'invalid'; message: string };
 
@@ -3890,7 +3994,7 @@ export function parseThinkingCommand(
   }
   const argument =
     prompt === '/thinking' ? '' : prompt.slice('/thinking '.length).trim();
-  if (argument === '') return { kind: 'report' };
+  if (argument === '') return { kind: 'pick' };
   if (!isThinkingLevel(argument)) {
     return {
       kind: 'invalid',
@@ -4960,9 +5064,10 @@ export async function runTuiCommand(
           if (!stopped) screen?.render();
           return;
         }
-        if (command.kind === 'report') {
-          app.setEditorFooter(`model: ${turn.modelRef}`);
-          if (!stopped) screen?.render();
+        // Issue #461: a bare `/model` opens the picker (the way in where
+        // Alt+M types `µ`, as macOS Option does).
+        if (command.kind === 'pick') {
+          openModelPicker();
           return;
         }
         if (command.kind === 'invalid') {
@@ -5098,7 +5203,82 @@ export async function runTuiCommand(
             screen?.render();
           });
       };
+      // Issue #461: one picker row per summarized session — its first
+      // prompt, then age · turns · cost; a legacy or held one greyed with
+      // why.
+      const sessionPickerRow = (summary: SessionSummary): TuiPickerRow => {
+        const created =
+          summary.createdAt === undefined
+            ? Number.NaN
+            : Date.parse(summary.createdAt);
+        const detail = [
+          Number.isNaN(created) ? undefined : formatAge(Date.now() - created),
+          summary.turns === undefined
+            ? undefined
+            : `${summary.turns} turn${summary.turns === 1 ? '' : 's'}`,
+          summary.costUsd === undefined
+            ? undefined
+            : formatCost(summary.costUsd),
+        ].filter((part): part is string => part !== undefined);
+        return {
+          value: summary.id,
+          label: summary.title ?? summary.id,
+          ...(detail.length === 0 ? {} : { description: detail.join(' · ') }),
+          ...(summary.state === 'ready'
+            ? {}
+            : {
+                disabled: true,
+                note:
+                  summary.state === 'legacy'
+                    ? 'legacy — kubic sessions'
+                    : 'in use by another kubic',
+              }),
+        };
+      };
+      const openSessionPicker = (
+        summarize: (exclude?: string) => Promise<readonly SessionSummary[]>,
+      ): TuiSubmitOutcome => {
+        app.setEditorFooter('resume: reading this project’s sessions…');
+        if (!stopped) screen?.render();
+        void summarize(boot.sessionId)
+          .then((summaries) => {
+            if (stopped) return;
+            if (summaries.length === 0) {
+              app.setEditorFooter('resume: no other sessions in this project');
+              screen?.render();
+              return;
+            }
+            app.setEditorFooter('');
+            const opened = app.openPicker({
+              title: 'Session',
+              rows: summaries.map(sessionPickerRow),
+              onSelect: resumeSession,
+              onCancel: () => {
+                if (stopped) return;
+                app.setEditorFooter('resume: cancelled');
+                screen?.render();
+              },
+            });
+            if (!opened) {
+              app.setEditorFooter(
+                'resume needs a wider terminal — use kubic sessions list',
+              );
+            }
+            screen?.render();
+          })
+          .catch((error: unknown) => {
+            if (stopped) return;
+            app.setEditorFooter(
+              `resume: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            screen?.render();
+          });
+        return 'accepted';
+      };
       const openResumePicker = (): TuiSubmitOutcome => {
+        if (boot.summarizeSessions !== undefined) {
+          return openSessionPicker(boot.summarizeSessions);
+        }
         const list = boot.listSessions;
         if (list === undefined) {
           app.setEditorFooter(
@@ -5246,6 +5426,94 @@ export async function runTuiCommand(
           });
         return 'accepted';
       };
+      // Issue #461: `/theme [name]` — the built-ins and the configured theme
+      // file, previewed live as the selection moves; ⏎ keeps it for this
+      // session (the config is never written), esc restores the one before.
+      const configuredTheme =
+        deps.theme !== undefined &&
+        deps.theme !== '' &&
+        !isThemeBuiltin(deps.theme)
+          ? deps.theme
+          : undefined;
+      // `default` is the dark brand palette's other name.
+      let activeTheme =
+        deps.theme === undefined ||
+        deps.theme === '' ||
+        deps.theme === 'default'
+          ? 'dark'
+          : deps.theme;
+      const themeChoices = (): string[] => [
+        'dark',
+        'light',
+        'terminal',
+        ...(configuredTheme === undefined ? [] : [configuredTheme]),
+      ];
+      const applyTheme = (name: string): boolean => {
+        try {
+          setTuiTheme(resolveTuiTheme(name, resolvedTheme.level, files));
+        } catch (error) {
+          app.setEditorFooter(
+            `theme: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          if (!stopped) screen?.render();
+          return false;
+        }
+        if (!stopped) screen?.render();
+        return true;
+      };
+      const keepTheme = (name: string): void => {
+        activeTheme = name;
+        app.appendNotice([
+          `theme: ${name} for this session — to keep it: [ui] theme = "${name}" in ~/.kubic/config.toml`,
+        ]);
+        app.setEditorFooter(`theme: ${name}`);
+        if (!stopped) screen?.render();
+      };
+      const openThemePicker = (argument: string): TuiSubmitOutcome => {
+        if (argument !== '') {
+          if (!themeChoices().includes(argument)) {
+            app.setEditorFooter(
+              `theme: unknown theme '${argument}' — ${themeChoices().join(', ')}`,
+            );
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
+          if (!applyTheme(argument)) return 'refused';
+          keepTheme(argument);
+          return 'command';
+        }
+        const before = activeTheme;
+        const opened = app.openPicker({
+          title: 'Theme',
+          rows: themeChoices().map((name) => ({
+            value: name,
+            label: name === configuredTheme ? basename(name) : name,
+            ...(name === activeTheme ? { current: true } : {}),
+            ...(name === configuredTheme
+              ? { description: 'from [ui] theme' }
+              : {}),
+          })),
+          onMove: (value) => {
+            if (value !== undefined) applyTheme(value);
+          },
+          onSelect: (value) => {
+            if (applyTheme(value)) keepTheme(value);
+          },
+          onCancel: () => {
+            if (stopped) return;
+            applyTheme(before);
+            app.setEditorFooter(`theme: ${before} (kept)`);
+            screen?.render();
+          },
+        });
+        if (!opened) {
+          app.setEditorFooter(
+            'theme picker needs a wider terminal — use /theme <name>',
+          );
+          if (!stopped) screen?.render();
+        }
+        return 'command';
+      };
       const runLocalCommand = (
         command: ParsedSlashCommand,
       ): TuiSubmitOutcome => {
@@ -5323,6 +5591,8 @@ export async function runTuiCommand(
             if (!stopped) screen?.render();
             return 'accepted';
           }
+          case 'theme':
+            return openThemePicker(command.argument);
           case 'safety': {
             // Issue #453: the honest limits of the CURRENT mode, in full. The
             // wording is the limits modules' (never re-worded here), and an
@@ -5472,9 +5742,12 @@ export async function runTuiCommand(
       // Enter — the same footer wording and the same refusal text.
       // Issue #210 adds the reason: `/escalate <id> [reason]` records it
       // in the escalation event; `/model` passes none (a silent climb).
+      // Issue #461: `thinking` is the level the model picker chose with the
+      // model; it is set once the switch (which re-clamps the old one) lands.
       const switchModelTo = (
         selection: ModelSelection,
         reason?: string,
+        thinking?: ModelThinkingLevel,
       ): void => {
         if (turn === undefined) {
           app.setEditorFooter('model switch needs the solo lane');
@@ -5516,6 +5789,9 @@ export async function runTuiCommand(
             }
             app.setEditorFooter(`model: ${label} (switched)`);
             screen?.render();
+            if (thinking !== undefined) {
+              handleThinkingCommand({ kind: 'switch', level: thinking });
+            }
           })
           .catch((error: unknown) => {
             if (stopped) return;
@@ -5534,12 +5810,35 @@ export async function runTuiCommand(
           if (!stopped) screen?.render();
           return;
         }
-        if (command.kind === 'report') {
-          void turn
-            .liveThinking()
-            .then((level) => {
+        // Issue #461: a bare `/thinking` picks from the levels the live
+        // model supports (Alt+T keeps cycling them).
+        if (command.kind === 'pick') {
+          const runner = turn;
+          void Promise.all([runner.supportedThinking(), runner.liveThinking()])
+            .then(([levels, live]) => {
               if (stopped) return;
-              app.setEditorFooter(`thinking: ${level}`);
+              const opened = app.openPicker({
+                title: 'Thinking',
+                rows: levels.map((level) => ({
+                  value: level,
+                  label: level,
+                  ...(level === live ? { current: true } : {}),
+                })),
+                onSelect: (value) => {
+                  if (value !== live && isThinkingLevel(value)) {
+                    handleThinkingCommand({ kind: 'switch', level: value });
+                  } else {
+                    app.setEditorFooter(`thinking: ${live}`);
+                    screen?.render();
+                  }
+                },
+                onCancel: () => {
+                  if (stopped) return;
+                  app.setEditorFooter(`thinking: ${live} (picker cancelled)`);
+                  screen?.render();
+                },
+              });
+              if (!opened) app.setEditorFooter(`thinking: ${live}`);
               screen?.render();
             })
             .catch((error: unknown) => {
@@ -5637,9 +5936,12 @@ export async function runTuiCommand(
         // Captured: the callbacks below run after a `/new` may have replaced
         // the runner, and they must report the one this picker came from.
         const runner = turn;
-        void runner
-          .listModels()
-          .then((rows) => {
+        void Promise.all([
+          runner.listModels(),
+          runner.listProviders(),
+          runner.liveThinking().catch(() => undefined),
+        ])
+          .then(([rows, providers, thinking]) => {
             if (stopped) return;
             const opened = app.openModelPicker({
               rows: rows.map((row) => ({
@@ -5648,9 +5950,37 @@ export async function runTuiCommand(
                 label: `${row.provider}/${row.id}`,
                 current: row.current,
                 ...(row.note === undefined ? {} : { note: row.note }),
+                ...(row.contextWindow === undefined
+                  ? {}
+                  : { contextWindow: row.contextWindow }),
+                ...(row.reasoning === undefined
+                  ? {}
+                  : { reasoning: row.reasoning }),
+                ...(row.thinking === undefined
+                  ? {}
+                  : { thinking: row.thinking }),
               })),
-              onSelect: (row) => {
-                switchModelTo({ provider: row.provider, id: row.id });
+              providers,
+              ...(thinking === undefined ? {} : { thinking }),
+              // Issue #461: model and thinking level are one decision —
+              // the level follows the switch (which re-clamps it), and is
+              // set only when the operator moved it.
+              onSelect: (row, level) => {
+                const moved =
+                  level !== undefined &&
+                  level !== thinking &&
+                  isThinkingLevel(level);
+                if (row.current === true) {
+                  if (moved) handleThinkingCommand({ kind: 'switch', level });
+                  else app.setEditorFooter(`model: ${runner.modelRef}`);
+                  if (!stopped) screen?.render();
+                  return;
+                }
+                switchModelTo(
+                  { provider: row.provider, id: row.id },
+                  undefined,
+                  moved ? level : undefined,
+                );
               },
               onCancel: () => {
                 if (stopped) return;
@@ -5707,19 +6037,40 @@ export async function runTuiCommand(
                   switchModelTo({ provider, id });
                 },
               }),
-          ...(list === undefined
-            ? {}
-            : {
+          ...(boot.summarizeSessions !== undefined
+            ? {
+                // Issue #461: the summaries `/resume` lists (titled, this
+                // project only); a legacy or held session cannot resume.
                 sessions: async () =>
-                  (await list()).filter(
-                    (row) =>
-                      row.id !== boot.sessionId &&
-                      (boot.cwd === undefined ||
-                        row.cwd === undefined ||
-                        row.cwd === boot.cwd),
-                  ),
+                  ((await boot.summarizeSessions?.(boot.sessionId)) ?? [])
+                    .filter((summary) => summary.state === 'ready')
+                    .map((summary) => ({
+                      id: summary.id,
+                      ...(summary.title === undefined
+                        ? {}
+                        : { title: summary.title }),
+                      ...(summary.createdAt === undefined
+                        ? {}
+                        : { createdAt: summary.createdAt }),
+                      ...(summary.turns === undefined
+                        ? {}
+                        : { turns: summary.turns }),
+                    })),
                 resumeSession,
-              }),
+              }
+            : list === undefined
+              ? {}
+              : {
+                  sessions: async () =>
+                    (await list()).filter(
+                      (row) =>
+                        row.id !== boot.sessionId &&
+                        (boot.cwd === undefined ||
+                          row.cwd === undefined ||
+                          row.cwd === boot.cwd),
+                    ),
+                  resumeSession,
+                }),
           onCancel: () => {
             if (stopped) return;
             app.setEditorFooter('palette: cancelled');

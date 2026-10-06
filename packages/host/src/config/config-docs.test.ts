@@ -153,44 +153,6 @@ describe('configuration docs parse against the implementation (issue #90)', () =
     expect(page).toContain('--json');
   });
 
-  it('names every §63 key in design-drift.md (issue #240)', () => {
-    // The §63 inventory, in the design's own spellings. Each must occur in
-    // the drift record with a disposition (shipped-as / intentionally not
-    // implemented / pending) — deleting a row, or adding a key to the
-    // parser without recording it, fails here. (New keys added to §63
-    // itself need a conscious inventory edit: the design document is
-    // local-only, so no test can see its future.)
-    const inventory = [
-      'system_prompt_file',
-      'auto_compact',
-      'reserve_tokens',
-      'autonomous',
-      'skip_approvals',
-      'max_pending_ms',
-      'retention_days',
-      'max_size_mb',
-      'exclude',
-      'budget',
-      'tool_policy',
-      'max_concurrent',
-      'worktree_root',
-      'retain_worktrees',
-      'renderer',
-      'show_agent_tree',
-      'show_cost_status',
-      'telemetry',
-      'store',
-      'thinking',
-    ];
-    const drift = readFileSync(
-      join(REPO_ROOT, 'docs', 'design-drift.md'),
-      'utf8',
-    );
-    for (const key of inventory) {
-      expect(drift, key).toContain(key);
-    }
-  });
-
   it('keeps every key-effect entry meaningful', () => {
     for (const [key, entry] of Object.entries(RUNTIME_KEY_EFFECTS)) {
       expect(key.length).toBeGreaterThan(0);

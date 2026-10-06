@@ -1,6 +1,6 @@
 # Exit codes
 
-> Design ref: §78 exit codes. The table below covers the failure codes
+> The table below covers the failure codes
 > (plus 0) and matches the `kubic doctor` fixture behaviour:
 > clean matrix → 0, provider-down → 6, any other fail → 1,
 > usage error → 2 (verified in `packages/host/src/doctor.test.ts`).

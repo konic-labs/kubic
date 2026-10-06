@@ -69,7 +69,7 @@ file that no longer exists, or when a row's file has become reachable
   row is gone. `roles-data.ts` is reachable too: the delegation path (#104)
   consumes its role list and thinking defaults through `worker-roles.ts`, so
   its row is gone as well.
-- Issue #99 executed the **delete** half of its table as well: `packages/agents/src/artifacts.ts`, `memory.ts`, `transfer.ts` and `packages/host/src/handoff.ts` had zero non-test importers and no honest consumer on the shipped path, so they were deleted with their tests rather than wired to an invented caller (the sibling issues' standard: a fabricated caller is worse than a deletion). The design sections those modules implemented — §24/§25 (context isolation/sharing, transfer grants) are enforced by structure instead: the shipped delegation hands each worker PROCESS an argv prompt and a session id, never a parent transcript, so there is nothing to validate at object level; §28 (memory lifetimes) has no live path — the harness session store is the only persistence; §69 (no-transcript guarantee) holds by construction on the process boundary. The sections are recorded as **not-yet-implemented** in [design-drift](design-drift.md) because the design document itself is local-only.
+- Issue #99 executed the **delete** half of its table as well: `packages/agents/src/artifacts.ts`, `memory.ts`, `transfer.ts` and `packages/host/src/handoff.ts` had zero non-test importers and no honest consumer on the shipped path, so they were deleted with their tests rather than wired to an invented caller (the sibling issues' standard: a fabricated caller is worse than a deletion). What those modules implemented holds by structure instead: context isolation/sharing and transfer grants — the shipped delegation hands each worker PROCESS an argv prompt and a session id, never a parent transcript, so there is nothing to validate at object level; memory lifetimes have no live path — the harness session store is the only persistence; the no-transcript guarantee holds by construction on the process boundary.
 - Issue #99 executed the skills half of its scope: **wired**
   `packages/agents/src/skills/skills.ts` (`discoverSkills` +
   `formatSkillsForSystemPrompt` run at solo boot through
@@ -215,7 +215,7 @@ non-test caller nor a row below (issue #359).
 
 | Export | Module | Owner | Disposition |
 | --- | --- | --- | --- |
-| `assertNoPlaintextSecrets` | `packages/host/src/config/secrets.ts` | #359 | keep: persistence guard for §36.3 brokering ([design drift item 22](design-drift.md#item-22--363-tool-credential-brokering-is-not-implemented)) |
+| `assertNoPlaintextSecrets` | `packages/host/src/config/secrets.ts` | #359 | keep: persistence guard for tool-credential brokering (not implemented yet) |
 | `containsPlaintextSecret` | `packages/host/src/config/secrets.ts` | #359 | keep: used only by `assertNoPlaintextSecrets` |
 | `ScopedToken` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 broker, not implemented (design drift item 22) |
 | `issueScopedToken` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 broker, not implemented (design drift item 22) |

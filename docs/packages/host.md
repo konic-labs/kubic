@@ -1,6 +1,6 @@
 # `@kubic/host`
 
-> Design ref: host runtime wiring worker + agents.
+> Host runtime wiring worker + agents.
 > Owner: issue
 > [#63](https://github.com/konic-labs/kubic/issues/63).
 > Source: `packages/host/src` (read-only — this page quotes it, never moves it).

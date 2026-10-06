@@ -142,9 +142,6 @@ const EXCLUDED_DIRS = new Set([
   '.serena',
   '.beads',
 ]);
-// Dev-tooling sources (design explorers, notes apps) are not product
-// claims surfaces — their UI strings describe the tool itself.
-const EXCLUDED_PATH_SEGMENTS = ['docs/design/tools'];
 const TEST_FILE_SUFFIXES = ['.test.ts', '.test.tsx', '.test.js', '.test.md'];
 
 // Lines reviewed by a human and judged honest: each entry names the file
@@ -155,18 +152,7 @@ const REVIEWED_EXCEPTIONS: Array<{
   fileSuffix: string;
   pattern: string;
   reason: string;
-}> = [
-  {
-    fileSuffix: 'docs/design/kubic-overview.md',
-    pattern: 'prompt-injection prevention system.*does not prevent injection',
-    reason: 'NOT-list entry: explicitly denies prevention in the same line',
-  },
-  {
-    fileSuffix: 'docs/design/kubic-overview.md',
-    pattern: 'isolated-vm.*refused until then',
-    reason: 'Phase-4 roadmap entry: explicitly refused until containment lands',
-  },
-];
+}> = [];
 
 function isReviewedException(file: string, line: string): boolean {
   return REVIEWED_EXCEPTIONS.some(
@@ -297,7 +283,6 @@ function walkSourceFiles(root: string): string[] {
         if (
           !EXCLUDED_DIRS.has(entry) &&
           !gitignored(relPath) &&
-          !EXCLUDED_PATH_SEGMENTS.some((segment) => relPath === segment) &&
           // Nested git repos and linked worktrees (a `.git` file) hold
           // other checkouts' files, never this tree's claims. (`full`
           // is always below the root here; the root's own `.git` is
@@ -458,18 +443,10 @@ describe('honest-claims grep-gate (issue #58)', () => {
   it('reviewed exceptions still match their justification patterns', () => {
     // Exceptions are drift-pinned: if the line changes so the denial is
     // gone, the exception stops applying and the scan re-flags it.
-    // Resolved directly, not via any listing (issue #375 review): the
-    // design doc is gitignored, so neither the tracked listing nor the
-    // gitignore-aware walk contains it — filtering a listing would pin
-    // nothing and this test would always `continue`.
     for (const entry of REVIEWED_EXCEPTIONS) {
       expect(entry.reason.length).toBeGreaterThan(0);
       const file = join(process.cwd(), entry.fileSuffix);
-      if (!existsSync(file)) {
-        // File absent here (e.g. gitignored design docs in worktrees
-        // and fresh clones) — nothing to pin.
-        continue;
-      }
+      expect(existsSync(file), entry.fileSuffix).toBe(true);
       const matched = readFileSync(file, 'utf8')
         .split('\n')
         .some(

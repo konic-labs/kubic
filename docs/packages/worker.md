@@ -1,6 +1,6 @@
 # `@kubic/worker`
 
-> Design ref: worker runtime; Pi boundary (§65, CODEOWNERS-gated
+> Worker runtime; Pi boundary (CODEOWNERS-gated
 > `src/pi-boundary.ts`).
 > Owner: issue
 > [#63](https://github.com/konic-labs/kubic/issues/63).

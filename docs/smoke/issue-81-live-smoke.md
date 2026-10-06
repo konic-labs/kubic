@@ -95,9 +95,9 @@ verbatim (repo issue-contract shape); filing them closes the loop.
 ### Draft: [host] `kubic diff`/`undo` cannot reach a headless-run session journal
 
 ```text
-## Design ref
+## Context
 
-Follow-up to #81 live smoke (§42 journal, §78).
+Follow-up to #81 live smoke (journal, exit codes).
 
 ## Goal
 
@@ -125,9 +125,9 @@ Out: changing where the headless lane records effects.
 ### Draft: [host] `kubic run` needs a wall-clock / turn guard
 
 ```text
-## Design ref
+## Context
 
-Follow-up to #81 live smoke (§78, solo lane #11).
+Follow-up to #81 live smoke (exit codes, solo lane #11).
 
 ## Goal
 

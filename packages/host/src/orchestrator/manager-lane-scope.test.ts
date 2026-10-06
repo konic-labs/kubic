@@ -1,5 +1,5 @@
 // Orchestrator scope is pinned to what ships (issue #95; §5.2, §9.2, §12,
-// §40, §41, §45, §54, D7/D8/D12). This issue decided the delegation model
+// §40, §41, §45, §54). This issue decided the delegation model
 // by measurement, then #103 closed the manager-lane gap it named. The live
 // path is a CLI-driven fan-out whose root lane now REGISTERS the §40 toolset
 // and authors a plan whose steps become per-worker prompts — so the docs
@@ -13,8 +13,6 @@
 //     issues that own what is still missing;
 //   - the CLI page must say each worker runs its own plan step and that the
 //     default is two agents executed one after another;
-//   - D7/D8 in the local design registry must be amended rather than left
-//     contradicting the code (skipped in a fresh clone — registry is local);
 //   - every runtime-dead module under packages/host/src/orchestrator/ must
 //     have a ledger row that is a named issue or a deletion, and no row may
 //     still be owned by an executed issue — manager.ts is WIRED by #103, so
@@ -62,10 +60,9 @@ const ROOT = join(
 const ARCHITECTURE_PAGE = join(ROOT, 'docs', 'architecture', 'orchestrator.md');
 const COMMANDS_PAGE = join(ROOT, 'docs', 'cli', 'commands.md');
 const LEDGER = join(ROOT, 'docs', 'dead-surface.md');
-const REGISTRY = join(ROOT, 'docs', 'design', 'design-decisions.json');
 
-// The four named successors this issue's re-scope created.
-const MANAGER_LANE_ISSUE = '#103';
+// The named successors this issue's re-scope created (#103, the manager
+// lane, is wired; see below).
 const ROLE_PROMPTS_ISSUE = '#104';
 const WORKER_APPROVALS_ISSUE = '#105';
 const ORCHESTRATOR_LEFTOVERS_ISSUE = '#106';
@@ -138,18 +135,17 @@ function prose(page: string): string {
     .replace(/\s+/g, ' ');
 }
 
-// The tracked docs/ pages plus README.md. `git ls-files` is the source (never
-// a plain directory walk: docs/design/ is gitignored local design work). Under
+// The tracked docs/ pages plus README.md. `git ls-files` is the source. Under
 // Stryker the suite runs from a gitignored sandbox copy
 // (.stryker-tmp/sandbox-*/) where git lists nothing; Stryker copies only
-// non-ignored files there, so a walk of docs/ that skips docs/design/ IS the
-// tracked set. The non-empty guard in the test keeps both paths honest.
+// non-ignored files there, so a walk of docs/ IS the tracked set. The
+// non-empty guard in the test keeps both paths honest.
 function markdownOnDisk(dir: string): string[] {
   const found: string[] = [];
   for (const entry of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
     const rel = `${dir}/${entry.name}`;
     if (entry.isDirectory()) {
-      if (rel !== 'docs/design') found.push(...markdownOnDisk(rel));
+      found.push(...markdownOnDisk(rel));
     } else if (entry.isFile() && rel.endsWith('.md')) {
       found.push(rel);
     }
@@ -235,10 +231,6 @@ describe('orchestrator scope is honest (issue #95)', () => {
     // pages this issue edited. README.md and docs/architecture/solo.md
     // carried the same false claim after the merge, which is exactly the
     // defect the re-scope exists to remove — so pin the class, not the sites.
-    //
-    // Scope is the TRACKED docs: docs/design/ is gitignored local design work
-    // that legitimately describes intent rather than shipped behaviour, and
-    // it carries its own `shipped-differently` notes.
     const files = trackedDocs().map((line) => join(ROOT, line));
     expect(files.length).toBeGreaterThan(20);
     for (const file of files) {
@@ -270,44 +262,6 @@ describe('orchestrator scope is honest (issue #95)', () => {
       );
     }
   });
-
-  // The registry is gitignored local design work (see .gitignore), so a
-  // fresh clone (or a Stryker sandbox) has nothing to pin: the check is
-  // reported SKIPPED there rather than passing green on an early return.
-  it.skipIf(!existsSync(REGISTRY))(
-    'amends D7 and D8 in the design registry when the local registry is present',
-    () => {
-      const parsed = JSON.parse(readFileSync(REGISTRY, 'utf8')) as {
-        decisions?: Array<{
-          id?: string;
-          status?: string;
-          decision?: string;
-          rationale?: string;
-        }>;
-      };
-      const byId = new Map(
-        (parsed.decisions ?? []).map((entry) => [entry.id ?? '', entry]),
-      );
-      for (const id of ['D7', 'D8']) {
-        const entry = byId.get(id);
-        expect(entry, `${id} must exist in the registry`).toBeDefined();
-        const text = `${entry?.decision ?? ''}\n${entry?.rationale ?? ''}`;
-        // An amendment is dated and names the issue that records the reality.
-        expect(text, `${id} must be amended`).toMatch(
-          /Amended \d{4}-\d{2}-\d{2}/,
-        );
-        expect(text, `${id} must name the manager-lane issue`).toContain(
-          MANAGER_LANE_ISSUE,
-        );
-      }
-      // D7's amendment states what the mode actually ships.
-      expect(byId.get('D7')?.decision ?? '').toMatch(/CLI/);
-      // D8's amendment states the shipped session-scoped entry point.
-      expect(byId.get('D8')?.decision ?? '').toMatch(
-        /kubic orchestrate|--session/,
-      );
-    },
-  );
 
   it('gives every runtime-dead orchestrator module a ledger row it can execute', () => {
     const ledger = readFileSync(LEDGER, 'utf8');

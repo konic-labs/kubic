@@ -352,8 +352,7 @@ export async function dispatchCommand(
   // command word has no whitespace, so `kubic nosuch` stays the documented
   // usage error (exit 2, #372) with a hint naming the prompt form. The
   // prompt form behaves exactly like `kubic run -p "<prompt>"` — headless
-  // in both modes; the spec's TUI-first-turn variant is deliberately not
-  // shipped (docs/design-drift.md).
+  // in both modes.
   const barePrompt =
     requested !== undefined &&
     /\s/.test(requested) &&

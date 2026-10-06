@@ -1,7 +1,7 @@
 # `@kubic/tui`
 
-> Design ref: §17 UX; §32 facet split (TUI never imports
-> host/worker implementation — contracts from core only).
+> Facet split: the TUI never imports host/worker implementation
+> (contracts come from core only).
 > Owner: issue
 > [#63](https://github.com/konic-labs/kubic/issues/63).
 > Source: `packages/tui/src` (read-only — this page quotes it, never moves it).

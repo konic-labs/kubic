@@ -1,6 +1,6 @@
 # Configuration
 
-> Design ref: §33–§36 config/secrets; §58 enterprise policy. Implementation:
+> Implementation:
 > `packages/host/src/config/config.ts` (layers, TOML, merge),
 > `runtime.ts` (the load the binary actually runs on), `config-cli.ts`
 > (`kubic config`), `secrets.ts` (request-time secrets), `stances.ts`
@@ -21,9 +21,9 @@ against every override attempt, the environment and the CLI included.
 | 2 | `product` | `/etc/kubic/product.toml` (or an explicit `productPath` override) | The distribution/vertical profile, below enterprise and above the user's own files. |
 | 3 | `global` | `~/.kubic/config.toml` | Your machine-wide defaults. |
 | 4 | `project` | `<projectRoot>/.kubic/config.toml` | Resolved as the nearest ancestor holding `.kubic/` (or the git top level), the cwd itself outside a repository — so `kubic config` and `kubic run --role` from a subdirectory read the same committed project as from the root (issue #229). **Trust-gated**: refused by path before it is read (`ProjectUntrustedError`) until the project is trusted (`kubic trust`, the `kubic tui` prompt, or `KUBIC_TRUST_PROJECT=1` for one invocation) — the grant is recorded at, and checked against, that same root, so trusting the root covers runs from its subdirectories; absent file counts as an empty layer. |
-| 5 | `workspace` | `<workspaceRoot>/.kubic/config.toml` | Only when a workspace root is set — otherwise the layer does not exist. **Not yet populated (issue #229)**: no shipped caller sets a workspace root (orchestrator worktree roots are not wired in), so this layer never exists today; recorded in [design drift](../design-drift.md). |
-| 6 | `session` | Supplied programmatically | Never a file. **Not yet populated (issue #229)**: no shipped caller supplies a session layer (attaching a session does not feed its recorded settings back), so this layer is always empty; recorded in [design drift](../design-drift.md). |
-| 7 | `agent` | Supplied programmatically | Never a file. Lowest. **Not yet populated (issue #229)**: no shipped caller supplies an agent layer, so this layer is always empty; recorded in [design drift](../design-drift.md). |
+| 5 | `workspace` | `<workspaceRoot>/.kubic/config.toml` | Only when a workspace root is set — otherwise the layer does not exist. **Not yet populated (issue #229)**: no shipped caller sets a workspace root (orchestrator worktree roots are not wired in), so this layer never exists today. |
+| 6 | `session` | Supplied programmatically | Never a file. **Not yet populated (issue #229)**: no shipped caller supplies a session layer (attaching a session does not feed its recorded settings back), so this layer is always empty. |
+| 7 | `agent` | Supplied programmatically | Never a file. Lowest. **Not yet populated (issue #229)**: no shipped caller supplies an agent layer, so this layer is always empty. |
 | — | `env` | The `KUBIC_*` overrides below | Above every file layer, below `enterprise`, below the CLI. |
 | — | `cli` | e.g. `--model`, `--thinking` | Highest, except against a frozen `enterprise` key. |
 
@@ -617,7 +617,7 @@ them:
   by embedders), so `require_credential_broker = true` in a config does not
   put `broker:<ref>` sentinels in a worker's env today — workers get the
   plain grant described under "Provider credentials reach workers per role"
-  below. See [design drift, item 22](../design-drift.md#item-22--363-tool-credential-brokering-is-not-implemented).
+  below.
 - `[[audit]]` — repeatable sink tables (`sink`, `level`, optional `target`
   and `facility`). Unknown kinds, levels and keys are refused by name.
   See [Audit sinks](#audit-sinks-audit).
@@ -822,8 +822,7 @@ the three required variables are present (the two ids are optional), while an
 API key or `ANTHROPIC_AUTH_TOKEN`, when set, wins as it does in Pi.
 
 Not implemented: **tool-credential brokering** — no budget-bounded scoped token is
-issued to a worker or revoked at settle/exit (see
-[design drift, item 22](../design-drift.md#item-22--363-tool-credential-brokering-is-not-implemented)).
+issued to a worker or revoked at settle/exit.
 
 **Provider credentials reach workers per role (issue #200; §36.3).** An
 orchestrator worker is a `kubic run` child behind the §3.8 allowlist, so its
@@ -858,8 +857,7 @@ reads the identity token file from disk itself — the path travels, never the
 token.
 With `require_credential_broker` the grant carries `broker:<ref>` sentinels
 instead of values, so no secret material reaches the child env — the flag is
-host policy input, and the `[policy] require_credential_broker` key is parsed and reported but not wired to it yet (see
-[design drift, item 22](../design-drift.md#item-22--363-tool-credential-brokering-is-not-implemented)).
+host policy input, and the `[policy] require_credential_broker` key is parsed and reported but not wired to it yet.
 
 ## What lives where
 

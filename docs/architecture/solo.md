@@ -1,6 +1,6 @@
 # Solo mode
 
-> Design ref: §5.1, §20.7, §59.1 honest limits, §3.7. Owner: issue
+> Owner: issue
 > [#62](https://github.com/konic-labs/kubic/issues/62).
 
 Solo is Kubic's default and its architecture: one agent working

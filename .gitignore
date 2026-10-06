@@ -1,27 +1,12 @@
 # ---------------------------------------------------------------------------
 # Reference clone of the Pi agent harness.
 #
-# This is upstream code, not part of Kubic. It is checked out read-only as an
-# implementation reference for the Kubic design (see docs/design/). It is not
-# built, linted, tested or modified by this repository, and it will be removed
-# once Kubic no longer needs it as a reference.
+# This is upstream code, not part of Kubic. It is checked out read-only as a
+# reference for the Pi interfaces Kubic builds on. It is not built, linted,
+# tested or modified by this repository, and it will be removed once Kubic no
+# longer needs it as a reference.
 # ---------------------------------------------------------------------------
 /pi/
-
-# ---------------------------------------------------------------------------
-# Kubic design documents.
-#
-# The design work is kept local: the document, the decision registry, the
-# generated explorer, the vendored generator and the explorer's annotation
-# files all live under docs/design/ and are not published to the remote. They
-# remain on disk and stay the source of truth for the design; they are simply
-# not tracked.
-#
-# Ignoring a path does not remove it from history. These files were tracked
-# before this rule existed, so their earlier revisions remain in origin's
-# history until it is rewritten.
-# ---------------------------------------------------------------------------
-docs/design/
 
 # ---------------------------------------------------------------------------
 # Node
@@ -104,12 +89,7 @@ reports/
 .stryker-tmp/
 
 # ---------------------------------------------------------------------------
-# Generated diagrams (rebuild, don't track)
-# ---------------------------------------------------------------------------
-kubic-architecture.html
-
-# ---------------------------------------------------------------------------
-# Kubic runtime state (issue #91; design §35, D34/D35).
+# Kubic runtime state (issue #91).
 #
 # `.kubic/` is a MIXED directory: config.toml + roles/*.md are committed
 # (see `git ls-files .kubic`), everything below is per-run state. Only the

@@ -1,4 +1,4 @@
-// One §60 audit ledger per repo (issue #279; §60, design-drift item 21).
+// One §60 audit ledger per repo (issue #279; §60).
 // Before this issue the solo writer used the raw cwd while `kubic audit` walked
 // up to the nearest `.git`: a run from <repo>/sub wrote <repo>/sub/.kubic/…
 // (untracked, and never read), every worker child wrote a mislabelled

@@ -1,7 +1,6 @@
 # Architecture overview
 
-> Design ref: §5 solo/orchestrator topology, §64 package layout,
-> §3.1 dependency directions, §59.1 honest limits. Owner: issue
+> Owner: issue
 > [#62](https://github.com/konic-labs/kubic/issues/62).
 
 Kubic is a terminal coding agent with one architecture and two modes.
@@ -69,8 +68,7 @@ never imports `host`/`worker` implementation, the worker never imports
 (`@earendil-works/pi-tui` 1.0.2 exports no such class) and Kubic
 declares no terminal-emulator dependency. TUI tests render the pure view
 functions directly into headless snapshot strings — no TTY, no alt-screen —
-and each view module records that in its header. See the
-[design-drift reconciliation](../design-drift.md).
+and each view module records that in its header.
 
 Per-package APIs live on the [package pages](../packages/README.md);
 command behaviour lives on the [CLI pages](../cli/README.md) — this

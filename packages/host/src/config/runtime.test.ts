@@ -1259,7 +1259,7 @@ level = "privileged"
     ]);
     expect(runtime.policy.models.providers).toEqual(['anthropic', 'local']);
     // 'proxy' is carried as the engine's allowlist mode; workspace-only as
-    // workspace-write. Both reconciliations are documented in design-drift.
+    // workspace-write.
     expect(runtime.policy.network.mode).toBe('allowlist');
     expect(runtime.policy.filesystem.level).toBe('workspace-write');
     expect(runtime.policy.credentials.requireCredentialBroker).toBe(true);

@@ -1,6 +1,6 @@
 # `@kubic/trajectory`
 
-> Design ref: §46 export fields; source:
+> Export fields; source:
 > `packages/trajectory/CONTRACT.md` (quoted, not copied).
 > Owner: issue
 > [#63](https://github.com/konic-labs/kubic/issues/63).

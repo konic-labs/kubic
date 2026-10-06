@@ -1,7 +1,7 @@
 // Ship-vs-ignore split gate for `.kubic/` runtime state (issue #91).
 //
 // This is NOT a unit test of the writer helper: it is the repo-level gate
-// that enforces the split the docs and the design claim —
+// that enforces the split the docs claim —
 //
 //   1. in ANY user repo, the first `kubic run` / `kubic orchestrate` must
 //      leave nothing of Kubic's own state in `git status` (scripted proof

@@ -1,6 +1,6 @@
 # `@kubic/exec`
 
-> Design ref: §9 ExecutionEnv binding; only this package touches
+> ExecutionEnv binding; only this package touches
 > `node:fs`/`node:child_process`.
 > Owner: issue
 > [#63](https://github.com/konic-labs/kubic/issues/63).

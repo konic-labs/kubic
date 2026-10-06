@@ -1,7 +1,6 @@
 # Change journal and safety
 
-> Design ref: §42 journal, §41 approvals safety model, §59.1 honest
-> limits. Owner: issue
+> Owner: issue
 > [#62](https://github.com/konic-labs/kubic/issues/62).
 
 Kubic's safety model has two halves: a VCS-independent change journal

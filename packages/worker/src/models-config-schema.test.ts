@@ -9,8 +9,8 @@ import {
 } from './models-config.js';
 import { createModels } from './pi-boundary.js';
 
-// docs/design/kubic-overview.md §38.5, verbatim.
-const SPEC_38_5 = `{
+// The object-form example in docs/cli/configuration.md, verbatim.
+const DOCS_EXAMPLE = `{
   "providers": {
     "local": {
       "baseUrl": "http://127.0.0.1:8000/v1",
@@ -50,7 +50,7 @@ function withProvider(extra: Record<string, unknown>) {
 
 describe('models.json schema (issue #223)', () => {
   it('parses and registers the §38.5 block as written', async () => {
-    const specs = parseModelsJson(JSON.parse(SPEC_38_5));
+    const specs = parseModelsJson(JSON.parse(DOCS_EXAMPLE));
     expect(specs.map((s) => s.id)).toEqual(['local']);
     const models = createModels();
     registerCustomProviders(models, specs);

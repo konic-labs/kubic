@@ -1,7 +1,7 @@
 # Project trust
 
-> Design ref: §35 ("Project-local configuration requires project trust";
-> `.kubic/config.toml` committed), §35.1. Implementation:
+> Project-local configuration requires project trust (`.kubic/config.toml`
+> is committed). Implementation:
 > `packages/host/src/config/trust-store.ts` (the store + the one trust
 > report), `packages/host/src/trust-cli.ts` (`kubic trust`),
 > `apps/kubic/src/config-runtime.ts` (the prompt and the load gate).

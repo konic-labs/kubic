@@ -46,7 +46,7 @@ const DELETED_MODULE_PATHS = [
 ];
 
 // Directories that never participate: dependencies, upstream reference,
-// build output, VCS, and the local-only (gitignored) design work.
+// build output and VCS.
 const SKIP_DIRS = new Set([
   'node_modules',
   'pi',
@@ -55,7 +55,6 @@ const SKIP_DIRS = new Set([
   'coverage',
   'reports',
 ]);
-const SKIP_PATH_SEGMENTS = ['docs/design'];
 const TEXT_EXTENSIONS = ['.ts', '.tsx', '.js', '.mjs', '.md', '.json'];
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -68,8 +67,6 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const entry of entries) {
     if (SKIP_DIRS.has(entry)) continue;
     const full = join(dir, entry);
-    const rel = relative(ROOT, full);
-    if (SKIP_PATH_SEGMENTS.some((segment) => rel.startsWith(segment))) continue;
     if (statSync(full).isDirectory()) walk(full, out);
     else out.push(full);
   }
@@ -185,34 +182,5 @@ describe('replay-surface honesty (issue #97: deleted, not wired)', () => {
     for (const module of DELETED_MODULES) {
       expect(ledger).not.toContain(`exec/src/${module}`);
     }
-  });
-
-  it('records the decision in the local design registry when present', (ctx) => {
-    // The registry is gitignored local design work (see .gitignore), so a
-    // fresh clone has nothing to pin and this gate skips — the same
-    // absent-file rule the honest-claims gate uses for design docs. Reported
-    // as a skip, never a vacuous pass.
-    const registry = join(ROOT, 'docs', 'design', 'design-decisions.json');
-    if (!exists(registry)) {
-      ctx.skip();
-      return;
-    }
-    const parsed = JSON.parse(readFileSync(registry, 'utf8')) as {
-      decisions?: Array<{
-        decision?: string;
-        refs?: string[];
-        status?: string;
-      }>;
-    };
-    const entry = (parsed.decisions ?? []).find(
-      (candidate) =>
-        ['20.1', '20.2', '20.4'].every((ref) =>
-          (candidate.refs ?? []).includes(ref),
-        ) &&
-        /delet/i.test(candidate.decision ?? '') &&
-        /effect|checkpoint/i.test(candidate.decision ?? ''),
-    );
-    expect(entry, 'a decision covering §20.1/§20.2/§20.4').toBeDefined();
-    expect(entry?.status).toBe('locked');
   });
 });

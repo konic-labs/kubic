@@ -256,6 +256,10 @@ export interface DispatchDeps {
   // Issue #450: the stderr theme for a usage error — the error block on a
   // colour terminal, `error:`/`hint:` lines otherwise. Absent means plain.
   readonly errorTheme?: () => CliTheme;
+  // Issue #451: the first-run setup of a bare `kubic` on a terminal, run
+  // before the config load so the TUI boots on what it saved. Resolves to an
+  // exit code to stop with, or undefined to open the TUI.
+  readonly firstRunSetup?: () => Promise<number | undefined>;
   // §78/§80 "interactive by default": true when stdin AND stdout are a TTY.
   // Only consulted for the bare invocation; absent means non-interactive.
   readonly isInteractive?: () => boolean;
@@ -375,6 +379,17 @@ export async function dispatchCommand(
     : bareFlag
       ? [String(requested), ...rest]
       : rest;
+  // Issue #451: a bare `kubic` on a terminal with no global config yet runs
+  // the setup first (provider, default model, trust) — before the one config
+  // load below, so the TUI opens on the model it saved.
+  if (
+    requested === undefined &&
+    interactive &&
+    deps.firstRunSetup !== undefined
+  ) {
+    const stop = await deps.firstRunSetup();
+    if (stop !== undefined) return stop;
+  }
   // A help request is side-effect free (issue #245): commander answers
   // `--help`/`-h` before any action, so the trust question and the
   // runtime-exclude write must not happen for it either.

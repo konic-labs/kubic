@@ -132,6 +132,7 @@ import {
   defaultSessionsRoot,
   runSessionsCommand,
 } from '../../../packages/host/src/sessions-cli.js';
+import { runSetupCommand } from '../../../packages/host/src/setup-cli.js';
 import { skillsDoctorProbe } from '../../../packages/host/src/skills-boot.js';
 import { runSkillsCommand } from '../../../packages/host/src/skills-cli.js';
 import { runTrustCommand } from '../../../packages/host/src/trust-cli.js';
@@ -188,6 +189,7 @@ import { orchestrateDepsWithDefaults } from './orchestrate-run.js';
 import { runProdReplay } from './replay-run.js';
 import { createRunProgress } from './run-progress.js';
 import { resolveSessionTrajectory } from './run-trajectory.js';
+import { prodSetupDeps } from './setup-prod.js';
 import {
   runTuiCommand,
   type TuiDepsInput,
@@ -794,6 +796,17 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
           : { defaultModel: `${pin.provider}/${pin.id}` }),
       });
     },
+    // Issue #451: the interactive setup (provider, model, thinking, trust).
+    setup: async (options, cliConfig) =>
+      runSetupCommand(
+        options,
+        await prodSetupDeps({
+          out,
+          err: debug,
+          errTheme: stderrTheme(),
+          cliConfig,
+        }),
+      ),
     skills: (options, cliConfig) => {
       // Issue #238: the listing over the same discovery the lane boots.
       // The trust inputs mirror `kubic run`'s (the env opt-in plus the

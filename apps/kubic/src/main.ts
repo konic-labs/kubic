@@ -18,6 +18,7 @@ import {
 import { dispatchCommand } from './dispatch.js';
 import { exitProcessAfterFlush } from './exit.js';
 import { createProdRunners } from './prod-runners.js';
+import { prodFirstRunSetup } from './setup-prod.js';
 
 // License identity (issue #59): version comes from this app's own
 // package.json; the license half of the line is owned by core/license.ts.
@@ -69,6 +70,10 @@ try {
     helpTheme: () => themeFor(process.stdout),
     // Issue #450: usage errors are an error block on a colour stderr.
     errorTheme: () => themeFor(process.stderr),
+    // Issue #451: a bare `kubic` on a terminal with no global config runs
+    // `kubic setup` first (KUBIC_SKIP_SETUP=1 skips it).
+    firstRunSetup: () =>
+      prodFirstRunSetup({ out, err, errTheme: themeFor(process.stderr) }),
     // Issue #228 (§35.1): the interactive trust question for `kubic tui` /
     // bare `kubic`. The resolver persists the answer under `~/.kubic/` and
     // hands it back to this invocation's config load; a non-TTY caller keeps

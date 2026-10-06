@@ -94,6 +94,7 @@ concurrency posture and every message — is on
 | `KUBIC_APPROVALS_ROUTE` | `ask-user` or `deny`. |
 | `KUBIC_JOURNAL_RETENTION_DAYS` | Journal age bound, in days (non-negative integer). |
 | `KUBIC_TRUST_PROJECT` | `1`/`true` accepts the project layer — `config.toml` and the project [`models.json`](#modelsjson) — for this invocation, above the persistent store and without recording anything. |
+| `KUBIC_SKIP_SETUP` | `1` skips the first-run setup a bare `kubic` on a terminal runs when there is no `~/.kubic/config.toml` (issue #451; see [`kubic setup`](commands.md#kubic-setup)). |
 
 A malformed value fails closed with the variable named — it never silently
 falls back to a default.

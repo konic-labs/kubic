@@ -448,6 +448,20 @@ function registerModels(program: Command, ctx: CommandContext): void {
     });
 }
 
+// Issue #451 (06-E): `kubic setup` — provider, default model, thinking level
+// and the project trust question, saved to ~/.kubic/config.toml.
+function registerSetup(program: Command, ctx: CommandContext): void {
+  program
+    .command('setup')
+    .description(
+      'choose a provider and default model, saved to ~/.kubic/config.toml (interactive)',
+    )
+    .addHelpText('after', examples(['kubic setup']))
+    .action(async () => {
+      ctx.setExitCode(await ctx.runners.setup({}, ctx.config));
+    });
+}
+
 function registerConfig(program: Command, ctx: CommandContext): void {
   program
     .command('config')
@@ -686,6 +700,7 @@ export const registerSoloCommands: CommandRegistrar = (program, ctx) => {
   registerDoctor(program, ctx);
   registerSkills(program, ctx);
   registerModels(program, ctx);
+  registerSetup(program, ctx);
   registerConfig(program, ctx);
   registerTrust(program, ctx);
   registerSessions(program, ctx);

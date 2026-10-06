@@ -532,6 +532,25 @@ describe('front door (issue #128 behavior, moved)', () => {
     ]);
   });
 
+  it('runs the first-run setup only for a bare interactive kubic (issue #451)', async () => {
+    let asked = 0;
+    const firstRunSetup = async (): Promise<number | undefined> => {
+      asked += 1;
+      return 6;
+    };
+    const bare = harness({ interactive: true });
+    expect(
+      await dispatchCommand(undefined, [], { ...bare.deps, firstRunSetup }),
+    ).toBe(6);
+    expect(asked).toBe(1);
+    expect(bare.calls).toEqual([]);
+    const command = harness({ interactive: true });
+    await dispatchCommand('doctor', [], { ...command.deps, firstRunSetup });
+    const piped = harness();
+    await dispatchCommand(undefined, [], { ...piped.deps, firstRunSetup });
+    expect(asked).toBe(1);
+  });
+
   it('renders a usage error as an error block on a colour terminal (issue #450)', async () => {
     const h = harness();
     const theme = createCliTheme('truecolor');

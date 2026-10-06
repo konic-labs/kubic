@@ -50,10 +50,10 @@ USAGE      kubic                       open the TUI (on a terminal)
            kubic "<prompt>"            run one prompt, like kubic run -p
            kubic <command> [options]
 
-SESSION    run · tui · resume · attach · sessions      work with the agent
-CHANGES    diff · undo · log · status · commit · git   review and revert what it did
-DELEGATE   orchestrate · workers · clean               manager + workers in worktrees
-SETUP      models · config · trust · doctor · skills   providers, project, health
+SESSION    run · tui · resume · attach · sessions              work with the agent
+CHANGES    diff · undo · log · status · commit · git           review and revert what it did
+DELEGATE   orchestrate · workers · clean                       manager + workers in worktrees
+SETUP      setup · models · config · trust · doctor · skills   providers, project, health
 ANALYSIS   cost · eval · benchmark · replay · export · perf · policy · audit
 
 EXAMPLES   kubic "fix the failing test"
@@ -2068,6 +2068,46 @@ e.g. `[model] provider = "anthropic"`, `id = "claude-sonnet-4-6"`.
 
 Usage errors (unknown option, `--resolve` without a value, an unknown
 provider) exit 2 on stderr. `--help`/`-h` prints the generated help and exits 0.
+
+## `kubic setup`
+
+Interactive first-run setup (issue #451): from "installed" to "ready" in
+under a minute.
+
+1. **Provider** — the providers whose key is detected (the same detection
+   `kubic models` and `kubic doctor` use: env keys, Bedrock/Vertex ambient
+   credentials, `models.json` customs; the testing provider is never offered).
+   One detected provider is confirmed as a step; several are a choice.
+2. **Default model** — that provider's chat models, the current pin
+   preselected, each with its context window and thinking support.
+3. **Thinking level** — only for a model that supports thinking (`medium`
+   preselected when supported).
+4. **Trust** — when the current directory has a project layer
+   (`.kubic/config.toml` or a project `models.json`) with no recorded
+   decision, the same question `kubic tui` asks; the answer is recorded in
+   the trust store.
+5. **Save** — `[model] provider`, `id` and `thinking` go to
+   `~/.kubic/config.toml`. An existing file is updated line by line: the
+   three keys are replaced inside an existing `[model]` table (missing ones
+   appended to it) or the table is appended; comments, other tables and
+   CRLF line endings are kept. The write is atomic (write then rename).
+
+A frozen enterprise `[model]` (`/etc/kubic/config.toml`) asks no model
+question: the step names the pinned model and nothing is written. With no
+provider key at all, setup names the variables to set (and `models.json`)
+and exits **6** without writing. A cancelled question (Ctrl-C / Esc) writes
+nothing and exits **130**. Off a terminal (stdin or stdout not a TTY) setup
+refuses with `error: kubic setup is interactive: …` and the manual
+alternative (`[model]` in `~/.kubic/config.toml` or `KUBIC_MODEL`), exit
+**2**.
+
+**First run.** A bare `kubic` on a terminal with no `~/.kubic/config.toml`,
+no `KUBIC_MODEL`, not under `KUBIC_PROVIDER=faux` and without
+`KUBIC_SKIP_SETUP=1` runs setup first, then opens the TUI on the model it
+saved. Cancelling it still opens the TUI and leaves a comment-only
+`~/.kubic/config.toml` (`# kubic setup was skipped …`) so the question is
+not asked on every launch; `kubic setup` asks again any time. With no
+provider key the first run exits 6 like `kubic setup`.
 
 ## `kubic config [--json] [--model <provider/id>] [--thinking <level>]`
 

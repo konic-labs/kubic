@@ -102,6 +102,9 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   `--revoke` or a path, stray operands); 1 an unreadable or corrupt store
   (the file is named). It runs even when the project config is refused —
   it is the repair path for exactly that refusal.
+- **`kubic setup`** (issue #451): 0 saved (or nothing to save under a
+  frozen enterprise model), 2 off a terminal, 6 no provider has a key,
+  130 cancelled (nothing written), 1 the config file could not be written.
 - **`kubic --version`**: always 0.
 - **`kubic --help` / `-h`**: always 0 — prints the top-level command
   listing (the root help). A command's own

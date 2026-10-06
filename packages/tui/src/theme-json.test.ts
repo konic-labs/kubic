@@ -1,14 +1,20 @@
-// JSON themes (issue #304; §16.9 "Themes are JSON with a schema").
-// The schema, the named validation errors, the built-in light/dark palettes
-// and the colour-level downgrade of a custom hex colour. Pure: text in,
-// theme out — the file read is the composition root's.
+// JSON themes (issue #304; §16.9 "Themes are JSON with a schema"; v2 token
+// roles in EPIC N, issue #444). The schema, the named validation errors, the
+// built-in palettes and the colour-level downgrade of a custom hex colour.
+// Pure: text in, palette/theme out — the file read is the composition root's.
 import { afterEach, describe, expect, it } from 'vitest';
+import {
+  DARK_PALETTE,
+  LIGHT_PALETTE,
+  TERMINAL_PALETTE,
+} from '../../core/src/ui/tokens.js';
 import { editorTheme } from './editor-view.js';
 import { StatusBar } from './status-bar.js';
 import {
-  builtinThemeColors,
-  createThemeFromColors,
+  builtinThemePalette,
+  createThemeFromPalette,
   createTuiTheme,
+  isThemeBuiltin,
   parseThemeJson,
   setTuiTheme,
   ThemeError,
@@ -16,7 +22,7 @@ import {
 } from './theme.js';
 import { markdownThemeFor } from './transcript.js';
 
-const VALID = JSON.stringify({
+const V1 = JSON.stringify({
   name: 'solarized',
   colors: {
     accent: '#268bd2',
@@ -33,35 +39,28 @@ afterEach(() => {
   setTuiTheme(createTuiTheme('none'));
 });
 
-describe('the JSON theme schema (issue #304)', () => {
-  it('accepts a valid theme file and keeps its colours', () => {
-    expect(parseThemeJson(VALID, 'solarized.json')).toEqual({
+describe('v1 theme files stay valid (issue #304)', () => {
+  it('maps the seven keys onto the dark palette', () => {
+    expect(parseThemeJson(V1, 'solarized.json')).toEqual({
+      ...DARK_PALETTE,
       accent: '#268bd2',
-      warm: '#b58900',
-      success: '#859900',
-      error: '#dc322f',
-      warning: '#cb4b16',
-      muted: '#93a1a1',
-      prompt: '#fdf6e3',
+      ok: '#859900',
+      err: '#dc322f',
+      warn: '#cb4b16',
+      fg2: '#93a1a1',
+      fg0: '#fdf6e3',
     });
   });
 
-  it('rejects malformed JSON, naming the file', () => {
-    expect(() => parseThemeJson('{ nope', 'broken.json')).toThrow(ThemeError);
-    expect(() => parseThemeJson('{ nope', 'broken.json')).toThrow(
-      /theme 'broken\.json': invalid JSON/,
-    );
-  });
-
-  it('rejects an unknown key, naming it and the expected ones', () => {
-    const text = JSON.stringify({ colors: { ...validColors(), blue: '#00f' } });
+  it('rejects an unknown v1 key, naming it and the v1 keys', () => {
+    const text = JSON.stringify({ colors: { ...v1Colors(), blue: '#00f' } });
     expect(() => parseThemeJson(text, 'extra.json')).toThrow(
-      /theme 'extra\.json': unknown colour 'blue' \(expected accent, warm, success, error, warning, muted, prompt\)/,
+      /theme 'extra\.json': unknown colour 'blue' \(a v1 theme uses accent, warm, success, error, warning, muted, prompt\)/,
     );
   });
 
-  it('rejects a missing colour, naming it', () => {
-    const { accent: _accent, ...rest } = validColors();
+  it('rejects a missing v1 colour, naming it', () => {
+    const { accent: _accent, ...rest } = v1Colors();
     const text = JSON.stringify({ colors: rest });
     expect(() => parseThemeJson(text, 'short.json')).toThrow(
       /theme 'short\.json': missing colour 'accent'/,
@@ -69,15 +68,70 @@ describe('the JSON theme schema (issue #304)', () => {
   });
 
   it('rejects a value that is not #rrggbb, naming the key', () => {
-    const text = JSON.stringify({
-      colors: { ...validColors(), accent: 'red' },
-    });
+    const text = JSON.stringify({ colors: { ...v1Colors(), accent: 'red' } });
     expect(() => parseThemeJson(text, 'bad.json')).toThrow(
       /theme 'bad\.json': 'accent' must be a #rrggbb colour \(got "red"\)/,
     );
   });
 
-  it('rejects a theme without a colors object', () => {
+  it('refuses extends on a v1 file', () => {
+    const text = JSON.stringify({ extends: 'light', colors: v1Colors() });
+    expect(() => parseThemeJson(text, 'mixed.json')).toThrow(
+      /'extends' needs a v2 theme/,
+    );
+  });
+});
+
+describe('v2 theme files (issue #444)', () => {
+  it('overrides any subset of roles on top of dark by default', () => {
+    const text = JSON.stringify({
+      colors: { accent: '#00aaff', bg2: '#202030' },
+    });
+    expect(parseThemeJson(text, 'mine.json')).toEqual({
+      ...DARK_PALETTE,
+      accent: '#00aaff',
+      bg2: '#202030',
+    });
+  });
+
+  it('extends a named built-in', () => {
+    const text = JSON.stringify({
+      name: 'mine',
+      extends: 'light',
+      colors: { accent: '#00aaff' },
+    });
+    expect(parseThemeJson(text, 'mine.json')).toEqual({
+      ...LIGHT_PALETTE,
+      accent: '#00aaff',
+    });
+  });
+
+  it('rejects an unknown role, naming the roles', () => {
+    const text = JSON.stringify({ colors: { purple: '#aa00aa' } });
+    expect(() => parseThemeJson(text, 'r.json')).toThrow(
+      /theme 'r\.json': unknown colour 'purple' \(expected token roles: bg0, bg1/,
+    );
+  });
+
+  it('rejects an unknown base', () => {
+    const text = JSON.stringify({ extends: 'solar', colors: {} });
+    expect(() => parseThemeJson(text, 'b.json')).toThrow(
+      /'extends' must be one of default, dark, light, terminal/,
+    );
+  });
+
+  it('rejects an unknown top-level key, naming the expected ones', () => {
+    const text = JSON.stringify({ colors: {}, palette: {} });
+    expect(() => parseThemeJson(text, 't.json')).toThrow(
+      /unknown key 'palette' \(expected name, extends, colors\)/,
+    );
+  });
+
+  it('rejects malformed JSON and a theme without a colors object', () => {
+    expect(() => parseThemeJson('{ nope', 'broken.json')).toThrow(ThemeError);
+    expect(() => parseThemeJson('{ nope', 'broken.json')).toThrow(
+      /theme 'broken\.json': invalid JSON/,
+    );
     expect(() => parseThemeJson('{"name":"x"}', 'x.json')).toThrow(
       /theme 'x\.json': 'colors' must be an object/,
     );
@@ -87,30 +141,32 @@ describe('the JSON theme schema (issue #304)', () => {
   });
 });
 
-describe('the built-in themes (issue #304)', () => {
-  it('ships default, dark and light; dark is the shipped brand palette', () => {
-    expect(builtinThemeColors('dark')).toEqual(builtinThemeColors('default'));
-    expect(builtinThemeColors('dark')).not.toEqual(builtinThemeColors('light'));
-    expect(builtinThemeColors('light').prompt).toBe('#18181b');
+describe('the built-in themes', () => {
+  it('ships default, dark, light and terminal', () => {
+    for (const name of ['default', 'dark', 'light', 'terminal']) {
+      expect(isThemeBuiltin(name)).toBe(true);
+    }
+    expect(isThemeBuiltin('solarized')).toBe(false);
+    expect(builtinThemePalette('default')).toBe(builtinThemePalette('dark'));
+    expect(builtinThemePalette('light')).toBe(LIGHT_PALETTE);
+    expect(builtinThemePalette('terminal')).toBe(TERMINAL_PALETTE);
   });
 });
 
-describe('the colour-level downgrade (issue #304)', () => {
+describe('the colour-level downgrade', () => {
   it('renders a custom colour at every level', () => {
-    const colors = builtinThemeColors('light');
-    const truecolor = createThemeFromColors(colors, 'truecolor');
-    const c256 = createThemeFromColors(colors, '256');
-    const c16 = createThemeFromColors(colors, '16');
-    const none = createThemeFromColors(colors, 'none');
+    const truecolor = createThemeFromPalette(LIGHT_PALETTE, 'truecolor');
+    const c256 = createThemeFromPalette(LIGHT_PALETTE, '256');
+    const c16 = createThemeFromPalette(LIGHT_PALETTE, '16');
+    const none = createThemeFromPalette(LIGHT_PALETTE, 'none');
     expect(truecolor.accent('x')).toContain('38;2;');
     expect(c256.accent('x')).toContain('38;5;');
-    expect(c16.accent('x')).toMatch(/\[3[0-9]m/);
+    expect(c16.accent('x')).toMatch(/\[(3|9)[0-7]m/);
     expect(none.accent('x')).toBe('x');
     expect(none.level).toBe('none');
   });
 
-  it('keeps the brand palette byte-identical to the shipped theme', () => {
-    // The built-in default must not move: existing snapshots pin its SGR.
+  it('the default theme is the dark palette', () => {
     const styles = [
       'accent',
       'accentBold',
@@ -128,13 +184,11 @@ describe('the colour-level downgrade (issue #304)', () => {
       'prompt',
     ] as const;
     const shipped = createTuiTheme('truecolor');
-    const fromColors = createThemeFromColors(
-      builtinThemeColors('default'),
-      'truecolor',
-    );
-    expect(styles.map((key) => fromColors[key]('x'))).toEqual(
+    const fromPalette = createThemeFromPalette(DARK_PALETTE, 'truecolor');
+    expect(styles.map((key) => fromPalette[key]('x'))).toEqual(
       styles.map((key) => shipped[key]('x')),
     );
+    expect(shipped.accent('x')).toBe('\u001b[38;2;255;0;77mx\u001b[39m');
   });
 });
 
@@ -150,12 +204,15 @@ describe('a light theme on the status bar (issue #304)', () => {
     };
     setTuiTheme(createTuiTheme('truecolor'));
     const before = new StatusBar(state).render(100).join('\n');
-    setTuiTheme(
-      createThemeFromColors(builtinThemeColors('light'), 'truecolor'),
-    );
+    setTuiTheme(createThemeFromPalette(LIGHT_PALETTE, 'truecolor'));
     const after = new StatusBar(state).render(100).join('\n');
-    expect(before).toContain('\u001b[38;2;255;0;77m');
-    expect(after).toContain('\u001b[38;2;196;0;56m');
+    // Issue #453: the line is painted on each palette's own bg1 surface.
+    expect(before).toContain(
+      createThemeFromPalette(DARK_PALETTE, 'truecolor').ui.open({ bg: 'bg1' }),
+    );
+    expect(after).toContain(
+      createThemeFromPalette(LIGHT_PALETTE, 'truecolor').ui.open({ bg: 'bg1' }),
+    );
     expect(after).not.toBe(before);
     expect(tuiTheme().level).toBe('truecolor');
   });
@@ -163,16 +220,19 @@ describe('a light theme on the status bar (issue #304)', () => {
   // The EPIC K re-baseline's scope edit: the custom palette must satisfy the
   // pi-tui 1.0.2 per-component interfaces Kubic builds from it.
   it('reaches the pi-tui per-component theme interfaces', () => {
-    const theme = createThemeFromColors(
-      builtinThemeColors('light'),
-      'truecolor',
-    );
+    const theme = createThemeFromPalette(LIGHT_PALETTE, 'truecolor');
     setTuiTheme(theme);
+    // Issue #458: headings fg0 bold, links info — on the light palette.
     expect(markdownThemeFor(theme).heading('x')).toBe(
-      '\u001b[1;38;2;196;0;56mx\u001b[22;39m',
+      '\u001b[1;38;2;24;24;27mx\u001b[22;39m',
     );
-    expect(editorTheme().borderColor('x')).toBe(
-      '\u001b[38;2;196;0;56mx\u001b[39m',
+    expect(markdownThemeFor(theme).link('x')).toBe(
+      '\u001b[38;2;29;78;216mx\u001b[39m',
+    );
+    // Issue #454: the editor's autocomplete list takes the palette (its
+    // rules only carry the frame's marker).
+    expect(editorTheme().selectList.selectedPrefix('x')).toBe(
+      '\u001b[38;2;208;0;63mx\u001b[39m',
     );
   });
 });
@@ -204,7 +264,7 @@ describe('a parse failure never quotes the file (issue #304 review)', () => {
   });
 });
 
-function validColors(): Record<string, string> {
+function v1Colors(): Record<string, string> {
   return {
     accent: '#268bd2',
     warm: '#b58900',

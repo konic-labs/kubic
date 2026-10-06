@@ -77,7 +77,7 @@ export interface JournalCommandDeps {
   theme?: CliTheme;
   // Colours for the logger's level prefixes. Default: none.
   errTheme?: CliTheme;
-  // Box-drawn `log` table (an interactive, coloured terminal). Default:
+  // Kit `log` table (an interactive, coloured terminal). Default:
   // plain aligned columns.
   fancy?: boolean;
   // Issue #362: session id → recorded workspace (the cwd the session was

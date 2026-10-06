@@ -30,6 +30,8 @@ import {
   CliUsageError,
   exitCodeForParseError,
 } from '../../../../packages/core/src/cli/exit-codes.js';
+import { errorBlock } from '../../../../packages/core/src/cli/kit.js';
+import type { CliTheme } from '../../../../packages/core/src/cli/theme.js';
 import { shellQuote } from '../../../../packages/host/src/run-cli.js';
 import type { KubicProgram } from './context.js';
 
@@ -41,14 +43,43 @@ export interface ProgramIo {
 export interface ProgramOptions {
   // The full `kubic --version` line (core/license.ts formatVersionLine).
   readonly versionLine: string;
-  // The root help text (`kubic --help`), pinned by the binary contract.
+  // The root help text (`kubic --help`); its plain form is pinned by the
+  // binary contract.
   readonly rootHelp: string;
+  // Issue #446: the stdout theme. When it is coloured, subcommand help is
+  // styled (titles, terms) through commander's style hooks; absent or plain
+  // keeps commander's text byte-for-byte.
+  readonly helpTheme?: CliTheme;
+  // Issue #450: the stderr theme. When it is coloured, a usage error
+  // (unknown option, missing value) is an error block; plain otherwise.
+  readonly errorTheme?: CliTheme;
 }
 
 // commander hands whole chunks ending in '\n'; the line channels add their
 // own newline (console.log in production).
 function toLines(write: (line: string) => void): (chunk: string) => void {
   return (chunk) => write(chunk.endsWith('\n') ? chunk.slice(0, -1) : chunk);
+}
+
+// Commander's help style hooks over the shared tokens (issue #446). Titles
+// (`Usage:`, `Options:`) muted and bold, the command line bold, option and
+// argument terms secondary; descriptions keep the default text colour.
+function helpStyles(theme: CliTheme | undefined): {
+  styleTitle?: (text: string) => string;
+  styleCommandText?: (text: string) => string;
+  styleOptionTerm?: (text: string) => string;
+  styleArgumentTerm?: (text: string) => string;
+  styleSubcommandTerm?: (text: string) => string;
+} {
+  if (theme === undefined || !theme.enabled) return {};
+  const ui = theme.ui;
+  return {
+    styleTitle: ui.style({ fg: 'fg2', bold: true }),
+    styleCommandText: ui.style({ fg: 'fg0', bold: true }),
+    styleOptionTerm: ui.fg('fg1'),
+    styleArgumentTerm: ui.fg('fg1'),
+    styleSubcommandTerm: ui.fg('fg1'),
+  };
 }
 
 export function createKubicProgram(
@@ -66,15 +97,32 @@ export function createKubicProgram(
     .configureOutput({
       writeOut: toLines(io.out),
       writeErr: toLines(io.err),
-      outputError: (message, write) => write(message),
+      outputError: (message, write) => {
+        const theme = options.errorTheme;
+        if (theme === undefined || !theme.enabled) {
+          write(message);
+          return;
+        }
+        const text = message.trimEnd().replace(/^error: /u, '');
+        const lines = errorBlock(theme, {
+          message: text,
+          hints: ['`--help` lists the options'],
+        });
+        write(`${lines.join('\n')}\n`);
+      },
+      // Help on stdout keeps its styles only when the stdout theme is
+      // coloured; help written to stderr (a usage error) is always plain.
+      getOutHasColors: () => options.helpTheme?.enabled === true,
+      getErrHasColors: () => false,
     })
     .configureHelp({
-      // The root answers with the pinned usage line; subcommands keep
-      // commander's generated help.
+      // The root answers with the grouped root help; subcommands keep
+      // commander's generated help, styled on a coloured terminal.
       formatHelp: (cmd, helper) =>
         cmd.parent === null
           ? `${options.rootHelp}\n`
           : Help.prototype.formatHelp.call(helper, cmd, helper),
+      ...helpStyles(options.helpTheme),
     });
   return program;
 }

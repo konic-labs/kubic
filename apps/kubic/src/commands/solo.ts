@@ -360,6 +360,10 @@ function registerDoctor(program: Command, ctx: CommandContext): void {
     )
     .option('--json', 'print one JSON report')
     .option(
+      '--verbose',
+      'print every check in full (the default on a terminal is a grouped summary)',
+    )
+    .option(
       '--session <id>',
       'check one session (its installed posture and full-access state)',
     )
@@ -367,6 +371,7 @@ function registerDoctor(program: Command, ctx: CommandContext): void {
       'after',
       examples([
         'kubic doctor',
+        'kubic doctor --verbose',
         'kubic doctor --skip node,license:kubic --json',
       ]),
     )
@@ -376,6 +381,7 @@ function registerDoctor(program: Command, ctx: CommandContext): void {
           {
             skip: opts.skip,
             ...(opts.json === true ? { json: true } : {}),
+            ...(opts.verbose === true ? { verbose: true } : {}),
             ...(opts.session === undefined ? {} : { session: opts.session }),
           },
           ctx.config,
@@ -411,6 +417,8 @@ function registerModels(program: Command, ctx: CommandContext): void {
   program
     .command('models')
     .description('list the model catalog or resolve one model')
+    .argument('[provider]', 'list one provider in full')
+    .option('--all', 'include providers without a configured key')
     .option('--json', 'print the catalog as one JSON document')
     .option(
       '--resolve <provider/id>',
@@ -418,18 +426,39 @@ function registerModels(program: Command, ctx: CommandContext): void {
     )
     .addHelpText(
       'after',
-      examples(['kubic models', 'kubic models --resolve faux/echo']),
+      examples([
+        'kubic models',
+        'kubic models anthropic',
+        'kubic models --all',
+        'kubic models --resolve faux/echo',
+      ]),
     )
-    .action(async (opts) => {
+    .action(async (provider, opts) => {
       ctx.setExitCode(
         await ctx.runners.models(
           {
+            ...(provider === undefined ? {} : { provider }),
+            ...(opts.all === true ? { all: true } : {}),
             ...(opts.json === true ? { json: true } : {}),
             ...(opts.resolve === undefined ? {} : { resolve: opts.resolve }),
           },
           ctx.config,
         ),
       );
+    });
+}
+
+// Issue #451 (06-E): `kubic setup` — provider, default model, thinking level
+// and the project trust question, saved to ~/.kubic/config.toml.
+function registerSetup(program: Command, ctx: CommandContext): void {
+  program
+    .command('setup')
+    .description(
+      'choose a provider and default model, saved to ~/.kubic/config.toml (interactive)',
+    )
+    .addHelpText('after', examples(['kubic setup']))
+    .action(async () => {
+      ctx.setExitCode(await ctx.runners.setup({}, ctx.config));
     });
 }
 
@@ -671,6 +700,7 @@ export const registerSoloCommands: CommandRegistrar = (program, ctx) => {
   registerDoctor(program, ctx);
   registerSkills(program, ctx);
   registerModels(program, ctx);
+  registerSetup(program, ctx);
   registerConfig(program, ctx);
   registerTrust(program, ctx);
   registerSessions(program, ctx);

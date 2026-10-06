@@ -78,6 +78,7 @@ describe('tui entry regression (issue #75)', () => {
     );
     await waitFor(() => fake.counts.started === 1);
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(fake.writes.join('')).toContain('?1049l');

@@ -8,7 +8,7 @@ import { registerJournalCommands } from '../commands/journal.js';
 import { registerOrchestratorCommands } from '../commands/orchestrator.js';
 import { registerSoloCommands } from '../commands/solo.js';
 import type { CliConfigResult } from '../config-runtime.js';
-import { COMMAND_NAMES, ROOT_USAGE } from '../dispatch.js';
+import { COMMAND_NAMES, ROOT_HELP } from '../dispatch.js';
 import type { CommandContext, DispatchRunners } from './context.js';
 import { createKubicProgram, runKubicProgram } from './program.js';
 
@@ -189,8 +189,8 @@ describe('command registry', () => {
     const names = registered().commands.map((command) => command.name());
     expect(new Set(names).size).toBe(names.length);
     expect([...names].sort()).toEqual([...COMMAND_NAMES].sort());
-    expect(COMMAND_NAMES.size).toBe(27);
-    expect(ROOT_USAGE).toContain('sessions | git');
+    expect(COMMAND_NAMES.size).toBe(28);
+    expect(ROOT_HELP).toContain('run · tui · resume · attach · sessions');
   });
 
   it('every command carries a summary for generated help', () => {
@@ -214,6 +214,7 @@ describe('command registry', () => {
       'resume',
       'run',
       'sessions',
+      'setup',
       'skills',
       'trust',
       'tui',

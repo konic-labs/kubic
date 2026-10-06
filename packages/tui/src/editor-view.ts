@@ -9,6 +9,7 @@
 // Presentation only (§66): the editor holds a draft string and a submit
 // callback. It never knows what a lane is.
 
+import { RULE_MARK } from './editor-frame.js';
 import { tuiTheme } from './theme.js';
 import type {
   AutocompleteProvider,
@@ -53,16 +54,19 @@ export const EDITOR_FALLBACK_ROWS = 24;
 export const PROMPT_HISTORY_MAX = 100;
 
 export function editorTheme(): EditorTheme {
-  const identity = (text: string): string => text;
+  // Read per call so a theme set after construction applies.
+  const ui = () => tuiTheme().ui;
   return {
-    // Read per call so a theme set after construction applies.
-    borderColor: (text: string): string => tuiTheme().accent(text),
+    // Issue #454: the rules only carry the frame's marker; the frame
+    // (editor-frame.ts) draws and colours the box around them.
+    borderColor: (text: string): string => `${RULE_MARK}${text}`,
     selectList: {
-      selectedPrefix: identity,
-      selectedText: identity,
-      description: identity,
-      scrollInfo: identity,
-      noMatch: identity,
+      selectedPrefix: (text: string): string => ui().fg('accent')(text),
+      selectedText: (text: string): string =>
+        ui().style({ fg: 'fg0', bold: true })(text),
+      description: (text: string): string => ui().fg('fg2')(text),
+      scrollInfo: (text: string): string => ui().fg('fg3')(text),
+      noMatch: (text: string): string => ui().fg('fg2')(text),
     },
   };
 }
@@ -154,8 +158,18 @@ export class PromptEditor implements Component, Focusable {
     return this.inner.getText();
   }
 
+  // Issue #454: Esc closes the dropdown before it means anything else.
+  isShowingAutocomplete(): boolean {
+    return this.inner.isShowingAutocomplete();
+  }
+
   setText(text: string): void {
     this.inner.setText(text);
+  }
+
+  // Issue #460: the palette's file rows insert `@path ` where the cursor is.
+  insertText(text: string): void {
+    this.inner.insertTextAtCursor(text);
   }
 
   handleInput(data: string): void {

@@ -352,6 +352,8 @@ export interface SoloDecisionInput {
   approved: boolean;
   by?: string;
   reason?: string;
+  /** Issue #467: an approval's recorded note (an edited command). */
+  note?: string;
   posture: string;
   /**
    * Set when this lane is an orchestrator-managed worker child (issue #279):
@@ -381,6 +383,10 @@ export function soloDecisionAudit(
       ? { approved: true, by: input.by ?? 'user' }
       : { approved: false, reason: input.reason ?? 'denied' },
   );
+  // Issue #467: an approval's own note (an edited command names both) is
+  // its recorded reason.
+  const recorded =
+    input.approved && input.note !== undefined ? input.note : reason;
   const worker = input.worker;
   const role = worker === undefined ? 'root' : 'worker';
   return {
@@ -414,7 +420,7 @@ export function soloDecisionAudit(
     mode: worker === undefined ? 'solo' : 'orchestrator',
     posture: input.posture,
     result,
-    reason,
+    reason: recorded,
   };
 }
 

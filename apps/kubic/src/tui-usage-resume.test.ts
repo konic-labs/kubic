@@ -206,6 +206,7 @@ describe('kubic tui --session seeds the committed spend (issue #346)', () => {
     await waitFor(() => fake.writes.join('').includes('live answer'));
     expect(fake.writes.join('')).toContain('$0.03');
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await exit).toBe(0);
     expect(boots).toHaveLength(1);
   });

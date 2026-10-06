@@ -184,6 +184,8 @@ describe('terminal control sequences from lane content (issue #88)', () => {
         ],
       }),
     );
+    // Issue #453: the solo tree row is opened on demand (Ctrl-T).
+    app.handleInput('\x14');
     const frame = app.render(100).join('\n');
     expect(frame).toContain('ZZ');
     expect(frame).not.toContain(`${ESC}[2J`);

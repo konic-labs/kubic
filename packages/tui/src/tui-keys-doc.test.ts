@@ -12,8 +12,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { INLINE_APPROVAL_HEADER } from './approval-surface.js';
-import { APPROVAL_MIN_WIDTH } from './approval-view.js';
+import { APPROVAL_PAGE_KEY } from './approval-view.js';
 import {
   DEFAULT_KEY_REGISTRY,
   KEY_ACTION_IDS,
@@ -126,26 +125,29 @@ describe.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(
         'allow-once': ['a'],
         'allow-session': ['ctrl+s'],
         deny: ['d', 'escape'],
+        comment: ['c'],
+        edit: ['e'],
+        'allow-edits': ['shift+a'],
       });
       const section = tuiSection();
       expect(section).toMatch(/\| `a` \|[^|]*allow once/i);
       expect(section).toMatch(/\| `Ctrl-S` \|[^|]*allow for the session/i);
       expect(section).toMatch(/arming delay[^.]*400 ms/i);
       expect(section).toMatch(/\| `d`, `Esc` \|[^|]*deny/i);
+      // Issue #467: the steering answers.
+      expect(section).toMatch(/\| `c` \|[^|]*deny with a comment/i);
+      expect(section).toMatch(/\| `e` \|[^|]*edit the command/i);
+      expect(section).toMatch(/\| `A` \|[^|]*allow all edits this turn/i);
     });
 
-    it('documents the narrow-terminal threshold the code uses', () => {
-      // The doc says "below N columns" — the code's number, in prose.
-      expect(tuiSection()).toMatch(
-        new RegExp(`below ${APPROVAL_MIN_WIDTH} columns`, 'i'),
+    it('documents the card keys the code binds (issue #459)', () => {
+      const section = tuiSection();
+      expect(section).toMatch(
+        new RegExp(`\\| \`${APPROVAL_PAGE_KEY}\` \\|[^|]*next page`, 'i'),
       );
-    });
-
-    it('documents the inline fallback by the header the code renders', () => {
-      // The doc quotes the header's leading, width-independent part.
-      const quoted = INLINE_APPROVAL_HEADER.split(' — ')[0] as string;
-      expect(quoted).toBe('! approval (inline)');
-      expect(tuiSection()).toContain(`\`${quoted}\``);
+      const explain = KEY_ACTIONS['approval.explain'].keys[0] as string;
+      expect(explain).toBe('?');
+      expect(section).toMatch(/\| `\?` \|[^|]*explanation/i);
     });
   },
 );
@@ -157,9 +159,11 @@ describe('the keybindings file is documented from the registry (issue #303)', ()
     const section = tuiSection();
     expect(section).toContain('~/.kubic/keybindings.json');
     for (const action of KEY_ACTION_IDS) {
-      const keys = DEFAULT_KEY_REGISTRY.keysFor(action)
-        .map((key) => `\`${key}\``)
-        .join(', ');
+      // An action with no default key (app.exit since #454) says so.
+      const keys =
+        DEFAULT_KEY_REGISTRY.keysFor(action)
+          .map((key) => `\`${key}\``)
+          .join(', ') || 'unbound';
       expect(section).toContain(`| \`${action}\` | ${keys} |`);
     }
   });

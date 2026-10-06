@@ -7,8 +7,9 @@
 //   one-line shape the root catch-all prints (docs/cli/exit-codes.md);
 // - `debug` is silent unless KUBIC_DEBUG=1 (or a command's own
 //   `--debug`, where it declares one: run, workers);
-// - the level prefix is coloured only when the theme is (a TTY without
-//   NO_COLOR and not `--json`); otherwise the reporter is plain text.
+// - on a colour terminal the level prefix is a status mark (✕ ▲ ℹ ✓,
+//   issue #450); otherwise (a pipe, NO_COLOR, `--json`) it is the plain
+//   `<level>:` word.
 
 import { formatWithOptions } from 'node:util';
 import {
@@ -53,14 +54,23 @@ function lineReporter(
   write: (chunk: string) => void,
   theme: CliTheme,
 ): ConsolaReporter {
+  // Issue #450: on a colour terminal the level is a status mark (the 06
+  // glyphs); plain output keeps the `<level>:` words scripts grep for.
+  const ui = theme.ui;
   const prefix = (type: LogObject['type']): string => {
-    if (type === 'error' || type === 'fatal') return theme.error('error:');
-    if (type === 'warn') return theme.warning('warn:');
-    if (type === 'success') return theme.success('ok:');
-    if (type === 'debug' || type === 'trace' || type === 'verbose') {
-      return theme.muted('debug:');
+    const debugType =
+      type === 'debug' || type === 'trace' || type === 'verbose';
+    if (!theme.enabled) {
+      if (type === 'error' || type === 'fatal') return 'error:';
+      if (type === 'warn') return 'warn:';
+      if (type === 'success') return 'ok:';
+      return debugType ? 'debug:' : 'info:';
     }
-    return theme.accent('info:');
+    if (type === 'error' || type === 'fatal') return ui.fg('err')('✕');
+    if (type === 'warn') return ui.fg('warn')('▲');
+    if (type === 'success') return ui.fg('ok')('✓');
+    if (debugType) return ui.fg('fg2')('debug:');
+    return ui.fg('info')('ℹ');
   };
   return {
     log: (logObj) => {

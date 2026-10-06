@@ -31,14 +31,20 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
 | 7 | `partial` (`kubic orchestrate` only) | `--on-failure continue` and at least one worker failed while the run continued: whatever succeeded was merged, the failed workers are named with their own codes in the envelope (`status: "partial"`, `error.code: "partial_failure"`, `workers[].error.details.code`), and the failed ones stay pending for `--resume`. Without `--on-failure continue` a worker failure keeps the all-or-nothing exit 1 (or 3/4 for its own budget/approval terminus). |
 ## Per-command notes
 
-- **Unknown command / subcommand**: the root usage line on stdout,
-  `error: unknown command '<name>'` on stderr for a registered group's
-  bad subcommand, exit 2 (issue #372). A word-shaped unknown token also
-  prints `hint: to run it as a prompt: kubic run -p '<word>'` (issue #268,
-  L-D7 — a multi-word token is the bare prompt and runs like `kubic run
-  -p`). The one exception is the bare `kubic` (no command) off a TTY: the
-  identical usage line, exit 1 — POSIX usage-on-no-args, the deliberate
-  scripted posture.
+- **Unknown command / subcommand**: exit 2 (issue #372), stdout empty,
+  and on stderr (issue #450) `error: unknown command '<name>'` (`unknown
+  option '<flag>'` for an unknown root option) followed by hints: `hint:
+  did you mean kubic <command>?` when a command is close (`kubic stauts`
+  → `status`), otherwise `hint: to run it as a prompt: kubic run -p
+  '<word>'` for a word-shaped token (issue #268, L-D7 — a multi-word token
+  is the bare prompt and runs like `kubic run -p`), and last `hint: kubic
+  --help lists the commands`. `kubic help` and `kubic version` point at
+  the real flags instead. On a colour terminal the same information is an
+  error block (`✕ unknown command <name>`, indented hints, a faint `exit 2
+  · usage`). A registered group's bad subcommand is commander's `error:
+  unknown command '<name>'` on stderr. The one exception is the bare
+  `kubic` (no command) off a TTY: the root help on stdout, exit 1 — POSIX
+  usage-on-no-args, the deliberate scripted posture.
 - **Diagnostics vs `--json`**: receipts, warnings and refusals — the
   `loaded models.json: …` note, the config refusal, colour/TTY notices — go
   to stderr, so a `--json` stdout is exactly one document (issue #244).
@@ -96,9 +102,12 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   `--revoke` or a path, stray operands); 1 an unreadable or corrupt store
   (the file is named). It runs even when the project config is refused —
   it is the repair path for exactly that refusal.
+- **`kubic setup`** (issue #451): 0 saved (or nothing to save under a
+  frozen enterprise model), 2 off a terminal, 6 no provider has a key,
+  130 cancelled (nothing written), 1 the config file could not be written.
 - **`kubic --version`**: always 0.
 - **`kubic --help` / `-h`**: always 0 — prints the top-level command
-  listing (the same usage line an unknown command gets). A command's own
+  listing (the root help). A command's own
   `--help` is also 0 and side-effect free: commander answers it before any
   action runs (issue #245).
 - **Bare `kubic`** (no command) off a TTY: 1, with the identical listing —
@@ -107,7 +116,7 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   terminal a bare `kubic` opens the TUI and exits as `kubic tui` does.
   `kubic --orchestrator` (issue #327) is the same bare form with the
   orchestrator opt-in: on a TTY it is exactly `kubic tui --orchestrator`;
-  off a TTY it is the usage line and exit 1, like every other bare flag.
+  off a TTY it is the root help and exit 1, like every other bare flag.
 - **Unexpected top-level failures** (a bug in a command's wiring, an
   unshaped IO error): one `error: <message>` line on stderr, 1 — the full
   stack only with `KUBIC_DEBUG=1` (see

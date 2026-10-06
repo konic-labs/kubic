@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Shell } from '../../../exec/src/env.js';
 import { FakeExecutionEnv, ROOT_PROVENANCE } from '../../../exec/src/env.js';
+import { factLine } from './facts.js';
 import { StaleGenerationError, spawnWorker } from './spawn.js';
 
 const READY_LINE = 'KUBIC_WORKER_READY w-1';
@@ -268,5 +269,85 @@ describe('spawnWorker readiness scan (issue #187)', () => {
     await worker.ready;
     expect(worker.status).toBe('ready');
     expect(worker.startupMs).toBe(0);
+  });
+});
+
+// Issue #464: the child's tool facts ride its stdout past readiness; the
+// spawn follows them for the whole run and hands back a stdout without them.
+describe('spawnWorker tool facts (issue #464)', () => {
+  it('delivers each fact once, in order, and strips them from stdout', async () => {
+    const one = factLine({
+      id: 'c1',
+      tool: 'read',
+      target: 'a.ts',
+      state: 'running',
+      at: 1,
+    });
+    const two = factLine({
+      id: 'c1',
+      tool: 'read',
+      target: 'a.ts',
+      state: 'done',
+      at: 2,
+    });
+    const report = '{"status":"completed"}';
+    const seen: string[] = [];
+    const worker = spawnWorker(
+      shellFor(`${READY_LINE}\n${one}\n${two}\n${report}\n`),
+      {
+        workerId: 'w-1',
+        sessionId: 's-1',
+        generation: 1,
+        role: 'implementer',
+        cmd: 'worker',
+        args: ['--run'],
+        baseEnv: {},
+        provenance: ROOT_PROVENANCE,
+      },
+      {
+        clock: () => 0,
+        onFact: (fact) => seen.push(`${fact.id}:${fact.state}`),
+      },
+    );
+    const done = await worker.wait();
+    expect(seen).toEqual(['c1:running', 'c1:done']);
+    expect(done.stdout).toBe(`${READY_LINE}\n${report}\n`);
+  });
+
+  it('keeps following stdout after the readiness marker', () => {
+    let onUpdate:
+      | ((snapshot: { stdout: string; stderr: string; exitCode: null }) => void)
+      | undefined;
+    const shell: Shell = {
+      spawn: (_cmd, _args, options) => {
+        onUpdate = options.onUpdate as typeof onUpdate;
+        return {
+          pid: 1,
+          wait: () => new Promise(() => undefined),
+          kill: () => undefined,
+        };
+      },
+    };
+    const seen: string[] = [];
+    const worker = spawnWorker(
+      shell,
+      {
+        workerId: 'w-1',
+        sessionId: 's-1',
+        generation: 1,
+        role: 'implementer',
+        cmd: 'worker',
+        args: ['--run'],
+        baseEnv: {},
+        provenance: ROOT_PROVENANCE,
+      },
+      { clock: () => 0, onFact: (fact) => seen.push(fact.id) },
+    );
+    let stdout = `${READY_LINE}\n`;
+    onUpdate?.({ stdout, stderr: '', exitCode: null });
+    expect(worker.status).toBe('ready');
+    stdout += `${factLine({ id: 'late', tool: 'bash', state: 'running', at: 3 })}\n`;
+    onUpdate?.({ stdout, stderr: '', exitCode: null });
+    expect(seen).toEqual(['late']);
   });
 });

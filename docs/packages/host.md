@@ -32,6 +32,9 @@ docs and code must never imply otherwise (design §59.1).
 | `replay/` | Replay surfaces over trajectory exports |
 | `limits/` | Honest-claims/skip-record guards, solo-warning + orchestrator notices |
 | `run-cli.ts`, `sessions-cli.ts`, `workers-cli.ts`, `journal-cli.ts`, `models-cli.ts`, `git-cli.ts` | Headless/CLI command implementations |
+| `session-read.ts` | `openReadOnlySessionStorage` (lock-free read-only open), `touchesWorkspace` (the project test) — shared by `kubic cost` and the TUI's `/resume` (#251, #461) |
+| `session-summaries.ts` | `SessionSummary`, `summarizeProjectSessions` — this project's sessions with first prompt, turns, cost and age; held or legacy ones listed, never opened (#461) |
+| `provider-key-hints.ts` | `providerKeyHints` — the variable Pi's auth check reads for a keyless provider (`OPENAI_API_KEY`), from a throwaway catalogue with a synthetic auth context (#461) |
 | `sessions-prune.ts` | `SessionsRootError`, `planSessionPrune`, `deleteSessionPruneCandidates`, `SessionPrunePlan`, `SessionPrunePlanArgs`, `SessionPruneCandidate`, `SessionPruneLocked`, `SessionPruneDeleteArgs`, `SessionPruneDeleteOutcome` — session-state retention core (#119): the age/lock/keep rails, the byte count over a session dir tree, and the guarded delete pass (liveness re-checked immediately before each remove) |
 | `credentials.ts` | Pointer | Request-time refs in `config/secrets.ts` (#38); model-layer store in `@kubic/worker` `pi-boundary.ts` |
 | `index.ts` | Pointer | No barrel — import per-module paths |

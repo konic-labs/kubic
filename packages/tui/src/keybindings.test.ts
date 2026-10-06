@@ -16,12 +16,15 @@ describe('keybinding registry defaults (issue #303)', () => {
     expect(keys.actionFor('global', 'ctrl+o')).toBe('panel.diff');
     expect(keys.actionFor('global', 'ctrl+r')).toBe('panel.journal');
     expect(keys.actionFor('global', 'ctrl+g')).toBe('session.mode');
-    expect(keys.actionFor('global', 'escape')).toBe('app.exit');
+    // Issue #454: Esc is the cancel key; quitting has no default key.
+    expect(keys.actionFor('global', 'escape')).toBe('app.cancel');
+    expect(keys.keysFor('app.exit')).toEqual([]);
+    expect(keys.label('app.exit')).toBe('');
     expect(keys.actionFor('global', 'alt+down')).toBe('panel.next');
     expect(keys.notices).toEqual([]);
   });
 
-  it('keeps the approval keys in their own scope (Esc denies there, quits globally)', () => {
+  it('keeps the approval keys in their own scope (Esc denies there, cancels globally)', () => {
     const keys = DEFAULT_KEY_REGISTRY;
     expect(keys.actionFor('approval', 'escape')).toBe('approval.deny');
     expect(keys.actionFor('approval', 'v')).toBe('approval.page');
@@ -31,6 +34,9 @@ describe('keybinding registry defaults (issue #303)', () => {
       'allow-once': ['a'],
       'allow-session': ['ctrl+s'],
       deny: ['d', 'escape'],
+      comment: ['c'],
+      edit: ['e'],
+      'allow-edits': ['shift+a'],
     });
   });
 
@@ -89,12 +95,20 @@ describe('keybinding overrides (issue #303)', () => {
   });
 
   it('an approval override conflicts only inside the approval scope', () => {
-    // Esc stays the global quit even though deny also binds it: the approval
-    // owns the keys first while it shows, so that overlap is by design.
+    // Esc stays the global cancel even though deny also binds it: the
+    // approval owns the keys first while it shows, so that overlap is by
+    // design.
     const keys = createKeyRegistry({ 'approval.allowOnce': ['y'] });
     expect(keys.notices).toEqual([]);
     expect(keys.approvalOverrides()['allow-once']).toEqual(['y']);
-    expect(keys.actionFor('global', 'escape')).toBe('app.exit');
+    expect(keys.actionFor('global', 'escape')).toBe('app.cancel');
+  });
+
+  it('still lets the operator bind a quit key (issue #454)', () => {
+    const keys = createKeyRegistry({ 'app.exit': ['ctrl+q'] });
+    expect(keys.notices).toEqual([]);
+    expect(keys.actionFor('global', 'ctrl+q')).toBe('app.exit');
+    expect(keys.label('app.exit')).toBe('ctrl+q');
   });
 });
 

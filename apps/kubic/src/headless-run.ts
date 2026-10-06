@@ -130,6 +130,10 @@ import {
   type SelectedRole,
   selectRole,
 } from '../../../packages/host/src/roles/roles-boot.js';
+import type {
+  RunProgressSink,
+  RunToolSink,
+} from '../../../packages/host/src/run-cli.js';
 import {
   DEFAULT_RUN_TIMEOUT_MS,
   type HeadlessRunResult,
@@ -273,6 +277,13 @@ export interface HeadlessRunOptions {
   // §71 (issue #283): the opt-in solo budget — the bundle builds with
   // these limits. Absent means empty limits, never defaults.
   budget?: SoloBudgetLimits;
+  // Issue #447: live progress on an interactive terminal (heading, compact
+  // solo notice, one line per tool call). Absent: today's stderr warning
+  // block and no progress output.
+  progress?: RunProgressSink;
+  // Issue #464: an orchestrator worker's tool facts (its manager follows
+  // them on stdout). Absent outside a worker.
+  toolFacts?: RunToolSink;
 }
 
 export interface HeadlessRunDeps {
@@ -1450,7 +1461,11 @@ async function runHeadlessPromptImpl(
   // orchestrator-managed children (KUBIC_WORKER_ID set — `kubic doctor`
   // reports that mode's own worktree limit) and for the documented
   // KUBIC_NO_NOTICE opt-out. stderr, never stdout: `--json` stays parseable.
-  if (shouldEmitSoloNotice(process.env)) {
+  // Issue #447: with a progress sink the notice is its compact one-liner,
+  // printed by `progress.begin` once the lane has booted (still before the
+  // first turn); the three-line block stays for every other run.
+  const soloNotice = shouldEmitSoloNotice(process.env);
+  if (soloNotice && options.progress === undefined) {
     emitSoloWarning((line) => process.stderr.write(`${line}\n`));
   }
   try {
@@ -2301,6 +2316,10 @@ async function runHeadlessPromptImpl(
       .thinkingLevel;
     if (bootedThinking !== undefined) capture.thinking = bootedThinking;
     report.model = await liveModelId(solo, context);
+    options.progress?.begin({
+      ...(report.model === undefined ? {} : { model: report.model }),
+      notice: soloNotice,
+    });
     // §71 (issue #208) + the turn guard: one event subscription per
     // conversation (#398) feeds the budget meter's usage half and counts the
     // run's turns for `--max-turns`. Durable retries are the harness's own
@@ -2313,6 +2332,27 @@ async function runHeadlessPromptImpl(
         // named on the debug channel — tens of silent seconds otherwise.
         const activity = laneActivityDebugLine(event);
         if (activity !== undefined) debug?.(activity);
+        if (event.type === 'tool-start') {
+          const start = {
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            args: event.args,
+          };
+          options.progress?.toolStart(start);
+          options.toolFacts?.toolStart(start);
+          return;
+        }
+        if (event.type === 'tool-end') {
+          const end = {
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            isError: event.isError,
+            ...(event.entry === undefined ? {} : { entry: event.entry }),
+          };
+          options.progress?.toolEnd(end);
+          options.toolFacts?.toolEnd(end);
+          return;
+        }
         if (event.type !== 'usage') return;
         budgetEnforcer?.onUsage(event.row);
         turns += 1;

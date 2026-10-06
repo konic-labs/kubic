@@ -15,8 +15,8 @@ import {
 
 describe('parseModelCommand (issue #227)', () => {
   it('reads the report and switch forms', () => {
-    expect(parseModelCommand('/model')).toEqual({ kind: 'report' });
-    expect(parseModelCommand('/model   ')).toEqual({ kind: 'report' });
+    expect(parseModelCommand('/model')).toEqual({ kind: 'pick' });
+    expect(parseModelCommand('/model   ')).toEqual({ kind: 'pick' });
     expect(parseModelCommand('/model alt/m1')).toEqual({
       kind: 'switch',
       selection: { provider: 'alt', id: 'm1' },
@@ -98,8 +98,8 @@ describe('parseEscalateCommand (issue #210)', () => {
 
 describe('parseThinkingCommand (issue #328)', () => {
   it('reads the report and switch forms', () => {
-    expect(parseThinkingCommand('/thinking')).toEqual({ kind: 'report' });
-    expect(parseThinkingCommand('/thinking   ')).toEqual({ kind: 'report' });
+    expect(parseThinkingCommand('/thinking')).toEqual({ kind: 'pick' });
+    expect(parseThinkingCommand('/thinking   ')).toEqual({ kind: 'pick' });
     expect(parseThinkingCommand('/thinking high')).toEqual({
       kind: 'switch',
       level: 'high',

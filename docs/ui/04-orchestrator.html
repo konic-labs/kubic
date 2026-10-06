@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>04 · Orchestrator dashboard — Kubic design</title>
+<link rel="stylesheet" href="kubic.css">
+<style>
+  .c { display: flex !important; flex: none; width: 50ch; overflow: hidden; }
+  .r { display: flex !important; flex: 1 !important; overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="page">
+  <nav class="nav"><a href="index.html">← system</a><a href="01-session.html">01 session</a><a href="02-approval.html">02 approval</a><a href="03-palette.html">03 palette</a><a class="on" href="04-orchestrator.html">04 orchestrator</a><a href="05-welcome.html">05 first launch</a><a href="06-cli.html">06 cli</a></nav>
+  <h1><b>04</b> Orchestrator dashboard</h1>
+  <p class="sub">Kubic's differentiator gets the most "mission control" screen: a run timeline, workers grouped by what they need from you, a live peek into the selected worker, and budgets as gauges.</p>
+
+  <div class="win"><div class="bar"><i></i><i></i><i></i><span>kubic orchestrate — 120×38</span></div>
+  <div class="term fixed" style="--rows:38">
+    <!-- A header -->
+    <div class="l b1"><span class="acc bd"> ■ KUBIC </span><span class="f3"> │ </span><span class="inv-acc bd"> ORCHESTRATE </span><span class="f0">  add cart clear() and format tests</span><span class="f2">  ⎇ main</span><span class="sp"></span><span class="warn">◆ 1 awaiting</span><span class="f3"> │ </span><span class="acc">⠹ 2 working</span><span class="f3"> │ </span><span class="ok">✓ 1 done</span><span class="f3"> │ </span><span class="f2">✕ 0 </span></div>
+    <!-- B timeline -->
+    <div class="l"><span class="f2"> RUN  </span><span class="ok">✓ plan</span><span class="f3"> ━━━━━ </span><span class="acc bd">⠹ implement ×2</span><span class="f3"> ━━━━━ </span><span class="f2">○ review</span><span class="f3"> ━━━━━ </span><span class="f2">○ merge</span><span class="f3"> ━━━━━ </span><span class="f2">○ verify</span><span class="sp"></span><span class="f2">elapsed </span><span class="f1">3:42 </span></div>
+    <div class="l f3"><span> </span><span class="fill"></span><span> </span></div>
+    <!-- C/D split -->
+    <div class="l"><span class="c"><span class="f2 sb"> AWAITING YOU</span></span><span class="v f3"></span><span class="r"><span class="f0 bd"> implementer-2</span><span class="f2"> · </span><span class="f1">cart clear()</span><span class="sp"></span><span class="f2">worktree </span><span class="f1">w2</span><span class="f2"> · branch </span><span class="f1">kubic/w2 </span></span></div>
+    <div class="l"><span class="c bwarn"><span class="warn"> ◆ </span><span class="f0">reviewer-1     </span><span class="warn">approve merge of w1?</span><span class="sp"></span><span class="f2">0:42 </span></span><span class="v f3"></span><span class="r"><span class="f2"> role </span><span class="f1">implementer</span><span class="f2"> · model </span><span class="f1">claude-sonnet-5-5</span><span class="f2"> · attempt </span><span class="f1">1/2</span></span></div>
+    <div class="l"><span class="c"></span><span class="v f3"></span><span class="r"><span class="f3"> </span><span class="fill f3"></span></span></div>
+    <div class="l"><span class="c"><span class="f2 sb"> WORKING</span></span><span class="v f3"></span><span class="r"><span class="ok">  ● </span><span class="f0 sb">read</span><span class="f2">  src/cart.js</span><span class="sp"></span><span class="f2">32 lines </span></span></div>
+    <div class="l"><span class="c b3"><span class="acc">▌⠹ </span><span class="f0 sb">implementer-2  </span><span class="f1">cart clear()</span><span class="sp"></span><span class="f1">3:10 </span></span><span class="v f3"></span><span class="r"><span class="ok">  ● </span><span class="f0 sb">edit</span><span class="f2">  src/cart.js</span><span class="sp"></span><span class="add">+6 </span></span></div>
+    <div class="l"><span class="c b3"><span class="f2">      edit src/cart.js · 12 tools · 18k tok</span><span class="sp"></span></span><span class="v f3"></span><span class="r"><span>  </span><span class="v f3"></span><span class="badd rest"><span class="add">  22 + export function clear(cart) {</span></span></span></div>
+    <div class="l"><span class="c"><span class="acc">  ⠹ </span><span class="f0">implementer-3  </span><span class="f1">format tests</span><span class="sp"></span><span class="f1">2:55 </span></span><span class="v f3"></span><span class="r"><span>  </span><span class="v f3"></span><span class="badd rest"><span class="add">  23 +   cart.items = [];</span></span></span></div>
+    <div class="l"><span class="c"><span class="f2">      bash npm test · 9 tools · 11k tok</span></span><span class="v f3"></span><span class="r"><span>  </span><span class="v f3"></span><span class="badd rest"><span class="add">  24 +   return cart;</span></span></span></div>
+    <div class="l"><span class="c"></span><span class="v f3"></span><span class="r"><span>  </span><span class="v f3"></span><span class="badd rest"><span class="add">  25 + }</span></span></span></div>
+    <div class="l"><span class="c"><span class="f2 sb"> DONE</span></span><span class="v f3"></span><span class="r"><span class="ok">  ● </span><span class="f0 sb">edit</span><span class="f2">  test/cart.test.js</span><span class="sp"></span><span class="add">+7 </span></span></div>
+    <div class="l"><span class="c"><span class="ok">  ✓ </span><span class="f1">planner-0      plan · 3 tasks</span><span class="sp"></span><span class="f2">0:31 </span></span><span class="v f3"></span><span class="r"><span class="acc">  ⠹ </span><span class="f0 sb">bash</span><span class="f2">  npm test</span><span class="sp"></span><span class="f2">running · 0:04 </span></span></div>
+    <div class="l"><span class="c"><span class="ok">  ✓ </span><span class="f1">implementer-1  titleCase()</span><span class="sp"></span><span class="f2">2:20 </span></span><span class="v f3"></span><span class="r"><span>  </span><span class="v f3"></span><span class="f2"> ▸ tests 6 …</span></span></div>
+    <div class="l"><span class="c"><span class="f2">      </span><span class="add">+9</span><span class="f2"> </span><span class="del">−1</span><span class="f2"> · 2 files · waiting on review</span></span><span class="v f3"></span><span class="r"></span></div>
+    <div class="l"><span class="c"></span><span class="v f3"></span><span class="r"></span></div>
+    <div class="l"><span class="c"><span class="f2 sb"> QUEUED</span></span><span class="v f3"></span><span class="r"></span></div>
+    <div class="l"><span class="c"><span class="f2">  ○ reviewer     review w2, w3</span><span class="sp"></span><span class="f3">after w2, w3 </span></span><span class="v f3"></span><span class="r"></span></div>
+    <div class="l"><span class="c"></span><span class="v f3"></span><span class="r"></span></div>
+    <div class="l"><span class="c"></span><span class="v f3"></span><span class="r"><span class="f2 sb"> WORKER BUDGET</span></span></div>
+    <div class="l"><span class="c"></span><span class="v f3"></span><span class="r"><span class="f2"> tokens </span><span class="f0">━━━━</span><span class="f3">━━━━━━━━</span><span class="f1"> 18k/60k</span><span class="f2">  tools </span><span class="f1">12/40</span><span class="f2">  wall </span><span class="f1">3:10/15:00</span></span></div>
+    <div class="l"><span class="c"></span><span class="v f3"></span><span class="r"></span></div>
+    <div class="grow"></div>
+    <div class="l f3"><span> </span><span class="fill"></span><span> </span></div>
+    <!-- E run budget -->
+    <div class="l"><span class="f2 sb"> RUN BUDGET  </span><span class="f2">tokens </span><span class="f0">━━━━━</span><span class="f3">━━━━━━━</span><span class="f1"> 41% of 400k</span><span class="f2">     cost </span><span class="f0">━━</span><span class="f3">━━━━━━━━━━</span><span class="f1"> $0.31 / $2.00</span><span class="f2">     wall </span><span class="f0">━</span><span class="f3">━━━━━━━━━━━</span><span class="f1"> 3:42 / 30:00</span></div>
+    <div class="l"> </div>
+    <!-- F dispatch -->
+    <div class="l f3"><span> ┌─ </span><span class="f2">dispatch</span><span> </span><span class="fill"></span><span>┐ </span></div>
+    <div class="l"><span> </span><span class="v f3"></span><span class="acc bd"> › </span><span class="f2 it">message implementer-2, or ^N to dispatch a new worker</span><span class="cur"> </span><span class="sp"></span><span class="v f3"></span><span> </span></div>
+    <div class="l f3"><span> └</span><span class="fill"></span><span>┘ </span></div>
+    <div class="l"><span class="f1"> ↑↓</span><span class="f2"> select   </span><span class="f1">⏎</span><span class="f2"> open   </span><span class="f1">a</span><span class="f2"> answer awaiting   </span><span class="f1">^N</span><span class="f2"> new worker   </span><span class="f1">x</span><span class="f2"> stop   </span><span class="f1">r</span><span class="f2"> retry   </span><span class="f1">^O</span><span class="f2"> diff   </span><span class="f1">/</span><span class="f2"> filter</span><span class="sp"></span><span class="f1">^C ^C</span><span class="f2"> quit </span></div>
+  </div></div>
+
+  <h2>Notes</h2>
+  <ul class="notes">
+    <li><b>04-A</b>Header carries the mode badge (red = orchestrator) and live counts by state.</li>
+    <li><b>04-B</b>The run timeline shows where the plan is: plan → implement → review → merge → verify.</li>
+    <li><b>04-C</b>Workers are grouped by what they need from you: awaiting first (amber), then working, done, queued.</li>
+    <li><b>04-D</b>The right pane is a live peek of the selected worker: its own tool cards, diff and budget.</li>
+    <li><b>04-E</b>Run-wide budgets as gauges; a gauge turns amber at 80% and red at 100%.</li>
+    <li><b>04-F</b>One input: message the selected worker, or dispatch a new one.</li>
+  </ul>
+  <div class="open"><b>Open:</b> should this be the default screen of <code>kubic tui --orchestrator</code> and <code>kubic orchestrate</code> in a terminal, with the solo session (01) reachable by opening a worker (⏎)?</div>
+</div>
+</body>
+</html>

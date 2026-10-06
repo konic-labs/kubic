@@ -12,7 +12,7 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../packages/exec/src/journal.js';
@@ -43,6 +43,7 @@ import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   runTuiCommand,
   soloTuiLoop,
+  TUI_CLOCK_TICK_MS,
   TuiCompactionTurn,
   type TuiLaneLoop,
   type TuiRunDeps,
@@ -116,6 +117,9 @@ function fauxLaneBoot(
     // The booted lane, for tests that read its transcript (the /compact
     // acceptance counts pi.compaction entries).
     onBoot?: (solo: SoloLane) => void;
+    // Issue #457: hand the session journal to the TUI (its panels and the
+    // turn receipt read it).
+    exposeJournal?: boolean;
   } = {},
 ): TuiRunDeps['bootLane'] {
   return async (sessionId?: string) => {
@@ -129,6 +133,7 @@ function fauxLaneBoot(
     if (provider === undefined) throw new Error('no provider registered');
     const model = models.getModels(provider.id)[0];
     if (model === undefined) throw new Error('no model registered');
+    const journal = new FileJournalStore(join(root, id, 'journal'));
     const solo = await bootSoloLane({
       session,
       models,
@@ -136,7 +141,7 @@ function fauxLaneBoot(
       env: new FakeExecutionEnv({}),
       sessionId: id,
       agentId: 'root',
-      journal: new FileJournalStore(join(root, id, 'journal')),
+      journal,
       ...(options.compaction === undefined
         ? {}
         : { compaction: options.compaction }),
@@ -146,6 +151,7 @@ function fauxLaneBoot(
     return {
       sessionId: id,
       model: `${provider.id}/${model.id}`,
+      ...(options.exposeJournal === true ? { journal } : {}),
       loop: soloTuiLoop(solo),
       close: async () => {
         await solo.close(context);
@@ -210,9 +216,10 @@ describe('kubic tui prompt loop (issue #88)', () => {
     // view received the lane's committed entries.
     await waitFor(() => fake.writes.join('').includes('all done, boss'));
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
-    expect(doc).toContain('› say done');
+    expect(doc).toContain('▌ say done');
     expect(doc).toContain('all done, boss');
     expect(fake.counts.stopped).toBe(1);
     expect(fake.writes.join('')).toContain('?1049l');
@@ -239,6 +246,13 @@ describe('kubic tui prompt loop (issue #88)', () => {
     for (const ch of 'run it') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('tool turn done'));
+    // Issue #453: the solo tree row opens on Ctrl-T; `/session` reports the
+    // usage rows the status bar holds.
+    fake.feed('\x14');
+    for (const ch of '/session') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => /in [1-9]\d* out [1-9]\d*/.test(fake.writes.join('')));
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
@@ -334,6 +348,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
       expect(fake.counts.stopped).toBe(0);
       release();
       fake.feed('\x03'); // idle again: Ctrl-C quits
+      fake.feed('\x03');
       expect(await pending).toBe(0);
       // The released turn keeps settling in the background after the loop
       // quits; wait for its result to reach the session log so afterEach's
@@ -388,6 +403,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(fake.writes.join('')).not.toContain('never delivered');
     // Now idle: Ctrl-C quits, restoring the main screen exactly once.
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(fake.writes.join('')).toContain('?1049l');
@@ -439,12 +455,13 @@ describe('kubic tui prompt loop (issue #88)', () => {
     const answered = fake.writes.filter((w) => w.includes('second answer'));
     expect(answered.at(-1) ?? '').not.toContain('queued: second prompt');
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
     // Both prompts are in the transcript, and the model ran twice: the
     // queued follow-up really was delivered after settlement.
-    expect(doc).toContain('› first prompt');
-    expect(doc).toContain('› second prompt');
+    expect(doc).toContain('▌ first prompt');
+    expect(doc).toContain('▌ second prompt');
     expect(calls()).toBe(2);
   });
 
@@ -496,6 +513,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     await waitFor(() => fake.writes.join('').includes('queued: third prompt'));
     release();
     await waitFor(() => fake.writes.join('').includes('third answer'));
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(calls()).toBe(3);
@@ -549,6 +567,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     release();
     await waitFor(() => fake.writes.join('').includes('steered answer'));
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(seen).toHaveLength(1);
     expect(seen[0]).toContain('use pnpm');
@@ -592,6 +611,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(fake.writes.slice(frames).join('')).not.toContain('queued:');
     release();
     await waitFor(() => fake.writes.join('').includes('first answer'));
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(calls()).toBe(1);
@@ -642,6 +662,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(fake.writes.join('')).not.toContain('queued answer');
     expect(calls()).toBe(1);
     // The session is alive and idle again: a second Ctrl-C quits.
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
@@ -701,6 +722,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     );
     const entries = page.items;
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     // The summarizer saw the operator's instructions (and the agent turn
     // never saw the command text).
@@ -719,7 +741,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     // (laneEntryFor → entriesToCells → the render) in one assertion, so a
     // dropped join cannot stay green.
     const document = lines.join('\n');
-    expect(document).toContain('context compacted');
+    expect(document).toMatch(/─+ compacted(?: · \w+)? ─+/);
     expect(document).toContain('## Goal');
   });
 
@@ -778,10 +800,11 @@ describe('kubic tui prompt loop (issue #88)', () => {
     ).toHaveLength(0);
     // Issue #302: with a draft in the editor the first Ctrl-C only clears it
     // (the footer says so — that message exists only for a non-empty draft),
-    // so quitting needs the second press.
+    // so quitting needs a double press after it (#454).
     fake.feed('\x03');
-    await waitFor(() => fake.writes.join('').includes('ctrl+c: draft cleared'));
+    await waitFor(() => fake.writes.join('').includes('^C: draft cleared'));
     expect(fake.counts.stopped).toBe(0);
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
   });
@@ -830,6 +853,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     releaseSummary();
     await waitFor(() => fake.writes.join('').includes('compaction cancelled'));
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
   });
@@ -876,10 +900,11 @@ describe('kubic tui prompt loop (issue #88)', () => {
     await waitFor(() => fake.writes.join('').includes('first answer'));
     // Issue #302: with a draft in the editor the first Ctrl-C only clears it
     // (the footer says so — that message exists only for a non-empty draft),
-    // so quitting needs the second press.
+    // so quitting needs a double press after it (#454).
     fake.feed('\x03');
-    await waitFor(() => fake.writes.join('').includes('ctrl+c: draft cleared'));
+    await waitFor(() => fake.writes.join('').includes('^C: draft cleared'));
     expect(fake.counts.stopped).toBe(0);
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     // Issue #302: the frames drawn after the Enter carry the draft (the
@@ -931,10 +956,11 @@ describe('kubic tui prompt loop (issue #88)', () => {
     await waitFor(() => fake.writes.join('').includes('first answer'));
     // Issue #302: with a draft in the editor the first Ctrl-C only clears it
     // (the footer says so — that message exists only for a non-empty draft),
-    // so quitting needs the second press.
+    // so quitting needs a double press after it (#454).
     fake.feed('\x03');
-    await waitFor(() => fake.writes.join('').includes('ctrl+c: draft cleared'));
+    await waitFor(() => fake.writes.join('').includes('^C: draft cleared'));
     expect(fake.counts.stopped).toBe(0);
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.writes.slice(refusedAt).join('')).toContain(
@@ -994,15 +1020,14 @@ describe('kubic tui prompt loop (issue #88)', () => {
     // Ctrl-G (0x07): the app refuses the toggle only while it is busy.
     fake.feed('\x07');
     await waitFor(() =>
-      fake.writes.slice(mark).join('').includes('orchestrator ·'),
+      fake.writes.slice(mark).join('').includes('[ORCHESTRATOR]'),
     );
     expect(fake.writes.slice(mark).join('')).not.toContain(
       'mode: finish the current turn',
     );
+    const back = fake.writes.length;
     fake.feed('\x07');
-    await waitFor(() =>
-      fake.writes.slice(mark).join('').includes('solo · faux'),
-    );
+    await waitFor(() => fake.writes.slice(back).join('').includes('[SOLO]'));
     // The next submit places the queue: the waiting follow-up runs first,
     // and the new prompt follows it (oldest first, one per boundary).
     for (const ch of 'third prompt') fake.feed(ch);
@@ -1010,15 +1035,16 @@ describe('kubic tui prompt loop (issue #88)', () => {
     await waitFor(() => fake.writes.join('').includes('second answer'));
     await waitFor(() => fake.writes.join('').includes('third answer'));
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
-    expect(doc).toContain('› second prompt');
-    expect(doc).toContain('› third prompt');
+    expect(doc).toContain('▌ second prompt');
+    expect(doc).toContain('▌ third prompt');
     expect(calls()).toBe(3);
     // The quit document is the whole layout: the editor row shows the idle
     // key hints, never the working line — the queue waiting in the inbox did
     // not keep the session busy.
-    expect(doc).toContain('enter send');
+    expect(doc).toContain('⏎ send');
     expect(doc).not.toContain('working…');
   });
 
@@ -1106,6 +1132,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
       page.items.filter((entry) => CompactionEntry.is(entry)),
     ).toHaveLength(0);
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
   });
 
@@ -1129,7 +1156,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     await waitFor(() => fake.counts.started === 1);
     // Ctrl-G (0x07) switches the session mode to orchestrator.
     fake.feed('\x07');
-    await waitFor(() => fake.writes.join('').includes('orchestrator ·'));
+    await waitFor(() => fake.writes.join('').includes('[ORCHESTRATOR]'));
     for (const ch of '/compact') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() =>
@@ -1139,10 +1166,11 @@ describe('kubic tui prompt loop (issue #88)', () => {
     );
     // Issue #302: with a draft in the editor the first Ctrl-C only clears it
     // (the footer says so — that message exists only for a non-empty draft),
-    // so quitting needs the second press.
+    // so quitting needs a double press after it (#454).
     fake.feed('\x03');
-    await waitFor(() => fake.writes.join('').includes('ctrl+c: draft cleared'));
+    await waitFor(() => fake.writes.join('').includes('^C: draft cleared'));
     expect(fake.counts.stopped).toBe(0);
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     // Refused, so the draft came back (finding 1 of the #334 review). The
@@ -1201,10 +1229,11 @@ describe('kubic tui prompt loop (issue #88)', () => {
     await waitFor(() => fake.writes.join('').includes('first answer'));
     // Issue #302: with a draft in the editor the first Ctrl-C only clears it
     // (the footer says so — that message exists only for a non-empty draft),
-    // so quitting needs the second press.
+    // so quitting needs a double press after it (#454).
     fake.feed('\x03');
-    await waitFor(() => fake.writes.join('').includes('ctrl+c: draft cleared'));
+    await waitFor(() => fake.writes.join('').includes('^C: draft cleared'));
     expect(fake.counts.stopped).toBe(0);
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.writes.slice(refusedAt).join('')).toContain('/thinking high');
@@ -1241,7 +1270,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     );
     expect(calls()).toBe(0);
     run('/help');
-    await waitFor(() => fake.writes.join('').includes('help: 18 commands'));
+    await waitFor(() => fake.writes.join('').includes('help: 20 commands'));
     // The list itself landed in the transcript, generated from the registry.
     expect(fake.writes.join('')).toContain('/quit — leave the TUI');
     run('/help resume');
@@ -1251,6 +1280,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(fake.writes.join('')).toContain('thinking off');
     run('/diff');
     await waitFor(() => fake.writes.join('').includes('diff: panel open'));
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     // Not one of the commands spent a model call.
@@ -1305,9 +1335,10 @@ describe('kubic tui prompt loop (issue #88)', () => {
     run('/session');
     await waitFor(() => fake.writes.join('').includes('in 0 out 0 (cached 0)'));
     run('/help');
-    await waitFor(() => fake.writes.join('').includes('help: 18 commands'));
+    await waitFor(() => fake.writes.join('').includes('help: 20 commands'));
     release();
     await waitFor(() => fake.writes.join('').includes('first answer'));
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(calls()).toBe(1);
@@ -1335,7 +1366,8 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(fake.writes.join('')).toContain('/session');
     // Enter takes the first row: /help runs exactly as if it were typed.
     fake.feed('\r');
-    await waitFor(() => fake.writes.join('').includes('help: 18 commands'));
+    await waitFor(() => fake.writes.join('').includes('help: 20 commands'));
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(calls()).toBe(0);
@@ -1406,14 +1438,15 @@ describe('kubic tui prompt loop (issue #88)', () => {
     }
   });
 
-  it('quits on the Kitty-protocol form of Esc and Ctrl-D, not only legacy bytes', async () => {
+  it('quits on the Kitty-protocol form of Ctrl-C and Ctrl-D, not only legacy bytes', async () => {
     // RED before the fix: the loop compared raw input against legacy
-    // control bytes ('\x1b', '\x04'), so a Kitty-class terminal — which
-    // sends CSI-u sequences ('\x1b[27u' for Esc, '\x1b[100;5u' for Ctrl-D)
-    // — hit the fall-through branch and did nothing: `consumed: true` with
-    // no effect, the exact silent no-op key the criterion forbids. Verified
-    // from the pinned pi-tui: parseKey('\x1b[27u') === 'escape'.
-    for (const key of ['\x1b[27u', '\x1b[100;5u']) {
+    // control bytes ('\x03', '\x04'), so a Kitty-class terminal — which
+    // sends CSI-u sequences ('\x1b[99;5u' for Ctrl-C, '\x1b[100;5u' for
+    // Ctrl-D) — hit the fall-through branch and did nothing: `consumed: true`
+    // with no effect, the exact silent no-op key the criterion forbids. Esc
+    // ('\x1b[27u') no longer quits at all (issue #454); Ctrl-C quits on its
+    // double press.
+    for (const presses of [['\x1b[99;5u', '\x1b[99;5u'], ['\x1b[100;5u']]) {
       const root = tmpRoot();
       const lines: string[] = [];
       const fake = fakeTerminal(100);
@@ -1428,7 +1461,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
         },
       );
       await waitFor(() => fake.counts.started === 1);
-      fake.feed(key);
+      for (const press of presses) fake.feed(press);
       expect(await pending).toBe(0);
       expect(fake.counts.stopped).toBe(1);
     }
@@ -1503,8 +1536,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(fake.counts.stopped).toBe(1);
   });
 
-  it('Esc clears a composed draft and cancels a busy turn, never quitting it (#302)', async () => {
-    // Busy: Esc goes through the same cancel-first path as Ctrl-C.
+  it('Esc interrupts a busy turn and never quits (#302, #454)', async () => {
     const root = tmpRoot();
     const lines: string[] = [];
     const fake = fakeTerminal(100);
@@ -1530,45 +1562,38 @@ describe('kubic tui prompt loop (issue #88)', () => {
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'slow one') fake.feed(ch);
     fake.feed('\r');
+    // Busy: Esc interrupts, like the first Ctrl-C.
     fake.feed('\x1b');
     await waitFor(() => fake.writes.join('').includes('cancelling'));
+    // A second Esc while the interrupt drains is not a quit.
+    fake.feed('\x1b');
+    await new Promise((resolve) => setTimeout(resolve, 30));
     expect(fake.counts.stopped).toBe(0);
     release();
     await waitFor(() => fake.writes.join('').includes('cancelled'));
     expect(fake.counts.stopped).toBe(0);
-    // Idle, empty draft: Esc quits.
+    // Idle, empty editor: Esc is still not a quit — it enters block mode
+    // (issue #463), and a second Esc returns to typing.
     fake.feed('\x1b');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(fake.counts.stopped).toBe(0);
+    fake.feed('\x1b');
+    // Idle with a draft: Esc keeps it.
+    for (const ch of 'keep me') fake.feed(ch);
+    fake.feed('\x1b');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(fake.counts.stopped).toBe(0);
+    expect(fake.writes.join('')).toContain('keep me');
+    // Ctrl-C clears the draft, then the double press quits.
+    fake.feed('\x03');
+    fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
-
-    // Idle with a composed draft: the first Esc only clears it.
-    const draftRoot = tmpRoot();
-    const draftLines: string[] = [];
-    const draftFake = fakeTerminal(100);
-    const draftModels = fauxModels([]);
-    const draftPending = runTuiCommand(
-      {},
-      {
-        out: (line: string) => draftLines.push(line),
-        createTerminal: () => draftFake.terminal,
-        colorLevel: 'none',
-        bootLane: fauxLaneBoot(draftRoot, draftModels.models),
-      },
-    );
-    await waitFor(() => draftFake.counts.started === 1);
-    for (const ch of 'hello') draftFake.feed(ch);
-    draftFake.feed('\x1b');
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(draftFake.counts.stopped).toBe(0);
-    // The cleared draft is gone from the rendered editor row.
-    expect(draftFake.writes.join('')).not.toContain('hello');
-    draftFake.feed('\x1b');
-    expect(await draftPending).toBe(0);
-    expect(draftFake.counts.stopped).toBe(1);
   });
 
-  it('quits on Esc and on Ctrl-D with an empty draft', async () => {
-    for (const key of ['\x1b', '\x04']) {
+  it('quits on Ctrl-D and on a Ctrl-C double press with an empty draft', async () => {
+    for (const key of ['\x04', '\x03\x03']) {
       const root = tmpRoot();
       const lines: string[] = [];
       const fake = fakeTerminal(100);
@@ -1583,10 +1608,10 @@ describe('kubic tui prompt loop (issue #88)', () => {
         },
       );
       await waitFor(() => fake.counts.started === 1);
-      fake.feed(key);
+      for (const press of key) fake.feed(press);
       expect(await pending).toBe(0);
       expect(fake.counts.stopped).toBe(1);
-      expect(lines.join('\n')).toContain('approvals:on');
+      expect(lines.join('\n')).toContain('[SOLO] approvals on');
     }
   });
 
@@ -1609,13 +1634,21 @@ describe('kubic tui prompt loop (issue #88)', () => {
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('answered'));
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
-    const order = ['› a question', 'answered', 'approvals:on'].map((marker) =>
-      doc.indexOf(marker),
-    );
+    // Issue #453: the header above the transcript, the status line below.
+    const order = [
+      '[SOLO] approvals on',
+      '▌ a question',
+      'answered',
+      ' ready ',
+    ].map((marker) => doc.indexOf(marker));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // Issue #455: the committed prompt carries its time through the whole
+    // production wire (laneEntryFor → entriesToCells → the prompt block).
+    expect(doc).toMatch(/▌ a question +you · \d\d:\d\d:\d\d/);
   });
 });
 
@@ -1644,5 +1677,116 @@ describe('kubic tui docs contract (issue #88)', () => {
       expect(section).toContain(key);
     }
     expect(section).toMatch(/submit/i);
+  });
+});
+
+// Issue #453: the header's live facts — the workspace the composition root
+// reads (at boot and after every settled turn) and the wall clock.
+describe('the header facts on the live loop (issue #453)', () => {
+  it('reads the workspace at boot and again after a settled turn', async () => {
+    const root = tmpRoot();
+    const fake = fakeTerminal(120);
+    const { models } = fauxModels(['first done']);
+    let reads = 0;
+    const pending = runTuiCommand(
+      {},
+      {
+        out: () => {},
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+        readWorkspace: async () => {
+          reads += 1;
+          return { project: 'playground', branch: 'main', dirty: reads };
+        },
+      },
+    );
+    await waitFor(() =>
+      fake.writes.join('').includes('│ playground  ⎇ main ●1'),
+    );
+    for (const ch of 'go') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('first done'));
+    await waitFor(() => fake.writes.join('').includes('⎇ main ●2'));
+    expect(reads).toBe(2);
+    fake.feed('\x03');
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+
+  it('repaints the clock only when its minute changes, and stops it on quit', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      let now = new Date(2026, 9, 6, 9, 59, 10);
+      const fake = fakeTerminal(120);
+      const pending = runTuiCommand(
+        {},
+        {
+          out: () => {},
+          createTerminal: () => fake.terminal,
+          colorLevel: 'none',
+          bootLane: async (sessionId?: string) => ({
+            sessionId: sessionId ?? 's1',
+            model: 'faux/test',
+          }),
+          clock: () => now,
+        },
+      );
+      await waitFor(() => fake.writes.join('').includes('│ 09:59 '));
+      // Let the boot frames settle, then tick within the same minute.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const mark = fake.writes.length;
+      now = new Date(2026, 9, 6, 9, 59, 40);
+      vi.advanceTimersByTime(TUI_CLOCK_TICK_MS);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(fake.writes.length).toBe(mark);
+      now = new Date(2026, 9, 6, 10, 0, 5);
+      vi.advanceTimersByTime(TUI_CLOCK_TICK_MS);
+      await waitFor(() =>
+        fake.writes.slice(mark).join('').includes('│ 10:00 '),
+      );
+      fake.feed('\x03');
+      fake.feed('\x03');
+      expect(await pending).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// Issue #457 (01-J): every settled solo turn ends with its receipt — the
+// whole production wire: the turn's tool call, the journal row its write
+// recorded, and the receipt the settlement appends.
+describe('the turn receipt on the live loop (issue #457)', () => {
+  it('counts the tools, the file and its lines of a write turn', async () => {
+    const root = tmpRoot();
+    const fake = fakeTerminal(120);
+    const { models } = fauxModels([
+      [
+        fauxText('writing'),
+        fauxToolCall('write', { path: 'notes.md', content: 'one\ntwo\n' }),
+      ],
+      'written',
+    ]);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: () => {},
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models, { exposeJournal: true }),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'write the notes') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() =>
+      /✓ turn \d+\.\ds · 1 tool · 1 file \+2 −0 · \$0\.000/.test(
+        fake.writes.join(''),
+      ),
+    );
+    fake.feed('\x04');
+    expect(await pending).toBe(0);
   });
 });

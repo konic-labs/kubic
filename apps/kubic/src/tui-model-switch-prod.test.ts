@@ -165,13 +165,14 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
 
     type(fake, '/model alt/m1');
     await waitFor(() => fake.frame.includes('model: alt/m1'));
-    // The status bar moved too, not only the footer: its model line is
-    // `<model> • thinking …`.
-    await waitFor(() => fake.frame.includes('alt/m1 • thinking'));
+    // The status line moved too, not only the notice row: it reads
+    // `● <model> · <thinking>` (issue #453).
+    await waitFor(() => fake.frame.includes('● alt/m1 · '));
     // The switch is real: the next request is answered on the alt provider.
     type(fake, 'hello');
     await waitFor(() => fake.frame.includes('from alt'));
 
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
@@ -210,7 +211,8 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     for (const ch of '/model alt/m1') fake.feed(ch);
     fake.feed('\x1b\r');
     await waitFor(() => fake.frame.includes('model: alt/m1'));
-    fake.feed('\x03');
+    // Ctrl-D quits on the empty editor and leaves the notice row as it was.
+    fake.feed('\x04');
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
     expect(doc).toContain('switched');
@@ -242,14 +244,23 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
       },
     );
     await waitFor(() => fake.counts.started === 1);
-    // The report names the boot level, and an unknown level is refused by
-    // name with the vocabulary.
+    // Issue #461: a bare /thinking opens the picker on the boot level; esc
+    // keeps it. An unknown level is refused by name with the vocabulary.
     type(fake, '/thinking');
-    await waitFor(() => fake.frame.includes('thinking: off'));
+    await waitFor(() => fake.frame.includes('┌─ Thinking'));
+    expect(fake.frame).toContain('● off  current');
+    fake.feed('\x1b');
+    await waitFor(() =>
+      fake.frame.includes('thinking: off (picker cancelled)'),
+    );
     type(fake, '/thinking bogus');
     await waitFor(() => fake.frame.includes("unknown thinking level 'bogus'"));
-    // The switch rides the NEXT request as `reasoning`.
-    type(fake, '/thinking high');
+    // Chosen in the picker, the switch rides the NEXT request as `reasoning`.
+    const picking = fake.mark();
+    type(fake, '/thinking');
+    await waitFor(() => fake.since(picking).includes('┌─ Thinking'));
+    for (const ch of 'high') fake.feed(ch);
+    fake.feed('\r');
     await waitFor(() => fake.frame.includes('thinking: high'));
     type(fake, 'hello');
     await waitFor(() => fake.frame.includes('from faux'));
@@ -264,9 +275,10 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
       fake.writes.slice(mark).join('').includes('thinking: off'),
     );
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
-    // The status bar carries the live level, not the boot one.
-    expect(lines.join('\n')).toContain('thinking off');
+    // The status line carries the live level, not the boot one.
+    expect(lines.join('\n')).toMatch(/● \S+ · off/);
   });
 
   it('picks a model from the Alt+M overlay (#328)', async () => {
@@ -294,18 +306,72 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
       },
     );
     await waitFor(() => fake.counts.started === 1);
-    // Alt+M opens the picker: the usable catalog rows, the live one marked.
+    // Alt+M opens the picker: one group per provider, the live model
+    // marked (issue #461).
     fake.feed('\u001bm');
-    await waitFor(() => fake.frame.includes('faux/big (current)'));
-    expect(fake.frame).toContain('alt/m1');
+    await waitFor(() => fake.frame.includes('● big  current'));
+    expect(fake.frame).toContain('ALT');
+    expect(fake.frame).toContain('m1');
     // Move to the next row and select it: the same switch path as /model.
     fake.feed('\u001b[B');
     fake.feed('\r');
     await waitFor(() => fake.frame.includes('model: faux/small (switched)'));
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(lines.join('\n')).toContain('faux/small');
     // The picker switched the real lane: a fresh attach resumes on it.
+    expect(await storedModel(sessionsRoot, sessionId)).toMatchObject({
+      provider: 'faux',
+      modelId: 'small',
+    });
+  });
+
+  it('switches the model from the ^P palette (#460)', async () => {
+    const workspace = tmpRoot('tui-460-palette-ws-');
+    const sessionsRoot = tmpRoot('tui-460-palette-sessions-');
+    const fake = fakeTerminal(120);
+    let sessionId = '';
+    const pending = runTuiCommand(
+      {},
+      {
+        out: () => {},
+        createTerminal: () => fake.terminal,
+        bootLane: async (sid, answer) => {
+          const boot = await bootTuiLane(sid, {
+            sessionsRoot,
+            models: twoProviders(),
+            env: new NodeExecutionEnv(workspace),
+            ...(answer === undefined ? {} : { answer }),
+            model: { provider: 'faux', id: 'big' },
+          });
+          sessionId = boot.sessionId;
+          return boot;
+        },
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    // Ctrl-P: the grouped palette with its own key hints; the catalog
+    // arrives after the first frame and the live model is marked.
+    fake.feed('\x10');
+    await waitFor(() => fake.frame.includes('COMMANDS'));
+    expect(fake.frame).toContain('tab next group');
+    await waitFor(() => fake.frame.includes('faux/big  current'));
+    // Esc closes it and the hint row is the editor's again.
+    const mark = fake.mark();
+    fake.feed('\x1b');
+    await waitFor(() => fake.since(mark).includes('^P palette'));
+    const reopened = fake.mark();
+    fake.feed('\x10');
+    for (const ch of 'small') fake.feed(ch);
+    // The catalog lands after the first frame; the best match is selected.
+    await waitFor(() => fake.since(reopened).includes('▌   faux/small'));
+    // ⏎ switches through the /model path.
+    fake.feed('\r');
+    await waitFor(() => fake.frame.includes('model: faux/small (switched)'));
+    fake.feed('\x03');
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
     expect(await storedModel(sessionsRoot, sessionId)).toMatchObject({
       provider: 'faux',
       modelId: 'small',
@@ -339,11 +405,14 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     // `faux/small` does not: the switch must re-clamp the stored level.
     type(fake, '/model faux/small');
     await waitFor(() => fake.frame.includes('model: faux/small (switched)'));
+    // The picker's current row is the clamped level.
     const mark = fake.writes.length;
     type(fake, '/thinking');
     await waitFor(() =>
-      fake.writes.slice(mark).join('').includes('thinking: off'),
+      fake.writes.slice(mark).join('').includes('● off  current'),
     );
+    fake.feed('\x1b');
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
   });
@@ -370,9 +439,10 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     );
     await waitFor(() => fake.counts.started === 1);
     fake.feed('\u001bm');
-    await waitFor(() => fake.frame.includes('faux/big (current)'));
+    await waitFor(() => fake.frame.includes('● big  current'));
     fake.feed('\u001b');
     await waitFor(() => fake.frame.includes('(picker cancelled)'));
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     // Still the boot model.
@@ -402,8 +472,13 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     );
     await waitFor(() => fake.counts.started === 1);
 
+    // Issue #461: a bare /model opens the picker; esc keeps the model.
     type(fake, '/model');
-    await waitFor(() => fake.frame.includes('model: faux/big'));
+    await waitFor(() => fake.frame.includes('┌─ Model'));
+    fake.feed('\x1b');
+    await waitFor(() =>
+      fake.frame.includes('model: faux/big (picker cancelled)'),
+    );
 
     type(fake, '/model alt/nope');
     await waitFor(() => fake.frame.includes('model switch failed'));
@@ -420,8 +495,9 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     await waitFor(() => fake.frame.includes('from faux'));
 
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
-    expect(lines.join('\n')).toContain('approvals:on');
+    expect(lines.join('\n')).toContain('[SOLO] approvals on');
   });
 });
 
@@ -444,7 +520,7 @@ describe('tui audit identity (issue #227, criterion 4)', () => {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
         // Issue #315's arming delay is pinned off so the deny keypress below
-        // registers the moment the overlay appears (as the HEAD approval
+        // registers the moment the card appears (as the HEAD approval
         // tests do).
         approvalArmingMs: 0,
         bootLane: async (sid, answer) => {
@@ -463,9 +539,10 @@ describe('tui audit identity (issue #227, criterion 4)', () => {
     await waitFor(() => fake.counts.started === 1);
 
     type(fake, 'clean up');
-    await waitFor(() => fake.frame.includes('Approval required'));
+    await waitFor(() => fake.frame.includes('APPROVAL'));
     fake.feed('d'); // deny: the command never runs, the decision is audited
     await waitFor(() => fake.frame.includes('after deny'));
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
 

@@ -10,6 +10,7 @@
 // + `pi.agent` (issue #225), never a sidecar — attach restores it from
 // the storage, so save/loadThinkingLevel were deleted (issue #216).
 
+import { suggest } from '../../core/src/suggest.js';
 import { isThinkingLevel, THINKING_LEVELS } from './models-config.js';
 import {
   clampThinkingLevel,
@@ -23,6 +24,16 @@ export class ModelSelectError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ModelSelectError';
+  }
+}
+
+// Issue #462: no model at all — no provider has a key and no explicit or
+// configured model was named. The TUI answers it with the first screen's
+// no-key block (docs/ui 05-F) instead of a bare error line.
+export class NoModelAvailableError extends ModelSelectError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NoModelAvailableError';
   }
 }
 
@@ -47,14 +58,23 @@ export function selectModel(
   const pick = (sel: ModelSelection, origin: string): AnyModel => {
     const provider = models.getProvider(sel.provider);
     if (provider === undefined) {
+      // Issue #450: name the closest registered provider, if any.
+      const [close] = suggest(
+        sel.provider,
+        models.getProviders().map((candidate) => candidate.id),
+      );
       throw new ModelSelectError(
-        `unknown provider '${sel.provider}' (${origin})`,
+        `unknown provider '${sel.provider}' (${origin})${close === undefined ? '' : `; did you mean '${close}'?`}`,
       );
     }
     const model = models.getModel(sel.provider, sel.id);
     if (model === undefined) {
+      const [close] = suggest(
+        sel.id,
+        models.getModels(sel.provider).map((candidate) => candidate.id),
+      );
       throw new ModelSelectError(
-        `unknown model '${sel.id}' on provider '${sel.provider}' (${origin})`,
+        `unknown model '${sel.id}' on provider '${sel.provider}' (${origin})${close === undefined ? '' : `; did you mean '${close}'?`}`,
       );
     }
     return model as AnyModel;
@@ -67,7 +87,7 @@ export function selectModel(
     const first = models.getModels(providerId)[0];
     if (first !== undefined) return first as AnyModel;
   }
-  throw new ModelSelectError(
+  throw new NoModelAvailableError(
     fallbackProviders === undefined
       ? 'no models available: register a provider first'
       : "no models available: register a provider first (set a built-in provider's env key, e.g. ANTHROPIC_API_KEY, or add models.json)",

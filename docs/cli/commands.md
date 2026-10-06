@@ -26,19 +26,46 @@ following `--flag` or the `--` terminator as its value: `kubic diff
 (`option '…' argument missing`, exit 2, nothing runs). A value that really
 starts with `--` goes in the attached form (`--session=…`, `-p--…`).
 
-The **root dispatcher** follows the same convention (issue #128):
-`kubic --help` / `kubic -h` prints the top-level command listing — the
-full `usage` line below — and exits 0. A **bare `kubic`** (no command) on
+The **root dispatcher** follows the same convention (issues #128, #446):
+`kubic --help` / `kubic -h` prints the grouped root help below and exits 0.
+On an interactive colour terminal the same text is coloured (brand, muted
+labels, command names); piped, redirected or under `NO_COLOR` it is plain. A **bare `kubic`** (no command) on
 an interactive terminal (stdin and stdout both a TTY) opens the TUI, exactly
 as `kubic tui`. Off a TTY (a pipe, CI, a script) it prints the *identical*
 listing and exits 1: usage-on-no-args is the deliberate POSIX posture, so
 only the exit code differs between the two paths.
 `kubic --orchestrator` (issue #327) is the same bare form with the
 orchestrator opt-in: on a TTY it is exactly `kubic tui --orchestrator`.
-Off a TTY, like every other bare flag, it prints the usage line and
+Off a TTY, like every other bare flag, it prints the root help and
 exits 1.
-`scripts/binary-contract.mjs` pins both exits and the line itself, so the
-dispatcher and its help cannot drift apart. `kubic --version` exits 0.
+`scripts/binary-contract.mjs` pins both exits and the plain text itself, so
+the dispatcher and its help cannot drift apart. The command groups are also
+the dispatcher's routing table (`apps/kubic/src/cli/root-help.ts`), so a
+command cannot ship without a place in the help.
+
+```text
+■ kubic — terminal coding agent by Konic
+
+USAGE      kubic                       open the TUI (on a terminal)
+           kubic "<prompt>"            run one prompt, like kubic run -p
+           kubic <command> [options]
+
+SESSION    run · tui · resume · attach · sessions              work with the agent
+CHANGES    diff · undo · log · status · commit · git           review and revert what it did
+DELEGATE   orchestrate · workers · clean                       manager + workers in worktrees
+SETUP      setup · models · config · trust · doctor · skills   providers, project, health
+ANALYSIS   cost · eval · benchmark · replay · export · perf · policy · audit
+
+EXAMPLES   kubic "fix the failing test"
+           kubic run -p "add tests for titleCase" --json
+           kubic orchestrate -p "split cart.js into modules"
+
+kubic <command> --help for options · docs/cli/README.md
+```
+
+A command's own help keeps commander's layout (`Usage: kubic <command>
+[options]`, then `Arguments:` and `Options:`); on a colour terminal the
+titles and option terms are styled, and the text is otherwise unchanged. `kubic --version` exits 0.
 
 **Every command's own `--help`/`-h` is side-effect free** (issue #245):
 commander answers it before the action runs, so `kubic run|tui|orchestrate
@@ -48,12 +75,13 @@ broken install whose extension bundle would fail the boot.
 
 Build first (`npm run build`), then invoke `./bin/kubic.js` (or
 `npm run kubic -- …`); anything else dispatches below; an unknown command
-prints
-`usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | skills | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>`
-and exits **2** (a usage error, issue #372); a word-shaped unknown token
-also prints `hint: to run it as a prompt: kubic run -p '<word>'`, while the
-bare invocation keeps the POSIX usage-on-no-args posture: the identical
-line, exit 1.
+is a usage error (exit **2**, issue #372) reported on stderr (issue #450):
+`error: unknown command '<name>'`, then `hint: did you mean kubic
+<command>?` for a near miss or `hint: to run it as a prompt: kubic run -p
+'<word>'` for any other word, then `hint: kubic --help lists the commands`
+(an error block on a colour terminal; see [exit codes](exit-codes.md)),
+while the bare invocation keeps the POSIX usage-on-no-args posture: the
+root help, exit 1.
 
 **The headline prompt form** (issue #268, §17): a single argv token that
 contains whitespace is a prompt — `kubic "fix the authentication bug"` is
@@ -77,7 +105,7 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | `--timeout <ms>` | Wall-clock bound for the run's turn — settling the pending work plus the prompt's own run (positive integer ms, max `2147483647`). Default `300000` (5 minutes). A model that never settles is cut off and the run ends `timeout` (exit 1, issue #280) with the ref triple intact — §71 budgets exist only when configured, so a default bound never claims `budget_exhausted`. When the bound fires mid-tool, the in-flight work is **aborted and killed, not abandoned**: the turn's context is cancelled, the run states a durable `conversation.abort()`, drains the kill registry (detached bash children die with their process groups), and only then runs the end-of-run reconciliation sweep — so a late write from orphaned work cannot land outside the journal. A provider that ignores cancellation cannot hang the run: the abort and the harness close are bounded, and the mapped result is reported either way. |
 | `--max-turns <n>` | Optional turn bound (positive integer). A turn is one committed model response, counted from the lane's own usage events; durable provider retries the harness performs inside a turn are not turns. Exceeding the bound ends the run `budget_exhausted` (exit 3) with the same abort-and-drain path as `--timeout`. Unset means no turn bound — the wall clock is the only limit. |
 | `--role <name>` | Boot as a §12 role: the `.kubic/roles/<name>.md` document when the workspace has one, else `~/.kubic/roles/<name>.md` (issue #241), else the preset of that name embedded in the binary (issue #203). The document's prompt text, tool set and model pin apply either way. A project document loads only for a trusted project root (issue #430, §33 — same gate as project skills): untrusted, `--role` naming it refuses with the trust message and `kubic doctor` warns what trust would unlock. The document may declare a `skills: [...]` list (issue #181, §29.4): only the named skills reach the role's prompt — merged with each skill's own `roles:` list, so both must admit. Skills outside the role, or needing tools the lane's classes deny, are withheld with reasons (debug log; `kubic doctor` warns each as `skill:<name>`) — never offered, never silently failing. The role's permission classes merge with the config's, most restrictive wins (issue #196, §40.2), and the role document (or a `[roles.<name>]` layer) may declare `requires: [...]` — tools that always require approval under the role (issue #196, §41.1). `kubic doctor` prints each role's effective classes under the run's config. Roles match by the declared `role:` name, not the filename (issue #293): `review.md` declaring `role: reviewer` boots `--role reviewer` with review.md's own `## Prompt` body — the prompt is never re-read from `<name>.md`. Robustness (issue #236): one malformed document never blocks the other roles — `--role` naming it refuses with that file's parse error, `kubic doctor` fails it as `role:<file-stem>`; two documents declaring the same `role:` name are refused by name everywhere (run refusal + doctor fail), both files listed, and neither copy wins. |
-| `--model <provider/id>` | Session model override (§38.1): the `cli` config layer, above `KUBIC_MODEL` and every file layer — and never above a frozen enterprise key, which still wins (one stderr note names the ignored flag or `KUBIC_MODEL` pin: `note: --model x ignored: model pinned by enterprise policy (corp/approved)`; stdout and a `--json` envelope are untouched). An unknown provider/model exits 6 with the id and the input that carried the pin named (`--model`, `KUBIC_MODEL`, `[model] in <layer> config`, `role model`); the flag is an input to the one config load, so `kubic config --model` reports the same selection. |
+| `--model <provider/id>` | Session model override (§38.1): the `cli` config layer, above `KUBIC_MODEL` and every file layer — and never above a frozen enterprise key, which still wins (one stderr note names the ignored flag or `KUBIC_MODEL` pin: `note: --model x ignored: model pinned by enterprise policy (corp/approved)`; stdout and a `--json` envelope are untouched). An unknown provider/model exits 6 with the id and the input that carried the pin named (`--model`, `KUBIC_MODEL`, `[model] in <layer> config`, `role model`), plus `; did you mean '<id>'?` when a registered provider or model is close (issue #450); the flag is an input to the one config load, so `kubic config --model` reports the same selection. |
 | `--thinking <level>` | Session thinking-level override (§38.3, issue #225): the `cli` config layer — `--thinking` beats `KUBIC_MODEL_THINKING`, which beats `[model].thinking`, and a frozen enterprise `model.thinking` beats the flag (refused by name: `--thinking <level> refused: model.thinking is frozen by the enterprise layer`; the env override is silently not applied). The lane resolves it against the session's stored level and the role default (`--thinking` > env > session > role > config) and clamps it to the effective model — a clamp is one stderr notice naming the model, the request and the level applied, never a silent rewrite. The applied level is committed to the session (a reattach keeps it) and recorded in `trajectory.json`. An unknown level exits 2 naming the levels that exist. |
 | `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). A directory, a `SKILL.md` file, or a bare name (discovery roots first, then the cwd). Relative values resolve against the invoking cwd on both `run` and `tui` (issue #177) — never against the sessions root — and an unresolvable value warns on stderr (`skill skipped (unknown skill '…')`), without needing `--debug`. |
 | `--invoke-skill <name>` | Invoke one booted skill by name (`run` only): its full content runs as the turn prompt — including skills hidden from the model (`disableModelInvocation`, issue #183, §29.4) — followed by `-p`/operand text as further instructions. An unknown name fails the run with `unknown skill '<name>'` (exit 1); a withheld skill (role gate, trust gate) resolves as unknown and fails the same way. |
@@ -124,6 +152,20 @@ trajectory file) on stdout (the labels are dimmed and the result coloured
 on a colour terminal; plain text under a pipe or `NO_COLOR`); on failure an
 `error:` line goes to stderr first. Exit code is the §78 terminus map — see
 [exit codes](exit-codes.md).
+
+**On an interactive terminal** (issue #447; stdout **and** stderr a colour
+TTY, no `--json`) the run shows its progress instead of those lines. On
+stderr: a heading (`■ kubic run · solo · <provider/id> · <cwd>`), the solo
+notice as one line (`○ solo has no isolation — approvals + journal are the
+controls · details: kubic doctor`, same opt-outs as the full block), a
+spinner with the elapsed time while the model works, and one settled line
+per tool call when it finishes (`✓ read  src/cart.js  0.0s`, `✕ bash  npm
+test  exit 1  0.4s`, `✓ edit  src/cart.js  +1 −1  0.0s`). The answer then
+lands on stdout, followed on stderr by a receipt (`✓ done 18.4s · 4 tools ·
+1 file +1 −1 · ↑ 9.2k ↓ 640 tok · $0.031`, or `✕ failed … · <terminus>`)
+and the next steps (`review kubic diff   revert kubic undo   continue kubic
+resume <id>`). A redirected stdout (`kubic run … > out.txt`), a pipe, CI or
+`--json` keeps the plain lines above byte for byte.
 
 **Trajectories (§46).** Every run that attached a session writes
 `<sessions-root>/<id>/trajectory.json` when it settles, completed or not,
@@ -213,8 +255,8 @@ credential path raises the credential trigger, issue #275), filesystem
 `full` as `workspace-write`, git `full` as `workspace`.
 
 A destructive or network-raising call needs an approval. `kubic run` has
-no TTY, and the TUI approval overlay has not landed, so a challenged call
-is **refused rather than executed**, and the run ends `approval_denied`
+no TTY to ask on and no approval card (the card is the TUI's), so a
+challenged call is **refused rather than executed**, and the run ends `approval_denied`
 (exit 4) with the refusal named on the `error:` line. Both labels map to
 exit 4 — the `status` string is the honest half: `approval_denied` for a
 recorded refusal (no installed approval surface, a policy route, a
@@ -305,8 +347,11 @@ A fresh solo start announces its trust model before the first turn: three
 orchestrator-managed worker child (`KUBIC_WORKER_ID` set; that mode's own
 worktree limit is what `kubic doctor` reports) and by the opt-out
 `KUBIC_NO_NOTICE=1`. A `--session` resume still announces it: the rule is
-per process start, not per session. `kubic tui` shows the same statement
-as its one-line form in the editor footer, and the re-execution tiers of
+per process start, not per session. On an interactive terminal (issue #447,
+see above) the three lines become one compact line under the run heading,
+under the same suppression rules. `kubic tui` shows the same statement
+as the first screen's isolation row (and the full text on `/safety`),
+and the re-execution tiers of
 `kubic replay` announce it too (they drive this same run path).
 
 ### Testing provider: `KUBIC_PROVIDER=faux`
@@ -325,7 +370,7 @@ policy, the session store and the journal.
 - **Always announced.** `run` prints
   `warn: provider: faux/echo (testing provider: scripted replies, no model is called; KUBIC_PROVIDER=faux)`
   on stderr before the first turn (stdout and `--json` stay clean); the
-  TUI footer reads `faux/echo: testing provider, no model is called`;
+  TUI's first screen reads `◆ provider  faux/echo  testing provider, no model is called`;
   `kubic models` and `kubic doctor` list the `faux` provider and print the
   same warning.
 - **Pinned.** The model is `faux/echo`; a configured `[model]` pin or
@@ -673,7 +718,7 @@ starvation-safe — and start when a settled worker releases its slot. §45's
 recorded in [design drift](../design-drift.md).
 
 **Requesting more workers than the cap asks** (issue #277; §41.1). On a run
-with a user attached (a TTY, or the TUI's own overlay) `--agents` naming more
+with a user attached (a TTY, or the TUI's own approval card) `--agents` naming more
 workers than the resolved cap raises ONE `spawn-agents` ask before anything
 spawns, naming the requested count, the cap and the excess worker ids. The
 verdict is a §60 row (`trigger:spawn-agents`, mode orchestrator): approving
@@ -976,8 +1021,8 @@ the status bar and usage rows name the model the lane actually runs, and a
 kept or switched model is named in the first footer. `--thinking <level>` boots the lane at that level under the same rule as `kubic run` (resolved against the session record and the role default, clamped to the model with a named notice); the status bar seeds from the committed level. In the loop,
 `/model <provider/id>` switches the live lane: the id is resolved against
 the catalogue, committed to the session as a config update, and the
-header, welcome block and status bar all move to it; `/model` alone
-reports the current model, and an unknown or malformed id is refused in
+first screen's provider row and the status line both move to it; `/model`
+alone opens the model picker, and an unknown or malformed id is refused in
 the footer while the lane keeps the model it had. `/scoped-models`
 reports the role's resolved allowed set (§38.2, issue #255) — the entries
 the boot selected against, with any per-entry thinking — or that the role
@@ -1000,8 +1045,8 @@ is the `cli` layer of the one config load (never patched over the projected
 pin), so a frozen enterprise `[model]` beats it — announced by one stderr
 note at boot — exactly as it does for `kubic run`. A session left with pending work
 by a crashed run (issue #147) has it durably aborted at boot — its
-approvals would need the overlay, which is not on screen yet, and the
-operator is present to re-send — and the editor footer names the outcome
+approvals would need the approval card, which is not on screen yet, and the
+operator is present to re-send — and the notice row names the outcome
 (`pending work: <kind> <id> (<status>) aborted after an
 interrupted run`) from the first render, together with the prompt the dead
 process had already admitted (`— interrupted prompt: <text>`) when there
@@ -1042,10 +1087,10 @@ approval ask. Each decision lands in the §60 ledger with the session id
 and the model the lane runs **when the ask resolves** (`provider/id`) —
 after the stored-model rule of a `--session` resume and after any `/model`
 switch, never the pre-boot pick — the same audit identity the headless
-runner records. A challenged call surfaces the approval overlay — the
+runner records. A challenged call surfaces the approval card — the
 interactive path can actually collect a verdict on it — and an unanswered
 ask denies on the same bounded wait. That bound also **withdraws the
-question** (issue #232): when it elapses the dialog for exactly that ask
+question** (issue #232): when it elapses the card for exactly that ask
 closes, the next queued ask takes the screen, and a decision pressed later
 settles the next ask — never the one nobody is waiting for anymore.
 
@@ -1071,7 +1116,7 @@ non-repo message on stderr as one `error: …` line, and exits **5** — it
 never falls back to solo. Solo sessions never pay the git probe.
 
 Worker approval asks (a worker's challenged call it cannot answer itself)
-route to the same approval overlay as a solo challenge: the dialog names the
+route to the same approval card as a solo challenge: the card names the
 worker and the full command, and the decision is written back to the run's
 mailbox, which is what unblocks the worker's bounded wait. A denied ask ends
 that worker's step (exit 4 on the CLI path) instead of hanging. The run's
@@ -1086,7 +1131,7 @@ a session id that already has state (`session_exists`, exit 2), so a prompt can
 never reuse an earlier prompt's id. List or dispose of them with
 `kubic clean` (`--session <tui-session>-o<stamp>` for one). The merge approval
 `kubic orchestrate` asks per worker (there is no `--yes` here) reaches the
-same approval overlay as a worker ask, naming the worker and its branch —
+same approval card as a worker ask, naming the worker and its branch —
 never a terminal prompt, which would corrupt the alt-screen. A merge with no
 seat to answer it is denied closed (exit 4), not asked on stdio, and the refusal message does not point at a `--yes` flag the TUI does not have.
 
@@ -1107,9 +1152,9 @@ name a direction and only report when it is already in force; enabling asks
 for confirmation first, disabling is immediate, and both write
 the same posture file and audit rows — the installed policy reads the change
 live, so the very next challenged call follows it, and the indicator moves in
-the same frame. The status bar shows
-`! warning: approvals OFF (full-access)` from the first frame. Off a
-terminal the bare form prints the usage line and exits 1, like bare
+the same frame. The header shows `approvals OFF (full-access)` from the
+first frame. Off a
+terminal the bare form prints the root help and exits 1, like bare
 `kubic`. The flag is never written to config.
 
 **The posture is decided at boot (§41.4, issue #325).** `kubic run` and
@@ -1146,9 +1191,14 @@ same context the headless one does:
 - **Model selection (§38.1):** the same precedence as `run` — an explicit
   pin (`--model <provider/id>`, else `[model]` in config or
   `KUBIC_MODEL`), then the `--role` layer's `[roles.<name>].model`, then
-  the first registered model. The header and status bar name the model
-  the lane actually runs on. An unknown or unavailable pinned model exits
-  6 with the named reason before the alt-screen opens. A bare `kubic
+  the first registered model. The first screen and the status line name the
+  model the lane actually runs on. An unknown or unavailable pinned model exits
+  6 with the named reason before the alt-screen opens. With no pin and no
+  provider key at all, the first screen's no-key block is printed to stderr
+  instead — `✕ provider  no model provider has a key`, the `export …` lines to
+  set one, the local-model and `KUBIC_PROVIDER=faux` alternatives — and the
+  exit is 6 (`provider_probe_failed`); no alt screen is entered, so the lines
+  stay in the scrollback (issue #462). A bare `kubic
   --model <provider/id>` on a terminal is `kubic tui --model …`.
 - **Agent id and role layers (§12.1, §35):** `[agent].name` names the lane
   (journal and reconciliation attribution, so `kubic diff --agent <name>`
@@ -1195,43 +1245,187 @@ terminal's thread — about 60 ms for ~700 files, linear in workspace size — s
 a large workspace pays it (and the screen pauses) after every turn that used
 `bash`.
 
-**Screen layout.** Top to bottom: a one-line header (the Konic `■ kubic`
-wordmark, mode and model); the agent tree, sized to its content (at most 6
-rows). The tree's root row carries the run glyph plus the session's
-`$cost in/out` tokens (`● solo $0.02 2.0k/1.0k`) — seeded from the session's
-usage ledger when the TUI attaches, then summed from each response; each
-tool row shows the glyph, the tool name, a one-line summary of its key
-argument (the `bash` command, the `read`/`edit` path), the duration and a
-short outcome (a detected test summary like `17 passed`, or a non-zero
-exit code) — a failed call renders `✗` in the error colour, never `✓`.
-Calls are grouped per turn: a new turn starts a new group, and earlier
-turns fold into one `… N earlier calls in M turns` line above the live
-turn (calls beyond the row cap fold into `… N earlier calls`). The
-transcript follows the end as the turn streams (your prompt is echoed as
-`› …` the moment you submit, assistant prose renders as markdown, and each
-tool call renders as `● name args` with its output folded underneath `⎿`,
-and a context compaction shows a `⟳ context compacted (reason)` marker with
-the summary underneath — collapsed to the same five rows, `Ctrl-X` expands
-it);
-the status bar, whose first row shows model, thinking level, tokens, cache
-and session cost, plus a `ctx NN%` context gauge once the lane has reported
-a committed request and the model's window is known — it turns to the
-warning colour at or above the auto-compaction threshold (window minus the
-reserve; roughly 87% of a 128k window, higher on larger ones), so the
-warning is the signal that the next turn will compact, and
-it drops out first when the terminal narrows. The status bar's second row is
-the always-visible mode indicator
-(`solo • approvals:on`, or the warning-styled
-`! warning: approvals OFF (full-access)` when the session's installed
-policy auto-approves every challenged call — read from that policy, at
-boot and after every turn, never assumed); the editor; and a footer row that shows a `working… 3s`
-spinner during a turn and the solo notice or the turn's outcome otherwise.
+**Screen layout.** Three one-row surfaces frame the transcript (issue #453;
+`docs/ui/01-session.html`). Top to bottom:
+
+- **The header** (one row): `■ KUBIC │ <project>  ⎇ <branch> ●<changed files>`
+  on the left and `session <title> │ SOLO approvals on │ HH:MM` on the right.
+  The project is the repository's top-level directory (or the working
+  directory outside a repository, where the branch part is left out); the
+  branch and the changed-file count are read with
+  `git --no-optional-locks status` when the screen opens and after every
+  settled turn, so the read never takes the index lock a tool's own git may
+  need. The session title is the session's first prompt cut to 24 cells, or
+  the short session id (`01a1…b6b8`) until there is one. The mode badge reads
+  `SOLO` or `ORCHESTRATOR`; the posture reads `approvals on`, or
+  `approvals OFF (full-access)` in the error colour when the session's
+  installed policy auto-approves every challenged call — read from that
+  policy, at boot and after every turn, never assumed. As the terminal
+  narrows the parts drop right to left — clock, session, approvals, branch —
+  and the project name is cut last; the brand and the mode badge never drop,
+  and neither does `approvals OFF`. The clock checks its minute every 30 s
+  and repaints only when it changed.
+- **The agent tree**, sized to its content (at most 6 rows). Solo starts
+  with it hidden — `Ctrl-T` opens and closes it; the orchestrator shows it,
+  and there `Ctrl-T` folds it to one summary line. Below 80 columns it is
+  hidden either way. The tree's root row carries the run glyph plus the
+  session's `$cost in/out` tokens (`● solo $0.02 2.0k/1.0k`) — seeded from
+  the session's usage ledger when the TUI attaches, then summed from each
+  response; each tool row shows the glyph, the tool name, a one-line summary
+  of its key argument (the `bash` command, the `read`/`edit` path), the
+  duration and a short outcome (a detected test summary like `17 passed`, or
+  a non-zero exit code) — a failed call renders `✗` in the error colour,
+  never `✓`. Calls are grouped per turn: a new turn starts a new group, and
+  earlier turns fold into one `… N earlier calls in M turns` line above the
+  live turn (calls beyond the row cap fold into `… N earlier calls`).
+- **The transcript**, which follows the end as the turn streams, as blocks
+  (issue #455; `docs/ui/01-session.html`). Your prompt is a full-width block
+  with a red `▌` edge and `you · HH:MM:SS` on the right (it shows the moment
+  you submit, before the lane commits it); assistant prose renders as
+  markdown behind a `◆` mark (issue #458): bold headings, inline code on a
+  raised surface, `•` bullets, quotes behind a `│`, and fenced code in a
+  `┌ ts` / `└` frame with syntax highlighting (highlight.js grammars via
+  `lowlight`, loaded when the TUI starts; a block over 2,000 lines or
+  200 KB, or in an unknown language, stays plain). A path to a file in the
+  project — `src/cart.js:10`, in prose or inline code — becomes a clickable
+  `file://` link on terminals that support OSC 8 hyperlinks (elsewhere it
+  stays text). Each tool call is one card: a header with its
+  state (`●` green done, red failed; the accent spinner and
+  `running · 3.00s` while it runs; `◆ … waiting for approval` while an
+  approval holds it), the tool name, its target (the command or path) and,
+  on the right, the outcome (`✓ exit 0` / `✕ exit 1`, `truncated` when the
+  output was clipped) and the duration; then up to five body lines behind a
+  `│` gutter — for a failure the error lines first, for a test run its tally
+  (`tests 4 · pass 3 · fail 1`) — and a `└ +35 lines   ^X expand` footer.
+  The shell record's `[bash exit …]` head, its `--- stdout ---` /
+  `--- stderr ---` markers and the exec layer's
+  `[kubic: N leading chars dropped …]` notice never show: stderr lines follow
+  stdout, and an expanded card's footer names the full-output file. A
+  successful workspace read (`read`, `ls`, `find`, `grep`, `git_status`,
+  `git_log`, `git_show`, `git_diff`) folds to one line
+  (`○ read  src/cart.js … 32 lines · 3ms`); a failed one is a full card.
+  An `edit` card shows `+A −R` and the change inline (issue #456): line
+  numbers, removed lines on a red surface with `−`, added lines on a green
+  one with `+`, the changed words highlighted, `⋮` for skipped lines —
+  twelve rows collapsed (`└ +N more lines   ^X expand`). A `write` that
+  creates a file shows `new file +N` and its first eight lines; one that
+  replaces a text file shows the diff. The diff rides the tool result's
+  details, so the model never pays for it; a session recorded before it
+  shows the op's own count instead (`✓ 2 replacements`).
+  The model's reasoning shows as one line, `⋯ thought for 4.1s — <its first
+  sentence>` (issue #457; the time is the response's generation time,
+  measured for turns that arrive while the TUI watches — a resumed
+  session's older reasoning reads `⋯ thinking — …`); `Ctrl-X` shows all of
+  it. Every settled solo turn ends with a receipt:
+  `✓ turn 18.4s · 4 tools · 1 file +1 −1 · $0.031` with
+  `^O review diff   /undo revert` when it changed files (counted from the
+  journal rows the turn recorded), or `✕ turn failed · 2.1s · <reason>` /
+  `○ turn cancelled · 0.8s`. Receipts are drawn by this TUI process only —
+  they are not written to the session.
+  `Ctrl-X` expands every card and wraps its lines in full. A context
+  compaction is a `─── compacted · auto ───` rule with the summary under it,
+  collapsed the same way.
+- **Block mode** (issue #463; docs/ui 01-D, 01-M): `Esc` on an idle, empty
+  editor walks the transcript by blocks — each prompt, answer, thinking,
+  tool card and turn receipt. The last block is selected first and shows an
+  accent `▌` edge on every row; the transcript scrolls to keep it in view.
+  `↑`/`↓` or `k`/`j` move a block, `g`/`G` jump to the first/last; `y`
+  copies the block (a tool card's full output, an answer's markdown, a
+  prompt's text) and `Y` its command (a tool's name and arguments) to the
+  system clipboard via OSC 52 — through tmux's passthrough when `TMUX` is
+  set; up to 100 KB (`copied 1.2 KB`, else `too large to copy — ⏎ view and
+  select`), and never claimed on a terminal known to drop it (Apple's
+  Terminal.app says so instead). `⏎` opens the block whole in a viewer
+  (`↑↓`/`j k` scroll, `PgUp/PgDn` a page, `g`/`G` the ends, `y` copy, `esc`
+  close); `x` expands or collapses just that block. `i`, `Esc` or any other
+  key returns to typing — a printable key is typed into the editor. The
+  hint row reads `↑↓ move  ⏎ view  y copy  Y copy command  x expand … esc
+  back`.
+- **The first screen** (issue #462; docs/ui 05): an empty session opens on
+  a preflight instead of a wall of keys — the wordmark with the version
+  (`■ kubic <version>` below 70 columns); PREFLIGHT rows `✓ provider` (the
+  model and where its key comes from, or `◆ … testing provider` for faux),
+  `✓ project` (the path, `git <branch> · clean | N changed`, or `not a git
+  repository`), `✓ trust` (`.kubic/config.toml loaded`, only when the
+  project has a layer), `✓ journal` and `○ isolation` (`none in solo` and
+  what that means, or the orchestrator's worktree limits, with `/safety`);
+  START (`⏎ describe a task below`, then `/ commands  @ attach a file  ^P
+  palette  ^G orchestrator mode  ? all keys` from the key bindings); and
+  RECENT IN THIS PROJECT — up to three sessions with their age, first prompt
+  and `turns · cost`, then `/resume to open one`. It is not a transcript
+  entry: the first prompt (not a command) clears it, a resumed session with
+  history never shows it, and `/new` brings it back. `?` on an idle, empty
+  editor lists every key binding, grouped (editor, session, transcript,
+  panels, approvals), with the key each has now.
+- **The notice row** above the editor — the "footer" the rest of this page
+  refers to: a command's reply, a refusal, a turn's outcome
+  (`cancelled`, `error: …`), the lane's retry or compaction activity, and,
+  while a turn runs, the working line `⠹ Working · 0:12 · ↑ 9.2k ↓ 640 tok ·
+  3 tools … esc interrupt   ⏎ queue a message` (tokens once a usage row
+  reported them; the orchestrator lane, which queues nothing, leaves out the
+  queue key). It takes no row when it has nothing to say, and wraps to at
+  most two rows.
+- **The editor**, framed (issue #454): `┌─…─┐`, `│ › <draft>   @ file  / cmd │`,
+  `└─…─┘`. The caret is the only red on screen while you type; the box grows
+  with a multi-line draft (Pi's `↑ 3 more` scroll markers stay in its rules)
+  and the `/`-command and `@`-file completions open below it. Mid-turn it is
+  a queue box: `› type to queue — sent when this turn ends`.
+- **The status line** (one row): `● <model> · <thinking>  │  ctx ━━━━──────
+  31% of 200k  │  $0.031  │  journal 2 changes  │  budget …` with the turn's
+  state word on the right — `ready`, `working` (the mark becomes the
+  spinner), `needs approval`, `cancelling…` or `error` (the last turn
+  failed; the next one clears it). The context gauge appears once the lane
+  has reported a committed request and the model's window is known; it turns
+  to the warning colour at or above the auto-compaction threshold (window
+  minus the reserve; roughly 87% of a 128k window, higher on larger ones), so
+  the warning is the signal that the next turn will compact. The journal
+  count is the session journal's changes (hidden at zero); the budget segment
+  shows only when `--budget` set limits. As the terminal narrows the window
+  size drops first, then the journal count, the gauge cells, the thinking
+  level, the context segment and the budget; the model name is cut last, and
+  the cost and the state word never drop.
+- **The key-hint row**: the keys that act right now, read from the key
+  bindings (a rebound action shows its real key; an unbound one is not
+  hinted). Idle: `⏎ send  ^J newline  / commands  @ file  ^P palette  ^O
+  diff  ^R journal … ^C ^C quit` (`⇧⏎ newline` on terminals that report
+  Shift+Enter, `@ file` when file mentions are available). While a turn
+  runs: `esc interrupt  ⏎ queue  alt+⏎ steer  ^X expand output  ^P palette
+  … ^C ^C quit` (no queue or steer on the orchestrator lane). With an
+  approval pending: its allow and deny keys. With the palette open: `↑↓ move
+  ⏎ run  tab next group  → details … esc close`. With the model picker
+  open: `↑↓ move  ⏎ switch  → expand provider … esc keep current`. With
+  another picker or a dialog open: `↑↓ move  ⏎ select  esc cancel`.
+- **The palette** (`Ctrl-P`, issue #460): one fuzzy search over four groups,
+  in this order — **COMMANDS** (the slash-command registry: name, summary,
+  and the key the bindings give it now), **MODELS** (the usable catalogue,
+  `provider/id` with its context window and whether it thinks, the live one
+  marked `● … current`), **SESSIONS** (this project's other sessions, by
+  their first prompt, with their age and turns — the rows `/resume` lists)
+  and **FILES** (the project's files, at most 2,000). A group with
+  nothing matching is hidden, and each shows at most six rows until `tab`
+  focuses it. Every word of the query must match a row's name in order, or
+  appear in a command's summary (ranked below a name match); the matched
+  letters are drawn in the accent colour, and the best match of any group is
+  selected. With nothing typed it shows the commands this session ran (the
+  first six commands before any) and the live model. `⏎` runs the row: a
+  command runs exactly as if it were typed (one that needs its argument —
+  `/inspect <worker>` — is put in the editor to finish), a model switches
+  like `/model`, a session resumes like `/resume`, a file inserts
+  `@<path> ` at the cursor. `→` shows the selected row in full in a footer
+  line, `esc` closes. The palette floats over the screen, which dims (no
+  colour, every row in the faint text colour) while it or a picker is open;
+  the key-hint row stays lit with the palette's own keys. Models and
+  sessions arrive after the first frame, so a slow catalogue never holds the
+  palette up. It needs 60 columns; it is 80 cells wide, or 70% of a narrower
+  terminal, and at most 70% of the rows tall.
+
 Colour follows the Konic palette on truecolor terminals, falls back to
 256/16 colours, and is off for `NO_COLOR`, `TERM=dumb`, or a non-TTY
 stdout (`FORCE_COLOR=0..3` overrides). The palette is selectable: `[ui]
 theme` takes a built-in name (`default`/`dark`, the shipped brand palette,
-or `light`) or a path to a JSON theme file (§16.9), resolved and validated
-before the screen opens — a missing or invalid file is one
+`light`, or `terminal` for the terminal's own colours) or a path to a JSON
+theme file (§16.9; design-token roles, `docs/ui/README.md`), resolved and
+validated before the screen opens — a missing or invalid file is one
 `error: theme '<ref>': …` line on stderr and exit 2. A custom theme's
 truecolor values are downgraded to the terminal's colour level exactly like
 the built-in palette; see `[ui] theme` under
@@ -1241,29 +1435,31 @@ the built-in palette; see `[ui] theme` under
 | --- | --- |
 | `Enter` | **Submit** the prompt (an empty draft submits nothing); typing `/` opens the editor's autocomplete over the registry's commands, and `Tab`/`Enter` completes the name. On the **solo** lane, a submit while a turn runs is **queued as a follow-up** in the conversation's own inbox (pi-durable `whenBusy: followUp`): a dim `queued: …` row appears under the transcript the moment the harness admits it, and the harness delivers it — its own user entry, answer, usage row and journal effects — when the running turn settles. On the **orchestrator** lane a busy submit is refused instead (an orchestrator run is one objective and has no inbox): the footer names the reason. A refused submit never eats the draft — it goes back into the editor, and the footer says why. |
 | `Alt+Enter` | **Steer** the running turn with the draft (solo lane): the text joins the work already in flight (the harness places it after the current tool round), and the editor is cleared like `Enter`. With no turn running it submits the draft exactly like `Enter`, on either lane. While an orchestrator run is in flight it is refused like a busy `Enter`, and the draft stays in the editor. An empty draft steers nothing. |
-| `/model <provider/id>` | Switch the live lane's model (the §38.1 session override): resolved against the catalogue, committed to the session's agent document (a resume restores it), and shown in the header and status bar. `/model` alone reports the current model; an unknown or malformed id is refused in the footer and the lane keeps its model. `Alt+M` opens the same switch as a picker. |
-| `/thinking <level>` | Set the live lane's thinking level (§66 thinking.cycle; §38.1): one of `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` — clamped to what the current model supports, and the footer reports the effective level (`thinking: high`, or `thinking: off (clamped from xhigh)` when they differ). `/thinking` alone reports the live level; an unknown level is refused by name with the vocabulary. Committed through the conversation's agent document, so a resume restores it. Refused while a turn runs. |
-| `Alt+M` | **Model picker** (§66 model.select): a `provider/id` list of the usable catalogue rows with the live model marked `(current)`. Arrows move, typing filters, `Enter` switches through the same resolution and refusals as `/model <provider/id>`, and `Esc`/`Ctrl-C` cancels, leaving the model unchanged. Refused while a turn runs. The overlay needs a terminal at least 60 columns wide (Pi refuses to composite it below that); on such a terminal the picker does not open and the footer says `model picker unavailable on this terminal — use /model <provider/id>` — a terminal resized below the minimum while it shows closes it the same way. |
+| `/model <provider/id>` | Switch the live lane's model (the §38.1 session override): resolved against the catalogue, committed to the session's agent document (a resume restores it), and shown in the welcome block and status line. `/model` alone opens the **model picker** (the same as `Alt+M`, issue #461); an unknown or malformed id is refused in the footer and the lane keeps its model. |
+| `/thinking <level>` | Set the live lane's thinking level (§66 thinking.cycle; §38.1): one of `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` — clamped to what the current model supports, and the footer reports the effective level (`thinking: high`, or `thinking: off (clamped from xhigh)` when they differ). `/thinking` alone opens a picker of the levels the live model supports, the live one marked `● … current` (`Esc` keeps it; issue #461); an unknown level is refused by name with the vocabulary. Committed through the conversation's agent document, so a resume restores it. Refused while a turn runs. |
+| `Alt+M` | **Model picker** (§66 model.select; issue #461): one group per provider — the live model's first — headed by where its key comes from (`ANTHROPIC  ● key from ANTHROPIC_API_KEY`); each model shows `● … current` for the live one and its context window and whether it thinks (`200k ctx · thinking`). A provider with more than eight models folds behind `▸ expand (→)`. Providers without a key are listed greyed with the variable to set (`OPENAI  ○ no key  set OPENAI_API_KEY`, named by Pi's own auth check) and their models are never offered. The **thinking row** at the bottom steps, with `←`/`→`, through the levels the selected model supports (the live level marked, a level the model lacks clamped down): `Enter` switches the model through the same resolution and refusals as `/model <provider/id>` and then sets the chosen level, so model and effort are one decision. Typing filters (by `provider/id`), and `Esc`/`Ctrl-C` cancels, leaving the model unchanged. Refused while a turn runs. **macOS:** Option sends `µ` for Alt+M unless the terminal sends Esc+ for Option (iTerm2: Profiles → Keys → Left Option key: Esc+; Terminal.app: "Use Option as Meta key") — `/model` or `Ctrl-P` reach the same picker either way. The overlay needs a terminal at least 60 columns wide (Pi refuses to composite it below that); on such a terminal the picker does not open and the footer says `model picker unavailable on this terminal — use /model <provider/id>` — a terminal resized below the minimum while it shows closes it the same way. |
 | `Alt+T` | **Cycle the thinking level** over the levels the live model supports (§66 thinking.cycle), committing each step exactly like `/thinking <level>`. Refused while a turn runs. |
 | `/compact [instructions]` | Compact the session's context now (§27.2, **solo lane**): the harness summarizes the older history into one `pi.compaction` entry while the most recent turns stay verbatim, and optional `instructions` focus the summary verbatim (`/compact keep the failing test names`). The command text never reaches the model. The footer reports `compacted: <tokensBefore> tokens → summary`, `nothing to compact: <tokens> tokens` when there is no older history to cut (nothing is placed, and the footer never claims a cut), or the harness' own failure message; Ctrl-C cancels a running compaction (`compaction cancelled`). Refused while a turn runs, and refused by name on the orchestrator lane — the session's own transcript is the solo lane's, not the run report the operator is watching. |
 | `/help [command]` | List the registered slash commands — and the keys that reach the same actions — generated from the registry, or one command's usage line. The list lands in the transcript. |
-| `/session` | Report the live session: id, workspace, model, thinking level, tokens (in/out/cached) and cost, from the rows the status bar already carries. |
+| `/session` | Report the live session: id, workspace, model, thinking level, tokens (in/out/cached) and cost, from the rows the status line already carries. |
+| `/safety` | Print the current mode's honest limits into the transcript, in full and verbatim from the limits module: in solo, that the session runs in-process with your authority (files, network, credentials), with no containment and no prompt-injection prevention, and that the controls are approvals plus the change journal; in orchestrator mode, what worktrees do and do not separate. Answered even where the startup notice is suppressed (`KUBIC_NO_NOTICE=1`), because you asked. A local read: nothing reaches the model. |
 | `/new` | Close the current session and boot a fresh one **without leaving the alt-screen**: the transcript, tree, usage rows and panels clear, and the next prompt runs on the new lane. The old session stays on disk (`kubic sessions list`). Refused while a turn runs (`session: finish the current turn before switching`) — the lane swap is the quit path's race, not a mid-turn one. |
-| `/resume` | List this store's sessions (newest first, the current one excluded) in a picker; choosing one attaches to it and loads its transcript, in the same alt-screen. Needs a terminal wide enough for the picker — otherwise the footer says so. Refused while a turn runs, like `/new`. |
+| `/resume` | Pick one of this project's other sessions (newest first, at most 30; issue #461): each row is its first prompt, with its age, turns and cost (`2m ago · 4 turns · $0.03`), read without a lock the way `kubic cost` reads. A legacy (Pi 0.87) session is greyed `legacy — kubic sessions`, one another `kubic` holds `in use by another kubic`; neither can be chosen. Choosing one attaches to it and loads its transcript, in the same alt-screen. Needs a terminal wide enough for the picker — otherwise the footer says so. Refused while a turn runs, like `/new`. |
+| `/theme [name]` | **Theme picker** (issue #461): the built-ins `dark`, `light` and `terminal`, and the configured `[ui] theme` file if there is one. Moving the selection previews each theme live; `Enter` keeps it for this session and prints `to keep it: [ui] theme = "<name>" in ~/.kubic/config.toml` (the config is never written); `Esc` restores the theme from before. `/theme <name>` switches directly; an unknown name is refused with the choices. |
 | `/tree` | Pick an earlier prompt and **retry from there in a fork** (issue #332; §22.1, §66 `session.fork`): a picker lists this session's prompts newest first (`#<entry>  <prompt>`); choosing one forks the session into a **new** session just *before* that prompt (the same fork as `kubic sessions fork --at`), switches the TUI to it in the same alt-screen, and puts the prompt back in the editor to edit and resend. The original session is untouched and keeps the abandoned path (`kubic tui --session <old id>` / `/resume` returns to it). Needs a terminal wide enough for the picker; refused while a turn runs. |
 | `/fork <entry>` | Fork this session **at** `<entry>` (inclusive; `kubic sessions attach <id> --ids` prints the ids) into a new session and switch to it, the editor left as it was. `/fork` without an integer entry is refused with the usage line. A fork that fails (an entry the session does not have) re-attaches the session you were in and names the reason on the footer. Refused while a turn runs. |
 | `/diff` | Open the diff panel — the same panel `Ctrl-O` toggles. |
 | `/undo` | Restore the session journal's changes (the same plan/apply path as `kubic undo`, without `--step`): the footer reports `undo: N restored, M skipped` and warnings land in the transcript. Refused while a turn runs (`undo: finish the current turn before switching`) — it rewrites the workspace the turn is working in. |
 | `/image <path>` | Attach one image (`png`, `jpeg`, `webp`, `gif`, ≤ 5 MB — verified by magic bytes) to the next submitted prompt (§16.8). The footer names the file and its size, and the prompt renders it (the real image on kitty/iTerm2 terminals, a `[image: <name> <size>]` row otherwise; a resumed session's committed entry has no file name and shows the MIME type instead). Enter on an empty draft sends the attachment alone. Refused in the footer when the path is not a regular file, the file is missing or unsupported, it is over the cap, or the live model takes no image input — nothing is sent. A pasted inline image (iTerm2 `OSC 1337`, reassembled across reads) attaches the same way. |
-| `/quit` | Leave the TUI (same as `Esc`). |
+| `/quit` | Leave the TUI (same as `Ctrl-D` on an empty draft). |
 | `/foo` (unknown) | **Refused locally** — `unknown command '/foo' — /help lists the commands` on the footer, with the draft kept in the editor. A slash command is never sent to the model; `//text` is the escape hatch for a prompt that starts with a slash. |
-| `Ctrl-P` | Open the **command palette**: the registry's commands in a picker (`Enter` runs the selected one exactly as if it were typed, `Esc`/`Ctrl-C` cancels). |
+| `Ctrl-P` | Open the **palette** (issue #460): fuzzy search over commands, models, sessions and files — `↑↓` move, `⏎` runs the row, `tab`/`Shift+Tab` focus the next/previous group, `→` details, `Esc`/`Ctrl-C` close. See *The palette* above. |
 | `Alt+A` | **Toggle full access** for this session (§41.4): enabling opens a confirmation dialog naming the consequence (`Ctrl-S` confirms, `Esc` cancels — a bare printable letter never does); disabling takes effect immediately. Either way `posture.json` is written, one `posture:full-access` / `posture:approvals` row is appended, and the status-bar indicator moves in the same frame. While an **approval is pending** the toggle refuses (`approvals: answer the pending request first`): the confirmation is a modal of its own and the approval owns the keys until it is answered. `kubic tui --dangerously-skip-approvals` is the boot-time equivalent. |
 | `/approvals [on\|off]` | The same posture, by direction: `/approvals` alone reports the live posture. `on` opens the confirmation — and in a session that is **already** on it only reports (`approvals: full access already ON for this session`), never flipping the other way or opening a dialog. `off` disables immediately; in a session that is already off it only reports (`approvals: enforced — nothing to change`) and writes no second row for a change that did not happen. Any other argument is refused by name. |
 | `Ctrl-J`, `Shift+Enter`, `\` then `Enter` | Insert a newline (multi-line entry). |
 | `@` | **Mention a file** (issue #336): typing `@` and part of a path opens a completion popup of matching workspace files — fuzzy, file-name and path-prefix matches first, at most 50 — and `Tab` (or `Enter` on the popup) inserts the workspace-relative path as `@path ` (`@"path with spaces" ` when it needs quoting). The list is the walk the `find` / `grep` tools use: `.gitignore` rules (nested ones included) are honoured and `node_modules` / `.git` are skipped, so an ignored file is never offered; it is refreshed at most every 2 s. **Only the path is sent** with the prompt — no file content is attached; the model reads the file with its own tools when it needs it. `/` commands complete through the same popup. |
 | `Up` / `Down` | Recall earlier prompts on an empty draft (Pi's editor history; consecutive duplicates collapse to one). `kubic tui --session <id>` seeds it from the resumed session's committed prompts (issue #340), so `Up` recalls what the previous process sent — the newest 100, the same bound the editor keeps for live prompts. |
-| `Ctrl-T` | Toggle the tree (collapsed summary ↔ per-call rows). |
+| `Ctrl-T` | Solo: show / hide the tree row (hidden by default). Orchestrator: toggle the tree between its per-call rows and one summary line. |
 | `/inspect <worker>` | **Inspect an orchestrator worker** (issue #342; §16.5 AgentInspector): a capturing overlay with the worker's role, status and generation, full worktree path, model, tokens and cost (`not reported yet` until the worker's result reports it); `Enter` or `Esc` closes it. Refused on the footer for a worker this session's orchestrator view does not show. |
 | `Ctrl-G` | Switch the session mode between **solo** and **orchestrator** between turns — the next submitted prompt takes the selected lane. Refused (with the reason on the footer) while a turn runs. The choice is **persisted with the session** (`<session>/mode.json`, issue #276): `kubic tui --session <id>`, `/resume` and the session swaps restore the mode it was last switched to (the `--orchestrator` flag still wins, and `[modes]` only seeds a session that was never switched); a fresh session starts solo unless config says otherwise. A saved orchestrator mode outside a git repository starts solo with a `warning:` line naming why. |
 | `Ctrl-O` | Toggle the **diff panel** — the last tool call that changed files (or, when a `bash` call changed something the file tools did not journal, that turn's reconciled change), rendered as unified hunks. Every file of the call is rendered under its own `path — op (file k/N)` header; the panel scrolls, and `Alt-↓` / `Alt-↑` cycle its files. |
@@ -1271,12 +1467,16 @@ the built-in palette; see `[ui] theme` under
 | `Ctrl-X` | Expand / collapse every tool output block. Collapsed, a block shows the first 5 lines, each cut at the terminal width, with a `… +N lines · lines clipped (ctrl+x to expand)` hint whenever anything is hidden or cut. Expanded, every output line **wraps** (hanging indent under the `⎿`) and the tool call's args summary wraps too, so a long diagnostic, stack frame or path is readable in full. |
 | `alt+down` | With a panel open: the diff panel's next file (wrapping), or the journal panel's next page. Ignored while both panels are closed. |
 | `alt+up` | With a panel open: the diff panel's previous file (wrapping), or the journal panel's previous page. Ignored while both panels are closed. |
-| `a` | Approval overlay: **allow once** — this call only, after the arming delay and the quiet period, and only while the overlay can show the whole command. Nothing is stored: the next identical call asks again. |
-| `Ctrl-S` | Approval overlay: **allow for the session** — after the arming delay and the quiet period, and only while the overlay can show the whole command; never a bare letter. Latched in `<session>/approvals.json`; identical calls in this session are not asked again (also after re-attach). |
-| `d`, `Esc` | Approval overlay: **deny** the challenged call. `Esc` acts at once (the only immediate action), `d` after the arming delay. A denial latches for the session like `Ctrl-S`, so the same operation is refused without asking again. |
-| `v` | Approval overlay: show the next page of a command too tall for the dialog (never decides). |
-| `Ctrl-C` | Cancel the in-flight turn; while idle, quit. **A composed draft is never discarded**: idle with text in the editor the first press clears the draft (footer `ctrl+c: draft cleared — press ctrl+c again on an empty draft to quit`) and the session stays — the second press, on the empty draft, quits. A second `Ctrl-C` during a turn also quits. **Cancelling clears the queue**: the abort withdraws every queued follow-up, and the footer names the count (`cancelled · dropped 2 queued prompts`). A prompt queued after a *failed* run stays in the inbox and is placed by the next submit (pi-durable's own rule). During an **orchestrator** run (which cannot be cancelled from the TUI) it quits directly — the manager's signal guard reaps its live workers as the process exits. |
-| `Esc` | Quit on an **empty** draft (while no approval is pending — during an approval it denies). With text in the editor the first `Esc` clears the draft instead (footer `esc: draft cleared — press esc again on an empty draft to quit`) and keeps the session; only the second press quits. While a turn runs it goes through the same cancel-first path as `Ctrl-C`: the turn aborts, the session stays, and the draft is kept. Quitting mid-turn aborts and drains the run like `Ctrl-C`, so queued follow-ups go with it. |
+| `a` | Approval card: **allow once** — this call only, after the arming delay and the quiet period, and only while the card can show the whole command. Nothing is stored: the next identical call asks again. |
+| `Ctrl-S` | Approval card: **allow for the session** — after the arming delay and the quiet period, and only while the card can show the whole command; never a bare letter. Latched in `<session>/approvals.json`; identical calls in this session are not asked again (also after re-attach). |
+| `d`, `Esc` | Approval card: **deny** the challenged call. `Esc` acts at once (the only immediate action), `d` after the arming delay. A denial latches for the session like `Ctrl-S`, so the same operation is refused without asking again. |
+| `v` | Approval card: show the next page of a command too tall for the card, or an edit's whole diff (never decides). |
+| `?` | Approval card: open (and close) the model's explanation for the ask (never decides). |
+| `c` | Approval card: **deny with a comment** (issue #467) — opens a one-line input on the card; `Enter` denies with `denied by the user: <comment>` as the reason the model reads (an empty comment is a plain deny), `Esc` goes back to the card. At most 500 characters; recorded in the §60 ledger as the denial's reason. Like `d`, the denial latches for the session. |
+| `e` | Approval card: **edit the command, then allow it** (issue #467; a shell ask of the solo lane only) — opens the proposed command in a one-line input; `Enter` runs what you typed instead. The edited command is judged again from the start, so an edit that is itself destructive asks again; an unchanged command is a plain allow once, an emptied one is not accepted. The call's result opens with `[edited by the user — ran: <yours> (proposed: <the model's>)]`, so neither the model nor the transcript takes it for the proposed command's output. Nothing is latched; the §60 ledger records both commands. |
+| `A` | Approval card: **allow all edits this turn** (issue #467; an edit or write ask a role's `requires` raised inside the workspace) — this call and every such ask until the turn ends. Never another capability: a write outside the workspace, into `.kubic/` or onto credentials still asks. The status line says `edits auto-approved this turn` while it applies; nothing is latched. |
+| `Ctrl-C` | **Interrupt** the in-flight turn and keep the session; a second press while the interrupt drains quits. Idle, **a composed draft is never discarded**: the first press clears it (`^C: draft cleared`); on an empty editor a press shows `press ^C again to quit` on the notice row for 2 s, and a second press inside that window quits (issue #454). **Cancelling clears the queue**: the abort withdraws every queued follow-up, and the footer names the count (`cancelled · dropped 2 queued prompts`). A prompt queued after a *failed* run stays in the inbox and is placed by the next submit (pi-durable's own rule). During an **orchestrator** run (which cannot be cancelled from the TUI) it quits directly — the manager's signal guard reaps its live workers as the process exits. |
+| `Esc` | **Never quits** (issue #454). It closes the editor's dropdown or an open picker or dialog; during a turn it **interrupts** it like the first `Ctrl-C` — the session and the draft stay, and a second `Esc` while the interrupt drains does nothing (an orchestrator run, which cannot be interrupted here, says so on the footer). Idle on an empty editor it enters **block mode** (see *Block mode* above). While an approval is pending it denies. For a one-press quit key, bind `app.exit` in `~/.kubic/keybindings.json`. |
 | `Ctrl-D` | Quit on an empty draft; while typing it stays delete-forward. |
 | `PageUp` / `PageDown` | Scroll the transcript one page (pi-tui's alt-screen binding; the editor does not see these keys). |
 | `Home` / `End` | Scroll the transcript to its top / bottom — which is why they do not move the editor's cursor: `Ctrl-A` / `Ctrl-E` move to the line start / end instead. |
@@ -1293,6 +1493,63 @@ spend (`$cost in/out`). The row is non-capturing (input stays in the editor)
 and follows each worker's start and result on the next frame; finished
 workers stay listed with their final status until the next delegation
 replaces the list. `/inspect <worker>` opens one node in full.
+
+**The orchestrator dashboard** (issue #465; docs/ui 04-A–E): once you hand
+the manager an objective, orchestrator mode shows the run's dashboard in
+place of the tree, the transcript, the status line and the editor:
+
+- the header: `■ KUBIC │ ORCHESTRATE <objective> ⎇ <branch>` and live counts
+  `◆ awaiting │ ⠹ working │ ✓ done │ ✕ failed`;
+- the run timeline: `RUN ✓ plan ━ ⠹ implement ×2 ━ ○ review ━ ○ merge ━ ○
+  verify   elapsed 3:42` — done in green, running with a spinner, failed in
+  red, a phase the run has no step for (the template plan's review; verify,
+  which no run has yet) struck through, a phase not reached yet `○`;
+- the workers, grouped by what they need from you: **AWAITING YOU** (an
+  approval ask or the merge gate is open for the worker; amber), **WORKING**,
+  **DONE** (`✓`, or `✕` with how it ended) and **QUEUED** (planned, not
+  launched yet). Each row is `<worker id> <task> <elapsed>` with a second line
+  — the latest tool call and the tool count while it works, the change
+  (`+a −r · N files`), tools and tokens once it settled. The list takes 50
+  columns (40% under 120 columns); under 100 columns it is the whole width.
+  A list taller than the screen scrolls with the selection and says what it
+  hides;
+- the live preview of the selected worker beside the list (issue #466; 04-D):
+  who it is (task, worktree, role, model, generation), its last eight tool
+  calls drawn as the very cards a solo session draws — an edit as its diff
+  block, a running call with its clock, newest at the bottom — then, once it
+  settled, how it ended (its change and its own summary line, or why it
+  failed), and its budget when it has a limit;
+- the run budget: the run's tokens, cost and elapsed time — as gauges
+  (amber at 80%, red at 100%) against the run's limits when it has them, plain
+  `no limits · …` otherwise (an interactive run sets none);
+- the dispatch box (issue #466; 04-F): `m` types a message to the selected
+  worker, `^N` the task of a new worker. `⏎` sends, `Esc` leaves the box
+  (the draft stays), `↑↓` move the target, `^N` switches between the two,
+  and for a new worker `tab` cycles its role (implementer, tester, reviewer,
+  debugger, planner). A message goes through the orchestrator's own path —
+  interactive runs use the template plan, whose workers have no inbox, so it
+  is refused with that reason and the draft stays (`^N` sends it as a new
+  worker's task instead). A new worker is a run of its own (`--agents
+  <role>-1:<role>`), so it starts once the run in flight settled. `⏎` on an
+  empty box opens the worker.
+
+Keys on the dashboard: `↑↓` (or `k j`) select a worker (group labels are
+skipped; the first worker waiting on you is selected first), `⏎` opens the
+full worker view — its facts and every recent call as a card, with `kubic
+workers inspect <id>` for the rest (`esc` back), `a` opens the approval card of the oldest ask waiting on you
+(asks wait in AWAITING YOU instead of taking the keys; the card arms when it
+appears, so a key pressed with the `a` cannot answer it, and after one answer
+the dashboard has the keys again), `x` stops the selected running worker
+through the run's own lifecycle (the run then follows its failure policy —
+by default it stops), `r` retries once the run has settled with the selected
+worker failed (the run is resumed: its failed workers run again), `^O` shows
+the selected worker's change in its worktree since its branch left yours
+(committed or not, plus the files it created), `/` filters the workers by id,
+role or task as you type (`⏎` keeps the filter, `Esc` clears it), and `tab`
+switches to the manager transcript — the report, and the editor for the next
+objective; on an empty editor `tab` comes back. Before the first objective,
+orchestrator mode opens on that manager view. A new run replaces the last
+run's workers on the dashboard.
 
 **Retries and compaction on the footer** (issue #150; §20.6, §27.1): while
 the harness waits to retry a transient model error the footer under the
@@ -1328,7 +1585,7 @@ default action loses that key (`keybinding: ctrl+g now runs panel.diff
 unbound` when nothing is left). Two user bindings on one key are a conflict —
 the first action in the table below keeps it and both are named. Approval
 keys conflict only with each other (the approval owns the keys while it
-shows, which is why `Esc` can be both the global quit and the approval deny).
+shows, which is why `Esc` can be both the global cancel and the approval deny).
 **A broken file refuses the boot** (`error: keybindings '<file>': …`, exit 2,
 nothing opens): invalid JSON, an unknown action, a malformed key id, or a
 file that is not a regular file or is over 64 KB. A missing file means the
@@ -1336,10 +1593,12 @@ shipped bindings.
 
 | Action | Default keys | What it does |
 |---|---|---|
-| `app.interrupt` | `ctrl+c` | cancel the running turn; idle: clear the draft, then quit |
-| `app.exit` | `escape` | quit on an empty draft (clears a draft first) |
+| `app.interrupt` | `ctrl+c` | interrupt the running turn; idle: clear the draft, then press twice to quit |
+| `app.cancel` | `escape` | close the open dropdown or overlay; else interrupt the running turn — never quits |
+| `app.exit` | unbound | quit on an empty draft (clears a draft first); bind a key to get a one-press quit |
 | `app.eof` | `ctrl+d` | quit on an empty draft; delete-forward while typing |
 | `app.palette` | `ctrl+p` | open the command palette |
+| `help.keys` | `?` | list every key (on an idle, empty editor; elsewhere `?` is typed) |
 | `session.mode` | `ctrl+g` | switch solo / orchestrator between turns |
 | `view.tree` | `ctrl+t` | toggle the tree |
 | `panel.diff` | `ctrl+o` | toggle the diff panel |
@@ -1354,6 +1613,10 @@ shipped bindings.
 | `approval.allowOnce` | `a` | approval: allow once |
 | `approval.allowSession` | `ctrl+s` | approval: allow for the session |
 | `approval.deny` | `d`, `escape` | approval: deny |
+| `approval.comment` | `c` | approval: deny with a comment for the model |
+| `approval.edit` | `e` | approval: edit the command, then allow it |
+| `approval.allowEdits` | `shift+a` | approval: allow all edits this turn |
+| `approval.explain` | `?` | approval: show why the model asked (the card's explanation row) |
 | `approval.page` | `v` | approval: next page of a long command |
 
 Both panels read the session's own journal through the same projection
@@ -1372,9 +1635,20 @@ chain to the transcript while the panel can still scroll), and
 page of the journal panel. A freshly opened panel starts at its first file,
 and a repaint (new journal rows arriving) never yanks the viewport.
 
-A challenged call opens the **approval overlay** instead of being refused: it
-names the tool class and the exact command, so the decision is made on what
-was actually asked, not on the tool's name. The command is shown **whole**:
+A challenged call turns the editor into an **approval card** instead of being
+refused (issue #459; `docs/ui/02-approval.html`): an amber frame with the
+`APPROVAL` badge, the tool and `1 of N`; the exact command (`$ …`, its
+destructive words bold) — or, for an `edit` or `write`, the diff it would make
+against the file on disk (`+A −R` in the frame); one plain-language row for the
+reason (`▲ destructive   it can delete or overwrite files`), the working
+directory (and, for a file change, that the journal keeps the old file), the
+next waiting ask (`next: …`), and the keys. `?` opens the model's own
+explanation. The transcript above stays readable — `PgUp` scrolls it — while
+the header shows `1 WAITING`, the call's card `◆ waiting for you` and the
+status line `needs approval`. Each capability a call trips is asked on its
+own, so a command that is both destructive and networked is `1 of 2`, then
+`2 of 2`. The card names the tool class and the exact command, so the decision
+is made on what was actually asked, not on the tool's name. The command is shown **whole**:
 it is the same text the approval key is computed from, wrapped across rows and
 never silently cut, with three display-only changes. Control, bidi, zero-width
 and other default-ignorable characters (including the Hangul fillers
@@ -1407,7 +1681,7 @@ the same secret-shape table the audit backstop uses (`sk-…`, `AKIA…`,
 header or a bare `bearer`/`basic` scheme, a `-u`/`--user`/`--proxy-user`
 `user:password` operand, and URL userinfo (`https://user:pw@host`) — and, when
 they shorten a command, say so: `… (+N chars)`. The narrow redaction is what
-the approval dialog's `command` field shows, and the same field in an
+the approval card's command shows, and the same field in an
 orchestrator worker ask — both carry the full command to the seat that decides,
 with the operator still seeing the host and the flag. The summary's broad
 redaction is the safe over-redacting one.
@@ -1415,28 +1689,24 @@ redaction is the safe over-redacting one.
 Rows wrap by terminal **display columns**, not by character count: wide (CJK)
 characters count two columns, and a combining sequence or an emoji cluster is
 never split, so every character of the command appears in the rows and none is
-cut by the overlay's edge. A command taller than a page (8 rows, fewer when
-the terminal is short — the dialog fits the 60 % of the terminal height the
-overlay may use) shows one page at a time with an explicit
-`… command lines 1–8 of N · [v] next page` marker, and `v` pages through it.
-When even that does not fit — the overlay needs the fixed rows, the
-justification, the hint row and either the whole command or one page with its
-marker (about 10 terminal rows for a long command, 9 for a one-line one) — the
-dialog **fails closed**: it shows `Too short to show this command — [d]/[Esc]
-deny` (plus the tool and an enlarge hint when there are rows for them) and every
-allow key (`a`, `Ctrl-S`) is inert until the terminal is tall enough, so you can
-never allow what you cannot see. `d` (after arming) and `Esc` (at once) still
-deny, and the dialog re-checks on every frame and key, so enlarging the
-terminal restores it. Below 80 columns the overlay falls back to an inline slot
-in the transcript (`! approval (inline)`) rather than rendering an unusable
-box; the slot has no height cap, so it always shows the whole command. Denying
+cut by the card's edge. A command taller than a page (8 rows) shows one page at
+a time with an explicit `… lines 1–8 of N` marker, and `v` pages through it;
+on an edit, `v` opens the whole diff (twelve rows show by default). When the
+card does not fit — it needs its own rows plus six more for the header, the
+status line, the key hints and three rows of transcript — it **fails closed**:
+it says `the terminal is too short to show this command — enlarge it` and
+every allow key (`a`, `Ctrl-S`) is inert until the terminal is tall enough, so
+you can never allow what you cannot see. `d` (after arming) and `Esc` (at
+once) still deny, and the card re-checks on every frame and key, so enlarging
+the terminal restores it. The card is the same at every width; below 60
+columns its reason rows keep only their labels and the keys wrap. Denying
 leaves the session running; the transcript shows the refusal instead of the
 call's result. Quitting with an ask still pending denies it, so a shutdown
 cannot strand the turn.
 
 An approval is consent to run code with your authority, so keys typed for
 the editor can never produce one. Asks arrive while you may be typing the
-next prompt, so the overlay is a capturing modal: while it shows, printable
+next prompt, so the card is a capturing modal: while it shows, printable
 keys are dropped instead of reaching your draft (the global keys `Ctrl-C`,
 `Ctrl-D`, `Ctrl-T`, `Ctrl-G`, `Ctrl-O`, `Ctrl-R` and `Ctrl-X` still work —
 `Ctrl-G` answers with its usual footer refusal, since an approval only arises
@@ -1484,7 +1754,8 @@ Quitting leaves the alternate screen first (autowrap, cursor, mouse and
 keyboard modes restored) and **then** prints the final document on your
 main screen, so it stays in your scrollback: the whole last frame at the
 terminal's width — header, tree, the transcript including the last
-assistant answer, status bar, editor and footer — on stdout, without the
+assistant answer, notice row, editor, status line and key hints — on stdout,
+without the
 editor's cursor artifacts (the hardware-cursor marker and the inverse-video
 cursor cell are stripped, as Pi's own stop path strips the marker). A crash
 restore (see **Signals and crashes** below) prints no document. **Quitting mid-turn aborts the turn** — `Ctrl-D`, `SIGINT` or stdin EOF while a solo turn runs (and `Esc`/`Ctrl-C` from their *second* press: the first one cancels the turn and keeps the session, issue #302): the turn
@@ -1518,9 +1789,11 @@ back on, cursor shown, mouse tracking and the Kitty protocol off, cooked
 mode), then prints `error: kubic tui crashed: …` on stderr and exits 1.
 `Ctrl-Z` suspend is not supported. Solo mode runs in-process with your user authority: no
 isolation, no containment. The no-isolation statement is on screen from the
-first frame: the editor footer carries the one-line form at startup and
-returns after every completed turn (a cancelled or failed turn reports that
-outcome instead). It is suppressed for orchestrator-managed worker children
+first frame: the first screen's isolation row carries it (`none in solo`
+and what that means, with `/safety` beside it), the header's
+`SOLO` badge stays on every frame, and `/safety` prints the full text from
+the limits module on demand (in orchestrator mode, the orchestrator's own
+limits). The startup line is suppressed for orchestrator-managed worker children
 (`KUBIC_WORKER_ID` set) and by the opt-out `KUBIC_NO_NOTICE=1`; see
 [`kubic run`](#kubic-run--p-prompt---session-id---timeout-ms---max-turns-n---role-name---model-providerid---skill-path---no-skills---debug---json).
 
@@ -1539,7 +1812,7 @@ its own generated help (`kubic sessions prune --help`).
 | --- | --- |
 | `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id on stdout. `--cwd` sets the session directory (default: current directory): a relative path resolves against the invoking directory (never the sessions root) and must name an existing directory, otherwise create refuses with `kubic sessions create: --cwd <path>: no such directory` (exit 1) and creates nothing. `--dangerously-skip-approvals` records session-scoped full-access in the session dir, appends one `posture:full-access` row to the audit ledger (session id, `kubic sessions create --dangerously-skip-approvals`), and prints a `warn:` line on stderr — fresh sessions start safe, the flag must be passed explicitly every time. |
 
-| `list [--json] [--parent <id>]` | A `SESSION  CWD  PARENT` table (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none — plus `parentSessionId`/`role`/`agentId` keys on sessions that carry them (an orchestrate worker names its run; a root carries no parent key at all). `--parent <id>` shows only that orchestrate run's children — a `--parent` naming no recorded session is refused (`unknown parent session: <id>`, exit 1; secret-shaped ids are redacted in the echo), and a `--parent` outside the id class is refused without echo (`invalid --parent id …`, exit 2). **`kubic sessions --json` with no subcommand is the same array** (issue #268); `kubic sessions` without `--json` stays the usage error naming the subcommands. A session written by Kubic on Pi 0.87 is listed with its recorded cwd and marked `(legacy pi 0.87 — cannot attach)`: it is listed so it can be seen, and it can never be attached ([below](#session-storage-and-legacy-pi-087-sessions)). |
+| `list [--json] [--parent <id>]` | A `SESSION  CWD  PARENT` table (plain aligned columns off a terminal, the kit table on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none — plus `parentSessionId`/`role`/`agentId` keys on sessions that carry them (an orchestrate worker names its run; a root carries no parent key at all). `--parent <id>` shows only that orchestrate run's children — a `--parent` naming no recorded session is refused (`unknown parent session: <id>`, exit 1; secret-shaped ids are redacted in the echo), and a `--parent` outside the id class is refused without echo (`invalid --parent id …`, exit 2). **`kubic sessions --json` with no subcommand is the same array** (issue #268); `kubic sessions` without `--json` stays the usage error naming the subcommands. A session written by Kubic on Pi 0.87 is listed with its recorded cwd and marked `(legacy pi 0.87 — cannot attach)`: it is listed so it can be seen, and it can never be attached ([below](#session-storage-and-legacy-pi-087-sessions)). |
 | `attach [--] <id> [--tail <n>] [--ids] [--json]` | Print session metadata (including the `parent=<run> [role=<r>] [agent=<a>]` line on a worker session), the approvals posture (`approvals enforced` or `full-access …`), the `pending work: <kind> <id> (<status>)` summary when a crashed run left unfinished durable work (settled by the next `run`/`tui --session`), then the last `--tail` transcript turns (default 10) — one readable line per turn (`user: …`, `assistant: …`, `tool-result <name>: …`, `system: …`, `[compaction] …`, `[reset] …`), whitespace collapsed and bounded to 300 characters; transcript text and model-authored tool names are untrusted, so terminal control sequences are stripped before a line is printed. `--tail` needs a non-negative integer. `--ids` prefixes each transcript line with its entry id (`#12 user: …`) — the id `kubic sessions fork --at` takes (issue #265). `--json` prints the raw tail entries instead — one full untruncated entry JSON per line, for scripting. |
 
 | `fork [--] <id> [--at <entry>] [--tree] [--json]` | Fork a session into a **new** one (issue #265; §22.3) and print the new id — `--json` prints one `{id, source, at}` document (`at` is `null` for `--tree`). The id works at once with `kubic run --session` / `kubic tui --session`. A **branch fork** (the default) cuts *at* an entry, inclusive — `--at <entry>` names it (`kubic sessions attach <id> --ids` prints them), default the source's newest — and the new session's lane is a pi-durable fork of the source's: it sees the history through that entry and the agent (model, thinking level) as of it, and nothing after it. **`--tree`** copies the whole session instead: every conversation and branch tip, the lane unchanged. Either way the new session has its **own** directory, lock and an empty journal, starts with **no usage** (the copied `pi.usage` documents are emptied, so `kubic cost` never counts the source's spend twice), and starts with **approvals enforced** — the source's posture, approvals and journal are not copied. The source is only read, under its own lock: forking a session another process holds live is **refused** (the lock refusal naming the holder, exit 1, nothing written), as is a missing or Pi 0.87 session (exit 1) and an `--at` entry the source does not have (exit 1). `--at` with `--tree` is a usage error (exit 2). |
@@ -1702,7 +1975,7 @@ value, `--max` that is not a positive integer, `stage` with no path,
 | `commit -m <message>` | Commit, print `committed <sha8> (<n> file(s))`. `--json` prints `{sha, files}` with each path verbatim (never C-quoted, even non-ASCII or newline names). `-m`/`--message` takes the next token verbatim, even one starting with `-` (`-m --amend` commits the message `--amend`). |
 
 On a colour terminal (TTY, no `NO_COLOR`, not `TERM=dumb`) the status
-labels are coloured and `log` is a box-drawn table; piped or under
+labels are coloured and `log` is the kit table (muted header, faint rule); piped or under
 `--json` the output is plain text.
 
 ## `kubic commit -m <message> [--json]`
@@ -1772,7 +2045,7 @@ Diagnostics (the fallback note, the empty-journal note, undo warnings as
 JSON. On a colour terminal (TTY, no `NO_COLOR`, not `TERM=dumb`) the diff
 is coloured — additions green, removals red, `@@` hunk headers amber, file
 headers bold, attribution lines grey — undo verdict words are coloured, and
-`log` is a box-drawn table; piped, redirected or under `--json` everything
+`log` is the kit table (muted header, faint rule); piped, redirected or under `--json` everything
 is plain text.
 
 **Usage errors** exit **2** with one `error:` line on stderr and touch
@@ -1980,7 +2253,7 @@ composition paths therefore capture a **baseline** when the lane boots and
 `kubic status` names it in the summary. `--json` keeps the raw entries (the
 `unattributed` flag is on each entry there).
 
-## `kubic models [--json] [--resolve <provider/id>]`
+## `kubic models [provider] [--all] [--json] [--resolve <provider/id>]`
 
 Catalog readout over Pi's **built-in providers** (the generated catalogue:
 `anthropic`, `openai`, `google`, `amazon-bedrock`, `openrouter`, …) plus
@@ -2008,7 +2281,9 @@ and a `warn:` line names it.
 
 | Flag | Meaning |
 | --- | --- |
-| (none) | A `PROVIDER  MODEL  THINKING  IN $/1M  OUT $/1M` table, one row per model of every **usable** provider (plain aligned columns off a terminal, box-drawn on an interactive colour terminal), then `info: <n> built-in providers not configured (set their env key): …` on stderr for the rest. With nothing usable, stdout stays empty and stderr says `info: no usable providers (set a built-in provider's env key, e.g. ANTHROPIC_API_KEY, or add models.json)`. Exits 0. |
+| (none) | Off a terminal: a `PROVIDER  MODEL  THINKING  IN $/1M  OUT $/1M` table (plain aligned columns), one row per model of every **usable** provider, then `info: <n> built-in providers not configured (set their env key): …` on stderr for the rest. On an interactive colour terminal (issue #449): the catalogue view — a `MODEL  CONTEXT  THINKING  INPUT  IN $/1M  OUT $/1M  KEY` kit table grouped by provider, the default model marked `● <provider/id>  default` (the configured pin, else the model a run would pick), every provider with more than 8 models folded to its first 3 rows and a `<provider>/… N more  kubic models <provider>` line, one `○ N providers without a key  kubic models --all` line, the `keys: <provider> ← <source>` line, and `set a default: kubic setup`. With nothing usable, stdout stays empty and stderr says `info: no usable providers (set a built-in provider's env key, e.g. ANTHROPIC_API_KEY, or add models.json)`. Exits 0. |
+| `[provider]` | List one provider in full (no folding), configured or not; `--json` is scoped to it too. An unknown provider is a usage error: `error: unknown provider "<id>"; did you mean '<id>'?` when one is close (issue #450), else `error: unknown provider "<id>" (known: …)`, on stderr, exit 2. |
+| `--all` | Include the providers without a configured key (their KEY cell reads `—`; off a terminal their rows join the plain table and the `not configured` note is dropped). |
 | `--json` | Every registered provider, usable or not, as one pretty-printed JSON document: `id`, `name`, `source` (`built-in`, `testing` or the `models.json` path), `usable`, `auth` (the auth source Pi reported, when configured) and `models` (`id`, `name`, `thinking`, `inputCost`, `outputCost`, `cacheReadCost`, `cacheWriteCost`, `input` modalities). Exits 0. |
 | `--resolve <provider/id>` | Print `selected <provider>/<id> (thinking: …)` for any registered model, built-in or custom, configured or not; a resolution failure prints `error: …` on stderr and exits 1. |
 
@@ -2019,8 +2294,48 @@ configured. A built-in with no key is never picked implicitly; with nothing
 usable the run exits 6 (`provider_probe_failed`). Pin the model you mean,
 e.g. `[model] provider = "anthropic"`, `id = "claude-sonnet-4-6"`.
 
-Usage errors (unknown option, `--resolve` without a value, an operand)
-exit 2 on stderr. `--help`/`-h` prints the generated help and exits 0.
+Usage errors (unknown option, `--resolve` without a value, an unknown
+provider) exit 2 on stderr. `--help`/`-h` prints the generated help and exits 0.
+
+## `kubic setup`
+
+Interactive first-run setup (issue #451): from "installed" to "ready" in
+under a minute.
+
+1. **Provider** — the providers whose key is detected (the same detection
+   `kubic models` and `kubic doctor` use: env keys, Bedrock/Vertex ambient
+   credentials, `models.json` customs; the testing provider is never offered).
+   One detected provider is confirmed as a step; several are a choice.
+2. **Default model** — that provider's chat models, the current pin
+   preselected, each with its context window and thinking support.
+3. **Thinking level** — only for a model that supports thinking (`medium`
+   preselected when supported).
+4. **Trust** — when the current directory has a project layer
+   (`.kubic/config.toml` or a project `models.json`) with no recorded
+   decision, the same question `kubic tui` asks; the answer is recorded in
+   the trust store.
+5. **Save** — `[model] provider`, `id` and `thinking` go to
+   `~/.kubic/config.toml`. An existing file is updated line by line: the
+   three keys are replaced inside an existing `[model]` table (missing ones
+   appended to it) or the table is appended; comments, other tables and
+   CRLF line endings are kept. The write is atomic (write then rename).
+
+A frozen enterprise `[model]` (`/etc/kubic/config.toml`) asks no model
+question: the step names the pinned model and nothing is written. With no
+provider key at all, setup names the variables to set (and `models.json`)
+and exits **6** without writing. A cancelled question (Ctrl-C / Esc) writes
+nothing and exits **130**. Off a terminal (stdin or stdout not a TTY) setup
+refuses with `error: kubic setup is interactive: …` and the manual
+alternative (`[model]` in `~/.kubic/config.toml` or `KUBIC_MODEL`), exit
+**2**.
+
+**First run.** A bare `kubic` on a terminal with no `~/.kubic/config.toml`,
+no `KUBIC_MODEL`, not under `KUBIC_PROVIDER=faux` and without
+`KUBIC_SKIP_SETUP=1` runs setup first, then opens the TUI on the model it
+saved. Cancelling it still opens the TUI and leaves a comment-only
+`~/.kubic/config.toml` (`# kubic setup was skipped …`) so the question is
+not asked on every launch; `kubic setup` asks again any time. With no
+provider key the first run exits 6 like `kubic setup`.
 
 ## `kubic config [--json] [--model <provider/id>] [--thinking <level>]`
 
@@ -2050,7 +2365,7 @@ project skills. The help, the interactive prompt and the grant output all
 say so. Exit 0 on success; a corrupt store is named and exits 1; a path that
 is not a directory, or `--list` combined with `--revoke`/a path, exits 2.
 
-## `kubic doctor [--skip <id[,id…]>]... [--json]`
+## `kubic doctor [--skip <id[,id…]>]... [--json] [--verbose]`
 
 Health readout — see [doctor and debug](doctor-and-debug.md).
 
@@ -2058,10 +2373,12 @@ Health readout — see [doctor and debug](doctor-and-debug.md).
 | --- | --- |
 | `--skip <id[,id…]>` | Mark checks skipped (comma-separated, repeatable). An id that matches no check exits 2 (`error: unknown check "<id>"` on stderr); `--skip` without a value exits 2. |
 | `--json` | Emit `{ok, exitCode, checks}` as one pretty-printed JSON document instead of human lines. Same exit code either way. |
+| `--verbose` | On an interactive colour terminal, print every check in full instead of the grouped summary (issue #448). Off a terminal the full report always prints. |
 
-Human lines keep the `STATUS id (reason): detail` shape; on a colour
-terminal the status is coloured (pass green, warn amber, fail red, skip
-grey). Unknown options exit 2. Full exit-code contract is on the
+On an interactive colour terminal the default is a grouped summary (issue
+#448; see [doctor and debug](doctor-and-debug.md)). The full report keeps the
+`STATUS id (reason): detail` shape; on a colour terminal the status is
+coloured (pass green, warn amber, fail red, skip grey). Unknown options exit 2. Full exit-code contract is on the
 [exit-codes page](exit-codes.md).
 
 The `limit:resources` line (issue #163, §82) states which per-agent limits a
@@ -2111,7 +2428,7 @@ an orchestrator has no record — nothing on stdout (`--json` prints `[]`), an
 
 | Flag | Meaning |
 | --- | --- |
-| (none) | A table with one row per worker: `WORKER  AGENT  PROCESS  GEN  AGE  OWNER  PID  STARTUP  RESOURCES  BUDGET` (`-` for an unknown pid/startup, and for an unbounded worker's budget). Plain space-aligned columns off a TTY (pipes, CI, `NO_COLOR`); box-drawn, with both states coloured, on an interactive colour terminal. The **BUDGET** cell (issue #285) names the worker's effective §71 bound with burn-down from the settled consumption (`tools 3/10`, `$0.12/$0.50` — limits alone, `maxToolCalls=4`, while the worker is still live, since a live spend is unknown, never zero). |
+| (none) | A table with one row per worker: `WORKER  AGENT  PROCESS  GEN  AGE  OWNER  PID  STARTUP  RESOURCES  BUDGET` (`-` for an unknown pid/startup, and for an unbounded worker's budget). Plain space-aligned columns off a TTY (pipes, CI, `NO_COLOR`); the kit table (muted header, faint rule), with both states coloured, on an interactive colour terminal. The **BUDGET** cell (issue #285) names the worker's effective §71 bound with burn-down from the settled consumption (`tools 3/10`, `$0.12/$0.50` — limits alone, `maxToolCalls=4`, while the worker is still live, since a live spend is unknown, never zero). |
 | `--json` | The same rows as JSON (`workerId`, `sessionId`, `generation`, `status`, `agentStatus`, `signal`, `cancel`, `ageMs`, `owner`, `resources`, `pid`, `startupMs`) — field-for-field with the text view (`status` is the process phase, `agentStatus` the agent state). `cancel` appears only for a worker that was actually cancelled: `settled` when its own cooperative shutdown finished inside its grace, `forced` when the group SIGKILL escalation beat it (issue #249). `resourceUsage` (`rssMb`, `cpuPct`) appears for a live pid, `consumption` (the settled token/cost/call counts) for a settled worker — both additive (issue #248). `budget` (`{limits, usage?}` — the effective §71 limits plus the settled usage in trajectory shape, absent for unbounded workers) appears when the run stored a bound (issue #285). |
 | `--debug` | `[worker] spawn …` per row plus the command's own `[exit] code=0 (kubic workers command exit)` on stderr (`KUBIC_DEBUG=1` does the same) — the exit line is the list command's, never any worker's; a worker's real signal reads next to its PROCESS cell. Spawn env values are always redacted (`KUBIC_ROLE_*` never prints). |
 
@@ -2131,7 +2448,13 @@ gone), the run's stored budget for the worker (`worker …`, `shared …`, or
 live usage accrues inside the worker session, which `kubic cost` reads), and
 approvals (`1 ask pending (worker is waiting)` when the agent state is
 `waiting`, with the newest §60 decision for the worker session when any).
-`--json` prints the same facets as one object. An unknown id exits 1
+When the run's own record knows them, three more lines follow: `task: …`
+(the task the worker was spawned for, else the run's objective — at most
+60 columns), `changes: N files +A −R` (counted from the worker's stored
+per-file diff, so it still reads after the merge) and `tools: N calls`
+(once the worker settled). Unknown facts print nothing rather than a zero.
+`--json` prints the same facets as one object (`task`, `toolCount` and
+`diffStat: { files, added, removed }` when known). An unknown id exits 1
 (`code=no_such_worker`).
 
 ### `kubic workers terminate <id> [--generation <n>] [--json]`
@@ -2171,7 +2494,7 @@ worker_not_running`) without signalling anything. Success prints
   line each. A refusal is `error: <message>`, or
   `error: [<code>] <message>` when it has a code.
 - **Tables.** `cost`, `perf`, `audit` and `benchmark` print their rows as
-  a table. On a colour terminal the table is box-drawn with coloured
+  a table. On a colour terminal the table is the kit table (muted header, faint rule) with coloured
   headers. On a pipe, in CI, or with `NO_COLOR`, it is plain
   space-aligned columns.
 - **`--json`.** stdout carries exactly one JSON document and nothing

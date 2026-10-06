@@ -4,10 +4,12 @@
 // sentence, list the shipped flags, and show `clean` in the usage line; the
 // binary's dispatch must actually answer `clean` (a typo in the dispatch
 // table would otherwise pass silently).
+
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { COMMAND_GROUPS, ROOT_HELP } from '../../cli/root-help.js';
 
 const ROOT = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -19,10 +21,10 @@ const ROOT = join(
 );
 const COMMANDS_PAGE = join(ROOT, 'docs', 'cli', 'commands.md');
 // Issue #135: the binary's front door moved out of main.ts — the routing
-// and the root usage line live in dispatch.ts, the production wiring (the
-// runCleanCommand deps) in prod-runners.ts. The pins below follow the
-// wiring; main.ts is the thin entry now.
-const DISPATCH = join(ROOT, 'apps', 'kubic', 'src', 'dispatch.ts');
+// lives in dispatch.ts (its command groups and root help in cli/root-help.ts,
+// issue #446), the production wiring (the runCleanCommand deps) in
+// prod-runners.ts. The pins below follow the wiring; main.ts is the thin
+// entry now.
 const PROD_RUNNERS = join(ROOT, 'apps', 'kubic', 'src', 'prod-runners.ts');
 // The commander registry: `clean` is registered by the orchestrator group.
 const ORCHESTRATOR_COMMANDS = join(
@@ -66,16 +68,13 @@ describe('clean is documented and dispatched (issue #92)', () => {
     );
   });
 
-  it('lists clean in the page usage line and in the binary usage line', () => {
+  it('lists clean in the root help, and the page shows that help verbatim', () => {
     const page = readFileSync(COMMANDS_PAGE, 'utf8');
-    const dispatch = readFileSync(DISPATCH, 'utf8');
-    const pageUsage = page.match(/usage: kubic <([^>]*)>/)?.[1] ?? '';
-    const dispatchUsage = dispatch.match(/usage: kubic <([^>]*)>/)?.[1] ?? '';
-    const words = (listing: string): string[] =>
-      listing.split('|').map((word) => word.trim());
-    expect(words(pageUsage)).toContain('clean');
-    expect(words(dispatchUsage)).toContain('clean');
-    expect(words(pageUsage)).toEqual(words(dispatchUsage));
+    const delegate = COMMAND_GROUPS.find((group) => group.label === 'delegate');
+    expect(delegate?.commands).toContain('clean');
+    expect(ROOT_HELP).toMatch(/^DELEGATE {3}orchestrate · workers · clean/m);
+    // Issue #446: the commands page quotes the plain root help exactly.
+    expect(page).toContain(ROOT_HELP);
   });
 
   it('documents every shipped clean flag on the commands page', () => {

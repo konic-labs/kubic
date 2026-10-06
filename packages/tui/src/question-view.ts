@@ -3,6 +3,7 @@
 // question (sanitized — it is worker-authored), and Pi's single-line Input.
 // Enter answers with the typed text (an empty line answers nothing); Esc
 // declines. The view resolves exactly once.
+
 import { sanitizeLaneText } from './lane-cells.js';
 import { tuiTheme } from './theme.js';
 import {
@@ -10,8 +11,8 @@ import {
   type Focusable,
   Input,
   truncateToWidth,
-  wrapTextWithAnsi,
 } from './tui-boundary.js';
+import { wrapStyled } from './ui/line.js';
 
 export interface WorkerQuestionLike {
   readonly question: string;
@@ -61,7 +62,7 @@ export class QuestionView implements Component, Focusable {
     const header = `? worker '${sanitizeLaneText(this.question.agentId)}' (${sanitizeLaneText(this.question.role)}) asks`;
     return [
       truncateToWidth(theme.accentBold(header), w, '…'),
-      ...wrapTextWithAnsi(sanitizeLaneText(this.question.question), w),
+      ...wrapStyled(sanitizeLaneText(this.question.question), w),
       ...this.input.render(w),
       truncateToWidth(theme.muted(QUESTION_HINT), w, '…'),
     ];

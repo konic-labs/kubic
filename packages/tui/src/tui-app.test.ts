@@ -14,7 +14,7 @@ import type {
   ApprovalViewRequest,
 } from './approval-view.js';
 import { createKeyRegistry } from './keybindings.js';
-import { createTuiApp, seedFromPresentation } from './tui-app.js';
+import { createTuiApp, QUIT_ARM_MS, seedFromPresentation } from './tui-app.js';
 
 const SESSION = 'sess-1';
 const MODEL = 'test-model';
@@ -49,36 +49,52 @@ function presentation(
 }
 
 describe('tui app root (issue #75)', () => {
-  it('orders tree / transcript / status top to bottom at 100 cols', () => {
+  it('orders header / transcript / status / hints top to bottom (#453)', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
       mode: 'solo',
       approvalsSkipped: false,
     });
-    const doc = app.render(100).join('\n');
-    const order = [
-      '◌ solo',
-      'Kubic — terminal coding agent',
-      'approvals:on',
-    ].map((marker) => doc.indexOf(marker));
+    const rows = app.render(100);
+    const doc = rows.join('\n');
+    const order = ['■ KUBIC', 'PREFLIGHT', `${MODEL} · off`, '⏎ send'].map(
+      (marker) => doc.indexOf(marker),
+    );
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // The header is the first row; the status line and the hints the last.
+    expect(rows[0]).toContain(`session ${SESSION} │ [SOLO] approvals on`);
+    expect(rows.at(-2)?.endsWith(' ready ')).toBe(true);
+    expect(rows.at(-1)).toContain('^C quit');
   });
 
-  it('hides the tree only below 80 columns', () => {
+  it('hides the solo tree row until Ctrl-T, and always below 80 columns', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
       mode: 'solo',
       approvalsSkipped: false,
     });
-    const wide = app.render(100).join('\n');
-    expect(wide).toContain('◌ solo');
+    expect(app.render(100).join('\n')).not.toContain('◌ solo');
+    app.handleInput('\x14');
+    expect(app.render(100).join('\n')).toContain('◌ solo');
     const narrow = app.render(70).join('\n');
-    expect(narrow).not.toMatch(/[✓●◌]/);
-    expect(narrow).toContain(`session ${SESSION}`);
-    expect(narrow).toContain('approvals:on');
+    expect(narrow).not.toContain('◌ solo');
+    expect(narrow).toContain('[SOLO] approvals on');
+  });
+
+  it('keeps the orchestrator tree row and collapses it with Ctrl-T', () => {
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'orchestrator',
+      approvalsSkipped: false,
+    });
+    expect(app.render(100).join('\n')).toContain('◌ solo');
+    app.handleInput('\x14');
+    expect(app.tree.isCollapsed()).toBe(true);
+    expect(app.render(100).join('\n')).toContain('◌ solo');
   });
 
   it('routes Ctrl-T to the tree toggle and keeps T/t for the draft', () => {
@@ -100,7 +116,8 @@ describe('tui app root (issue #75)', () => {
         ],
       }),
     );
-    expect(app.render(100).join('\n')).toContain('● read');
+    // Issue #453: the solo tree row starts hidden.
+    expect(app.render(100).join('\n')).not.toContain('● read');
     // Issue #88: Ctrl-T toggles the tree. Sent in BOTH encodings, because
     // the classification goes through parseKey — the legacy byte here and
     // the Kitty CSI-u form ('\x1b[116;5u') below.
@@ -109,15 +126,14 @@ describe('tui app root (issue #75)', () => {
       consumed: true,
       cancel: false,
     });
-    expect(app.render(100).join('\n')).toContain('…1 call');
-    expect(app.render(100).join('\n')).not.toContain('● read');
+    expect(app.render(100).join('\n')).toContain('● read');
     expect(app.handleInput('\x1b[116;5u')).toEqual({
       quit: false,
       consumed: true,
       cancel: false,
     });
-    expect(app.render(100).join('\n')).toContain('● read');
-    expect(app.render(100).join('\n')).not.toContain('…1 call');
+    expect(app.render(100).join('\n')).not.toContain('● read');
+    app.handleInput('\x14');
     // Issue #88: the editor owns plain characters — T/t are prompt text,
     // never toggles (a coding-agent prompt must be able to spell "test").
     for (const ch of 'Tt') app.handleInput(ch);
@@ -125,35 +141,64 @@ describe('tui app root (issue #75)', () => {
     expect(app.render(100).join('\n')).toContain('● read');
   });
 
-  it('quits on Ctrl-C and passes other keys through', () => {
-    const app = createTuiApp({
-      sessionId: SESSION,
-      model: MODEL,
-      mode: 'solo',
-      approvalsSkipped: false,
-    });
-    expect(app.handleInput('\x03')).toEqual({
-      quit: true,
-      consumed: true,
-      cancel: true,
-    });
-    // Any other key is neither a quit nor a cancel: it reaches the draft.
-    expect(app.handleInput('x')).toMatchObject({ quit: false, cancel: false });
-    expect(app.editor.getText()).toBe('x');
+  // Issue #454: the key model — Esc never quits, Ctrl-C clears a draft and
+  // then quits on a double press within QUIT_ARM_MS, Ctrl-D quits on an
+  // empty editor.
+  const CONSUMED = { quit: false, consumed: true, cancel: false };
+
+  it('arms on an idle Ctrl-C and quits on the second press (issue #454)', () => {
+    vi.useFakeTimers();
+    try {
+      const app = createTuiApp({
+        sessionId: SESSION,
+        model: MODEL,
+        mode: 'solo',
+        approvalsSkipped: false,
+      });
+      expect(app.handleInput('\x03')).toEqual(CONSUMED);
+      expect(app.render(100).join('\n')).toContain('press ^C again to quit');
+      vi.advanceTimersByTime(QUIT_ARM_MS - 1);
+      expect(app.handleInput('\x03')).toEqual({
+        quit: true,
+        consumed: true,
+        cancel: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it('quits on Esc and on Ctrl-D with an empty draft', () => {
+  it('disarms after the window and clears the notice (issue #454)', () => {
+    vi.useFakeTimers();
+    try {
+      const app = createTuiApp({
+        sessionId: SESSION,
+        model: MODEL,
+        mode: 'solo',
+        approvalsSkipped: false,
+      });
+      app.handleInput('\x03');
+      vi.advanceTimersByTime(QUIT_ARM_MS);
+      expect(app.render(100).join('\n')).not.toContain('again to quit');
+      // A lapsed arm starts over: the next press arms again.
+      expect(app.handleInput('\x03')).toEqual(CONSUMED);
+      // Any other key still reaches the draft.
+      expect(app.handleInput('x')).toEqual(CONSUMED);
+      expect(app.editor.getText()).toBe('x');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never quits on Esc; Ctrl-D quits on an empty draft', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
       mode: 'solo',
       approvalsSkipped: false,
     });
-    expect(app.handleInput('\x1b')).toEqual({
-      quit: true,
-      consumed: true,
-      cancel: false,
-    });
+    expect(app.handleInput('\x1b')).toEqual(CONSUMED);
+    expect(app.handleInput('\x1b')).toEqual(CONSUMED);
     expect(app.handleInput('\x04')).toEqual({
       quit: true,
       consumed: true,
@@ -161,7 +206,7 @@ describe('tui app root (issue #75)', () => {
     });
   });
 
-  it('clears a composed draft on Esc before quitting (issue #302)', () => {
+  it('keeps a composed draft on Esc (issue #302, #454)', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
@@ -169,24 +214,12 @@ describe('tui app root (issue #75)', () => {
       approvalsSkipped: false,
     });
     for (const ch of 'hello') app.handleInput(ch);
+    expect(app.handleInput('\x1b')).toEqual(CONSUMED);
+    expect(app.handleInput('\x1b')).toEqual(CONSUMED);
     expect(app.editor.getText()).toBe('hello');
-    // The first Esc clears the draft — one press must never throw away a
-    // composed prompt — and the session stays.
-    expect(app.handleInput('\x1b')).toEqual({
-      quit: false,
-      consumed: true,
-      cancel: false,
-    });
-    expect(app.editor.getText()).toBe('');
-    // Only a second Esc, on the now-empty draft, quits.
-    expect(app.handleInput('\x1b')).toEqual({
-      quit: true,
-      consumed: true,
-      cancel: false,
-    });
   });
 
-  it('clears a composed draft on idle Ctrl-C before quitting (issue #302)', () => {
+  it('clears a composed draft on idle Ctrl-C before arming (issue #302)', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
@@ -194,12 +227,11 @@ describe('tui app root (issue #75)', () => {
       approvalsSkipped: false,
     });
     for (const ch of 'hi') app.handleInput(ch);
-    expect(app.handleInput('\x03')).toEqual({
-      quit: false,
-      consumed: true,
-      cancel: false,
-    });
+    expect(app.handleInput('\x03')).toEqual(CONSUMED);
     expect(app.editor.getText()).toBe('');
+    expect(app.render(100).join('\n')).toContain('^C: draft cleared');
+    // The empty editor now arms; only the press after that quits.
+    expect(app.handleInput('\x03')).toEqual(CONSUMED);
     expect(app.handleInput('\x03')).toEqual({
       quit: true,
       consumed: true,
@@ -207,7 +239,7 @@ describe('tui app root (issue #75)', () => {
     });
   });
 
-  it('routes Esc through the cancel-first path while a turn runs (issue #302)', () => {
+  it('interrupts a running turn on Esc without quitting (issue #454)', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
@@ -216,12 +248,55 @@ describe('tui app root (issue #75)', () => {
     });
     app.setBusy(true);
     for (const ch of 'queued thought') app.handleInput(ch);
-    // Busy: Esc is a cancel, exactly like Ctrl-C — the root aborts the turn
-    // and keeps the session, so the draft is NOT silently dropped either.
+    // Busy: Esc is an interrupt — the root aborts the turn and keeps the
+    // session; the draft stays for the next turn.
     expect(app.handleInput('\x1b')).toEqual({
+      quit: false,
+      consumed: true,
+      cancel: true,
+      interrupt: true,
+    });
+    expect(app.editor.getText()).toBe('queued thought');
+    // Ctrl-C during a turn keeps its cancel-then-quit classification.
+    expect(app.handleInput('\x03')).toEqual({
       quit: true,
       consumed: true,
       cancel: true,
+    });
+  });
+
+  it('closes the editor dropdown on Esc before anything else (issue #454)', () => {
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+    const showing = vi
+      .spyOn(app.editor, 'isShowingAutocomplete')
+      .mockReturnValue(true);
+    const forwarded = vi.spyOn(app.editor, 'handleInput');
+    app.setBusy(true);
+    expect(app.handleInput('\x1b')).toEqual(CONSUMED);
+    expect(forwarded).toHaveBeenCalledWith('\x1b');
+    showing.mockRestore();
+  });
+
+  it('still quits through an operator-bound app.exit key', () => {
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+      keys: createKeyRegistry({ 'app.exit': ['ctrl+q'] }),
+    });
+    for (const ch of 'draft') app.handleInput(ch);
+    expect(app.handleInput('\x11')).toEqual(CONSUMED);
+    expect(app.editor.getText()).toBe('');
+    expect(app.handleInput('\x11')).toEqual({
+      quit: true,
+      consumed: true,
+      cancel: false,
     });
   });
 
@@ -250,6 +325,7 @@ describe('tui app root (issue #75)', () => {
       approvalsSkipped: false,
     });
     app.applyPresentation(presentation());
+    app.handleInput('\x14');
     expect(app.render(100).join('\n')).toContain('● solo');
     app.setUsage([
       {
@@ -271,7 +347,7 @@ describe('tui app root (issue #75)', () => {
         },
       },
     ]);
-    expect(app.render(100).join('\n')).toContain('$0.02');
+    expect(app.render(100).join('\n')).toContain('$0.020');
   });
 
   it('renders the context gauge from the seed and follows setContextLimits (#347)', () => {
@@ -305,10 +381,10 @@ describe('tui app root (issue #75)', () => {
         },
       },
     ]);
-    expect(app.render(120).join('\n')).toContain('ctx 42%');
+    expect(app.render(120).join('\n')).toContain('42% of 1k');
     // A switch to a model with a wider window moves the gauge.
     app.setContextLimits({ contextWindow: 4000, compactionThreshold: 3000 });
-    expect(app.render(120).join('\n')).toContain('ctx 11%');
+    expect(app.render(120).join('\n')).toContain('11% of 4k');
     // A model whose window is unknown clears it: no made-up percentage.
     app.setContextLimits({});
     expect(app.render(120).join('\n')).not.toContain('ctx ');
@@ -334,11 +410,12 @@ describe('tui app root (issue #75)', () => {
     ]);
     const doc = app.finalDocument(100).join('\n');
     expect(doc).toContain('final words');
-    expect(doc).toContain(`session ${SESSION}`);
-    expect(doc.indexOf('final words')).toBeLessThan(
-      doc.indexOf(`session ${SESSION}`),
+    // Issue #453: the header above the transcript, the status line below.
+    expect(doc.indexOf(`session ${SESSION}`)).toBeLessThan(
+      doc.indexOf('final words'),
     );
-    expect(doc).toContain('approvals:on');
+    expect(doc.indexOf('final words')).toBeLessThan(doc.indexOf(' ready '));
+    expect(doc).toContain('[SOLO] approvals on');
   });
 });
 
@@ -512,7 +589,7 @@ describe('queued follow-ups and steers while a turn runs (issue #334)', () => {
     expect(submitted).toEqual(['also run the tests']);
     // A queued prompt is NOT echoed as a pending turn: the queued row is the
     // feedback (the lane's inbox drives it).
-    expect(ui.render(100).join('\n')).not.toContain('› also run the tests');
+    expect(ui.render(100).join('\n')).not.toContain('▌ also run the tests');
     ui.applyPresentation(presentation({ queued: ['also run the tests'] }));
     const doc = ui.render(100).join('\n');
     expect(doc).toContain('queued: also run the tests');
@@ -526,14 +603,18 @@ describe('queued follow-ups and steers while a turn runs (issue #334)', () => {
     ui.onSubmit(() => 'accepted');
     for (const ch of 'first') ui.handleInput(ch);
     ui.handleInput('\r');
-    expect(ui.render(100).join('\n')).toContain('› first');
+    expect(ui.render(100).join('\n')).toContain('▌ first');
     const refused = app();
     refused.setEditorFooter('error: an orchestrator run is in flight');
     refused.onSubmit(() => 'refused');
     for (const ch of 'dropped') refused.handleInput(ch);
     refused.handleInput('\r');
     const doc = refused.render(100).join('\n');
-    expect(doc).not.toContain('› dropped');
+    // No pending echo in the transcript (the editor's own `›` caret shows the
+    // restored draft below).
+    expect(refused.transcript.render(100).join('\n')).not.toContain(
+      '▌ dropped',
+    );
     expect(doc).toContain('error: an orchestrator run is in flight');
     // Issue #334 (review): a refused prompt never eats the draft — Pi's
     // editor cleared it before onSubmit fired, so it is put back.
@@ -565,7 +646,7 @@ describe('queued follow-ups and steers while a turn runs (issue #334)', () => {
     ui.setPendingEcho('queued prompt');
     const doc = ui.render(100).join('\n');
     expect(doc).not.toContain('queued: queued prompt');
-    expect(doc).toContain('› queued prompt');
+    expect(doc).toContain('▌ queued prompt');
   });
 
   it('Alt+Enter hands the draft to the loop as a steer and clears it', () => {
@@ -616,7 +697,7 @@ describe('lane snapshot feed (issue #88)', () => {
       },
     ]);
     const doc = app.render(100).join('\n');
-    expect(doc).toContain('› fix it');
+    expect(doc).toContain('▌ fix it');
     expect(doc).toContain('done and dusted');
   });
 
@@ -656,23 +737,16 @@ describe('lane snapshot feed (issue #88)', () => {
     expect(app.status.getState().model).toBe(MODEL);
     expect(app.status.getState().thinking).toBe('high');
     const before = app.render(100).join('\n');
-    expect(before).toContain(MODEL);
-    expect(before).toContain(`model ${MODEL}`);
-    expect(
-      before.split('\n').some((l) => l.includes('solo') && l.includes(MODEL)),
-    ).toBe(true);
+    expect(before).toContain(`provider     ${MODEL}`);
+    expect(app.status.render(100).join('\n')).toContain(`${MODEL} · high`);
 
     app.setModel('alt/m1', 'medium');
 
     expect(app.status.getState().model).toBe('alt/m1');
     expect(app.status.getState().thinking).toBe('medium');
     const doc = app.render(100).join('\n');
-    expect(doc).toContain('alt/m1');
-    expect(doc).toContain('model alt/m1');
-    expect(
-      doc.split('\n').some((l) => l.includes('solo') && l.includes('alt/m1')),
-    ).toBe(true);
-    expect(app.status.render(100).join('\n')).toContain('alt/m1');
+    expect(doc).toContain('provider     alt/m1');
+    expect(app.status.render(100).join('\n')).toContain('alt/m1 · medium');
     expect(doc).not.toContain(MODEL);
   });
 
@@ -765,10 +839,12 @@ describe('model picker and thinking cycle (issue #328)', () => {
     ).toBe(true);
     expect(ui.isModelPickerOpen()).toBe(true);
     const frame = seat.shown[0]?.render(80).join('\n') ?? '';
-    // The live model is marked and the note renders as its description.
-    expect(frame).toContain('faux/big (current)');
-    expect(frame).toContain('alt/m1');
-    expect(frame).toContain('models.json');
+    // Issue #461: one group per provider, the live model marked, a
+    // provider's origin in its header.
+    expect(frame).toContain('┌─ Model');
+    expect(frame).toContain('● big  current');
+    expect(frame).toContain('ALT  ● models.json');
+    expect(frame).toContain('m1');
     // The picker is modal: arrows move it and Enter selects the second row.
     ui.handleInput('\u001b[B');
     ui.handleInput('\r');
@@ -1066,9 +1142,11 @@ describe('app-level wiring that no test executed (issue #320)', () => {
     const before = seatState.renders;
     const pending = ui.requestApproval(REQUEST);
     // The ask itself asks for a frame: an async lane turn must not wait for
-    // the next keypress to show its dialog.
+    // the next keypress to show its card (issue #459: in the editor slot,
+    // no overlay).
     expect(seatState.renders).toBeGreaterThan(before);
-    expect(seatState.shown).toHaveLength(1);
+    expect(seatState.shown).toHaveLength(0);
+    expect(ui.render(120).join('\n')).toContain('[APPROVAL] ━ bash');
     expect(ui.hasPendingApproval()).toBe(true);
     surface.decide('d');
     await pending;
@@ -1087,8 +1165,9 @@ describe('app-level wiring that no test executed (issue #320)', () => {
     const pending = ui.requestApproval(REQUEST);
     const seatState = seat();
     ui.attachApprovalOverlay(seatState.host);
-    // Attaching syncs the overlay to the surface's pending request.
-    expect(seatState.shown).toHaveLength(1);
+    // Attaching repaints: the card of the pending request is on screen.
+    expect(seatState.renders).toBeGreaterThan(0);
+    expect(ui.render(120).join('\n')).toContain('$ rm -rf build');
     expect(ui.hasPendingApproval()).toBe(true);
     surface.decide('d');
     await pending;
@@ -1106,12 +1185,12 @@ describe('app-level wiring that no test executed (issue #320)', () => {
     for (const ch of 'zzz echo me') ui.handleInput(ch);
     ui.handleInput('\r');
     // The prompt is echoed while the lane works (#88).
-    expect(ui.render(100).join('\n')).toContain('› zzz echo me');
+    expect(ui.render(100).join('\n')).toContain('▌ zzz echo me');
     // The turn ends without committing the entry (an abort, or a settle with
     // no commit): the echo must not outlive the turn it belongs to.
     ui.setBusy(false);
     const doc = ui.render(100).join('\n');
-    expect(doc).not.toContain('› zzz echo me');
+    expect(doc).not.toContain('▌ zzz echo me');
     expect(doc).not.toContain('zzz echo me');
   });
 
@@ -1156,8 +1235,8 @@ describe('keybinding overrides in the app (issue #303)', () => {
 
   it('the key hints name the rebound key', () => {
     const frame = rebound().render(160).join('\n');
-    expect(frame).toContain('ctrl+g diff');
-    expect(frame).not.toContain('ctrl+o diff');
+    expect(frame).toContain('^G diff');
+    expect(frame).not.toContain('^O diff');
   });
 });
 
@@ -1183,14 +1262,14 @@ describe('lane activity on the footer (issue #150)', () => {
     expect(footer(ui)).toContain('⟳ retrying · attempt 2 — server overloaded');
     ui.applyPresentation(presentation());
     expect(footer(ui)).toBe('');
-    expect(ui.render(100).join('\n')).toContain('enter send');
+    expect(ui.render(100).join('\n')).toContain('⏎ send');
   });
 
   it('renders the compaction indicator (headless snapshot)', () => {
     const ui = app();
     ui.applyPresentation(presentation({ compacting: true }));
     expect(footer(ui).trimEnd()).toMatchInlineSnapshot(
-      `"⟳ compacting context…"`,
+      `" ⟳ compacting context…"`,
     );
   });
 });

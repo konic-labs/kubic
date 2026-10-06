@@ -16,6 +16,7 @@
 //     stdio prompt. The deps are built lazily: a session that never toggles
 //     into orchestrator mode pays nothing.
 
+import type { WorkerToolActivity } from '../../../packages/core/src/presentation.js';
 import type {
   ApprovalRequest,
   ApprovalVerdict,
@@ -33,10 +34,15 @@ import type {
   WorkerAskSeat,
   WorkerQuestionSeat,
 } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
+import { diffStatOfHunks } from '../../../packages/host/src/orchestrator/diff-stat.js';
 import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import type { EffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
-import type { WorkerProjectionEvent } from '../../../packages/host/src/presentation/projector.js';
+import type { OrchestratorProjectionEvent } from '../../../packages/host/src/presentation/projector.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
+import {
+  batchFacts,
+  type FactBatchOptions,
+} from '../../../packages/worker/src/lifecycle/facts.js';
 import {
   type OrchestrateRunOptions,
   orchestrateDepsWithDefaults,
@@ -217,23 +223,53 @@ export function createProdTuiOrchestrator(
   const now = options.now ?? Date.now;
   let lastStamp = 0;
   // Issue #342: the orchestrator view's feed — one listener, registered by
-  // the TUI loop; every turn's workers report through it.
-  let onWorker: ((event: WorkerProjectionEvent) => void) | undefined;
+  // the TUI loop; every turn's workers (and, #464, its phases) report
+  // through it.
+  let onWorker: ((event: OrchestratorProjectionEvent) => void) | undefined;
+  const feed = (event: OrchestratorProjectionEvent): void => {
+    onWorker?.(event);
+  };
+  // Issue #464: a worker waiting on the operator shows it on its row.
+  const seat =
+    options.seat === undefined ? undefined : observeAsks(options.seat, feed);
   // Issue #154: the late-bound question seat (the app's dialog).
   let questionSeat: WorkerQuestionSeat | undefined;
   const nextSessionId = (): string => {
     lastStamp = Math.max(now(), lastStamp + 1);
     return `${options.sessionId}-o${lastStamp.toString(36)}`;
   };
+  // Issue #465: the last run's session (what `r` resumes) and the deps of
+  // the run in flight (whose lifecycle `x` stops a worker through).
+  let lastSession: string | undefined;
+  let liveDeps: OrchestrateCommandDeps | undefined;
   return {
     watchWorkers(listener) {
       onWorker = listener;
     },
+    stopWorker(workerId) {
+      const cancel = liveDeps?.cancelWorker;
+      if (cancel === undefined) return false;
+      void Promise.resolve(cancel(workerId)).catch(() => undefined);
+      return true;
+    },
+    // Issue #466: a worker of the template plan has no inbox — only the
+    // model-driven manager lane can send one a follow-up (`send_to_agent`),
+    // and interactive runs stay on the template plan (L-D34).
+    messageWorker(workerId) {
+      return {
+        sent: false,
+        footer: `message: ${workerId} cannot take messages — interactive runs use the template plan, which has no worker inbox (^N dispatches a new worker)`,
+      };
+    },
     setQuestionSeat(seat) {
       questionSeat = seat;
     },
-    async run(objective, onReport): Promise<TuiTurnOutcome> {
+    async run(objective, onReport, runOptions): Promise<TuiTurnOutcome> {
       sink = onReport ?? options.out;
+      const resume = runOptions?.resume === true;
+      if (resume && lastSession === undefined) {
+        return { status: 'failed', detail: 'there is no run to retry' };
+      }
       try {
         // The model the workers inherit: the frozen enterprise pin when one
         // is in force, else the lane's current model (issue #202) — read per
@@ -244,16 +280,17 @@ export function createProdTuiOrchestrator(
           out: report,
           err: options.err ?? report,
           debug: options.debug ?? report,
-          ...(options.seat === undefined
-            ? {}
-            : { approvalsSeat: options.seat }),
+          ...(seat === undefined ? {} : { approvalsSeat: seat }),
           // Issue #154: worker questions reach the TUI dialog; with no seat
           // bound yet they go unanswered (the worker's bound names them).
           questionSeat: (question, signal) =>
             questionSeat === undefined
               ? Promise.resolve(undefined)
               : questionSeat(question, signal),
-          mergeApproval: options.mergeSeat ?? denyMergeClosed,
+          mergeApproval: observeMergeAsks(
+            options.mergeSeat ?? denyMergeClosed,
+            feed,
+          ),
           // No `--yes` in the TUI: a merge refusal must not name it.
           yesHint: false,
           ...(options.projectTrust === undefined
@@ -296,10 +333,29 @@ export function createProdTuiOrchestrator(
             ? {}
             : { sessionsRoot: options.sessionsRoot }),
         });
-        const code = await runCommand(
-          { prompt: objective, session: nextSessionId() },
-          observeWorkers(deps, (event) => onWorker?.(event)),
-        );
+        // Issue #465: a retry resumes the last run's session (its failed
+        // workers run again); anything else is a new run.
+        const session =
+          resume && lastSession !== undefined ? lastSession : nextSessionId();
+        lastSession = session;
+        liveDeps = deps;
+        let code: number;
+        try {
+          code = await runCommand(
+            resume
+              ? { resume: true, session }
+              : {
+                  prompt: objective,
+                  session,
+                  ...(runOptions?.agents === undefined
+                    ? {}
+                    : { agents: [...runOptions.agents] }),
+                },
+            observeWorkers(deps, feed),
+          );
+        } finally {
+          liveDeps = undefined;
+        }
         return code === 0
           ? { status: 'completed' }
           : {
@@ -320,14 +376,39 @@ export function createProdTuiOrchestrator(
 // start (role, worktree, model, generation — a replacement of the same agent
 // is the next generation) and its end (the result's status and spend), the
 // facts the orchestrator view renders. The run itself is untouched.
+// Issue #464 adds the dashboard's facts: the worker's task, its live tool
+// calls (batched — at most one update per interval per worker, the batch
+// flushed before the end), its change summary, and the run's phases.
 export function observeWorkers(
   deps: OrchestrateCommandDeps,
-  emit: (event: WorkerProjectionEvent) => void,
+  emit: (event: OrchestratorProjectionEvent) => void,
+  options: {
+    readonly batch?: FactBatchOptions;
+    readonly now?: () => number;
+  } = {},
 ): OrchestrateCommandDeps {
   const generations = new Map<string, number>();
   const runWorker = deps.runWorker;
+  const now = options.now ?? Date.now;
   return {
     ...deps,
+    onPhase: (event) => {
+      deps.onPhase?.(event);
+      emit({ type: 'run-phase', ...event });
+    },
+    // Issue #465: the planned workers show as queued until they launch.
+    onPlanned: (workers) => {
+      deps.onPlanned?.(workers);
+      for (const worker of workers) {
+        emit({
+          type: 'worker-update',
+          workerId: worker.agentId,
+          status: 'queued',
+          ...(worker.role === undefined ? {} : { role: worker.role }),
+          ...(worker.task === undefined ? {} : { task: worker.task }),
+        });
+      }
+    },
     runWorker: async (agentId, worktree, prompt, info) => {
       const generation = (generations.get(agentId) ?? 0) + 1;
       generations.set(agentId, generation);
@@ -339,14 +420,39 @@ export function observeWorkers(
         workspace: worktree.path,
         ...(info?.role === undefined ? {} : { role: info.role }),
         ...(info?.modelRef === undefined ? {} : { model: info.modelRef }),
+        ...(info?.task === undefined ? {} : { task: info.task }),
+        startedAt: now(),
       });
+      const batch = batchFacts(
+        (facts) => emit({ type: 'worker-update', workerId: agentId, facts }),
+        options.batch,
+      );
+      const observed =
+        info === undefined
+          ? undefined
+          : {
+              ...info,
+              onActivity: (fact: WorkerToolActivity) => {
+                info.onActivity?.(fact);
+                batch.push(fact);
+              },
+            };
       try {
-        const output = await runWorker(agentId, worktree, prompt, info);
-        const result = Array.isArray(output) ? undefined : output.result;
+        const output = await runWorker(agentId, worktree, prompt, observed);
+        batch.flush();
+        const run = Array.isArray(output) ? { hunks: output } : output;
+        const result = run.result;
+        const summary = firstLine(result?.summary);
+        const failure =
+          result === undefined || result.status === 'completed'
+            ? undefined
+            : firstLine(result.error?.message);
         emit({
           type: 'worker-update',
           workerId: agentId,
           status: result?.status ?? 'completed',
+          ...(summary === undefined ? {} : { summary }),
+          ...(failure === undefined ? {} : { failure }),
           ...(result === undefined
             ? {}
             : {
@@ -356,12 +462,81 @@ export function observeWorkers(
                   ? {}
                   : { costUsd: result.metrics.costUsd }),
               }),
+          diffStat: diffStatOfHunks(run.hunks),
+          endedAt: now(),
         });
         return output;
       } catch (error) {
-        emit({ type: 'worker-update', workerId: agentId, status: 'failed' });
+        batch.flush();
+        const failure = firstLine(
+          error instanceof Error ? error.message : String(error),
+        );
+        emit({
+          type: 'worker-update',
+          workerId: agentId,
+          status: 'failed',
+          endedAt: now(),
+          ...(failure === undefined ? {} : { failure }),
+        });
         throw error;
       }
     },
+  };
+}
+
+// Issue #466: one line of a worker's own text for the preview, bounded.
+function firstLine(text: string | undefined): string | undefined {
+  const line = text
+    ?.split('\n')
+    .map((row) => row.trim())
+    .find((row) => row !== '');
+  if (line === undefined) return undefined;
+  return line.length <= 200 ? line : `${line.slice(0, 199)}…`;
+}
+
+// Issue #464 (docs/ui 04-C): a worker's approval ask marks its row as
+// waiting on the operator until the ask settles, however it settles.
+export function observeAsks(
+  seat: WorkerAskSeat,
+  emit: (event: OrchestratorProjectionEvent) => void,
+): WorkerAskSeat {
+  return async (request, signal) => {
+    emit({
+      type: 'worker-update',
+      workerId: request.agentId,
+      awaiting: { approvalKey: request.key, summary: request.summary },
+    });
+    try {
+      return await seat(request, signal);
+    } finally {
+      emit({
+        type: 'worker-update',
+        workerId: request.agentId,
+        awaiting: null,
+      });
+    }
+  };
+}
+
+// The merge gate's ask waits on the operator too (the worker's branch is
+// ready to land).
+export function observeMergeAsks(
+  seat: NonNullable<OrchestrateRunOptions['mergeApproval']>,
+  emit: (event: OrchestratorProjectionEvent) => void,
+): NonNullable<OrchestrateRunOptions['mergeApproval']> {
+  return async (input) => {
+    emit({
+      type: 'worker-update',
+      workerId: input.agentId,
+      awaiting: {
+        approvalKey: `merge:${input.branch}`,
+        summary: 'approve merge into your branch',
+      },
+    });
+    try {
+      return await seat(input);
+    } finally {
+      emit({ type: 'worker-update', workerId: input.agentId, awaiting: null });
+    }
   };
 }

@@ -11,7 +11,6 @@ import {
   APPROVAL_QUIET_MS,
   APPROVAL_REPEAT_MS,
   type ApprovalViewRequest,
-  renderApprovalLines,
 } from './approval-view.js';
 import { createTuiApp } from './tui-app.js';
 
@@ -135,7 +134,8 @@ describe('allow-session needs a key prose cannot produce (issue #315)', () => {
       String.fromCharCode(32 + i),
     );
     for (const ch of printable) {
-      if (ch === 'a' || ch === 'd') continue; // allow-once / deny
+      // allow-once / deny / the comment input (#467 — it answers nothing).
+      if (ch === 'a' || ch === 'd' || ch === 'c') continue;
       expect(surface.decide(ch)).toBe(false);
     }
     expect(surface.isShowing()).toBe(true);
@@ -196,19 +196,7 @@ describe('the overlay captures input (issue #315)', () => {
     expect(app.editor.getText()).toBe('add x');
   });
 
-  it('renders dimmed hints before arming and the live keys after', () => {
-    const before = renderApprovalLines(REQUEST, 72, { armed: false });
-    const after = renderApprovalLines(REQUEST, 72, { armed: true });
-    expect(before.at(-1)).toMatchInlineSnapshot(
-      `"… keys unlock in a moment · [Esc] deny now"`,
-    );
-    expect(after.at(-1)).toMatchInlineSnapshot(
-      `"[a] allow once   [Ctrl-S] allow session   [d]/[Esc] deny"`,
-    );
-    expect(before.slice(0, -1)).toEqual(after.slice(0, -1));
-  });
-
-  it('the overlay view follows the surface arming state', () => {
+  it('the card follows the surface arming state (issue #459)', () => {
     const time = clock();
     const surface = createApprovalSurface({
       now: time.now,
@@ -221,17 +209,10 @@ describe('the overlay captures input (issue #315)', () => {
       approvalsSkipped: false,
       approvalSurface: surface,
     });
-    const shown: Array<{ render: (w: number) => string[] }> = [];
-    app.attachApprovalOverlay({
-      showOverlay: (component) => {
-        shown.push(component as { render: (w: number) => string[] });
-        return { unfocus: () => {}, hide: () => {} };
-      },
-    });
     void app.requestApproval(REQUEST);
-    expect(shown[0]?.render(80).join('\n')).toContain('keys unlock');
+    expect(app.render(100).join('\n')).toContain('keys unlock');
     time.advance(APPROVAL_ARMING_MS);
-    expect(shown[0]?.render(80).join('\n')).toContain('[a] allow once');
+    expect(app.render(100).join('\n')).toContain('a  allow once');
     surface.cancelPending();
   });
 });

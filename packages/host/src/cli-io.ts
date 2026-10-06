@@ -20,7 +20,7 @@ export interface CliIo {
   // Diagnostics (`error: …`, `warn: …`); stderr in production.
   readonly logger?: Diagnostics;
   readonly theme?: CliTheme;
-  // Box-drawn tables (an interactive, coloured stdout).
+  // Kit tables (an interactive, coloured stdout).
   readonly fancy?: boolean;
 }
 

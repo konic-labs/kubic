@@ -23,7 +23,8 @@ every diff touching the boundary for maintainer review.
 | `lane/solo.ts` | `SOLO_LANE_NAME` (`'main'`), `SOLO_PROMPT_SECTION`, `SOLO_ROLE`, `assembleSoloPrompt`, `SoloPromptInput`, `defaultSoloModelId`, `SoloPolicyOptions` (`beforePolicyHooks`/`spanHooks`/`contributions`/`classes`/`interceptors`; enterprise `toolAllowed`/`modelAllowed`), `SoloCompactionOptions`, `SoloBootOptions` (`session` is the #392 handle, handed to the harness through `session.adopt()` so a `release()` cannot close a storage a live harness owns; `settings` excludes `compaction`/`extensions`, which the lane owns; the pre-1.0 `memos` option is gone — tool memos are pi-durable `api.memo`; `modelPolicy`/`onModelNotice`: a resumed lane keeps its stored model unless the selection is an explicit pin, which switches it; an unregistered stored model fails closed with `ModelSelectError` — #148), `SoloLane` (`harness`/`conversation`/`registry`/`kills`/`model`; `close()` closes the harness and leaves `session.release()` to the caller), `bootSoloLane` (installs the per-process registry `kubic.budget` → `kubic.policy` → `kubic.spans` → `kubic` — install order is hook order, #397/#394), `splitSoloModelId`, `escalateSoloModel`. One turn is `conversation.submit(...)` → `submission.wait(...)`; the pre-1.0 `driveToSettled`/`DriveOutcome` loop was deleted with #395, and `lane/turn.ts` owns the glue |
 | `lane/events.ts` | `KubicLaneEvent`, `LaneEventSink`, `KubicLaneTool`, `KubicLaneCompaction`, `toKubicLaneEvent`, `subscribeLaneEvents` |
 | `lane/failures.ts` | `FailureCode`, `FAILURE_CODES`, `RetryStrategy`, `RETRY_STRATEGIES`, `RetryDecisionKind`, `ClassifiedFailure`, `classifyFailure`, `RetryHints`, `RetryDecision`, `RetryBudget`, `chooseRetry` |
-| `lane/tools-adapter.ts` | `KubicToolContext`, `kubicToolsToPiTools` (registry schemas + json_schema/`prefer` constrained sampling — #168), `renderToolText`, `renderReadText`, `renderGrepText`, `renderBashText` (plain-text results with a header; [tools](../cli/tools.md)) |
+| `lane/tools-adapter.ts` | `KubicToolContext`, `kubicToolsToPiTools` (registry schemas + json_schema/`prefer` constrained sampling — #168), `renderToolText`, `renderReadText`, `renderGrepText`, `renderBashText` (plain-text results with a header; [tools](../cli/tools.md)). A successful `edit` or `write` also puts its display record in the result `details` (issue #456) — never in the model's text |
+| `ops/display-diff.ts` | `displayDiff(before, after)` (Pi's display form: `+n` / `-n` / ` n` rows, 3 lines of context, `...` gaps, bounded LCS, 400 rows) and `writeDisplay(content)`; the ops report them through `OpContext.display` (issue #456) |
 | `lane/interceptors.ts` | `PolicyTrigger`, `PolicyInterceptorOptions`, `ApprovalCall`, `ApprovalAskVerdict`, `defaultIsDestructive`, `isNetworkCommand`, `confinePath`, `redactReason`, `redactSecrets` (broad redactor for summaries/block reasons: inline credential rules + the shared `@kubic/core` shape table, #192), `policyInterceptorHooks` (ordered pi-durable `ToolTask.beforeTool` registrations, #397; one call per boot — the attempt counter and the exact-call stand-down set (call id + args hash, spent after the call, #194) live in that call, never across boots; first block wins, a throw blocks) |
 | `lane/policy.ts` | `PermissionClasses` (re-export), `PolicyRefusedError` |
 | `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `KubicSessionMeta`, `KubicSessionDoc`, `SessionHandle`, `SessionListEntry`, `createSession`, `attachSession`, `listSessions`, `readSessionMetadata`, `forkSession` / `ForkSessionOptions` / `ForkSessionResult` / `SessionForkError` (issue #265: a new session forked from an existing one), `laneConversationIdOf` (the conversation a session's lane runs — a fork's recorded `KubicSessionMeta.conversation`, else the reserved root; every transcript reader resolves it), `SessionAttachError`, `SessionFormatError`, `SessionIdError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionLockIsLive`, `sessionsTouchingWorkspace` — session storage on pi-durable ([session storage](#session-storage-issue-392)) |
@@ -688,6 +689,28 @@ the same generation `kubic workers` shows (issue #383). Registry rows persist to
 `<repo>/.kubic/orchestrator/workers.json` (§35 keeps that out of git) and
 `kubic workers` reads them back — one shared record, never a fresh empty
 registry.
+
+### Live tool facts (issue #464: `facts.ts`)
+
+A worker reports its tool calls on the same stdout as the readiness marker
+and the final `--json` report: one `KUBIC_WORKER_FACT <json>` line per tool
+start and end (`apps/kubic/src/worker-facts.ts` writes them when
+`KUBIC_WORKER_ID` is set; an ordinary `kubic run` prints none). A fact
+carries the call id, the tool, the one-line argument summary the progress
+lines print, the state (`running`, `done`, `error`), an outcome (`+3 −1`,
+`exit 1`, `new file, 2 lines`) and, for an edit or write, the display diff
+(at most 20 KB) — every text through the worker's secret redactor
+(`redactSecrets`, the one approval summaries use), never the raw arguments.
+
+`spawnWorker`'s `onFact` follows the stream for the whole run: only complete
+lines past the last one read, located through the snapshot's `dropped`
+count, so output past the 10 MiB stream cap is followed without missing or
+repeating a line. Each line parses closed world (an unknown key, a wrong type
+or an over-bound field refuses the line), and the stdout the run reads its
+report and diagnostics from has the fact lines taken out. `batchFacts`
+bounds the rate: the first fact after a quiet interval goes out at once, the
+rest leave together at most once per 100 ms per worker, and the batch is
+flushed when the worker ends.
 
 Failure taxonomy on that path: a worker that never becomes ready is
 terminal `SPAWN_FAILED` and the run reports the §78 code `spawn_failed`

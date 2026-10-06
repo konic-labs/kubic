@@ -1,7 +1,7 @@
 // Exact-pin check (issue #4, design §65; extended to the CLI stack).
 // Every dependency spec in every workspace package.json must be an exact
 // version — no ^, ~, or ranges — so Pi upgrades AND third-party upgrades
-// (commander, chalk, consola, cli-table3, @clack/prompts, dev tooling) are
+// (commander, consola, @clack/prompts, dev tooling) are
 // always deliberate. `overrides` entries stay Pi-only (they may pin nested
 // transitive versions by design).
 

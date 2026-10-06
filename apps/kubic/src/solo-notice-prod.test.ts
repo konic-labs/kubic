@@ -3,7 +3,9 @@
 // wired, so `kubic run` and `kubic tui` never told the operator the trust
 // model. This file proves the notice reaches the operator ON THE COMPOSITION
 // PATH (apps/kubic), not just inside the strings module: stderr for `run`
-// before the first turn, the editor footer for `tui` from the first render.
+// before the first turn, the welcome block for `tui` from the first render
+// (issue #453 retired the permanent footer: the header's SOLO badge stays on
+// every frame and `/safety` prints the full text).
 // Faux lane only — zero network, zero paid tokens.
 import {
   mkdtempSync,
@@ -19,10 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../packages/exec/src/journal.js';
-import {
-  FAUX_FOOTER,
-  FAUX_MODEL_REF,
-} from '../../../packages/host/src/faux-provider.js';
+import { FAUX_MODEL_REF } from '../../../packages/host/src/faux-provider.js';
 import {
   SOLO_NOTICE_OPT_OUT_ENV,
   SOLO_NOTICE_WORKER_ENV,
@@ -356,13 +355,14 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     const frame = fake.writes.join('');
     expect(frame).toContain(soloTuiLine());
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     // The restored main screen renders the same live root, so the operator
     // reads the same line after quitting as in the alt-screen.
     expect(lines.join('\n')).toContain(soloTuiLine());
   });
 
-  it('names the faux testing provider in the footer while it answers', async () => {
+  it('names the faux testing provider in the welcome block while it answers', async () => {
     const fake = fakeTerminal(300);
     const pending = runTuiCommand(
       {},
@@ -375,13 +375,15 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     );
     await waitFor(() => fake.started() === 1);
     const frame = fake.writes.join('');
-    expect(frame).toContain(FAUX_FOOTER);
+    // Issue #462: the first screen's provider row says it.
+    expect(frame).toContain('faux/echo  testing provider, no model is called');
     expect(frame).toContain(soloTuiLine());
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
   });
 
-  it('keeps the line as the idle footer after a completed turn', async () => {
+  it('keeps the SOLO badge after a turn and prints the full notice on /safety', async () => {
     const root = tmpRoot('solo-notice-tui-');
     const lines: string[] = [];
     const fake = fakeTerminal(200);
@@ -398,18 +400,32 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     for (const ch of 'say done') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('all done, boss'));
-    // The footer must be back to the trust statement AFTER the turn settled,
-    // not merely still present from the startup frame: drop every frame that
-    // preceded the assistant text (the startup render is among them) and
-    // assert on what remains. Without this slicing the assertion could pass
-    // off the pre-turn frame alone, which is how a footer regression would
-    // hide behind it.
-    const frames = fake.writes.join('');
-    const afterTurn = frames.slice(frames.lastIndexOf('all done, boss'));
-    expect(afterTurn).toContain(soloTuiLine());
+    // Issue #453: the notice is reachable AFTER the turn settled, not merely
+    // left over from the startup frame — `/safety` prints the full text from
+    // the limits module (read from what was written after the ask).
+    const mark = fake.writes.length;
+    for (const ch of '/safety') fake.feed(ch);
+    fake.feed('\r');
+    const [first, second] = soloWarningLines().map((line) =>
+      line.replace(/^warning: /, ''),
+    );
+    await waitFor(() =>
+      fake.writes
+        .slice(mark)
+        .join('')
+        .includes(first ?? '\u0000'),
+    );
+    expect(fake.writes.slice(mark).join('')).toContain(
+      'there is no containment',
+    );
+    expect(second).toContain('there is no containment');
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
-    expect(lines.join('\n')).toContain(soloTuiLine());
+    // The final document keeps the badge; the first screen (and its
+    // isolation row) left with the first prompt (issue #462) — `/safety`
+    // above is how the line is reached after that.
+    expect(lines.join('\n')).toContain('[SOLO] approvals on');
   });
 
   it('stays silent for an orchestrator worker session', async () => {
@@ -429,6 +445,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
       },
     );
     await waitFor(() => fake.started() === 1);
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.writes.join('')).not.toContain('no isolation');
@@ -452,6 +469,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
       },
     );
     await waitFor(() => fake.started() === 1);
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.writes.join('')).not.toContain('no isolation');
@@ -536,14 +554,15 @@ describe('the notice is documented where the operator looks (issue #89)', () => 
     // #89's premise) — a doc claim outrunning the code. The sentence now
     // describes exactly what ships, and both surfaces it names are the ones
     // the prod tests above exercise: run = the three-line stderr block, tui =
-    // the one-line editor footer.
+    // the one-line welcome-block form, the header badge and `/safety`.
     expect(soloPage).toContain('announced, not buried');
     expect(soloPage).toMatch(
       /`kubic run` prints the three-line warning block on\s+stderr before the first turn/,
     );
     expect(soloPage).toMatch(
-      /`kubic tui` carries the one-line form in the\s+editor footer from the first render/,
+      /`kubic tui` shows the one-line form in the\s+welcome block from the first render/,
     );
+    expect(soloPage).toContain('prints the full text on `/safety`');
     expect(soloPage).toContain('per process start, not per\nsession');
     expect(soloPage).toContain(SOLO_NOTICE_WORKER_ENV);
     expect(soloPage).toContain(`${SOLO_NOTICE_OPT_OUT_ENV}=1`);

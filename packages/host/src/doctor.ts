@@ -29,6 +29,7 @@ import {
 } from './approvals.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 import type { FullAccessSession } from './doctor-full-access.js';
+import { renderDoctorGrouped } from './doctor-render.js';
 // Issue #58 honest limits (§59.1, §78): registration import only — no
 // existing check builder in this file was modified for #58. Exit codes
 // route through the limits mapper so provider-down exits 6.
@@ -100,6 +101,8 @@ export interface DepProbe {
 }
 
 export interface DoctorDeps extends CliIo {
+  // Issue #448: the terminal width the grouped summary packs into.
+  readonly columns?: number;
   probeProviders: () => ProviderProbe[];
   checkDeps: () => DepProbe[];
   loadPolicy: () => unknown;
@@ -964,6 +967,10 @@ function summarize(checks: DoctorCheck[]): string {
 export interface DoctorCommandOptions {
   readonly skip?: readonly string[];
   readonly json?: boolean;
+  // Issue #448: the full per-check report on an interactive terminal
+  // (the grouped summary is the default there). Piped output is always the
+  // full report.
+  readonly verbose?: boolean;
   // Issue #310: check one session — its installed posture reads that
   // session's posture.json, and the full-access enumeration covers
   // exactly it (workspace filter bypassed).
@@ -992,6 +999,15 @@ export async function runDoctorCommand(
     return exitCode;
   }
   const theme = themeOf(deps);
+  if (deps.fancy === true && options.verbose !== true) {
+    for (const line of renderDoctorGrouped(checks, theme, {
+      exitCode,
+      ...(deps.columns === undefined ? {} : { columns: deps.columns }),
+    })) {
+      deps.out(line);
+    }
+    return exitCode;
+  }
   const paint: Record<DoctorStatus, (text: string) => string> = {
     pass: theme.success,
     warn: theme.warning,

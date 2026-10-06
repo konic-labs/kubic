@@ -1,5 +1,6 @@
-// Slice A: §16.2 VStack root — tree / transcript / status / editor rows.
-// RED: buildLayoutRoot/renderLayout do not exist yet.
+// Slice A: §16.2 VStack root — tree / transcript / editor / status rows
+// (issue #453 put the editor above the status line and added the notice and
+// key-hint rows).
 //
 // No VirtualTerminal exists in Pi 0.85.1: headless snapshots render the
 // root VStack directly (Component.render is pure) and assert row counts,
@@ -24,17 +25,61 @@ function slots(): {
 }
 
 describe('tui layout root (issue #22, slice A)', () => {
-  it('orders tree / transcript / status / editor top to bottom', () => {
+  it('orders tree / transcript / editor / status top to bottom', () => {
     const s = slots();
     const root = buildLayoutRoot(s);
     const rows = renderLayout(root, 100);
     expect(rows.length).toBeGreaterThan(0);
     const doc = rows.join('\n');
-    const order = ['tree', 'body', 'status', 'editor'].map((m) =>
+    const order = ['tree', 'body', 'editor', 'status'].map((m) =>
       doc.indexOf(m),
     );
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it('puts the notice above the editor and the hints at the bottom (#453)', () => {
+    const rows = renderLayout(
+      buildLayoutRoot({
+        ...slots(),
+        header: new Text('head', 0, 0),
+        notice: new Text('notice', 0, 0),
+        hints: new Text('hints', 0, 0),
+      }),
+      100,
+    )
+      .map((row) => row.trim())
+      .filter((row) => row !== '');
+    expect(rows).toEqual([
+      'head',
+      'tree',
+      'body',
+      'notice',
+      'editor',
+      'status',
+      'hints',
+    ]);
+  });
+
+  it('gives an empty notice no row and hides a tree the caller turned off', () => {
+    const empty = { render: (): string[] => [], invalidate: (): void => {} };
+    const plain = (extra: object): string[] =>
+      renderLayout(
+        buildLayoutRoot({
+          tree: new Text('tree', 0, 0),
+          transcript: new Text('body', 0, 0),
+          status: new Text('status', 0, 0),
+          editor: new Text('editor', 0, 0),
+          ...extra,
+        }),
+        100,
+      );
+    expect(plain({ notice: empty })).toEqual(plain({}));
+    let open = false;
+    const toggled = (): string => plain({ treeVisible: () => open }).join('\n');
+    expect(toggled()).not.toContain('tree');
+    open = true;
+    expect(toggled()).toContain('tree');
   });
 
   it('collapses the tree below 80 columns without overflow', () => {

@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
+import { suggest } from '../../core/src/suggest.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { parseModelFlag, selectModel } from '../../worker/src/model-select.js';
 import {
@@ -31,6 +32,7 @@ import {
   fauxProviderActive,
   registerFauxProvider,
 } from './faux-provider.js';
+import { renderModelsCatalog } from './models-render.js';
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -149,6 +151,9 @@ export interface ModelsCommandDeps extends CliIo {
   // Origin + auth state per provider (from assembleModels). Without it every
   // registered provider is listed as-is.
   providers?: ReadonlyMap<string, ProviderInfo>;
+  // Issue #449: the configured model pin (`provider/id`), marked as the
+  // default in the terminal view. Absent: the selection chain's own pick.
+  defaultModel?: string;
 }
 
 // The parsed `kubic models` invocation (commander owns the argv:
@@ -156,6 +161,10 @@ export interface ModelsCommandDeps extends CliIo {
 export interface ModelsCommandOptions {
   readonly json?: boolean;
   readonly resolve?: string;
+  // Issue #449: list one provider in full (`kubic models <provider>`).
+  readonly provider?: string;
+  // Issue #449: include the providers without a configured key.
+  readonly all?: boolean;
 }
 
 // Pi's auth context over an explicit env (never the ambient one in tests):
@@ -501,6 +510,19 @@ export function providerProbesOf(assembled: AssembledModels): ProviderProbe[] {
     });
 }
 
+// The default the terminal view marks: the configured pin, else the model
+// the selection chain would pick with no pin (first usable provider).
+function defaultOf(deps: ModelsCommandDeps): { defaultModel?: string } {
+  if (deps.defaultModel !== undefined)
+    return { defaultModel: deps.defaultModel };
+  try {
+    const picked = selectModel(deps.models, undefined);
+    return { defaultModel: `${picked.provider}/${picked.id}` };
+  } catch {
+    return {};
+  }
+}
+
 export async function runModelsCommand(
   options: ModelsCommandOptions,
   deps: ModelsCommandDeps,
@@ -537,6 +559,7 @@ export async function runModelsCommand(
       models: deps.models.getModels(provider.id).map((m) => ({
         id: m.id,
         name: m.name,
+        contextWindow: m.contextWindow,
         thinking: getSupportedThinkingLevels(m),
         inputCost: m.cost.input,
         outputCost: m.cost.output,
@@ -546,13 +569,47 @@ export async function runModelsCommand(
       })),
     };
   });
+  if (
+    options.provider !== undefined &&
+    !catalog.some((provider) => provider.id === options.provider)
+  ) {
+    const ids = catalog.map((provider) => provider.id);
+    const [close] = suggest(options.provider, ids);
+    log.error(
+      close === undefined
+        ? `unknown provider ${JSON.stringify(options.provider)} (known: ${ids.join(', ')})`
+        : `unknown provider ${JSON.stringify(options.provider)}; did you mean '${close}'?`,
+    );
+    return 2;
+  }
+  const scoped =
+    options.provider === undefined
+      ? catalog
+      : catalog.filter((provider) => provider.id === options.provider);
   if (options.json === true) {
-    deps.out(formatJson(catalog));
+    deps.out(formatJson(scoped));
+    return 0;
+  }
+  if (deps.fancy === true) {
+    // Issue #449: the catalogue view on an interactive colour terminal.
+    for (const line of renderModelsCatalog(catalog, themeOf(deps), {
+      ...(options.provider === undefined ? {} : { only: options.provider }),
+      ...(options.all === true ? { all: true } : {}),
+      ...defaultOf(deps),
+    })) {
+      deps.out(line);
+    }
     return 0;
   }
   // Text mode lists the usable providers in full; the (large) set of
-  // built-ins with no configured auth is summarised on one line.
-  const listed = catalog.filter((provider) => provider.usable !== false);
+  // built-ins with no configured auth is summarised on one line. A named
+  // provider or `--all` widens the table to exactly what was asked for.
+  const listed = scoped.filter(
+    (provider) =>
+      options.provider !== undefined ||
+      options.all === true ||
+      provider.usable !== false,
+  );
   const unconfigured = catalog
     .filter((provider) => provider.usable === false)
     .map((provider) => provider.id);
@@ -581,11 +638,16 @@ export async function runModelsCommand(
           { header: 'IN $/1M', align: 'right' },
           { header: 'OUT $/1M', align: 'right' },
         ],
-        { fancy: deps.fancy === true, theme },
+        // The terminal view returned above: this is the plain table.
+        { theme },
       ),
     );
   }
-  if (unconfigured.length > 0) {
+  if (
+    unconfigured.length > 0 &&
+    options.provider === undefined &&
+    options.all !== true
+  ) {
     log.info(
       `${unconfigured.length} built-in providers not configured (set their env key): ${unconfigured.join(', ')}`,
     );

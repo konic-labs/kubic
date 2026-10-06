@@ -53,12 +53,15 @@ Sub-interfaces, field-for-field (issue #333 fleshed out the stubs):
 
 | Interface | Fields |
 | --- | --- |
-| `SessionSnapshot` | `sessionId: string`, `model?: string`, `thinking?: string`, `mode: 'solo' \| 'orchestrator'`, `approvalsSkipped: boolean` |
+| `SessionSnapshot` | `sessionId: string`, `model?: string`, `thinking?: string`, `mode: 'solo' \| 'orchestrator'`, `approvalsSkipped: boolean`, `runPhases?: RunPhaseState[]` (issue #464: the orchestrator run's timeline, in run order) |
+| `RunPhaseState` | `phase: 'plan' \| 'implement' \| 'review' \| 'merge' \| 'verify'` (`RUN_PHASES`), `state: 'running' \| 'done' \| 'failed' \| 'skipped'`, `at` |
 | `AgentSummary` | `agentId`, `role`, `status`, `workspace?`, `budget?: BudgetSummary` |
 | `BudgetSummary` | `inputTokens`, `outputTokens`, `costUsd`, `limitUsd?` |
 | `LaneSnapshot` | `laneId`, `agentId`, `status: 'idle'\|'running'\|'done'`, `tools: LaneToolSnapshot[]`, `queued: string[]`, `compacting: boolean`, `fault?`, `retrying?` |
 | `LaneToolSnapshot` | `toolCallId`, `toolName`, `status: 'running'\|'done'`, `isError`, `args?`, `entry?`, `durationMs?` |
-| `WorkerSummary` | `workerId`, `role?`, `status?`, `workspace?`, `budget?`, `generation?`, `model?`, `inputTokens?`, `outputTokens?`, `costUsd?` (issue #342: the orchestrator view's per-agent facts) |
+| `WorkerSummary` | `workerId`, `role?`, `status?`, `workspace?`, `budget?`, `generation?`, `model?`, `inputTokens?`, `outputTokens?`, `costUsd?` (issue #342: the orchestrator view's per-agent facts); `task?`, `activity?`, `toolCount?`, `recentTools?` (the last eight calls), `diffStat?`, `awaiting?: { approvalKey, summary }` (issue #464: the dashboard's facts) |
+| `WorkerToolActivity` | `id`, `tool`, `target?`, `state: 'running' \| 'done' \| 'error'`, `outcome?`, `diff?: { text, firstChangedLine? }`, `at` — a redacted summary, never the raw arguments; the projector keeps at most 20 KB of diff text |
+| `WorkerDiffStat` | `files`, `added`, `removed` |
 | `ApprovalRequest` | `requestId`, `toolName?`, `capability?`, `detail?` |
 | `UsageTotals` | `inputTokens`, `outputTokens`, `costUsd`, `requests?`, `cacheReadTokens?`, `cacheWriteTokens?` |
 | `ConnectionState` | `status: 'connected' \| 'disconnected' \| 'reconnecting'`, `detail?` |

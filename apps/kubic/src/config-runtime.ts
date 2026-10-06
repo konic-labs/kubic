@@ -301,13 +301,29 @@ export function projectTrustFor(result: CliConfigResult): ProjectTrustCheck {
 // is already recorded (including a recorded decline: the operator answered).
 // A cancelled prompt is not an answer: nothing is persisted, and the
 // invocation fails closed into the refusal path.
+// Issue #462: the restyled question's answers (docs/ui 05-C).
+export type TrustAnswer = 'yes' | 'not-now' | 'view';
+
+export interface TrustQuestion {
+  /** The canonical project root the decision is keyed to. */
+  readonly root: string;
+  readonly configPath: string;
+  /** The full disclosure on one line (what `confirm` asks). */
+  readonly message: string;
+}
+
 export interface InteractiveTrustDeps {
   home?: string;
   cwd?: string;
   env?: Record<string, string | undefined>;
   // The question channel: production passes core's `promptConfirm` bound to
   // `interactive: true`; a test passes a collector. `null` means cancelled.
-  confirm: (message: string) => Promise<boolean | null>;
+  confirm?: (message: string) => Promise<boolean | null>;
+  // Issue #462: the restyled one-key question — `y` yes, `n` not now, `v`
+  // view the file (`show` prints it, then it asks again). Present, it is
+  // asked instead of `confirm`.
+  ask?: (question: TrustQuestion) => Promise<TrustAnswer | null>;
+  show?: (path: string) => void;
   store?: ProjectTrustStore;
 }
 
@@ -339,9 +355,28 @@ export async function resolveInteractiveProjectTrust(
   // `KUBIC_*` variable it names (`KUBIC_API_KEY` when it names none), so a
   // "yes" lets the repository choose where a key you have set is sent — and
   // the project skills the model is told to follow.
-  const answer = await deps.confirm(
-    `Trust project ${report.key}? This lets the project's own files take effect for runs here: ${report.configPath} (sets the model, approvals, permissions and journal retention), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills (instructions the model follows).`,
-  );
+  const message = `Trust project ${report.key}? This lets the project's own files take effect for runs here: ${report.configPath} (sets the model, approvals, permissions and journal retention), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default), its project skills and its project role documents (instructions the model follows).`;
+  if (deps.ask !== undefined) {
+    for (;;) {
+      const answer = await deps.ask({
+        root: report.key,
+        configPath: report.configPath,
+        message,
+      });
+      if (answer === 'view') {
+        deps.show?.(report.configPath);
+        continue;
+      }
+      if (answer === 'yes') {
+        store.set(root, true);
+        return true;
+      }
+      // `not now` and a cancel record nothing: the load refuses the project
+      // layer by name (exit 1), and the next launch asks again.
+      return false;
+    }
+  }
+  const answer = (await deps.confirm?.(message)) ?? null;
   if (answer === null) return false;
   store.set(root, answer);
   return answer;

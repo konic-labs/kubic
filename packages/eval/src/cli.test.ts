@@ -932,13 +932,14 @@ describe('eval/benchmark semantics over parsed options', () => {
     expect(o.errs).toEqual([]);
   });
 
-  it('draws the benchmark table boxed only when fancy', async () => {
+  it('draws the benchmark kit table (header rule) only when fancy', async () => {
     const o = out();
     await runBenchmarkCommand(
       { suite: 'swe-bench-mini', ...PROVENANCE },
       { ...deps, out: o.write, err: o.err, fancy: true },
     );
-    expect(o.lines[0]).toContain('┌');
+    expect(o.lines.join('\n')).toMatch(/\n─+\n/);
+    expect(o.lines.join('\n')).not.toContain('┌');
   });
 
   it('refuses an unknown benchmark suite by name on stderr', async () => {

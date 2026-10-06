@@ -1,0 +1,484 @@
+/* Kubic design system — terminal mockups.
+   Rule: everything inside a .term must be drawable on a character grid.
+   One line = one .l row (fixed 18px); colours are per-cell fg/bg only;
+   no radius, shadow, gradient or proportional text inside a terminal. */
+
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,600;0,700;1,400&display=swap");
+
+:root {
+  /* surfaces: canvas → raised */
+  --bg0: #0a0a0c;
+  --bg1: #111115;
+  --bg2: #18181e;
+  --bg3: #22222a;
+  /* text: primary → faint */
+  --fg0: #ececf1;
+  --fg1: #a3a3ae;
+  --fg2: #6e6e79;
+  --fg3: #3c3c45;
+  /* brand: konic red, used for focus + identity only */
+  --acc: #ff004d;
+  --acc-bg: #2a0612;
+  /* semantic */
+  --ok: #5ed68c;
+  --ok-bg: #0c2416;
+  --warn: #ffb547;
+  --warn-bg: #2a1d07;
+  --err: #ff6b5e;
+  --err-bg: #2c0d0b;
+  --info: #7fb4ff;
+  /* diff */
+  --add: #7ee2a0;
+  --add-bg: #0e2617;
+  --del: #ff8f9c;
+  --del-bg: #2d0e15;
+
+  --cell-h: 18px;
+  --font: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* The light palette (packages/core/src/ui/tokens.ts LIGHT_PALETTE; issue
+   #468). `:root[data-theme="light"]` swaps a whole page; `.theme-light`
+   swaps one mock window. Values meet the contrast targets the palette tests
+   pin (fg0 ≥ 7:1, fg1 ≥ 4.5:1, fg2 ≥ 3:1 on every surface). */
+:root[data-theme="light"],
+.theme-light {
+  --bg0: #ffffff;
+  --bg1: #f3f3f6;
+  --bg2: #ebebf0;
+  --bg3: #dfdfe7;
+  --fg0: #18181b;
+  --fg1: #3f3f46;
+  --fg2: #63636e;
+  --fg3: #a1a1aa;
+  --acc: #d0003f;
+  --acc-bg: #ffe5ec;
+  --ok: #15803d;
+  --ok-bg: #e6f6ec;
+  --warn: #a35200;
+  --warn-bg: #fff3df;
+  --err: #c0261b;
+  --err-bg: #fdecea;
+  --info: #1d4ed8;
+  --add: #166534;
+  --add-bg: #dcfce7;
+  --del: #9f1239;
+  --del-bg: #ffe4e6;
+}
+
+* {
+  box-sizing: border-box;
+}
+html {
+  background: #050506;
+}
+body {
+  margin: 0;
+  color: #d9d9e0;
+  font:
+    14px / 1.55 system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  background: #050506;
+}
+
+/* ---------- page chrome (outside the terminal: free design) ---------- */
+.page {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 32px 16px 80px;
+}
+.page h1 {
+  font: 600 22px / 1.3 var(--font);
+  letter-spacing: 0.02em;
+  margin: 0 0 4px;
+  color: #fff;
+}
+.page h1 b {
+  color: var(--acc);
+}
+.page .sub {
+  color: #8a8a96;
+  margin: 0 0 28px;
+}
+.page h2 {
+  font: 600 13px / 1 var(--font);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #8a8a96;
+  margin: 40px 0 12px;
+}
+.page a {
+  color: #ff4d7f;
+}
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  font: 12px var(--font);
+  margin-bottom: 24px;
+}
+.nav a {
+  color: #8a8a96;
+  text-decoration: none;
+}
+.nav a.on,
+.nav a:hover {
+  color: #fff;
+}
+
+.notes {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+  columns: 2;
+  column-gap: 32px;
+}
+.notes li {
+  break-inside: avoid;
+  margin: 0 0 8px;
+  padding-left: 38px;
+  position: relative;
+  color: #b4b4be;
+  font-size: 13px;
+}
+.notes li b {
+  position: absolute;
+  left: 0;
+  top: 1px;
+  font: 600 11px var(--font);
+  color: var(--acc);
+}
+.open {
+  margin-top: 18px;
+  padding: 12px 14px;
+  border-left: 2px solid var(--warn);
+  background: #141109;
+  font-size: 13px;
+  color: #cfc7b4;
+}
+.open b {
+  color: var(--warn);
+}
+
+/* ---------- terminal window ---------- */
+.win {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid #222228;
+  background: var(--bg0);
+}
+.win .bar {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  background: #141418;
+  border-bottom: 1px solid #222228;
+  font: 11px var(--font);
+  color: #6e6e79;
+}
+.win .bar i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #2c2c33;
+  display: inline-block;
+}
+.win .bar span {
+  margin-left: 8px;
+}
+
+.term {
+  font: 13px var(--font);
+  color: var(--fg0);
+  background: var(--bg0);
+  padding: 6px 0;
+  width: calc(var(--cols, 120) * 1ch + 2px);
+  font-variant-ligatures: none;
+}
+.term.fixed {
+  height: calc(var(--rows, 38) * var(--cell-h) + 12px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.term .grow {
+  flex: 1;
+}
+
+.l {
+  height: var(--cell-h);
+  line-height: var(--cell-h);
+  white-space: pre;
+  display: flex;
+  overflow: hidden;
+}
+.l > span {
+  white-space: pre;
+  flex: none;
+}
+.l .sp {
+  flex: 1;
+}
+.fill {
+  flex: 1 !important;
+  overflow: hidden;
+}
+.fill::before {
+  content: "──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────";
+}
+.fill.dbl::before {
+  content: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+}
+.fill.dot::before {
+  content: "·······································································································································";
+}
+.fill.blank::before {
+  content: "";
+}
+.rest {
+  flex: 1 !important;
+}
+
+/* a full-height vertical cell rule (what a terminal draws for │ / ┃) */
+.v,
+.V {
+  display: inline-block;
+  width: 1ch;
+  height: var(--cell-h);
+  flex: none;
+  background: linear-gradient(
+    to right,
+    transparent calc(50% - 0.5px),
+    currentColor calc(50% - 0.5px),
+    currentColor calc(50% + 0.5px),
+    transparent calc(50% + 0.5px)
+  );
+}
+.V {
+  background: linear-gradient(
+    to right,
+    transparent calc(50% - 1.5px),
+    currentColor calc(50% - 1.5px),
+    currentColor calc(50% + 1.5px),
+    transparent calc(50% + 1.5px)
+  );
+}
+
+/* ---------- cell styles ---------- */
+.f0 {
+  color: var(--fg0);
+}
+.f1 {
+  color: var(--fg1);
+}
+.f2 {
+  color: var(--fg2);
+}
+.f3 {
+  color: var(--fg3);
+}
+.acc {
+  color: var(--acc);
+}
+.ok {
+  color: var(--ok);
+}
+.warn {
+  color: var(--warn);
+}
+.err {
+  color: var(--err);
+}
+.info {
+  color: var(--info);
+}
+.add {
+  color: var(--add);
+}
+.del {
+  color: var(--del);
+}
+.b0 {
+  background: var(--bg0);
+}
+.b1 {
+  background: var(--bg1);
+}
+.b2 {
+  background: var(--bg2);
+}
+.b3 {
+  background: var(--bg3);
+}
+.bacc {
+  background: var(--acc-bg);
+}
+.bok {
+  background: var(--ok-bg);
+}
+.bwarn {
+  background: var(--warn-bg);
+}
+.berr {
+  background: var(--err-bg);
+}
+.badd {
+  background: var(--add-bg);
+}
+.bdel {
+  background: var(--del-bg);
+}
+.inv-acc {
+  background: var(--acc);
+  color: #fff;
+}
+.inv-warn {
+  background: var(--warn);
+  color: #1a1205;
+}
+.inv-ok {
+  background: var(--ok);
+  color: #06140b;
+}
+.inv-f {
+  background: var(--fg0);
+  color: var(--bg0);
+}
+.bd {
+  font-weight: 700;
+}
+.sb {
+  font-weight: 600;
+}
+.it {
+  font-style: italic;
+}
+.ul {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.cur {
+  background: var(--fg0);
+  color: var(--bg0);
+}
+.dim * {
+  color: var(--fg3) !important;
+  background: transparent !important;
+}
+.dim .v,
+.dim .V {
+  color: var(--fg3) !important;
+}
+
+/* overlay: an absolutely positioned block on the cell grid */
+.stage {
+  position: relative;
+}
+.ovl {
+  position: absolute;
+  background: var(--bg2);
+}
+
+/* ---------- design-system page pieces ---------- */
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.sw {
+  border: 1px solid #222228;
+  font: 11px var(--font);
+}
+.sw div {
+  height: 44px;
+}
+.sw p {
+  margin: 0;
+  padding: 6px 8px;
+  color: #9a9aa5;
+  background: #0d0d10;
+}
+.sw p b {
+  display: block;
+  color: #e6e6ec;
+  font-weight: 600;
+}
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+.card {
+  display: block;
+  padding: 16px;
+  border: 1px solid #222228;
+  background: #0d0d10;
+  text-decoration: none;
+  color: #c8c8d2 !important;
+}
+.card:hover {
+  border-color: var(--acc);
+}
+.card b {
+  display: block;
+  font: 600 13px var(--font);
+  color: #fff;
+  margin-bottom: 6px;
+}
+.card small {
+  color: #8a8a96;
+  font-size: 12.5px;
+}
+.principles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+.principles div {
+  padding: 14px 16px;
+  background: #0d0d10;
+  border-left: 2px solid var(--acc);
+  font-size: 13px;
+  color: #b4b4be;
+}
+.principles div b {
+  display: block;
+  color: #fff;
+  margin-bottom: 4px;
+  font-size: 13.5px;
+}
+.glyphs {
+  font: 13px / 2 var(--font);
+  color: var(--fg0);
+  background: var(--bg0);
+  padding: 12px 16px;
+  border: 1px solid #222228;
+  columns: 3;
+}
+.glyphs span {
+  color: var(--fg2);
+}
+.stack > * + * {
+  margin-top: 22px;
+}
+.cap {
+  font: 11px var(--font);
+  color: #6e6e79;
+  margin: 0 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+@media (max-width: 720px) {
+  .notes {
+    columns: 1;
+  }
+  .glyphs {
+    columns: 1;
+  }
+}

@@ -12,7 +12,11 @@
 
 import type { LaneImagePart } from '../../core/src/presentation.js';
 import { imagePartOf } from './attachments.js';
-import type { TranscriptEntry, TranscriptEntryKind } from './transcript.js';
+import type {
+  CellDisplay,
+  TranscriptEntry,
+  TranscriptEntryKind,
+} from './transcript.js';
 import { visibleWidth } from './tui-boundary.js';
 
 // Entry shapes are structural on purpose: the tui package must never import
@@ -49,6 +53,14 @@ function textOf(part: unknown): string | undefined {
   if (!isRecord(part)) return undefined;
   if (part.type !== 'text') return undefined;
   return typeof part.text === 'string' ? part.text : undefined;
+}
+
+// Issue #457: a reasoning part (Pi ThinkingContent). A redacted one carries
+// only an opaque signature, so it has nothing to show.
+function thinkingOf(part: unknown): string | undefined {
+  if (!isRecord(part) || part.type !== 'thinking') return undefined;
+  if (part.redacted === true) return undefined;
+  return typeof part.thinking === 'string' ? part.thinking : undefined;
 }
 
 function nameOf(part: unknown): string | undefined {
@@ -329,6 +341,57 @@ function compactionSummaryOf(text: string): string {
     .trim();
 }
 
+// Issue #456: the display record a file change put in the result's details.
+// Its text is file content — untrusted like every other lane string — so
+// each row is sanitized after its `+12 ` / `-12 ` / ` 12 ` prefix (tabs then
+// expand from the content's own first column).
+const DIFF_ROW = /^([-+ ] *\d+ )(.*)$/u;
+
+function displayOf(details: unknown): CellDisplay | undefined {
+  if (!isRecord(details) || !isRecord(details.display)) return undefined;
+  const display = details.display;
+  if (
+    display.kind === 'diff' &&
+    typeof display.text === 'string' &&
+    typeof display.added === 'number' &&
+    typeof display.removed === 'number'
+  ) {
+    const text = display.text
+      .split('\n')
+      .map((row) => {
+        const hit = DIFF_ROW.exec(row);
+        return hit === null
+          ? sanitizeLaneText(row)
+          : `${hit[1]}${sanitizeLaneText(hit[2] ?? '')}`;
+      })
+      .join('\n');
+    return {
+      kind: 'diff',
+      text,
+      firstChangedLine:
+        typeof display.firstChangedLine === 'number'
+          ? display.firstChangedLine
+          : 1,
+      added: display.added,
+      removed: display.removed,
+      truncated: display.truncated === true,
+    };
+  }
+  if (
+    display.kind === 'write' &&
+    typeof display.lines === 'number' &&
+    typeof display.preview === 'string'
+  ) {
+    return {
+      kind: 'write',
+      newFile: display.newFile === true,
+      lines: display.lines,
+      preview: sanitizeLaneText(display.preview),
+    };
+  }
+  return undefined;
+}
+
 function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
   const id = typeof entry.id === 'string' ? entry.id : '';
   if (id === '') return [];
@@ -371,12 +434,21 @@ function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
     kind: TranscriptEntryKind,
     markdown: string,
     extra: Partial<
-      Pick<TranscriptEntry, 'detail' | 'isError' | 'toolCallId' | 'images'>
+      Pick<
+        TranscriptEntry,
+        'detail' | 'isError' | 'toolCallId' | 'images' | 'timestamp'
+      >
     > = {},
   ): void => {
     if (markdown === '') return;
     cells.push({ id: `${id}:${key}`, kind, markdown, ...extra });
   };
+  // Issue #455: Pi stamps every message; the prompt block shows the time.
+  const stamp =
+    typeof entry.message.timestamp === 'number' &&
+    Number.isFinite(entry.message.timestamp)
+      ? { timestamp: entry.message.timestamp }
+      : {};
   if (role === ROLE_USER) {
     // Issue #338: an attached image is part of the prompt, not text. A
     // prompt cell with images and no text (an image-only submit) still
@@ -398,7 +470,7 @@ function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
           ? PROMPT_PREFIX
           : ''
         : `${PROMPT_PREFIX}${text}`,
-      hasImages ? { images } : {},
+      { ...(hasImages ? { images } : {}), ...stamp },
     );
     return cells;
   }
@@ -410,11 +482,17 @@ function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
       .filter((t) => t !== '')
       .join('\n');
     const message = entry.message;
-    const extra: { isError?: boolean; toolCallId?: string } = {};
+    const extra: {
+      isError?: boolean;
+      toolCallId?: string;
+      display?: CellDisplay;
+    } = {};
     if (message.isError === true) extra.isError = true;
     if (typeof message.toolCallId === 'string' && message.toolCallId !== '') {
       extra.toolCallId = message.toolCallId;
     }
+    const display = displayOf(message.details);
+    if (display !== undefined) extra.display = display;
     push(
       'result',
       'output',
@@ -425,6 +503,16 @@ function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
   }
   if (role === ROLE_ASSISTANT) {
     parts.forEach((part, index) => {
+      const thinking = thinkingOf(part);
+      if (thinking !== undefined) {
+        push(
+          `thinking:${index}`,
+          'thinking',
+          sanitizeLaneText(thinking).trim(),
+          stamp,
+        );
+        return;
+      }
       const text = textOf(part);
       if (text !== undefined) {
         push(

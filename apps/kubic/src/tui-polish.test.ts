@@ -2,6 +2,8 @@
 // working indicator, header, compact tree. Headless snapshots of pure
 // render functions only (no terminal, no network).
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderHeader } from '../../../packages/tui/src/chrome.js';
+import { renderWorkingLine } from '../../../packages/tui/src/editor-frame.js';
 import { sanitizeLaneText } from '../../../packages/tui/src/lane-cells.js';
 import {
   buildLayoutRoot,
@@ -15,6 +17,7 @@ import {
   formatElapsed,
   setTuiTheme,
   spinnerFrame,
+  tuiTheme,
 } from '../../../packages/tui/src/theme.js';
 import {
   createTranscriptView,
@@ -26,12 +29,7 @@ import {
   renderTreeLines,
   type TreeToolSnapshot,
 } from '../../../packages/tui/src/tree.js';
-import {
-  createTuiApp,
-  renderHeader,
-  renderKeyHints,
-  renderWorkingLine,
-} from '../../../packages/tui/src/tui-app.js';
+import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
 import { Text, visibleWidth } from '../../../packages/tui/src/tui-boundary.js';
 import { fakeTerminal } from '../../../test/fake-terminal.js';
 import { TuiTurnRunner } from './tui-run.js';
@@ -116,21 +114,27 @@ function toolTranscript() {
 
 describe('transcript blocks', () => {
   it('renders prompt, prose, and each call with its output folded under it', () => {
-    expect(toolTranscript().render(60).map(plain)).toEqual([
-      '› list files',
+    // Issue #455 (01-B…E): the prompt block's edge, the prose mark, and a
+    // card per call with a gutter body and a footer naming what is hidden.
+    expect(
+      toolTranscript()
+        .render(60)
+        .map((line) => plain(line).trimEnd()),
+    ).toEqual([
+      ' ▌ list files',
       '',
-      '▪ Looking now.',
+      '  ◆ Looking now.',
       '',
-      '● bash ls',
-      '  ⎿  row 0',
-      '     row 1',
-      '     row 2',
-      '     row 3',
-      '     row 4',
-      '     … +4 lines (ctrl+x to expand)',
+      '  ● bash  ls',
+      '  │ row 0',
+      '  │ row 1',
+      '  │ row 2',
+      '  │ row 3',
+      '  │ row 4',
+      '  └ +4 lines   ^X expand',
       '',
-      '● read x.ts',
-      '  ⎿  no such file',
+      `  ● read  x.ts${' '.repeat(60 - 14 - 9)}✕ failed`,
+      '  │ no such file',
     ]);
     expect(TOOL_OUTPUT_PREVIEW_LINES).toBe(5);
   });
@@ -140,21 +144,21 @@ describe('transcript blocks', () => {
     expect(view.toggleExpanded()).toBe(true);
     const doc = view.render(60).join('\n');
     expect(doc).toContain('row 8');
-    expect(doc).not.toContain('to expand');
+    expect(doc).not.toContain('^X expand');
   });
 
   it('colours the call glyph by outcome under the Konic palette', () => {
     setTuiTheme(createTuiTheme('truecolor'));
     const lines = toolTranscript().render(60);
-    const ok = lines.find((l) => plain(l) === '● bash ls') ?? '';
-    const failed = lines.find((l) => plain(l) === '● read x.ts') ?? '';
+    const ok = lines.find((l) => plain(l).startsWith('  ● bash')) ?? '';
+    const failed = lines.find((l) => plain(l).startsWith('  ● read')) ?? '';
     expect(ok).toContain('38;2;94;214;140m●');
-    expect(failed).toContain('38;2;255;42;31m●');
+    expect(failed).toContain('38;2;255;107;94m●');
     for (const line of lines)
       expect(plain(line).length).toBeLessThanOrEqual(60);
   });
 
-  it('shows a pending call in amber until its output lands', () => {
+  it('shows a running call with the accent spinner until its output lands', () => {
     setTuiTheme(createTuiTheme('truecolor'));
     const view = createTranscriptView();
     view.applyLaneSnapshot(
@@ -162,7 +166,9 @@ describe('transcript blocks', () => {
       [{ id: 'c', kind: 'tool', markdown: 'tool bash', toolCallId: 'c' }],
       1,
     );
-    expect(view.render(40)[0]).toContain('38;2;255;122;46m●');
+    const head = view.render(40)[0] ?? '';
+    expect(head).toContain('38;2;255;0;77m');
+    expect(plain(head)).toContain('running');
   });
 
   it('truncates long lines to the width instead of wrapping tool output', () => {
@@ -188,7 +194,7 @@ describe('transcript blocks', () => {
     for (const line of lines)
       expect(plain(line).length).toBeLessThanOrEqual(30);
     expect(plain(lines[0] ?? '').endsWith('…')).toBe(true);
-    expect(plain(lines[2] ?? '')).toContain('lines clipped');
+    expect(plain(lines[2] ?? '')).toContain('wide lines cut');
   });
 });
 
@@ -203,7 +209,7 @@ describe('app chrome', () => {
     app.onSubmit(() => {});
     for (const ch of 'hello there') app.handleInput(ch);
     app.handleInput('\r');
-    expect(app.transcript.render(80)).toContain('› hello there');
+    expect(app.transcript.render(80)).toContain(' ▌ hello there');
     app.applyLaneEntries([
       {
         id: 'u1',
@@ -216,7 +222,7 @@ describe('app chrome', () => {
       },
     ]);
     const doc = app.transcript.render(80).join('\n');
-    expect(doc.split('› hello there')).toHaveLength(2);
+    expect(doc.split('▌ hello there')).toHaveLength(2);
   });
 
   it('shows the working indicator while busy and key hints when idle', () => {
@@ -226,12 +232,17 @@ describe('app chrome', () => {
       mode: 'solo',
       approvalsSkipped: false,
     });
-    expect(app.render(100).at(-1)).toContain('enter send');
+    expect(app.render(100).at(-1)).toContain('⏎ send');
     app.setBusy(true);
     expect(app.busyElapsedMs()).toBeGreaterThanOrEqual(0);
-    expect(app.render(100).at(-1)).toMatch(
-      /working… \ds · enter queues · alt\+enter steers · ctrl\+c cancels/,
+    // Issue #453/#454: the working line sits on the notice row above the
+    // editor; the hint row switches to the keys that act on a running turn.
+    const rows = app.render(100);
+    expect(rows.join('\n')).toMatch(
+      /Working · 0:0\d .*esc interrupt {3}⏎ queue a message/,
     );
+    expect(rows.at(-1)).toContain('esc interrupt');
+    expect(rows.at(-2)?.endsWith(' working ')).toBe(true);
     app.setBusy(false);
     expect(app.busyElapsedMs()).toBeUndefined();
   });
@@ -244,9 +255,7 @@ describe('app chrome', () => {
       approvalsSkipped: false,
     });
     solo.setBusy(true);
-    expect(solo.render(100).at(-1)).toContain(
-      'enter queues · alt+enter steers',
-    );
+    expect(solo.render(100).join('\n')).toContain('⏎ queue a message');
     const orchestrator = createTuiApp({
       sessionId: 's',
       model: 'faux/m',
@@ -254,13 +263,22 @@ describe('app chrome', () => {
       approvalsSkipped: false,
     });
     orchestrator.setBusy(true);
-    const line = orchestrator.render(100).at(-1) ?? '';
+    const line =
+      orchestrator.render(100).find((row) => row.includes('Working')) ?? '';
     // The orchestrator lane has no inbox and refuses both keys: naming them
     // would promise a queue that does not exist.
-    expect(line).toMatch(/working… \ds · ctrl\+c cancels/);
-    expect(line).not.toContain('enter queues');
-    expect(plain(renderWorkingLine(1500, 80, { queues: false }))).toBe(
-      `${spinnerFrame(1500)} working… 1s · ctrl+c cancels`,
+    expect(line).toMatch(/Working · 0:0\d/);
+    expect(line).not.toContain('queue');
+    expect(
+      plain(
+        renderWorkingLine(
+          tuiTheme().ui,
+          { elapsedMs: 1500, queues: false },
+          80,
+        ),
+      ),
+    ).toBe(
+      ` ${spinnerFrame(1500)} Working · 0:01${' '.repeat(80 - 17 - 14)}esc interrupt `,
     );
   });
 
@@ -287,22 +305,25 @@ describe('app chrome', () => {
       approvalsSkipped: false,
     });
     app.setEditorFooter(`solo: ${'word '.repeat(20)}end`);
-    const tail = app.render(60).slice(-2);
-    expect(tail[0]).toContain('solo:');
-    expect(tail[1]).toContain('end');
+    const rows = app.render(60);
+    const at = rows.findIndex((row) => row.includes('solo:'));
+    expect(at).toBeGreaterThan(0);
+    expect(rows[at + 1]).toContain('end');
   });
 
   it('renders the header, hints and working line within the width', () => {
-    expect(renderHeader(60, { mode: 'solo', model: 'faux/m' })).toBe(
-      `■ kubic by konic${' '.repeat(60 - 16 - 13)}solo · faux/m`,
+    const info = { mode: 'solo', approvalsSkipped: false } as const;
+    expect(renderHeader(tuiTheme().ui, info, 60)).toBe(
+      ` ■ KUBIC ${' '.repeat(60 - 9 - 20)}[SOLO] approvals on `,
     );
-    expect(renderHeader(20, { mode: 'solo', model: 'faux/m' })).toBe(
-      '■ kubic by konic',
+    expect(renderHeader(tuiTheme().ui, info, 20)).toBe(' ■ KUBIC     [SOLO] ');
+    const working = renderWorkingLine(
+      tuiTheme().ui,
+      { elapsedMs: 1500, queues: true },
+      80,
     );
-    expect(renderKeyHints(20)).toBe('enter send');
-    expect(plain(renderWorkingLine(1500, 80))).toBe(
-      `${spinnerFrame(1500)} working… 1s · enter queues · alt+enter steers · ctrl+c cancels`,
-    );
+    expect(visibleWidth(working)).toBe(80);
+    expect(plain(working)).toContain('esc interrupt   ⏎ queue a message ');
   });
 });
 
@@ -340,8 +361,8 @@ describe('compact tree', () => {
       'head',
       'tree',
       'body',
-      'status',
       'editor',
+      'status',
     ]);
   });
 });
@@ -367,20 +388,24 @@ describe('review fixes', () => {
     app.handleInput('\r');
     // A refresh that still only holds the OLD prompt must not clear the echo.
     app.applyLaneEntries([userEntry('u1', 1, 'again')]);
-    expect(app.transcript.render(80).join('\n').split('› again')).toHaveLength(
+    expect(app.transcript.render(80).join('\n').split('▌ again')).toHaveLength(
       3,
     );
     app.applyLaneEntries([
       userEntry('u1', 1, 'again'),
       userEntry('u2', 2, 'again'),
     ]);
-    expect(app.transcript.render(80).join('\n').split('› again')).toHaveLength(
+    expect(app.transcript.render(80).join('\n').split('▌ again')).toHaveLength(
       3,
     );
   });
 
   it('measures the header by visible width', () => {
-    const line = renderHeader(60, { mode: 'solo', model: 'faux/m' });
+    const line = renderHeader(
+      tuiTheme().ui,
+      { mode: 'solo', approvalsSkipped: false, project: 'kubic-playground' },
+      60,
+    );
     expect(visibleWidth(line)).toBe(60);
   });
 
@@ -422,7 +447,7 @@ describe('review fixes', () => {
     resolvers[0]?.([userRecord(1, 'stale')]);
     await older;
     const doc = app.transcript.render(80).join('\n');
-    expect(doc).toContain('› fresh');
+    expect(doc).toContain('▌ fresh');
     expect(doc).not.toContain('stale');
   });
 

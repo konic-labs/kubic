@@ -406,6 +406,7 @@ describe('kubic tui --dangerously-skip-approvals (issue #308)', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
     rig.feed('\x03');
+    rig.feed('\x03');
     expect(await pending).toBe(0);
     expect(flags).toEqual([{ dangerouslySkipApprovals: true }]);
     expect(rig.frame).toContain('approvals OFF (full-access)');

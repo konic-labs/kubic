@@ -4,9 +4,11 @@
 // in ./prod-runners.js. This file parses argv, builds the seam, and wraps
 // failures.
 
+import { homedir } from 'node:os';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promptConfirm } from '../../../packages/core/src/cli/prompt.js';
+import { promptKey } from '../../../packages/core/src/cli/prompt.js';
+import { themeFor } from '../../../packages/core/src/cli/theme.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import { ExtensionStartupError } from '../../../packages/extensions/src/startup.js';
@@ -17,6 +19,12 @@ import {
 import { dispatchCommand } from './dispatch.js';
 import { exitProcessAfterFlush } from './exit.js';
 import { createProdRunners } from './prod-runners.js';
+import { prodFirstRunSetup } from './setup-prod.js';
+import {
+  TRUST_KEYS,
+  trustFileLines,
+  trustQuestionLines,
+} from './trust-question.js';
 
 // License identity (issue #59): version comes from this app's own
 // package.json; the license half of the line is owned by core/license.ts.
@@ -64,22 +72,44 @@ try {
     ensureRuntimeExclude: (entries) =>
       ensureRuntimeExcludeRules({ cwd: process.cwd(), entries }),
     isInteractive: interactive,
+    // Issue #446: the root and subcommand help are coloured on a TTY.
+    helpTheme: () => themeFor(process.stdout),
+    // Issue #450: usage errors are an error block on a colour stderr.
+    errorTheme: () => themeFor(process.stderr),
+    // Issue #451: a bare `kubic` on a terminal with no global config runs
+    // `kubic setup` first (KUBIC_SKIP_SETUP=1 skips it).
+    firstRunSetup: () =>
+      prodFirstRunSetup({ out, err, errTheme: themeFor(process.stderr) }),
     // Issue #228 (§35.1): the interactive trust question for `kubic tui` /
     // bare `kubic`. The resolver persists the answer under `~/.kubic/` and
     // hands it back to this invocation's config load; a non-TTY caller keeps
     // the refusal with both remedies named.
+    // Issue #462: asked as one row of the first screen (05-C): one key
+    // answers — y yes, n not now, v view the file first.
     resolveProjectTrust: () =>
       resolveInteractiveProjectTrust({
-        confirm: (message) =>
-          promptConfirm({
-            message,
+        ask: (question) =>
+          promptKey({
+            message: trustQuestionLines(
+              themeFor(process.stdout),
+              question,
+              process.stdout.columns ?? 80,
+              homedir(),
+            ).join('\n'),
             interactive: true,
-            nonInteractive: false,
+            nonInteractive: 'not-now',
+            choices: TRUST_KEYS,
           }),
+        show: (path) => {
+          for (const line of trustFileLines(themeFor(process.stdout), path)) {
+            out(line);
+          }
+        },
       }),
     runners: createProdRunners({
       out,
       debug: err,
+      version: cliVersion,
     }),
   });
   exitProcessAfterFlush(code);

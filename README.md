@@ -54,6 +54,11 @@ invocations: `npx kubic --version` (the `bin` entry, no install needed),
 configured it exits 6 with a single `provider-down` failure
 (`limit:provider-availability`) — see
 [`docs/cli/doctor-and-debug.md`](docs/cli/doctor-and-debug.md).
+With a provider key in your environment (for example `ANTHROPIC_API_KEY`),
+`./bin/kubic.js setup` picks a default model and saves it to
+`~/.kubic/config.toml`; a bare `./bin/kubic.js` on a terminal runs the same
+setup on first launch, then opens the TUI — see
+[`docs/cli/commands.md`](docs/cli/commands.md#kubic-setup).
 
 `dist/` is gitignored tsc output (`tsconfig.build.json`, no hand-rolled
 flags); rebuilding is byte-equivalent. Nothing here publishes to npm.

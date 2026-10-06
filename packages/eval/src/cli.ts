@@ -50,7 +50,7 @@ export interface EvalCliDeps extends EvalTaskDeps {
   // stderr: diagnostics — usage refusals and, off --json, runner errors as
   // `error: [code] message` (core/cli/logger).
   err: (line: string) => void;
-  // Colour and box drawing for the human report; absent means plain.
+  // Colour and the kit table for the human report; absent means plain.
   theme?: CliTheme;
   // Colour of the stderr diagnostics, from stderr's own TTY state (never
   // stdout's); absent means plain.

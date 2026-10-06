@@ -436,3 +436,127 @@ describe('forkPickerRows (issue #332)', () => {
     expect(row?.label).toBe('#3  one two');
   });
 });
+
+describe('prompt timestamps (issue #455)', () => {
+  it('carries the message time onto the prompt cell, and only a real number', () => {
+    const at = Date.UTC(2026, 9, 6, 12, 1, 52);
+    const cells = entriesToCells([
+      {
+        id: 'u1',
+        seq: 1,
+        type: 'message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'fix the cart' }],
+          timestamp: at,
+        },
+      },
+      {
+        id: 'u2',
+        seq: 2,
+        type: 'message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'again' }],
+          timestamp: 'yesterday',
+        },
+      },
+    ]);
+    expect(cells[0]).toMatchObject({ kind: 'prompt', timestamp: at });
+    expect(cells[1]?.timestamp).toBeUndefined();
+  });
+});
+
+describe('file-change display records (issue #456)', () => {
+  const result = (details: unknown) => ({
+    id: 'r1',
+    seq: 2,
+    type: 'message',
+    message: {
+      role: 'toolResult',
+      toolCallId: 'tc1',
+      content: [{ type: 'text', text: '{"path":"a.js","replacements":1}' }],
+      details,
+    },
+  });
+
+  it('carries the diff onto the output cell, sanitized per row', () => {
+    const [cell] = entriesToCells([
+      result({
+        ok: true,
+        display: {
+          kind: 'diff',
+          text: '-2 old\u001b[2J line\n+2 \tnew line',
+          firstChangedLine: 2,
+          added: 1,
+          removed: 1,
+          truncated: false,
+        },
+      }),
+    ]);
+    expect(cell?.display).toEqual({
+      kind: 'diff',
+      // Control sequences stripped; the tab expands from the content's own
+      // first column, after the `+2 ` prefix.
+      text: '-2 old line\n+2         new line',
+      firstChangedLine: 2,
+      added: 1,
+      removed: 1,
+      truncated: false,
+    });
+  });
+
+  it('carries a new file record, and ignores a malformed or absent one', () => {
+    const [created] = entriesToCells([
+      result({
+        ok: true,
+        display: { kind: 'write', newFile: true, lines: 2, preview: 'a\nb' },
+      }),
+    ]);
+    expect(created?.display).toEqual({
+      kind: 'write',
+      newFile: true,
+      lines: 2,
+      preview: 'a\nb',
+    });
+    expect(entriesToCells([result({ ok: true })])[0]?.display).toBeUndefined();
+    expect(
+      entriesToCells([result({ display: { kind: 'diff', text: 3 } })])[0]
+        ?.display,
+    ).toBeUndefined();
+  });
+});
+
+describe('thinking cells (issue #457)', () => {
+  const assistant = (content: unknown[]) => ({
+    id: 'a1',
+    seq: 2,
+    type: 'message',
+    message: { role: 'assistant', content, timestamp: 1000 },
+  });
+
+  it('turns a thinking part into a thinking cell before the answer', () => {
+    const cells = entriesToCells([
+      assistant([
+        { type: 'thinking', thinking: 'addItem overwrites qty. Check it.' },
+        { type: 'text', text: 'Fixed.' },
+      ]),
+    ]);
+    expect(cells.map((cell) => [cell.kind, cell.markdown])).toEqual([
+      ['thinking', 'addItem overwrites qty. Check it.'],
+      ['text', 'Fixed.'],
+    ]);
+    expect(cells[0]?.timestamp).toBe(1000);
+  });
+
+  it('drops redacted and empty thinking', () => {
+    const cells = entriesToCells([
+      assistant([
+        { type: 'thinking', thinking: '', thinkingSignature: 'x' },
+        { type: 'thinking', thinking: 'secret', redacted: true },
+        { type: 'text', text: 'ok' },
+      ]),
+    ]);
+    expect(cells.map((cell) => cell.kind)).toEqual(['text']);
+  });
+});

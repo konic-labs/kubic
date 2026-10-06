@@ -1,4 +1,5 @@
 import { createSocket } from 'node:dgram';
+import type { WorkerDiffStat } from '../../../packages/core/src/presentation.js';
 
 // Production wiring for the command dispatch (issue #135): one runner per
 // command in the if-chain, built from the same objects `main()` built
@@ -18,6 +19,7 @@ import {
   EXIT_FAILED,
   EXIT_USAGE,
 } from '../../../packages/core/src/cli/exit-codes.js';
+import { isFancy } from '../../../packages/core/src/cli/kit.js';
 import {
   type CliLogger,
   createLineLogger,
@@ -84,7 +86,10 @@ import {
   ORCHESTRATE_DEFAULT_AGENTS,
   type OrchestrateCliOptions,
   runOrchestrateCommand,
+  workerTaskOf,
+  workerTaskTitle,
 } from '../../../packages/host/src/orchestrate-cli.js';
+import { diffStatOfHunks } from '../../../packages/host/src/orchestrator/diff-stat.js';
 import {
   cleanDepsWithDefaults,
   runCleanCommand,
@@ -131,6 +136,7 @@ import {
   defaultSessionsRoot,
   runSessionsCommand,
 } from '../../../packages/host/src/sessions-cli.js';
+import { runSetupCommand } from '../../../packages/host/src/setup-cli.js';
 import { skillsDoctorProbe } from '../../../packages/host/src/skills-boot.js';
 import { runSkillsCommand } from '../../../packages/host/src/skills-cli.js';
 import { runTrustCommand } from '../../../packages/host/src/trust-cli.js';
@@ -185,18 +191,23 @@ import {
 import { type HeadlessRunDeps, runHeadlessPrompt } from './headless-run.js';
 import { orchestrateDepsWithDefaults } from './orchestrate-run.js';
 import { runProdReplay } from './replay-run.js';
+import { createRunProgress } from './run-progress.js';
 import { resolveSessionTrajectory } from './run-trajectory.js';
+import { prodSetupDeps } from './setup-prod.js';
 import {
   runTuiCommand,
   type TuiDepsInput,
   tuiDepsWithDefaults,
 } from './tui-run.js';
+import { createWorkerToolFacts } from './worker-facts.js';
 
 // The two channels the root wired: `kubic` output on stdout, diagnostics
 // (workers/orchestrate debug lines, the TUI extension receipt) on stderr.
 export interface ProdRunnerIo {
   readonly out: (line: string) => void;
   readonly debug: (line: string) => void;
+  // Issue #462: the version the TUI's first screen names.
+  readonly version?: () => string;
 }
 
 // Test-only overrides for the orchestrate runner (issue #179): prod-path
@@ -220,7 +231,7 @@ export interface ProdRunners extends DispatchRunners {
 // The presentation seams of one solo-command invocation, derived once from
 // the real streams: colour for stdout data (none off a TTY, under NO_COLOR,
 // or for --json), the stderr diagnostics logger (debug lines under
-// KUBIC_DEBUG=1), box-drawn tables and prompts only on an interactive
+// KUBIC_DEBUG=1), kit tables and prompts only on an interactive
 // terminal. `--json` keeps stdout to exactly one document.
 function presentation(
   out: (line: string) => void,
@@ -295,7 +306,7 @@ const auditProbes = {
 
 // Report colours and table style for a migrated command, decided once from
 // the real stdout: colour only on a TTY that allows it (NO_COLOR,
-// FORCE_COLOR, TERM=dumb honoured), box-drawn tables only there too, and
+// FORCE_COLOR, TERM=dumb honoured), kit tables only there too, and
 // neither under `--json`.
 function reportStyle(json: boolean): { theme: CliTheme; fancy: boolean } {
   const theme = json ? PLAIN : themeFor(process.stdout);
@@ -432,6 +443,12 @@ export function prodTuiDeps(
     // Issue #228 review: the same per-path check gates the project models.json
     // and each ancestor skill root on the interactive lane.
     trustProject: projectTrustFor(cliConfig),
+    // Issue #462: the first screen's version and trust row (the trust row
+    // is omitted when the project has no layer).
+    ...(io.version === undefined ? {} : { version: io.version() }),
+    ...(cliConfig.trust?.present === true
+      ? { projectTrust: cliConfig.trust.trusted ? 'loaded' : 'untrusted' }
+      : {}),
     // Issue #133: the SAME lane projections `kubic run` consumes — the
     // interactive lane names itself and layers `--role` identically.
     ...runtimeLaneDeps(cliConfig),
@@ -692,13 +709,64 @@ function prodInspectRun(repoRoot: string, row: WorkerListRow): WorkerRunView {
     view.usage = usage;
     view.usageHint = undefined;
   }
+  // Issue #464: the task title, the change summary and the settled tool
+  // count — all from the run's own record, like the usage above.
+  const task = prodTaskOf(state, row.workerId);
+  if (task !== undefined) view.task = task;
+  const diffStat = prodDiffStatOf(state, row.workerId);
+  if (diffStat !== undefined) view.diffStat = diffStat;
+  if (usage?.toolCalls !== undefined) view.toolCount = usage.toolCalls;
   return view;
+}
+
+// Issue #464: the worker's task title as its run recorded it (the run
+// state is untrusted JSON: anything malformed reads as unknown).
+function prodTaskOf(state: unknown, workerId: string): string | undefined {
+  const value = state as { prompt?: unknown; plan?: unknown };
+  if (typeof value.prompt !== 'string') return undefined;
+  const title = workerTaskTitle(
+    workerTaskOf(
+      {
+        prompt: value.prompt,
+        ...(Array.isArray(value.plan) ? { plan: value.plan } : {}),
+      },
+      workerId,
+    ),
+  );
+  return title === '' ? undefined : title;
+}
+
+// Issue #464: the change summary from the worker's stored record — the
+// same per-file hunks the run merged (or holds for the merge).
+function prodDiffStatOf(
+  state: unknown,
+  workerId: string,
+): WorkerDiffStat | undefined {
+  const records = state as { records?: unknown; completed?: unknown };
+  const candidates = [
+    ...(Array.isArray(records.records) ? records.records : []),
+    ...(Array.isArray(records.completed) ? records.completed : []),
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'object' || candidate === null) continue;
+    const entry = candidate as { agentId?: unknown; hunks?: unknown };
+    if (entry.agentId !== workerId || !Array.isArray(entry.hunks)) continue;
+    const hunks = entry.hunks.filter(
+      (hunk): hunk is { path: string; hunk: string } =>
+        typeof hunk === 'object' &&
+        hunk !== null &&
+        typeof (hunk as { path?: unknown }).path === 'string' &&
+        typeof (hunk as { hunk?: unknown }).hunk === 'string',
+    );
+    return diffStatOfHunks(hunks);
+  }
+  return undefined;
 }
 
 export function createProdRunners(io: ProdRunnerIo): ProdRunners {
   const { out, debug } = io;
   // The analysis handlers' channels: the report on stdout, diagnostics on
-  // stderr (the `debug` channel), report colour and box drawing from the
+  // stderr (the `debug` channel), report colour and the kit table from the
   // real stdout, diagnostics colour from the real stderr (each off on a
   // pipe and under NO_COLOR; each handler also drops them under --json).
   const report = () => {
@@ -781,12 +849,28 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       });
       for (const note of assembled.notes) view.logger.info(note);
       if (fauxProviderActive(process.env)) view.logger.warn(FAUX_NOTICE);
+      const pin = runtimeModelPin(cliConfig);
       return runModelsCommand(options, {
         ...view,
         models: assembled.models,
         providers: assembled.providers,
+        // Issue #449: the configured pin is the default the view marks.
+        ...(pin === undefined
+          ? {}
+          : { defaultModel: `${pin.provider}/${pin.id}` }),
       });
     },
+    // Issue #451: the interactive setup (provider, model, thinking, trust).
+    setup: async (options, cliConfig) =>
+      runSetupCommand(
+        options,
+        await prodSetupDeps({
+          out,
+          err: debug,
+          errTheme: stderrTheme(),
+          cliConfig,
+        }),
+      ),
     skills: (options, cliConfig) => {
       // Issue #238: the listing over the same discovery the lane boots.
       // The trust inputs mirror `kubic run`'s (the env opt-in plus the
@@ -869,6 +953,31 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         ...presentation(out, debug, options.json === true),
         run: (prompt, options) =>
           runHeadlessPrompt(prompt, options, prodRunDeps(cliConfig)),
+        // Issue #464: an orchestrator worker (`kubic orchestrate` launches
+        // it with KUBIC_WORKER_ID) reports its tool calls on stdout, where
+        // its manager follows them; an ordinary run prints nothing extra.
+        ...((process.env.KUBIC_WORKER_ID ?? '') === ''
+          ? {}
+          : {
+              toolFacts: () =>
+                createWorkerToolFacts((line) => {
+                  process.stdout.write(`${line}\n`);
+                }),
+            }),
+        // Issue #447: live progress only when the whole run is on an
+        // interactive colour terminal (stdout AND stderr) and not --json;
+        // a redirected stdout keeps the plain lines scripts read.
+        ...(options.json !== true &&
+        isFancy(process.stdout) &&
+        isFancy(process.stderr)
+          ? {
+              progress: () =>
+                createRunProgress(process.stderr, themeFor(process.stderr), {
+                  cwd: process.cwd(),
+                  home: homedir(),
+                }),
+            }
+          : {}),
       });
     },
     tui: async (options, cliConfig) => {
@@ -895,7 +1004,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       return runTuiCommand(
         options,
         tuiDepsWithDefaults({
-          ...prodTuiDeps({ out, debug }, cliConfig),
+          ...prodTuiDeps(io, cliConfig),
           extensions,
         }),
       );
@@ -1072,6 +1181,10 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       };
       return runDoctorCommand(options, {
         ...view,
+        // Issue #448: the grouped summary packs into the terminal's width.
+        ...(process.stdout.columns === undefined
+          ? {}
+          : { columns: process.stdout.columns }),
         probeProviders: () => providerProbesOf(assembled),
         checkDeps: () => [
           {
@@ -1394,7 +1507,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       // a fresh CLI process's registry is always empty, so a registry
       // branch here could only ever be dead (issue #94's finding, finished
       // in #132): the CLI reads the durable record directly. The table is
-      // box-drawn only on an interactive, coloured stdout; `--debug` (or
+      // the kit table only on an interactive, coloured stdout; `--debug` (or
       // KUBIC_DEBUG=1) adds the §50 spawn/exit lines on stderr.
       const theme = stdoutTheme();
       const mode = outputModeFor({

@@ -11,7 +11,7 @@
 // and reported on the readout. No new top-level --json field: the extra
 // per-row numbers are additive inside the existing `agents` entries.
 
-import { join, sep } from 'node:path';
+import { join } from 'node:path';
 import {
   EXIT_FAILED,
   EXIT_OK,
@@ -26,7 +26,6 @@ import {
 } from '../../../../core/src/cli/theme.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
 import { stripUnsafeCharacters } from '../../../../exec/src/runtime-exclude.js';
-import { bridgeToPiFileSystem } from '../../../../worker/src/lane/session-fs.js';
 import {
   listSessions,
   openSessionStore,
@@ -42,13 +41,16 @@ import {
 import {
   BACKGROUND_CONTEXT,
   type Context,
-  JsonlStorage,
   type Storage,
   type Usage,
   UsageDoc,
 } from '../../../../worker/src/pi-boundary.js';
 import { redactSecretShapes } from '../../policy/secret-shapes.js';
 import { type RunUsage, SESSION_ID_PATTERN } from '../../run-cli.js';
+import {
+  openReadOnlySessionStorage,
+  touchesWorkspace,
+} from '../../session-read.js';
 import { defaultSessionsRoot } from '../../sessions-cli.js';
 import { transparentCachingNote } from './cache.js';
 import {
@@ -94,7 +96,7 @@ export interface CostCommandDeps {
   out: (line: string) => void;
   // stderr: diagnostics, one `error: …` line each (core/cli/logger).
   err: (line: string) => void;
-  // Colour and box drawing for the human report; absent means plain.
+  // Colour and the kit table for the human report; absent means plain.
   theme?: CliTheme;
   // Colour of the stderr diagnostics, from stderr's own TTY state (never
   // stdout's); absent means plain.
@@ -226,62 +228,6 @@ export function totalSessionUsage(
     cacheWrite: total.cacheWrite,
     costUsd: total.cost.total,
   };
-}
-
-// Issue #251: lock-free read-only open of one session's storage. The
-// caller classified the session via `listSessions` and probed no live
-// holder via `sessionLockIsLive`, so this never creates or removes
-// `lock.json` — the session dir mtime (the prune age signal) is untouched
-// and a concurrent attach is never blocked. A missing storage is an
-// unknown session, exactly as `attachSession` reports it.
-async function openCostReadStorage(
-  sessionsRoot: string,
-  sessionId: string,
-): Promise<Storage> {
-  const bridge = createNodeFileBridge(sessionsRoot);
-  if (!bridge.exists(join(sessionsRoot, sessionId, 'main.jsonl'))) {
-    throw new SessionAttachError(sessionId);
-  }
-  // The portable core over the exec bridge, never the `/node` entry point:
-  // session bytes keep crossing the I/O seam, where the #359 secret
-  // scrubbing and the #361 file modes live (see session-fs.ts). fsync stays
-  // off — cost never commits, so there is nothing to flush.
-  return JsonlStorage.open(
-    join(sessionsRoot, sessionId),
-    bridgeToPiFileSystem(bridge),
-    BACKGROUND_CONTEXT,
-    { fsync: false },
-  );
-}
-
-// Issue #250 (§39): the invoking workspace, canonically. Symlinks are
-// resolved (macOS /var → /private/var); a path that no longer exists keeps
-// its lexical form, matching journal-cli's rule, so it can then only match
-// itself.
-function canonicalWorkspace(path: string): string {
-  try {
-    return createNodeFileBridge('/').realPath?.(path) ?? path;
-  } catch {
-    return path;
-  }
-}
-
-// Issue #250: whether a session belongs to the invoking project. The
-// recorded workspace (`meta.workspace ?? meta.cwd`) matches when it nests
-// with the invocation either way — a run started at the repo root covers a
-// `cost` from a subdirectory, and a subdir run still belongs to a `cost`
-// from the root — so both directions count as touching the workspace.
-function touchesWorkspace(
-  recorded: string | undefined,
-  workspace: string,
-): boolean {
-  if (recorded === undefined || recorded === '') return false;
-  const left = canonicalWorkspace(recorded);
-  const right = canonicalWorkspace(workspace);
-  if (left === right) return true;
-  const below = (parent: string, child: string): boolean =>
-    child.startsWith(parent.endsWith(sep) ? parent : `${parent}${sep}`);
-  return below(left, right) || below(right, left);
 }
 
 // Prod loader: usage facts out of the session store, aggregated to the
@@ -423,7 +369,7 @@ export async function loadSessionCostRows(
     }
     let storage: Storage;
     try {
-      storage = await openCostReadStorage(sessionsRoot, entry.id);
+      storage = await openReadOnlySessionStorage(sessionsRoot, entry.id);
     } catch (error) {
       if (isNamed) throw error;
       if (
@@ -542,7 +488,7 @@ export async function readSessionRunUsage(
       startedAt: live.startedAt ?? 0,
     });
   }
-  const storage = await openCostReadStorage(sessionsRoot, sessionId);
+  const storage = await openReadOnlySessionStorage(sessionsRoot, sessionId);
   try {
     const totals = totalSessionUsage(
       await readSessionUsage(storage, BACKGROUND_CONTEXT),
@@ -581,7 +527,7 @@ export async function readSessionRunUsage(
 // Presentation over the grouped rows (issue #250; §39): the group column
 // names the `--by` level, then the worker's role, the model, and the
 // separate in/out/cacheRead/cacheWrite counters the old combined-tokens
-// column hid. Box-drawn only on a coloured terminal, plain aligned text
+// column hid. The kit table only on a coloured terminal, plain aligned text
 // otherwise. Role/agent/model values are operator- or model-authored, so
 // the display strips control characters (the stored rows keep them raw,
 // exactly like `sessions attach`).

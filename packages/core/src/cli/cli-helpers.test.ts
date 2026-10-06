@@ -102,9 +102,9 @@ describe('theme', () => {
     expect(rich.enabled).toBe(true);
     expect(rich.accent('x')).toBe(`${ESC}[38;2;255;0;77mx${ESC}[39m`);
     expect(rich.success('x')).toContain('38;2;94;214;140');
-    expect(rich.warning('x')).toContain('38;2;255;122;46');
-    expect(rich.muted('x')).toContain('38;2;128;128;128');
-    expect(rich.code('x')).toContain('38;2;244;244;244');
+    expect(rich.warning('x')).toContain('38;2;255;181;71');
+    expect(rich.muted('x')).toContain('38;2;110;110;121');
+    expect(rich.code('x')).toContain('38;2;236;236;241');
     expect(rich.bold('x')).toBe(`${ESC}[1mx${ESC}[22m`);
     expect(rich.dim('x')).toBe(`${ESC}[2mx${ESC}[22m`);
     expect(createCliTheme('16').accent('x')).not.toBe('x');
@@ -150,16 +150,22 @@ describe('logger', () => {
     expect(on.chunks).toEqual(['debug: shown\n']);
   });
 
-  it('colours the prefix only with a coloured theme', () => {
+  it('uses status marks with a coloured theme (issue #450)', () => {
     const chunks: string[] = [];
+    const theme = createCliTheme('truecolor');
     const logger = createLogger({
       write: (chunk) => chunks.push(chunk),
-      theme: createCliTheme('truecolor'),
+      theme,
     });
     logger.error('x');
+    logger.warn('y');
+    logger.info('z');
+    logger.success('w');
+    expect(chunks[0]).toBe(`${theme.ui.fg('err')('✕')} x\n`);
+    expect(chunks[1]).toBe(`${theme.ui.fg('warn')('▲')} y\n`);
+    expect(chunks[2]).toBe(`${theme.ui.fg('info')('ℹ')} z\n`);
+    expect(chunks[3]).toBe(`${theme.ui.fg('ok')('✓')} w\n`);
     expect(chunks[0]).toContain(ESC);
-    expect(chunks[0]).toContain('error:');
-    expect(chunks[0]?.endsWith(' x\n')).toBe(true);
   });
 
   it('createLineLogger writes whole lines to a line channel (no trailing newline)', () => {
@@ -232,15 +238,33 @@ describe('table', () => {
     ).toBe('  N\n  1\n100');
   });
 
-  it('renders a box-drawn table when fancy', () => {
+  it('renders the borderless kit table when fancy (issue #445)', () => {
     const out = renderTable(rows, columns, {
       fancy: true,
       theme: createCliTheme('none'),
     });
-    expect(out).toContain('┌');
-    expect(out).toContain('│ bbbb │');
-    expect(out).toContain('second');
+    expect(out.split('\n')).toEqual([
+      'ID    COST  NAME',
+      '─'.repeat(18),
+      'a      1.5  first',
+      'bbbb    10  second',
+    ]);
+    expect(out).not.toContain('┌');
     expect(renderTable(rows, columns, { fancy: true })).toContain('NAME');
+  });
+
+  it('styles the kit header and rule, and draws row markers', () => {
+    const theme = createCliTheme('truecolor');
+    const out = renderTable(rows, columns, {
+      fancy: true,
+      theme,
+      markers: ['●', undefined],
+    });
+    const lines = out.split('\n');
+    expect(lines[0]).toContain(theme.ui.style({ fg: 'fg2', bold: true })('ID'));
+    expect(lines[1]).toBe(theme.ui.fg('fg3')('─'.repeat(20)));
+    expect(lines[2]?.startsWith('● a')).toBe(true);
+    expect(lines[3]?.startsWith('  bbbb')).toBe(true);
   });
 });
 

@@ -239,6 +239,7 @@ describe('kubic tui /image (issue #338)', () => {
     ]);
 
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await exit).toBe(0);
   });
 
@@ -267,6 +268,7 @@ describe('kubic tui /image (issue #338)', () => {
       { type: 'image', data: PNG.toString('base64'), mimeType: 'image/png' },
     ]);
 
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
   });
@@ -297,6 +299,7 @@ describe('kubic tui /image (issue #338)', () => {
     expect(capture.seen[0]?.content).toBe('hello');
 
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await exit).toBe(0);
   });
 
@@ -319,6 +322,7 @@ describe('kubic tui /image (issue #338)', () => {
       fake.writes.join('').includes('is not a supported image'),
     );
 
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
   });
@@ -350,6 +354,7 @@ describe('kubic tui /image (issue #338)', () => {
       { type: 'image', data: PNG.toString('base64'), mimeType: 'image/png' },
     ]);
 
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
   });
@@ -433,6 +438,7 @@ describe('kubic tui /image (issue #338)', () => {
     expect(capture.seen[0]?.content).toBe('what now');
 
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await exit).toBe(0);
   });
 
@@ -513,6 +519,8 @@ describe('kubic tui /image (issue #338)', () => {
     // The garbage never reached the draft.
     expect(fake.writes.join('')).not.toContain('AAAAAAAA');
 
+    // The typed draft takes the first Ctrl-C; the double press quits (#454).
+    fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
@@ -550,6 +558,8 @@ describe('kubic tui /image (issue #338)', () => {
     await waitFor(() => fake.writes.join('').includes('after'));
     expect(fake.writes.join('')).not.toContain('AAAAAAAA');
 
+    // The typed draft takes the first Ctrl-C; the double press quits (#454).
+    fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
@@ -569,6 +579,8 @@ describe('kubic tui /image (issue #338)', () => {
     await waitFor(() => fake.writes.join('').includes('typed'));
     expect(fake.writes.join('')).not.toContain('AAAA');
 
+    // The typed draft takes the first Ctrl-C; the double press quits (#454).
+    fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
@@ -598,6 +610,8 @@ describe('kubic tui /image (issue #338)', () => {
     await waitFor(() => fake.writes.join('').includes('typed'));
     expect(fake.writes.join('')).not.toContain('AAAAAAAA');
 
+    // The typed draft takes the first Ctrl-C; the double press quits (#454).
+    fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
@@ -629,6 +643,7 @@ describe('kubic tui /image (issue #338)', () => {
       { type: 'image', data: PNG.toString('base64'), mimeType: 'image/png' },
     ]);
 
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
   });

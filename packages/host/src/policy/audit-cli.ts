@@ -48,7 +48,7 @@ export interface AuditCommandDeps {
   out: (line: string) => void;
   // stderr: diagnostics, one `error: …` line each (core/cli/logger).
   err: (line: string) => void;
-  // Colour and box drawing for the human table; absent means plain.
+  // Colour and the kit table for the human table; absent means plain.
   theme?: CliTheme;
   // Colour of the stderr diagnostics, from stderr's own TTY state (never
   // stdout's); absent means plain.

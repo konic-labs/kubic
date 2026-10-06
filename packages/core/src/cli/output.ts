@@ -14,7 +14,7 @@ export interface OutputMode {
   readonly json: boolean;
   // stdin AND stdout are TTYs and not --json: prompts/spinners allowed.
   readonly interactive: boolean;
-  // Fancy (box-drawn, coloured) rendering allowed on stdout.
+  // Fancy (kit table, coloured) rendering allowed on stdout.
   readonly fancy: boolean;
 }
 

@@ -1163,7 +1163,7 @@ describe('journal CLI --json parity', () => {
 
 // Presentation on the shared CLI helpers: colour comes only from the
 // injected theme (the composition root decides TTY/NO_COLOR), `--json`
-// never carries it, and `log` is a table (plain columns off a TTY, box
+// never carries it, and `log` is a table (plain columns off a TTY, the kit
 // drawn when fancy).
 describe('journal CLI presentation (themes, tables)', () => {
   const ESC = '\u001b[';
@@ -1230,7 +1230,7 @@ describe('journal CLI presentation (themes, tables)', () => {
     expect(lines[0]).toBe(`${COLOR.success('restored')} a.txt`);
   });
 
-  it('log is a plain aligned table off a TTY and box-drawn when fancy', async () => {
+  it('log is a plain aligned table off a TTY and the kit table when fancy', async () => {
     const { journalDir, root } = setup();
     const plain: string[] = [];
     await runJournalCommand(
@@ -1247,7 +1247,8 @@ describe('journal CLI presentation (themes, tables)', () => {
       { command: 'log' },
       { journalDir, root, fancy: true, out: (l) => fancy.push(l) },
     );
-    expect(fancy[0]).toMatch(/^┌/);
+    expect(fancy.join('\n')).toMatch(/\n─+\n/);
+    expect(fancy.join('\n')).not.toContain('┌');
     expect(fancy.join('\n')).toContain('a.txt');
     expect(fancy.at(-1)).toBe(
       'unattributed: 0 of 1 entr(ies) reconciled at run end',
@@ -1284,7 +1285,8 @@ describe('journal CLI presentation (themes, tables)', () => {
       },
     );
     expect(errs).toHaveLength(1);
-    expect(errs[0]?.startsWith(COLOR.accent('info:'))).toBe(true);
+    // Issue #450: a colour terminal shows the level as a status mark.
+    expect(errs[0]?.startsWith(COLOR.ui.fg('info')('ℹ'))).toBe(true);
   });
 });
 

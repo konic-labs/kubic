@@ -12,6 +12,7 @@ import type { OrchestrateCliOptions } from '../../../../packages/host/src/orches
 import type { CleanOptions } from '../../../../packages/host/src/orchestrator/worktree/clean.js';
 import type { RunCommandOptions } from '../../../../packages/host/src/run-cli.js';
 import type { SessionsInvocation } from '../../../../packages/host/src/sessions-cli.js';
+import type { SetupCommandOptions } from '../../../../packages/host/src/setup-cli.js';
 import type { SkillsCommandOptions } from '../../../../packages/host/src/skills-cli.js';
 import type { TrustCommandOptions } from '../../../../packages/host/src/trust-cli.js';
 import type { WorkersInvocation } from '../../../../packages/host/src/workers-cli.js';
@@ -42,6 +43,8 @@ export interface DispatchRunners extends AnalysisRunners {
   readonly clean: CommandRunner<CleanOptions>;
   readonly config: CommandRunner<ConfigCommandOptions>;
   readonly trust: CommandRunner<TrustCommandOptions>;
+  // Issue #451: the interactive first-run setup.
+  readonly setup: CommandRunner<SetupCommandOptions>;
   readonly workers: CommandRunner<WorkersInvocation>;
 }
 

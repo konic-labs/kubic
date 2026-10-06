@@ -1,4 +1,4 @@
-// The approval overlay on the real `kubic tui` composition path (issue #96,
+// The approval card on the real `kubic tui` composition path (issue #96,
 // criteria 1 and 6). Before #96 `kubic tui` installed the approval policy
 // (issue #86) but attached no answer seat, so a challenged call was refused
 // with NO_ANSWER_SURFACE_REASON and the operator could never approve anything.
@@ -6,7 +6,7 @@
 // Real code end to end: the prod boot (bootTuiLane) on a real faux lane, a
 // real ProcessTerminal-shaped fake Terminal driving the real alt-screen, and
 // the real key path. Criterion 6 (clean quit restores the main screen and
-// exits 0) rides the same run: the overlay must not break the restore.
+// exits 0) rides the same run: the card must not break the restore.
 //
 // Lives in host next to tui-loop.test.ts (it reaches the composition root as
 // a black-box caller). Faux provider only: zero network, zero paid tokens.
@@ -178,20 +178,21 @@ describe('allow once is not a session approval (issue #231)', () => {
     for (const ch of 'clean up') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() => asks === 1);
-    await waitFor(() => fake.frame.includes('Approval required'));
+    await waitFor(() => fake.frame.includes('APPROVAL'));
     fake.feed('a');
     // The second identical call must ask again: 'a' approved ONE call.
     await waitFor(() => asks === 2);
     fake.feed('a');
     await waitFor(() => fake.frame.includes('both calls done'));
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(asks).toBe(2);
   });
 });
 
-describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () => {
-  it('shows the overlay for a gated call and runs it when approved', async () => {
+describe('approval card on the kubic tui path (issue #96, criterion 1)', () => {
+  it('shows the card for a gated call and runs it when approved', async () => {
     const root = tmpRoot();
     const lines: string[] = [];
     const fake = fakeTerminal(100);
@@ -214,9 +215,9 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'clean up') fake.feed(ch);
     fake.feed('\r');
-    // The overlay is up: the request names the capability and the command.
-    await waitFor(() => fake.frame.includes('Approval required'));
-    expect(fake.frame).toContain('destructive-shell');
+    // The card is up (#459): it names the capability and the command.
+    await waitFor(() => fake.frame.includes('APPROVAL'));
+    expect(fake.frame).toContain('▲ destructive');
     expect(fake.frame).toContain('rm -rf /tmp/x');
     expect(fake.frame).toContain('allow once');
     // 'a' is the shipped allow-once binding: the call runs, the turn settles.
@@ -224,7 +225,10 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     // (The main-screen `lines` document is only printed at quit, so the
     // live frame is the only place the settled turn can show up yet.)
     await waitFor(() => fake.frame.includes('approved turn done'));
+    // Issue #453: the solo tree row opens on Ctrl-T.
+    fake.feed('\x14');
     // Quit cleanly (criterion 6): restore + exit 0.
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
@@ -258,7 +262,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'clean up') fake.feed(ch);
     fake.feed('\r');
-    await waitFor(() => fake.frame.includes('Approval required'));
+    await waitFor(() => fake.frame.includes('APPROVAL'));
     // Esc answers the request (deny). It must NOT also quit: the process is
     // still alive and the turn continues to its next assistant message.
     fake.feed('\u001b');
@@ -269,15 +273,16 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     expect(lines).toEqual([]);
     // Now a clean quit (criterion 6).
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(fake.frame).toContain('?1049l');
-    // The restored main screen carries the continued turn and no overlay
+    // The restored main screen carries the continued turn and no card
     // left behind for a request that already settled; the denied call
     // never ran successfully.
     const doc = lines.join('\n');
     expect(doc).toContain('after the denial');
-    expect(doc).not.toContain('Approval required');
+    expect(doc).not.toContain('APPROVAL');
     expect(doc).not.toMatch(/✓ bash /);
   });
 
@@ -297,6 +302,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       },
     );
     await waitFor(() => fake.counts.started === 1);
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
@@ -329,22 +335,23 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'clean up') fake.feed(ch);
     fake.feed('\r');
-    await waitFor(() => fake.frame.includes('Approval required'));
+    await waitFor(() => fake.frame.includes('APPROVAL'));
     // Ctrl-C once cancels the RUNNING turn (documented in
     // docs/cli/commands.md) and the shutdown path settles the pending
     // approval as a deny — so the turn ends without waiting for the lane's
     // own timeout and no frame is left showing a request nobody can answer.
     fake.feed('\x03');
     await waitFor(() => fake.frame.includes('cancelled'));
-    // A second press, with nothing running, is the quit. Screen restores and
-    // the process exits 0 (criterion 6).
+    // Idle again: a double press is the quit (issue #454). Screen restores
+    // and the process exits 0 (criterion 6).
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(fake.frame).toContain('?1049l');
   });
 
-  it('renders the inline fallback instead of the overlay on a narrow terminal', async () => {
+  it('shows the card on a narrow terminal and stays answerable', async () => {
     const root = tmpRoot();
     const lines: string[] = [];
     const fake = fakeTerminal(70);
@@ -367,19 +374,20 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'clean up') fake.feed(ch);
     fake.feed('\r');
-    await waitFor(() => fake.frame.includes('! approval (inline)'));
-    // The overlay body is NOT composited at this width (Pi's visible() gate),
-    // and the request is still answerable.
-    expect(fake.frame).toContain('destructive-shell');
+    await waitFor(() => fake.frame.includes('APPROVAL'));
+    // The card lives in the editor's slot (#459), so a narrow terminal shows
+    // it too (no overlay width gate), and the request is answerable.
+    expect(fake.frame).toContain('▲ destructive');
     fake.feed('a');
     await waitFor(() => fake.frame.includes('narrow done'));
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
   });
 
   // Issue #315: type-ahead cannot approve. With the shipped arming delay on
-  // an injected clock, an `a` typed 50 ms after the overlay appeared neither
+  // an injected clock, an `a` typed 50 ms after the card appeared neither
   // answers the ask nor reaches the draft; the same key once armed does.
   it('ignores a decision key typed inside the arming window', async () => {
     const root = tmpRoot();
@@ -404,7 +412,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'clean up') fake.feed(ch);
     fake.feed('\r');
-    await waitFor(() => fake.frame.includes('Approval required'));
+    await waitFor(() => fake.frame.includes('APPROVAL'));
     expect(fake.frame).toContain('keys unlock in a moment');
     now += 50;
     fake.feed('a');
@@ -421,13 +429,14 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     fake.feed('a');
     await waitFor(() => fake.frame.includes('armed turn done'));
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
   });
 
-  // Issue #316: a padded 400-char command reaches the dialog whole — the
+  // Issue #316: a padded 400-char command reaches the card whole — the
   // seat receives the full command derived from the same args the key
-  // hashes, and the overlay shows it wrapped instead of a 120-char slice.
-  it('delivers the full padded command to the dialog', async () => {
+  // hashes, and the card shows it wrapped instead of a 120-char slice.
+  it('delivers the full padded command to the card', async () => {
     const root = tmpRoot();
     const fake = fakeTerminal(100);
     const padded = `echo 'running formatter' ${'x'.repeat(360)}; rm -rf /tmp/x`;
@@ -460,13 +469,17 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'pad') fake.feed(ch);
     fake.feed('\r');
-    await waitFor(() => fake.frame.includes('Approval required'));
+    await waitFor(() => fake.frame.includes('APPROVAL'));
     expect(seen[0]?.command).toBe(padded);
     expect(seen[0]?.summary).toMatch(/… \(\+\d+ chars\)$/);
-    expect(fake.frame).toContain('command: ');
-    expect(fake.frame).not.toContain('summary: ');
+    // The card pages the whole command (its tail past the summary's cut is
+    // on screen), never the truncated summary.
+    expect(fake.frame).toContain("$ echo 'running formatter'");
+    expect(fake.frame).toContain('/tmp/x');
+    expect(fake.frame).not.toMatch(/\(\+\d+ chars\)/);
     fake.feed('d');
     await waitFor(() => fake.frame.includes('padded turn done'));
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
   });

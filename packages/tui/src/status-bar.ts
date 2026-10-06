@@ -1,9 +1,8 @@
-// Cost/Model status bar + mode indicator (issue #27).
-// §39 usage rows aggregated with the cache split; §18 model +
-// thinking / tokens / cache / cost / mode / approvals-disabled; §17
-// always-visible solo/orchestrator + OFF indicator; §16.2 StatusBar
-// basis 2; §80 cost + status + indicator. Budget burn-down is out of
-// scope (orchestrator).
+// Cost/Model status line (issue #27; one row since EPIC N issue #453).
+// §39 usage rows aggregated with the cache split; §18 model + thinking,
+// context gauge, cost; §71 budget burn-down; the turn state word. The mode
+// and the approvals posture moved to the header (chrome.ts), which reads
+// them from this bar's state.
 //
 // Structural usage mirror: the fields below repeat the shape read in
 // packages/worker/src/usage.ts (KubicUsageRow) WITHOUT importing it —
@@ -14,10 +13,17 @@
 // Issue #346: the TTFT/tool-ms segments were deleted, not repaired. Pi 1.0
 // routes no streaming/timing field Kubic could read (message deltas stay
 // inside the harness; the lane watch commits whole entries), so the two
-// segments could never render — dead code, which was the bug. The bar shows
-// what the lane really reports: tokens, cache, cost, mode, posture.
-import { tuiTheme } from './theme.js';
+// segments could never render — dead code, which was the bug.
+import { formatCost } from '../../core/src/cli/kit.js';
+import { TOOL } from '../../core/src/ui/glyphs.js';
+import type { UiTheme } from '../../core/src/ui/style.js';
+import type { TokenRole } from '../../core/src/ui/tokens.js';
+import { spinnerFrame, tuiTheme } from './theme.js';
 import type { Component } from './tui-boundary.js';
+import { visibleWidth } from './tui-boundary.js';
+import { fitLine, leftRight } from './ui/line.js';
+import { gauge } from './ui/marks.js';
+import { fillLine } from './ui/surface.js';
 
 export interface StatusUsageCost {
   readonly input: number;
@@ -124,10 +130,21 @@ export interface StatusBudget {
   readonly toolCalls: number;
 }
 
+// Issue #453: the word at the right end of the status line.
+export type StatusTurnState =
+  | 'ready'
+  | 'working'
+  | 'approval'
+  | 'cancelling'
+  | 'error';
+
 export interface StatusBarState {
   readonly model: string;
   readonly thinking: string;
   readonly rows: ReadonlyArray<StatusUsageRow>;
+  // The session facts the header shows (issue #453 moved them off this
+  // line); the bar stays their one holder so posture and mode have a
+  // single source the app and the loop read.
   readonly mode: StatusMode;
   readonly approvalsSkipped: boolean;
   readonly sessionId: string;
@@ -138,83 +155,92 @@ export interface StatusBarState {
   // an unknown window must never render a made-up percentage.
   readonly contextWindow?: number;
   readonly compactionThreshold?: number;
+  // Issue #453: the turn state word, when the running turn started (the
+  // spinner's clock), and the session journal's change count.
+  readonly turn?: StatusTurnState;
+  readonly busySince?: number;
+  readonly journalChanges?: number;
+  // Issue #467: an `allow all edits this turn` answer applies right now.
+  readonly turnEdits?: boolean;
 }
 
-export interface StatusBarTheme {
-  readonly warning: (text: string) => string;
-}
+const SEPARATOR = '  │  ';
+const GAUGE_CELLS = 10;
 
-const ESC = String.fromCharCode(27);
-
-export const DEFAULT_STATUS_THEME: StatusBarTheme = {
-  warning: (text: string): string => `${ESC}[33;1m${text}${ESC}[0m`,
+const TURN_WORD: Record<StatusTurnState, string> = {
+  ready: 'ready',
+  working: 'working',
+  approval: 'needs approval',
+  cancelling: 'cancelling…',
+  error: 'error',
 };
 
-function stripAnsi(line: string): string {
-  return line.replace(new RegExp(`${ESC}\\[[0-9;]*m`, 'g'), '');
+const TURN_ROLE: Record<StatusTurnState, TokenRole> = {
+  ready: 'ok',
+  working: 'accent',
+  approval: 'warn',
+  cancelling: 'fg2',
+  error: 'err',
+};
+
+// `200k`, `1M`: the window as people say it.
+export function compactCount(count: number): string {
+  if (count >= 1_000_000) {
+    const millions = Math.round(count / 100_000) / 10;
+    return `${millions}M`;
+  }
+  if (count >= 1000) return `${Math.round(count / 1000)}k`;
+  return String(Math.max(0, Math.round(count)));
 }
 
-export function statusVisibleWidth(line: string): number {
-  return stripAnsi(line).length;
+interface StatusSegments {
+  readonly model: string;
+  readonly thinking: string;
+  readonly ctxGauge: string;
+  readonly ctxPercent: string;
+  readonly ctxWindow: string;
+  readonly cost: string;
+  readonly journal: string;
+  readonly budget: string;
 }
 
-function truncateLine(
-  line: string,
-  width: number,
-  wrap?: (text: string) => string,
-): string {
-  if (statusVisibleWidth(line) <= width) return line;
-  if (width <= 0) return '';
-  const plain = stripAnsi(line);
-  const head = `${plain.slice(0, width - 1)}…`;
-  // ANSI re-wrap: truncation strips SGR spans, so callers whose source
-  // line carries theme styling re-apply it to the truncated head —
-  // otherwise a narrowed OFF line loses its warning color entirely.
-  return wrap === undefined ? head : wrap(head);
-}
-
-function shortModel(model: string, width: number, rest: string): string {
-  const room = width - statusVisibleWidth(rest);
-  if (room <= 0) return '';
-  if (model.length <= room) return model;
-  if (room < 4) return model.slice(0, room);
-  return `${model.slice(0, room - 1)}…`;
-}
-
-// Issue #347: the context gauge. `undefined` (unknown window, or no
-// committed request yet) means no segment at all — a wrong percentage is
-// worse than a missing one. At or above the compaction threshold the segment
-// takes the warning colour: the next turn is about to compact.
-function contextSegment(
+// Issue #347: the context gauge. Unknown (no window, or no committed
+// request yet) means no segment at all — a wrong percentage is worse than a
+// missing one. At or above the compaction threshold the gauge and the
+// percentage take the warning colour: the next turn is about to compact.
+function contextParts(
+  ui: UiTheme,
   state: StatusBarState,
   summary: StatusSummary,
-  theme: StatusBarTheme,
-): string | undefined {
+): Pick<StatusSegments, 'ctxGauge' | 'ctxPercent' | 'ctxWindow'> {
   const window = state.contextWindow;
   const used = summary.contextTokens;
   if (window === undefined || !(window > 0) || used === undefined) {
-    return undefined;
+    return { ctxGauge: '', ctxPercent: '', ctxWindow: '' };
   }
-  const percent = Math.min(100, Math.max(0, Math.round((used / window) * 100)));
-  const text = `ctx ${percent}%`;
+  const fraction = used / window;
+  const percent = Math.min(100, Math.max(0, Math.round(fraction * 100)));
   const threshold = state.compactionThreshold;
-  return threshold !== undefined && used >= threshold
-    ? theme.warning(text)
-    : text;
+  const warnAt = threshold === undefined ? 0.8 : threshold / window;
+  const warned = fraction >= warnAt;
+  return {
+    ctxGauge: gauge(ui, fraction, GAUGE_CELLS, { warnAt, failAt: 1 }),
+    ctxPercent: ui.fg(warned ? 'warn' : 'fg1')(`${percent}%`),
+    ctxWindow: ui.fg('fg2')(` of ${compactCount(window)}`),
+  };
 }
 
 // The §71 budget segment: one burn-down per set dimension (`tools 3/10`,
 // `$0.12/$0.50`, `tokens 1200/4096`) plus the wall-clock bound as static
-// limit text (the bar holds no elapsed source — `wall≤60s`). Undefined
-// when no dimension is set: an unbounded run shows nothing budget-shaped.
-// A breached dimension takes the warning colour: the next tool call may
-// not run.
-function budgetSegment(
+// limit text (the bar holds no elapsed source — `wall≤60s`). Empty when no
+// dimension is set: an unbounded run shows nothing budget-shaped. A breached
+// dimension takes the warning colour: the next tool call may not run.
+function budgetPart(
+  ui: UiTheme,
   budget: StatusBudget | undefined,
   summary: StatusSummary,
-  theme: StatusBarTheme,
-): string | undefined {
-  if (budget === undefined) return undefined;
+): string {
+  if (budget === undefined) return '';
   const { limits, toolCalls } = budget;
   const segs: string[] = [];
   let breached = false;
@@ -239,143 +265,124 @@ function budgetSegment(
       `wall≤${ms >= 1000 && ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`}`,
     );
   }
-  if (segs.length === 0) return undefined;
+  if (segs.length === 0) return '';
   const text = `budget ${segs.join(' · ')}`;
-  return breached ? theme.warning(text) : text;
+  return breached
+    ? ui.style({ fg: 'warn', bold: true })(text)
+    : ui.fg('fg1')(text);
 }
 
-// Row 1 segments, highest truncation priority last: the context gauge
-// drops first, then the budget burn-down, then thinking, then the model
-// shrinks; tokens + session cost never go.
-function renderRow1(
-  state: StatusBarState,
-  summary: StatusSummary,
-  width: number,
-  theme: StatusBarTheme,
+// What drops first as the line narrows, one rung at a time: the window
+// size, the journal count, the gauge cells, the thinking level, the context
+// segment, the budget; then the model name is cut. The cost and the state
+// word never drop.
+const RUNGS: ReadonlyArray<ReadonlyArray<keyof StatusSegments>> = [
+  [],
+  ['ctxWindow'],
+  ['ctxWindow', 'journal'],
+  ['ctxWindow', 'journal', 'ctxGauge'],
+  ['ctxWindow', 'journal', 'ctxGauge', 'thinking'],
+  ['ctxWindow', 'journal', 'ctxGauge', 'thinking', 'ctxPercent'],
+  ['ctxWindow', 'journal', 'ctxGauge', 'thinking', 'ctxPercent', 'budget'],
+];
+
+function assemble(
+  ui: UiTheme,
+  segments: StatusSegments,
+  drop: ReadonlyArray<keyof StatusSegments>,
 ): string {
-  const tokens = `in ${summary.input} out ${summary.output} (cached ${summary.cacheRead})`;
-  const cost = formatStatusCost(summary.costTotal);
-  const base = `${state.model} • thinking ${state.thinking} • ${tokens} • ${cost}`;
-  const ctx = contextSegment(state, summary, theme);
-  const full = ctx === undefined ? base : `${base} • ${ctx}`;
-  const seg = budgetSegment(state.budget, summary, theme);
-  const fullB = seg === undefined ? full : `${full} • ${seg}`;
-  if (statusVisibleWidth(fullB) <= width) return fullB;
-  const baseB = seg === undefined ? base : `${base} • ${seg}`;
-  if (statusVisibleWidth(baseB) <= width) return baseB;
-  if (statusVisibleWidth(base) <= width) return base;
-  const bare = `${shortModel(state.model, width, ` • ${tokens} • ${cost}`)} • ${tokens} • ${cost}`;
-  if (statusVisibleWidth(bare) <= width) return bare;
-  // The last rung keeps the cost (#346 review): truncating the tail would
-  // drop the one number the bar exists for, so the token half is cut to the
-  // room left over and the cost is always appended.
-  const tail = ` • ${cost}`;
-  const room = width - statusVisibleWidth(tail);
-  if (room < 2) return truncateLine(cost, width);
-  return `${truncateLine(` • ${tokens}`, room)}${tail}`;
+  const has = (key: keyof StatusSegments): boolean =>
+    segments[key] !== '' && !drop.includes(key);
+  const sep = ui.fg('fg3')(SEPARATOR);
+  const parts: string[] = [
+    `${segments.model}${has('thinking') ? segments.thinking : ''}`,
+  ];
+  if (has('ctxPercent')) {
+    const bar = has('ctxGauge') ? `${segments.ctxGauge} ` : '';
+    const size = has('ctxWindow') ? segments.ctxWindow : '';
+    parts.push(`${ui.fg('fg2')('ctx ')}${bar}${segments.ctxPercent}${size}`);
+  }
+  parts.push(segments.cost);
+  if (has('journal')) parts.push(segments.journal);
+  if (has('budget')) parts.push(segments.budget);
+  return parts.join(sep);
 }
 
-// Row 2: always-visible posture indicator. OFF is warning-themed and
-// unmissable (`! warning: … OFF (full-access)` — the same `warning:` +
-// `full-access` vocabulary `kubic sessions` prints, so doctor output
-// and the bar agree). Session id truncates first; mode + approvals
-// survive narrowing.
-function renderRow2(
+/**
+ * The one-row status line (EPIC N, issue #453; docs/ui 01-L):
+ * `● model · thinking │ ctx ━━━ 31% of 200k │ $0.031 │ journal 2 changes │
+ * budget …` and the turn state word on the right, painted on bg1. A
+ * running turn turns the mark into the spinner.
+ */
+export function renderStatusLine(
   state: StatusBarState,
-  theme: StatusBarTheme,
   width: number,
+  ui: UiTheme = tuiTheme().ui,
+  now: number = Date.now(),
 ): string {
-  const approvals = state.approvalsSkipped
-    ? theme.warning('! warning: approvals OFF (full-access)')
-    : 'approvals:on';
-  const full = `${state.mode} • ${approvals} • session ${state.sessionId}`;
-  if (statusVisibleWidth(full) <= width) return full;
-  const head = `${state.mode} • ${approvals}`;
-  // Only the OFF head carries warning styling; a narrowed ON line is
-  // plain text and must not gain warning color through truncation.
-  const wrap = state.approvalsSkipped === true ? theme.warning : undefined;
-  if (statusVisibleWidth(head) > width) {
-    return truncateLine(head, width, wrap);
-  }
-  const room = width - statusVisibleWidth(head) - ' • session '.length;
-  if (room >= 4) {
-    const shortId =
-      state.sessionId.length <= room
-        ? state.sessionId
-        : `${state.sessionId.slice(0, room - 1)}…`;
-    const attempt = `${state.mode} • ${approvals} • session ${shortId}`;
-    if (statusVisibleWidth(attempt) <= width) return attempt;
-  }
-  return truncateLine(head, width, wrap);
-}
-
-// Pure headless render (no VirtualTerminal in Pi 0.85.1): callers
-// assert these two lines directly like renderLayout in layout.test.ts.
-//
-// Supported minimum width is 40 columns: below that the rows still
-// clamp to the given width (best-effort, cost + mode survive longest)
-// but layout priority is no longer guaranteed. Non-finite widths
-// (NaN/Infinity) normalize to 0 and render empty lines.
-export function renderStatusLines(
-  state: StatusBarState,
-  width: number,
-  theme: StatusBarTheme = DEFAULT_STATUS_THEME,
-): string[] {
   const w = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
+  if (w === 0) return '';
   const summary = summarizeStatusRows(state.rows);
-  return [renderRow1(state, summary, w, theme), renderRow2(state, theme, w)];
-}
-
-// Inner body: renders the exact pre-truncated lines (no padding/wrap)
-// so headless snapshots assert content, not pixels — same pattern as
-// the tree's TreeBody (Pi's Text pads to full width).
-class StatusBody implements Component {
-  private barState: StatusBarState;
-  private theme: StatusBarTheme;
-
-  constructor(state: StatusBarState, theme: StatusBarTheme) {
-    this.barState = state;
-    this.theme = theme;
+  const turn = state.turn ?? 'ready';
+  const role = TURN_ROLE[turn];
+  const mark =
+    turn === 'working'
+      ? spinnerFrame(Math.max(0, now - (state.busySince ?? now)))
+      : TOOL;
+  const lead = ui.fg(role)(` ${mark} `);
+  // Issue #467: a turn's edits approved at once say so beside the state.
+  const word = `${
+    state.turnEdits === true
+      ? `${ui.fg('warn')('edits auto-approved this turn')}${ui.fg('fg3')(SEPARATOR)}`
+      : ''
+  }${ui.fg(role)(TURN_WORD[turn])} `;
+  const changes = state.journalChanges ?? 0;
+  const segments: StatusSegments = {
+    model: ui.fg('fg1')(state.model),
+    thinking: state.thinking === '' ? '' : ui.fg('fg2')(` · ${state.thinking}`),
+    ...contextParts(ui, state, summary),
+    cost: ui.fg('fg1')(formatCost(summary.costTotal)),
+    journal:
+      changes > 0
+        ? `${ui.fg('fg2')('journal ')}${ui.fg('fg1')(`${changes} change${changes === 1 ? '' : 's'}`)}`
+        : '',
+    budget: budgetPart(ui, state.budget, summary),
+  };
+  const fill = (text: string): string => fillLine(ui, text, w, 'bg1');
+  for (const drop of RUNGS) {
+    const left = `${lead}${assemble(ui, segments, drop)}`;
+    if (visibleWidth(left) + 1 + visibleWidth(word) <= w) {
+      return fill(leftRight(left, word, w));
+    }
   }
-
-  setState(state: StatusBarState): void {
-    this.barState = state;
+  // The model is cut to the room the cost and the state word leave.
+  const tail = `${ui.fg('fg3')(SEPARATOR)}${segments.cost}`;
+  const room =
+    w - visibleWidth(lead) - visibleWidth(tail) - 1 - visibleWidth(word);
+  if (room >= 2) {
+    return fill(
+      leftRight(`${lead}${fitLine(segments.model, room)}${tail}`, word, w),
+    );
   }
-
-  render(width: number): string[] {
-    const lines = renderStatusLines(this.barState, width, this.theme);
-    const palette = tuiTheme();
-    if (palette.level === 'none') return lines;
-    // Colour over the already width-fitted plain rows: the model in bold,
-    // the rest secondary; row 2 keeps its own warning styling when
-    // approvals are off.
-    const [row1 = '', row2 = ''] = lines;
-    const model = this.barState.model;
-    const styled1 = row1.startsWith(model)
-      ? `${palette.bold(model)}${palette.muted(row1.slice(model.length))}`
-      : palette.muted(row1);
-    const styled2 = this.barState.approvalsSkipped
-      ? row2
-      : row2.startsWith(this.barState.mode)
-        ? `${palette.accent(this.barState.mode)}${palette.muted(row2.slice(this.barState.mode.length))}`
-        : palette.muted(row2);
-    return [styled1, styled2];
-  }
-
-  invalidate(): void {}
+  return fill(leftRight(`${lead}${segments.cost}`, word, w));
 }
 
 export interface StatusBarOptions {
-  readonly theme?: StatusBarTheme;
+  // Issue #453: the turn facts read at render time (the app's busy,
+  // approval and cancel state), so the state word never lags a frame.
+  readonly live?: () => Pick<
+    StatusBarState,
+    'turn' | 'busySince' | 'turnEdits'
+  >;
 }
 
 export class StatusBar implements Component {
-  private readonly body: StatusBody;
   private barState: StatusBarState;
+  private readonly live: StatusBarOptions['live'];
 
   constructor(state: StatusBarState, options: StatusBarOptions = {}) {
     this.barState = state;
-    this.body = new StatusBody(state, options.theme ?? DEFAULT_STATUS_THEME);
+    this.live = options.live;
   }
 
   getState(): StatusBarState {
@@ -384,7 +391,6 @@ export class StatusBar implements Component {
 
   setState(state: StatusBarState): void {
     this.barState = state;
-    this.body.setState(state);
   }
 
   // Skip-flag toggle: synchronous, so the OFF indicator lands within
@@ -407,10 +413,14 @@ export class StatusBar implements Component {
   }
 
   render(width: number): string[] {
-    return this.body.render(width);
+    const live = this.live?.();
+    return [
+      renderStatusLine(
+        live === undefined ? this.barState : { ...this.barState, ...live },
+        width,
+      ),
+    ];
   }
 
-  invalidate(): void {
-    this.body.invalidate();
-  }
+  invalidate(): void {}
 }

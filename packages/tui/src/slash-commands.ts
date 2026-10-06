@@ -15,6 +15,7 @@
 // store).
 
 import type { PresentationCommand } from '../../core/src/presentation.js';
+import type { KeyAction } from './keybindings.js';
 import type {
   AutocompleteItem,
   AutocompleteProvider,
@@ -35,6 +36,11 @@ export interface SlashCommandSpec {
   readonly command?: PresentationCommand;
   /** The key equivalent, when one exists (shown by `/help`). */
   readonly keys?: string;
+  /**
+   * Issue #460: the key action behind `keys`, so the palette shows the key
+   * the registry has bound now (a rebound key included).
+   */
+  readonly keyAction?: KeyAction;
   /** What the argument is, for the autocomplete's hint. */
   readonly argumentHint?: string;
 }
@@ -99,13 +105,22 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     summary: 'toggle full access for this session',
     usage: '/approvals [on|off]',
     keys: 'Alt+A',
+    keyAction: 'approvals.fullAccess',
     argumentHint: 'on|off',
+  },
+  {
+    // Issue #453: the honest limits on demand — the permanent footer that
+    // carried them is gone (the header keeps the mode badge on every frame).
+    name: 'safety',
+    summary: 'what this mode does and does not protect',
+    usage: '/safety',
   },
   {
     name: 'diff',
     summary: 'the current run’s changes',
     usage: '/diff',
     keys: 'Ctrl-O',
+    keyAction: 'panel.diff',
   },
   {
     name: 'undo',
@@ -129,13 +144,16 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     name: 'quit',
     summary: 'leave the TUI',
     usage: '/quit',
-    keys: 'Esc',
+    // Issue #454: Esc never quits; Ctrl-D on an empty draft does.
+    keys: 'Ctrl-D',
+    keyAction: 'app.eof',
   },
   {
     name: 'model',
     summary: 'switch the live lane’s model',
     usage: '/model [provider/id]',
     keys: 'Alt+M',
+    keyAction: 'model.pick',
     argumentHint: 'provider/id',
     command: 'model.select',
   },
@@ -159,8 +177,16 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     summary: 'set the live lane’s thinking level',
     usage: '/thinking [level]',
     keys: 'Alt+T',
+    keyAction: 'model.thinking',
     argumentHint: 'level',
     command: 'thinking.cycle',
+  },
+  {
+    // Issue #461: the theme picker — previewed live, kept for the session.
+    name: 'theme',
+    summary: 'pick a colour theme for this session (previewed live)',
+    usage: '/theme [name]',
+    argumentHint: 'name',
   },
   {
     name: 'compact',
@@ -222,7 +248,7 @@ export function isKnownSlashCommand(input: string): boolean {
 }
 
 // The commands whose name starts with the draft's command prefix (`'he'` →
-// `/help`), for the autocomplete and the palette's filter.
+// `/help`), for the autocomplete.
 export function matchingSlashCommands(
   prefix: string,
   commands: readonly SlashCommandSpec[] = SLASH_COMMANDS,
@@ -232,28 +258,9 @@ export function matchingSlashCommands(
   return commands.filter((spec) => spec.name.startsWith(body));
 }
 
-// The palette's rows: `value` is the command with its slash (what the
-// editor/loop receives), `label` the name, `description` the summary plus
-// the key equivalent when there is one.
-export interface SlashCommandRow {
-  readonly value: string;
-  readonly label: string;
-  readonly description: string;
-}
-
-export function slashCommandRows(
-  commands: readonly SlashCommandSpec[] = SLASH_COMMANDS,
-): readonly SlashCommandRow[] {
-  return commands.map((spec) => ({
-    value: spec.usage.split(' ')[0] ?? `/${spec.name}`,
-    label: `/${spec.name}${spec.argumentHint === undefined ? '' : ` <${spec.argumentHint}>`}`,
-    description:
-      spec.keys === undefined ? spec.summary : `${spec.summary} · ${spec.keys}`,
-  }));
-}
-
 // `/help`'s body: one line per command, generated from the registry — the
-// palette and the printed help can never drift.
+// palette (ui/palette.ts rows, built by the app) and the printed help can
+// never drift.
 export function helpLines(
   commands: readonly SlashCommandSpec[] = SLASH_COMMANDS,
 ): readonly string[] {

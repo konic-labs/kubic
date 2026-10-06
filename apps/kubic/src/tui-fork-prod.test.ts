@@ -142,7 +142,7 @@ describe('/fork and /tree in the TUI (issue #332)', () => {
     );
     tui.type('third');
     await waitFor(() => plain(tui.fake.frame).includes('three'));
-    tui.fake.feed('\x1b');
+    tui.fake.feed('\x04');
     expect(await tui.exit).toBe(0);
 
     const [forkId] = sessionDirs(sessionsRoot).filter((id) => id !== source.id);
@@ -178,7 +178,7 @@ describe('/fork and /tree in the TUI (issue #332)', () => {
     // The editor holds the picked prompt: Enter resubmits it on the fork.
     tui.fake.feed('\r');
     await waitFor(() => plain(tui.fake.frame).includes('retried'));
-    tui.fake.feed('\x1b');
+    tui.fake.feed('\x04');
     expect(await tui.exit).toBe(0);
 
     const [forkId] = sessionDirs(sessionsRoot).filter((id) => id !== source.id);

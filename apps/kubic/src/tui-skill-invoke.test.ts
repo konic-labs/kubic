@@ -221,6 +221,7 @@ describe('kubic tui /skill: over a stub lane (issue #183)', () => {
     expect(admitted[0]).toBe('Hidden content.\n\ndo x');
 
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await exit).toBe(0);
   });
 
@@ -235,7 +236,8 @@ describe('kubic tui /skill: over a stub lane (issue #183)', () => {
     expect(admitted).toEqual([]);
 
     // A refused submit keeps the draft, and the first Ctrl-C clears it —
-    // only the second one quits.
+    // only the double press after it quits (#454).
+    fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
@@ -251,6 +253,7 @@ describe('kubic tui /skill: over a stub lane (issue #183)', () => {
     expect(admitted).toEqual([]);
 
     // As above: the refused draft eats the first Ctrl-C.
+    fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
@@ -318,6 +321,7 @@ describe('kubic tui /skill: over the real lane (issue #183)', () => {
     expect(systemTexts).toContain('<name>open</name>');
     expect(systemTexts).not.toContain('Hidden content.');
 
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
   });

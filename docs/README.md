@@ -19,6 +19,7 @@ build on.
 | Packages | [packages/](packages/README.md) | One page per package: public API, contracts, dep-direction neighbours | Architecture rationale, CLI usage |
 | CLI & operations | [cli/](cli/README.md) | Commands, flags, exit codes, config precedence, `doctor` diagnostics | Package internals |
 | Contributing | [contributing.md](contributing.md) | Workflow (LC0–LC6), Conventional Commits, the docs-update rule | Feature documentation |
+| UI design | [ui/](ui/README.md) | Terminal design system: colour tokens, glyphs, key map, screen mockups (EPIC N, #442) | Implementation details, CLI flags |
 
 ## Page index and owners
 

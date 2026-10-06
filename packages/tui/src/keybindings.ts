@@ -35,11 +35,21 @@ export const KEY_ACTIONS = {
   'app.interrupt': {
     scope: 'global',
     keys: ['ctrl+c'],
-    description: 'cancel the running turn; idle: clear the draft, then quit',
+    description:
+      'interrupt the running turn; idle: clear the draft, then press twice to quit',
   },
-  'app.exit': {
+  // Issue #454: Esc never quits. It closes what is open, interrupts a
+  // running turn, and (idle, empty editor) enters block mode.
+  'app.cancel': {
     scope: 'global',
     keys: ['escape'],
+    description:
+      'close the open dropdown or overlay; else interrupt the running turn',
+  },
+  // Issue #454: unbound by default (Esc used to quit); still bindable.
+  'app.exit': {
+    scope: 'global',
+    keys: [],
     description: 'quit on an empty draft (clears a draft first)',
   },
   'app.eof': {
@@ -51,6 +61,13 @@ export const KEY_ACTIONS = {
     scope: 'global',
     keys: ['ctrl+p'],
     description: 'open the command palette',
+  },
+  // Issue #462: `?` on an idle, empty editor lists every key; anywhere
+  // else it is the character.
+  'help.keys': {
+    scope: 'global',
+    keys: ['?'],
+    description: 'list every key (on an idle, empty editor)',
   },
   'session.mode': {
     scope: 'global',
@@ -126,6 +143,28 @@ export const KEY_ACTIONS = {
     scope: 'approval',
     keys: [APPROVAL_PAGE_KEY],
     description: 'approval: next page of a long command',
+  },
+  // Issue #467: steering answers.
+  'approval.comment': {
+    scope: 'approval',
+    keys: APPROVAL_DEFAULT_KEYS.comment,
+    description: 'approval: deny with a comment for the model',
+  },
+  'approval.edit': {
+    scope: 'approval',
+    keys: APPROVAL_DEFAULT_KEYS.edit,
+    description: 'approval: edit the command, then allow it',
+  },
+  'approval.allowEdits': {
+    scope: 'approval',
+    keys: APPROVAL_DEFAULT_KEYS['allow-edits'],
+    description: 'approval: allow all edits this turn',
+  },
+  // Issue #459: the card's explanation row (the model's justification).
+  'approval.explain': {
+    scope: 'approval',
+    keys: ['?'],
+    description: 'approval: show why the model asked',
   },
 } as const satisfies Record<string, ActionSpec>;
 
@@ -352,6 +391,9 @@ export function createKeyRegistry(
         'allow-once': bound.get('approval.allowOnce') ?? [],
         'allow-session': bound.get('approval.allowSession') ?? [],
         deny: bound.get('approval.deny') ?? [],
+        comment: bound.get('approval.comment') ?? [],
+        edit: bound.get('approval.edit') ?? [],
+        'allow-edits': bound.get('approval.allowEdits') ?? [],
       }) as ApprovalKeyOverrides,
     notices,
   };

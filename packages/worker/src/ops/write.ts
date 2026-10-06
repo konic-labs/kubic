@@ -3,6 +3,7 @@
 // replay:"never" — writes are effects, never re-executed on replay.
 
 import { readPreImage, replaceFile } from './atomic-file.js';
+import { displayDiff, writeDisplay } from './display-diff.js';
 import { sha256Hex } from './hash.js';
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
@@ -68,6 +69,17 @@ export const writeOperation: Operation<WriteArgs, WriteResult> = {
       after: args.content,
       bytesDelta: result.bytesDelta,
     });
+    // Issue #456: a new file shows its size and first lines; an overwritten
+    // text file shows the diff (a binary pre-image cannot).
+    if (ctx.display !== undefined) {
+      const lf = (text: string): string => text.replace(/\r\n/g, '\n');
+      if (pre.exists && pre.text !== null) {
+        const diff = displayDiff(lf(pre.text), lf(args.content));
+        if (diff !== undefined) ctx.display(diff);
+      } else {
+        ctx.display(writeDisplay(lf(args.content), !pre.exists));
+      }
+    }
     return result;
   },
 };

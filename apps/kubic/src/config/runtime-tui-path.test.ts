@@ -275,9 +275,9 @@ describe('the TUI consumes [modes] orchestrator (issue #327)', () => {
     };
     const exit = runTuiCommand({}, deps);
     await waitFor(() => fake.counts.started === 1);
-    expect(fake.writes.join('')).toContain('orchestrator · faux/m');
-    expect(fake.writes.join('')).toContain('orchestrator • approvals:on');
-    fake.feed('\x1b');
+    expect(fake.writes.join('')).toContain('[ORCHESTRATOR] approvals on');
+    expect(fake.writes.join('')).toContain('faux/m · off');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 
@@ -299,8 +299,8 @@ describe('the TUI consumes [modes] orchestrator (issue #327)', () => {
     };
     const exit = runTuiCommand({}, deps);
     await waitFor(() => fake.counts.started === 1);
-    expect(fake.writes.join('')).toContain('solo • approvals:on');
-    fake.feed('\x1b');
+    expect(fake.writes.join('')).toContain('[SOLO] approvals on');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
   });
 });
@@ -373,11 +373,13 @@ describe('the TUI selects the pinned model (issue #295)', () => {
     );
     const exit = runTuiCommand({}, deps);
     await waitFor(() => fake.writes.join('').includes('fx/b'));
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
     const doc = lines.join('\n');
-    // Header (`solo · fx/b`) and status bar both name the pinned model.
-    expect(doc).toMatch(/solo · fx\/b/);
+    // The first screen's provider row and the status line both name the
+    // pinned model (issue #453 moved it off the header; #462 the row).
+    expect(doc).toMatch(/provider {5}fx\/b/u);
+    expect(doc).toMatch(/● fx\/b · /);
     expect(doc.match(/fx\/b/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
     expect(doc).not.toContain('fx/a');
   });
@@ -391,7 +393,7 @@ describe('the TUI selects the pinned model (issue #295)', () => {
     );
     const exit = runTuiCommand({}, deps);
     await waitFor(() => fake.counts.started === 1);
-    fake.feed('\x1b');
+    fake.feed('\x04');
     expect(await exit).toBe(0);
     expect(lines.join('\n')).toContain('fx/b');
     expect(lines.join('\n')).not.toContain('fx/a');

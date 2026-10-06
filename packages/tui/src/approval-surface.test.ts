@@ -2,23 +2,21 @@
 // RED: nothing in the interactive TUI can answer an approval — the host's
 // installed policy has no answer seat, and approval-view.ts is runtime-dead.
 //
-// Criterion 2's width rule and criterion 1's key map are pinned here as pure
-// render/settle tests: there is no VirtualTerminal in the pinned pi-tui, so
-// the app is rendered at a fixed width (the established pattern in
-// layout.test.ts / tree.test.ts) and the surface is exercised with plain
-// strings. Overlay compositing itself is the root's business and is asserted
-// against a real TuiAltScreen on the composition path.
+// Criterion 1's key map is pinned here as pure render/settle tests: there is
+// no VirtualTerminal in the pinned pi-tui, so the card is rendered at a fixed
+// width (the established pattern in layout.test.ts / tree.test.ts) and the
+// surface is exercised with plain strings. The card on the live alt-screen is
+// asserted on the composition path.
 import { describe, expect, it } from 'vitest';
+import { createUiTheme } from '../../core/src/ui/style.js';
+import { DARK_PALETTE } from '../../core/src/ui/tokens.js';
+import { renderApprovalCard } from './approval-card.js';
 import {
   APPROVAL_CANCELLED_REASON,
+  type ApprovalSurface,
   createApprovalSurface,
-  INLINE_APPROVAL_HEADER,
 } from './approval-surface.js';
-import {
-  APPROVAL_MIN_WIDTH,
-  type ApprovalViewRequest,
-  approvalOverlayOptions,
-} from './approval-view.js';
+import type { ApprovalViewRequest } from './approval-view.js';
 
 const REQUEST: ApprovalViewRequest = {
   key: 'k-1',
@@ -28,47 +26,27 @@ const REQUEST: ApprovalViewRequest = {
   justification: 'clean scratch dir',
 };
 
-describe('approval surface: width rule (issue #96, criterion 2)', () => {
-  it('renders the inline form below APPROVAL_MIN_WIDTH', async () => {
-    const surface = createApprovalSurface({ armingMs: 0 });
-    const pending = surface.ask(REQUEST);
-    expect(surface.isShowing()).toBe(true);
-    const lines = surface.renderInline(70).join('\n');
-    expect(lines).toContain(INLINE_APPROVAL_HEADER);
-    expect(lines).toContain('destructive-shell');
-    expect(lines).toContain('rm -rf /tmp/x');
-    expect(lines).toContain('deny');
-    for (const line of surface.renderInline(70)) {
-      expect(line.length).toBeLessThanOrEqual(70);
-    }
-    surface.decide('d');
-    await pending;
-  });
-
-  it('does not take the inline path at or above APPROVAL_MIN_WIDTH', async () => {
-    const surface = createApprovalSurface({ armingMs: 0 });
-    const pending = surface.ask(REQUEST);
-    expect(surface.usesInlineFallback(APPROVAL_MIN_WIDTH)).toBe(false);
-    expect(surface.usesInlineFallback(APPROVAL_MIN_WIDTH - 1)).toBe(true);
-    expect(surface.usesInlineFallback(100)).toBe(false);
-    surface.decide('a');
-    await pending;
-  });
-
-  it('uses the overlay where the width allows it', async () => {
-    // The overlay's own visible() gate is the second half of the rule: below
-    // the minimum Pi must not composite it, so the inline body is the only
-    // surface left — the two can never both be absent.
-    const options = approvalOverlayOptions();
-    expect(options.visible?.(APPROVAL_MIN_WIDTH, 30)).toBe(true);
-    expect(options.visible?.(APPROVAL_MIN_WIDTH - 1, 30)).toBe(false);
-    const surface = createApprovalSurface({ armingMs: 0 });
-    const pending = surface.ask(REQUEST);
-    expect(surface.usesInlineFallback(APPROVAL_MIN_WIDTH - 1)).toBe(true);
-    surface.decide('d');
-    await pending;
-  });
-});
+// The card the app shows for the surface's current ask (issue #459).
+function card(surface: ApprovalSurface, width: number): string {
+  const request = surface.pending();
+  if (request === undefined) return '';
+  return renderApprovalCard(
+    createUiTheme(DARK_PALETTE, 'none'),
+    request,
+    width,
+    {
+      armed: surface.isArmed(),
+      allowable: true,
+      keys: surface.keys(),
+      commandPage: surface.commandPage(),
+      position: 1,
+      total: 1,
+      explain: true,
+      pageKey: 'v',
+      explainKey: '?',
+    },
+  ).join('\n');
+}
 
 describe('approval surface: decisions (issue #96, criterion 1)', () => {
   it('resolves allow-once, allow-session and deny by key', async () => {
@@ -165,6 +143,9 @@ describe('approval surface: boot key check (issue #96, criterion 1)', () => {
       'allow-once': ['a'],
       'allow-session': ['ctrl+s'],
       deny: ['d', 'escape'],
+      comment: ['c'],
+      edit: ['e'],
+      'allow-edits': ['shift+a'],
     });
   });
 });
@@ -182,7 +163,7 @@ describe('approval surface: untrusted content (issue #96, criterion 1)', () => {
       paths: [`/tmp${ESC}[2J/x`],
       justification: `because${ESC}[0m`,
     });
-    const frame = surface.renderInline(120).join('\n');
+    const frame = card(surface, 120);
     expect(frame).toContain('destructive');
     expect(frame).toContain('bash');
     expect(frame).toContain('/tmp/x');

@@ -136,13 +136,14 @@ describe('kubic cost text view (issue #79)', () => {
     expect(cap.errs).toEqual([]);
   });
 
-  it('draws a box table only when fancy', async () => {
+  it('draws the kit table only when fancy', async () => {
     const cap = capture();
     await runCostCommand(
       {},
       { loadRows: () => ROWS, out: cap.out, err: cap.err, fancy: true },
     );
-    expect(cap.lines[0]).toContain('┌');
+    expect(cap.lines.join('\n')).toMatch(/\n─+\n/);
+    expect(cap.lines.join('\n')).not.toContain('┌');
     expect(cap.lines[0]).toContain('worker-2');
   });
 

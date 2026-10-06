@@ -33,6 +33,21 @@ describe('model selection + escalation + thinking (issue #20, slice B)', () => {
     );
   });
 
+  it('names the closest provider and model when one is near (issue #450)', () => {
+    const models = modelsWithFaux();
+    const fauxId = models.getModels('faux')[0]?.id ?? 'faux-model';
+    expect(() => selectModel(models, { provider: 'fuax', id: fauxId })).toThrow(
+      /unknown provider 'fuax' \(--model\); did you mean 'faux'\?/,
+    );
+    const typo = `${fauxId.slice(0, -1)}${fauxId.endsWith('x') ? 'y' : 'x'}`;
+    expect(() => selectModel(models, { provider: 'faux', id: typo })).toThrow(
+      new RegExp(`did you mean '${fauxId}'\\?`),
+    );
+    expect(() =>
+      selectModel(models, { provider: 'faux', id: 'zzzzzzzzzzzzzz' }),
+    ).toThrow(/unknown model 'zzzzzzzzzzzzzz' on provider 'faux' \(--model\)$/);
+  });
+
   it('falls back to config default, then first available', () => {
     const models = modelsWithFaux();
     const fauxId = models.getModels('faux')[0]?.id ?? 'faux-model';

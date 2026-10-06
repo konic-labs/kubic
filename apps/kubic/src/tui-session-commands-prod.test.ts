@@ -123,12 +123,13 @@ describe('/new, /resume and /undo on the kubic tui path (issue #305)', () => {
     type(fake, 'second prompt');
     await waitFor(() => fake.frame.includes('from the new session'));
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     // The layout at quit is the NEW session's: the old transcript is gone.
     const doc = lines.join('\n');
-    expect(doc).toContain('› second prompt');
-    expect(doc).not.toContain('› first prompt');
+    expect(doc).toContain('▌ second prompt');
+    expect(doc).not.toContain('▌ first prompt');
   });
 
   it('lists the store with /resume and loads the chosen transcript', {
@@ -166,20 +167,24 @@ describe('/new, /resume and /undo on the kubic tui path (issue #305)', () => {
     expect(first).toBeDefined();
     expect(second).toBeDefined();
 
-    // `/resume` lists the OTHER session (the current one is not a choice).
+    // `/resume` lists the OTHER session (the current one is not a choice),
+    // titled by its first prompt with its turns (issue #461).
     const mark = fake.writes.length;
     type(fake, '/resume');
-    // The picker's selected row (`→`, Pi's list marker): the overlay
-    // truncates the session id, so the marker is the picker's own signal.
-    await waitFor(() => fake.writes.slice(mark).join('').includes('→ '));
+    await waitFor(() =>
+      fake.writes.slice(mark).join('').includes('the first session prompt'),
+    );
+    expect(fake.writes.slice(mark).join('')).toContain('┌─ Session');
+    expect(fake.writes.slice(mark).join('')).toContain('1 turn');
     // Select the first row: the older session.
     fake.feed('\r');
     await waitFor(() => fake.frame.includes('(resumed)'));
     // The chosen session's transcript is what the screen now shows.
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
-    expect(doc).toContain('› the first session prompt');
+    expect(doc).toContain('▌ the first session prompt');
     expect(doc).toContain('first answer');
   });
 
@@ -220,6 +225,7 @@ describe('/new, /resume and /undo on the kubic tui path (issue #305)', () => {
     type(fake, '/undo');
     await waitFor(() => fake.frame.includes('undo: 1 restored'));
     expect(readFileSync(join(workspace, 'a.txt'), 'utf8')).toBe('before\n');
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(lines.join('\n')).toContain('undo: 1 restored, 0 skipped');

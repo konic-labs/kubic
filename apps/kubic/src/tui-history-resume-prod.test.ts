@@ -67,7 +67,7 @@ describe('resumed prompt history (issue #340)', () => {
     for (const ch of 'remember this prompt') first.fake.feed(ch);
     first.fake.feed('\r');
     await waitFor(() => first.fake.frame.includes('noted'));
-    first.fake.feed('\x1b');
+    first.fake.feed('\x04');
     expect(await first.exit).toBe(0);
     const [sessionId] = readdirSync(sessionsRoot).filter(
       (entry) => !entry.startsWith('.'),
@@ -89,6 +89,8 @@ describe('resumed prompt history (issue #340)', () => {
     await waitFor(() =>
       plain(second.fake.since(mark)).includes('remember this prompt'),
     );
+    // The recalled draft takes the first Ctrl-C; the double press quits.
+    second.fake.feed('\x03');
     second.fake.feed('\x03');
     second.fake.feed('\x03');
     expect(await second.exit).toBe(0);

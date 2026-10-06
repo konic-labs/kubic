@@ -1,0 +1,125 @@
+// The sessions the TUI's `/resume` picker lists (EPIC N, issue #461;
+// docs/ui 03-D): this project's sessions, newest first, each with its
+// title (the first prompt), turns, cost and age. Read the way `kubic cost`
+// reads (session-read.ts): a session another live process holds is never
+// opened (pi-durable: one process per storage) and a legacy (Pi 0.87) one
+// cannot be — both are listed so the picker can say why they are greyed.
+
+import { join } from 'node:path';
+import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+import {
+  listSessions,
+  openSessionStore,
+  sessionLockIsLive,
+} from '../../worker/src/lane/session-store.js';
+import {
+  entriesToTranscript,
+  readSessionEntries,
+} from '../../worker/src/lane/transcript.js';
+import {
+  BACKGROUND_CONTEXT,
+  type Context,
+  type Storage,
+} from '../../worker/src/pi-boundary.js';
+import { readSessionUsage, totalSessionUsage } from './ops/cost/cost-cli.js';
+import {
+  openReadOnlySessionStorage,
+  touchesWorkspace,
+} from './session-read.js';
+
+export interface SessionSummary {
+  readonly id: string;
+  /** ISO time the session was created. */
+  readonly createdAt?: string;
+  /** The first prompt of its active transcript, on one line. */
+  readonly title?: string;
+  /** Prompts in its active transcript. */
+  readonly turns?: number;
+  readonly costUsd?: number;
+  /** `legacy`: a Pi 0.87 transcript; `live`: another process holds it. */
+  readonly state: 'ready' | 'legacy' | 'live';
+}
+
+export interface SummarizeOptions {
+  readonly sessionsRoot: string;
+  readonly workspace: string;
+  /** The session asking (never listed). */
+  readonly exclude?: string;
+  /** Newest first, at most this many (default 30). */
+  readonly limit?: number;
+  readonly context?: Context;
+}
+
+const TITLE_CHARS = 80;
+
+/** This project's sessions, newest first, with what the picker shows. */
+export async function summarizeProjectSessions(
+  options: SummarizeOptions,
+): Promise<SessionSummary[]> {
+  const context = options.context ?? BACKGROUND_CONTEXT;
+  const store = openSessionStore(
+    options.sessionsRoot,
+    createNodeFileBridge(options.sessionsRoot),
+  );
+  const listed = (await listSessions(store, context))
+    .filter(
+      (entry) =>
+        entry.id !== options.exclude &&
+        touchesWorkspace(
+          entry.meta?.workspace ?? entry.meta?.cwd,
+          options.workspace,
+        ),
+    )
+    .sort((a, b) =>
+      (b.meta?.createdAt ?? '').localeCompare(a.meta?.createdAt ?? ''),
+    )
+    .slice(0, options.limit ?? 30);
+  const summaries: SessionSummary[] = [];
+  for (const entry of listed) {
+    const base = {
+      id: entry.id,
+      ...(entry.meta?.createdAt === undefined
+        ? {}
+        : { createdAt: entry.meta.createdAt }),
+    };
+    if (entry.format === 'legacy') {
+      summaries.push({ ...base, state: 'legacy' });
+      continue;
+    }
+    const dir = join(options.sessionsRoot, entry.id);
+    if (sessionLockIsLive(dir) !== undefined) {
+      summaries.push({ ...base, state: 'live' });
+      continue;
+    }
+    let storage: Storage;
+    try {
+      storage = await openReadOnlySessionStorage(
+        options.sessionsRoot,
+        entry.id,
+      );
+    } catch {
+      summaries.push({ ...base, state: 'ready' });
+      continue;
+    }
+    try {
+      const prompts = entriesToTranscript(
+        await readSessionEntries(storage, context),
+      ).filter((item) => item.kind === 'user');
+      const first = prompts[0]?.text.split('\n')[0]?.trim() ?? '';
+      const cost = totalSessionUsage(await readSessionUsage(storage, context));
+      summaries.push({
+        ...base,
+        ...(first === '' ? {} : { title: first.slice(0, TITLE_CHARS) }),
+        turns: prompts.length,
+        costUsd: cost.costUsd,
+        // The read raced a new holder: what was read may be partial.
+        state: sessionLockIsLive(dir) === undefined ? 'ready' : 'live',
+      });
+    } catch {
+      summaries.push({ ...base, state: 'ready' });
+    } finally {
+      await storage.close(context);
+    }
+  }
+  return summaries;
+}

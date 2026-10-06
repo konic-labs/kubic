@@ -4,6 +4,7 @@
 // replay:"never" — edits are effects, never re-executed on replay.
 
 import { readPreImage, replaceFile } from './atomic-file.js';
+import { displayDiff } from './display-diff.js';
 import { sha256Hex } from './hash.js';
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
@@ -195,9 +196,8 @@ export const editOperation: Operation<EditArgs, EditResult> = {
         `edit: found ${found} matches in ${args.path}, expected ${expected}`,
       );
     }
-    const updated =
-      (bom ? BOM : '') +
-      restoreLineEndings(current.split(oldText).join(newText), ending);
+    const replaced = current.split(oldText).join(newText);
+    const updated = (bom ? BOM : '') + restoreLineEndings(replaced, ending);
     const beforeHash = sha256Hex(raw);
     const result = {
       path: args.path,
@@ -216,6 +216,11 @@ export const editOperation: Operation<EditArgs, EditResult> = {
       after: updated,
       bytesDelta: result.bytesDelta,
     });
+    // Issue #456: the inline diff, in the LF space the edit matched in.
+    if (ctx.display !== undefined) {
+      const diff = displayDiff(current, replaced);
+      if (diff !== undefined) ctx.display(diff);
+    }
     return result;
   },
 };

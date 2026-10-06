@@ -97,20 +97,31 @@ repository cannot write it, and `kubic trust` is the only writer.
 
 `kubic tui` — and a bare `kubic` on an interactive terminal — resolves
 trust before the config load and before the alt-screen opens. When a
-project `config.toml` is present and no decision is recorded, it asks once:
+project `config.toml` is present and no decision is recorded, it asks once,
+as one row in the first screen's language (issue #462), answered with one
+key:
 
 ```
-Trust project /Users/you/src/app? This lets the project's own files take effect for runs here: /Users/you/src/app/.kubic/config.toml (sets the model, approvals, permissions and journal retention), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default), its project skills and its project role documents (instructions the model follows).
+  ◆ trust        ~/src/app/.kubic/config.toml found — load project config?
+                 This lets the project's own files take effect for runs here:
+                 its config.toml sets the model, approvals, permissions and
+                 journal retention; its models.json names provider URLs that are
+                 sent the key of any *_API_KEY or KUBIC_* variable it names
+                 (KUBIC_API_KEY by default); its project skills and role
+                 documents are instructions the model follows.
+                 y  yes   n  not now   v  view file
 ```
 
-(One line on screen — wrapped here for readability.)
-
-- **Accept** records `true` and boots the lane with the project layer.
-- **Decline** records `false` and the lane stops on the refusal (exit 1).
-- **Cancel** (Ctrl-C / Esc) records nothing and fails closed; the next
-  `kubic tui` asks again.
-- A recorded decision — accept or decline — is never asked again.
-  `kubic trust --revoke` removes it if you want the question back.
+- **`y` yes** records `true` and boots the lane with the project layer; the
+  first screen's trust row then reads `.kubic/config.toml loaded`.
+- **`v` view file** prints the config (its first 40 lines, control bytes
+  removed) and asks again.
+- **`n` not now** records nothing: the lane stops on the refusal (exit 1),
+  and the next `kubic tui` asks again.
+- **Cancel** (Ctrl-C / Esc) records nothing and fails closed the same way.
+- A recorded decision is never asked again. `kubic trust --revoke` removes
+  it if you want the question back; `kubic trust` records a grant without
+  the question.
 - `kubic run` never prompts: it is the non-interactive lane, so an
   untrusted project config refuses with the remedies named. Scripts use
   `KUBIC_TRUST_PROJECT=1` or a prior `kubic trust`.

@@ -9,14 +9,39 @@
 ## Running it
 
 ```
-kubic doctor [--skip <id[,id…]>]... [--json] [--session <id>]
+kubic doctor [--skip <id[,id…]>]... [--json] [--verbose] [--session <id>]
 ```
 
-`kubic doctor --help` prints the generated help. Each check prints one
-human line on stdout (the status word coloured on a colour terminal;
-plain text under a pipe or `NO_COLOR`); notes such as a `models.json` load
-go to stderr as `info:` lines, so stdout — and `--json` — carry only the
-report:
+`kubic doctor --help` prints the generated help. **On an interactive colour
+terminal** (issue #448) the report is a grouped summary: a totals line, the
+checks grouped by area (RUNTIME, PROVIDERS, PROJECT, POLICY, LIMITS, ROLES,
+SKILLS, and OTHER for anything new) with `✓` / `▲` / `✕` / `○`, passing
+checks packed onto shared lines, every warning on its own short line, a
+failure always in full, and the six honest-limit warnings folded into one
+`▲ honest limits: …` line:
+
+```
+■ kubic doctor · 28 checks · 19 ok · 9 warnings · 0 failed
+
+RUNTIME     ✓ node 24.13.0   ✓ config   ✓ models.json   ✓ extensions 1 loaded, 2 refused
+PROVIDERS   ✓ anthropic  23 models  key from ANTHROPIC_API_KEY   ✓ provider available
+PROJECT     ▲ overlap — 5 sessions recorded against /repo
+POLICY      ✓ approvals ask-user   ✓ workspace-write · network none · 18 tools   ✓ routing policy
+            ▲ guards are detection-only (lexical), not a sandbox
+LIMITS      ▲ memory and disk caps are not enforced; wall clock is
+            ▲ honest limits: solo no isolation · worktrees writers only · …
+ROLES       ✓ role credentials   ✓ debugger   ✓ implementer   ✓ planner   ✓ reviewer
+SKILLS      ✓ skills 0 loaded
+
+9 warnings, nothing blocking · kubic doctor --verbose for the full report
+```
+
+`--verbose` prints the full report below on a terminal too. Off a terminal
+(a pipe, a file, CI, `NO_COLOR`) the full report is always what prints.
+Each check prints one human line on stdout (the status word coloured on a
+colour terminal; plain text under a pipe or `NO_COLOR`); notes such as a
+`models.json` load go to stderr as `info:` lines, so stdout — and `--json`
+— carry only the report:
 
 ```
 PASS provider:local (ok): listed, not dialled, 1 model(s) registered — from /repo/models.json

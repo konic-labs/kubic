@@ -7,13 +7,14 @@ hand-roll argv parsing, colours, tables, or prompts.
 | --- | --- | --- |
 | Commands, options, help | `commander` via `@commander-js/extra-typings` | `apps/kubic/src/cli/program.ts` |
 | Exit codes | — | `packages/core/src/cli/exit-codes.ts` |
-| Colour | `chalk` | `packages/core/src/cli/theme.ts` |
+| Colour | — (shared tokens, `packages/core/src/ui`) | `packages/core/src/cli/theme.ts` |
 | Leveled logs | `consola` | `packages/core/src/cli/logger.ts` |
-| Tables | `cli-table3` | `packages/core/src/cli/table.ts` |
+| Tables | — | `packages/core/src/cli/table.ts` |
+| Output kit (headings, marks, receipts, errors, spinner) | — | `packages/core/src/cli/kit.ts`, `spinner.ts`, `width.ts` |
 | Prompts | `@clack/prompts` | `packages/core/src/cli/prompt.ts` |
 | `--json` / output mode | — | `packages/core/src/cli/output.ts` |
 
-All six packages are exact-pinned in the root `package.json` (it owns the
+The four packages are exact-pinned in the root `package.json` (it owns the
 `kubic` bin and `dist/`, so the runtime resolves them from the root
 `node_modules`); `npm run check:pi` rejects ranges on any dependency and
 `scripts/license.test.mjs` rejects a non-permissive runtime licence.
@@ -83,10 +84,15 @@ new literals.
   the program prints `error: <message>` on stderr and exits with the code.
 - Anything else thrown reaches the root catch-all: one `error: <message>`
   line, exit 1, the stack only with `KUBIC_DEBUG=1`.
-- An unknown top-level command or root option prints the root usage line to
-  stdout and exits 2 (a usage error, issue #372); a bare `kubic` off a TTY
-  prints the identical line and exits 1 (POSIX usage-on-no-args); a bare
-  `kubic` on a TTY opens the TUI.
+- An unknown top-level command or root option is a usage error (exit 2,
+  issue #372) reported on stderr with a did-you-mean or prompt hint (issue
+  #450); a bare `kubic` off a TTY prints the root help and exits 1 (POSIX
+  usage-on-no-args); a bare `kubic` on a TTY opens the TUI.
+- **Errors on a terminal** (issue #450): the logger's level prefixes become
+  status marks on a colour stderr (`✕`, `▲`, `ℹ`, `✓`; plain `error:` /
+  `warn:` / `info:` / `ok:` words otherwise), commander usage errors are an
+  `errorBlock`, and name lookups use `suggest()` (`packages/core/src/suggest.ts`)
+  for a "did you mean" hint.
 
 ## Output rules
 
@@ -105,15 +111,28 @@ new literals.
   computes `interactive` and `fancy`).
 - **Colour** comes from `themeFor(stream)` / `createCliTheme(level)`: it
   honours `NO_COLOR`, `FORCE_COLOR`, `TERM=dumb`, and is off on a non-TTY.
-  The palette is the Konic brand shared with the TUI (`#ff004d` accent).
-- **Tables**: `renderTable(rows, columns, { fancy, theme })` — box-drawn
-  when `fancy`, plain space-aligned text otherwise (pipes, CI, NO_COLOR),
-  aligned by terminal display width (wide CJK cells count 2).
+  The palette is the shared design tokens (`docs/ui/README.md`); new output
+  styles through `theme.ui` roles (`fg2`, `accent`, `ok`, …), never raw hex.
+- **Tables**: `renderTable(rows, columns, { fancy, theme, markers })` — the
+  kit's borderless table when `fancy` (muted header, faint rule, optional
+  row markers such as `●` for a default row), plain space-aligned text
+  otherwise (pipes, CI, NO_COLOR), aligned by terminal display width (wide
+  CJK cells count 2).
+- **The output kit** (`packages/core/src/cli/kit.ts`, issue #445) is the TTY
+  layer for human-facing output (`docs/ui/06-cli.html`): `brandHeading`,
+  `sectionLabel`, `statusMark` (✓ ▲ ✕ ○ ℹ and the spinner frame),
+  `alignedRows`, `receipt`, `nextActions`, `errorBlock`, `hintLine`
+  (backtick spans highlighted) and `kvLine`. Use it only when
+  `isFancy(stream)` is true; otherwise print the command's plain text — the
+  binary contract and scripts depend on it.
+- **Progress**: `createSpinner(stream, theme)` animates only on a TTY
+  (`start`, `update`, `print` a settled line above it, `stop`); on any other
+  stream it writes nothing. It hides the cursor while spinning and restores
+  it on stop and on process exit.
 - **Prompts** (`promptConfirm`) take an explicit `interactive` flag and a
   required `nonInteractive` answer; they never prompt off a TTY or under
-  `--json`. A cancelled prompt resolves to `null`. `@clack/prompts` and
-  `cli-table3` load lazily (first prompt, first box-drawn table), so
-  scripted calls skip their import cost.
+  `--json`. A cancelled prompt resolves to `null`. `@clack/prompts` loads lazily
+  (first prompt), so scripted calls skip its import cost.
 
 ## Testing
 

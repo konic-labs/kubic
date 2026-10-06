@@ -13,9 +13,6 @@
 //     be asked again before the previous verdict is consumed, so asks queue and
 //     are answered in order (a request is never dropped: dropping one would
 //     hang a turn);
-//   - the width rule (§16.4, criterion 2): at/above APPROVAL_MIN_WIDTH the
-//     overlay is the surface, below it the inline body is, and the two are
-//     mutually exclusive by construction;
 //   - the boot key check: the shipped key map is verified against
 //     approval-view.ts's own conflict detector, so a conflicting map is
 //     refused by name instead of silently binding one action to two keys;
@@ -36,23 +33,16 @@ import {
   APPROVAL_ARMING_MS,
   APPROVAL_DEFAULT_KEYS,
   APPROVAL_IMMEDIATE_KEY,
-  APPROVAL_MIN_WIDTH,
   APPROVAL_QUIET_MS,
   APPROVAL_REPEAT_MS,
   approvalKeyConflicts,
   approvalKeyProblems,
-  renderApprovalInline,
-  renderApprovalLines,
   resolveApprovalKey,
-  shouldUseInlineFallback,
 } from './approval-view.js';
 import { sanitizeLaneText } from './lane-cells.js';
+import { matchesKey } from './tui-boundary.js';
 
-export { APPROVAL_DEFAULT_KEYS, APPROVAL_MIN_WIDTH };
-
-// The inline body's own header (approval-view.ts renders it): named here so
-// callers and tests assert the same string instead of a literal.
-export const INLINE_APPROVAL_HEADER = '! approval (inline) — narrow terminal';
+export { APPROVAL_DEFAULT_KEYS };
 
 // The reason recorded when the session can no longer collect a verdict. Named
 // once: the deny that a quit produces must read the same everywhere.
@@ -91,6 +81,22 @@ function defaultArmTimer(ms: number, fire: () => void): () => void {
 // surface does not care which host service asked.
 export type SurfaceRequest = ApprovalViewRequest;
 
+/** Issue #467: the card's one-line input — a denial comment or a command. */
+export interface ApprovalInput {
+  readonly kind: 'comment' | 'edit';
+  readonly text: string;
+}
+
+/** Issue #467: the longest comment the card takes (the host bounds it too). */
+export const APPROVAL_COMMENT_MAX_CHARS = 500;
+/** And the longest command an edit may grow to. */
+export const APPROVAL_EDIT_MAX_CHARS = 16 * 1024;
+
+// Text a key (or a burst of typing) inserts: no control character in it.
+function insertable(data: string): boolean {
+  return data !== '' && [...data].every((ch) => ch >= ' ' && ch !== '\u007f');
+}
+
 export interface ApprovalSurface {
   // Called by the decider. Resolves when the user decides (or when the
   // session gives up); never rejects.
@@ -120,18 +126,30 @@ export interface ApprovalSurface {
   // `decide` (a held-key repeat): that is typing too, so the arming window
   // restarts. A no-op when nothing shows.
   noteDroppedKey(): void;
+  // Issue #467: `c` (comment) or `e` (edit) opened a one-line input on the
+  // card. While it is open, `typeInto` takes the keys first: text, Backspace,
+  // Ctrl-U, Esc (back to the card) and Enter (send) — `settled` when Enter
+  // answered the ask, `consumed` for any other key it used, undefined for a
+  // key it leaves alone (a global key). `decide` takes no key meanwhile.
+  inputMode(): ApprovalInput | undefined;
+  typeInto(data: string): 'settled' | 'consumed' | undefined;
+  // Issue #465: the shown request just came on screen (the dashboard's `a`
+  // opened its card): it arms from now, like a fresh ask — a key pressed
+  // with the one that opened it cannot answer it. A no-op when nothing shows.
+  reveal(): void;
   // Issue #316: the page of a long command the dialog shows, and the
   // `v` key that advances it (wrapping back to the first page).
   commandPage(): number;
   nextCommandPage(): boolean;
+  // Issue #459: the asks waiting behind the shown one (the card's `i of n`
+  // and its `next:` row), and the `?` explanation row, closed again for
+  // every new ask.
+  queued(): readonly SurfaceRequest[];
+  explaining(): boolean;
+  toggleExplain(): boolean;
   // Settles every queued and shown request as a deny. Used by the quit path
   // and by the in-flight cancel path, so nothing is left hanging.
   cancelPending(reason?: string): void;
-  // The body to render instead of an overlay at this width.
-  renderInline(width: number): string[];
-  // The body an overlay composites at this width.
-  renderOverlayBody(width: number): string[];
-  usesInlineFallback(width: number): boolean;
   // Settable change hooks (see ApprovalSurfaceOptions.onChange): the surface
   // is created by the composition root before the lane boots, so the app
   // attaches its overlay sync and render request after creation.
@@ -173,7 +191,7 @@ interface PendingAsk {
 // Sanitise a request at ingress: capability, tool name, command, paths and
 // justification are all model/tool-supplied strings, and renderApprovalLines
 // renders them raw (its own tests pin that). Cleaning here means every render
-// path downstream — overlay and inline both — is covered by one choke point.
+// path downstream — the card and the transcript — is covered by one choke point.
 function sanitizeRequest(request: SurfaceRequest): SurfaceRequest {
   const paths =
     request.paths === undefined
@@ -193,6 +211,32 @@ function sanitizeRequest(request: SurfaceRequest): SurfaceRequest {
     ...(request.summary === undefined
       ? {}
       : { summary: sanitizeLaneText(request.summary) }),
+    ...(request.preview === undefined
+      ? {}
+      : { preview: sanitizePreview(request.preview) }),
+  };
+}
+
+// Issue #459: a preview carries file content — untrusted like the rest.
+// Each diff row is cleaned after its number prefix, so tabs expand from the
+// content's own first column.
+function sanitizePreview(
+  preview: NonNullable<SurfaceRequest['preview']>,
+): NonNullable<SurfaceRequest['preview']> {
+  if (preview.kind === 'write') {
+    return { ...preview, preview: sanitizeLaneText(preview.preview) };
+  }
+  return {
+    ...preview,
+    text: preview.text
+      .split('\n')
+      .map((row) => {
+        const hit = /^([-+ ] *\d+ )(.*)$/u.exec(row);
+        return hit === null
+          ? sanitizeLaneText(row)
+          : `${hit[1]}${sanitizeLaneText(hit[2] ?? '')}`;
+      })
+      .join('\n'),
   };
 }
 
@@ -200,6 +244,10 @@ function decisionFor(action: ApprovalAction): ApprovalDecision {
   if (action === 'allow-once') return { approved: true, by: 'allow-once' };
   if (action === 'allow-session') {
     return { approved: true, by: 'allow-session' };
+  }
+  // Issue #467: the host's `ALLOW_TURN_EDITS`.
+  if (action === 'allow-edits') {
+    return { approved: true, by: 'allow-turn-edits' };
   }
   return { approved: false, reason: 'denied by the user' };
 }
@@ -236,7 +284,10 @@ export function createApprovalSurface(
   let windowMs = armingMs;
   // The previous key the surface saw, for the terminal-repeat rule.
   let lastKey: { readonly data: string; readonly at: number } | undefined;
+  // Issue #467: the card's open input, if any (closed for every new ask).
+  let input: ApprovalInput | undefined;
   let page = 0;
+  let explain = false;
   let cancelArmTimer: (() => void) | undefined;
   // Bumped on every (re)start of the window, so a timer that outlived its
   // window (an injected timer may ignore its cancel) never repaints for it.
@@ -280,6 +331,8 @@ export function createApprovalSurface(
     // own arming window, and the frame repaints when it arms so the key
     // hints unlock visibly.
     page = 0;
+    explain = false;
+    input = undefined;
     startArming(shown, armingMs);
     notify();
   };
@@ -389,19 +442,110 @@ export function createApprovalSurface(
     set fitCheck(next: (() => boolean) | undefined) {
       hooks.fitCheck = next;
     },
+    queued: (): readonly SurfaceRequest[] => queue.map((ask) => ask.request),
+    explaining: (): boolean => shown !== undefined && explain,
+    toggleExplain: (): boolean => {
+      if (shown === undefined) return false;
+      explain = !explain;
+      notify();
+      return true;
+    },
     decide: (data: string): boolean => {
       const current = shown;
-      if (current === undefined) return false;
+      if (current === undefined || input !== undefined) return false;
       const action = findAction(data);
       if (action === undefined) return false;
+      // Issue #467: `c` and `e` open the card's input instead of answering;
+      // `e` and `A` act only on the asks the host offered them for.
+      if (action === 'comment') {
+        input = { kind: 'comment', text: '' };
+        notify();
+        return false;
+      }
+      if (action === 'edit') {
+        if (current.request.editable !== true) return false;
+        input = { kind: 'edit', text: current.request.command ?? '' };
+        notify();
+        return false;
+      }
+      if (action === 'allow-edits' && current.request.batchable !== true) {
+        return false;
+      }
       settle(current, decisionFor(action));
       return true;
+    },
+    inputMode: (): ApprovalInput | undefined =>
+      shown === undefined ? undefined : input,
+    typeInto: (data: string): 'settled' | 'consumed' | undefined => {
+      const current = shown;
+      const open = input;
+      if (current === undefined || open === undefined) return undefined;
+      if (matchesKey(data, 'escape')) {
+        input = undefined;
+        notify();
+        return 'consumed';
+      }
+      if (matchesKey(data, 'enter')) {
+        const text = open.text.trim();
+        if (open.kind === 'comment') {
+          input = undefined;
+          settle(current, {
+            approved: false,
+            reason:
+              text === ''
+                ? 'denied by the user'
+                : `denied by the user: ${text}`,
+          });
+          return 'settled';
+        }
+        // An emptied command is not an answer: the input stays open.
+        if (text === '') return 'consumed';
+        input = undefined;
+        settle(
+          current,
+          text === (current.request.command ?? '').trim()
+            ? { approved: true, by: 'allow-once' }
+            : {
+                approved: true,
+                by: 'allow-once',
+                edited: { command: open.text },
+              },
+        );
+        return 'settled';
+      }
+      if (matchesKey(data, 'backspace')) {
+        input = { ...open, text: [...open.text].slice(0, -1).join('') };
+        notify();
+        return 'consumed';
+      }
+      if (matchesKey(data, 'ctrl+u')) {
+        input = { ...open, text: '' };
+        notify();
+        return 'consumed';
+      }
+      if (insertable(data)) {
+        const max =
+          open.kind === 'comment'
+            ? APPROVAL_COMMENT_MAX_CHARS
+            : APPROVAL_EDIT_MAX_CHARS;
+        input = { ...open, text: `${open.text}${data}`.slice(0, max) };
+        notify();
+        return 'consumed';
+      }
+      return undefined;
     },
     pending: (): SurfaceRequest | undefined => shown?.request,
     isShowing: (): boolean => shown !== undefined,
     isArmed,
     isAllowable,
     noteDroppedKey: restartArming,
+    reveal: (): void => {
+      const current = shown;
+      if (current === undefined) return;
+      const wasArmed = isArmed();
+      startArming(current, armingMs);
+      if (wasArmed && armingMs > 0) notify();
+    },
     commandPage: (): number => page,
     nextCommandPage: (): boolean => {
       if (shown === undefined) return false;
@@ -427,26 +571,6 @@ export function createApprovalSurface(
       }
       if (current !== undefined || waiting.length > 0) notify();
     },
-    renderInline: (width: number): string[] => {
-      const current = shown;
-      if (current === undefined) return [];
-      return renderApprovalInline(current.request, width, {
-        armed: isArmed(),
-        commandPage: page,
-        keys: surface.keys(),
-      });
-    },
-    renderOverlayBody: (width: number): string[] => {
-      const current = shown;
-      if (current === undefined) return [];
-      return renderApprovalLines(current.request, width, {
-        armed: isArmed(),
-        commandPage: page,
-        keys: surface.keys(),
-      });
-    },
-    usesInlineFallback: (width: number): boolean =>
-      shouldUseInlineFallback(width),
     checkKeys: (reserved?: ReadonlyArray<string>): boolean => {
       const conflicts = approvalKeyConflicts(overrides);
       const first = conflicts[0];
@@ -466,6 +590,11 @@ export function createApprovalSurface(
           APPROVAL_DEFAULT_KEYS['allow-session']),
       ],
       deny: [...(overrides?.deny ?? APPROVAL_DEFAULT_KEYS.deny)],
+      comment: [...(overrides?.comment ?? APPROVAL_DEFAULT_KEYS.comment)],
+      edit: [...(overrides?.edit ?? APPROVAL_DEFAULT_KEYS.edit)],
+      'allow-edits': [
+        ...(overrides?.['allow-edits'] ?? APPROVAL_DEFAULT_KEYS['allow-edits']),
+      ],
     }),
     // Delegates to ask() so the sanitiser, the queue and the abort path are
     // always in the path. `seat` is also the value runTuiCommand hands the

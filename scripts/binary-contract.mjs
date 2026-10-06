@@ -73,13 +73,31 @@ export const MODELS_RECEIPT_PREFIX = 'loaded models.json:';
 // the project layer, loaded through KUBIC_TRUST_PROJECT=1).
 export const CONFIG_REFUSAL_KEY = 'bogus_key';
 
-// The root dispatcher's usage line (issue #128): one string serves
-// `kubic --help` / `kubic -h` (exit 0 — help is success, §78) and the
-// bare invocation off a TTY (exit 1 — POSIX usage-on-no-args; a bare
-// `kubic` on an interactive terminal opens the TUI instead, §78/§80). Pinned literally so
-// a command-list drift fails here instead of shipping stale help.
-export const ROOT_USAGE_LINE =
-  'usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | skills | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
+// The root help (issues #128, #446): one text serves `kubic --help` /
+// `kubic -h` (exit 0 — help is success, §78) and the bare invocation off a
+// TTY (exit 1 — POSIX usage-on-no-args; a bare `kubic` on an interactive
+// terminal opens the TUI instead, §78/§80). The probes run over pipes, so
+// this is the plain text (no colour). Pinned literally so a command-list
+// drift fails here instead of shipping stale help.
+export const ROOT_HELP_TEXT = [
+  '■ kubic — terminal coding agent by Konic',
+  '',
+  'USAGE      kubic                       open the TUI (on a terminal)',
+  '           kubic "<prompt>"            run one prompt, like kubic run -p',
+  '           kubic <command> [options]',
+  '',
+  'SESSION    run · tui · resume · attach · sessions              work with the agent',
+  'CHANGES    diff · undo · log · status · commit · git           review and revert what it did',
+  'DELEGATE   orchestrate · workers · clean                       manager + workers in worktrees',
+  'SETUP      setup · models · config · trust · doctor · skills   providers, project, health',
+  'ANALYSIS   cost · eval · benchmark · replay · export · perf · policy · audit',
+  '',
+  'EXAMPLES   kubic "fix the failing test"',
+  '           kubic run -p "add tests for titleCase" --json',
+  '           kubic orchestrate -p "split cart.js into modules"',
+  '',
+  'kubic <command> --help for options · docs/cli/README.md',
+].join('\n');
 
 // The launcher's named Node-requirement line (issue #128), printed to
 // stderr when a runtime below 22.19 runs bin/kubic.js. `runningVersion`
@@ -123,6 +141,14 @@ export function expectedVersionLine(version) {
 export function unknownPromptHint(word) {
   return `hint: to run it as a prompt: kubic run -p '${word}'`;
 }
+
+// Issue #450: the usage error for an unknown command (plain, on stderr) and
+// the hint that closes it.
+export function unknownCommandError(word) {
+  return `error: unknown command '${word}'`;
+}
+export const UNKNOWN_COMMAND_HELP_HINT =
+  'hint: kubic --help lists the commands';
 
 function lines(stdout) {
   return stdout.split('\n').filter((line) => line.trim() !== '');
@@ -185,7 +211,7 @@ export function binaryContract({
   }
 
   // Issue #128: help at the root is success, and the bare invocation keeps
-  // the POSIX usage-on-no-args posture — one line, two exit codes. The
+  // the POSIX usage-on-no-args posture — one help text, two exit codes. The
   // probes spawn over pipes (non-TTY), which is exactly the scripted case
   // that must keep exit 1; the TTY → TUI branch is pinned in dispatch.test.
   for (const [label, probe] of [
@@ -204,9 +230,9 @@ export function binaryContract({
       continue;
     }
     const printed = probe.stdout.trimEnd();
-    if (printed !== ROOT_USAGE_LINE) {
+    if (printed !== ROOT_HELP_TEXT) {
       problems.push(
-        `\`${label}\` printed ${JSON.stringify(printed)} — expected exactly ${JSON.stringify(ROOT_USAGE_LINE)}`,
+        `\`${label}\` printed ${JSON.stringify(printed)} — expected exactly ${JSON.stringify(ROOT_HELP_TEXT)}`,
       );
     }
   }
@@ -250,9 +276,9 @@ export function binaryContract({
       );
     }
     const printed = bare.stdout.trimEnd();
-    if (printed !== ROOT_USAGE_LINE) {
+    if (printed !== ROOT_HELP_TEXT) {
       problems.push(
-        `\`kubic\` with no command printed ${JSON.stringify(printed)} — expected the identical \`kubic --help\` line ${JSON.stringify(ROOT_USAGE_LINE)}`,
+        `\`kubic\` with no command printed ${JSON.stringify(printed)} — expected the identical \`kubic --help\` text ${JSON.stringify(ROOT_HELP_TEXT)}`,
       );
     }
   }
@@ -370,9 +396,9 @@ export function binaryContract({
   }
 
   // The seam is internal-only (issue #128): without the contract's own env
-  // gate, `kubic __crash-probe` is just an unknown command — the root usage
-  // line, exit 2 (usage, issue #372), nothing on stderr — never an injected
-  // crash.
+  // gate, `kubic __crash-probe` is just an unknown command — exit 2 (usage,
+  // issue #372), the usage error on stderr with no prompt hint and nothing
+  // on stdout (issue #450) — never an injected crash.
   const ungated = run(['__crash-probe']);
   const ungatedFailed = probeProblems('kubic __crash-probe (ungated)', ungated);
   if (ungatedFailed.length > 0) {
@@ -383,21 +409,22 @@ export function binaryContract({
         `\`kubic __crash-probe\` without the env gate exited ${ungated.code} (expected ${USAGE_EXIT} — unknown command)`,
       );
     }
-    if (ungated.stdout.trimEnd() !== ROOT_USAGE_LINE) {
+    if (ungated.stdout !== '') {
       problems.push(
-        `\`kubic __crash-probe\` without the env gate printed ${JSON.stringify(ungated.stdout.trimEnd())} — expected the root usage line (the seam must stay internal-only)`,
+        `\`kubic __crash-probe\` without the env gate printed ${JSON.stringify(ungated.stdout)} on stdout — expected nothing (the seam must stay internal-only)`,
       );
     }
-    if (ungated.stderr !== '') {
+    const expectedUngated = `${unknownCommandError('__crash-probe')}\n${UNKNOWN_COMMAND_HELP_HINT}\n`;
+    if (ungated.stderr !== expectedUngated) {
       problems.push(
-        `\`kubic __crash-probe\` without the env gate wrote ${JSON.stringify(ungated.stderr)} to stderr — expected silence`,
+        `\`kubic __crash-probe\` without the env gate wrote ${JSON.stringify(ungated.stderr)} to stderr — expected exactly ${JSON.stringify(expectedUngated)}`,
       );
     }
   }
 
   // Issue #372: an unknown command is a usage error, not a task failure —
-  // exit 2 with the root usage line on stdout and nothing on stderr.
-  // Issue #268 (L-D7): a word-shaped token also names the prompt form.
+  // exit 2. Issue #450: the error and its hints go to stderr and stdout stays
+  // empty. Issue #268 (L-D7): a word-shaped token also names the prompt form.
   const unknown = run(['nosuch-command']);
   const unknownFailed = probeProblems('kubic nosuch-command', unknown);
   if (unknownFailed.length > 0) {
@@ -408,15 +435,15 @@ export function binaryContract({
         `\`kubic nosuch-command\` exited ${unknown.code} (expected ${USAGE_EXIT} — unknown command is a usage error, §78)`,
       );
     }
-    const expectedUnknown = `${ROOT_USAGE_LINE}\n${unknownPromptHint('nosuch-command')}`;
-    if (unknown.stdout.trimEnd() !== expectedUnknown) {
+    if (unknown.stdout !== '') {
       problems.push(
-        `\`kubic nosuch-command\` printed ${JSON.stringify(unknown.stdout.trimEnd())} — expected the root usage line and the prompt hint`,
+        `\`kubic nosuch-command\` printed ${JSON.stringify(unknown.stdout)} on stdout — expected an empty stdout (a usage error is stderr-only)`,
       );
     }
-    if (unknown.stderr !== '') {
+    const expectedUnknown = `${unknownCommandError('nosuch-command')}\n${unknownPromptHint('nosuch-command')}\n${UNKNOWN_COMMAND_HELP_HINT}\n`;
+    if (unknown.stderr !== expectedUnknown) {
       problems.push(
-        `\`kubic nosuch-command\` wrote ${JSON.stringify(unknown.stderr)} to stderr — expected silence (the usage line is stdout-only)`,
+        `\`kubic nosuch-command\` wrote ${JSON.stringify(unknown.stderr)} to stderr — expected the error line, the prompt hint and the help hint ${JSON.stringify(expectedUnknown)}`,
       );
     }
   }
@@ -955,7 +982,7 @@ if (import.meta.main) {
       throw CONTRACT_VIOLATION;
     }
     console.log(
-      `binary contract OK: ${expectedLine} (exit 0); --help/-h exit 0 with the root usage line; bare kubic exit 1 (same line); an unknown command exits ${USAGE_EXIT} with the prompt hint; the bare multi-word prompt runs like \`kubic run -p\` (completed on faux); orchestrate/clean outside a git repo exit ${WORKSPACE_EXIT}; models/doctor --json keep stdout to one document with the models.json receipt on stderr; a refused config exits 1 with the run envelope under --json and stderr-only otherwise; stubbed old node hits the named guard (exit 1, stderr-only) and the 22.19 floor passes; injected failure prints one \`error:\` line (stack only under KUBIC_DEBUG=1); doctor exit ${DOCTOR_PROVIDER_EXIT} ${JSON.stringify(PROVIDER_DOWN_LINE)} with the five embedded role presets reported as builtin (issue #203); provider-less run exit ${RUN_PROVIDER_EXIT} with session:/journal:/usage:/trajectory: refs; orchestrate on faux through a symlinked bin exits 0 with one completed envelope (issue #179)`,
+      `binary contract OK: ${expectedLine} (exit 0); --help/-h exit 0 with the root help; bare kubic exit 1 (same text); an unknown command exits ${USAGE_EXIT} with the error and hints on stderr; the bare multi-word prompt runs like \`kubic run -p\` (completed on faux); orchestrate/clean outside a git repo exit ${WORKSPACE_EXIT}; models/doctor --json keep stdout to one document with the models.json receipt on stderr; a refused config exits 1 with the run envelope under --json and stderr-only otherwise; stubbed old node hits the named guard (exit 1, stderr-only) and the 22.19 floor passes; injected failure prints one \`error:\` line (stack only under KUBIC_DEBUG=1); doctor exit ${DOCTOR_PROVIDER_EXIT} ${JSON.stringify(PROVIDER_DOWN_LINE)} with the five embedded role presets reported as builtin (issue #203); provider-less run exit ${RUN_PROVIDER_EXIT} with session:/journal:/usage:/trajectory: refs; orchestrate on faux through a symlinked bin exits 0 with one completed envelope (issue #179)`,
     );
   } catch (error) {
     // The violation marker carries no information the user has not already

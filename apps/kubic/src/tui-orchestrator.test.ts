@@ -12,6 +12,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { buildOrchestratorWorktreeNotice } from '../../../packages/host/src/limits/orchestrator-notice.js';
 import type {
   OrchestrateCliOptions,
   OrchestrateCommandDeps,
@@ -21,6 +22,7 @@ import {
   publishWorkerAsk,
   readWorkerAskAnswer,
 } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
+import type { OrchestratorProjectionEvent } from '../../../packages/host/src/presentation/projector.js';
 import { createApprovalSurface } from '../../../packages/tui/src/approval-surface.js';
 import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
@@ -112,6 +114,55 @@ interface FakeDrive {
   ) => Promise<{ status: 'completed' }>;
 }
 
+// Issue #465: a drive that reports workers and phases, can stop a worker,
+// and records what each run was asked to do.
+function dashboardDrive() {
+  let listener: ((event: OrchestratorProjectionEvent) => void) | undefined;
+  let release: (() => void) | undefined;
+  const runs: Array<{
+    objective: string;
+    resume: boolean;
+    agents?: readonly string[];
+  }> = [];
+  const stopped: string[] = [];
+  const messages: string[] = [];
+  const drive: TuiOrchestratorRun & {
+    runs: typeof runs;
+    stopped: string[];
+    messages: string[];
+    emit: (event: OrchestratorProjectionEvent) => void;
+    settle: () => void;
+  } = {
+    runs,
+    stopped,
+    messages,
+    emit: (event) => listener?.(event),
+    messageWorker: (workerId, text) => {
+      messages.push(`${workerId}:${text}`);
+      return { sent: false, footer: `no inbox for ${workerId}` };
+    },
+    settle: () => release?.(),
+    watchWorkers: (next) => {
+      listener = next;
+    },
+    stopWorker: (workerId) => {
+      stopped.push(workerId);
+      return true;
+    },
+    run: (objective, _report, options) => {
+      runs.push({
+        objective,
+        resume: options?.resume === true,
+        ...(options?.agents === undefined ? {} : { agents: options.agents }),
+      });
+      return new Promise<TuiTurnOutcome>((resolve) => {
+        release = () => resolve({ status: 'completed' });
+      });
+    },
+  };
+  return drive;
+}
+
 function fakeDrive(): FakeDrive {
   const drive: FakeDrive = {
     objectives: [],
@@ -125,13 +176,14 @@ function fakeDrive(): FakeDrive {
 }
 
 describe('orchestrator entry: mode resolution (issue #327)', () => {
-  it('--orchestrator boots the TUI with the mode in the header and status bar', async () => {
+  it('--orchestrator boots the TUI with the mode in the header', async () => {
     const terminal = fakeTerminal(100);
     const pending = runTuiCommand({ orchestrator: true }, deps(terminal));
     await waitFor(() => terminal.started === 1);
     const frame = terminal.writes.join('');
-    expect(frame).toContain('orchestrator · faux/test');
-    expect(frame).toContain('orchestrator • approvals:on');
+    expect(frame).toContain('[ORCHESTRATOR] approvals on');
+    expect(frame).toContain('faux/test · off');
+    terminal.feed('\x03');
     terminal.feed('\x03');
     expect(await pending).toBe(0);
   });
@@ -144,8 +196,9 @@ describe('orchestrator entry: mode resolution (issue #327)', () => {
     );
     await waitFor(() => terminal.started === 1);
     const frame = terminal.writes.join('');
-    expect(frame).toContain('orchestrator · faux/test');
-    expect(frame).toContain('orchestrator • approvals:on');
+    expect(frame).toContain('[ORCHESTRATOR] approvals on');
+    expect(frame).toContain('faux/test · off');
+    terminal.feed('\x03');
     terminal.feed('\x03');
     expect(await pending).toBe(0);
   });
@@ -157,7 +210,8 @@ describe('orchestrator entry: mode resolution (issue #327)', () => {
       deps(flagged, { modes: { orchestrator: false } }),
     );
     await waitFor(() => flagged.started === 1);
-    expect(flagged.writes.join('')).toContain('orchestrator • approvals:on');
+    expect(flagged.writes.join('')).toContain('[ORCHESTRATOR] approvals on');
+    flagged.feed('\x03');
     flagged.feed('\x03');
     await run;
 
@@ -168,8 +222,9 @@ describe('orchestrator entry: mode resolution (issue #327)', () => {
     );
     await waitFor(() => plain.started === 1);
     const frame = plain.writes.join('');
-    expect(frame).toContain('solo • approvals:on');
-    expect(frame).not.toContain('orchestrator ·');
+    expect(frame).toContain('[SOLO] approvals on');
+    expect(frame).not.toContain('[ORCHESTRATOR]');
+    plain.feed('\x03');
     plain.feed('\x03');
     await solo;
   });
@@ -207,6 +262,7 @@ describe('orchestrator entry: the non-git refusal (issue #327)', () => {
     const pending = runTuiCommand({}, deps(terminal, { isGitRepo: probe }));
     await waitFor(() => terminal.started === 1);
     terminal.feed('\x03');
+    terminal.feed('\x03');
     expect(await pending).toBe(0);
     expect(probe).not.toHaveBeenCalled();
   });
@@ -230,13 +286,16 @@ describe('orchestrator entry: the toggle routes the next submit (issue #327)', (
     );
     await waitFor(() => terminal.started === 1);
     terminal.feed('\x07');
-    await waitFor(() => terminal.writes.join('').includes('orchestrator •'));
+    await waitFor(() => terminal.writes.join('').includes('[ORCHESTRATOR]'));
     terminal.feed('do it');
     terminal.feed('\r');
     await waitFor(() => drive.objectives.length === 1);
     expect(drive.objectives).toEqual(['do it']);
     expect(admitted).toEqual([]);
-    // The drive's report callback lands in the transcript, not nowhere.
+    // Issue #465: the run opens the dashboard; the drive's report lands in
+    // the manager transcript, one `tab` away — not nowhere.
+    await waitFor(() => terminal.writes.join('').includes('[ORCHESTRATE]'));
+    terminal.feed('\t');
     await waitFor(() => terminal.writes.join('').includes('manager: planning'));
     terminal.feed('\x03');
     terminal.feed('\x03');
@@ -283,7 +342,7 @@ describe('orchestrator worker asks reach the TUI surface and the worker (issue #
     provenance: { parentSessionId: 'orch-327' },
   } as const;
 
-  it('a published worker ask is rendered by the surface and the allow decision reaches the mailbox', async () => {
+  it('a published worker ask reaches the surface and the allow decision reaches the mailbox', async () => {
     const dir = tmpRoot();
     const surface = createApprovalSurface({ armingMs: 0 });
     const approvals = createOrchestratorApprovalsRun({
@@ -301,12 +360,11 @@ describe('orchestrator worker asks reach the TUI surface and the worker (issue #
     });
     await waitFor(() => surface.isShowing());
     const shown = surface.pending();
-    // The overlay names the worker, the tool and the full command: the
+    // The card names the worker, the tool and the full command: the
     // operator decides on what will run, not on a bare tool name.
     expect(shown?.toolName).toBe('bash');
     expect(shown?.summary).toContain("worker 'worker-1'");
     expect(shown?.command).toContain('rm -rf /tmp/kubic-327-scratch');
-    expect(surface.renderOverlayBody(90).join('\n')).toContain('bash');
     // The operator answers through the same key path the TUI routes.
     expect(surface.decide('a')).toBe(true);
     expect(await pumped).toBeUndefined();
@@ -403,6 +461,7 @@ describe('orchestrator cancellation is honest (issue #327)', () => {
     terminal.feed('long task');
     terminal.feed('\r');
     await waitFor(() => started);
+    terminal.feed('\x03');
     terminal.feed('\x03');
     expect(await pending).toBe(0);
     expect(terminal.stopped).toBe(1);
@@ -596,7 +655,13 @@ describe('createProdTuiOrchestrator (issue #327)', () => {
       runCommand: async () => 0,
     });
     await drive.run('go');
-    expect(attached).toBe(mergeSeat);
+    // The decider is the TUI seat (issue #464 wraps it to mark the worker
+    // awaiting while it asks): its answer is the run's, and it is asked.
+    const decide = attached as typeof mergeSeat;
+    expect(await decide({ agentId: 'worker-1', branch: 'kubic/s/w' })).toEqual({
+      verdict: 'approve',
+    });
+    expect(asked).toEqual(['worker-1@kubic/s/w']);
   });
 
   it('tells the run it has no --yes flag, so a merge refusal never names one (issue #327)', async () => {
@@ -710,6 +775,256 @@ describe('mergeSeatFromAnswer (issue #327)', () => {
     const seat = mergeSeatFromAnswer(async () => undefined);
     expect(await seat({ agentId: 'a', branch: 'b' })).toEqual({
       verdict: 'deny',
+    });
+  });
+});
+
+// Issue #453: `/safety` prints the CURRENT mode's honest limits, verbatim
+// from the limits module — here the orchestrator's, never the solo text.
+describe('/safety in orchestrator mode (issue #453)', () => {
+  it("prints the orchestrator's limits, not the solo notice", async () => {
+    const terminal = fakeTerminal(200);
+    const admitted: string[] = [];
+    const drive = fakeDrive();
+    const pending = runTuiCommand(
+      { orchestrator: true },
+      deps(terminal, {
+        bootLane: async (sessionId?: string) => ({
+          sessionId: sessionId ?? 's1',
+          model: 'faux/test',
+          loop: fakeLoop(admitted),
+          orchestrator: drive,
+        }),
+      }),
+    );
+    await waitFor(() => terminal.started === 1);
+    const mark = terminal.writes.length;
+    for (const ch of '/safety') terminal.feed(ch);
+    terminal.feed('\r');
+    await waitFor(() =>
+      terminal.writes
+        .slice(mark)
+        .join('')
+        .includes('safety: orchestrator mode'),
+    );
+    const after = terminal.writes.slice(mark).join('');
+    for (const line of buildOrchestratorWorktreeNotice()) {
+      expect(after).toContain(line.slice(0, 40));
+    }
+    expect(after).not.toContain('solo mode has no isolation');
+    // A local read: nothing reached the lane or the manager.
+    expect(admitted).toEqual([]);
+    expect(drive.objectives).toEqual([]);
+    terminal.feed('\x03');
+    terminal.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+});
+
+describe('the dashboard on the TUI loop (issue #465)', () => {
+  it('stops a running worker through the drive and retries a failed one as a resumed run', async () => {
+    const terminal = fakeTerminal(140);
+    const drive = dashboardDrive();
+    const pending = runTuiCommand(
+      { orchestrator: true },
+      deps(terminal, {
+        isGitRepo: () => true,
+        bootLane: async (sessionId?: string) => ({
+          sessionId: sessionId ?? 's1',
+          model: 'faux/test',
+          loop: fakeLoop([]),
+          orchestrator: drive,
+        }),
+      }),
+    );
+    await waitFor(() => terminal.started === 1);
+    terminal.feed('fix the cart');
+    terminal.feed('\r');
+    await waitFor(() => drive.runs.length === 1);
+    drive.emit({ type: 'run-phase', phase: 'plan', state: 'running', at: 1 });
+    drive.emit({
+      type: 'worker-start',
+      workerId: 'worker-1',
+      status: 'running',
+      task: 'fix the cart',
+      startedAt: Date.now(),
+    });
+    drive.emit({
+      type: 'worker-start',
+      workerId: 'worker-2',
+      status: 'running',
+      startedAt: Date.now(),
+    });
+    await waitFor(() =>
+      terminal.writes.join('').includes('worker-1  fix the cart'),
+    );
+    terminal.feed('x');
+    await waitFor(() => drive.stopped.length === 1);
+    expect(drive.stopped).toEqual(['worker-1']);
+    await waitFor(() => terminal.writes.join('').includes('stopping worker-1'));
+    // worker-2 fails; while the run is in flight a retry waits.
+    drive.emit({
+      type: 'worker-update',
+      workerId: 'worker-2',
+      status: 'failed',
+    });
+    terminal.feed('j');
+    terminal.feed('r');
+    await waitFor(() =>
+      terminal.writes.join('').includes('retry: wait for the run to settle'),
+    );
+    drive.settle();
+    await waitFor(() => !terminal.writes.join('').endsWith('working'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    terminal.feed('r');
+    await waitFor(() => drive.runs.length === 2);
+    expect(drive.runs[1]).toEqual({ objective: '', resume: true });
+    drive.settle();
+    terminal.feed('\x03');
+    terminal.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+});
+
+describe('the prod drive: stop and retry (issue #465)', () => {
+  it('stops a worker through the live run and resumes the last run on retry', async () => {
+    const commands: OrchestrateCliOptions[] = [];
+    const cancelled: string[] = [];
+    const gate: { release?: () => void } = {};
+    // A call, not an inline `gate.release?.()`: control flow would narrow
+    // the property to the `undefined` this test resets it to.
+    const release = (): void => {
+      gate.release?.();
+    };
+    const drive = createProdTuiOrchestrator({
+      sessionId: 'tui-9',
+      out: () => {},
+      now: () => 1_700_000_000_000,
+      createDeps: async () =>
+        ({
+          cancelWorker: (agentId: string) => {
+            cancelled.push(agentId);
+          },
+        }) as unknown as OrchestrateCommandDeps,
+      runCommand: async (options) => {
+        commands.push(options);
+        await new Promise<void>((resolve) => {
+          gate.release = resolve;
+        });
+        return 0;
+      },
+    });
+    expect(await drive.run('', undefined, { resume: true })).toEqual({
+      status: 'failed',
+      detail: 'there is no run to retry',
+    });
+    expect(drive.stopWorker?.('worker-1')).toBe(false);
+    const first = drive.run('fix the cart');
+    await waitFor(() => gate.release !== undefined);
+    expect(drive.stopWorker?.('worker-1')).toBe(true);
+    expect(cancelled).toEqual(['worker-1']);
+    release();
+    await first;
+    // No run in flight: nothing to stop.
+    expect(drive.stopWorker?.('worker-1')).toBe(false);
+    gate.release = undefined;
+    const retry = drive.run('', undefined, { resume: true });
+    await waitFor(() => gate.release !== undefined);
+    release();
+    await retry;
+    expect(commands.map((options) => options.resume === true)).toEqual([
+      false,
+      true,
+    ]);
+    expect(commands[1]?.session).toBe(commands[0]?.session);
+    expect(commands[0]?.prompt).toBe('fix the cart');
+  });
+});
+
+describe('the dispatch box on the TUI loop (issue #466)', () => {
+  it('messages a worker through the drive and dispatches a new one as a run', async () => {
+    const terminal = fakeTerminal(140);
+    const drive = dashboardDrive();
+    const pending = runTuiCommand(
+      { orchestrator: true },
+      deps(terminal, {
+        isGitRepo: () => true,
+        bootLane: async (sessionId?: string) => ({
+          sessionId: sessionId ?? 's1',
+          model: 'faux/test',
+          loop: fakeLoop([]),
+          orchestrator: drive,
+        }),
+      }),
+    );
+    await waitFor(() => terminal.started === 1);
+    terminal.feed('fix the cart');
+    terminal.feed('\r');
+    await waitFor(() => drive.runs.length === 1);
+    drive.emit({ type: 'run-phase', phase: 'plan', state: 'running', at: 1 });
+    drive.emit({
+      type: 'worker-start',
+      workerId: 'worker-1',
+      status: 'running',
+      startedAt: Date.now(),
+    });
+    await waitFor(() => terminal.writes.join('').includes('worker-1'));
+    terminal.feed('m');
+    terminal.feed('hello');
+    terminal.feed('\r');
+    await waitFor(() => drive.messages.length === 1);
+    expect(drive.messages).toEqual(['worker-1:hello']);
+    await waitFor(() =>
+      terminal.writes.join('').includes('no inbox for worker-1'),
+    );
+    // The refused text stays: `^N` turns it into a new worker's task. While
+    // the run is in flight the dispatch waits (the draft stays too)…
+    terminal.feed('\x0e');
+    terminal.feed('\t');
+    terminal.feed('\r');
+    await waitFor(() =>
+      terminal.writes
+        .join('')
+        .includes('dispatch: a new worker starts once this run settles'),
+    );
+    expect(drive.runs).toHaveLength(1);
+    // …and once it settled the same Enter starts a run of its own.
+    drive.settle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    terminal.feed('\r');
+    await waitFor(() => drive.runs.length === 2);
+    expect(drive.runs[1]).toEqual({
+      objective: 'hello',
+      resume: false,
+      agents: ['tester-1:tester'],
+    });
+    drive.settle();
+    terminal.feed('\x03');
+    terminal.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+});
+
+describe('the prod drive: messages and dispatch (issue #466)', () => {
+  it('names why a template worker takes no message, and runs a dispatch with its agents', async () => {
+    const commands: OrchestrateCliOptions[] = [];
+    const drive = createProdTuiOrchestrator({
+      sessionId: 'tui-9',
+      out: () => {},
+      now: () => 1_700_000_000_000,
+      createDeps: async () => ({}) as unknown as OrchestrateCommandDeps,
+      runCommand: async (options) => {
+        commands.push(options);
+        return 0;
+      },
+    });
+    const answer = drive.messageWorker?.('worker-1', 'hello');
+    expect(answer?.sent).toBe(false);
+    expect(answer?.footer).toContain('template plan');
+    await drive.run('add tests', undefined, { agents: ['tester-1:tester'] });
+    expect(commands[0]).toMatchObject({
+      prompt: 'add tests',
+      agents: ['tester-1:tester'],
     });
   });
 });

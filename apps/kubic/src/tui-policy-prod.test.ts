@@ -691,6 +691,7 @@ describe('a refused /model switch is named in the footer and the lane keeps its 
     await waitFor(() => fake.frame.includes('from faux'));
     expect(other.state.callCount).toBe(0);
     fake.feed('\x03');
+    fake.feed('\x03');
     expect(await pending).toBe(0);
   });
 });

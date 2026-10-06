@@ -201,3 +201,33 @@ describe('screen lifecycle (issue #22, slice B)', () => {
     });
   });
 });
+
+// Issue #460: the base frame goes through a filter BEFORE the overlays are
+// composited on it, so the palette's dimmed background never dims the
+// palette itself.
+describe('screen base filter (issue #460)', () => {
+  it('filters the base frame, never an overlay on top of it', () => {
+    const terminal = fakeTerminal(60);
+    const root = buildLayoutRoot({
+      tree: new Text('tree'),
+      transcript: new Text('base row'),
+      status: new Text('status'),
+      editor: new Text('editor'),
+    });
+    const screen = bootScreen(terminal, root);
+    screen.tui.baseFilter = (lines) =>
+      lines.map((line) => line.replace('base', 'BASE'));
+    screen.tui.showOverlay(new Text('overlay base'), {
+      anchor: 'center',
+      width: 20,
+    });
+    screen.render();
+    const frame = screen.tui.getScreenLines().join('\n');
+    expect(frame).toContain('BASE row');
+    expect(frame).toContain('overlay base');
+    screen.tui.baseFilter = undefined;
+    screen.render();
+    expect(screen.tui.getScreenLines().join('\n')).toContain('base row');
+    screen.stop(() => {});
+  });
+});

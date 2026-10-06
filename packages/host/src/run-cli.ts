@@ -306,6 +306,35 @@ export function buildRunEnvelope(
   };
 }
 
+// Issue #447 (docs/ui/06-cli.html 06-B): live progress for a `kubic run` on
+// an interactive terminal. The composition root builds the sink (stderr,
+// spinner, kit rendering); the runner feeds it lane facts; the command
+// hands it the settled result for the receipt. Absent means today's plain
+// text everywhere (pipes, files, CI, `--json`).
+export interface RunProgressSink {
+  /** The lane booted: heading and (when `notice`) the one-line solo notice. */
+  begin(info: { readonly model?: string; readonly notice: boolean }): void;
+  toolStart(event: {
+    readonly toolCallId: string;
+    readonly toolName: string;
+    readonly args: unknown;
+  }): void;
+  toolEnd(event: {
+    readonly toolCallId: string;
+    readonly toolName: string;
+    readonly isError: boolean;
+    readonly entry?: unknown;
+  }): void;
+  /** The run settled: stop the spinner and clear its line. */
+  settle(): void;
+  /** After the answer: the receipt line and the next steps. */
+  receipt(result: HeadlessRunResult, exitCode: number): void;
+}
+
+// Issue #464: the tool half of a progress sink — what an orchestrator
+// worker reports to its manager as each tool call starts and ends.
+export type RunToolSink = Pick<RunProgressSink, 'toolStart' | 'toolEnd'>;
+
 export interface RunCommandDeps extends CliIo {
   run: (
     prompt: string,
@@ -340,10 +369,20 @@ export interface RunCommandDeps extends CliIo {
       // §40.1 mechanism 1 (issue #273): the per-invocation tool selection.
       tools?: readonly string[];
       noTools?: boolean;
+      // Issue #447: live progress on an interactive terminal.
+      progress?: RunProgressSink;
+      // Issue #464: an orchestrator worker's live tool facts.
+      toolFacts?: RunToolSink;
     },
   ) => Promise<HeadlessRunResult>;
   persist?: (result: HeadlessRunResult) => Promise<void> | void;
   onScreenMount?: () => void;
+  // Issue #447: the interactive-terminal progress sink. Present only when
+  // stdout AND stderr are a coloured TTY and the run is not `--json`.
+  progress?: () => RunProgressSink;
+  // Issue #464: the tool-fact sink of a run that is an orchestrator worker
+  // (the manager follows them on the child's stdout, `--json` or not).
+  toolFacts?: () => RunToolSink;
 }
 
 // Session ids are path segments under the sessions root: accept only
@@ -616,6 +655,8 @@ export async function runRunCommand(
   // tests can fail closed if a future edit wires one in.
   void deps.onScreenMount;
   const skills = options.skills ?? [];
+  const progress = options.json === true ? undefined : deps.progress?.();
+  const toolFacts = deps.toolFacts?.();
   let result: HeadlessRunResult;
   try {
     result = await deps.run(options.prompt, {
@@ -639,6 +680,8 @@ export async function runRunCommand(
         ? {}
         : { tools: [...options.tools] }),
       ...(options.noTools === true ? { noTools: true } : {}),
+      ...(progress === undefined ? {} : { progress }),
+      ...(toolFacts === undefined ? {} : { toolFacts }),
     });
     await deps.persist?.(result);
   } catch (error) {
@@ -649,6 +692,21 @@ export async function runRunCommand(
     // One compact line, deliberately not pretty-printed: `kubic
     // orchestrate` reads a worker's envelope as the LAST stdout line.
     deps.out(JSON.stringify(buildRunEnvelope(result, exitCode)));
+    return exitCode;
+  }
+  if (progress !== undefined) {
+    // Issue #447: the interactive rendering. The answer is the command's
+    // data (stdout); the receipt and next steps are presentation (stderr,
+    // through the sink). The plain lines below stay for every other case.
+    progress.settle();
+    if (exitCode === RUN_EXIT_OK) {
+      deps.out('');
+      deps.out(result.summary);
+      deps.out('');
+    } else if (result.error !== undefined) {
+      log.error(result.error.message);
+    }
+    progress.receipt(result, exitCode);
     return exitCode;
   }
   if (result.error !== undefined) log.error(result.error.message);

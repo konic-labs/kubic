@@ -138,6 +138,14 @@ export interface ProcessSnapshot {
   stdout: string;
   stderr: string;
   exitCode: number | null;
+  /**
+   * Issue #464: how many characters (UTF-16 code units) the capped
+   * accumulators have dropped from the head of each stream so far. Past the
+   * cap a snapshot keeps its length while its head moves, so a reader that
+   * follows a stream (the worker fact scanner) needs this to find where the
+   * new output starts. Absent means nothing was dropped.
+   */
+  dropped?: { stdout: number; stderr: number };
 }
 
 export interface CheckpointStore {
@@ -621,6 +629,7 @@ class NodeShell implements Shell {
       let text = '';
       let bytes = 0;
       let dropped = 0;
+      let droppedChars = 0;
       return {
         push(chunk: string): void {
           const chunkBytes = Buffer.byteLength(chunk, 'utf8');
@@ -640,11 +649,15 @@ class NodeShell implements Shell {
             at += codePoint > 0xffff ? 2 : 1;
           }
           dropped += drop;
+          droppedChars += at;
           text = combined.slice(at);
           bytes = total - drop;
         },
         peek(): string {
           return text;
+        },
+        droppedChars(): number {
+          return droppedChars;
         },
         final(): string {
           if (dropped === 0) return text;
@@ -669,11 +682,18 @@ class NodeShell implements Shell {
     let forced = false;
     let leaderExited = false;
     let escalationTimer: ReturnType<typeof setTimeout> | undefined;
-    const snapshot = (): ProcessSnapshot => ({
-      stdout: stdoutAcc.peek(),
-      stderr: stderrAcc.peek(),
-      exitCode: null,
-    });
+    const snapshot = (): ProcessSnapshot => {
+      const out = stdoutAcc.droppedChars();
+      const err = stderrAcc.droppedChars();
+      return {
+        stdout: stdoutAcc.peek(),
+        stderr: stderrAcc.peek(),
+        exitCode: null,
+        ...(out === 0 && err === 0
+          ? {}
+          : { dropped: { stdout: out, stderr: err } }),
+      };
+    };
     const emit = (checkpoint: boolean) => {
       options.onUpdate?.(
         snapshot(),

@@ -38,7 +38,7 @@ export interface GitCommandDeps {
   // Report colours (status verdicts, table headers). Default: none; never
   // applied to `--json`.
   theme?: CliTheme;
-  // Box-drawn `log` table. Default: plain aligned columns.
+  // Kit `log` table. Default: plain aligned columns.
   fancy?: boolean;
 }
 

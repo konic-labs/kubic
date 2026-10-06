@@ -47,6 +47,7 @@ import type {
 } from '../../../exec/src/env.js';
 import type { FileJournalStore } from '../../../exec/src/journal.js';
 import { BASH_RESULT_MAX_CHARS, type BashResult } from '../ops/bash.js';
+import type { ToolDisplay } from '../ops/display-diff.js';
 import type { GrepResult } from '../ops/grep.js';
 import { GREP_MAX_LINE_LENGTH } from '../ops/grep.js';
 import type { ReadResult } from '../ops/read.js';
@@ -98,7 +99,46 @@ type KubicToolDetails =
       readonly toolCallId: string;
       readonly invocationId: string;
     }
+  | {
+      readonly ok: true;
+      readonly toolCallId: string;
+      readonly invocationId: string;
+      // Issue #456: the change's display record (edit/write) — the TUI's
+      // inline diff. The model never sees details.
+      readonly display: DisplayRecord;
+    }
   | { readonly ok: false; readonly toolCallId: string; readonly code: string };
+
+// The display record as plain JSON (no optional fields — details are
+// JsonValue).
+type DisplayRecord =
+  | {
+      readonly kind: 'diff';
+      readonly text: string;
+      readonly firstChangedLine: number;
+      readonly added: number;
+      readonly removed: number;
+      readonly truncated: boolean;
+    }
+  | {
+      readonly kind: 'write';
+      readonly newFile: boolean;
+      readonly lines: number;
+      readonly preview: string;
+    };
+
+function displayRecord(display: ToolDisplay): DisplayRecord {
+  return display.kind === 'diff'
+    ? {
+        kind: 'diff',
+        text: display.text,
+        firstChangedLine: display.firstChangedLine,
+        added: display.added,
+        removed: display.removed,
+        truncated: display.truncated === true,
+      }
+    : display;
+}
 
 // The durable harness bounds whatever a tool reports (2000 lines / 50 KiB by
 // default) and appends its own `truncated` diagnostic — which would edit
@@ -325,13 +365,20 @@ export function kubicToolsToPiTools(
           trackHandle: (kill) =>
             context.kills.track(String(api.conversationId), kill),
           onUpdate: createOutputStreamer(api),
+          display: (record) => {
+            display = record;
+          },
         };
+        let display: ToolDisplay | undefined;
         const out = await callOperation(op.name, args, inv, opContext);
         const details: KubicToolDetails = out.ok
           ? {
               ok: true,
               toolCallId: api.callId,
               invocationId: inv.invocationId,
+              ...(display === undefined
+                ? {}
+                : { display: displayRecord(display) }),
             }
           : { ok: false, toolCallId: api.callId, code: out.error.code };
         const text = out.ok

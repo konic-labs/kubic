@@ -1,11 +1,9 @@
-// The approval overlay inside the interactive loop (issue #96, criteria 1
-// and 2).
+// The approval inside the interactive loop (issue #96, criteria 1 and 2).
 //
-// Headless: the app is rendered at a fixed width — at/above
-// APPROVAL_MIN_WIDTH the surface must be handed to the overlay host (the
-// composition root composites it), below it the inline body renders in the
-// transcript's slot. Overlay COMPOSITING is asserted on the real alt-screen in
-// the composition-root test; this file pins the loop's decisions.
+// Issue #459: an approval is an inline card in the editor's slot at every
+// width — never an overlay — so the transcript above stays readable. The app
+// is rendered headless at a fixed width; this file pins the loop's
+// decisions.
 import { describe, expect, it } from 'vitest';
 import { createApprovalSurface } from './approval-surface.js';
 import { APPROVAL_MIN_WIDTH } from './approval-view.js';
@@ -51,7 +49,7 @@ function approvalHost() {
 }
 
 describe('approval in the loop (issue #96, criterion 1)', () => {
-  it('shows the overlay for a gated call and resolves it on approve', async () => {
+  it('shows the card for a gated call and resolves it on approve', async () => {
     const app = createTuiApp({
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
@@ -63,11 +61,11 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
     app.attachApprovalOverlay(fake.host);
     const pending = app.requestApproval(request());
     expect(app.hasPendingApproval()).toBe(true);
-    // The overlay host got a real component whose body is the request.
-    expect(fake.shown).toHaveLength(1);
-    const body = fake.shown[0]?.render(60).join('\n') ?? '';
-    expect(body).toContain('destructive-shell');
-    expect(body).toContain('rm -rf /tmp/x');
+    // The card replaces the editor; no overlay is shown.
+    expect(fake.shown).toHaveLength(0);
+    const body = app.render(100).join('\n');
+    expect(body).toContain('▲ destructive');
+    expect(body).toContain('$ rm -rf /tmp/x');
     // 'a' is the shipped allow-once binding, routed through the app's own
     // handleInput (which classifies through parseKey first).
     const routed = app.handleInput('a');
@@ -78,7 +76,8 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
       by: 'allow-once',
     });
     expect(app.hasPendingApproval()).toBe(false);
-    expect(fake.hidden).toBe(1);
+    // The editor is back.
+    expect(app.render(100).join('\n')).not.toContain('[APPROVAL]');
   });
 
   it('resolves deny on Escape without quitting the session', async () => {
@@ -102,7 +101,7 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
     });
   });
 
-  it('leaves Esc as quit when nothing is pending', () => {
+  it('leaves Esc a harmless no-op when nothing is pending (issue #454)', () => {
     const app = createTuiApp({
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
@@ -111,7 +110,7 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
       approvalsSkipped: false,
     });
     expect(app.handleInput('\u001b')).toEqual({
-      quit: true,
+      quit: false,
       consumed: true,
       cancel: false,
     });
@@ -147,15 +146,16 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
     const second = app.requestApproval(
       request({ key: 'k-2', toolName: 'write' }),
     );
-    // Queued, not shown on top of the live one.
-    expect(fake.shown).toHaveLength(1);
+    // Queued, not shown on top of the live one: the card says what is next.
+    const card = app.render(100).join('\n');
+    expect(card).toContain(' 1 of 2 ');
+    expect(card).toContain('next: write');
     app.handleInput('a');
     await expect(first).resolves.toEqual({ approved: true, by: 'allow-once' });
-    // The second is now on the overlay (the first one's was hidden).
-    expect(fake.shown).toHaveLength(2);
-    expect(fake.hidden).toBe(1);
-    const body = fake.shown[1]?.render(60).join('\n') ?? '';
-    expect(body).toContain('write');
+    // The second now holds the card.
+    const body = app.render(100).join('\n');
+    expect(body).toContain('[APPROVAL] ━ write');
+    expect(body).toContain(' 1 of 1 ');
     app.handleInput('d');
     await expect(second).resolves.toEqual({
       approved: false,
@@ -180,8 +180,8 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
   });
 });
 
-describe('inline fallback (issue #96, criterion 2)', () => {
-  it('renders the inline body below APPROVAL_MIN_WIDTH instead of the overlay', async () => {
+describe('the card at every width (issue #96 criterion 2; #459)', () => {
+  it('renders the card on a narrow terminal, and the editor once settled', async () => {
     const app = createTuiApp({
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
@@ -193,19 +193,18 @@ describe('inline fallback (issue #96, criterion 2)', () => {
     app.attachApprovalOverlay(fake.host);
     const pending = app.requestApproval(request());
     const narrow = app.render(APPROVAL_MIN_WIDTH - 1).join('\n');
-    expect(narrow).toContain('! approval (inline) — narrow terminal');
-    expect(narrow).toContain('destructive-shell');
-    expect(narrow).toContain('rm -rf /tmp/x');
+    expect(narrow).toContain('[APPROVAL] ━ bash');
+    expect(narrow).toContain('$ rm -rf /tmp/x');
     expect(narrow).toContain('deny');
+    expect(fake.shown).toHaveLength(0);
     app.handleInput('d');
     await expect(pending).resolves.toMatchObject({ approved: false });
-    // Once settled the inline body is gone from the narrow frame too.
     expect(app.render(APPROVAL_MIN_WIDTH - 1).join('\n')).not.toContain(
-      '! approval (inline)',
+      '[APPROVAL]',
     );
   });
 
-  it('does NOT render the inline body at the minimum width (overlay owns it)', async () => {
+  it('renders the same card at and above the old overlay width', async () => {
     const app = createTuiApp({
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
@@ -216,15 +215,15 @@ describe('inline fallback (issue #96, criterion 2)', () => {
     const fake = approvalHost();
     app.attachApprovalOverlay(fake.host);
     const pending = app.requestApproval(request());
-    const wide = app.render(APPROVAL_MIN_WIDTH).join('\n');
-    expect(wide).not.toContain('! approval (inline)');
-    // ...because the overlay host really has it.
-    expect(fake.shown).toHaveLength(1);
+    expect(app.render(APPROVAL_MIN_WIDTH).join('\n')).toContain(
+      '[APPROVAL] ━ bash',
+    );
+    expect(fake.shown).toHaveLength(0);
     app.handleInput('d');
     await expect(pending).resolves.toMatchObject({ approved: false });
   });
 
-  it('still renders the inline body with no overlay host attached', async () => {
+  it('renders the card with no overlay host attached', async () => {
     // The viewer shell (an injected boot with no loop) must be able to show
     // the request too: an unanswered approval is a hang otherwise.
     const app = createTuiApp({
@@ -236,7 +235,7 @@ describe('inline fallback (issue #96, criterion 2)', () => {
     });
     const pending = app.requestApproval(request());
     expect(app.render(APPROVAL_MIN_WIDTH - 1).join('\n')).toContain(
-      '! approval (inline)',
+      '[APPROVAL]',
     );
     app.handleInput('a');
     await expect(pending).resolves.toEqual({

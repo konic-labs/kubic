@@ -127,6 +127,49 @@ describe('run progress (issue #447)', () => {
     ]);
   });
 
+  // Kubic's own edit tool reports its change as a display record
+  // (tools-adapter.ts, issue #456), not Pi's `details.diff`: the stat must
+  // come from it, or a real run never shows `+a −r`.
+  it("counts an edit from Kubic's display record", () => {
+    const { chunks, progress } = rig();
+    progress.begin({ model: 'faux/m', notice: false });
+    progress.toolStart({
+      toolCallId: 'e',
+      toolName: 'edit',
+      args: { path: 'src/cart.js', oldText: 'a', newText: 'b' },
+    });
+    progress.toolEnd({
+      toolCallId: 'e',
+      toolName: 'edit',
+      isError: false,
+      entry: {
+        model: [
+          {
+            role: 'toolResult',
+            content: [{ type: 'text', text: 'ok' }],
+            details: {
+              ok: true,
+              toolCallId: 'e',
+              invocationId: 'i',
+              display: {
+                kind: 'diff',
+                text: '-10 q = 1;\n+10 q += 1;\n+11 r();',
+                firstChangedLine: 10,
+                added: 2,
+                removed: 1,
+                truncated: false,
+              },
+            },
+          },
+        ],
+      },
+    });
+    progress.settle();
+    expect(settledLines(chunks).at(-1)).toBe(
+      '✓ edit    src/cart.js  +2 −1  0.0s',
+    );
+  });
+
   it('keeps a long path to its last two segments', () => {
     const chunks: string[] = [];
     const progress = createRunProgress(

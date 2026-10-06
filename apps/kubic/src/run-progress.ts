@@ -88,6 +88,25 @@ export function countDiffLines(diff: string): {
   return { added, removed };
 }
 
+// An edit's line counts: Kubic's display record (tools-adapter.ts, issue
+// #456) carries them; Pi's own `details.diff` is counted.
+function editStat(
+  details: Record<string, unknown> | undefined,
+): { added: number; removed: number } | undefined {
+  const display = details?.display;
+  if (
+    isRecord(display) &&
+    display.kind === 'diff' &&
+    typeof display.added === 'number' &&
+    typeof display.removed === 'number'
+  ) {
+    return { added: display.added, removed: display.removed };
+  }
+  return typeof details?.diff === 'string'
+    ? countDiffLines(details.diff)
+    : undefined;
+}
+
 function lineCount(text: string): number {
   if (text === '') return 0;
   const lines = text.split('\n');
@@ -186,12 +205,8 @@ export function createRunProgress(
         event.isError || (outcome !== undefined && /^exit [1-9]/.test(outcome));
       const details = resultDetails(event.entry);
       let stat: { added: number; removed: number } | undefined;
-      if (
-        !failed &&
-        event.toolName === 'edit' &&
-        typeof details?.diff === 'string'
-      ) {
-        stat = countDiffLines(details.diff);
+      if (!failed && event.toolName === 'edit') {
+        stat = editStat(details);
       }
       const args = pendingArgs.get(event.toolCallId);
       pendingArgs.delete(event.toolCallId);

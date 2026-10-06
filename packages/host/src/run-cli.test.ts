@@ -1043,3 +1043,67 @@ describe('run -p argument handling (issue #68; mutation hardening)', () => {
     ]);
   });
 });
+
+// Issue #447: the interactive-terminal rendering of `kubic run`.
+describe('run progress sink (issue #447)', () => {
+  function sink() {
+    const calls: string[] = [];
+    let progressSeen: unknown;
+    return {
+      calls,
+      progressSeen: () => progressSeen,
+      factory: () => ({
+        begin: () => calls.push('begin'),
+        toolStart: () => calls.push('toolStart'),
+        toolEnd: () => calls.push('toolEnd'),
+        settle: () => calls.push('settle'),
+        receipt: (_: HeadlessRunResult, code: number) =>
+          calls.push(`receipt:${code}`),
+      }),
+      run: async (_prompt: string, options: { progress?: unknown }) => {
+        progressSeen = options.progress;
+        return completedResult();
+      },
+    };
+  }
+
+  it('hands the sink to the runner and prints only the answer on stdout', async () => {
+    const s = sink();
+    const o = out();
+    const code = await runRunCommand(
+      { prompt: 'do it' },
+      { out: o.write, run: s.run, progress: s.factory },
+    );
+    expect(code).toBe(0);
+    expect(s.progressSeen()).toBeDefined();
+    expect(o.lines).toEqual(['', 'did the thing', '']);
+    expect(s.calls).toEqual(['settle', 'receipt:0']);
+  });
+
+  it('never uses the sink under --json', async () => {
+    const s = sink();
+    const o = out();
+    await runRunCommand(
+      { prompt: 'do it', json: true },
+      { out: o.write, run: s.run, progress: s.factory },
+    );
+    expect(s.progressSeen()).toBeUndefined();
+    expect(s.calls).toEqual([]);
+    expect(JSON.parse(o.lines[0] ?? '{}').ok).toBe(true);
+  });
+
+  it('keeps the plain lines without a sink', async () => {
+    const o = out();
+    await runRunCommand(
+      { prompt: 'do it' },
+      { out: o.write, run: stubRun(completedResult()) },
+    );
+    expect(o.lines).toEqual([
+      'result: did the thing',
+      'session: sess-1',
+      'journal: journal:42',
+      'usage: usage:42',
+      'trajectory: trajectory:42',
+    ]);
+  });
+});

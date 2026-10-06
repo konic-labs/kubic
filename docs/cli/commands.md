@@ -151,6 +151,20 @@ on a colour terminal; plain text under a pipe or `NO_COLOR`); on failure an
 `error:` line goes to stderr first. Exit code is the §78 terminus map — see
 [exit codes](exit-codes.md).
 
+**On an interactive terminal** (issue #447; stdout **and** stderr a colour
+TTY, no `--json`) the run shows its progress instead of those lines. On
+stderr: a heading (`■ kubic run · solo · <provider/id> · <cwd>`), the solo
+notice as one line (`○ solo has no isolation — approvals + journal are the
+controls · details: kubic doctor`, same opt-outs as the full block), a
+spinner with the elapsed time while the model works, and one settled line
+per tool call when it finishes (`✓ read  src/cart.js  0.0s`, `✕ bash  npm
+test  exit 1  0.4s`, `✓ edit  src/cart.js  +1 −1  0.0s`). The answer then
+lands on stdout, followed on stderr by a receipt (`✓ done 18.4s · 4 tools ·
+1 file +1 −1 · ↑ 9.2k ↓ 640 tok · $0.031`, or `✕ failed … · <terminus>`)
+and the next steps (`review kubic diff   revert kubic undo   continue kubic
+resume <id>`). A redirected stdout (`kubic run … > out.txt`), a pipe, CI or
+`--json` keeps the plain lines above byte for byte.
+
 **Trajectories (§46).** Every run that attached a session writes
 `<sessions-root>/<id>/trajectory.json` when it settles, completed or not,
 and the `trajectory` ref (text line and `--json` envelope) is that file's
@@ -331,7 +345,9 @@ A fresh solo start announces its trust model before the first turn: three
 orchestrator-managed worker child (`KUBIC_WORKER_ID` set; that mode's own
 worktree limit is what `kubic doctor` reports) and by the opt-out
 `KUBIC_NO_NOTICE=1`. A `--session` resume still announces it: the rule is
-per process start, not per session. `kubic tui` shows the same statement
+per process start, not per session. On an interactive terminal (issue #447,
+see above) the three lines become one compact line under the run heading,
+under the same suppression rules. `kubic tui` shows the same statement
 as its one-line form in the editor footer, and the re-execution tiers of
 `kubic replay` announce it too (they drive this same run path).
 

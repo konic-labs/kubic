@@ -18,6 +18,7 @@ import {
   EXIT_FAILED,
   EXIT_USAGE,
 } from '../../../packages/core/src/cli/exit-codes.js';
+import { isFancy } from '../../../packages/core/src/cli/kit.js';
 import {
   type CliLogger,
   createLineLogger,
@@ -185,6 +186,7 @@ import {
 import { type HeadlessRunDeps, runHeadlessPrompt } from './headless-run.js';
 import { orchestrateDepsWithDefaults } from './orchestrate-run.js';
 import { runProdReplay } from './replay-run.js';
+import { createRunProgress } from './run-progress.js';
 import { resolveSessionTrajectory } from './run-trajectory.js';
 import {
   runTuiCommand,
@@ -869,6 +871,20 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         ...presentation(out, debug, options.json === true),
         run: (prompt, options) =>
           runHeadlessPrompt(prompt, options, prodRunDeps(cliConfig)),
+        // Issue #447: live progress only when the whole run is on an
+        // interactive colour terminal (stdout AND stderr) and not --json;
+        // a redirected stdout keeps the plain lines scripts read.
+        ...(options.json !== true &&
+        isFancy(process.stdout) &&
+        isFancy(process.stderr)
+          ? {
+              progress: () =>
+                createRunProgress(process.stderr, themeFor(process.stderr), {
+                  cwd: process.cwd(),
+                  home: homedir(),
+                }),
+            }
+          : {}),
       });
     },
     tui: async (options, cliConfig) => {

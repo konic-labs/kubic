@@ -61,6 +61,10 @@ export interface WorkerProjectionEvent {
   // (`null` clears it).
   readonly task?: string;
   readonly facts?: readonly WorkerToolActivity[];
+  // Issue #465: a start's time (a new generation restarts the clock) and a
+  // settle's.
+  readonly startedAt?: number;
+  readonly endedAt?: number;
   readonly diffStat?: WorkerDiffStat;
   readonly awaiting?: {
     readonly approvalKey: string;
@@ -379,6 +383,11 @@ export class PresentationProjector {
           event.awaiting === null
             ? undefined
             : (event.awaiting ?? previous?.awaiting),
+        startedAt: event.startedAt ?? previous?.startedAt,
+        endedAt:
+          event.type === 'worker-start'
+            ? event.endedAt
+            : (event.endedAt ?? previous?.endedAt),
       };
       for (const fact of event.facts ?? []) this.foldTool(next, fact);
       workers.set(event.workerId, next);
@@ -433,10 +442,19 @@ export class PresentationProjector {
       previous.some(
         (phase) => phase.phase !== 'plan' || phase.state !== 'running',
       );
+    const earlier = fresh
+      ? undefined
+      : previous.find((phase) => phase.phase === event.phase);
     const phases = (fresh ? [] : previous).filter(
       (phase) => phase.phase !== event.phase,
     );
-    phases.push({ phase: event.phase, state: event.state, at: event.at });
+    const startedAt = event.state === 'running' ? event.at : earlier?.startedAt;
+    phases.push({
+      phase: event.phase,
+      state: event.state,
+      at: event.at,
+      ...(startedAt === undefined ? {} : { startedAt }),
+    });
     phases.sort(
       (a, b) => RUN_PHASES.indexOf(a.phase) - RUN_PHASES.indexOf(b.phase),
     );

@@ -462,6 +462,13 @@ export interface WorkerRunOutput {
   diffMs?: number;
 }
 
+/** Issue #465: a worker the run is about to start. */
+export interface PlannedWorker {
+  agentId: string;
+  role?: string;
+  task?: string;
+}
+
 /** Issue #464: the longest task title a worker row shows. */
 export const WORKER_TASK_TITLE_MAX = 60;
 
@@ -1238,6 +1245,9 @@ export interface OrchestrateCommandDeps {
   // Issue #464 (docs/ui 04-B): each phase transition of the run, as it
   // happens — the TUI's orchestrator view folds them into its timeline.
   onPhase?: (event: RunPhaseEvent) => void;
+  // Issue #465 (docs/ui 04-C): the workers the run is about to start, so
+  // the dashboard lists them as queued until each one launches.
+  onPlanned?: (workers: readonly PlannedWorker[]) => void;
   isGitRepo: () => boolean | Promise<boolean>;
   // Issue #144: the run names the owning session and whether it is a
   // --resume, so the worktree is scoped to this session and an existing
@@ -3891,6 +3901,26 @@ async function orchestrate(
     return { ok: true };
   };
 
+  // Issue #465: the workers this run is about to start (never one a resume
+  // reuses, nor one a cap or the operator already refused).
+  const planned = state.pending.filter(
+    (agentId) =>
+      !resumedCompleted.has(agentId) &&
+      !deniedSpawns.has(agentId) &&
+      !cappedSpawns.has(agentId),
+  );
+  if (planned.length > 0) {
+    deps.onPlanned?.(
+      planned.map((agentId) => {
+        const role = spawnRoleInfo(agentId, rolePlan).role;
+        return {
+          agentId,
+          ...(role === undefined ? {} : { role }),
+          ...taskInfo(agentId),
+        };
+      }),
+    );
+  }
   // Phase 2: admit every pending worker, then run the admitted ones
   // concurrently and drain the queue on release. Fail-fast: the first
   // failed outcome stops the run — siblings still in flight are cancelled

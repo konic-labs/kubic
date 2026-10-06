@@ -329,7 +329,7 @@ import {
   mergeSeatFromAnswer,
   workerAskSeatFromAnswer,
 } from './tui-orchestrator.js';
-import { readTuiWorkspace } from './tui-workspace.js';
+import { readTuiWorkspace, readWorkerDiff } from './tui-workspace.js';
 
 // The interaction surface the root shares with the app (issue #96): the seat
 // the installed policy consults and the surface the loop renders are the SAME
@@ -547,6 +547,9 @@ export interface TuiTurnOptions {
   onSubmitted?: (submissionId: string, state: 'placed' | 'queued') => void;
   // Issue #338: images attached to this prompt, in order.
   images?: readonly LaneImagePart[];
+  // Issue #465: an orchestrator turn that resumes the last run (the
+  // dashboard's `r`) instead of starting one for the prompt.
+  resume?: boolean;
 }
 
 // One turn's driver, whichever lane owns it (issue #327): the solo
@@ -580,7 +583,13 @@ export interface TuiOrchestratorRun {
   run(
     objective: string,
     report?: (line: string) => void,
+    // Issue #465: resume the last run (its failed workers run again).
+    options?: { readonly resume?: boolean },
   ): Promise<TuiTurnOutcome>;
+  // Issue #465: stop one worker of the run in flight through the run's own
+  // lifecycle (the `kubic workers terminate` reap); false when no run holds
+  // it.
+  stopWorker?: (workerId: string) => boolean;
   // Issue #327: best-effort cancellation. The prod drive has none — an
   // orchestration is stopped by the manager's own signal guard (live
   // workers are reaped on process exit); a drive that can abort stops the
@@ -633,11 +642,17 @@ export class TuiOrchestratorTurn implements TuiTurnDriver {
   // Issue #334: the orchestrator lane has one objective and no inbox, so a
   // passed option (only busy submits carry one, and those are refused for
   // this driver) never applies; the signature is the shared driver's.
-  run(prompt: string, _options?: TuiTurnOptions): Promise<TuiTurnOutcome> {
+  run(prompt: string, options?: TuiTurnOptions): Promise<TuiTurnOutcome> {
     this.aborted = false;
-    const running = this.drive.run(prompt, this.onReport).finally(() => {
-      if (this.running === running) this.running = undefined;
-    });
+    const running = this.drive
+      .run(
+        prompt,
+        this.onReport,
+        options?.resume === true ? { resume: true } : undefined,
+      )
+      .finally(() => {
+        if (this.running === running) this.running = undefined;
+      });
     this.running = running;
     return running;
   }
@@ -1041,6 +1056,12 @@ export interface TuiRunDeps {
   // screen opens and again after every settled turn. Absent leaves the
   // header without them (injected fakes).
   readWorkspace?: () => Promise<TuiWorkspace>;
+  // Issue #465: a worker's change in its worktree since its branch left
+  // `base` (the dashboard's `^O`). Absent means the key says it cannot.
+  readWorkerDiff?: (
+    workspace: string,
+    base: string | undefined,
+  ) => Promise<string | undefined>;
   // Issue #453: the header clock's time source; absent hides the clock.
   clock?: () => Date;
   // Issue #462: the version the first screen names, and the project
@@ -2811,6 +2832,8 @@ export function tuiDepsWithDefaults(
         new NodeExecutionEnv(process.cwd()).shell,
         process.cwd(),
       ),
+    readWorkerDiff: (workspace, base) =>
+      readWorkerDiff(new NodeExecutionEnv(workspace).shell, base),
     clock: () => new Date(),
     // The seat arrives as an argument from runTuiCommand — see TuiRunDeps.
     bootLane: (
@@ -4258,6 +4281,9 @@ export async function runTuiCommand(
   };
   // Issue #463: the terminal the screen opens on (block mode's copies).
   let screenTerminal: Terminal | undefined;
+  // Issue #465: the branch the header last read — what a worker's branch
+  // left, for its `^O` diff.
+  let baseBranch: string | undefined;
   const app = createTuiApp({
     sessionId: boot.sessionId,
     model: boot.model,
@@ -4302,6 +4328,15 @@ export async function runTuiCommand(
     // Issue #463: block mode's copies — OSC 52 on the terminal the screen
     // runs on (through tmux's passthrough when inside it); refused on a
     // terminal known to drop it, so a copy is never claimed falsely.
+    // Issue #465: `^O` on the dashboard — the worker's worktree against
+    // the branch it left (the header's branch, read with the workspace).
+    ...(deps.readWorkerDiff === undefined
+      ? {}
+      : {
+          workerDiff: (worker: { workerId: string; workspace: string }) =>
+            deps.readWorkerDiff?.(worker.workspace, baseBranch) ??
+            Promise.resolve(undefined),
+        }),
     clipboard: (text: string): boolean => {
       if (!clipboardSupported(process.env)) return false;
       const target = screenTerminal;
@@ -4632,6 +4667,7 @@ export async function runTuiCommand(
     void read().then(
       (next) => {
         if (stopped) return;
+        baseBranch = next.branch;
         app.setWorkspace(next);
         screen?.update();
       },
@@ -6635,6 +6671,25 @@ export async function runTuiCommand(
       };
 
       app.onSubmit((prompt: string) => submitPrompt(prompt, false));
+      // Issue #465: the dashboard's stop and retry. A stop goes through the
+      // live run's own lifecycle (the `kubic workers terminate` reap); a
+      // retry resumes the last run as a turn of its own, so its failed
+      // workers run again.
+      app.setWorkerActionHandler((action, workerId) => {
+        if (action === 'stop') {
+          return boot.orchestrator?.stopWorker?.(workerId) === true
+            ? `stopping ${workerId}…`
+            : `stop: no run in flight holds ${workerId}`;
+        }
+        if (activeTurn?.isRunning() === true) {
+          return 'retry: wait for the run to settle';
+        }
+        if (orchestratorTurn === undefined) {
+          return 'retry: this session has no orchestrator';
+        }
+        startTurn(orchestratorTurn, '', { resume: true });
+        return 'retry: resuming the run — its failed workers run again';
+      });
       // The steer key's own entry point (the key router is defined above).
       submitForLoop = submitPrompt;
       await turn?.refreshTranscript();

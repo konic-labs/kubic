@@ -22,6 +22,7 @@ import {
   publishWorkerAsk,
   readWorkerAskAnswer,
 } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
+import type { OrchestratorProjectionEvent } from '../../../packages/host/src/presentation/projector.js';
 import { createApprovalSurface } from '../../../packages/tui/src/approval-surface.js';
 import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
@@ -111,6 +112,40 @@ interface FakeDrive {
     objective: string,
     report?: (line: string) => void,
   ) => Promise<{ status: 'completed' }>;
+}
+
+// Issue #465: a drive that reports workers and phases, can stop a worker,
+// and records what each run was asked to do.
+function dashboardDrive() {
+  let listener: ((event: OrchestratorProjectionEvent) => void) | undefined;
+  let release: (() => void) | undefined;
+  const runs: Array<{ objective: string; resume: boolean }> = [];
+  const stopped: string[] = [];
+  const drive: TuiOrchestratorRun & {
+    runs: typeof runs;
+    stopped: string[];
+    emit: (event: OrchestratorProjectionEvent) => void;
+    settle: () => void;
+  } = {
+    runs,
+    stopped,
+    emit: (event) => listener?.(event),
+    settle: () => release?.(),
+    watchWorkers: (next) => {
+      listener = next;
+    },
+    stopWorker: (workerId) => {
+      stopped.push(workerId);
+      return true;
+    },
+    run: (objective, _report, options) => {
+      runs.push({ objective, resume: options?.resume === true });
+      return new Promise<TuiTurnOutcome>((resolve) => {
+        release = () => resolve({ status: 'completed' });
+      });
+    },
+  };
+  return drive;
 }
 
 function fakeDrive(): FakeDrive {
@@ -242,7 +277,10 @@ describe('orchestrator entry: the toggle routes the next submit (issue #327)', (
     await waitFor(() => drive.objectives.length === 1);
     expect(drive.objectives).toEqual(['do it']);
     expect(admitted).toEqual([]);
-    // The drive's report callback lands in the transcript, not nowhere.
+    // Issue #465: the run opens the dashboard; the drive's report lands in
+    // the manager transcript, one `tab` away — not nowhere.
+    await waitFor(() => terminal.writes.join('').includes('[ORCHESTRATE]'));
+    terminal.feed('\t');
     await waitFor(() => terminal.writes.join('').includes('manager: planning'));
     terminal.feed('\x03');
     terminal.feed('\x03');
@@ -765,5 +803,125 @@ describe('/safety in orchestrator mode (issue #453)', () => {
     terminal.feed('\x03');
     terminal.feed('\x03');
     expect(await pending).toBe(0);
+  });
+});
+
+describe('the dashboard on the TUI loop (issue #465)', () => {
+  it('stops a running worker through the drive and retries a failed one as a resumed run', async () => {
+    const terminal = fakeTerminal(140);
+    const drive = dashboardDrive();
+    const pending = runTuiCommand(
+      { orchestrator: true },
+      deps(terminal, {
+        isGitRepo: () => true,
+        bootLane: async (sessionId?: string) => ({
+          sessionId: sessionId ?? 's1',
+          model: 'faux/test',
+          loop: fakeLoop([]),
+          orchestrator: drive,
+        }),
+      }),
+    );
+    await waitFor(() => terminal.started === 1);
+    terminal.feed('fix the cart');
+    terminal.feed('\r');
+    await waitFor(() => drive.runs.length === 1);
+    drive.emit({ type: 'run-phase', phase: 'plan', state: 'running', at: 1 });
+    drive.emit({
+      type: 'worker-start',
+      workerId: 'worker-1',
+      status: 'running',
+      task: 'fix the cart',
+      startedAt: Date.now(),
+    });
+    drive.emit({
+      type: 'worker-start',
+      workerId: 'worker-2',
+      status: 'running',
+      startedAt: Date.now(),
+    });
+    await waitFor(() =>
+      terminal.writes.join('').includes('worker-1  fix the cart'),
+    );
+    terminal.feed('x');
+    await waitFor(() => drive.stopped.length === 1);
+    expect(drive.stopped).toEqual(['worker-1']);
+    await waitFor(() => terminal.writes.join('').includes('stopping worker-1'));
+    // worker-2 fails; while the run is in flight a retry waits.
+    drive.emit({
+      type: 'worker-update',
+      workerId: 'worker-2',
+      status: 'failed',
+    });
+    terminal.feed('j');
+    terminal.feed('r');
+    await waitFor(() =>
+      terminal.writes.join('').includes('retry: wait for the run to settle'),
+    );
+    drive.settle();
+    await waitFor(() => !terminal.writes.join('').endsWith('working'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    terminal.feed('r');
+    await waitFor(() => drive.runs.length === 2);
+    expect(drive.runs[1]).toEqual({ objective: '', resume: true });
+    drive.settle();
+    terminal.feed('\x03');
+    terminal.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+});
+
+describe('the prod drive: stop and retry (issue #465)', () => {
+  it('stops a worker through the live run and resumes the last run on retry', async () => {
+    const commands: OrchestrateCliOptions[] = [];
+    const cancelled: string[] = [];
+    const gate: { release?: () => void } = {};
+    // A call, not an inline `gate.release?.()`: control flow would narrow
+    // the property to the `undefined` this test resets it to.
+    const release = (): void => {
+      gate.release?.();
+    };
+    const drive = createProdTuiOrchestrator({
+      sessionId: 'tui-9',
+      out: () => {},
+      now: () => 1_700_000_000_000,
+      createDeps: async () =>
+        ({
+          cancelWorker: (agentId: string) => {
+            cancelled.push(agentId);
+          },
+        }) as unknown as OrchestrateCommandDeps,
+      runCommand: async (options) => {
+        commands.push(options);
+        await new Promise<void>((resolve) => {
+          gate.release = resolve;
+        });
+        return 0;
+      },
+    });
+    expect(await drive.run('', undefined, { resume: true })).toEqual({
+      status: 'failed',
+      detail: 'there is no run to retry',
+    });
+    expect(drive.stopWorker?.('worker-1')).toBe(false);
+    const first = drive.run('fix the cart');
+    await waitFor(() => gate.release !== undefined);
+    expect(drive.stopWorker?.('worker-1')).toBe(true);
+    expect(cancelled).toEqual(['worker-1']);
+    release();
+    await first;
+    // No run in flight: nothing to stop.
+    expect(drive.stopWorker?.('worker-1')).toBe(false);
+    gate.release = undefined;
+    const retry = drive.run('', undefined, { resume: true });
+    await waitFor(() => gate.release !== undefined);
+    release();
+    await retry;
+    expect(commands.map((options) => options.resume === true)).toEqual([
+      false,
+      true,
+    ]);
+    expect(commands[1]?.session).toBe(commands[0]?.session);
+    expect(commands[0]?.prompt).toBe('fix the cart');
   });
 });

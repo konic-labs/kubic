@@ -179,7 +179,10 @@ export type HintContext =
   | 'overlay'
   | 'palette'
   | 'model'
-  | 'blocks';
+  | 'blocks'
+  // Issue #465: the orchestrator dashboard, and its `/` filter.
+  | 'dashboard'
+  | 'filter';
 
 export interface HintSetOptions {
   /** Whether a busy turn takes follow-ups (the solo lane's inbox). */
@@ -188,6 +191,8 @@ export interface HintSetOptions {
   readonly files?: boolean;
   /** The newline key that works on this terminal (`⇧⏎` or `^J`). */
   readonly newline?: string;
+  /** Issue #465: a run exists, so `tab` goes to its dashboard. */
+  readonly dashboard?: boolean;
 }
 
 export interface HintSet {
@@ -250,6 +255,31 @@ export function keyHintSet(
       right: ['esc', 'back'],
     };
   }
+  // Issue #465: the orchestrator dashboard (04-E keys row).
+  if (context === 'dashboard') {
+    return {
+      hints: [
+        ['↑↓', 'select'],
+        ['⏎', 'open'],
+        ['a', 'answer awaiting'],
+        ['x', 'stop'],
+        ['r', 'retry'],
+        ...bound('panel.diff', 'diff'),
+        ['/', 'filter'],
+        ['tab', 'manager'],
+      ],
+      ...quitHint(),
+    };
+  }
+  if (context === 'filter') {
+    return {
+      hints: [
+        ['type', 'filter workers'],
+        ['⏎', 'keep'],
+      ],
+      right: ['esc', 'clear'],
+    };
+  }
   // Issue #461: the model picker (03-D).
   if (context === 'model') {
     return {
@@ -280,6 +310,7 @@ export function keyHintSet(
           : []),
         ...bound('transcript.expand', 'expand output'),
         ...bound('app.palette', 'palette'),
+        ...(options.dashboard === true ? [['tab', 'dashboard'] as const] : []),
       ],
       ...quitHint(),
     };
@@ -293,6 +324,7 @@ export function keyHintSet(
       ...bound('app.palette', 'palette'),
       ...bound('panel.diff', 'diff'),
       ...bound('panel.journal', 'journal'),
+      ...(options.dashboard === true ? [['tab', 'dashboard'] as const] : []),
     ],
     ...quitHint(),
   };

@@ -51,6 +51,7 @@ import type {
   KubicPresentationState,
   LaneImagePart,
 } from '../../core/src/presentation.js';
+import { spinnerFrame } from '../../core/src/ui/glyphs.js';
 import {
   type ApprovalCardOptions,
   renderApprovalCard,
@@ -76,6 +77,15 @@ import {
   sessionTitle,
   shortSessionId,
 } from './chrome.js';
+import {
+  renderDashboardBody,
+  renderDashboardFooter,
+  renderDashboardHeader,
+  renderWorkerDiff,
+  workerInspectorLines,
+} from './dashboard/render.js';
+import { type DashboardModel, resolveSelection } from './dashboard/state.js';
+import { type DashboardIntent, DashboardView } from './dashboard/view.js';
 import {
   EDITOR_FRAME_CELLS,
   frameEditorLines,
@@ -155,7 +165,7 @@ import { CLIPBOARD_MAX_BYTES, copySize, formatSize } from './ui/clipboard.js';
 import { dimFrame } from './ui/dim.js';
 import { fileUrl } from './ui/file-links.js';
 import { renderKeyHintRow } from './ui/key-hints.js';
-import { leftRight } from './ui/line.js';
+import { fitLine, leftRight } from './ui/line.js';
 import {
   formatAge,
   formatContextWindow,
@@ -318,6 +328,13 @@ export interface TuiAppSeed {
   // Issue #463: copy text to the system clipboard (OSC 52, written by the
   // composition root). False when this terminal does not take it.
   readonly clipboard?: (text: string) => boolean;
+  // Issue #465: the change a worker has made in its worktree (`^O` on the
+  // orchestrator dashboard), as unified diff text; undefined when it cannot
+  // be read.
+  readonly workerDiff?: (worker: {
+    readonly workerId: string;
+    readonly workspace: string;
+  }) => Promise<string | undefined>;
   // Issue #458: the project's absolute root; with `listFiles`, file
   // references in answers link to `file://<root>/<path>`.
   readonly fileRoot?: string;
@@ -699,6 +716,16 @@ export interface TuiApp {
   // Issue #342 (§16.5 AgentInspector): open the capturing inspector for one
   // worker node; false when there is no such worker or no room for it.
   inspectWorker(workerId: string): boolean;
+  // Issue #465: the orchestrator dashboard's stop / retry, carried out by
+  // the loop; the answer is the footer's word on it.
+  setWorkerActionHandler(
+    handler:
+      | ((action: 'stop' | 'retry', workerId: string) => string | undefined)
+      | undefined,
+  ): void;
+  // Issue #465: what orchestrator mode shows (the dashboard, or the manager
+  // transcript `tab` toggles to).
+  orchestratorView(): 'dashboard' | 'manager';
   // Issue #154 (§14.2): a worker's free-text question as a capturing dialog;
   // resolves with the typed answer, or undefined (declined, withdrawn, or no
   // live screen to show it on). One question shows at a time; later ones wait.
@@ -1004,6 +1031,10 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const setMode = (next: StatusMode): void => {
     if (next === sessionMode.current) return;
     sessionMode.current = next;
+    // Issue #465: back in orchestrator mode, a session that ran something
+    // returns to its dashboard.
+    if (next === 'orchestrator' && dashboard.hasRun)
+      dashboard.view = 'dashboard';
     status.setMode(next);
     // Issue #453: each mode starts from its own tree default (solo hidden,
     // orchestrator shown) and its own welcome notice.
@@ -1167,22 +1198,56 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
           ...(next.dirty === undefined ? {} : { dirty: next.dirty }),
         };
   let workspace = cleanWorkspace(seed.workspace);
+  // ── Issue #465: the orchestrator dashboard ────────────────────────────────
+  // Its view state (which view orchestrator mode shows, the selection, the
+  // filter, an answer in progress), the last presentation state the loop
+  // applied, and the loop's stop / retry handler.
+  const dashboard = new DashboardView();
+  let presentation: KubicPresentationState | undefined;
+  let workerActionHandler:
+    | ((action: 'stop' | 'retry', workerId: string) => string | undefined)
+    | undefined;
+  const dashboardShown = (): boolean =>
+    sessionMode.current === 'orchestrator' && dashboard.view === 'dashboard';
+  const dashboardModelNow = (): DashboardModel =>
+    dashboard.model(presentation, {
+      now: Date.now(),
+      ...(workspace?.branch === undefined ? {} : { branch: workspace.branch }),
+    });
+  // The approval card shows wherever it is not deferred: on the dashboard a
+  // worker's ask waits in the AWAITING group until `a` opens it.
+  const cardVisible = (): boolean =>
+    approvalSurface.isShowing() && (!dashboardShown() || dashboard.answering);
+  // The rows the dashboard body may take: the terminal less the rows that
+  // stay on screen with it (header, footer, hints, notice, an open card).
+  const dashboardRows = (width: number): number => {
+    const rows = overlayHost?.terminal?.rows ?? 40;
+    const card = cardVisible() ? editorSlot.render(width).length : 0;
+    return Math.max(4, rows - 4 - noticeRow.render(width).length - card);
+  };
   const root = buildLayoutRoot({
     header: lineComponent((width) =>
-      renderHeader(
-        tuiTheme().ui,
-        {
-          mode: sessionMode.current,
-          approvalsSkipped: status.getState().approvalsSkipped,
-          ...workspace,
-          session: title ?? shortSessionId(sessionId),
-          waiting: approvalSurface.isShowing()
-            ? 1 + approvalSurface.queued().length
-            : 0,
-          ...(seed.clock === undefined ? {} : { clock: seed.clock() }),
-        },
-        width,
-      ),
+      dashboardShown()
+        ? renderDashboardHeader(
+            tuiTheme().ui,
+            dashboardModelNow(),
+            width,
+            spinnerFrame(Date.now()),
+          )
+        : renderHeader(
+            tuiTheme().ui,
+            {
+              mode: sessionMode.current,
+              approvalsSkipped: status.getState().approvalsSkipped,
+              ...workspace,
+              session: title ?? shortSessionId(sessionId),
+              waiting: approvalSurface.isShowing()
+                ? 1 + approvalSurface.queued().length
+                : 0,
+              ...(seed.clock === undefined ? {} : { clock: seed.clock() }),
+            },
+            width,
+          ),
     ),
     tree,
     treeVisible: () =>
@@ -1191,13 +1256,37 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     panel: { component: panelScroll, isOpen: () => mode !== 'closed' },
     notice: noticeRow,
     editor: editorSlot,
+    editorVisible: () => !dashboardShown() || cardVisible(),
     status,
+    dashboard: {
+      body: {
+        render: (width: number): string[] => {
+          const model = dashboardModelNow();
+          const selected = resolveSelection(model, dashboard.selected);
+          return renderDashboardBody(tuiTheme().ui, model, {
+            ...(selected === undefined ? {} : { selected }),
+            width,
+            maxRows: dashboardRows(width),
+            spinner: spinnerFrame(Date.now()),
+          });
+        },
+        invalidate: (): void => {},
+      },
+      footer: {
+        render: (width: number): string[] =>
+          renderDashboardFooter(tuiTheme().ui, dashboardModelNow(), width),
+        invalidate: (): void => {},
+      },
+      isShown: dashboardShown,
+    },
     hints: lineComponent((width) => {
       const set = keyHintSet(hintContext(), keys, {
         queues: sessionMode.current === 'solo',
         files: seed.listFiles !== undefined,
         // Shift+Enter is a newline only where the terminal reports it.
         newline: isKittyProtocolActive() ? '⇧⏎' : '^J',
+        // Issue #465: the manager view names the way back to the dashboard.
+        dashboard: sessionMode.current === 'orchestrator' && dashboard.hasRun,
       });
       return renderKeyHintRow(tuiTheme().ui, set.hints, width, set.right);
     }),
@@ -1269,6 +1358,15 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       return;
     }
     if (outcome === 'accepted') echoPendingPrompt(prompt);
+    // Issue #465: an objective handed to the manager starts a run, and the
+    // dashboard shows it.
+    if (
+      outcome === 'accepted' &&
+      sessionMode.current === 'orchestrator' &&
+      parseSlashCommand(prompt) === undefined
+    ) {
+      dashboard.startRun(prompt);
+    }
     transcript.rePin();
   };
   // The prompt echo before the lane commits it (issue #88), also reused for
@@ -1858,7 +1956,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const copyBlock = (meta: boolean): void => {
     const block = selectedBlock();
     if (block === undefined) return;
-    const text = meta ? block.metaText : block.copyText;
+    copyText(meta ? block.metaText : block.copyText);
+  };
+  const copyText = (text: string): void => {
     const size = copySize(text);
     if (size > CLIPBOARD_MAX_BYTES) {
       noticeRow.setFooter('too large to copy — ⏎ view and select');
@@ -1894,15 +1994,30 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     overlayHost?.requestRender?.();
   };
   const openBlockViewer = (): boolean => {
-    const host = overlayHost;
     const block = selectedBlock();
-    if (host === undefined || block === undefined) return false;
+    if (block === undefined) return false;
+    return openViewer(
+      blockTitle(block.kind, block.metaText),
+      (width) => transcript.blockLines(block.id, width),
+      () => copyBlock(false),
+    );
+  };
+  // One whole text in the framed viewer: a transcript block (#463) or a
+  // worker's diff (#465).
+  const openViewer = (
+    viewTitle: string,
+    lines: (width: number) => string[],
+    onCopy: () => void,
+  ): boolean => {
+    const host = overlayHost;
+    if (host === undefined) return false;
+    closeBlockViewer();
     const view = new BlockViewer({
-      title: blockTitle(block.kind, block.metaText),
-      lines: (width) => transcript.blockLines(block.id, width),
+      title: viewTitle,
+      lines,
       maxRows: () =>
         Math.max(6, Math.floor(((host.terminal?.rows ?? 30) * 90) / 100)),
-      onCopy: () => copyBlock(false),
+      onCopy,
       onClose: closeBlockViewer,
     });
     blockViewer = {
@@ -1920,13 +2035,120 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // a change only needs a frame. Issue #460: a palette open over it would
   // dim the card and hide it from the keys' owner, so it closes.
   const syncOverlay = (): void => {
-    if (approvalSurface.isShowing() && palette !== undefined) {
+    if (cardVisible() && palette !== undefined) {
       closePalette(true);
     }
+    if (!approvalSurface.isShowing()) dashboard.answering = false;
+    noteDeferredAsk();
     overlayHost?.requestRender?.();
   };
   const settleApproval = (): void => {
+    // Issue #465: one answer at a time from the dashboard — the next ask
+    // waits for its own `a`.
+    dashboard.answering = false;
     syncOverlay();
+  };
+  // Issue #465: an ask that arrives while the dashboard shows waits in its
+  // AWAITING group; the footer says so once.
+  let deferredAsk: unknown;
+  const noteDeferredAsk = (): void => {
+    const request = approvalSurface.pending();
+    if (request === undefined || !dashboardShown() || dashboard.answering) {
+      deferredAsk = undefined;
+      return;
+    }
+    if (request === deferredAsk) return;
+    deferredAsk = request;
+    const waiting = dashboardModelNow().workers.find(
+      (row) => row.group === 'awaiting',
+    );
+    noticeRow.setFooter(
+      `◆ ${waiting === undefined ? 'an approval is' : `${sanitizeLaneText(waiting.worker.workerId)} is`} waiting on you · a answer`,
+    );
+  };
+  // Issue #465: what a dashboard key asked for.
+  const runDashboardIntent = (
+    intent: DashboardIntent,
+    model: DashboardModel,
+  ): void => {
+    switch (intent.kind) {
+      case 'hint':
+        noticeRow.setFooter(intent.text);
+        break;
+      case 'open': {
+        const row = model.workers.find(
+          (entry) => entry.worker.workerId === intent.workerId,
+        );
+        if (row !== undefined) {
+          const facts = workerInspectorLines(row).map(sanitizeLaneText);
+          openViewer(
+            sanitizeLaneText(intent.workerId),
+            (width) => facts.map((line) => fitLine(line, width)),
+            () => copyText(facts.join('\n')),
+          );
+        }
+        break;
+      }
+      case 'answer': {
+        if (!approvalSurface.isShowing()) {
+          noticeRow.setFooter('nothing is waiting on you');
+          break;
+        }
+        dashboard.answering = true;
+        // The card's arming window starts when it appears, not when the ask
+        // arrived: a key pressed with the `a` cannot answer it.
+        approvalSurface.reveal();
+        const waiting = model.workers.find((row) => row.group === 'awaiting');
+        if (waiting !== undefined) dashboard.selected = waiting.worker.workerId;
+        noticeRow.setFooter('');
+        break;
+      }
+      case 'stop':
+      case 'retry':
+        noticeRow.setFooter(
+          workerActionHandler?.(intent.kind, intent.workerId) ??
+            `${intent.kind}: not available in this session`,
+        );
+        break;
+      case 'diff':
+        openWorkerDiff(intent.workerId, model);
+        break;
+      default:
+        break;
+    }
+    overlayHost?.requestRender?.();
+  };
+  const openWorkerDiff = (workerId: string, model: DashboardModel): void => {
+    const workspace = model.workers.find(
+      (row) => row.worker.workerId === workerId,
+    )?.worker.workspace;
+    const read = seed.workerDiff;
+    if (workspace === undefined || read === undefined) {
+      noticeRow.setFooter(`diff: ${workerId} has no worktree to read`);
+      return;
+    }
+    noticeRow.setFooter(`diff: reading ${workerId}…`);
+    void read({ workerId, workspace }).then(
+      (text) => {
+        if (text === undefined) {
+          noticeRow.setFooter(`diff: could not read ${workerId}'s worktree`);
+        } else if (text.trim() === '') {
+          noticeRow.setFooter(`diff: ${workerId} has no changes`);
+        } else {
+          noticeRow.setFooter('');
+          openViewer(
+            `diff ${workerId}`,
+            (width) => renderWorkerDiff(tuiTheme().ui, text, width),
+            () => copyText(text),
+          );
+        }
+        overlayHost?.requestRender?.();
+      },
+      () => {
+        noticeRow.setFooter(`diff: could not read ${workerId}'s worktree`);
+        overlayHost?.requestRender?.();
+      },
+    );
   };
   // Issue #455: what the presentation state says about each call — when the
   // app first saw it, whether it still runs, and its duration once done.
@@ -2032,7 +2254,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     return failed ? 'error' : 'ready';
   };
   const hintContext = (): HintContext => {
-    if (approvalSurface.isShowing()) return 'approval';
+    if (cardVisible()) return 'approval';
     if (palette !== undefined) return 'palette';
     if (blockViewer !== undefined) return 'overlay';
     if (blockMode !== undefined) return 'blocks';
@@ -2044,6 +2266,8 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     ) {
       return 'overlay';
     }
+    // Issue #465: the dashboard names its own keys.
+    if (dashboardShown()) return dashboard.filtering ? 'filter' : 'dashboard';
     return busy ? 'working' : 'idle';
   };
   return {
@@ -2069,10 +2293,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // backspace keeps deleting) but never the approval decision keys or a
       // global key — a held Ctrl-O must not strobe the panel, and a held
       // allow key must not answer the NEXT request too.
-      if (
-        isKeyRepeat(data) &&
-        (approvalSurface.isShowing() || keys.isGlobalKey(keyId))
-      ) {
+      if (isKeyRepeat(data) && (cardVisible() || keys.isGlobalKey(keyId))) {
         // Issue #315: a dropped repeat is still typing — it never reaches
         // decide(), so the surface is told to restart its arming window.
         approvalSurface.noteDroppedKey();
@@ -2083,7 +2304,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // session; the operator can still quit after the request settles. A key
       // the surface does not claim falls through to the normal loop (so the
       // draft, Ctrl-T, Ctrl-O/R and the rest keep working).
-      if (approvalSurface.isShowing() && approvalSurface.decide(data)) {
+      // Issue #465: an ask the dashboard defers is not on screen, so it
+      // takes no keys until `a` opens it.
+      if (cardVisible() && approvalSurface.decide(data)) {
         settleApproval();
         return { quit: false, consumed: true, cancel: false };
       }
@@ -2093,7 +2316,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // than reaching the draft. Only the loop's global keys still act.
       // Issue #316: `v` pages a long command in the dialog (never decides).
       if (
-        approvalSurface.isShowing() &&
+        cardVisible() &&
         keys.actionFor('approval', keyId) === 'approval.page' &&
         approvalSurface.nextCommandPage()
       ) {
@@ -2101,13 +2324,13 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       }
       // Issue #459: `?` opens (and closes) the card's explanation row.
       if (
-        approvalSurface.isShowing() &&
+        cardVisible() &&
         keys.actionFor('approval', keyId) === 'approval.explain' &&
         approvalSurface.toggleExplain()
       ) {
         return { quit: false, consumed: true, cancel: false };
       }
-      if (approvalSurface.isShowing() && !keys.isGlobalKey(keyId)) {
+      if (cardVisible() && !keys.isGlobalKey(keyId)) {
         return { quit: false, consumed: true, cancel: false };
       }
       // Issue #301: the open panel's navigation. alt+up / alt+down cycle the
@@ -2233,6 +2456,45 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
           return { quit: false, consumed: true, cancel: false };
         }
         modelPicker.view.handleInput(data);
+        overlayHost?.requestRender?.();
+        return { quit: false, consumed: true, cancel: false };
+      }
+      // Issue #465: the orchestrator dashboard owns its keys (the editor is
+      // not on screen there); a global key it does not take acts as usual.
+      // From the manager view, Tab on an empty editor goes back to it.
+      if (dashboardShown() && !cardVisible()) {
+        const model = dashboardModelNow();
+        const before = `${dashboard.filtering}:${dashboard.filter}`;
+        const intent = dashboard.handleKey(
+          {
+            data,
+            ...(keyId === undefined ? {} : { keyId }),
+            ...(action === undefined ? {} : { action }),
+          },
+          model,
+        );
+        if (intent.kind !== 'pass') {
+          runDashboardIntent(intent, model);
+          if (`${dashboard.filtering}:${dashboard.filter}` !== before) {
+            noticeRow.setFooter(
+              dashboard.filtering
+                ? `/${dashboard.filter}▏ · ⏎ keep · esc clear`
+                : dashboard.filter === ''
+                  ? ''
+                  : `filter: ${dashboard.filter} · esc clears`,
+            );
+          }
+          return { quit: false, consumed: true, cancel: false };
+        }
+      } else if (
+        sessionMode.current === 'orchestrator' &&
+        dashboard.hasRun &&
+        keyId === 'tab' &&
+        editor.getText() === '' &&
+        !editor.isShowingAutocomplete()
+      ) {
+        dashboard.view = 'dashboard';
+        noteDeferredAsk();
         overlayHost?.requestRender?.();
         return { quit: false, consumed: true, cancel: false };
       }
@@ -2404,6 +2666,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       approvalsSkipped: status.getState().approvalsSkipped,
     }),
     applyPresentation: (state: KubicPresentationState): void => {
+      presentation = state;
       const lane = state.lanes.get(seed.sessionId);
       noticeRow.setActivity(
         lane === undefined ? undefined : laneActivityLine(lane),
@@ -2767,6 +3030,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // Issue #463: the old session's blocks are gone.
       closeBlockViewer();
       exitBlockMode();
+      // Issue #465: and so is its run.
+      dashboard.reset();
+      presentation = undefined;
       // Issue #462: a fresh session starts on the first screen again (a
       // resumed one with history hides it when its entries apply).
       welcomeVisible = true;
@@ -2825,6 +3091,10 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         onSelect: () => {},
       });
     },
+    setWorkerActionHandler: (handler): void => {
+      workerActionHandler = handler;
+    },
+    orchestratorView: (): 'dashboard' | 'manager' => dashboard.view,
     openPanel: setPanel,
     panelScrollBy: (lines: number): void => {
       panelScroll.scrollBy(Math.trunc(lines));

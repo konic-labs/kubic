@@ -50,6 +50,7 @@ describe('observeWorkers (issue #342)', () => {
         },
       })),
       (event) => events.push(event),
+      { now: () => 5 },
     );
     await deps.runWorker('alpha', worktree, 'step 1', {
       sessionId: 's-o1',
@@ -69,6 +70,7 @@ describe('observeWorkers (issue #342)', () => {
       workspace: worktree.path,
       role: 'implementer',
       model: 'faux/faux-1',
+      startedAt: 5,
     });
     expect(events[1]).toEqual({
       type: 'worker-update',
@@ -78,6 +80,7 @@ describe('observeWorkers (issue #342)', () => {
       outputTokens: 300,
       costUsd: 0.0123,
       diffStat: { files: 0, added: 0, removed: 0 },
+      endedAt: 5,
     });
     expect(events[2]).toMatchObject({ type: 'worker-start', generation: 2 });
   });
@@ -89,6 +92,7 @@ describe('observeWorkers (issue #342)', () => {
         throw new Error('spawn exploded');
       }),
       (event) => events.push(event),
+      { now: () => 7 },
     );
     await expect(deps.runWorker('beta', worktree, 'x')).rejects.toThrow(
       'spawn exploded',
@@ -97,6 +101,7 @@ describe('observeWorkers (issue #342)', () => {
       type: 'worker-update',
       workerId: 'beta',
       status: 'failed',
+      endedAt: 7,
     });
   });
 });
@@ -165,12 +170,34 @@ describe('observeWorkers activity (issue #464)', () => {
       ['c1:done', 'c2:running'],
       ['c2:done'],
     ]);
-    expect(events.at(-1)).toEqual({
+    expect(events.at(-1)).toMatchObject({
       type: 'worker-update',
       workerId: 'alpha',
       status: 'completed',
       diffStat: { files: 2, added: 2, removed: 1 },
     });
+  });
+
+  it('lists the planned workers as queued until they launch (issue #465)', () => {
+    const events: OrchestratorProjectionEvent[] = [];
+    const deps = observeWorkers(
+      depsWith(async () => []),
+      (event) => events.push(event),
+    );
+    deps.onPlanned?.([
+      { agentId: 'alpha', role: 'implementer', task: 'Fix the cart' },
+      { agentId: 'beta' },
+    ]);
+    expect(events).toEqual([
+      {
+        type: 'worker-update',
+        workerId: 'alpha',
+        status: 'queued',
+        role: 'implementer',
+        task: 'Fix the cart',
+      },
+      { type: 'worker-update', workerId: 'beta', status: 'queued' },
+    ]);
   });
 
   it('forwards the run phases as run-phase events', () => {
@@ -230,7 +257,7 @@ describe('observeWorkers activity (issue #464)', () => {
         workerId: 'beta',
         awaiting: {
           approvalKey: 'merge:kubic/s/beta',
-          summary: 'merge kubic/s/beta',
+          summary: 'approve merge into your branch',
         },
       },
       { type: 'worker-update', workerId: 'beta', awaiting: null },

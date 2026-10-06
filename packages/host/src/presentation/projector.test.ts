@@ -492,8 +492,8 @@ describe('worker activity (issue #464)', () => {
       at: 3,
     });
     expect(projector.state().session.runPhases).toEqual([
-      { phase: 'plan', state: 'done', at: 2 },
-      { phase: 'implement', state: 'running', at: 3 },
+      { phase: 'plan', state: 'done', at: 2, startedAt: 1 },
+      { phase: 'implement', state: 'running', at: 3, startedAt: 3 },
     ]);
     // Reported out of order (a skip after the merge started): run order.
     projector.applyRunPhase({
@@ -518,8 +518,35 @@ describe('worker activity (issue #464)', () => {
       at: 9,
     });
     expect(projector.state().session.runPhases).toEqual([
-      { phase: 'plan', state: 'running', at: 9 },
+      { phase: 'plan', state: 'running', at: 9, startedAt: 9 },
     ]);
+  });
+
+  it('keeps a generation start and end time, a new start restarting the clock (issue #465)', () => {
+    const projector = new PresentationProjector(SEED);
+    projector.applyWorker({
+      type: 'worker-start',
+      workerId: 'w',
+      startedAt: 10,
+    });
+    projector.applyWorker({
+      type: 'worker-update',
+      workerId: 'w',
+      status: 'failed',
+      endedAt: 40,
+    });
+    expect(projector.state().workers.get('w')).toMatchObject({
+      startedAt: 10,
+      endedAt: 40,
+    });
+    projector.applyWorker({
+      type: 'worker-start',
+      workerId: 'w',
+      startedAt: 50,
+    });
+    const worker = projector.state().workers.get('w');
+    expect(worker?.startedAt).toBe(50);
+    expect(worker?.endedAt).toBeUndefined();
   });
 
   it('folds a batch of facts in order, one call replacing its earlier state', () => {

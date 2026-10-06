@@ -41,7 +41,10 @@ export type RunPhase = (typeof RUN_PHASES)[number];
 export interface RunPhaseState {
   readonly phase: RunPhase;
   readonly state: 'running' | 'done' | 'failed' | 'skipped';
+  /** When the phase reached this state. */
   readonly at: number;
+  /** Issue #465: when the phase started running, once it has. */
+  readonly startedAt?: number;
 }
 
 export interface SessionSnapshot {
@@ -143,6 +146,10 @@ export interface WorkerSummary {
   recentTools?: readonly WorkerToolActivity[];
   diffStat?: WorkerDiffStat;
   awaiting?: { readonly approvalKey: string; readonly summary: string };
+  // Issue #465: when this generation started and, once settled, ended
+  // (epoch ms) — the dashboard's elapsed column.
+  startedAt?: number;
+  endedAt?: number;
 }
 
 export interface ApprovalRequest {

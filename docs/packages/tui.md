@@ -70,11 +70,13 @@ VStack root, rows in order (issue #453 order; optional slots in italics):
 | --- | --- | --- |
 | *one-row header* (`chrome.ts`) | `header` | basis 1 |
 | `AgentTreeView` | `tree` | auto, at most `TREE_MAX_ROWS`; hidden below 80 columns and while `treeVisible()` is false |
-| ScrollView transcript | `transcript` | grow 1, follow-end |
+| ScrollView transcript | `transcript` | grow 1, follow-end; hidden while the dashboard shows |
+| *dashboard body* (issue #465) | `dashboard.body` | grow 1, only while `dashboard.isShown()` |
+| *dashboard footer* (rule + run budget) | `dashboard.footer` | auto, pinned under the body |
 | *diff / journal panel* | `panel` | basis 12 while open |
 | *notice row* | `notice` | auto — no row when empty |
-| editor | `editor` | auto |
-| one-row status line | `status` | auto |
+| editor | `editor` | auto; hidden while `editorVisible()` is false |
+| one-row status line | `status` | auto; hidden while the dashboard shows |
 | *key-hint row* | `hints` | auto |
 
 `Viewport` is `{ width: number, height: number }` (matches Pi's
@@ -234,6 +236,34 @@ notice from its seed (`workspace`, `clock`, `laneNotice`) and
   turn runs, clear a draft, else arm: a second press within 2 s quits),
   Ctrl-D (quit on an empty draft). Plain
   characters — including `t`/`T` — belong to the editor.
+
+### Orchestrator dashboard (`dashboard/`, issue #465; docs/ui 04)
+
+- `state.ts` — `dashboardModel(state, { now, task, branch, filter, limits })`
+  derives the frame's facts from the presentation state: workers grouped
+  awaiting → working → done → queued (`DASHBOARD_GROUPS`), the counts, each
+  generation's elapsed time, the run's elapsed time (from the plan's start to
+  now, or to its last report once every phase settled), the spend, and the
+  filtered rows; `defaultSelection` / `resolveSelection` / `moveSelection`
+  keep the selection on a worker (never a group label).
+- `render.ts` — pure rows at a width: `renderDashboardHeader` (04-A),
+  `renderTimeline` (04-B), `renderWorkerList` (04-C, windowed around the
+  selection), `renderWorkerMeta` (the side column), `renderDashboardBody`
+  (timeline, rule, then the list and side column zipped with a faint `│`;
+  the list alone under `DASHBOARD_NARROW_COLUMNS`), `renderDashboardFooter`
+  (04-E gauges), `workerInspectorLines` (`⏎`) and `renderWorkerDiff` (`^O`,
+  sanitized rows).
+- `view.ts` — `DashboardView`: which view orchestrator mode shows
+  (`dashboard` / `manager`), the selection, the `/` filter and whether the
+  approval card is open over the dashboard; `handleKey` turns a key into an
+  intent (`open`, `answer`, `stop`, `retry`, `diff`, a footer hint, or
+  `pass` for a global key) that the app carries out.
+
+The app shows the dashboard from the first objective handed to the manager;
+an ask that arrives meanwhile waits (the card is not on screen and takes no
+keys) until `a`, which re-arms the card (#315) before it takes a key. Stop,
+retry and the worktree diff come from the composition root
+(`setWorkerActionHandler`, the `workerDiff` seed).
 
 ### Presentation state
 

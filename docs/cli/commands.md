@@ -1491,6 +1491,46 @@ and follows each worker's start and result on the next frame; finished
 workers stay listed with their final status until the next delegation
 replaces the list. `/inspect <worker>` opens one node in full.
 
+**The orchestrator dashboard** (issue #465; docs/ui 04-A–E): once you hand
+the manager an objective, orchestrator mode shows the run's dashboard in
+place of the tree, the transcript, the status line and the editor:
+
+- the header: `■ KUBIC │ ORCHESTRATE <objective> ⎇ <branch>` and live counts
+  `◆ awaiting │ ⠹ working │ ✓ done │ ✕ failed`;
+- the run timeline: `RUN ✓ plan ━ ⠹ implement ×2 ━ ○ review ━ ○ merge ━ ○
+  verify   elapsed 3:42` — done in green, running with a spinner, failed in
+  red, a phase the run has no step for (the template plan's review; verify,
+  which no run has yet) struck through, a phase not reached yet `○`;
+- the workers, grouped by what they need from you: **AWAITING YOU** (an
+  approval ask or the merge gate is open for the worker; amber), **WORKING**,
+  **DONE** (`✓`, or `✕` with how it ended) and **QUEUED** (planned, not
+  launched yet). Each row is `<worker id> <task> <elapsed>` with a second line
+  — the latest tool call and the tool count while it works, the change
+  (`+a −r · N files`), tools and tokens once it settled. The list takes 50
+  columns (40% under 120 columns) beside the selected worker's facts (role,
+  model, generation, worktree); under 100 columns it is the whole width. A
+  list taller than the screen scrolls with the selection and says what it
+  hides;
+- the run budget: the run's tokens, cost and elapsed time — as gauges
+  (amber at 80%, red at 100%) against the run's limits when it has them, plain
+  `no limits · …` otherwise (an interactive run sets none).
+
+Keys on the dashboard: `↑↓` (or `k j`) select a worker (group labels are
+skipped; the first worker waiting on you is selected first), `⏎` opens its
+facts in full, `a` opens the approval card of the oldest ask waiting on you
+(asks wait in AWAITING YOU instead of taking the keys; the card arms when it
+appears, so a key pressed with the `a` cannot answer it, and after one answer
+the dashboard has the keys again), `x` stops the selected running worker
+through the run's own lifecycle (the run then follows its failure policy —
+by default it stops), `r` retries once the run has settled with the selected
+worker failed (the run is resumed: its failed workers run again), `^O` shows
+the selected worker's change in its worktree since its branch left yours
+(committed or not, plus the files it created), `/` filters the workers by id,
+role or task as you type (`⏎` keeps the filter, `Esc` clears it), and `tab`
+switches to the manager transcript — the report, and the editor for the next
+objective; on an empty editor `tab` comes back. Before the first objective,
+orchestrator mode opens on that manager view.
+
 **Retries and compaction on the footer** (issue #150; §20.6, §27.1): while
 the harness waits to retry a transient model error the footer under the
 editor reads `⟳ retrying · attempt <n> — <error>`, and while it compacts the

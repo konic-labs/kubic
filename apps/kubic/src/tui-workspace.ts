@@ -67,3 +67,55 @@ export async function readTuiWorkspace(
     return fallback;
   }
 }
+
+/** Untracked files a worker diff shows in full, at most. */
+export const WORKER_DIFF_NEW_FILES = 20;
+
+/**
+ * Issue #465: a worker's change in its worktree for the dashboard's `^O` —
+ * everything since its branch left `base` (committed or not), plus the files
+ * it created and has not committed yet (each shown whole, at most
+ * WORKER_DIFF_NEW_FILES of them). Reads only: the worker's index is never
+ * touched. Undefined when the worktree cannot be read.
+ */
+export async function readWorkerDiff(
+  shell: Shell,
+  base: string | undefined,
+): Promise<string | undefined> {
+  const git = (args: readonly string[]) =>
+    shell
+      .spawn('git', ['--no-optional-locks', ...args], {
+        provenance: PROVENANCE,
+      })
+      .wait();
+  try {
+    const fork =
+      base === undefined || base === 'detached'
+        ? undefined
+        : await git(['merge-base', 'HEAD', base]);
+    const from =
+      fork !== undefined && fork.exitCode === 0 && fork.stdout.trim() !== ''
+        ? fork.stdout.trim()
+        : 'HEAD';
+    const tracked = await git(['diff', from, '--']);
+    if (tracked.exitCode !== 0) return undefined;
+    const untracked = await git(['ls-files', '--others', '--exclude-standard']);
+    const created =
+      untracked.exitCode === 0
+        ? untracked.stdout
+            .split('\n')
+            .filter((path) => path !== '')
+            .slice(0, WORKER_DIFF_NEW_FILES)
+        : [];
+    const parts = [tracked.stdout];
+    for (const path of created) {
+      // `--no-index` exits 1 when the files differ — which they always do.
+      const whole = await git(['diff', '--no-index', '--', '/dev/null', path]);
+      if (whole.exitCode === 0 || whole.exitCode === 1)
+        parts.push(whole.stdout);
+    }
+    return parts.filter((part) => part !== '').join('\n');
+  } catch {
+    return undefined;
+  }
+}

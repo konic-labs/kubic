@@ -238,15 +238,29 @@ export function createProdTuiOrchestrator(
     lastStamp = Math.max(now(), lastStamp + 1);
     return `${options.sessionId}-o${lastStamp.toString(36)}`;
   };
+  // Issue #465: the last run's session (what `r` resumes) and the deps of
+  // the run in flight (whose lifecycle `x` stops a worker through).
+  let lastSession: string | undefined;
+  let liveDeps: OrchestrateCommandDeps | undefined;
   return {
     watchWorkers(listener) {
       onWorker = listener;
     },
+    stopWorker(workerId) {
+      const cancel = liveDeps?.cancelWorker;
+      if (cancel === undefined) return false;
+      void Promise.resolve(cancel(workerId)).catch(() => undefined);
+      return true;
+    },
     setQuestionSeat(seat) {
       questionSeat = seat;
     },
-    async run(objective, onReport): Promise<TuiTurnOutcome> {
+    async run(objective, onReport, runOptions): Promise<TuiTurnOutcome> {
       sink = onReport ?? options.out;
+      const resume = runOptions?.resume === true;
+      if (resume && lastSession === undefined) {
+        return { status: 'failed', detail: 'there is no run to retry' };
+      }
       try {
         // The model the workers inherit: the frozen enterprise pin when one
         // is in force, else the lane's current model (issue #202) — read per
@@ -310,10 +324,21 @@ export function createProdTuiOrchestrator(
             ? {}
             : { sessionsRoot: options.sessionsRoot }),
         });
-        const code = await runCommand(
-          { prompt: objective, session: nextSessionId() },
-          observeWorkers(deps, feed),
-        );
+        // Issue #465: a retry resumes the last run's session (its failed
+        // workers run again); anything else is a new run.
+        const session =
+          resume && lastSession !== undefined ? lastSession : nextSessionId();
+        lastSession = session;
+        liveDeps = deps;
+        let code: number;
+        try {
+          code = await runCommand(
+            resume ? { resume: true, session } : { prompt: objective, session },
+            observeWorkers(deps, feed),
+          );
+        } finally {
+          liveDeps = undefined;
+        }
         return code === 0
           ? { status: 'completed' }
           : {
@@ -340,15 +365,32 @@ export function createProdTuiOrchestrator(
 export function observeWorkers(
   deps: OrchestrateCommandDeps,
   emit: (event: OrchestratorProjectionEvent) => void,
-  options: { readonly batch?: FactBatchOptions } = {},
+  options: {
+    readonly batch?: FactBatchOptions;
+    readonly now?: () => number;
+  } = {},
 ): OrchestrateCommandDeps {
   const generations = new Map<string, number>();
   const runWorker = deps.runWorker;
+  const now = options.now ?? Date.now;
   return {
     ...deps,
     onPhase: (event) => {
       deps.onPhase?.(event);
       emit({ type: 'run-phase', ...event });
+    },
+    // Issue #465: the planned workers show as queued until they launch.
+    onPlanned: (workers) => {
+      deps.onPlanned?.(workers);
+      for (const worker of workers) {
+        emit({
+          type: 'worker-update',
+          workerId: worker.agentId,
+          status: 'queued',
+          ...(worker.role === undefined ? {} : { role: worker.role }),
+          ...(worker.task === undefined ? {} : { task: worker.task }),
+        });
+      }
     },
     runWorker: async (agentId, worktree, prompt, info) => {
       const generation = (generations.get(agentId) ?? 0) + 1;
@@ -362,6 +404,7 @@ export function observeWorkers(
         ...(info?.role === undefined ? {} : { role: info.role }),
         ...(info?.modelRef === undefined ? {} : { model: info.modelRef }),
         ...(info?.task === undefined ? {} : { task: info.task }),
+        startedAt: now(),
       });
       const batch = batchFacts(
         (facts) => emit({ type: 'worker-update', workerId: agentId, facts }),
@@ -396,11 +439,17 @@ export function observeWorkers(
                   : { costUsd: result.metrics.costUsd }),
               }),
           diffStat: diffStatOfHunks(run.hunks),
+          endedAt: now(),
         });
         return output;
       } catch (error) {
         batch.flush();
-        emit({ type: 'worker-update', workerId: agentId, status: 'failed' });
+        emit({
+          type: 'worker-update',
+          workerId: agentId,
+          status: 'failed',
+          endedAt: now(),
+        });
         throw error;
       }
     },
@@ -443,7 +492,7 @@ export function observeMergeAsks(
       workerId: input.agentId,
       awaiting: {
         approvalKey: `merge:${input.branch}`,
-        summary: `merge ${input.branch}`,
+        summary: 'approve merge into your branch',
       },
     });
     try {

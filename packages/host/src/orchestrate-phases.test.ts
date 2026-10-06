@@ -84,6 +84,20 @@ describe('orchestrate run phases (issue #464)', () => {
   });
 });
 
+describe('planned workers (issue #465)', () => {
+  it('names the workers a run is about to start, with their task', async () => {
+    const planned: unknown[] = [];
+    const { deps } = world({ onPlanned: (workers) => planned.push(workers) });
+    expect(await runOrchestrateCommand(RUN, deps)).toBe(0);
+    expect(planned).toEqual([
+      [
+        { agentId: 'alpha', task: 'do it' },
+        { agentId: 'beta', task: 'do it' },
+      ],
+    ]);
+  });
+});
+
 describe('worker task titles (issue #464)', () => {
   it('hands every template worker the objective as its title, bounded', async () => {
     const tasks: Array<string | undefined> = [];

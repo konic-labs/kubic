@@ -1,13 +1,25 @@
 // The TUI header's workspace facts (EPIC N, issue #453): project, branch and
 // changed-file count from `git status --porcelain=v2 -z -b`, read through a
 // fake shell (no real git, no network).
-import { describe, expect, it } from 'vitest';
-import type {
-  ProcessHandle,
-  Shell,
-  ShellResult,
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  NodeExecutionEnv,
+  type ProcessHandle,
+  type Shell,
+  type ShellResult,
 } from '../../../packages/exec/src/env.js';
-import { readTuiWorkspace, workspaceFromStatus } from './tui-workspace.js';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+} from '../../../packages/exec/src/test-support/git-sandbox.js';
+import {
+  readTuiWorkspace,
+  readWorkerDiff,
+  workspaceFromStatus,
+} from './tui-workspace.js';
 
 const STATUS_OUT = [
   '# branch.oid abc1234\0',
@@ -100,5 +112,44 @@ describe('tui workspace facts (issue #453)', () => {
     expect(await readTuiWorkspace(statusFails, '/work/repo')).toEqual({
       project: 'repo',
     });
+  });
+});
+
+describe('readWorkerDiff (issue #465)', () => {
+  const scratch: string[] = [];
+  afterEach(() => {
+    disposeAllGitSandboxes();
+    for (const dir of scratch.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('shows what the branch changed since it left base, uncommitted edits and new files', async () => {
+    const sandbox = createGitSandbox({ injectProcessEnv: true });
+    const root = sandbox.path;
+    writeFileSync(join(root, 'cart.js'), 'a\n');
+    sandbox.git(['add', 'cart.js']);
+    sandbox.git(['commit', '-qm', 'base']);
+    sandbox.git(['checkout', '-q', '-b', 'kubic/run/worker-1']);
+    writeFileSync(join(root, 'cart.js'), 'a\nb\n');
+    sandbox.git(['commit', '-qam', 'worker']);
+    writeFileSync(join(root, 'cart.js'), 'a\nb\nc\n');
+    writeFileSync(join(root, 'notes.md'), 'fresh\n');
+    const diff =
+      (await readWorkerDiff(new NodeExecutionEnv(root).shell, 'main')) ?? '';
+    expect(diff).toContain('+b');
+    expect(diff).toContain('+c');
+    expect(diff).toContain('notes.md');
+    expect(diff).toContain('+fresh');
+    // Reading never staged anything in the worker's index.
+    expect(sandbox.git(['diff', '--cached', '--name-only']).trim()).toBe('');
+  });
+
+  it('is undefined outside a repository', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kubic-465-nogit-'));
+    scratch.push(dir);
+    expect(
+      await readWorkerDiff(new NodeExecutionEnv(dir).shell, 'main'),
+    ).toBeUndefined();
   });
 });

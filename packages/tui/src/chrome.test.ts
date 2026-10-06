@@ -228,6 +228,16 @@ describe('key-hint sets (01-M)', () => {
       ],
       right: ['esc', 'keep current'],
     });
+    expect(keyHintSet('blocks', DEFAULT_KEY_REGISTRY)).toEqual({
+      hints: [
+        ['↑↓', 'move'],
+        ['⏎', 'view'],
+        ['y', 'copy'],
+        ['Y', 'copy command'],
+        ['x', 'expand'],
+      ],
+      right: ['esc', 'back'],
+    });
     // Issue #460: the palette's own keys (03-A).
     expect(keyHintSet('palette', DEFAULT_KEY_REGISTRY)).toEqual({
       hints: [

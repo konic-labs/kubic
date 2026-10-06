@@ -178,7 +178,8 @@ export type HintContext =
   | 'approval'
   | 'overlay'
   | 'palette'
-  | 'model';
+  | 'model'
+  | 'blocks';
 
 export interface HintSetOptions {
   /** Whether a busy turn takes follow-ups (the solo lane's inbox). */
@@ -234,6 +235,19 @@ export function keyHintSet(
         ['→', 'details'],
       ],
       right: ['esc', 'close'],
+    };
+  }
+  // Issue #463: block mode (01-D, 01-M).
+  if (context === 'blocks') {
+    return {
+      hints: [
+        ['↑↓', 'move'],
+        ['⏎', 'view'],
+        ['y', 'copy'],
+        ['Y', 'copy command'],
+        ['x', 'expand'],
+      ],
+      right: ['esc', 'back'],
     };
   }
   // Issue #461: the model picker (03-D).

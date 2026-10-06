@@ -1572,10 +1572,12 @@ describe('kubic tui prompt loop (issue #88)', () => {
     release();
     await waitFor(() => fake.writes.join('').includes('cancelled'));
     expect(fake.counts.stopped).toBe(0);
-    // Idle, empty editor: Esc is still not a quit.
+    // Idle, empty editor: Esc is still not a quit — it enters block mode
+    // (issue #463), and a second Esc returns to typing.
     fake.feed('\x1b');
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(fake.counts.stopped).toBe(0);
+    fake.feed('\x1b');
     // Idle with a draft: Esc keeps it.
     for (const ch of 'keep me') fake.feed(ch);
     fake.feed('\x1b');

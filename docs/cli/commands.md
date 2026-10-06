@@ -1325,6 +1325,22 @@ a large workspace pays it (and the screen pauses) after every turn that used
   `Ctrl-X` expands every card and wraps its lines in full. A context
   compaction is a `─── compacted · auto ───` rule with the summary under it,
   collapsed the same way.
+- **Block mode** (issue #463; docs/ui 01-D, 01-M): `Esc` on an idle, empty
+  editor walks the transcript by blocks — each prompt, answer, thinking,
+  tool card and turn receipt. The last block is selected first and shows an
+  accent `▌` edge on every row; the transcript scrolls to keep it in view.
+  `↑`/`↓` or `k`/`j` move a block, `g`/`G` jump to the first/last; `y`
+  copies the block (a tool card's full output, an answer's markdown, a
+  prompt's text) and `Y` its command (a tool's name and arguments) to the
+  system clipboard via OSC 52 — through tmux's passthrough when `TMUX` is
+  set; up to 100 KB (`copied 1.2 KB`, else `too large to copy — ⏎ view and
+  select`), and never claimed on a terminal known to drop it (Apple's
+  Terminal.app says so instead). `⏎` opens the block whole in a viewer
+  (`↑↓`/`j k` scroll, `PgUp/PgDn` a page, `g`/`G` the ends, `y` copy, `esc`
+  close); `x` expands or collapses just that block. `i`, `Esc` or any other
+  key returns to typing — a printable key is typed into the editor. The
+  hint row reads `↑↓ move  ⏎ view  y copy  Y copy command  x expand … esc
+  back`.
 - **The first screen** (issue #462; docs/ui 05): an empty session opens on
   a preflight instead of a wall of keys — the wordmark with the version
   (`■ kubic <version>` below 70 columns); PREFLIGHT rows `✓ provider` (the
@@ -1457,7 +1473,7 @@ the built-in palette; see `[ui] theme` under
 | `v` | Approval card: show the next page of a command too tall for the card, or an edit's whole diff (never decides). |
 | `?` | Approval card: open (and close) the model's explanation for the ask (never decides). |
 | `Ctrl-C` | **Interrupt** the in-flight turn and keep the session; a second press while the interrupt drains quits. Idle, **a composed draft is never discarded**: the first press clears it (`^C: draft cleared`); on an empty editor a press shows `press ^C again to quit` on the notice row for 2 s, and a second press inside that window quits (issue #454). **Cancelling clears the queue**: the abort withdraws every queued follow-up, and the footer names the count (`cancelled · dropped 2 queued prompts`). A prompt queued after a *failed* run stays in the inbox and is placed by the next submit (pi-durable's own rule). During an **orchestrator** run (which cannot be cancelled from the TUI) it quits directly — the manager's signal guard reaps its live workers as the process exits. |
-| `Esc` | **Never quits** (issue #454). It closes the editor's dropdown or an open picker or dialog; during a turn it **interrupts** it like the first `Ctrl-C` — the session and the draft stay, and a second `Esc` while the interrupt drains does nothing (an orchestrator run, which cannot be interrupted here, says so on the footer). Idle on an empty editor it does nothing yet (block mode, #463). While an approval is pending it denies. For a one-press quit key, bind `app.exit` in `~/.kubic/keybindings.json`. |
+| `Esc` | **Never quits** (issue #454). It closes the editor's dropdown or an open picker or dialog; during a turn it **interrupts** it like the first `Ctrl-C` — the session and the draft stay, and a second `Esc` while the interrupt drains does nothing (an orchestrator run, which cannot be interrupted here, says so on the footer). Idle on an empty editor it enters **block mode** (see *Block mode* above). While an approval is pending it denies. For a one-press quit key, bind `app.exit` in `~/.kubic/keybindings.json`. |
 | `Ctrl-D` | Quit on an empty draft; while typing it stays delete-forward. |
 | `PageUp` / `PageDown` | Scroll the transcript one page (pi-tui's alt-screen binding; the editor does not see these keys). |
 | `Home` / `End` | Scroll the transcript to its top / bottom — which is why they do not move the editor's cursor: `Ctrl-A` / `Ctrl-E` move to the line start / end instead. |

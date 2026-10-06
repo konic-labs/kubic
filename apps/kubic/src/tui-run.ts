@@ -209,6 +209,10 @@ import {
   ProcessTerminal,
   parseKey,
 } from '../../../packages/tui/src/tui-boundary.js';
+import {
+  clipboardSupported,
+  osc52,
+} from '../../../packages/tui/src/ui/clipboard.js';
 import { loadHighlighter } from '../../../packages/tui/src/ui/highlight.js';
 import { formatAge } from '../../../packages/tui/src/ui/palette.js';
 import {
@@ -4248,6 +4252,8 @@ export async function runTuiCommand(
       ? [FAUX_FOOTER, base].filter((part) => part !== '').join(' · ')
       : base;
   };
+  // Issue #463: the terminal the screen opens on (block mode's copies).
+  let screenTerminal: Terminal | undefined;
   const app = createTuiApp({
     sessionId: boot.sessionId,
     model: boot.model,
@@ -4289,6 +4295,16 @@ export async function runTuiCommand(
     // Issue #453: the welcome block's honest notice per mode, and the
     // header clock.
     laneNotice: noticeFor,
+    // Issue #463: block mode's copies — OSC 52 on the terminal the screen
+    // runs on (through tmux's passthrough when inside it); refused on a
+    // terminal known to drop it, so a copy is never claimed falsely.
+    clipboard: (text: string): boolean => {
+      if (!clipboardSupported(process.env)) return false;
+      const target = screenTerminal;
+      if (target === undefined) return false;
+      target.write(osc52(text, { tmux: (process.env.TMUX ?? '') !== '' }));
+      return true;
+    },
     // Issue #462: the first screen's facts only this boot has.
     preflight: {
       ...(deps.version === undefined ? {} : { version: deps.version }),
@@ -4335,6 +4351,7 @@ export async function runTuiCommand(
   // frame — the other commands never pay for them.
   await loadHighlighter();
   const terminal = deps.createTerminal();
+  screenTerminal = terminal;
   // Issue #311: the Ctrl-O / Ctrl-R panels read the session journal the
   // boot created — loaded once now (a resumed session shows its earlier
   // turns), after each tool call (throttled) and at every settlement.

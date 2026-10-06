@@ -42,6 +42,44 @@ export type TranscriptEntryKind =
   // Issue #457: a settled turn's one-line receipt (UI only, never stored).
   | 'receipt';
 
+// Issue #463: what block mode walks and copies — one block per prompt,
+// answer, thinking, tool card, compaction and receipt, as last drawn.
+export type TranscriptBlockKind =
+  | 'prompt'
+  | 'prose'
+  | 'thinking'
+  | 'tool'
+  | 'compaction'
+  | 'receipt';
+
+export interface TranscriptBlock {
+  readonly id: string;
+  readonly kind: TranscriptBlockKind;
+  /** The block's first row in the document, and how many rows it takes. */
+  readonly firstRow: number;
+  readonly rowCount: number;
+  /** What `y` copies: a tool's output, an answer's markdown, a prompt. */
+  readonly copyText: string;
+  /** What `Y` copies: a tool's command; otherwise the same as copyText. */
+  readonly metaText: string;
+}
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching SGR is the point
+const SGR = /\u001b\[[0-9;]*m/gu;
+
+function plainText(line: string): string {
+  return line.replace(SGR, '');
+}
+
+// The selected block's edge: its first visible cell becomes the mark; the
+// line's leading colour (a surface) is kept.
+function withEdge(line: string, mark: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching SGR is the point
+  const hit = /^((?:\u001b\[[0-9;]*m)*)[\s\S]/u.exec(line);
+  if (hit === null) return mark;
+  return `${hit[1] ?? ''}${mark}${line.slice(hit[0].length)}`;
+}
+
 // Issue #457: what a settled turn did — the receipt cell's data.
 export interface TurnReceipt {
   readonly outcome: 'completed' | 'cancelled' | 'failed';
@@ -291,6 +329,11 @@ function imageCellIdOf(key: string): string {
 // construction (the composition root) takes effect on the next frame.
 class TranscriptDocument implements Component {
   cells: TranscriptEntry[] = [];
+  // Issue #463: block mode — the blocks of the last render, the selected
+  // one, and the blocks expanded one by one (`x`).
+  blocks: TranscriptBlock[] = [];
+  selected: string | undefined;
+  readonly expandedCells = new Set<string>();
   // Issue #462: the welcome block — fixed lines, or the preflight drawn at
   // the frame's width.
   welcome: readonly string[] | ((width: number) => string[]) = [];
@@ -453,107 +496,30 @@ class TranscriptDocument implements Component {
     const gap = (): void => {
       if (out.length > 0 && out[out.length - 1] !== '') out.push('');
     };
+    // Issue #463: the blocks block mode walks — each cell's rows, as drawn.
+    const blocks: TranscriptBlock[] = [];
     for (const cell of this.cells) {
-      switch (cell.kind) {
-        case 'prompt': {
-          gap();
-          this.renderPrompt(
-            out,
-            cell.markdown,
-            w,
-            theme,
-            cell.images,
-            cell.id,
-            cell.timestamp,
-          );
-          break;
-        }
-        case 'tool': {
-          gap();
-          const result =
-            cell.toolCallId === undefined
-              ? undefined
-              : outputs.get(cell.toolCallId);
-          out.push(...this.card(cell, result, w, theme));
-          break;
-        }
-        case 'compaction': {
-          // Issue #317/#455: a rule names what happened; the summary
-          // follows, collapsed like a card body (Ctrl-X expands it).
-          gap();
-          const label = ` compacted${cell.detail === undefined ? '' : ` · ${cell.detail}`} `;
-          const side = Math.max(2, Math.floor((w - visibleWidth(label)) / 2));
-          const rest = Math.max(0, w - side - visibleWidth(label));
-          out.push(
-            fit(
-              theme.ui.fg('fg2')(
-                `${'─'.repeat(side)}${label}${'─'.repeat(rest)}`,
-              ),
-              w,
-            ),
-          );
-          this.renderBlock(out, cell.markdown.split('\n'), w, theme);
-          break;
-        }
-        case 'thinking': {
-          gap();
-          out.push(...this.thinking(cell, w, theme));
-          break;
-        }
-        case 'receipt': {
-          if (cell.receipt === undefined) break;
-          gap();
-          out.push(renderReceipt(theme.ui, cell.receipt, w));
-          break;
-        }
-        case 'output': {
-          // Paired outputs render under their call; an orphan (no call in
-          // view) renders on its own.
-          if (cell.toolCallId !== undefined && called.has(cell.toolCallId)) {
-            break;
-          }
-          gap();
-          out.push(...this.card(undefined, cell, w, theme));
-          break;
-        }
-        default: {
-          if (cell.markdown.startsWith(`${PROMPT_MARK} `)) {
-            gap();
-            this.renderPrompt(
-              out,
-              cell.markdown,
-              w,
-              theme,
-              cell.images,
-              cell.id,
-              cell.timestamp,
-            );
-            break;
-          }
-          gap();
-          const cached = this.cachedLines(cell, w, theme);
-          if (cached !== undefined) {
-            out.push(...cached);
-            break;
-          }
-          const body = this.markdown(cell, theme).render(Math.max(1, w - 4));
-          const lines: string[] = [];
-          let first = true;
-          for (const raw of body) {
-            // Markdown pads rows to the width; the padding is dropped so a
-            // row's length is its text (the alt-screen clears the rest).
-            const line = raw.replace(/ +$/, '');
-            if (first && line.trim() !== '') {
-              lines.push(fit(`  ${theme.ui.fg('fg1')(PROSE)} ${line}`, w));
-              first = false;
-            } else {
-              lines.push(fit(line === '' ? '' : `    ${line}`, w));
-            }
-          }
-          this.storeLines(cell, w, theme, lines);
-          out.push(...lines);
-          break;
-        }
+      const before = out.length;
+      const info = this.renderCell(cell, out, w, theme, outputs, called, gap);
+      if (info === undefined || out.length === before) continue;
+      // The gap row (if one was pushed) belongs to no block.
+      const firstRow = out[before] === '' ? before + 1 : before;
+      blocks.push({
+        id: cell.id,
+        kind: info.kind,
+        firstRow,
+        rowCount: out.length - firstRow,
+        copyText: info.copy,
+        metaText: info.meta ?? info.copy,
+      });
+    }
+    this.blocks = blocks;
+    const selected = blocks.find((block) => block.id === this.selected);
+    if (selected !== undefined) {
+      const edge = theme.ui.style({ fg: 'accent', bold: true })('▌');
+      for (let row = 0; row < selected.rowCount; row += 1) {
+        const at = selected.firstRow + row;
+        out[at] = withEdge(out[at] ?? '', edge);
       }
     }
     if (this.stream !== undefined && this.stream !== '') {
@@ -588,6 +554,167 @@ class TranscriptDocument implements Component {
       gap();
       out.push(fit(`  ${theme.dim(queuedLine(prompt))}`, w));
     }
+    return out;
+  }
+
+  // One cell's rows (issue #463: shared by the document and the block
+  // viewer), and what block mode copies from it. Undefined: no block (an
+  // output drawn under its call, an empty receipt).
+  private renderCell(
+    cell: TranscriptEntry,
+    out: string[],
+    w: number,
+    theme: TuiTheme,
+    outputs: ReadonlyMap<string, TranscriptEntry>,
+    called: ReadonlySet<string>,
+    gap: () => void,
+    forceExpanded = false,
+  ):
+    | {
+        readonly kind: TranscriptBlockKind;
+        readonly copy: string;
+        readonly meta?: string;
+      }
+    | undefined {
+    const expanded =
+      forceExpanded || this.expanded || this.expandedCells.has(cell.id);
+    switch (cell.kind) {
+      case 'prompt': {
+        gap();
+        this.renderPrompt(
+          out,
+          cell.markdown,
+          w,
+          theme,
+          cell.images,
+          cell.id,
+          cell.timestamp,
+        );
+        return {
+          kind: 'prompt',
+          copy: stripPrefix(cell.markdown, `${PROMPT_MARK} `),
+        };
+      }
+      case 'tool': {
+        gap();
+        const result =
+          cell.toolCallId === undefined
+            ? undefined
+            : outputs.get(cell.toolCallId);
+        out.push(...this.card(cell, result, w, theme, expanded));
+        const name = stripPrefix(cell.markdown, 'tool ');
+        return {
+          kind: 'tool',
+          copy: result?.markdown ?? '',
+          meta: `${name}${cell.detail === undefined ? '' : ` ${cell.detail}`}`,
+        };
+      }
+      case 'compaction': {
+        // Issue #317/#455: a rule names what happened; the summary
+        // follows, collapsed like a card body (Ctrl-X expands it).
+        gap();
+        const label = ` compacted${cell.detail === undefined ? '' : ` · ${cell.detail}`} `;
+        const side = Math.max(2, Math.floor((w - visibleWidth(label)) / 2));
+        const rest = Math.max(0, w - side - visibleWidth(label));
+        out.push(
+          fit(
+            theme.ui.fg('fg2')(
+              `${'─'.repeat(side)}${label}${'─'.repeat(rest)}`,
+            ),
+            w,
+          ),
+        );
+        this.renderBlock(out, cell.markdown.split('\n'), w, theme, expanded);
+        return { kind: 'compaction', copy: cell.markdown };
+      }
+      case 'thinking': {
+        gap();
+        out.push(...this.thinking(cell, w, theme, expanded));
+        return { kind: 'thinking', copy: cell.markdown };
+      }
+      case 'receipt': {
+        if (cell.receipt === undefined) return undefined;
+        gap();
+        const line = renderReceipt(theme.ui, cell.receipt, w);
+        out.push(line);
+        return { kind: 'receipt', copy: plainText(line).trim() };
+      }
+      case 'output': {
+        // Paired outputs render under their call; an orphan (no call in
+        // view) renders on its own.
+        if (cell.toolCallId !== undefined && called.has(cell.toolCallId)) {
+          return undefined;
+        }
+        gap();
+        out.push(...this.card(undefined, cell, w, theme, expanded));
+        return { kind: 'tool', copy: cell.markdown };
+      }
+      default: {
+        if (cell.markdown.startsWith(`${PROMPT_MARK} `)) {
+          gap();
+          this.renderPrompt(
+            out,
+            cell.markdown,
+            w,
+            theme,
+            cell.images,
+            cell.id,
+            cell.timestamp,
+          );
+          return {
+            kind: 'prompt',
+            copy: stripPrefix(cell.markdown, `${PROMPT_MARK} `),
+          };
+        }
+        gap();
+        const cached = this.cachedLines(cell, w, theme);
+        if (cached !== undefined) {
+          out.push(...cached);
+          return { kind: 'prose', copy: cell.markdown };
+        }
+        const body = this.markdown(cell, theme).render(Math.max(1, w - 4));
+        const lines: string[] = [];
+        let first = true;
+        for (const raw of body) {
+          // Markdown pads rows to the width; the padding is dropped so a
+          // row's length is its text (the alt-screen clears the rest).
+          const line = raw.replace(/ +$/, '');
+          if (first && line.trim() !== '') {
+            lines.push(fit(`  ${theme.ui.fg('fg1')(PROSE)} ${line}`, w));
+            first = false;
+          } else {
+            lines.push(fit(line === '' ? '' : `    ${line}`, w));
+          }
+        }
+        this.storeLines(cell, w, theme, lines);
+        out.push(...lines);
+        return { kind: 'prose', copy: cell.markdown };
+      }
+    }
+  }
+
+  // Issue #463: one block alone and whole (expanded), for the block viewer.
+  renderCellAlone(id: string, width: number): string[] {
+    const w = Math.max(1, Math.floor(width));
+    const cell = this.cells.find((candidate) => candidate.id === id);
+    if (cell === undefined) return [];
+    const outputs = new Map<string, TranscriptEntry>();
+    for (const candidate of this.cells) {
+      if (candidate.kind === 'output' && candidate.toolCallId !== undefined) {
+        outputs.set(candidate.toolCallId, candidate);
+      }
+    }
+    const out: string[] = [];
+    this.renderCell(
+      cell,
+      out,
+      w,
+      tuiTheme(),
+      outputs,
+      new Set<string>(),
+      () => {},
+      true,
+    );
     return out;
   }
 
@@ -631,6 +758,7 @@ class TranscriptDocument implements Component {
     cell: TranscriptEntry,
     width: number,
     theme: TuiTheme,
+    expanded: boolean,
   ): string[] {
     const ui = theme.ui;
     const muted = ui.style({ fg: 'fg2', italic: true });
@@ -639,7 +767,7 @@ class TranscriptDocument implements Component {
         ? 'thinking'
         : `thought for ${formatThinkingTime(cell.durationMs)}`;
     const mark = `  ${ui.fg('fg2')(THINKING_MARK)} `;
-    if (this.expanded) {
+    if (expanded) {
       const out = [fit(`${mark}${ui.fg('fg2')(label)}`, width)];
       const gutter = `  ${ui.fg('fg3')('│')} `;
       const room = Math.max(1, width - 4);
@@ -667,6 +795,7 @@ class TranscriptDocument implements Component {
     result: TranscriptEntry | undefined,
     width: number,
     theme: TuiTheme,
+    expanded: boolean,
   ): string[] {
     const toolCallId = call?.toolCallId ?? result?.toolCallId;
     const state =
@@ -687,7 +816,7 @@ class TranscriptDocument implements Component {
           ? {}
           : { runningMs: state.runningMs }),
         ...(state?.waiting === true ? { waiting: true } : {}),
-        expanded: this.expanded,
+        expanded,
         expandKey: this.expandKey?.() ?? '^X',
       },
       width,
@@ -724,16 +853,15 @@ class TranscriptDocument implements Component {
     lines: string[],
     width: number,
     theme: TuiTheme,
+    expanded: boolean,
   ): void {
     const ui = theme.ui;
     const gutter = `  ${ui.fg('fg3')('│')} `;
     const bodyWidth = Math.max(1, width - visibleWidth(gutter));
-    const shown = this.expanded
-      ? lines
-      : lines.slice(0, TOOL_OUTPUT_PREVIEW_LINES);
+    const shown = expanded ? lines : lines.slice(0, TOOL_OUTPUT_PREVIEW_LINES);
     let clipped = false;
     for (const line of shown) {
-      if (this.expanded) {
+      if (expanded) {
         for (const row of wrapTextWithAnsi(line, bodyWidth)) {
           out.push(fit(`${gutter}${ui.fg('fg2')(row)}`, width));
         }
@@ -806,6 +934,14 @@ export interface TranscriptView {
   setQueuedPrompts(prompts: readonly string[]): void;
   toggleExpanded(): boolean;
   readonly expanded: boolean;
+  // Issue #463: block mode — the blocks of the last render, the selection
+  // (drawn with an accent edge), one block's expand toggle, one block whole
+  // for the viewer, and scrolling a block into view.
+  blocks(): readonly TranscriptBlock[];
+  select(id: string | undefined): void;
+  toggleBlock(id: string): boolean;
+  blockLines(id: string, width: number): string[];
+  reveal(id: string): void;
   // Issue #298: cache counters the perf tests assert on — the live markdown
   // entries and how many parses (constructor + setText) the document forced.
   markdownCacheSize(): number;
@@ -1015,6 +1151,30 @@ export function createTranscriptView(
     },
     get expanded(): boolean {
       return document.expanded;
+    },
+    blocks: (): readonly TranscriptBlock[] => document.blocks,
+    select: (id: string | undefined): void => {
+      document.selected = id;
+    },
+    toggleBlock: (id: string): boolean => {
+      if (document.expandedCells.delete(id)) return false;
+      document.expandedCells.add(id);
+      return true;
+    },
+    blockLines: (id: string, width: number): string[] =>
+      document.renderCellAlone(id, width),
+    reveal: (id: string): void => {
+      const block = document.blocks.find((candidate) => candidate.id === id);
+      if (block === undefined) return;
+      const top = scroll.scrollTop;
+      const height = Math.max(1, scroll.viewportHeight);
+      if (block.firstRow < top) {
+        scroll.scrollTo(block.firstRow);
+      } else if (block.firstRow + block.rowCount > top + height) {
+        scroll.scrollTo(
+          Math.min(block.firstRow, block.firstRow + block.rowCount - height),
+        );
+      }
     },
   };
 }

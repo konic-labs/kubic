@@ -67,6 +67,7 @@ import type {
   ApprovalViewRequest,
 } from './approval-view.js';
 import { approvalOverlayOptions } from './approval-view.js';
+import { BlockViewer } from './block-viewer.js';
 import {
   type HintContext,
   keyCap,
@@ -150,6 +151,7 @@ import {
   truncateToWidth,
   wrapTextWithAnsi,
 } from './tui-boundary.js';
+import { CLIPBOARD_MAX_BYTES, copySize, formatSize } from './ui/clipboard.js';
 import { dimFrame } from './ui/dim.js';
 import { fileUrl } from './ui/file-links.js';
 import { renderKeyHintRow } from './ui/key-hints.js';
@@ -313,6 +315,9 @@ export interface TuiAppSeed {
   readonly laneNotice?: (mode: StatusMode) => string;
   // Issue #462: what the first screen's preflight needs from the boot.
   readonly preflight?: TuiPreflightSeed;
+  // Issue #463: copy text to the system clipboard (OSC 52, written by the
+  // composition root). False when this terminal does not take it.
+  readonly clipboard?: (text: string) => boolean;
   // Issue #458: the project's absolute root; with `listFiles`, file
   // references in answers link to `file://<root>/<path>`.
   readonly fileRoot?: string;
@@ -1820,6 +1825,97 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     host.requestRender?.();
     return true;
   };
+  // Issue #463: block mode — Esc on an idle, empty editor walks the
+  // transcript by blocks (prompt, answer, thinking, tool card, receipt):
+  // `↑↓`/`k j` move, `g`/`G` the ends, `y` copies the block, `Y` its
+  // command, `⏎` opens it whole in the viewer, `x` expands just it; `i`,
+  // `esc` or any other key returns to typing (a printable key is typed).
+  let blockMode: { selected: string } | undefined;
+  let blockViewer:
+    | { readonly view: BlockViewer; readonly handle: ApprovalOverlayHandle }
+    | undefined;
+  const selectBlock = (id: string): void => {
+    blockMode = { selected: id };
+    transcript.select(id);
+    transcript.reveal(id);
+    overlayHost?.requestRender?.();
+  };
+  const enterBlockMode = (): boolean => {
+    const last = transcript.blocks().at(-1);
+    if (last === undefined) return false;
+    selectBlock(last.id);
+    return true;
+  };
+  const exitBlockMode = (): void => {
+    if (blockMode === undefined) return;
+    blockMode = undefined;
+    transcript.select(undefined);
+    transcript.rePin();
+    overlayHost?.requestRender?.();
+  };
+  const selectedBlock = () =>
+    transcript.blocks().find((block) => block.id === blockMode?.selected);
+  const copyBlock = (meta: boolean): void => {
+    const block = selectedBlock();
+    if (block === undefined) return;
+    const text = meta ? block.metaText : block.copyText;
+    const size = copySize(text);
+    if (size > CLIPBOARD_MAX_BYTES) {
+      noticeRow.setFooter('too large to copy — ⏎ view and select');
+    } else if (seed.clipboard === undefined || !seed.clipboard(text)) {
+      noticeRow.setFooter(
+        'copy: this terminal does not take clipboard writes (OSC 52)',
+      );
+    } else {
+      noticeRow.setFooter(`copied ${formatSize(size)}`);
+    }
+    overlayHost?.requestRender?.();
+  };
+  const blockTitle = (kind: string, meta: string): string => {
+    switch (kind) {
+      case 'tool':
+        return meta;
+      case 'prose':
+        return 'answer';
+      default:
+        return kind;
+    }
+  };
+  const closeBlockViewer = (): void => {
+    const open = blockViewer;
+    blockViewer = undefined;
+    if (open === undefined) return;
+    try {
+      open.handle.unfocus({ target: editor });
+      open.handle.hide();
+    } catch {
+      // A torn-down overlay is already gone; the state above is the truth.
+    }
+    overlayHost?.requestRender?.();
+  };
+  const openBlockViewer = (): boolean => {
+    const host = overlayHost;
+    const block = selectedBlock();
+    if (host === undefined || block === undefined) return false;
+    const view = new BlockViewer({
+      title: blockTitle(block.kind, block.metaText),
+      lines: (width) => transcript.blockLines(block.id, width),
+      maxRows: () =>
+        Math.max(6, Math.floor(((host.terminal?.rows ?? 30) * 90) / 100)),
+      onCopy: () => copyBlock(false),
+      onClose: closeBlockViewer,
+    });
+    blockViewer = {
+      view,
+      handle: host.showOverlay(view, {
+        width: '90%',
+        maxHeight: '90%',
+        anchor: 'center',
+      }),
+    };
+    host.requestRender?.();
+    return true;
+  };
   // Issue #459: an approval is a card in the editor slot, not an overlay —
   // a change only needs a frame. Issue #460: a palette open over it would
   // dim the card and hide it from the keys' owner, so it closes.
@@ -1938,6 +2034,8 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const hintContext = (): HintContext => {
     if (approvalSurface.isShowing()) return 'approval';
     if (palette !== undefined) return 'palette';
+    if (blockViewer !== undefined) return 'overlay';
+    if (blockMode !== undefined) return 'blocks';
     if (modelPicker?.kind === 'model') return 'model';
     if (
       modelPicker !== undefined ||
@@ -2042,6 +2140,58 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         overlayHost?.requestRender?.();
         return { quit: false, consumed: true, cancel: false };
       }
+      // Issue #463: the block viewer owns the keys while it shows.
+      if (blockViewer !== undefined) {
+        if (action === 'app.interrupt') closeBlockViewer();
+        else blockViewer.view.handleInput(data);
+        overlayHost?.requestRender?.();
+        return { quit: false, consumed: true, cancel: false };
+      }
+      // Issue #463: block mode. Any key it does not take returns to typing
+      // and is handled as usual (a printable key lands in the editor).
+      if (blockMode !== undefined) {
+        const blocks = transcript.blocks();
+        const at = blocks.findIndex(
+          (block) => block.id === blockMode?.selected,
+        );
+        const go = (index: number): void => {
+          const target =
+            blocks[Math.max(0, Math.min(blocks.length - 1, index))];
+          if (target !== undefined) selectBlock(target.id);
+        };
+        const done = { quit: false, consumed: true, cancel: false };
+        if (action === 'app.cancel' || data === 'i') {
+          exitBlockMode();
+          return done;
+        }
+        if (keyId === 'up' || data === 'k') {
+          go(at - 1);
+          return done;
+        }
+        if (keyId === 'down' || data === 'j') {
+          go(at + 1);
+          return done;
+        }
+        if (data === 'g' || data === 'G') {
+          go(data === 'g' ? 0 : blocks.length - 1);
+          return done;
+        }
+        if (data === 'y' || data === 'Y') {
+          copyBlock(data === 'Y');
+          return done;
+        }
+        if (keyId === 'enter') {
+          openBlockViewer();
+          return done;
+        }
+        if (data === 'x') {
+          const selected = blockMode.selected;
+          transcript.toggleBlock(selected);
+          overlayHost?.requestRender?.();
+          return done;
+        }
+        exitBlockMode();
+      }
       if (
         mode !== 'closed' &&
         (action === 'panel.next' || action === 'panel.previous')
@@ -2112,6 +2262,8 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         if (busy) {
           return { quit: false, consumed: true, cancel: true, interrupt: true };
         }
+        // Issue #463: idle with an empty editor, Esc walks the blocks.
+        if (editor.getText() === '') enterBlockMode();
         return consumed;
       }
       // Issue #454: Ctrl-C interrupts a running turn (a second press while
@@ -2612,6 +2764,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         journalChanges: 0,
       });
       status.setRows([...(options.usage ?? [])]);
+      // Issue #463: the old session's blocks are gone.
+      closeBlockViewer();
+      exitBlockMode();
       // Issue #462: a fresh session starts on the first screen again (a
       // resumed one with history hides it when its entries apply).
       welcomeVisible = true;
@@ -2684,7 +2839,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // Issue #460: while the palette or a picker is open the screen behind
       // it is dimmed (03-A); the key-hint row at the bottom stays lit.
       host.baseFilter = (lines: string[]): string[] =>
-        palette !== undefined || modelPicker !== undefined
+        palette !== undefined ||
+        modelPicker !== undefined ||
+        blockViewer !== undefined
           ? dimFrame(tuiTheme().ui, lines)
           : lines;
       // Issue #96: the live screen's render request, so an ask that arrives

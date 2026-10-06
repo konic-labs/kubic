@@ -194,4 +194,13 @@ describe('fuzzy match positions', () => {
     );
     expect(highlightPositions('abc', [], mark)).toBe('abc');
   });
+
+  it('styles the unmatched runs too when asked (issue #460)', () => {
+    const mark = (text: string): string => `[${text}]`;
+    const rest = (text: string): string => `(${text})`;
+    expect(highlightPositions('/model', [1, 2, 3], mark, rest)).toBe(
+      '(/)[mod](el)',
+    );
+    expect(highlightPositions('abc', [], mark, rest)).toBe('(abc)');
+  });
 });

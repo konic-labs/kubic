@@ -4,6 +4,7 @@
 // refused locally instead of being sent to the model.
 import { describe, expect, it } from 'vitest';
 import { isPresentationCommand } from '../../core/src/presentation.js';
+import { DEFAULT_KEY_REGISTRY } from './keybindings.js';
 import {
   findSlashCommand,
   helpLines,
@@ -13,7 +14,6 @@ import {
   SLASH_COMMANDS,
   SlashCommandAutocomplete,
   skillCommandSpecs,
-  slashCommandRows,
 } from './slash-commands.js';
 
 describe('slash-command registry (issue #305)', () => {
@@ -103,17 +103,26 @@ describe('slash-command registry (issue #305)', () => {
     expect(matchingSlashCommands('/help m')).toEqual([]);
   });
 
-  it('renders the palette rows and the help lines from the registry', () => {
-    const rows = slashCommandRows();
-    expect(rows).toHaveLength(SLASH_COMMANDS.length);
-    const diff = rows.find((row) => row.value === '/diff');
-    expect(diff?.label).toBe('/diff');
-    expect(diff?.description).toContain('Ctrl-O');
-    const model = rows.find((row) => row.value === '/model');
-    expect(model?.label).toBe('/model <provider/id>');
+  it('renders the help lines from the registry', () => {
     const lines = helpLines();
     expect(lines).toHaveLength(SLASH_COMMANDS.length);
     expect(lines.some((line) => line.startsWith('/quit — '))).toBe(true);
+  });
+});
+
+describe('slash-command keys (issue #460)', () => {
+  // The palette shows a command's key from the live key registry; `/help`
+  // prints the static `keys`. They must name the same default binding.
+  it("every printed key is its action's default binding", () => {
+    const normalize = (keys: string): string =>
+      keys.toLowerCase().replaceAll('-', '+');
+    for (const spec of SLASH_COMMANDS) {
+      expect(spec.keys === undefined).toBe(spec.keyAction === undefined);
+      if (spec.keys === undefined || spec.keyAction === undefined) continue;
+      expect(normalize(spec.keys)).toBe(
+        DEFAULT_KEY_REGISTRY.label(spec.keyAction),
+      );
+    }
   });
 });
 

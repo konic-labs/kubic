@@ -71,19 +71,28 @@ export function fuzzyPositions(
   return positions;
 }
 
-/** `text` with the characters at `positions` styled (runs merged). */
+/**
+ * `text` with the characters at `positions` styled (runs merged); the runs
+ * between them take `rest` when given (the palette's row colour).
+ */
 export function highlightPositions(
   text: string,
   positions: readonly number[],
   style: Style,
+  rest: Style = (part) => part,
 ): string {
-  if (positions.length === 0) return text;
+  if (positions.length === 0) return text === '' ? '' : rest(text);
   const marked = new Set(positions);
   let out = '';
   let run = '';
+  let plain = '';
   for (let index = 0; index < text.length; index += 1) {
     const char = text[index] as string;
     if (marked.has(index)) {
+      if (plain !== '') {
+        out += rest(plain);
+        plain = '';
+      }
       run += char;
       continue;
     }
@@ -91,8 +100,9 @@ export function highlightPositions(
       out += style(run);
       run = '';
     }
-    out += char;
+    plain += char;
   }
   if (run !== '') out += style(run);
+  if (plain !== '') out += rest(plain);
   return out;
 }

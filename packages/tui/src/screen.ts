@@ -25,6 +25,26 @@ function stripCursor(line: string): string {
   );
 }
 
+// Issue #460: the live alt-screen with a filter over the base frame, run
+// BEFORE the overlays are composited on it — the dimmed background behind
+// the palette and the pickers never touches the overlay itself.
+export class KubicAltScreen extends TuiAltScreen {
+  baseFilter: ((lines: string[]) => string[]) | undefined;
+
+  protected override compositeOverlays(
+    lines: string[],
+    termWidth: number,
+    termHeight: number,
+  ): string[] {
+    const filter = this.baseFilter;
+    return super.compositeOverlays(
+      filter === undefined ? lines : filter(lines),
+      termWidth,
+      termHeight,
+    );
+  }
+}
+
 export interface Screen {
   render: () => void;
   // Differential frame (only changed rows are written), coalesced to one
@@ -41,11 +61,11 @@ export interface Screen {
   // The live alt-screen (issue #75): the composition root needs
   // setFocus/addInputListener to route keyboard input. Additive — the
   // boot/render/stop lifecycle above is unchanged.
-  tui: TuiAltScreen;
+  tui: KubicAltScreen;
 }
 
 export function bootScreen(terminal: Terminal, root: VStack): Screen {
-  const screen = new TuiAltScreen(terminal);
+  const screen = new KubicAltScreen(terminal);
   screen.setLayoutRoot(root);
   try {
     screen.start();

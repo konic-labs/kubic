@@ -19,16 +19,17 @@ TUI-side analogue of the worker Pi boundary.
 | --- | --- |
 | `tui-boundary.ts` | Sole presentation seam: re-exports `Component`, `Focusable`, `MouseRegionHandler`, `StackEntryOptions`, `Terminal`, `TUI` (types) and `CURSOR_MARKER`, `Editor`, `Markdown`, `MouseRegion`, `matchesKey`, `ScrollView`, `Text`, `TuiAltScreen`, `VStack` (values) from `@earendil-works/pi-tui`, each with a JUSTIFICATION block |
 | `layout.ts` | `Viewport`, `LayoutSlots`, `NARROW_COLUMNS`, `buildLayoutRoot`, `renderLayout` |
-| `screen.ts` | `Screen`, `bootScreen` |
+| `screen.ts` | `Screen`, `bootScreen`, `KubicAltScreen` (Pi's alt-screen with a `baseFilter` run over the base frame before the overlays are composited — the dimmed background, issue #460) |
 | `status-bar.ts` | `StatusUsageCost`, `StatusUsage`, `StatusUsageRow`, `StatusSummary`, `summarizeStatusRows`, `formatStatusCost`, `StatusMode`, `StatusBarState`, `StatusBarTheme`, `DEFAULT_STATUS_THEME`, `statusVisibleWidth`, `renderStatusLines`, `StatusBarOptions`, `StatusBar` |
 | `transcript.ts` | `TranscriptEntryKind`, `TranscriptEntry`, `TranscriptDelta`, `LaneIdentity`, `TranscriptSnapshotOp`, `TranscriptDeltaOp`, `TranscriptOp`, `TranscriptView`, `createTranscriptView`, `replayTranscript` |
 | `tree.ts` | `RunStatus`, `ToolCallState`, `rootGlyph`, `toolGlyph`, `TreeToolCall`, `TreeUsage`, `TreeTurnSummary`, `AgentTreeState`, `createTreeState`, `toggleTree`, `TreeToolSnapshot`, `TreeLaneSnapshot`, `applyTreeSnapshot`, `collapsedSummary`, `formatTreeTokens`, `renderTreeLines`, `TreeMouseEvent`, `TreeMouseResult`, `TreeViewOptions`, `AgentTreeView` |
-| `editor-view.ts` | `EDITOR_FALLBACK_ROWS`, `editorTheme`, `PromptEditor` (Pi `Editor` behind the seam: Enter submit, multi-line entry, history, focus forwarding) |
+| `editor-view.ts` | `EDITOR_FALLBACK_ROWS`, `editorTheme`, `PromptEditor` (Pi `Editor` behind the seam: Enter submit, multi-line entry, history, focus forwarding, `insertText` at the cursor) |
 | `lane-cells.ts` | `LaneEntryLike`, `PROMPT_PREFIX`, `TOOL_CALL_PREFIX`, `TOOL_RESULT_MAX_CHARS`, `TOOL_DETAIL_MAX_CHARS`, `TOOL_OUTCOME_MAX_CHARS`, `sanitizeLaneText`, `summarizeToolArguments`, `summarizeToolOutcome`, `entriesToCells` — committed lane entries → coarse transcript cells (§15.2); every cell's text (user, assistant, tool result, tool name) is sanitized here so model-supplied content cannot drive the terminal. `sanitizeLaneText` strips complete ECMA-48 sequences (CSI, OSC, C1 CSI, 2-byte ESC forms — not just the ESC byte, #299), collapses carriage-return overwrites to the text after the last `\r`, expands tabs by visible column width, and drops the remaining C0/C1 controls |
 | `tui-app.ts` | `TuiAppSeed`, `TuiInputResult`, `TuiApp`, `createTuiApp`, `seedFromPresentation` — the global keys (Ctrl-C/Esc/Ctrl-D/Ctrl-T) are classified through Pi's `parseKey` (see `tui-boundary.ts`), so both legacy-byte and Kitty CSI-u encodings are honoured |
 | `diff-view.ts` | `DiffOp`, `DiffFileChange`, `DiffRenderOptions`, `isBinaryText`, `unifiedHunks`, `renderDiffHeader`, `renderDiffLines` (pure render functions; the panel owns the document and its scrolling, #301) |
 | `approval-view.ts` | `ApprovalAction`, `ApprovalViewRequest`, `ApprovalDecision`, `APPROVAL_MIN_WIDTH`, `ApprovalOverlayOptions`, `approvalOverlayOptions`, `ApprovalOverlayBounds`, `approvalOverlayBounds`, `APPROVAL_PAGE_KEY`, `APPROVAL_DEFAULT_KEYS`, `APPROVAL_ARMING_MS`, `APPROVAL_QUIET_MS`, `APPROVAL_REPEAT_MS`, `APPROVAL_IMMEDIATE_KEY`, `ApprovalKeyOverrides`, `resolveApprovalAction`, `resolveApprovalKey`, `isProseKey`, `approvalKeyProblems`, `ApprovalKeyConflict`, `approvalKeyConflicts`, `ApprovalOverlayHandle`, `ApprovalOverlayTui`, `ApprovalDecisionStore`, `MemoryApprovalDecisionStore`, `ApprovalMemo`, `createApprovalMemo`, `ApprovalWaitOptions`, `waitForApproval` |
 | `approval-card.ts` | `APPROVAL_COMMAND_PAGE_LINES`, `wrapByColumns`, `approvalReason`, `ApprovalCardOptions`, `renderApprovalCard` (the inline approval card, issue #459) |
+| `palette-view.ts` | `PaletteViewOptions`, `PaletteView` (the ^P overlay: Pi's `Input` for the query, `ui/palette.ts` for the rest; issue #460) |
 | `journal-view.ts` | `JournalFilter`, `filterJournalChanges`, `renderJournalLines`, `JournalViewOptions`, `JournalView` |
 | `views.ts`, `components.ts` | Pointer | View assembly lives in `layout.ts` / `*-view.ts` / `tui-app.ts` (#23–#28); no shared or aggregated module |
 | `index.ts` | Pointer | No barrel — import per-module paths (`tui-boundary.js` seam + views); `tui/` stays presentation-only |
@@ -47,7 +48,9 @@ depth `none`, so snapshots stay readable.
 | `ui/frame.ts` | `frameLines` (`┌─┐` box, heavy `┏┃┗` card or bare rules; title and right label in the top rule), `frameInnerWidth` |
 | `ui/marks.ts` | `badge` (inverse mode/accent/waiting/ok/error cells, `[TEXT]` without colour; `key` caps), `gauge` (warn at 80%, err at 100%), `sectionLabel`, `rule` |
 | `ui/key-hints.ts` | `renderKeyHintRow`: keys fg1, labels fg2, whole hints dropped from the end when narrow, a right-aligned hint |
-| `ui/match.ts` | `fuzzyPositions` (contiguous run, else word starts) and `highlightPositions` |
+| `ui/match.ts` | `fuzzyPositions` (contiguous run, else word starts) and `highlightPositions` (matched runs styled, the rest optionally too) |
+| `ui/palette.ts` | the ^P palette (issue #460): `PaletteItem`/`PaletteState`, grouping and ranking with Pi's `fuzzyMatch` (`paletteGroups`, `paletteRows`, `paletteResultCount`), navigation (`movePalette`, `cyclePaletteGroup`, `togglePaletteDetails`, `setPaletteQuery`, `setPaletteItems`), `renderPalette`, and the row helpers `paletteModelMeta`, `formatContextWindow`, `formatAge` |
+| `ui/dim.ts` | `dimLine` / `dimFrame`: a row without colours, links or markers in fg3; a frame dimmed but for its key-hint row |
 
 Widths always come from Pi's grapheme-aware helpers through
 `tui-boundary.ts`, never `string.length`.

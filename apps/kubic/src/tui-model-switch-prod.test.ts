@@ -316,6 +316,57 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     });
   });
 
+  it('switches the model from the ^P palette (#460)', async () => {
+    const workspace = tmpRoot('tui-460-palette-ws-');
+    const sessionsRoot = tmpRoot('tui-460-palette-sessions-');
+    const fake = fakeTerminal(120);
+    let sessionId = '';
+    const pending = runTuiCommand(
+      {},
+      {
+        out: () => {},
+        createTerminal: () => fake.terminal,
+        bootLane: async (sid, answer) => {
+          const boot = await bootTuiLane(sid, {
+            sessionsRoot,
+            models: twoProviders(),
+            env: new NodeExecutionEnv(workspace),
+            ...(answer === undefined ? {} : { answer }),
+            model: { provider: 'faux', id: 'big' },
+          });
+          sessionId = boot.sessionId;
+          return boot;
+        },
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    // Ctrl-P: the grouped palette with its own key hints; the catalog
+    // arrives after the first frame and the live model is marked.
+    fake.feed('\x10');
+    await waitFor(() => fake.frame.includes('COMMANDS'));
+    expect(fake.frame).toContain('tab next group');
+    await waitFor(() => fake.frame.includes('faux/big  current'));
+    // Esc closes it and the hint row is the editor's again.
+    const mark = fake.mark();
+    fake.feed('\x1b');
+    await waitFor(() => fake.since(mark).includes('^P palette'));
+    const reopened = fake.mark();
+    fake.feed('\x10');
+    for (const ch of 'small') fake.feed(ch);
+    // The catalog lands after the first frame; the best match is selected.
+    await waitFor(() => fake.since(reopened).includes('▌   faux/small'));
+    // ⏎ switches through the /model path.
+    fake.feed('\r');
+    await waitFor(() => fake.frame.includes('model: faux/small (switched)'));
+    fake.feed('\x03');
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    expect(await storedModel(sessionsRoot, sessionId)).toMatchObject({
+      provider: 'faux',
+      modelId: 'small',
+    });
+  });
+
   it('re-clamps the thinking level when /model moves to a shorter ladder (#328 review)', async () => {
     const workspace = tmpRoot('tui-328-clamp-ws-');
     const sessionsRoot = tmpRoot('tui-328-clamp-sessions-');

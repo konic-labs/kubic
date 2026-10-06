@@ -67,9 +67,20 @@ export type {
 //   why Pi has no alternative: Pi negotiates the protocol and owns the flag;
 //     Kubic only reads it, never sets it
 //   review: issue #453
+// --- #460 additions ---
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-tui fuzzyMatch (the subsequence scorer behind
+//     Pi's own fuzzyFilter: consecutive and word-boundary letters score
+//     better, lower is better)
+//   used by: packages/tui/src/ui/palette.ts (the ^P palette ranks every
+//     group's rows with it, the name above the summary)
+//   why Pi has no alternative: it is Pi's ranking; ranking the palette with
+//     a Kubic copy would order rows differently from Pi's own pickers
+//   review: issue #460
 export {
   CURSOR_MARKER,
   Editor,
+  fuzzyMatch,
   getCapabilities,
   Image,
   Input,

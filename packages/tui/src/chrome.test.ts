@@ -220,6 +220,16 @@ describe('key-hint sets (01-M)', () => {
         ['esc', 'cancel'],
       ],
     });
+    // Issue #460: the palette's own keys (03-A).
+    expect(keyHintSet('palette', DEFAULT_KEY_REGISTRY)).toEqual({
+      hints: [
+        ['↑↓', 'move'],
+        ['⏎', 'run'],
+        ['tab', 'next group'],
+        ['→', 'details'],
+      ],
+      right: ['esc', 'close'],
+    });
   });
 
   it('follows a rebind and hides an unbound action', () => {

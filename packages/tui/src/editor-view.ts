@@ -167,6 +167,11 @@ export class PromptEditor implements Component, Focusable {
     this.inner.setText(text);
   }
 
+  // Issue #460: the palette's file rows insert `@path ` where the cursor is.
+  insertText(text: string): void {
+    this.inner.insertTextAtCursor(text);
+  }
+
   handleInput(data: string): void {
     this.inner.handleInput(data);
   }

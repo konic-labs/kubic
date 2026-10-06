@@ -170,7 +170,6 @@ import {
   parseSlashCommand,
   SLASH_COMMAND_NAMES,
   SLASH_COMMANDS,
-  slashCommandRows,
 } from '../../../packages/tui/src/slash-commands.js';
 import type {
   StatusMode,
@@ -465,6 +464,9 @@ export interface TuiModelChoice {
   readonly current: boolean;
   /** The provider's origin (built-in / custom / testing), when known. */
   readonly note?: string;
+  /** Issue #460: the palette's model columns (context, thinking). */
+  readonly contextWindow?: number;
+  readonly reasoning?: boolean;
 }
 
 // One settled turn as the runner saw it: the prompt, when it started, the
@@ -2284,6 +2286,8 @@ export async function bootTuiLane(
                 id: model.id,
                 current: provider.id === live.provider && model.id === live.id,
                 ...(note === undefined ? {} : { note }),
+                contextWindow: model.contextWindow,
+                reasoning: model.reasoning,
               });
             }
           }
@@ -5072,6 +5076,28 @@ export async function runTuiCommand(
           });
         return 'accepted';
       };
+      // `/resume`'s choice, and the palette's SESSIONS rows (issue #460).
+      const resumeSession = (id: string): void => {
+        if (activeTurn?.isRunning() === true) {
+          busyRefusal('session');
+          return;
+        }
+        app.setEditorFooter(`session: attaching ${id}…`);
+        screen?.render();
+        void rebindSession(id)
+          .then(() => {
+            if (stopped) return;
+            app.setEditorFooter(`session: ${boot.sessionId} (resumed)`);
+            screen?.render();
+          })
+          .catch((error: unknown) => {
+            if (stopped) return;
+            app.setEditorFooter(
+              `session: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            screen?.render();
+          });
+      };
       const openResumePicker = (): TuiSubmitOutcome => {
         const list = boot.listSessions;
         if (list === undefined) {
@@ -5098,23 +5124,7 @@ export async function runTuiCommand(
                   .filter((part): part is string => part !== undefined)
                   .join(' · '),
               })),
-              onSelect: (id) => {
-                app.setEditorFooter(`session: attaching ${id}…`);
-                screen?.render();
-                void rebindSession(id)
-                  .then(() => {
-                    if (stopped) return;
-                    app.setEditorFooter(`session: ${boot.sessionId} (resumed)`);
-                    screen?.render();
-                  })
-                  .catch((error: unknown) => {
-                    if (stopped) return;
-                    app.setEditorFooter(
-                      `session: ${error instanceof Error ? error.message : String(error)}`,
-                    );
-                    screen?.render();
-                  });
-              },
+              onSelect: resumeSession,
               onCancel: () => {
                 if (stopped) return;
                 app.setEditorFooter('resume: cancelled');
@@ -5668,16 +5678,48 @@ export async function runTuiCommand(
       pickModelForLoop = openModelPicker;
       cycleThinkingForLoop = cycleThinking;
 
-      // Issue #305: Ctrl-P's palette — the registry's rows in the same
-      // overlay the model picker uses; choosing a row submits it exactly as
-      // if it had been typed (the dispatcher above owns the rest).
+      // Issue #460: Ctrl-P's grouped palette (03-A … C). The app owns the
+      // command and file rows; this boot supplies the model catalog and this
+      // project's other sessions, and the actions behind them: a command row
+      // is submitted exactly as if typed (the dispatcher above owns the
+      // rest), a model row switches like the picker, a session row resumes
+      // like `/resume`.
       const openPalette = (): void => {
         if (stopped) return;
-        const opened = app.openPicker({
-          rows: slashCommandRows(),
-          onSelect: (value) => {
-            submitForLoop?.(value, false);
+        const runner = turn;
+        const list = boot.listSessions;
+        const opened = app.openPalette({
+          runCommand: (command) => {
+            submitForLoop?.(command, false);
           },
+          ...(runner === undefined
+            ? {}
+            : {
+                models: async () => runner.listModels(),
+                switchModel: (provider: string, id: string) => {
+                  if (activeTurn?.isRunning() === true) {
+                    app.setEditorFooter(
+                      'model: finish the current turn before switching',
+                    );
+                    if (!stopped) screen?.render();
+                    return;
+                  }
+                  switchModelTo({ provider, id });
+                },
+              }),
+          ...(list === undefined
+            ? {}
+            : {
+                sessions: async () =>
+                  (await list()).filter(
+                    (row) =>
+                      row.id !== boot.sessionId &&
+                      (boot.cwd === undefined ||
+                        row.cwd === undefined ||
+                        row.cwd === boot.cwd),
+                  ),
+                resumeSession,
+              }),
           onCancel: () => {
             if (stopped) return;
             app.setEditorFooter('palette: cancelled');

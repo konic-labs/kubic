@@ -172,7 +172,12 @@ export function keyCap(label: string): string {
 }
 
 /** Which keys act right now, and so which hints the row shows. */
-export type HintContext = 'idle' | 'working' | 'approval' | 'overlay';
+export type HintContext =
+  | 'idle'
+  | 'working'
+  | 'approval'
+  | 'overlay'
+  | 'palette';
 
 export interface HintSetOptions {
   /** Whether a busy turn takes follow-ups (the solo lane's inbox). */
@@ -216,6 +221,18 @@ export function keyHintSet(
         ['PgUp', 'read transcript'],
       ],
       ...quitHint(),
+    };
+  }
+  // Issue #460: the palette names its own keys (03-A).
+  if (context === 'palette') {
+    return {
+      hints: [
+        ['↑↓', 'move'],
+        ['⏎', 'run'],
+        ['tab', 'next group'],
+        ['→', 'details'],
+      ],
+      right: ['esc', 'close'],
     };
   }
   if (context === 'overlay') {

@@ -85,6 +85,7 @@ import { PromptEditor } from './editor-view.js';
 import {
   CombinedAutocomplete,
   FileMentionAutocomplete,
+  mentionFor,
 } from './file-mentions.js';
 import {
   DEFAULT_KEY_REGISTRY,
@@ -98,8 +99,12 @@ import {
   sanitizeLaneText,
 } from './lane-cells.js';
 import { buildLayoutRoot, type Viewport } from './layout.js';
+import { PaletteView } from './palette-view.js';
 import { QuestionView, type WorkerQuestionLike } from './question-view.js';
 import {
+  findSlashCommand,
+  parseSlashCommand,
+  SLASH_COMMAND_NAMES,
   SLASH_COMMANDS,
   SlashCommandAutocomplete,
   skillCommandSpecs,
@@ -145,8 +150,16 @@ import {
   truncateToWidth,
   wrapTextWithAnsi,
 } from './tui-boundary.js';
+import { dimFrame } from './ui/dim.js';
 import { fileUrl } from './ui/file-links.js';
 import { renderKeyHintRow } from './ui/key-hints.js';
+import {
+  formatAge,
+  PALETTE_FILES_MAX,
+  PALETTE_GROUP_ROWS,
+  type PaletteItem,
+  paletteModelMeta,
+} from './ui/palette.js';
 
 // The editor footer wraps to at most this many rows.
 export const FOOTER_MAX_ROWS = 2;
@@ -386,6 +399,40 @@ export interface TuiPickerOptions {
   readonly onCancel?: () => void;
 }
 
+// Issue #460: the ^P palette's sources. The app owns the command rows (the
+// registry), the file rows (`listFiles`) and what they do in the editor;
+// the composition root supplies the rows only it can read and the actions
+// only it can take. Models and sessions load after the palette opens.
+export interface TuiPaletteModel {
+  readonly provider: string;
+  readonly id: string;
+  readonly current: boolean;
+  readonly contextWindow?: number;
+  readonly reasoning?: boolean;
+}
+
+export interface TuiPaletteSession {
+  readonly id: string;
+  /** When the session was created (ISO), shown as its age. */
+  readonly createdAt?: string;
+}
+
+export interface TuiPaletteSources {
+  readonly models?: () => Promise<readonly TuiPaletteModel[]>;
+  readonly sessions?: () => Promise<readonly TuiPaletteSession[]>;
+  /** Run a command row as if it had been typed (`/help`). */
+  readonly runCommand: (command: string) => void;
+  readonly switchModel?: (provider: string, id: string) => void;
+  readonly resumeSession?: (id: string) => void;
+  readonly onCancel?: () => void;
+}
+
+// Issue #460: the palette is 80 cells wide, or 70% of a narrower terminal,
+// and takes at most 70% of the rows.
+export const PALETTE_WIDTH = 80;
+export const PALETTE_WIDTH_PERCENT = 70;
+export const PALETTE_HEIGHT_PERCENT = 70;
+
 // Issue #309: the confirmation dialog (the full-access toggle's "are you
 // sure?"). The accept key is explicit and deliberate — never a bare
 // printable letter — and every other key is swallowed while it shows, so
@@ -518,6 +565,10 @@ export interface TuiApp {
   // Issue #305: the same overlay for the command palette and the session
   // list; `openModelPicker` is this with the model rows mapped.
   openPicker(options: TuiPickerOptions): boolean;
+  // Issue #460: ^P's grouped palette (03-A … C). False when this boot has
+  // no overlay seat or the terminal is too narrow (the loop says so).
+  openPalette(sources: TuiPaletteSources): boolean;
+  isPaletteOpen(): boolean;
   // Issue #305: a command's own output (the `/help` list, `/session`,
   // `/undo`'s verdict) as transcript text. A later lane snapshot replaces
   // it, exactly like the orchestrator report.
@@ -1152,6 +1203,17 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   editor.allowEmptySubmit = (): boolean => pendingAttachments > 0;
   let promptCells = 0;
   let promptCellsAtSubmit = 0;
+  // Issue #460: the commands this session ran, most recent first — what
+  // the palette offers before anything is typed.
+  const recentCommands: string[] = [];
+  const noteRecentCommand = (prompt: string): void => {
+    const parsed = parseSlashCommand(prompt);
+    if (parsed === undefined || !SLASH_COMMAND_NAMES.has(parsed.name)) return;
+    const at = recentCommands.indexOf(parsed.name);
+    if (at !== -1) recentCommands.splice(at, 1);
+    recentCommands.unshift(parsed.name);
+    recentCommands.length = Math.min(recentCommands.length, PALETTE_GROUP_ROWS);
+  };
   editor.onSubmit = (prompt: string): void => {
     if (submitHandler === undefined) return;
     // Issue #334: the loop decides which submit outcome this is. A queued
@@ -1160,6 +1222,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     // says why. Both still pin the transcript: the operator asked to see
     // the tail.
     const outcome = submitHandler(prompt) ?? 'accepted';
+    if (outcome !== 'refused') noteRecentCommand(prompt);
     if (outcome === 'refused') {
       // Issue #334 (review): a refused prompt never eats the draft. Pi's
       // editor clears the draft BEFORE onSubmit fires, so the text has to go
@@ -1351,9 +1414,196 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     }
     if (notifyCancel) open.onCancel?.();
   };
+  // Issue #460: the ^P palette. The app builds the command and file rows
+  // and owns what they do in the editor; models and sessions come from the
+  // composition root after the palette is up.
+  let palette:
+    | {
+        readonly view: PaletteView;
+        readonly handle: ApprovalOverlayHandle;
+        readonly sources: TuiPaletteSources;
+      }
+    | undefined;
+  const closePalette = (notifyCancel = false): void => {
+    const open = palette;
+    palette = undefined;
+    if (open === undefined) return;
+    try {
+      open.handle.unfocus({ target: editor });
+      open.handle.hide();
+    } catch {
+      // A torn-down overlay is already gone; the state above is the truth.
+    }
+    if (notifyCancel) open.sources.onCancel?.();
+    overlayHost?.requestRender?.();
+  };
+  // The registry's commands, the recent ones first (in the order they ran),
+  // each with the key the registry has bound now.
+  const commandItems = (): PaletteItem[] => {
+    const rank = (name: string): number => {
+      const at = recentCommands.indexOf(name);
+      return at === -1 ? recentCommands.length : at;
+    };
+    return [...SLASH_COMMANDS]
+      .sort((a, b) => rank(a.name) - rank(b.name))
+      .map((spec) => {
+        const key =
+          spec.keyAction === undefined
+            ? ''
+            : keyCap(keys.label(spec.keyAction));
+        return {
+          group: 'commands' as const,
+          value: `/${spec.name}`,
+          text: `/${spec.name}`,
+          detail: spec.summary,
+          ...(key === '' ? {} : { meta: key }),
+          ...(recentCommands.includes(spec.name) ? { recent: true } : {}),
+        };
+      });
+  };
+  const paletteModels = new Map<string, TuiPaletteModel>();
+  const modelItem = (model: TuiPaletteModel): PaletteItem => {
+    const value = `${model.provider}/${model.id}`;
+    paletteModels.set(value, model);
+    return {
+      group: 'models',
+      value,
+      text: sanitizeLaneText(value),
+      ...(model.current ? { current: true } : {}),
+      meta: paletteModelMeta(model.contextWindow, model.reasoning),
+    };
+  };
+  const sessionItem = (session: TuiPaletteSession): PaletteItem => {
+    const created =
+      session.createdAt === undefined
+        ? Number.NaN
+        : Date.parse(session.createdAt);
+    return {
+      group: 'sessions',
+      value: session.id,
+      text: sanitizeLaneText(session.id),
+      ...(Number.isNaN(created)
+        ? {}
+        : { meta: formatAge(Date.now() - created) }),
+    };
+  };
+  const fileItems = (): PaletteItem[] =>
+    (seed.listFiles?.() ?? []).slice(0, PALETTE_FILES_MAX).map((path) => ({
+      group: 'files',
+      value: path,
+      text: sanitizeLaneText(path),
+      meta: '@ insert',
+    }));
+  const runPaletteItem = (
+    item: PaletteItem,
+    sources: TuiPaletteSources,
+  ): void => {
+    closePalette();
+    switch (item.group) {
+      case 'commands': {
+        const spec = findSlashCommand(item.value.slice(1));
+        // A command that needs its argument goes to the editor to finish
+        // (`/inspect `); the rest run as if typed.
+        if (spec !== undefined && /<[^>]+>/u.test(spec.usage)) {
+          const head = (spec.usage.split(' ')[0] ?? item.value).replace(
+            /<[^>]+>$/u,
+            '',
+          );
+          const draft = editor.getText();
+          editor.setText(
+            head.endsWith(':') ? `${head}${draft}` : `${head} ${draft}`,
+          );
+        } else {
+          noteRecentCommand(item.value);
+          sources.runCommand(item.value);
+        }
+        break;
+      }
+      case 'models': {
+        const model = paletteModels.get(item.value);
+        if (model !== undefined)
+          sources.switchModel?.(model.provider, model.id);
+        break;
+      }
+      case 'sessions':
+        sources.resumeSession?.(item.value);
+        break;
+      case 'files':
+        editor.insertText(`${mentionFor(item.value)} `);
+        break;
+    }
+    overlayHost?.requestRender?.();
+  };
+  // 80 cells, or 70% of a narrower terminal; read per frame, so a resize
+  // re-sizes it.
+  const paletteOverlayOptions = (): ApprovalOverlayOptions => ({
+    get width(): number {
+      const columns = overlayHost?.terminal?.columns ?? PALETTE_WIDTH;
+      return Math.max(
+        1,
+        Math.min(
+          PALETTE_WIDTH,
+          Math.floor((columns * PALETTE_WIDTH_PERCENT) / 100),
+        ),
+      );
+    },
+    maxHeight: `${PALETTE_HEIGHT_PERCENT}%`,
+    anchor: 'center',
+    visible: (termWidth: number): boolean =>
+      termWidth >= MODEL_PICKER_MIN_WIDTH,
+  });
+  const openPaletteOverlay = (sources: TuiPaletteSources): boolean => {
+    const host = overlayHost;
+    if (host === undefined || !pickerFits()) return false;
+    closeModelPicker();
+    closePalette();
+    let items: PaletteItem[] = commandItems();
+    const view = new PaletteView({
+      items,
+      keyLabel: keyCap(keys.label('app.palette')),
+      maxRows: () =>
+        Math.max(
+          6,
+          Math.floor(
+            ((host.terminal?.rows ?? 30) * PALETTE_HEIGHT_PERCENT) / 100,
+          ),
+        ),
+      onRun: (item) => runPaletteItem(item, sources),
+      onClose: () => closePalette(true),
+    });
+    palette = {
+      view,
+      handle: host.showOverlay(view, paletteOverlayOptions()),
+      sources,
+    };
+    // The rows that take a read arrive after the first frame: a slow model
+    // catalog, session store or file walk never holds the palette up.
+    const add = (more: readonly PaletteItem[]): void => {
+      if (palette?.view !== view || more.length === 0) return;
+      items = [...items, ...more];
+      view.setItems(items);
+      host.requestRender?.();
+    };
+    void sources
+      .models?.()
+      .then((rows) => add(rows.map(modelItem)))
+      .catch(() => {});
+    void sources
+      .sessions?.()
+      .then((rows) => add(rows.map(sessionItem)))
+      .catch(() => {});
+    const files = setTimeout(() => add(fileItems()), 0);
+    files.unref?.();
+    host.requestRender?.();
+    return true;
+  };
   // Issue #459: an approval is a card in the editor slot, not an overlay —
-  // a change only needs a frame.
+  // a change only needs a frame. Issue #460: a palette open over it would
+  // dim the card and hide it from the keys' owner, so it closes.
   const syncOverlay = (): void => {
+    if (approvalSurface.isShowing() && palette !== undefined) {
+      closePalette(true);
+    }
     overlayHost?.requestRender?.();
   };
   const settleApproval = (): void => {
@@ -1464,6 +1714,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   };
   const hintContext = (): HintContext => {
     if (approvalSurface.isShowing()) return 'approval';
+    if (palette !== undefined) return 'palette';
     if (
       modelPicker !== undefined ||
       confirmOverlay !== undefined ||
@@ -1550,6 +1801,23 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // Issue #303: every action below is looked up in the registry, so a
       // rebound key acts and the old key falls through to the editor.
       const action = keys.actionFor('global', keyId);
+      // Issue #460: the palette is modal like the picker: Esc/Ctrl-C close
+      // it, every other key is its own (a stray global key never acts
+      // behind it). A terminal resized below its minimum closes it.
+      if (palette !== undefined && !pickerFits()) closePalette(true);
+      if (palette !== undefined) {
+        if (
+          action === 'app.cancel' ||
+          action === 'app.exit' ||
+          action === 'app.interrupt'
+        ) {
+          closePalette(true);
+        } else {
+          palette.view.handleInput(data);
+        }
+        overlayHost?.requestRender?.();
+        return { quit: false, consumed: true, cancel: false };
+      }
       if (
         mode !== 'closed' &&
         (action === 'panel.next' || action === 'panel.previous')
@@ -2029,6 +2297,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     },
     openPicker: (options: TuiPickerOptions): boolean =>
       openPickerOverlay(options),
+    openPalette: (sources: TuiPaletteSources): boolean =>
+      openPaletteOverlay(sources),
+    isPaletteOpen: (): boolean => palette !== undefined,
     openConfirm: (options: TuiConfirmOptions): boolean => {
       if (overlayHost === undefined) return false;
       closeConfirm('cancel');
@@ -2179,6 +2450,12 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     panelJumpFile: (delta: number): boolean => panelJumpFile(delta),
     attachApprovalOverlay: (host: ApprovalOverlayTui): void => {
       overlayHost = host;
+      // Issue #460: while the palette or a picker is open the screen behind
+      // it is dimmed (03-A); the key-hint row at the bottom stays lit.
+      host.baseFilter = (lines: string[]): string[] =>
+        palette !== undefined || modelPicker !== undefined
+          ? dimFrame(tuiTheme().ui, lines)
+          : lines;
       // Issue #96: the live screen's render request, so an ask that arrives
       // from the lane's async turn paints a frame immediately. Optional on
       // the seam (see ApprovalOverlayTui) — a host that lacks it still gets

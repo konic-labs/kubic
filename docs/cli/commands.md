@@ -1355,8 +1355,31 @@ a large workspace pays it (and the screen pauses) after every turn that used
   Shift+Enter, `@ file` when file mentions are available). While a turn
   runs: `esc interrupt  ⏎ queue  alt+⏎ steer  ^X expand output  ^P palette
   … ^C ^C quit` (no queue or steer on the orchestrator lane). With an
-  approval pending: its allow and deny keys. With a picker or dialog open:
-  `↑↓ move  ⏎ select  esc cancel`.
+  approval pending: its allow and deny keys. With the palette open: `↑↓ move
+  ⏎ run  tab next group  → details … esc close`. With a picker or dialog
+  open: `↑↓ move  ⏎ select  esc cancel`.
+- **The palette** (`Ctrl-P`, issue #460): one fuzzy search over four groups,
+  in this order — **COMMANDS** (the slash-command registry: name, summary,
+  and the key the bindings give it now), **MODELS** (the usable catalogue,
+  `provider/id` with its context window and whether it thinks, the live one
+  marked `● … current`), **SESSIONS** (this project's other sessions, with
+  their age) and **FILES** (the project's files, at most 2,000). A group with
+  nothing matching is hidden, and each shows at most six rows until `tab`
+  focuses it. Every word of the query must match a row's name in order, or
+  appear in a command's summary (ranked below a name match); the matched
+  letters are drawn in the accent colour, and the best match of any group is
+  selected. With nothing typed it shows the commands this session ran (the
+  first six commands before any) and the live model. `⏎` runs the row: a
+  command runs exactly as if it were typed (one that needs its argument —
+  `/inspect <worker>` — is put in the editor to finish), a model switches
+  like `/model`, a session resumes like `/resume`, a file inserts
+  `@<path> ` at the cursor. `→` shows the selected row in full in a footer
+  line, `esc` closes. The palette floats over the screen, which dims (no
+  colour, every row in the faint text colour) while it or a picker is open;
+  the key-hint row stays lit with the palette's own keys. Models and
+  sessions arrive after the first frame, so a slow catalogue never holds the
+  palette up. It needs 60 columns; it is 80 cells wide, or 70% of a narrower
+  terminal, and at most 70% of the rows tall.
 
 Colour follows the Konic palette on truecolor terminals, falls back to
 256/16 colours, and is off for `NO_COLOR`, `TERM=dumb`, or a non-TTY
@@ -1389,9 +1412,9 @@ the built-in palette; see `[ui] theme` under
 | `/diff` | Open the diff panel — the same panel `Ctrl-O` toggles. |
 | `/undo` | Restore the session journal's changes (the same plan/apply path as `kubic undo`, without `--step`): the footer reports `undo: N restored, M skipped` and warnings land in the transcript. Refused while a turn runs (`undo: finish the current turn before switching`) — it rewrites the workspace the turn is working in. |
 | `/image <path>` | Attach one image (`png`, `jpeg`, `webp`, `gif`, ≤ 5 MB — verified by magic bytes) to the next submitted prompt (§16.8). The footer names the file and its size, and the prompt renders it (the real image on kitty/iTerm2 terminals, a `[image: <name> <size>]` row otherwise; a resumed session's committed entry has no file name and shows the MIME type instead). Enter on an empty draft sends the attachment alone. Refused in the footer when the path is not a regular file, the file is missing or unsupported, it is over the cap, or the live model takes no image input — nothing is sent. A pasted inline image (iTerm2 `OSC 1337`, reassembled across reads) attaches the same way. |
-| `/quit` | Leave the TUI (same as `Esc`). |
+| `/quit` | Leave the TUI (same as `Ctrl-D` on an empty draft). |
 | `/foo` (unknown) | **Refused locally** — `unknown command '/foo' — /help lists the commands` on the footer, with the draft kept in the editor. A slash command is never sent to the model; `//text` is the escape hatch for a prompt that starts with a slash. |
-| `Ctrl-P` | Open the **command palette**: the registry's commands in a picker (`Enter` runs the selected one exactly as if it were typed, `Esc`/`Ctrl-C` cancels). |
+| `Ctrl-P` | Open the **palette** (issue #460): fuzzy search over commands, models, sessions and files — `↑↓` move, `⏎` runs the row, `tab`/`Shift+Tab` focus the next/previous group, `→` details, `Esc`/`Ctrl-C` close. See *The palette* above. |
 | `Alt+A` | **Toggle full access** for this session (§41.4): enabling opens a confirmation dialog naming the consequence (`Ctrl-S` confirms, `Esc` cancels — a bare printable letter never does); disabling takes effect immediately. Either way `posture.json` is written, one `posture:full-access` / `posture:approvals` row is appended, and the status-bar indicator moves in the same frame. While an **approval is pending** the toggle refuses (`approvals: answer the pending request first`): the confirmation is a modal of its own and the approval owns the keys until it is answered. `kubic tui --dangerously-skip-approvals` is the boot-time equivalent. |
 | `/approvals [on\|off]` | The same posture, by direction: `/approvals` alone reports the live posture. `on` opens the confirmation — and in a session that is **already** on it only reports (`approvals: full access already ON for this session`), never flipping the other way or opening a dialog. `off` disables immediately; in a session that is already off it only reports (`approvals: enforced — nothing to change`) and writes no second row for a change that did not happen. Any other argument is refused by name. |
 | `Ctrl-J`, `Shift+Enter`, `\` then `Enter` | Insert a newline (multi-line entry). |

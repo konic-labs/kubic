@@ -275,6 +275,10 @@ export interface ApprovalOverlayTui {
     readonly rows: number;
     readonly columns: number;
   };
+  // Issue #460: a filter over the base frame before the overlays are
+  // composited (the dimmed background behind the palette); the live screen
+  // honours it, a fake host simply keeps it.
+  baseFilter?: ((lines: string[]) => string[]) | undefined;
 }
 
 // memoOnce decisions (§41): first answer wins, persisted through the

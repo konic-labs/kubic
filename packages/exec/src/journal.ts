@@ -1127,7 +1127,10 @@ export class FileJournalStore {
       for (const info of bridge.listDir(this.blobsDir)) {
         if (info.isDirectory || info.isSymbolicLink) continue;
         if (info.name.endsWith('.tmp')) continue;
-        if (info.mtimeMs > sweepStartedAt) continue;
+        // Whole milliseconds on both sides: `Date.now()` is truncated and
+        // `mtimeMs` is not, so a blob written earlier in the pass's own
+        // millisecond must not read as newer than the pass.
+        if (Math.floor(info.mtimeMs) > sweepStartedAt) continue;
         if (referenced.has(info.name)) continue;
         try {
           bridge.remove(join(this.blobsDir, info.name), false, true);

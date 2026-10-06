@@ -237,6 +237,27 @@ describe('journal mutation lock (issue #337)', () => {
     expect(existsSync(fresh)).toBe(true);
   });
 
+  it('sweeps an orphan written earlier in the millisecond the pass started', () => {
+    // `Date.now()` is whole milliseconds and a blob's `mtimeMs` is not: an
+    // orphan written in the pass's own millisecond read as newer than the
+    // pass and survived it (a flake on a fast CI runner).
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir, { durable: false });
+    store.append(entry({ path: 'a.txt', after: 'a\n' }));
+    store.append(entry({ path: 'b.txt', after: 'b\n' }));
+    const blobs = join(dir, 'blobs');
+    const passStart = Date.now();
+    const within = (passStart + 0.5) / 1000;
+    utimesSync(join(blobs, sha256Hex('a\n')), within, within);
+    vi.useFakeTimers({ toFake: ['Date'], now: passStart });
+    try {
+      store.enforceRetention({ maxBytes: 1 });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(readdirSync(blobs)).toEqual([sha256Hex('b\n')]);
+  });
+
   it('never removes an in-flight `*.pid.tmp` blob', () => {
     const dir = tmpRoot();
     const store = new FileJournalStore(dir, { durable: false });

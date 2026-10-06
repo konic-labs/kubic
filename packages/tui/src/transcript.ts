@@ -441,14 +441,16 @@ class TranscriptDocument implements Component {
   // The cell's finished rows (indent, prefix, width clamp, styling), reused
   // while text, width and theme are unchanged. `undefined` means "render it
   // and store the result".
+  // `stamp` is everything else the rows were drawn from (a prompt's time).
   private cachedLines(
     cell: TranscriptEntry,
     width: number,
     theme: TuiTheme,
+    stamp = cell.markdown,
   ): string[] | undefined {
     const cached = this.lineCache.get(`${themeKey(theme)}\u0000${cell.id}`);
     if (cached === undefined) return undefined;
-    if (cached.text !== cell.markdown || cached.width !== width) {
+    if (cached.text !== stamp || cached.width !== width) {
       return undefined;
     }
     return cached.lines;
@@ -459,9 +461,10 @@ class TranscriptDocument implements Component {
     width: number,
     theme: TuiTheme,
     lines: string[],
+    stamp = cell.markdown,
   ): void {
     this.lineCache.set(`${themeKey(theme)}\u0000${cell.id}`, {
-      text: cell.markdown,
+      text: stamp,
       width,
       lines,
     });
@@ -500,9 +503,12 @@ class TranscriptDocument implements Component {
       const before = out.length;
       const info = this.renderCell(cell, out, w, theme, outputs, called, gap);
       // Issue #468: no style a cell opens (a wrapped code row's colour, say)
-      // bleeds past the row it was drawn on.
-      for (let row = before; row < out.length; row += 1) {
-        out[row] = closeOpenStyles(out[row] ?? '');
+      // bleeds past the row it was drawn on. Cached rows were closed when
+      // they were cached, so a steady frame never scans them again.
+      if (info?.closed !== true) {
+        for (let row = before; row < out.length; row += 1) {
+          out[row] = closeOpenStyles(out[row] ?? '');
+        }
       }
       if (info === undefined || out.length === before) continue;
       // The gap row (if one was pushed) belongs to no block.
@@ -577,6 +583,8 @@ class TranscriptDocument implements Component {
         readonly kind: TranscriptBlockKind;
         readonly copy: string;
         readonly meta?: string;
+        /** Every row it pushed is already closed (#468): built that way. */
+        readonly closed?: boolean;
       }
     | undefined {
     const expanded =
@@ -584,18 +592,10 @@ class TranscriptDocument implements Component {
     switch (cell.kind) {
       case 'prompt': {
         gap();
-        this.renderPrompt(
-          out,
-          cell.markdown,
-          w,
-          theme,
-          cell.images,
-          cell.id,
-          cell.timestamp,
-        );
         return {
           kind: 'prompt',
           copy: stripPrefix(cell.markdown, `${PROMPT_MARK} `),
+          closed: this.pushPrompt(out, cell, w, theme),
         };
       }
       case 'tool': {
@@ -655,25 +655,17 @@ class TranscriptDocument implements Component {
       default: {
         if (cell.markdown.startsWith(`${PROMPT_MARK} `)) {
           gap();
-          this.renderPrompt(
-            out,
-            cell.markdown,
-            w,
-            theme,
-            cell.images,
-            cell.id,
-            cell.timestamp,
-          );
           return {
             kind: 'prompt',
             copy: stripPrefix(cell.markdown, `${PROMPT_MARK} `),
+            closed: this.pushPrompt(out, cell, w, theme),
           };
         }
         gap();
         const cached = this.cachedLines(cell, w, theme);
         if (cached !== undefined) {
           out.push(...cached);
-          return { kind: 'prose', copy: cell.markdown };
+          return { kind: 'prose', copy: cell.markdown, closed: true };
         }
         const body = this.markdown(cell, theme).render(Math.max(1, w - 4));
         const lines: string[] = [];
@@ -683,15 +675,19 @@ class TranscriptDocument implements Component {
           // row's length is its text (the alt-screen clears the rest).
           const line = raw.replace(/ +$/, '');
           if (first && line.trim() !== '') {
-            lines.push(fit(`  ${theme.ui.fg('fg1')(PROSE)} ${line}`, w));
+            lines.push(
+              closeOpenStyles(fit(`  ${theme.ui.fg('fg1')(PROSE)} ${line}`, w)),
+            );
             first = false;
           } else {
-            lines.push(fit(line === '' ? '' : `    ${line}`, w));
+            lines.push(
+              closeOpenStyles(fit(line === '' ? '' : `    ${line}`, w)),
+            );
           }
         }
         this.storeLines(cell, w, theme, lines);
         out.push(...lines);
-        return { kind: 'prose', copy: cell.markdown };
+        return { kind: 'prose', copy: cell.markdown, closed: true };
       }
     }
   }
@@ -724,6 +720,29 @@ class TranscriptDocument implements Component {
   // Issue #455 (01-B): the operator's own turn — a full-width bg2 block
   // with the accent edge, the text fg0 bold, and `you · HH:MM:SS` on the
   // right when the entry carries its time.
+  // Issue #298: a committed prompt's block is cached like prose — drawn once
+  // per text, stamp, width and theme, its rows closed (#468) when cached —
+  // so a steady frame does not redraw every prompt of a long session. True
+  // when every row it pushed came closed (no attachment rows).
+  private pushPrompt(
+    out: string[],
+    cell: TranscriptEntry,
+    width: number,
+    theme: TuiTheme,
+  ): boolean {
+    const stamp = `${cell.markdown}\u0000${cell.timestamp ?? ''}`;
+    let rows = this.cachedLines(cell, width, theme, stamp);
+    if (rows === undefined) {
+      rows = this.promptRows(cell.markdown, width, theme, cell.timestamp).map(
+        closeOpenStyles,
+      );
+      this.storeLines(cell, width, theme, rows, stamp);
+    }
+    out.push(...rows);
+    this.renderImages(out, cell.images, width, theme, cell.id);
+    return cell.images === undefined || cell.images.length === 0;
+  }
+
   private renderPrompt(
     out: string[],
     markdown: string,
@@ -733,6 +752,16 @@ class TranscriptDocument implements Component {
     cellId?: string,
     timestamp?: number,
   ): void {
+    out.push(...this.promptRows(markdown, width, theme, timestamp));
+    this.renderImages(out, images, width, theme, cellId ?? '');
+  }
+
+  private promptRows(
+    markdown: string,
+    width: number,
+    theme: TuiTheme,
+    timestamp?: number,
+  ): string[] {
     const ui = theme.ui;
     const text = stripPrefix(markdown, `${PROMPT_MARK} `);
     const stamp =
@@ -744,15 +773,14 @@ class TranscriptDocument implements Component {
       width - 3 - (stamp === '' ? 1 : visibleWidth(stamp) + 2),
     );
     const lines = text === '' ? [''] : wrapStyled(text, room);
-    lines.forEach((line, index) => {
+    return lines.map((line, index) => {
       const left = `${edge}${body(line)}`;
       const row =
         index === 0 && stamp !== ''
           ? leftRight(left, `${ui.fg('fg2')(stamp)} `, width)
           : left;
-      out.push(fillLine(ui, row, width, 'bg2'));
+      return fillLine(ui, row, width, 'bg2');
     });
-    this.renderImages(out, images, width, theme, cellId ?? '');
   }
 
   // Issue #457 (01-F): reasoning collapses to its first sentence; ^X shows

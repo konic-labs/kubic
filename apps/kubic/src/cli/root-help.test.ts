@@ -1,0 +1,113 @@
+// The grouped root help and styled subcommand help (issue #446; 06-A).
+import { describe, expect, it } from 'vitest';
+import { createCliTheme } from '../../../../packages/core/src/cli/theme.js';
+import { registerSoloCommands } from '../commands/solo.js';
+import type { CliConfigResult } from '../config-runtime.js';
+import { COMMAND_NAMES } from '../dispatch.js';
+import type { CommandContext, DispatchRunners } from './context.js';
+import { createKubicProgram, runKubicProgram } from './program.js';
+import { COMMAND_GROUPS, ROOT_HELP, renderRootHelp } from './root-help.js';
+
+const ESC = '\u001b';
+
+describe('the root help (issue #446)', () => {
+  it('lists every command in exactly one group', () => {
+    const listed = COMMAND_GROUPS.flatMap((group) => group.commands);
+    expect(new Set(listed).size).toBe(listed.length);
+    expect([...listed].sort()).toEqual([...COMMAND_NAMES].sort());
+    for (const name of COMMAND_NAMES) {
+      expect(ROOT_HELP).toMatch(new RegExp(`(^| )${name}( |$)`, 'm'));
+    }
+  });
+
+  it('is the grouped plain text when piped', () => {
+    expect(ROOT_HELP.split('\n')).toEqual([
+      '■ kubic — terminal coding agent by Konic',
+      '',
+      'USAGE      kubic                       open the TUI (on a terminal)',
+      '           kubic "<prompt>"            run one prompt, like kubic run -p',
+      '           kubic <command> [options]',
+      '',
+      'SESSION    run · tui · resume · attach · sessions      work with the agent',
+      'CHANGES    diff · undo · log · status · commit · git   review and revert what it did',
+      'DELEGATE   orchestrate · workers · clean               manager + workers in worktrees',
+      'SETUP      models · config · trust · doctor · skills   providers, project, health',
+      'ANALYSIS   cost · eval · benchmark · replay · export · perf · policy · audit',
+      '',
+      'EXAMPLES   kubic "fix the failing test"',
+      '           kubic run -p "add tests for titleCase" --json',
+      '           kubic orchestrate -p "split cart.js into modules"',
+      '',
+      'kubic <command> --help for options · docs/cli/README.md',
+    ]);
+    expect(ROOT_HELP).not.toContain(ESC);
+  });
+
+  it('is coloured on a terminal, with the same visible text', () => {
+    const theme = createCliTheme('truecolor');
+    const rich = renderRootHelp(theme);
+    expect(rich).toContain(
+      theme.ui.style({ fg: 'accent', bold: true })('■ kubic'),
+    );
+    expect(rich).toContain(
+      theme.ui.style({ fg: 'fg2', bold: true })('SESSION    '),
+    );
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping SGR is the point
+    expect(rich.replace(/\u001b\[[0-9;]*m/g, '')).toBe(ROOT_HELP);
+  });
+});
+
+function contextFor(): CommandContext {
+  const fallback = () => 0;
+  const runners = new Proxy(
+    {},
+    { get: () => fallback },
+  ) as unknown as DispatchRunners;
+  return {
+    config: {} as CliConfigResult,
+    runners,
+    rest: [],
+    out: () => {},
+    err: () => {},
+    setExitCode: () => {},
+  };
+}
+
+async function subcommandHelp(level: 'none' | 'truecolor'): Promise<string> {
+  const out: string[] = [];
+  const channels = {
+    out: (line: string) => out.push(line),
+    err: (line: string) => out.push(line),
+  };
+  const program = createKubicProgram(channels, {
+    versionLine: 'kubic 1.2.3 (license: MIT)',
+    rootHelp: ROOT_HELP,
+    helpTheme: createCliTheme(level),
+  });
+  registerSoloCommands(program, contextFor());
+  await runKubicProgram(program, ['doctor', '--help'], channels, {
+    code: () => 0,
+  });
+  return out.join('\n');
+}
+
+describe('subcommand help styling (issue #446)', () => {
+  it('stays plain commander text without a coloured theme', async () => {
+    const plain = await subcommandHelp('none');
+    expect(plain).toContain('Usage: kubic doctor');
+    expect(plain).not.toContain(ESC);
+  });
+
+  it('styles titles and terms on a coloured terminal', async () => {
+    const theme = createCliTheme('truecolor');
+    const rich = await subcommandHelp('truecolor');
+    expect(rich).toContain(theme.ui.style({ fg: 'fg2', bold: true })('Usage:'));
+    expect(rich).toContain(
+      theme.ui.style({ fg: 'fg2', bold: true })('Options:'),
+    );
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping SGR is the point
+    expect(rich.replace(/\u001b\[[0-9;]*m/g, '')).toBe(
+      await subcommandHelp('none'),
+    );
+  });
+});

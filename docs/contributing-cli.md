@@ -84,7 +84,7 @@ new literals.
   the program prints `error: <message>` on stderr and exits with the code.
 - Anything else thrown reaches the root catch-all: one `error: <message>`
   line, exit 1, the stack only with `KUBIC_DEBUG=1`.
-- An unknown top-level command or root option prints the root usage line to
+- An unknown top-level command or root option prints the root help to
   stdout and exits 2 (a usage error, issue #372); a bare `kubic` off a TTY
   prints the identical line and exits 1 (POSIX usage-on-no-args); a bare
   `kubic` on a TTY opens the TUI.

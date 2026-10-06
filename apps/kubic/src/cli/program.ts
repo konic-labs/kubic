@@ -30,6 +30,7 @@ import {
   CliUsageError,
   exitCodeForParseError,
 } from '../../../../packages/core/src/cli/exit-codes.js';
+import type { CliTheme } from '../../../../packages/core/src/cli/theme.js';
 import { shellQuote } from '../../../../packages/host/src/run-cli.js';
 import type { KubicProgram } from './context.js';
 
@@ -41,14 +42,40 @@ export interface ProgramIo {
 export interface ProgramOptions {
   // The full `kubic --version` line (core/license.ts formatVersionLine).
   readonly versionLine: string;
-  // The root help text (`kubic --help`), pinned by the binary contract.
+  // The root help text (`kubic --help`); its plain form is pinned by the
+  // binary contract.
   readonly rootHelp: string;
+  // Issue #446: the stdout theme. When it is coloured, subcommand help is
+  // styled (titles, terms) through commander's style hooks; absent or plain
+  // keeps commander's text byte-for-byte.
+  readonly helpTheme?: CliTheme;
 }
 
 // commander hands whole chunks ending in '\n'; the line channels add their
 // own newline (console.log in production).
 function toLines(write: (line: string) => void): (chunk: string) => void {
   return (chunk) => write(chunk.endsWith('\n') ? chunk.slice(0, -1) : chunk);
+}
+
+// Commander's help style hooks over the shared tokens (issue #446). Titles
+// (`Usage:`, `Options:`) muted and bold, the command line bold, option and
+// argument terms secondary; descriptions keep the default text colour.
+function helpStyles(theme: CliTheme | undefined): {
+  styleTitle?: (text: string) => string;
+  styleCommandText?: (text: string) => string;
+  styleOptionTerm?: (text: string) => string;
+  styleArgumentTerm?: (text: string) => string;
+  styleSubcommandTerm?: (text: string) => string;
+} {
+  if (theme === undefined || !theme.enabled) return {};
+  const ui = theme.ui;
+  return {
+    styleTitle: ui.style({ fg: 'fg2', bold: true }),
+    styleCommandText: ui.style({ fg: 'fg0', bold: true }),
+    styleOptionTerm: ui.fg('fg1'),
+    styleArgumentTerm: ui.fg('fg1'),
+    styleSubcommandTerm: ui.fg('fg1'),
+  };
 }
 
 export function createKubicProgram(
@@ -67,14 +94,19 @@ export function createKubicProgram(
       writeOut: toLines(io.out),
       writeErr: toLines(io.err),
       outputError: (message, write) => write(message),
+      // Help on stdout keeps its styles only when the stdout theme is
+      // coloured; help written to stderr (a usage error) is always plain.
+      getOutHasColors: () => options.helpTheme?.enabled === true,
+      getErrHasColors: () => false,
     })
     .configureHelp({
-      // The root answers with the pinned usage line; subcommands keep
-      // commander's generated help.
+      // The root answers with the grouped root help; subcommands keep
+      // commander's generated help, styled on a coloured terminal.
       formatHelp: (cmd, helper) =>
         cmd.parent === null
           ? `${options.rootHelp}\n`
           : Help.prototype.formatHelp.call(helper, cmd, helper),
+      ...helpStyles(options.helpTheme),
     });
   return program;
 }

@@ -16,6 +16,7 @@ import {
   EXIT_USAGE,
 } from '../../../packages/core/src/cli/exit-codes.js';
 import { formatJson } from '../../../packages/core/src/cli/output.js';
+import type { CliTheme } from '../../../packages/core/src/cli/theme.js';
 import { formatVersionLine } from '../../../packages/core/src/license.js';
 import { refusedOrchestrateEnvelope } from '../../../packages/host/src/orchestrate-cli.js';
 import {
@@ -39,6 +40,7 @@ import type {
   DispatchRunners,
 } from './cli/context.js';
 import { createKubicProgram, runKubicProgram } from './cli/program.js';
+import { COMMAND_GROUPS, ROOT_HELP, renderRootHelp } from './cli/root-help.js';
 import { registerAnalysisCommands } from './commands/analysis.js';
 import { registerJournalCommands } from './commands/journal.js';
 import { registerOrchestratorCommands } from './commands/orchestrator.js';
@@ -49,23 +51,19 @@ import {
   runtimeExcludeEntriesFor,
 } from './config-runtime.js';
 
-// The root dispatcher's usage line (issue #128): one string, printed by
-// `--help`/`-h` (exit 0 — a help request is a successful invocation), by
-// the bare invocation or a bare TUI flag off a TTY (exit 1 — usage-on-no-args
-// is the deliberate POSIX posture), and by an unknown command or root option
-// (exit 2 — a usage error, issue #372). Every path is pinned by
-// scripts/binary-contract.mjs; they must never drift apart.
-export const ROOT_USAGE =
-  'usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | skills | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
+// The root help (issues #128, #446): one text, printed by `--help`/`-h`
+// (exit 0 — a help request is a successful invocation), by the bare
+// invocation or a bare TUI flag off a TTY (exit 1 — usage-on-no-args is the
+// deliberate POSIX posture), and by an unknown command or root option (exit
+// 2 — a usage error, issue #372). The plain text is pinned by
+// scripts/binary-contract.mjs; on a TTY the same text is coloured.
+export { ROOT_HELP };
 
-// The supported command names, read off the usage line so the routing
-// table and the listing can never drift apart (dispatch.test.ts also pins
-// that the registered commander commands are exactly these).
+// The supported command names, read off the help's command groups so the
+// routing table and the listing can never drift apart (program.test.ts also
+// pins that the registered commander commands are exactly these).
 export const COMMAND_NAMES: ReadonlySet<string> = new Set(
-  ROOT_USAGE.slice(
-    ROOT_USAGE.indexOf('<') + 1,
-    ROOT_USAGE.lastIndexOf('>'),
-  ).split(' | '),
+  COMMAND_GROUPS.flatMap((group) => group.commands),
 );
 
 // The modes that create `.kubic/` runtime state (issue #91).
@@ -250,6 +248,9 @@ export interface DispatchDeps {
   // never dirties the tree the run merges into.
   readonly ensureRuntimeExclude: (entries: readonly string[]) => void;
   readonly runners: DispatchRunners;
+  // The stdout theme for the help (issue #446): coloured on a TTY, the
+  // identity otherwise. Absent means plain (the fakes in dispatch.test.ts).
+  readonly helpTheme?: () => CliTheme;
   // §78/§80 "interactive by default": true when stdin AND stdout are a TTY.
   // Only consulted for the bare invocation; absent means non-interactive.
   readonly isInteractive?: () => boolean;
@@ -411,6 +412,9 @@ export async function dispatchCommand(
   // #372), so scripts can tell it from a task failure. Both print the one
   // usage line on stdout rather than commander's stderr message.
   const crashProbe = process.env.__KUBIC_CONTRACT_CRASH_PROBE === '1';
+  const helpTheme = deps.helpTheme?.();
+  const rootHelp =
+    helpTheme === undefined ? ROOT_HELP : renderRootHelp(helpTheme);
   const known =
     command !== undefined &&
     (ROOT_OPTIONS.has(command) ||
@@ -423,7 +427,7 @@ export async function dispatchCommand(
       command === BARE_ORCHESTRATOR_FLAG ||
       command === BARE_MODEL_FLAG ||
       command.startsWith(`${BARE_MODEL_FLAG}=`);
-    deps.out(ROOT_USAGE);
+    deps.out(rootHelp);
     // Issue #268 (L-D7): a single-word token stays an unknown command
     // (#372) — the hint names the prompt form for exactly that word. The
     // internal crash probe stays hint-free (it is not a user surface).
@@ -443,7 +447,8 @@ export async function dispatchCommand(
   const io = { out: deps.out, err: deps.err ?? deps.out };
   const program = createKubicProgram(io, {
     versionLine: formatVersionLine(deps.version()),
-    rootHelp: ROOT_USAGE,
+    rootHelp,
+    ...(helpTheme === undefined ? {} : { helpTheme }),
   });
   let exitCode = 0;
   const ctx: CommandContext = {
@@ -461,7 +466,7 @@ export async function dispatchCommand(
     // Deliberate failure seam for the shipped-artifact contract (issue
     // #128): throws a plain Error so the top-level catch-all's `error:
     // <message>` / KUBIC_DEBUG behavior is asserted end to end against the
-    // real binary. Internal, hidden, and absent from ROOT_USAGE.
+    // real binary. Internal, hidden, and absent from the root help.
     program
       .command(CRASH_PROBE, { hidden: true })
       .helpOption(false)

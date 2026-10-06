@@ -26,19 +26,46 @@ following `--flag` or the `--` terminator as its value: `kubic diff
 (`option '…' argument missing`, exit 2, nothing runs). A value that really
 starts with `--` goes in the attached form (`--session=…`, `-p--…`).
 
-The **root dispatcher** follows the same convention (issue #128):
-`kubic --help` / `kubic -h` prints the top-level command listing — the
-full `usage` line below — and exits 0. A **bare `kubic`** (no command) on
+The **root dispatcher** follows the same convention (issues #128, #446):
+`kubic --help` / `kubic -h` prints the grouped root help below and exits 0.
+On an interactive colour terminal the same text is coloured (brand, muted
+labels, command names); piped, redirected or under `NO_COLOR` it is plain. A **bare `kubic`** (no command) on
 an interactive terminal (stdin and stdout both a TTY) opens the TUI, exactly
 as `kubic tui`. Off a TTY (a pipe, CI, a script) it prints the *identical*
 listing and exits 1: usage-on-no-args is the deliberate POSIX posture, so
 only the exit code differs between the two paths.
 `kubic --orchestrator` (issue #327) is the same bare form with the
 orchestrator opt-in: on a TTY it is exactly `kubic tui --orchestrator`.
-Off a TTY, like every other bare flag, it prints the usage line and
+Off a TTY, like every other bare flag, it prints the root help and
 exits 1.
-`scripts/binary-contract.mjs` pins both exits and the line itself, so the
-dispatcher and its help cannot drift apart. `kubic --version` exits 0.
+`scripts/binary-contract.mjs` pins both exits and the plain text itself, so
+the dispatcher and its help cannot drift apart. The command groups are also
+the dispatcher's routing table (`apps/kubic/src/cli/root-help.ts`), so a
+command cannot ship without a place in the help.
+
+```text
+■ kubic — terminal coding agent by Konic
+
+USAGE      kubic                       open the TUI (on a terminal)
+           kubic "<prompt>"            run one prompt, like kubic run -p
+           kubic <command> [options]
+
+SESSION    run · tui · resume · attach · sessions      work with the agent
+CHANGES    diff · undo · log · status · commit · git   review and revert what it did
+DELEGATE   orchestrate · workers · clean               manager + workers in worktrees
+SETUP      models · config · trust · doctor · skills   providers, project, health
+ANALYSIS   cost · eval · benchmark · replay · export · perf · policy · audit
+
+EXAMPLES   kubic "fix the failing test"
+           kubic run -p "add tests for titleCase" --json
+           kubic orchestrate -p "split cart.js into modules"
+
+kubic <command> --help for options · docs/cli/README.md
+```
+
+A command's own help keeps commander's layout (`Usage: kubic <command>
+[options]`, then `Arguments:` and `Options:`); on a colour terminal the
+titles and option terms are styled, and the text is otherwise unchanged. `kubic --version` exits 0.
 
 **Every command's own `--help`/`-h` is side-effect free** (issue #245):
 commander answers it before the action runs, so `kubic run|tui|orchestrate
@@ -48,12 +75,11 @@ broken install whose extension bundle would fail the boot.
 
 Build first (`npm run build`), then invoke `./bin/kubic.js` (or
 `npm run kubic -- …`); anything else dispatches below; an unknown command
-prints
-`usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | skills | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>`
-and exits **2** (a usage error, issue #372); a word-shaped unknown token
-also prints `hint: to run it as a prompt: kubic run -p '<word>'`, while the
-bare invocation keeps the POSIX usage-on-no-args posture: the identical
-line, exit 1.
+prints the root help and exits **2** (a usage error, issue #372); a
+word-shaped unknown token also prints
+`hint: to run it as a prompt: kubic run -p '<word>'`, while the bare
+invocation keeps the POSIX usage-on-no-args posture: the identical text,
+exit 1.
 
 **The headline prompt form** (issue #268, §17): a single argv token that
 contains whitespace is a prompt — `kubic "fix the authentication bug"` is
@@ -1109,7 +1135,7 @@ the same posture file and audit rows — the installed policy reads the change
 live, so the very next challenged call follows it, and the indicator moves in
 the same frame. The status bar shows
 `! warning: approvals OFF (full-access)` from the first frame. Off a
-terminal the bare form prints the usage line and exits 1, like bare
+terminal the bare form prints the root help and exits 1, like bare
 `kubic`. The flag is never written to config.
 
 **The posture is decided at boot (§41.4, issue #325).** `kubic run` and

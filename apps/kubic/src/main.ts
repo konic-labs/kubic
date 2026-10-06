@@ -7,6 +7,7 @@
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promptConfirm } from '../../../packages/core/src/cli/prompt.js';
+import { themeFor } from '../../../packages/core/src/cli/theme.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import { ExtensionStartupError } from '../../../packages/extensions/src/startup.js';
@@ -64,6 +65,8 @@ try {
     ensureRuntimeExclude: (entries) =>
       ensureRuntimeExcludeRules({ cwd: process.cwd(), entries }),
     isInteractive: interactive,
+    // Issue #446: the root and subcommand help are coloured on a TTY.
+    helpTheme: () => themeFor(process.stdout),
     // Issue #228 (§35.1): the interactive trust question for `kubic tui` /
     // bare `kubic`. The resolver persists the answer under `~/.kubic/` and
     // hands it back to this invocation's config load; a non-TTY caller keeps

@@ -33,7 +33,7 @@ import {
   type DispatchDeps,
   type DispatchRunners,
   dispatchCommand,
-  ROOT_USAGE,
+  ROOT_HELP,
 } from './dispatch.js';
 import { createProdRunners } from './prod-runners.js';
 
@@ -303,7 +303,7 @@ describe('dispatch routing (issue #135)', () => {
       2,
     );
     expect(h.lines).toEqual([
-      ROOT_USAGE,
+      ROOT_HELP,
       "hint: to run it as a prompt: kubic run -p 'definitely-not-a-command'",
     ]);
     expect(h.calls).toEqual([]);
@@ -334,7 +334,7 @@ describe('dispatch routing (issue #135)', () => {
     const h = harness();
     expect(await dispatchCommand('nosuch', [], h.deps)).toBe(2);
     expect(h.lines).toEqual([
-      ROOT_USAGE,
+      ROOT_HELP,
       "hint: to run it as a prompt: kubic run -p 'nosuch'",
     ]);
     expect(h.calls).toEqual([]);
@@ -345,7 +345,7 @@ describe('dispatch routing (issue #135)', () => {
     // hint would name a command that exits 2 again.
     const h = harness();
     expect(await dispatchCommand('', [], h.deps)).toBe(2);
-    expect(h.lines).toEqual([ROOT_USAGE]);
+    expect(h.lines).toEqual([ROOT_HELP]);
     expect(h.calls).toEqual([]);
   });
 });
@@ -368,7 +368,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     for (const flag of ['--help', '-h']) {
       const h = harness();
       expect(await dispatchCommand(flag, [], h.deps), flag).toBe(0);
-      expect(h.lines, flag).toEqual([ROOT_USAGE]);
+      expect(h.lines, flag).toEqual([ROOT_HELP]);
       expect(h.calls, flag).toEqual([]);
     }
   });
@@ -376,7 +376,7 @@ describe('front door (issue #128 behavior, moved)', () => {
   it('the bare invocation prints the usage and exits 1 (POSIX posture)', async () => {
     const h = harness();
     expect(await dispatchCommand(undefined, [], h.deps)).toBe(1);
-    expect(h.lines).toEqual([ROOT_USAGE]);
+    expect(h.lines).toEqual([ROOT_HELP]);
     expect(h.calls).toEqual([]);
   });
 
@@ -408,7 +408,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(
       await dispatchCommand('--dangerously-skip-approvals', [], deps),
     ).toBe(1);
-    expect(h.lines).toEqual([ROOT_USAGE]);
+    expect(h.lines).toEqual([ROOT_HELP]);
     expect(h.calls).toEqual([]);
   });
 
@@ -431,7 +431,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     const h = harness();
     const deps = { ...h.deps, isInteractive: () => false };
     expect(await dispatchCommand('--orchestrator', [], deps)).toBe(1);
-    expect(h.lines).toEqual([ROOT_USAGE]);
+    expect(h.lines).toEqual([ROOT_HELP]);
     expect(h.calls).toEqual([]);
   });
 
@@ -458,7 +458,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     const h = harness();
     const deps = { ...h.deps, isInteractive: () => false };
     expect(await dispatchCommand(undefined, [], deps)).toBe(1);
-    expect(h.lines).toEqual([ROOT_USAGE]);
+    expect(h.lines).toEqual([ROOT_HELP]);
     expect(h.calls).toEqual([]);
   });
 
@@ -484,7 +484,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     delete process.env.__KUBIC_CONTRACT_CRASH_PROBE;
     const h = harness();
     expect(await dispatchCommand('__crash-probe', [], h.deps)).toBe(2);
-    expect(h.lines).toEqual([ROOT_USAGE]);
+    expect(h.lines).toEqual([ROOT_HELP]);
     expect(h.calls).toEqual([]);
   });
 
@@ -492,14 +492,14 @@ describe('front door (issue #128 behavior, moved)', () => {
     for (const command of ['--bogus', '-x']) {
       const h = harness();
       expect(await dispatchCommand(command, [], h.deps), command).toBe(2);
-      expect(h.lines, command).toEqual([ROOT_USAGE]);
+      expect(h.lines, command).toEqual([ROOT_HELP]);
       expect(h.calls, command).toEqual([]);
     }
     // A word-shaped token gets the L-D7 hint; a flag-shaped one does not.
     const help = harness();
     expect(await dispatchCommand('help', [], help.deps)).toBe(2);
     expect(help.lines).toEqual([
-      ROOT_USAGE,
+      ROOT_HELP,
       "hint: to run it as a prompt: kubic run -p 'help'",
     ]);
   });
@@ -512,7 +512,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(await dispatchCommand('doctor', ['--help'], help.deps)).toBe(0);
     expect(help.calls).toEqual([]);
     expect(help.lines.join('\n')).toContain('Usage: kubic doctor');
-    expect(help.lines).not.toContain(ROOT_USAGE);
+    expect(help.lines).not.toContain(ROOT_HELP);
     const version = harness();
     expect(await dispatchCommand('doctor', ['-V'], version.deps)).toBe(2);
     expect(version.calls).toEqual([]);

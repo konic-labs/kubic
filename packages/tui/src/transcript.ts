@@ -35,6 +35,25 @@ export type TranscriptEntryKind =
   // Issue #317: a compaction summary the lane placed in the branch.
   | 'compaction';
 
+// Issue #456: a file change's display record (the inline diff, or a new
+// file's size and first lines) — a structural mirror of the worker's
+// ToolDisplay (dep-lint forbids tui → worker), sanitized at ingress.
+export type CellDisplay =
+  | {
+      readonly kind: 'diff';
+      readonly text: string;
+      readonly firstChangedLine: number;
+      readonly added: number;
+      readonly removed: number;
+      readonly truncated: boolean;
+    }
+  | {
+      readonly kind: 'write';
+      readonly newFile: boolean;
+      readonly lines: number;
+      readonly preview: string;
+    };
+
 export interface TranscriptEntry {
   readonly id: string;
   readonly kind: TranscriptEntryKind;
@@ -51,6 +70,15 @@ export interface TranscriptEntry {
   // Issue #455: when the entry was committed (ms since the epoch) — the
   // prompt block's `you · HH:MM:SS`.
   readonly timestamp?: number;
+  // Issue #456: a tool output's display record (edit/write).
+  readonly display?: CellDisplay;
+}
+
+function displayKey(display: CellDisplay | undefined): string {
+  if (display === undefined) return '';
+  return display.kind === 'diff'
+    ? `d\u0000${display.added}\u0000${display.removed}\u0000${display.text}`
+    : `w\u0000${display.newFile}\u0000${display.lines}\u0000${display.preview}`;
 }
 
 export interface TranscriptDelta {
@@ -468,6 +496,7 @@ class TranscriptDocument implements Component {
         ...(call?.detail === undefined ? {} : { target: call.detail }),
         ...(result === undefined ? {} : { output: result.markdown }),
         ...(result?.isError === true ? { isError: true } : {}),
+        ...(result?.display === undefined ? {} : { display: result.display }),
         ...(state?.durationMs === undefined
           ? {}
           : { durationMs: state.durationMs }),
@@ -626,7 +655,8 @@ function sameCell(left: TranscriptEntry, right: TranscriptEntry): boolean {
     left.detail === right.detail &&
     left.isError === right.isError &&
     left.toolCallId === right.toolCallId &&
-    left.timestamp === right.timestamp
+    left.timestamp === right.timestamp &&
+    displayKey(left.display) === displayKey(right.display)
   );
 }
 

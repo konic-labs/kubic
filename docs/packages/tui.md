@@ -134,7 +134,12 @@ notice from its seed (`workspace`, `clock`, `laneNotice`) and
   `READ_TOOLS` fold to one `○` line). Cards show `CARD_PREVIEW_LINES` body
   lines (cut at the width, with a `└` footer naming hidden or cut rows);
   Ctrl-X expands them, and then every line and a too-long target wrap
-  instead of being cut (issue #300). Per-call facts the entries do not carry
+  instead of being cut (issue #300). An `edit` (or a `write` over a text
+  file) with a display record shows `+A −R` and the inline diff
+  (`ui/diff-block.ts`: `parseDisplayDiff`, `renderDiffRows` with the
+  `addBg`/`delBg` surfaces and a token-level `wordDiff` on the
+  `addWordBg`/`delWordBg` roles; 12 rows collapsed); a new file shows
+  `new file +N` and its first 8 lines (issue #456). Per-call facts the entries do not carry
   (duration, running clock, waiting on an approval) come from the app through
   `TranscriptViewOptions.toolState`. A `pi.compaction` entry renders as its
   own `compaction` cell — a `── compacted · reason ──` rule plus the

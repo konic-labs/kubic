@@ -34,6 +34,9 @@ export const TOKEN_ROLES = [
   'addBg',
   'del',
   'delBg',
+  // Issue #456: the changed words inside an added / removed diff line.
+  'addWordBg',
+  'delWordBg',
 ] as const;
 
 export type TokenRole = (typeof TOKEN_ROLES)[number];
@@ -54,6 +57,8 @@ export const BACKGROUND_ROLES: ReadonlySet<TokenRole> = new Set<TokenRole>([
   'errBg',
   'addBg',
   'delBg',
+  'addWordBg',
+  'delWordBg',
 ]);
 
 export function isTokenRole(name: string): name is TokenRole {
@@ -93,6 +98,8 @@ export const DARK_PALETTE: Palette = {
   addBg: '#0e2617',
   del: '#ff8f9c',
   delBg: '#2d0e15',
+  addWordBg: '#164a2a',
+  delWordBg: '#4a1220',
 };
 
 // The same roles for a light terminal background: dark text on near-white
@@ -119,6 +126,8 @@ export const LIGHT_PALETTE: Palette = {
   addBg: '#dcfce7',
   del: '#9f1239',
   delBg: '#ffe4e6',
+  addWordBg: '#bbf7d0',
+  delWordBg: '#fecdd3',
 };
 
 // The terminal's own colours: no backgrounds of its own (translucent or
@@ -147,6 +156,8 @@ export const TERMINAL_PALETTE: Palette = {
   addBg: 'none',
   del: 'ansi:1',
   delBg: 'none',
+  addWordBg: 'none',
+  delWordBg: 'none',
 };
 
 export const PALETTE_BUILTINS = [

@@ -15,11 +15,21 @@
 import { FAIL, OK, TOOL, WARN } from '../../core/src/ui/glyphs.js';
 import type { Style, UiTheme } from '../../core/src/ui/style.js';
 import { spinnerFrame } from './theme.js';
+import type { CellDisplay } from './transcript.js';
 import { visibleWidth, wrapTextWithAnsi } from './tui-boundary.js';
+import {
+  type DiffRow,
+  parseDisplayDiff,
+  renderDiffRows,
+} from './ui/diff-block.js';
 import { fitLine, leftRight } from './ui/line.js';
 
 /** Collapsed cards show at most this many body lines. */
 export const CARD_PREVIEW_LINES = 5;
+/** Collapsed edit cards show at most this many diff rows (#456). */
+export const DIFF_PREVIEW_ROWS = 12;
+/** Collapsed new-file cards show this many of the first lines (#456). */
+export const WRITE_PREVIEW_ROWS = 8;
 
 const INDENT = '  ';
 const COLLAPSED_MARK = '○';
@@ -204,6 +214,30 @@ export interface ToolCardInput {
   readonly expanded: boolean;
   /** The expand key's cap (`^X`); empty hides the hint. */
   readonly expandKey?: string;
+  /** A file change's display record (edit/write, #456). */
+  readonly display?: CellDisplay;
+}
+
+// Issue #456: an edit or write result without a display record (an older
+// session) still says what it did, from the op's own JSON — never the JSON.
+function changeMeta(name: string, output: string): string | undefined {
+  if (name !== 'edit' && name !== 'write') return undefined;
+  try {
+    const parsed: unknown = JSON.parse(output);
+    if (typeof parsed !== 'object' || parsed === null) return undefined;
+    const record = parsed as Record<string, unknown>;
+    if (name === 'edit' && typeof record.replacements === 'number') {
+      const count = record.replacements;
+      return `${count} replacement${count === 1 ? '' : 's'}`;
+    }
+    if (typeof record.bytesDelta === 'number') {
+      const delta = record.bytesDelta;
+      return `${delta >= 0 ? '+' : ''}${delta} bytes`;
+    }
+  } catch {
+    // Not the op's JSON: no meta.
+  }
+  return undefined;
 }
 
 function readMeta(name: string, output: string): string {
@@ -300,6 +334,18 @@ export function renderToolCard(
       );
     } else if (card.isError === true) {
       parts.push(ui.fg('err')(`${FAIL} failed`));
+    } else if (card.display?.kind === 'diff') {
+      parts.push(
+        `${ui.fg('add')(`+${card.display.added}`)} ${ui.fg('del')(`−${card.display.removed}`)}`,
+      );
+    } else if (card.display?.kind === 'write') {
+      const added = ui.fg('add')(`+${card.display.lines}`);
+      parts.push(
+        card.display.newFile ? `${ui.fg('fg2')('new file')} ${added}` : added,
+      );
+    } else {
+      const meta = changeMeta(card.name, card.output ?? '');
+      if (meta !== undefined) parts.push(ui.fg('ok')(`${OK} ${meta}`));
     }
     outcome = parts.join(ui.fg('fg2')(' · '));
   }
@@ -325,6 +371,19 @@ export function renderToolCard(
     out.push(leftRight(`${name}${target}`, right, w));
   }
   if (!done) return out;
+  const key =
+    card.expandKey === undefined || card.expandKey === ''
+      ? ''
+      : `   ${ui.fg('fg1')(card.expandKey)}${ui.fg('fg2')(' expand')}`;
+  if (!failed && card.display !== undefined) {
+    return [
+      ...out,
+      ...displayBody(ui, card, card.display, w, gutter, elbow, key),
+    ];
+  }
+  if (!failed && changeMeta(card.name, card.output ?? '') !== undefined) {
+    return out;
+  }
   // Body lines: the streams of a shell record (stderr after stdout), else
   // the result text.
   const lines: BodyLine[] =
@@ -387,6 +446,61 @@ export function renderToolCard(
         ? ''
         : `   ${ui.fg('fg1')(card.expandKey)}${ui.fg('fg2')(' expand')}`;
     out.push(fitLine(`${elbow}${ui.fg('fg2')(parts.join(' · '))}${key}`, w));
+  }
+  return out;
+}
+
+// Issue #456: the body of a file-change card — the inline diff (01-G), or a
+// new file's first lines as additions.
+function displayBody(
+  ui: UiTheme,
+  card: ToolCardInput,
+  display: CellDisplay,
+  width: number,
+  gutter: string,
+  elbow: string,
+  key: string,
+): string[] {
+  const bodyWidth = Math.max(1, width - visibleWidth(gutter));
+  const out: string[] = [];
+  let rows: DiffRow[];
+  let total: number;
+  if (display.kind === 'diff') {
+    rows = parseDisplayDiff(display.text);
+    total = rows.length;
+  } else {
+    const preview = display.preview === '' ? [] : display.preview.split('\n');
+    rows = preview.map((text, index) => ({
+      kind: 'add' as const,
+      number: String(index + 1),
+      text,
+    }));
+    total = display.lines;
+  }
+  const limit =
+    display.kind === 'diff' ? DIFF_PREVIEW_ROWS : WRITE_PREVIEW_ROWS;
+  const shown = card.expanded ? rows : rows.slice(0, limit);
+  const digits = Math.max(1, ...rows.map((row) => row.number.length));
+  for (const line of renderDiffRows(ui, shown, bodyWidth, {
+    numberWidth: digits,
+  })) {
+    out.push(`${gutter}${line}`);
+  }
+  const hidden = total - shown.length;
+  if (hidden > 0) {
+    out.push(
+      fitLine(
+        `${elbow}${ui.fg('fg2')(`+${hidden} more line${hidden === 1 ? '' : 's'}`)}${card.expanded ? '' : key}`,
+        width,
+      ),
+    );
+  } else if (display.kind === 'diff' && display.truncated && card.expanded) {
+    out.push(
+      fitLine(
+        `${elbow}${ui.fg('fg2')('the diff was cut — the diff panel (^O) has it whole')}`,
+        width,
+      ),
+    );
   }
   return out;
 }

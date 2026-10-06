@@ -538,6 +538,8 @@ describe('kubicToolsToPiTools on the pi-durable surface (issue #393)', () => {
       ok: true,
       toolCallId: 'call-1',
       invocationId: 'call-1',
+      // Issue #456: a new file's display record rides along.
+      display: { kind: 'write', newFile: true, lines: 1, preview: 'x' },
     });
   });
 
@@ -809,5 +811,51 @@ describe('renderGrepText (issue #172)', () => {
     ).toBe(
       '[grep /p/: 0 matches, truncated (narrow pattern, root or include), 2 binary file(s) skipped, 1 oversized file(s) skipped: skipped 1 file(s) over the 8388608B grep bound; results may be incomplete]\n',
     );
+  });
+});
+
+// Issue #456: a file change's display record rides the result details (the
+// UI's record); the model-facing text stays the op's own result.
+describe('file-change display records (issue #456)', () => {
+  it('puts the inline diff of an edit in the details, never in the text', async () => {
+    const env = new FakeExecutionEnv({});
+    env.fs.writeFile('cart.js', 'a\nexisting.qty = qty;\nb\n');
+    const out = await run(
+      'edit',
+      { path: 'cart.js', oldText: 'qty = qty', newText: 'qty += qty' },
+      toolContext({ env }),
+    );
+    expect(out.text).not.toContain('display');
+    expect(out.details).toMatchObject({
+      ok: true,
+      display: {
+        kind: 'diff',
+        text: ' 1 a\n-2 existing.qty = qty;\n+2 existing.qty += qty;\n 3 b',
+        firstChangedLine: 2,
+        added: 1,
+        removed: 1,
+        truncated: false,
+      },
+    });
+  });
+
+  it('describes a new file, and diffs an overwritten one', async () => {
+    const env = new FakeExecutionEnv({});
+    const created = await run(
+      'write',
+      { path: 'notes.md', content: 'one\ntwo\n' },
+      toolContext({ env }),
+    );
+    expect(created.details).toMatchObject({
+      display: { kind: 'write', newFile: true, lines: 2, preview: 'one\ntwo' },
+    });
+    const replaced = await run(
+      'write',
+      { path: 'notes.md', content: 'one\nthree\n' },
+      toolContext({ env }),
+    );
+    expect(replaced.details).toMatchObject({
+      display: { kind: 'diff', added: 1, removed: 1 },
+    });
   });
 });

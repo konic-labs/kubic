@@ -93,6 +93,10 @@ export interface OpContext {
   // injects a session-scoped sink; absent (tests, journal-free contexts) the
   // clip notice simply names no path and the result shape is unchanged.
   spill?: SpillSink;
+  // Issue #456: the change's display record (the inline diff the TUI
+  // shows). It rides the tool result's details, never the model's text;
+  // absent, nobody is listening and nothing is computed.
+  display?: (record: import('./display-diff.js').ToolDisplay) => void;
 }
 
 export interface InvocationRef {

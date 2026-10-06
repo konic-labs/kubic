@@ -466,3 +466,63 @@ describe('prompt timestamps (issue #455)', () => {
     expect(cells[1]?.timestamp).toBeUndefined();
   });
 });
+
+describe('file-change display records (issue #456)', () => {
+  const result = (details: unknown) => ({
+    id: 'r1',
+    seq: 2,
+    type: 'message',
+    message: {
+      role: 'toolResult',
+      toolCallId: 'tc1',
+      content: [{ type: 'text', text: '{"path":"a.js","replacements":1}' }],
+      details,
+    },
+  });
+
+  it('carries the diff onto the output cell, sanitized per row', () => {
+    const [cell] = entriesToCells([
+      result({
+        ok: true,
+        display: {
+          kind: 'diff',
+          text: '-2 old\u001b[2J line\n+2 \tnew line',
+          firstChangedLine: 2,
+          added: 1,
+          removed: 1,
+          truncated: false,
+        },
+      }),
+    ]);
+    expect(cell?.display).toEqual({
+      kind: 'diff',
+      // Control sequences stripped; the tab expands from the content's own
+      // first column, after the `+2 ` prefix.
+      text: '-2 old line\n+2         new line',
+      firstChangedLine: 2,
+      added: 1,
+      removed: 1,
+      truncated: false,
+    });
+  });
+
+  it('carries a new file record, and ignores a malformed or absent one', () => {
+    const [created] = entriesToCells([
+      result({
+        ok: true,
+        display: { kind: 'write', newFile: true, lines: 2, preview: 'a\nb' },
+      }),
+    ]);
+    expect(created?.display).toEqual({
+      kind: 'write',
+      newFile: true,
+      lines: 2,
+      preview: 'a\nb',
+    });
+    expect(entriesToCells([result({ ok: true })])[0]?.display).toBeUndefined();
+    expect(
+      entriesToCells([result({ display: { kind: 'diff', text: 3 } })])[0]
+        ?.display,
+    ).toBeUndefined();
+  });
+});

@@ -2471,6 +2471,7 @@ export function laneEntryFor(entry: EntryRecord): LaneEntryLike | undefined {
         isError?: unknown;
         toolCallId?: unknown;
         timestamp?: unknown;
+        details?: unknown;
       }
     | undefined;
   if (message === undefined) return undefined;
@@ -2495,6 +2496,8 @@ export function laneEntryFor(entry: EntryRecord): LaneEntryLike | undefined {
       ...(typeof message.timestamp === 'number'
         ? { timestamp: message.timestamp }
         : {}),
+      // Issue #456: a file change's display record rides the details.
+      ...(message.details === undefined ? {} : { details: message.details }),
     },
   };
 }

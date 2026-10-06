@@ -64,6 +64,7 @@ backgrounds.
 | `info` | `#7fb4ff` | Links |
 | `add` / `addBg` | `#7ee2a0` / `#0e2617` | Diff additions |
 | `del` / `delBg` | `#ff8f9c` / `#2d0e15` | Diff removals |
+| `addWordBg` / `delWordBg` | `#164a2a` / `#4a1220` | The changed words inside an added / removed diff line |
 
 At 16 colours the `bg0`–`bg2` surfaces drop their background (a 16-colour
 grey reads worse than none) and `bg3` selection uses bright black.

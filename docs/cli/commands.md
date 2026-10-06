@@ -1292,6 +1292,14 @@ a large workspace pays it (and the screen pauses) after every turn that used
   successful workspace read (`read`, `ls`, `find`, `grep`, `git_status`,
   `git_log`, `git_show`, `git_diff`) folds to one line
   (`○ read  src/cart.js … 32 lines · 3ms`); a failed one is a full card.
+  An `edit` card shows `+A −R` and the change inline (issue #456): line
+  numbers, removed lines on a red surface with `−`, added lines on a green
+  one with `+`, the changed words highlighted, `⋮` for skipped lines —
+  twelve rows collapsed (`└ +N more lines   ^X expand`). A `write` that
+  creates a file shows `new file +N` and its first eight lines; one that
+  replaces a text file shows the diff. The diff rides the tool result's
+  details, so the model never pays for it; a session recorded before it
+  shows the op's own count instead (`✓ 2 replacements`).
   `Ctrl-X` expands every card and wraps its lines in full. A context
   compaction is a `─── compacted · auto ───` rule with the summary under it,
   collapsed the same way. Its welcome block carries the honest one-line lane

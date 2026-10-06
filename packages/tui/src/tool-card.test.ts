@@ -282,3 +282,141 @@ describe('tool cards (issue #455; 01-D, 01-H)', () => {
     expect(lines[0]).toContain('…');
   });
 });
+
+describe('file-change cards (issue #456; 01-G)', () => {
+  const diffText = [
+    ' 8   const existing = cart.items.find((i) => i.name === name);',
+    ' 9   if (existing) {',
+    '-10     existing.qty = qty;',
+    '+10     existing.qty += qty;',
+    ' 11   } else {',
+  ].join('\n');
+  const edit = {
+    kind: 'diff' as const,
+    text: diffText,
+    firstChangedLine: 10,
+    added: 1,
+    removed: 1,
+    truncated: false,
+  };
+
+  it('shows the counts and the inline diff under an edit card', () => {
+    const lines = renderToolCard(
+      plain,
+      {
+        name: 'edit',
+        target: 'src/cart.js',
+        output: '{"path":"src/cart.js","replacements":1}',
+        display: edit,
+        durationMs: 9,
+        expanded: false,
+        expandKey: '^X',
+      },
+      100,
+    );
+    expect(lines[0]).toBe(
+      between('  ● edit  src/cart.js', '+1 −1 · 9ms ', 100),
+    );
+    expect(lines.slice(1)).toEqual([
+      '  │  8     const existing = cart.items.find((i) => i.name === name);',
+      '  │  9     if (existing) {',
+      '  │ 10 −     existing.qty = qty;',
+      '  │ 10 +     existing.qty += qty;',
+      '  │ 11     } else {',
+    ]);
+    const painted = renderToolCard(
+      rich,
+      { name: 'edit', output: '{}', display: edit, expanded: false },
+      80,
+    );
+    expect(painted[0]).toContain(rich.fg('add')('+1'));
+    expect(painted[0]).toContain(rich.fg('del')('−1'));
+  });
+
+  it('collapses a long diff to twelve rows and expands it whole', () => {
+    const rows = Array.from(
+      { length: 20 },
+      (_, i) => `+${String(i + 1).padStart(2)} line ${i + 1}`,
+    );
+    const big = { ...edit, text: rows.join('\n'), added: 20, removed: 0 };
+    const collapsed = renderToolCard(
+      plain,
+      {
+        name: 'edit',
+        target: 'a.ts',
+        output: '{}',
+        display: big,
+        expanded: false,
+        expandKey: '^X',
+      },
+      80,
+    );
+    expect(collapsed).toHaveLength(1 + 12 + 1);
+    expect(collapsed.at(-1)).toBe('  └ +8 more lines   ^X expand');
+    const expanded = renderToolCard(
+      plain,
+      {
+        name: 'edit',
+        target: 'a.ts',
+        output: '{}',
+        display: big,
+        expanded: true,
+      },
+      80,
+    );
+    expect(expanded).toHaveLength(1 + 20);
+  });
+
+  it('shows a new file by its size and first lines', () => {
+    const lines = renderToolCard(
+      plain,
+      {
+        name: 'write',
+        target: 'notes.md',
+        output: '{"path":"notes.md"}',
+        display: {
+          kind: 'write',
+          newFile: true,
+          lines: 10,
+          preview: Array.from({ length: 10 }, (_, i) => `row ${i + 1}`).join(
+            '\n',
+          ),
+        },
+        expanded: false,
+        expandKey: '^X',
+      },
+      80,
+    );
+    expect(lines[0]).toBe(between('  ● write  notes.md', 'new file +10 ', 80));
+    expect(lines[1]).toBe('  │  1 + row 1');
+    expect(lines).toHaveLength(1 + 8 + 1);
+    expect(lines.at(-1)).toBe('  └ +2 more lines   ^X expand');
+  });
+
+  it('falls back to the op result without a display record (older sessions)', () => {
+    const lines = renderToolCard(
+      plain,
+      {
+        name: 'edit',
+        target: 'src/cart.js',
+        output: '{"path":"src/cart.js","replacements":2,"bytesDelta":3}',
+        expanded: false,
+      },
+      80,
+    );
+    expect(lines).toEqual([
+      between('  ● edit  src/cart.js', '✓ 2 replacements ', 80),
+    ]);
+    const write = renderToolCard(
+      plain,
+      {
+        name: 'write',
+        target: 'a',
+        output: '{"path":"a","bytesDelta":-12}',
+        expanded: false,
+      },
+      60,
+    );
+    expect(write[0]?.endsWith('✓ -12 bytes ')).toBe(true);
+  });
+});

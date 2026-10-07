@@ -1,7 +1,7 @@
-// Colour depth and colour arithmetic for every Kubic terminal surface (EPIC N,
-// issue #444). The TUI (packages/tui) and the CLI helpers (core/src/cli) both
-// style through `style.ts`; this module owns the one copy of the depth rule
-// and the downgrade maths they share.
+// Colour depth and colour arithmetic for every Kubic terminal surface. The TUI
+// (packages/tui) and the CLI helpers (core/src/cli) both style through
+// `style.ts`; this module owns the one copy of the depth rule and the downgrade
+// maths they share.
 
 export type ColorLevel = 'none' | '16' | '256' | 'truecolor';
 
@@ -10,8 +10,8 @@ export type Rgb = readonly [number, number, number];
 type Env = Readonly<Record<string, string | undefined>>;
 
 // Colour depth from the environment. NO_COLOR (any non-empty value) wins;
-// FORCE_COLOR=0/false disables and 1/2/3/true/'' force a depth even off a TTY
-// (issue #319); a non-TTY (pipe, file, CI log) or TERM=dumb gets none;
+// FORCE_COLOR=0/false disables and 1/2/3/true/'' force a depth even off a TTY;
+// a non-TTY (pipe, file, CI log) or TERM=dumb gets none;
 // COLORTERM=truecolor|24bit gets truecolor; *256color / *-direct gets 256;
 // anything else gets the 16-colour set.
 export function detectColorLevel(env: Env, isTTY: boolean): ColorLevel {

@@ -1,12 +1,11 @@
-// Global `~/.kubic/roles` through the real `kubic run --role` (issue #241,
-// §35): a role defined only in the home directory resolves for the lane,
-// and a project document of the same name wins. Everything is real except
-// the model (scripted faux via KUBIC_PROVIDER=faux: zero network, zero
-// paid tokens): the prod runner, the config load, the runtimeLaneDeps
-// home threading, the loader, and the lane. Temp dirs and env restored in
-// afterEach. The observable is the role's tool set: the objective asks
-// for bash, so a marker file appears in the workspace only when the
-// winning document registers bash.
+// Global `~/.kubic/roles` through the real `kubic run --role`: a role defined
+// only in the home directory resolves for the lane, and a project document of
+// the same name wins. Everything is real except the model (scripted faux via
+// KUBIC_PROVIDER=faux: zero network, zero paid tokens): the prod runner, the
+// config load, the runtimeLaneDeps home threading, the loader, and the lane.
+// Temp dirs and env restored in afterEach. The observable is the role's tool
+// set: the objective asks for bash, so a marker file appears in the workspace
+// only when the winning document registers bash.
 import {
   existsSync,
   mkdirSync,
@@ -85,7 +84,7 @@ function roleDoc(tools: string, shell: boolean, prompt: string): string {
   return `---\nrole: helper\ntools: [${tools}]\nfilesystem: workspace-write\nshell: ${String(shell)}\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# helper\n\n## Prompt\n\n${prompt}\n`;
 }
 
-describe('run --role resolves the global layer (issue #241)', () => {
+describe('run --role resolves the global layer', () => {
   it('a role defined only in ~/.kubic/roles runs with its tool set', async () => {
     const home = tmp('kubic-role-global-home-');
     const ws = tmp('kubic-role-global-ws-');

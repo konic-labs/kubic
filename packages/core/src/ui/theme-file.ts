@@ -1,4 +1,4 @@
-// JSON theme files (`[ui] theme = "<path>"`, §16.9; v2 in EPIC N, issue #444).
+// JSON theme files (`[ui] theme = "<path>"`, v2).
 //
 // v2 (token roles):
 //   { "name"?: string, "extends"?: "default"|"dark"|"light"|"terminal",
@@ -6,7 +6,7 @@
 // Any subset of the roles in tokens.ts; the rest come from `extends`
 // (default: dark).
 //
-// v1 (issue #304, still accepted): exactly the seven keys accent, warm,
+// v1 (still accepted): exactly the seven keys accent, warm,
 // success, error, warning, muted, prompt — mapped onto the dark palette
 // (accent→accent, success→ok, error→err, warning→warn, muted→fg2,
 // prompt→fg0; warm is accepted and unused).
@@ -35,7 +35,7 @@ export class ThemeError extends Error {
   }
 }
 
-/** The seven v1 colour keys (issue #304). */
+/** The seven v1 colour keys. */
 export const LEGACY_THEME_KEYS = [
   'accent',
   'warm',
@@ -59,7 +59,7 @@ function parseJson(text: string, source: string): unknown {
     return JSON.parse(text);
   } catch (error) {
     // V8's message quotes a window of the INPUT, so only the position is
-    // kept (issue #304 review).
+    // kept.
     const detail = error instanceof Error ? error.message : '';
     const position =
       /line \d+ column \d+/.exec(detail)?.[0] ??

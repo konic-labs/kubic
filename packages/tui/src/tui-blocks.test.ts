@@ -1,4 +1,4 @@
-// Block mode in the app (EPIC N, issue #463; docs/ui 01-D, 01-M): Esc on
+// Block mode in the app: Esc on
 // an idle, empty editor walks the transcript by blocks — move, copy (OSC 52
 // through the composition root), view whole, expand — and any other key
 // returns to typing.
@@ -14,7 +14,6 @@ function setup(clipboard?: (text: string) => boolean) {
   const app = createTuiApp({
     sessionId: 'sess-463',
     model: 'faux/m',
-    mode: 'solo',
     approvalsSkipped: false,
     approvalSurface: createApprovalSurface({ armingMs: 0 }),
     ...(clipboard === undefined ? {} : { clipboard }),
@@ -93,7 +92,7 @@ function setup(clipboard?: (text: string) => boolean) {
 const selectedRow = (lines: readonly string[]): string =>
   lines.find((line) => line.startsWith('▌')) ?? '';
 
-describe('block mode (issue #463)', () => {
+describe('block mode', () => {
   it('Esc on an idle, empty editor selects the last block', () => {
     const { app, frame } = setup();
     app.render(100);

@@ -1,160 +1,39 @@
 # Contributing
 
-> Owner: issue [#64](https://github.com/konic-labs/kubic/issues/64).
-> The contributor workflow (LC0–LC6), commit rules and CI gates for this
-> repository.
+> How to build, test and change Kubic, and the checks every change passes.
 
-Kubic is Konic's open-source terminal coding agent: model-agnostic,
-with a VCS-independent change journal and an opt-in orchestrator mode.
-Solo mode is the architecture; delegation is a mode — solo has no
-isolation, never imply otherwise in code, docs, or CLI text.
+Kubic is a model-agnostic terminal coding agent with a VCS-independent
+change journal. Solo mode has no isolation — never imply otherwise in
+code, docs, or CLI text.
 
-## Workflow (LC0–LC6)
+## Getting set up
 
-Every issue, every wave, no freelancing:
-
-- **LC0 Scope** — `gh issue view <n> --comments`, then
-  `gh issue develop <n> --checkout` (`feat/issue-<n>-<slug>`). Read the
-  issue's Goal / Acceptance / Dependencies fully. If the approach
-  is genuinely unknowable upfront, spike first and throw it away.
-- **LC1 TDD** — one acceptance checkbox at a time: failing test → watch
-  it fail → minimal code → watch it pass → refactor. Runner is vitest
-  with the `faux` provider (zero network, zero paid tokens in CI); TUI
-  work adds pure-render headless snapshots (the pinned `pi-tui` has no
-  `VirtualTerminal`) or reads live frames back with
-  `TuiAltScreen.getScreenLines()` over the one shared fake Terminal,
-  `test/fake-terminal.ts` (`fakeTerminal()` / `terminalRig()`; never a
-  per-file copy). A test never sleeps for a render: a forced
-  `screen.render()` is synchronous, and a requested render is flushed by
-  faking `setTimeout` + `performance` and running the pending timer. One behavior per
-  test, real code over mocks.
-- **LC2 Debug** — anything red goes through root-cause investigation
-  first (tight repro loop, recent changes, data flow — no fix proposals
-  yet), then pattern analysis, ranked falsifiable hypotheses tested one
-  variable at a time, and finally a regression test plus a single fix.
-  Three failed fixes means questioning the architecture with a human,
-  never a fourth blind attempt.
-- **LC3 Review gate** — before every commit on a staged diff: static
-  security scan of added lines (secrets, shell/SQL injection,
-  eval/exec, unsafe deserialization), baseline tests + lint (only NEW
-  failures block), then one brief solo self-review of the staged diff
-  (solo, no reviewer subagent), max 2
-  auto-fix cycles; say what you did not verify. Lint gate is `biome ci`
-  (exact CI parity).
-- **LC4 Simplify** — only on explicit request, per wave, never bundled
-  into feature commits.
-- **LC5 Commit** — Conventional Commits, one commit per finished issue
-  minimum, pushed iteratively; wave merges carry `fixes #<n>` (repeat
-  the keyword per issue — `closes #1, #2` closes only the first). Never
-  `git add -A`, `reset --hard`, `stash`, `clean -fd`, or `--no-verify`;
-  never force-push. See below.
-- **LC6 Capture** — reusable procedures learned doing the work go to a
-  skill; memory is only for facts true of every future session.
-
-## Commits
-
-`type(scope): summary` — e.g. `feat(journal): …`, `fix(worker): …`,
-`chore(scaffold): …`. Post issue/PR comments with
-`gh issue comment <n> --body-file <file>`, never multi-line `--body`.
-
-## Conventions that bite contributors
-
-- **Erasable-syntax TypeScript only** — no parameter properties,
-  `enum`, `namespace`, `import =`/`export =`. Node >= 22.19. Exact
-  (no `^`/`~`) pins on all `@earendil-works/*` deps.
-- **Dep direction** — the TUI package must never import `host`/`worker`
-  implementation (contracts from `core` only), enforced by lint.
-- **Issue body contract** — `## Goal`, `## Scope` (in/out),
-  `## Acceptance criteria` (checkboxes), `## Dependencies`.
-- **`pi/` is read-only reference** — never build, modify, lint, or test
-  anything under `pi/`; it is gitignored upstream material, not Kubic.
-  The clone to work against is upstream Pi tag **`v1.0.2`** (the version
-  every `@earendil-works/*` pin names); its own `AGENTS.md` and commands
-  do not apply here.
-- **Tests never need network or paid tokens** — `faux` provider,
-  pure-render headless snapshots, fixture `usage` rows.
-- **Tests never depend on the shell's colour variables** — `runTuiCommand`
-  takes `colorLevel` through its deps (pass `'none'`), and the shared
-  `vitest.setup.ts` fails any test that leaves a coloured TUI theme active,
-  so `FORCE_COLOR=3`, `FORCE_COLOR=0` and `NO_COLOR=1` runs all pass.
-
-## Pi boundary
-
-Kubic runs on Pi 1.0 (`@earendil-works/*` **1.0.2**, exact pins). The
-boundary is enforced, not conventional:
-
-- **Only two files may import `@earendil-works/*`** —
-  `packages/worker/src/pi-boundary.ts` (the worker seam, §65) and
-  `packages/tui/src/tui-boundary.ts` (presentation).
-  `scripts/dep-lint.mjs` rejects every other import, each re-export in a
-  seam carries a JUSTIFICATION block checked by
-  `scripts/pi-boundary.test.mjs`, and CODEOWNERS flags seam diffs for
-  maintainer review.
-- **The worker seam is append-only per issue** — additions land in a
-  `// --- #<issue> additions ---` block at the end of
-  `pi-boundary.ts`, never by reordering or deleting another issue's lines.
-- **The runtime packages are `pi-durable`** (the `Harness`, conversations,
-  submissions, durable tasks, documents and the extension registry),
-  `pi-ai` (the model layer) and `chord` (`Context`); `pi-tui` is
-  presentation only. Pi 1.0 removed the experimental `pi-agent-core`
-  harness (AgentHarness/AgentLane/operations) — nothing imports it.
-
-## Docs rule
-
-Each implementation wave updates its docs page in the same commit — a
-behaviour change without its docs page is incomplete and fails review.
-`node scripts/check-docs-links.mjs` must pass (it runs in CI as the
-standalone `npm run docs:check` step, and again inside `npm test` via
-`scripts/check-docs-links.test.mjs`). The area map lives on the
-[docs index](README.md#separation-of-concerns-soc).
-
-## CI gates (run these locally)
-
-A push runs the `test` job (the linters, suites and the shipped-artifact
-check below). The per-push `mutation` job on the changed lines (see
-"The gate") is postponed (#407) and the nightly full-scope
-`mutation-nightly` job is postponed (#137); run the per-push gate locally
-until #407 restores it. Efficiency rules of the workflow:
-
-- **`test` runs on node 22** (the lowest supported) on every ref, and on
-  **22 and 24 on `main`**. The Node-independent static checks (typecheck, biome,
-  `lint:deps`, `check:pi`, `docs:check`) run once, first, on the 22 leg.
-- **One live run per ref**: a newer push cancels the older run, and a PR
-  branch (which fires both `push` and `pull_request`) keeps a single run.
-  `main` is keyed by commit and never cancelled.
-- **`mutation` stops before `npm ci`** when nothing mutable changed (docs,
-  tests, config), and is bounded by changed lines (see "The gate") so a big push
-  is scored rather than ending at the job timeout.
-- Workflow permissions are read-only; actions are on their Node 24 majors.
-
-Mirror the `test` job before you push — same commands, same order:
+Node >= 22.19 is the only requirement:
 
 ```sh
 npm ci
-npm run typecheck
-npx biome ci .              # exact CI lint parity (never --no-verify)
-npm run lint:deps
-npm run check:pi            # exact pins on every dependency
-npm run docs:check          # dangling links + dep-table drift
-npm test                    # scripts/*.test.mjs via node --test
-npm run test:unit           # vitest
-npm run build               # tsc -> gitignored dist/
-npm run test:binary-contract  # runs the built bin: version / doctor / run
+npm run build                # tsc -> gitignored dist/
+./bin/kubic.js --version
 ```
 
-The vitest run is hermetic too (issue #377): `test/vitest-setup.ts` runs
-every test file under a fresh temp `HOME` (so `~/.agents/skills`,
-`~/.pi/agent/skills` and `~/.kubic` are empty), with every ambient
-`KUBIC_*` variable (`KUBIC_TRUST_PROJECT`, `KUBIC_DEBUG`, …) cleared, and
-with non-loopback TCP connects refused (`hermetic test env: TCP connect …
-refused`). Loopback is exempt — a test that owns a local server (bind port
-0, close it in `afterEach`) stays hermetic — so a loopback connect to
-anything else, such as a hard-coded `127.0.0.1:1` provider, is not caught:
-use the faux provider instead. Results never depend on the developer's
-installed skills, shell exports or network. A test that needs one of those
-variables stubs it (`vi.stubEnv`) and restores it in `afterEach`. The
-per-file homes live under one run root (`test/vitest-global-setup.ts`) that
-the main process removes when the run ends.
+Kubic runs on the Pi agent harness (`@earendil-works/*` **1.0.2**, exact
+pins), installed from npm like every other dependency.
+
+## Before you push
+
+CI runs these commands in this order; run them locally first:
+
+```sh
+npm run typecheck
+npm run lint                  # biome ci — exact CI parity
+npm run lint:deps             # package dependency direction
+npm run check:pi              # exact pins on every dependency
+npm run docs:check            # no dangling internal doc links
+npm test                      # repo gates: scripts/*.test.mjs via node --test
+npm run test:unit             # vitest
+npm run build
+npm run test:binary-contract  # runs the built binary: version / doctor / run
+```
 
 `npm run test:binary-contract` (`scripts/binary-contract.mjs`) is the
 install-story gate: with `dist/` built it asserts the exact
@@ -163,131 +42,113 @@ with `FAIL limit:provider-availability (provider-down)`, and a
 provider-less `kubic run -p` exiting 6 while still printing the
 `session:`/`journal:`/`usage:`/`trajectory:` refs. It is hermetic — the
 probes run under a temp `HOME` with no `models.json` in the cwd, so no
-provider and no network. Move `dist/apps/kubic/src/main.js` aside to
-watch it fail: a broken dist path or entry fails the job, not a human
-review.
+provider and no network.
 
-## The gate
+## Tests
 
-The bar is **mutation score ≥ 80% per file**, enforced by
-`scripts/mutation-check.mjs` over Stryker's JSON report (Stryker's own
-`thresholds.break` is total-only, so the vitest config sets it to `null` and
-leaves gating to the per-file check).
+- **Test first.** Write the failing test, watch it fail, then write the
+  code. One behaviour per test, real code over mocks.
+- **No network, no paid tokens.** Agent tests use the `faux` provider;
+  usage and cost tests use fixture `usage` rows.
+- **Hermetic by default.** `test/vitest-setup.ts` runs every test file
+  under a fresh temp `HOME` (so `~/.agents/skills`, `~/.pi/agent/skills`
+  and `~/.kubic` are empty), with every ambient `KUBIC_*` variable cleared
+  and non-loopback TCP connects refused. Loopback is exempt, so a test that
+  owns a local server stays hermetic. A test that needs an environment
+  variable stubs it with `vi.stubEnv` and restores it in `afterEach`.
+- **Clean up.** A test removes every temp dir, environment change and child
+  process it creates.
+- **Lanes.** Boot a lane with `bootFauxLane`
+  (`packages/worker/src/lane/test-harness.ts`): the real `bootSoloLane`
+  over in-memory or temp-dir storage. A faux tool round must end with
+  `stopReason: 'toolUse'` (`fauxToolUse(...)`), or the tool never runs.
+- **The TUI.** Render functions are pure and tested as headless snapshots;
+  live frames are read back with `TuiAltScreen.getScreenLines()` over the
+  one shared fake terminal, `test/fake-terminal.ts` (`fakeTerminal()`,
+  `terminalRig()`). A test never sleeps for a render.
+- **Real git.** Tests that run git use the shared sandbox
+  (`packages/exec/src/test-support/git-sandbox.ts`); a direct
+  `execFileSync('git', …)` in a test fails `npm test`.
+- **Colour.** Tests never depend on the shell's colour variables:
+  `FORCE_COLOR=3`, `FORCE_COLOR=0` and `NO_COLOR=1` runs all pass.
 
-- **vitest side** — `stryker.conf.json` (`@stryker-mutator/vitest-runner`,
-  patched on `postinstall`, see "vitest-runner × vitest 5" below) with
-  `coverageAnalysis: "perTest"`: each mutant runs only the tests that cover
-  it. `ignoreStatic: true` skips module-level mutants, which are ~5% of
-  mutants but ~67% of the runtime (each would re-run the whole suite).
-- **tap side** — `stryker.tap.conf.json` (`@stryker-mutator/tap-runner`)
-  mutates the script systems under test (`scripts/dep-lint.mjs`,
-  `scripts/check-pinned-deps.mjs`) and runs the killing suites
-  (`scripts/dep-lint.test.mjs`, `scripts/pi-boundary.test.mjs`,
-  `scripts/check-pinned-deps.test.mjs`, `scripts/check-docs-links.test.mjs` — the last is the only suite exercising
-  `listInternalEdges`) with
-  `nodeArgs: ["--test-reporter=tap", "{{testFile}}"]` — in-process, so
-  coverage attribution and mutant activation share one process — and
-  `coverageAnalysis: "perTest"` (file-level: every hit lands in the static
-  bucket, which the tap runner maps per test file). Proof run (#72): **83.57
-  total (351 killed), 82.93 check-pinned-deps, 83.73 dep-lint — gate exit 0**.
-- **ratchet** — `mutation-check.mjs --baseline <previous report>` holds each
-  file to `min(80, its baseline score)`: a file below 80 may not drop below
-  its baseline, a file at or above 80 must stay ≥ 80, and files new to the
-  baseline need 80. Without `--baseline` every file needs 80 (`npm run
-  test:mutation`, the full local run).
-- **concurrency** — both configs default to `"50%"` of the cores (CI passes
-  `--concurrency 4`); vitest itself runs at `maxWorkers: '50%'`.
+## Code conventions
 
-### CI: per push and nightly
+- **Erasable-syntax TypeScript only** — no parameter properties, `enum`,
+  `namespace`, `import =` / `export =`.
+- **Exact pins** — no `^` / `~` on any dependency (`npm run check:pi`).
+- **Dependency direction** — packages import "downward" only, and the TUI
+  never imports `host` / `worker` implementation; contracts come from
+  `core` (`npm run lint:deps`, see the [package map](packages/README.md)).
+- **The Pi boundary** — only `packages/worker/src/pi-boundary.ts` and
+  `packages/tui/src/tui-boundary.ts` import `@earendil-works/*`. Every
+  re-export carries a `JUSTIFICATION:` block naming the seam, its users
+  and why Kubic cannot do without it (`scripts/pi-boundary.test.mjs`), and
+  CODEOWNERS puts every change to `pi-boundary.ts` up for maintainer
+  review. The
+  runtime packages are `pi-durable` (the harness, conversations, durable
+  tasks, documents, the extension registry), `pi-ai` (the model layer)
+  and `chord` (`Context`); `pi-tui` is presentation only.
+- **Exactly one copy of each `@earendil-works/*` package** in
+  `package-lock.json` and `node_modules`. A nested duplicate keeps vitest
+  green but breaks the built binary; after a Pi bump run `npm dedupe`,
+  then `npm ci`.
+- **CLI commands** — commander is the only argv parser; see
+  [contributing-cli.md](contributing-cli.md).
 
-- **`mutation` (every push / PR)** — *postponed (#407): the job is disabled
-  (`if: false`) until the EPIC K test-strength gaps and the scope's time
-  budget are fixed; run it locally (see "Run a scope locally" below) with
-  `--mutate "$(node scripts/mutation-scope.mjs --ref main)"`.*
-  When enabled — `scripts/mutation-scope.mjs --ref <base>`
-  maps `git diff -U0` hunks to the **changed lines** of touched source files
-  (`path:start-end` ranges; a core file alone can hold ~1k mutants covered by
-  ~500 tests), capped at 25 files **and 2000 changed lines** (about 1500
-  mutants, what the 30-minute job can score; first-fit in sorted order, a lone
-  oversized file is trimmed to the budget) — the rest are left to the nightly
-  run with a warning. The job needs no `npm ci` when nothing mutable changed,
-  and its vitest step has its own 26-minute timeout so an overrun fails as a
-  named step rather than the job ending "cancelled". Test-only changes mutate nothing per push; the nightly
-  ratchet catches weakened tests. `--tap` maps changed scripts to their SUTs.
-  No mutable change → the step is skipped; a failed diff exits 1 rather
-  than widening or emptying the scope. The changed lines' score is
-  ratcheted against the file's nightly baseline: new code may not drag a
-  file down.
-- **`mutation-nightly`** — *postponed (backlog #137): the job is disabled and
-  no baseline exists yet, so per-push changed lines are held to a strict 80%.*
-  When enabled (03:00 UTC + `workflow_dispatch`) — full scope with
-  `--incremental` against the previous run (only changed code and tests
-  re-run), ratcheted against the baseline. The incremental file is cached
-  after every run; the baseline only when the ratchet passes, so a
-  regression never becomes the new floor.
+## Commits and docs
 
-Run a scope locally: `npx stryker run --mutate "path/a.ts,path/b.ts"`, then
-`node scripts/mutation-check.mjs --report reports/mutation/mutation.json`.
+[Conventional Commits](https://www.conventionalcommits.org/):
+`type(scope): summary` — imperative, lower-case, no trailing period
+(`feat(journal): …`, `fix(worker): …`, `docs(cli): …`). Types are `feat`,
+`fix`, `refactor`, `perf`, `test`, `docs`, `style`, `chore`, `build`,
+`ci`; a breaking change uses `type(scope)!:` and a `BREAKING CHANGE:`
+footer.
 
-## Suite selection notes (all evidence-based)
+A behaviour change ships its docs page in the same commit, and
+`npm run docs:check` must pass. The area map lives on the
+[docs index](README.md).
 
-- `erasable.test.mjs` is **not** in the tap `testFiles`: it imports no script
-  SUT (node builtins only), so it kills zero script mutants by construction.
-  It stays green via `npm test` in the CI `test` job.
-- `node --test <file>` must **not** be used as the tap runner command: `--test`
-  delegates execution to child processes, so the parent process (whose hook
-  output file Stryker reads) records zero coverage and every mutant lands in
-  `NoCoverage`. Direct execution (`node --test-reporter=tap <file>`) keeps
-  everything in-process; the default spec reporter it would otherwise emit is
-  not TAP and the parser scores every failing mutant as `RuntimeError`.
-- There are exactly **five mutator exclusions**, all in
-  `scripts/check-pinned-deps.mjs`, each a proven equivalent with its reason
-  and `(tracking: #66)` in the comment: junk-seed array entry (statSync
-  skips it), empty catch fallthrough (loop is a no-op), unconditional push
-  (later read/parse throws and skips just the same), `""` read encoding
-  (Buffer coerces identically under JSON.parse), dropped typeof guard (no
-  non-string JSON value stringifies to an exact-version match). Zero
-  unexplained exclusions.
+## CI
 
-## vitest-runner × vitest 5 (fixed locally, issue #72)
+A push runs the `test` job: the static checks first (typecheck, biome,
+`lint:deps`, `check:pi`, `docs:check`), then the suites and the built
+binary. It runs on Node 22 (the lowest supported) on every ref and on
+Node 22 and 24 on `main`. A newer push cancels the older run of the same
+ref; `main` is keyed by commit and never cancelled. Workflow permissions
+are read-only.
 
-`@stryker-mutator/vitest-runner` 10.0.0 names tests by space-joining suite +
-test names and filters each mutant run with that name as `testNamePattern`;
-vitest 5 matches the pattern against `fullTestName` (`" > "`-joined). Every
-filtered run executed **zero** tests, so `coverageAnalysis: "perTest"` was
-unusable and every mutant fell back to the full suite (~9h CI runs, #72).
+## Mutation testing
 
-`scripts/patch-vitest-runner.mjs` (run on `postinstall`) names tests by
-vitest's own `fullTestName` and anchors the filter (`^(?:a|b)$`). It is
-idempotent and fails loudly if the runner changes shape, so a runner
-upgrade can never silently drop the fix. Verified: on the trajectory scope
-`perTest` and a filter-free `coverageAnalysis: "all"` run produce identical
-per-mutant statuses (0 differences), at seconds instead of hours. Scores
-before this fix were artifacts of the bug; the first nightly report is the
-real baseline.
+The mutation jobs are switched off for now; the tooling stays in the repo.
+The bar is a **mutation score ≥ 80% per file**, enforced by
+`scripts/mutation-check.mjs` over Stryker's JSON report.
 
-Tests that scan **source text** (e.g. `clean-docs`, `tui-keys-doc`) cannot
-run under Stryker — every literal is instrumented — and kill no mutants, so
-they skip when `STRYKER_MUTATOR_WORKER` is set; plain `vitest` still runs
-them. Tests that list repo files must not rely on `git ls-files` alone:
-Stryker's sandbox is a gitignored copy (see `orchestrate-roles-docs`).
+- **vitest side** — `stryker.conf.json` (`@stryker-mutator/vitest-runner`)
+  with `coverageAnalysis: "perTest"`, so each mutant runs only the tests
+  that cover it, and `ignoreStatic: true`.
+- **tap side** — `stryker.tap.conf.json` mutates the script gates and runs
+  their `node:test` suites in-process
+  (`nodeArgs: ["--test-reporter=tap", "{{testFile}}"]`). `node --test` must
+  not be the runner command: it runs each file in a child process, and
+  Stryker then records no coverage.
+- **ratchet** — `mutation-check.mjs --baseline <previous report>` holds
+  each file to `min(80, its baseline score)`; a file new to the baseline
+  needs 80.
+- **scope** — `scripts/mutation-scope.mjs --ref <base>` maps a diff to the
+  changed lines of the touched source files.
 
-## What new suites owe the gate
+Run a scope locally with `npx stryker run --mutate "path/a.ts,path/b.ts"`,
+then `node scripts/mutation-check.mjs --report reports/mutation/mutation.json`.
 
-Every new source file must reach ≥ 80% per file the first time it is
-mutated (it is absent from the nightly baseline, so the ratchet holds it to
-80). A new package goes into `mutate` in `stryker.conf.json`.
+The vitest runner needs a patch (`scripts/patch-vitest-runner.mjs`, run on
+`postinstall`): the stock runner filters each mutant's tests by a name
+vitest 5 never matches, so every mutant would fall back to the full suite.
+The patch is idempotent and fails loudly if the runner changes shape —
+re-verify it before upgrading any `@stryker-mutator/*` package.
 
-## Spike verdict (recorded for #66)
-
-tap-runner wiring against ESM `node:test` suites: **confirmed working** with
-the in-process TAP invocation above (full proof run green at 83.50; fail
-direction verified at 47.17/76.66/79.85 during test-strengthening). The issue's
-suggested `node --test --test-reporter=tap` form is documented here as
-not-working for Stryker's coverage model; Stryker symlinks `node_modules`
-into the sandbox, so `tsc`-dependent suites run unmodified (dry-run green on
-all three suites including `erasable`).
-
-See also the docs rule from the [docs index](README.md): **each implementation wave updates its docs page in the same commit** — a behaviour change without its docs page is incomplete and fails review.
+Stryker runs the suite from a gitignored sandbox copy with instrumented
+sources: a test must not rely on `git ls-files` alone, and a test that
+scans source text skips when `STRYKER_MUTATOR_WORKER` is set.
 
 Back to the [docs index](README.md).

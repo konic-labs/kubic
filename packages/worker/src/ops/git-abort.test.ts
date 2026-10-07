@@ -1,10 +1,10 @@
-// Git abort + timeout against a REAL hanging child (issue #190): a commit
+// Git abort + timeout against a REAL hanging child: a commit
 // hook that sleeps, killed mid-flight through the lane kill registry (the
 // headless-run drain path) or the op's AbortSignal, or by the runGit
-// timeout. Hermetic git sandbox per test (issue #365); the sandbox owns
+// timeout. Hermetic git sandbox per test; the sandbox owns
 // every scratch dir, the group kill owns the child — no sleeps, no leaks.
 //
-// RED first: runGit never touched trackHandle/signal/timeout, so the drain
+// RunGit never touched trackHandle/signal/timeout, so the drain
 // killed nothing and the op hung until the hook's sleep elapsed.
 
 import { chmodSync, writeFileSync } from 'node:fs';
@@ -73,7 +73,7 @@ function trackedCtx(
   return { ctx, gate };
 }
 
-describe('git abort kills the in-flight child (issue #190)', () => {
+describe('git abort kills the in-flight child', () => {
   it('draining the registry mid-commit kills the hook and fails the op', async () => {
     const { dir, registry } = hangingRepo();
     const { ctx, gate } = trackedCtx(dir, registry);

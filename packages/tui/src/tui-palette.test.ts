@@ -1,4 +1,4 @@
-// The ^P palette in the app (EPIC N, issue #460; docs/ui 03-A … C): the
+// The ^P palette in the app: the
 // command, model, session and file rows, what ⏎ does for each, Esc, the
 // palette's own hint row and the dimmed screen behind it.
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -27,7 +27,6 @@ function setup(listFiles?: () => readonly string[]) {
   const app = createTuiApp({
     sessionId: 'sess-460',
     model: 'faux/m',
-    mode: 'solo',
     approvalsSkipped: false,
     approvalSurface: surface,
     ...(listFiles === undefined ? {} : { listFiles }),
@@ -88,7 +87,7 @@ function setup(listFiles?: () => readonly string[]) {
 // Lets the async model and session rows (and the deferred file rows) land.
 const settle = (): Promise<void> => new Promise((done) => setTimeout(done, 5));
 
-describe('the ^P palette (issue #460)', () => {
+describe('the ^P palette', () => {
   it('Ctrl-P asks the loop for the palette', () => {
     const { app } = setup();
     expect(app.handleInput('\x10')).toMatchObject({ palette: true });
@@ -122,10 +121,10 @@ describe('the ^P palette (issue #460)', () => {
   it('leaves a command that needs its argument in the editor', () => {
     const { app, sources, type, ran } = setup();
     app.openPalette(sources);
-    type('inspect');
+    type('image');
     app.handleInput('\r');
     expect(ran).toEqual([]);
-    expect(app.editor.getText()).toBe('/inspect ');
+    expect(app.editor.getText()).toBe('/image ');
   });
 
   it('switches the model and resumes a session through the loop', async () => {

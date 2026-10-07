@@ -1,5 +1,4 @@
-// Slice A: journal diff core — attributed hunks from entries (issue #18; §42.2).
-// RED: diffEntries/renderDiff do not exist yet.
+// Journal diff core — attributed hunks from entries.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,7 +9,6 @@ import {
   clipContent,
   DEFAULT_MAX_CONTENT_BYTES,
   diffEntries,
-  diffEntriesMany,
   type FileChange,
   renderDiff,
   renderDiffStat,
@@ -70,7 +68,7 @@ function seed(): FileJournalStore {
   return store;
 }
 
-describe('journal diff core (issue #18, slice A)', () => {
+describe('journal diff core', () => {
   it('lists every change with attribution and reversibility', () => {
     const changes = diffEntries(seed(), {});
     expect(changes.map((c) => c.path)).toEqual(['a.txt', 'b.txt', 'c.txt']);
@@ -111,7 +109,7 @@ describe('journal diff core (issue #18, slice A)', () => {
   });
 });
 
-// Issue #126: every emitted `@@` header must count exactly the lines the
+// Every emitted `@@` header must count exactly the lines the
 // hunk prints for its side (`-`/context for A, `+`/context for B) — a
 // consumer (the TUI view, a future patch applier) reads the counts. The
 // counts are accumulated while emitting, never derived from pre-loop
@@ -149,7 +147,7 @@ function hunkCountMismatches(
   return out;
 }
 
-describe('truthful hunk header counts (issue #126)', () => {
+describe('truthful hunk header counts', () => {
   it('counts the lines emitted, not the pre-loop window (issue example)', () => {
     const lines = unifiedHunks('1\n2\n3\n4\n5', '1\n5');
     expect(lines[0]).toBe('@@ -1,5 +1,2 @@');
@@ -184,9 +182,9 @@ describe('truthful hunk header counts (issue #126)', () => {
   });
 });
 
-// Issue #126: the `diff --json` content bound — byte-exact clipping with a
+// The `diff --json` content bound — byte-exact clipping with a
 // named marker, `0` meaning unlimited, null sides untouched.
-describe('diff --json content clipping (issue #126)', () => {
+describe('diff --json content clipping', () => {
   it('clips at the byte bound and names it in a marker line', () => {
     const text = 'x'.repeat(100);
     const clipped = clipContent(text, 10);
@@ -243,9 +241,9 @@ describe('diff --json content clipping (issue #126)', () => {
   });
 });
 
-// Blob integrity (issue #111): corrupt journal content must surface as a
+// Blob integrity: corrupt journal content must surface as a
 // named flag/marker, never crash the read path.
-describe('corrupt journal content (issue #111)', () => {
+describe('corrupt journal content', () => {
   function tornDeltaStore(): {
     store: FileJournalStore;
     dir: string;
@@ -322,7 +320,7 @@ describe('corrupt journal content (issue #111)', () => {
   });
 });
 
-describe('HEAD-move markers (issue #378)', () => {
+describe('HEAD-move markers', () => {
   it('never surfaces a marker as a diff hunk', () => {
     const store = seed();
     store.append({
@@ -351,47 +349,7 @@ describe('HEAD-move markers (issue #378)', () => {
   });
 });
 
-describe('multi-store diff (issue #364)', () => {
-  function storeWith(
-    sessionId: string,
-    agentId: string,
-    path: string,
-    content: string,
-  ): FileJournalStore {
-    const store = new FileJournalStore(tmpRoot());
-    store.append({
-      path,
-      op: 'write',
-      before: null,
-      after: content,
-      bytesDelta: content.length,
-      sessionId,
-      agentId,
-      toolCallId: 't',
-      timestamp: 100,
-    });
-    return store;
-  }
-
-  it('reads blobs from each entry home store and never merges workers paths', () => {
-    const w1 = storeWith('orch-worker-1', 'worker-1', 'same.txt', 'one\n');
-    const w2 = storeWith('orch-worker-2', 'worker-2', 'same.txt', 'two\n');
-    const changes = diffEntriesMany([w1, w2], {});
-    expect(changes).toHaveLength(2);
-    expect(
-      changes.map((c) => [c.sessionId, c.agentId, c.after]).sort(),
-    ).toEqual([
-      ['orch-worker-1', 'worker-1', 'one\n'],
-      ['orch-worker-2', 'worker-2', 'two\n'],
-    ]);
-    // --agent selects one worker's changes across stores.
-    expect(
-      diffEntriesMany([w1, w2], { agent: 'worker-2' }).map((c) => c.path),
-    ).toEqual(['same.txt']);
-  });
-});
-
-describe('diff --stat (issue #335)', () => {
+describe('diff --stat', () => {
   function change(over: Record<string, unknown>): FileChange {
     return {
       path: 'a.txt',
@@ -427,42 +385,5 @@ describe('diff --stat (issue #335)', () => {
       'old.txt +3 -2 create',
       'sweep.txt +3 -2 reconciled',
     ]);
-  });
-});
-
-describe('multi-store group readers (issue #364 review)', () => {
-  it("resolves the first entry's blobs through its own store", () => {
-    const first = new FileJournalStore(tmpRoot());
-    first.append({
-      path: 'p.txt',
-      op: 'write',
-      before: 'B1\n',
-      after: 'MID\n',
-      bytesDelta: 1,
-      sessionId: 's',
-      agentId: 'a1',
-      toolCallId: 't1',
-      timestamp: 100,
-    });
-    const second = new FileJournalStore(tmpRoot());
-    second.append({
-      path: 'p.txt',
-      op: 'write',
-      before: 'B2\n',
-      after: 'A2\n',
-      bytesDelta: 1,
-      sessionId: 's',
-      agentId: 'a1',
-      toolCallId: 't2',
-      timestamp: 200,
-    });
-    // Same session+path across two stores (the one-store-per-session
-    // invariant broken on purpose): before must come from the first
-    // entry's home store, after from the last entry's.
-    const changes = diffEntriesMany([first, second], {});
-    expect(changes).toHaveLength(1);
-    expect(changes[0]?.before).toBe('B1\n');
-    expect(changes[0]?.after).toBe('A2\n');
-    expect(changes[0]?.corrupt).toBe(false);
   });
 });

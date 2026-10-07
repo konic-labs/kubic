@@ -1,7 +1,6 @@
-// Solo lane boot wiring on the durable harness (issues #82, #99, #143;
-// ported in #394): the registry install order (= hook order), the prompt
-// sections (role prompt, appended context blocks), and the
-// HarnessSettings the boot hands over.
+// Solo lane boot wiring on the durable harness: the registry install order (=
+// hook order), the prompt sections (role prompt, appended context blocks), and
+// the HarnessSettings the boot hands over.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import type { EscalationLadder } from '../model-select.js';
@@ -118,7 +117,7 @@ function handle(id = 'sess-1'): TestSession {
     dir: `/tmp/kubic-solo-wiring/${id}`,
     storage,
     meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
-    // #395/D8.1: the boot adopts the storage, so the handle must expose it.
+    // The boot adopts the storage, so the handle must expose it.
     adopt: () => storage,
     release: vi.fn(async () => undefined),
   };
@@ -182,14 +181,12 @@ async function committedPrompt(solo: SoloLane): Promise<string> {
   return message?.sections?.[SOLO_PROMPT_SECTION] ?? '';
 }
 
-describe('solo boot installs the extension stack in hook order (issues #208, #98)', () => {
-  it('budget → policy → spans → kubic, and nothing else', async () => {
-    const budget = hook(ToolTask, { beforeTool: () => undefined });
+describe('solo boot installs the extension stack in hook order', () => {
+  it('policy → spans → kubic, and nothing else', async () => {
     const span = hook(ToolTask, { beforeTool: () => undefined });
     const solo = await boot({
       policy: {
         interceptors: { workspace: '/ws', readRoots: ['/skills-a'] },
-        beforePolicyHooks: () => [budget],
         spanHooks: () => [span],
       },
       skillReadRoots: ['/skills-b'],
@@ -199,10 +196,7 @@ describe('solo boot installs the extension stack in hook order (issues #208, #98
         .snapshot()
         .installed()
         .map((extension) => extension.name),
-    ).toEqual(['kubic.budget', 'kubic.policy', 'kubic.spans', 'kubic']);
-    expect(
-      solo.registry.snapshot().extension('kubic.budget')?.hooks,
-    ).toHaveLength(1);
+    ).toEqual(['kubic.policy', 'kubic.spans', 'kubic']);
     expect(
       solo.registry.snapshot().extension('kubic.policy')?.hooks,
     ).toHaveLength(1);
@@ -241,7 +235,7 @@ describe('solo boot installs the extension stack in hook order (issues #208, #98
   });
 });
 
-describe('solo boot prompt sections (issues #82, #99)', () => {
+describe('solo boot prompt sections', () => {
   it('a role prompt replaces the SOLO_ROLE seed, prefix rules intact', async () => {
     const solo = await boot({ rolePrompt: 'ROLE TEXT' });
     const prompt = await committedPrompt(solo);
@@ -272,13 +266,13 @@ describe('solo boot prompt sections (issues #82, #99)', () => {
         extraSections: ['## Skills', 'skill-a'],
       }),
     );
-    // The #33 rule: everything the no-sections boot sends is a prefix of it.
+    // The rule: everything the no-sections boot sends is a prefix of it.
     const prefix = prompt.slice(0, prompt.indexOf('\n## Skills'));
     expect(prefix).toContain('meta: agent=root,lane=main,model=faux/big');
   });
 });
 
-describe('solo boot hands HarnessSettings compaction to #399 (issues #82, #399)', () => {
+describe('solo boot hands HarnessSettings compaction to', () => {
   it('passes the configured reserve and a live current-window getter', async () => {
     const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
@@ -304,7 +298,7 @@ describe('solo boot hands HarnessSettings compaction to #399 (issues #82, #399)'
     expect(options?.currentWindow()).toBe(200_000);
   });
 
-  it('the current-window getter follows an escalation (issue #82 rule 6)', async () => {
+  it('the current-window getter follows an escalation', async () => {
     const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
     const solo = await bootSoloLane({

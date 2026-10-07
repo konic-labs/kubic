@@ -1,11 +1,10 @@
-// The interactive TUI's slash-command registry (issue #305; §16.4, §16.5,
-// §66).
+// The interactive TUI's slash-command registry.
 //
 // One source of truth for what a `/`-command is: the palette rows, the
 // editor's autocomplete, `/help` and the submit path's dispatcher all read
 // this list, so a command that exists is discoverable and a command that
 // does not is refused locally instead of being sent to the model as a
-// prompt. Each entry names the §66 `PresentationCommand` it issues (absent
+// prompt. Each entry names the `PresentationCommand` it issues (absent
 // for a purely local read like `/help`), which is what makes the dispatcher
 // typed rather than a string switch.
 //
@@ -30,14 +29,14 @@ export interface SlashCommandSpec {
   /** The usage line (`'/help [command]'`). */
   readonly usage: string;
   /**
-   * The §66 command this issues. Absent for a local action or a local read
-   * (`/help`, `/session`, `/diff`, `/undo`) — those never reach the lane.
+   * The presentation command this issues. Absent for a local action or a local
+   * read (`/help`, `/session`, `/diff`, `/undo`) — those never reach the lane.
    */
   readonly command?: PresentationCommand;
   /** The key equivalent, when one exists (shown by `/help`). */
   readonly keys?: string;
   /**
-   * Issue #460: the key action behind `keys`, so the palette shows the key
+   * The key action behind `keys`, so the palette shows the key
    * the registry has bound now (a rebound key included).
    */
   readonly keyAction?: KeyAction;
@@ -46,7 +45,7 @@ export interface SlashCommandSpec {
 }
 
 // The shipped command set. `/model`, `/thinking` and `/compact` ship from
-// their own issues (#227, #328, #330) and are listed here because they
+// their own issues and are listed here because they
 // exist: a palette that hides working capabilities is worse than one that
 // names them.
 export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
@@ -74,21 +73,13 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     command: 'session.attach',
   },
   {
-    // Issue #332 (§22.1, §66 session.fork): pi-durable branches by forking,
+    // Pi-durable branches by forking,
     // so both commands fork the live session into a NEW one and switch to it;
     // the original keeps the abandoned path.
     name: 'tree',
     summary: 'pick an earlier prompt and retry from there in a fork',
     usage: '/tree',
     command: 'session.fork',
-  },
-  {
-    // Issue #342 (§16.5 AgentInspector): a local read — no §66 command.
-    name: 'inspect',
-    summary:
-      'show an orchestrator worker in full (role, worktree, model, cost)',
-    usage: '/inspect <worker>',
-    argumentHint: 'worker',
   },
   {
     name: 'fork',
@@ -98,7 +89,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     argumentHint: 'entry',
   },
   {
-    // No §66 command: the posture toggle is a session decision, not a
+    // No presentation command: the posture toggle is a session decision, not a
     // response to an approval request (the vocabulary's `approval.respond`
     // needs a request id this has none of).
     name: 'approvals',
@@ -109,7 +100,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     argumentHint: 'on|off',
   },
   {
-    // Issue #453: the honest limits on demand — the permanent footer that
+    // The honest limits on demand — the permanent footer that
     // carried them is gone (the header keeps the mode badge on every frame).
     name: 'safety',
     summary: 'what this mode does and does not protect',
@@ -127,7 +118,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     summary: 'restore the journaled changes',
     usage: '/undo',
   },
-  // Issue #183 (§29.4): explicit skill invocation — hidden skills
+  // Explicit skill invocation — hidden skills
   // included. The skill name rides the command (`/skill:<name>`), so one
   // static entry covers discovery (/help, the palette, the `/sk` prefix
   // completion); the composition root parses the name, expands the
@@ -139,12 +130,12 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     usage: '/skill:<name> [instructions]',
   },
   {
-    // No §66 command: quitting ends the process (the session close is part
-    // of that), which the presentation vocabulary does not name.
+    // No presentation command: quitting ends the process (the session close is
+    // part of that), which the presentation vocabulary does not name.
     name: 'quit',
     summary: 'leave the TUI',
     usage: '/quit',
-    // Issue #454: Esc never quits; Ctrl-D on an empty draft does.
+    // Esc never quits; Ctrl-D on an empty draft does.
     keys: 'Ctrl-D',
     keyAction: 'app.eof',
   },
@@ -158,7 +149,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     command: 'model.select',
   },
   {
-    // Issue #210 (§38.4): the explicit climb — same ladder gate as
+    // The explicit climb — same ladder gate as
     // `/model`, but the reason lands in the escalation event.
     name: 'escalate',
     summary: 'climb the escalation ladder with a reason',
@@ -166,7 +157,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     argumentHint: 'provider/id',
   },
   {
-    // No §66 command (issue #255): the allowed set is a local read like
+    // No presentation command: the allowed set is a local read like
     // `/session` — the loop reports the resolved set, nothing is sent.
     name: 'scoped-models',
     summary: 'show the role’s allowed model set',
@@ -182,7 +173,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     command: 'thinking.cycle',
   },
   {
-    // Issue #461: the theme picker — previewed live, kept for the session.
+    // The theme picker — previewed live, kept for the session.
     name: 'theme',
     summary: 'pick a colour theme for this session (previewed live)',
     usage: '/theme [name]',
@@ -196,11 +187,11 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     command: 'lane.compact',
   },
   {
-    // Issue #338: attaching an image is local — it reads one file and arms
-    // the next prompt — so it issues no §66 command; the composition root
-    // owns the read (§9). Registered here so `/help`, the palette and the
-    // autocomplete know it, and so the unknown-command refusal lets it
-    // through to the local dispatcher instead of refusing it as a typo.
+    // Attaching an image is local — it reads one file and arms the next prompt
+    // — so it issues no presentation command; the composition root owns the
+    // read. Registered here so `/help`, the palette and the autocomplete know
+    // it, and so the unknown-command refusal lets it through to the local
+    // dispatcher instead of refusing it as a typo.
     name: 'image',
     summary: 'attach an image to the next prompt',
     usage: '/image <path>',
@@ -270,7 +261,7 @@ export function helpLines(
   });
 }
 
-// Per-skill completion rows (issue #183): the composition root
+// Per-skill completion rows: the composition root
 // synthesizes one spec per booted (gated-visible, hidden included) skill
 // so the editor's popup completes `/skill:<prefix>` to `/skill:<name>`.
 // Static registry entries cannot name boot-time skills, so these live
@@ -286,7 +277,7 @@ export function skillCommandSpecs(
   }));
 }
 
-// The editor's autocomplete provider (issue #305): a draft that starts with
+// The editor's autocomplete provider: a draft that starts with
 // `/` and has no space yet offers the registry's commands, so `/` alone
 // lists them and `/he<Tab>` completes `/help`. Presentation only — it
 // completes TEXT; the submit path still parses and dispatches.

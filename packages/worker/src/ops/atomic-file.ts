@@ -20,17 +20,17 @@ export interface PreImage {
   mode: number | undefined;
 }
 
-// Above this size the pre-image is never held in memory (issue #139): the
+// Above this size the pre-image is never held in memory: the
 // file is hashed in bounded chunks and recorded hash-only. 8 MiB matches the
 // text bound read and edit share (READ_MAX_BYTES / EDIT_MAX_BYTES): a text op
 // stays text up to there, and above it the journal keeps the change visible
 // at a bounded cost — undo reports the entry non-reversible, exactly as it
-// does for a binary pre-image or the sweep's hash-only after-side (#120).
+// does for a binary pre-image or the sweep's hash-only after-side.
 export const PREIMAGE_MAX_BYTES = 8 * 1024 * 1024;
 
-// Chunk size for that streamed hashing: the journal's own streamed-hash chunk
-// (issue #107), imported rather than re-declared so there is one source of
-// truth for "how much of a file is held at once".
+// Chunk size for that streamed hashing: the journal's own streamed-hash chunk,
+// imported rather than re-declared so there is one source of truth for "how
+// much of a file is held at once".
 export const PREIMAGE_CHUNK_BYTES = HASH_CHUNK_BYTES;
 
 // Reads the file's bytes when the seam can (readFileRange), so the recorded
@@ -54,7 +54,7 @@ export function readPreImage(ctx: OpContext, path: string): PreImage {
   if (fs.readFileRange !== undefined) {
     const readRange = fs.readFileRange.bind(fs);
     if (size > PREIMAGE_MAX_BYTES) {
-      // Issue #139: a whole-file pre-image costs ~3x the file (buffer +
+      // A whole-file pre-image costs ~3x the file (buffer +
       // decode + re-encode check) and `write` has no size guard, so one
       // overwrite of a multi-GB file OOMs the worker and journals the
       // content verbatim. Hash it chunk by chunk instead: bounded memory,
@@ -91,7 +91,7 @@ export function readPreImage(ctx: OpContext, path: string): PreImage {
 }
 
 // The sha256 of a file's raw bytes, one PREIMAGE_CHUNK_BYTES chunk at a
-// time (issue #139): peak memory is the chunk, never the file. The loop
+// time: peak memory is the chunk, never the file. The loop
 // advances by what a chunk actually delivered (a short read — the file
 // shrank after `stat` — must not be counted as hashed, nor skipped over),
 // and returns the bytes really read, so `bytesDelta` describes the file as
@@ -119,13 +119,13 @@ function hashRawBytes(
 // aborts the op with the file untouched. The tmp takes the replaced file's
 // mode before the rename; a new file keeps the umask default.
 //
-// Issue #140: the tmp+rename follows symlinks. `path` may name a link (to a
+// The tmp+rename follows symlinks. `path` may name a link (to a
 // file, or to a directory on the way), and renaming onto the LINK's own
 // name replaces the link with a regular file — the link is silently lost
 // and its target keeps the old content. The tmp is written beside the
 // RESOLVED file and renamed onto it, so the link survives and the real file
 // changes. The journal records the RESOLVED path in that case, so the
-// end-of-run sweep (§42) keys the file the walk sees and undo restores the
+// end-of-run sweep keys the file the walk sees and undo restores the
 // target instead of replacing the link. A resolution that leaves the
 // workspace is refused first (a `symlink_escape` OpError, journal
 // untouched): following the link would write outside the guardrail. A
@@ -150,12 +150,12 @@ export function replaceFile(
         sessionId: ctx.sessionId,
         agentId: ctx.agentId,
         toolCallId: ctx.toolCallId ?? null,
-        // Issue #335: the intercepting tool's name — `opName` is the
+        // The intercepting tool's name — `opName` is the
         // literal 'write'/'edit' the call site passed, so both tools are
         // covered here with no signature change.
         toolName: opName,
         timestamp: Date.now(),
-        // Issue #436: a turn-less call (headless, tests) writes NO turn
+        // A turn-less call (headless, tests) writes NO turn
         // field at all — never null, never zero — matching the sweep
         // entries' absent-on-old shape.
         ...(ctx.turn === undefined ? {} : { turn: ctx.turn }),
@@ -208,7 +208,7 @@ function rootKey(base: string, path: string): string {
 // Where a write to `path` must land, and whether that is allowed. The
 // caller's named path is kept when the seam cannot resolve links (test
 // doubles, an unresolvable component) — there the seam's own confinement
-// and the OS decide, exactly as before #140.
+// and the OS decide, exactly as.
 function writeTarget(
   ctx: OpContext,
   opName: string,

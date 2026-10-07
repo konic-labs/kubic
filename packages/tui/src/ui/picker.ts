@@ -1,11 +1,10 @@
-// The grouped picker list (EPIC N, issue #461; docs/ui/03-palette.html,
-// 03-D and 03-E): what bare `/model`, `/resume`, `/theme` and `/thinking`
-// open. The palette's list (ui/palette.ts) grown the parts a "choose one"
-// needs: group headers with a status (`● key from …`, `○ no key`), groups
-// and rows that cannot be chosen (shown greyed, never a stop), groups of
-// more than PICKER_FOLD_ROWS rows folded behind `▸ expand (→)`, and a
-// footer row under its own rule (the model picker's thinking row). The
-// query filters with Pi's fuzzyMatch. Pure: state in, state or lines out.
+// The grouped picker list: what bare `/model`, `/resume`, `/theme` and
+// `/thinking` open. The palette's list (ui/palette.ts) grown the parts a
+// "choose one" needs: group headers with a status (`● key from …`, `○ no key`),
+// groups and rows that cannot be chosen (shown greyed, never a stop), groups of
+// more than PICKER_FOLD_ROWS rows folded behind `▸ expand (→)`, and a footer
+// row under its own rule (the model picker's thinking row). The query filters
+// with Pi's fuzzyMatch. Pure: state in, state or lines out.
 
 import type { UiTheme } from '../../../core/src/ui/style.js';
 import { fuzzyMatch, visibleWidth } from '../tui-boundary.js';
@@ -131,7 +130,7 @@ function layout(state: PickerState): {
     if (query !== '' && hits.length === 0 && !(group.disabled && named)) {
       continue;
     }
-    // Keyless providers stack one header per row (03-D); every other
+    // Keyless providers stack one header per row; every other
     // group is set off by a blank row.
     const previous = lines.at(-1);
     const stacked =

@@ -1,4 +1,4 @@
-// Per-turn spans on the TUI path (issue #290): a faux turn through a real
+// Per-turn spans on the TUI path: a faux turn through a real
 // TuiTurnRunner forwards run/tool events to TurnSpans and writes the settled
 // turn's artifact. Stub lane only: zero network, zero paid tokens.
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -29,7 +29,6 @@ function app() {
   return createTuiApp({
     sessionId: 's',
     model: 'faux/faux-1',
-    mode: 'solo',
     approvalsSkipped: false,
   });
 }
@@ -75,7 +74,7 @@ function fileSink(
   };
 }
 
-describe('TUI per-turn spans (issue #290)', () => {
+describe('TUI per-turn spans', () => {
   it('writes the settled turn with a tool span per tool call', async () => {
     const written: string[] = [];
     const sink = fileSink('sess-tui', written);

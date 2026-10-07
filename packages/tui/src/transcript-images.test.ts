@@ -1,4 +1,4 @@
-// Prompt images in the transcript (issue #338; §16.5 Image, §16.8 Images).
+// Prompt images in the transcript (Image, Images).
 // A committed prompt carries its attachments back from the lane (so a
 // resumed session replays them), the pending echo carries the ones just
 // attached, and a part Kubic did not validate never reaches the renderer.
@@ -24,7 +24,7 @@ afterEach(() => {
   resetCapabilitiesCache();
 });
 
-describe('transcript prompt images (issue #338)', () => {
+describe('transcript prompt images', () => {
   it('renders a committed prompt image as the placeholder', () => {
     setCapabilities({ images: null, trueColor: false, hyperlinks: false });
     const view = createTranscriptView();

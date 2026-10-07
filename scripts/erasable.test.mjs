@@ -16,8 +16,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TSC = join(ROOT, 'node_modules', '.bin', 'tsc');
 
-// Discovered, not hand-listed: a hard-coded list silently skipped
-// packages/extensions, so "every package/app" was never true.
+// Discovered, not hand-listed, so "every package/app" stays true as the
+// workspace grows.
 const PACKAGES = ['packages', 'apps'].flatMap((top) =>
   readdirSync(join(ROOT, top), { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
@@ -53,7 +53,7 @@ function negativeFixture(name, source) {
   return dir;
 }
 
-describe('erasable-syntax config (issue #3)', () => {
+describe('erasable-syntax config', () => {
   it('base enables erasableSyntaxOnly + verbatimModuleSyntax', () => {
     const base = JSON.parse(
       readFileSync(join(ROOT, 'tsconfig.base.json'), 'utf8'),
@@ -63,9 +63,8 @@ describe('erasable-syntax config (issue #3)', () => {
   });
 
   it('every package/app tsconfig extends the base and typechecks', () => {
-    // Floor: 9 packages + apps/kubic — a collapsed discovery must not pass.
-    assert.ok(PACKAGES.length >= 10, `saw only ${PACKAGES.join(', ')}`);
-    assert.ok(PACKAGES.includes('packages/extensions'));
+    // Floor: 8 packages + apps/kubic — a collapsed discovery must not pass.
+    assert.ok(PACKAGES.length >= 9, `saw only ${PACKAGES.join(', ')}`);
     for (const pkg of PACKAGES) {
       const file = join(ROOT, pkg, 'tsconfig.json');
       assert.ok(existsSync(file), `missing ${pkg}/tsconfig.json`);

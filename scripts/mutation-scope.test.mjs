@@ -17,7 +17,7 @@ const diff = (...files) =>
     )
     .join('\n');
 
-describe('changedRanges (issue #72)', () => {
+describe('changedRanges', () => {
   it('reads added/changed line ranges from -U0 hunk headers', () => {
     const ranges = changedRanges(
       diff([
@@ -42,7 +42,7 @@ describe('changedRanges (issue #72)', () => {
   });
 });
 
-describe('vitestScope (issue #72)', () => {
+describe('vitestScope', () => {
   it('mutates only the changed lines of source files', () => {
     const scope = vitestScope(
       new Map([
@@ -161,7 +161,7 @@ describe('vitestScope (issue #72)', () => {
   });
 });
 
-describe('tapScope (issues #66, #72)', () => {
+describe('tapScope', () => {
   it('maps a changed script SUT and its test to the tap mutate file', () => {
     assert.deepEqual(tapScope(['scripts/dep-lint.mjs']), [
       'scripts/dep-lint.mjs',
@@ -171,7 +171,7 @@ describe('tapScope (issues #66, #72)', () => {
     ]);
   });
 
-  it('maps the same-named pin test to its SUT (issue #376)', () => {
+  it('maps the same-named pin test to its SUT', () => {
     assert.deepEqual(tapScope(['scripts/check-pinned-deps.test.mjs']), [
       'scripts/check-pinned-deps.mjs',
     ]);

@@ -114,7 +114,7 @@ function toolTranscript() {
 
 describe('transcript blocks', () => {
   it('renders prompt, prose, and each call with its output folded under it', () => {
-    // Issue #455 (01-B…E): the prompt block's edge, the prose mark, and a
+    // The prompt block's edge, the prose mark, and a
     // card per call with a gutter body and a footer naming what is hidden.
     expect(
       toolTranscript()
@@ -189,7 +189,7 @@ describe('transcript blocks', () => {
     );
     const lines = view.render(30);
     // Collapsed: both rows are CUT at the width (no wrap), and the output's
-    // hint says so instead of pretending the row is complete (issue #300).
+    // hint says so instead of pretending the row is complete.
     expect(lines).toHaveLength(3);
     for (const line of lines)
       expect(plain(line).length).toBeLessThanOrEqual(30);
@@ -203,7 +203,6 @@ describe('app chrome', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'faux/m',
-      mode: 'solo',
       approvalsSkipped: false,
     });
     app.onSubmit(() => {});
@@ -229,13 +228,12 @@ describe('app chrome', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'faux/m',
-      mode: 'solo',
       approvalsSkipped: false,
     });
     expect(app.render(100).at(-1)).toContain('⏎ send');
     app.setBusy(true);
     expect(app.busyElapsedMs()).toBeGreaterThanOrEqual(0);
-    // Issue #453/#454: the working line sits on the notice row above the
+    // The working line sits on the notice row above the
     // editor; the hint row switches to the keys that act on a running turn.
     const rows = app.render(100);
     expect(rows.join('\n')).toMatch(
@@ -247,46 +245,20 @@ describe('app chrome', () => {
     expect(app.busyElapsedMs()).toBeUndefined();
   });
 
-  it('names the queue and steer keys only on the solo lane (#334)', () => {
-    const solo = createTuiApp({
+  it('names the queue key while a turn runs', () => {
+    const app = createTuiApp({
       sessionId: 's',
       model: 'faux/m',
-      mode: 'solo',
       approvalsSkipped: false,
     });
-    solo.setBusy(true);
-    expect(solo.render(100).join('\n')).toContain('⏎ queue a message');
-    const orchestrator = createTuiApp({
-      sessionId: 's',
-      model: 'faux/m',
-      mode: 'orchestrator',
-      approvalsSkipped: false,
-    });
-    orchestrator.setBusy(true);
-    const line =
-      orchestrator.render(100).find((row) => row.includes('Working')) ?? '';
-    // The orchestrator lane has no inbox and refuses both keys: naming them
-    // would promise a queue that does not exist.
-    expect(line).toMatch(/Working · 0:0\d/);
-    expect(line).not.toContain('queue');
-    expect(
-      plain(
-        renderWorkingLine(
-          tuiTheme().ui,
-          { elapsedMs: 1500, queues: false },
-          80,
-        ),
-      ),
-    ).toBe(
-      ` ${spinnerFrame(1500)} Working · 0:01${' '.repeat(80 - 17 - 14)}esc interrupt `,
-    );
+    app.setBusy(true);
+    expect(app.render(100).join('\n')).toContain('⏎ queue a message');
   });
 
   it('toggles tool output expansion with Ctrl-X', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'faux/m',
-      mode: 'solo',
       approvalsSkipped: false,
     });
     expect(app.handleInput('\x18')).toEqual({
@@ -301,7 +273,6 @@ describe('app chrome', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'faux/m',
-      mode: 'solo',
       approvalsSkipped: false,
     });
     app.setEditorFooter(`solo: ${'word '.repeat(20)}end`);
@@ -312,16 +283,14 @@ describe('app chrome', () => {
   });
 
   it('renders the header, hints and working line within the width', () => {
-    const info = { mode: 'solo', approvalsSkipped: false } as const;
+    const info = { approvalsSkipped: false } as const;
     expect(renderHeader(tuiTheme().ui, info, 60)).toBe(
-      ` ■ KUBIC ${' '.repeat(60 - 9 - 20)}[SOLO] approvals on `,
+      ` ■ KUBIC ${' '.repeat(60 - 9 - 13)}approvals on `,
     );
-    expect(renderHeader(tuiTheme().ui, info, 20)).toBe(' ■ KUBIC     [SOLO] ');
-    const working = renderWorkingLine(
-      tuiTheme().ui,
-      { elapsedMs: 1500, queues: true },
-      80,
+    expect(renderHeader(tuiTheme().ui, info, 20)).toBe(
+      ` ■ KUBIC ${' '.repeat(11)}`,
     );
+    const working = renderWorkingLine(tuiTheme().ui, { elapsedMs: 1500 }, 80);
     expect(visibleWidth(working)).toBe(80);
     expect(plain(working)).toContain('esc interrupt   ⏎ queue a message ');
   });
@@ -367,7 +336,7 @@ describe('compact tree', () => {
   });
 });
 
-describe('review fixes', () => {
+describe('regressions', () => {
   const userEntry = (id: string, seq: number, text: string) => ({
     id,
     seq,
@@ -379,7 +348,6 @@ describe('review fixes', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'faux/m',
-      mode: 'solo',
       approvalsSkipped: false,
     });
     app.onSubmit(() => {});
@@ -403,7 +371,7 @@ describe('review fixes', () => {
   it('measures the header by visible width', () => {
     const line = renderHeader(
       tuiTheme().ui,
-      { mode: 'solo', approvalsSkipped: false, project: 'kubic-playground' },
+      { approvalsSkipped: false, project: 'kubic-playground' },
       60,
     );
     expect(visibleWidth(line)).toBe(60);
@@ -420,7 +388,6 @@ describe('review fixes', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'faux/m',
-      mode: 'solo',
       approvalsSkipped: false,
     });
     // The durable entry the runner's read returns (pi.user carries the
@@ -452,7 +419,7 @@ describe('review fixes', () => {
   });
 
   it('fully redraws on a width change even through the differential update', async () => {
-    // Deterministic, no sleeps (issue #321): pi-tui schedules a requested
+    // Deterministic, no sleeps: pi-tui schedules a requested
     // render with process.nextTick, then a setTimeout bounded by its render
     // interval, measured with performance.now(). Faking only the timer and the
     // clock lets the real nextTick fire, after which the pending render timer

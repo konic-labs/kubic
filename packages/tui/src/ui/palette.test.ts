@@ -1,4 +1,4 @@
-// The ^P palette's state and render (EPIC N, issue #460; docs/ui 03-A … C).
+// The ^P palette's state and render.
 import { describe, expect, it } from 'vitest';
 import { createUiTheme } from '../../../core/src/ui/style.js';
 import { DARK_PALETTE } from '../../../core/src/ui/tokens.js';
@@ -44,7 +44,7 @@ const COMMANDS: PaletteItem[] = [
     group: 'commands',
     value: '/mode',
     text: '/mode',
-    detail: 'switch solo ↔ orchestrator',
+    detail: 'switch the input mode',
     meta: '^G',
   },
   {
@@ -112,7 +112,7 @@ const render = (state: PaletteState, width = 80, maxRows = 30): string[] =>
     keyLabel: '^P',
   });
 
-describe('palette state (issue #460)', () => {
+describe('palette state', () => {
   it('groups the matches in order, best first, and hides empty groups', () => {
     const state = query('mod');
     expect(shape(state)).toEqual([
@@ -237,14 +237,14 @@ describe('palette state (issue #460)', () => {
   });
 });
 
-describe('palette render (issue #460; 03-A … C)', () => {
+describe('palette render', () => {
   it('reads like the design at depth none', () => {
     expect(render(query('mod'))).toEqual([
       '┌─ ^P ─────────────────────────────────────────────────────────────────────────┐',
       '│ › mod                                                              5 results │',
       '├──────────────────────────────────────────────────────────────────────────────┤',
       '│ COMMANDS                                                                     │',
-      '│▌ /mode    switch solo ↔ orchestrator                                      ^G │',
+      '│▌ /mode    switch the input mode                                           ^G │',
       '│  /model   switch the model for this session                            alt+m │',
       "│  /models  browse every provider's catalogue                                  │",
       '│                                                                              │',
@@ -306,7 +306,7 @@ describe('palette render (issue #460; 03-A … C)', () => {
 
   it('opens a details footer with the whole row', () => {
     const lines = render(togglePaletteDetails(query('mod')), 40);
-    expect(lines.at(-2)).toBe('│ /mode — switch solo ↔ orchestrator   │');
+    expect(lines.at(-2)).toBe('│ /mode — switch the input mode        │');
     expect(lines.at(-3)?.startsWith('├')).toBe(true);
   });
 

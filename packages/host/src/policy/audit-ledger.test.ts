@@ -1,4 +1,4 @@
-// §60 audit ledger (one record format, one file): approval decisions are
+// Audit ledger (one record format, one file): approval decisions are
 // emitted through emitAudit as OrgAuditRecords and read back by the same
 // reader `kubic audit` uses.
 import { execFileSync } from 'node:child_process';
@@ -17,7 +17,6 @@ import {
   disposeAllGitSandboxes,
   type GitSandbox,
 } from '../../../exec/src/test-support/git-sandbox.js';
-import { createWorkerAskRouter } from '../orchestrator/approvals/worker-asks.js';
 import type { AuditInput } from './audit.js';
 import { runAuditCommand } from './audit-cli.js';
 import {
@@ -30,8 +29,6 @@ import {
   credentialUseAudit,
   fullAccessEnabledAudit,
   isPrivilegedAuditWhat,
-  mergeDecisionAudit,
-  orchestratorDecisionAudit,
   PRIVILEGED_ACTION_KINDS,
   readAuditLedger,
   resolveRunBaseRevision,
@@ -39,11 +36,6 @@ import {
   setAuditSinks,
   soloDecisionAudit,
   undoRestoreAudit,
-  workerGenerationFromEnv,
-  workerSpawnAudit,
-  workerTerminateAudit,
-  worktreeCreateAudit,
-  worktreeRemoveAudit,
 } from './audit-ledger.js';
 import { REDACTED_SECRET } from './secret-shapes.js';
 
@@ -57,7 +49,7 @@ afterEach(() => {
   }
 });
 
-// The test's git driver (issue #420): plain, never injected — production
+// The test's git driver: plain, never injected — production
 // reaches git only through the injected spawn seam below.
 function git(cwd: string, args: string[]): string {
   driver ??= createGitSandbox();
@@ -70,48 +62,7 @@ function repo(): string {
   return root;
 }
 
-const askInput = {
-  trigger: 'network',
-  toolName: 'bash',
-  args: { command: 'curl example.com' },
-  justification: 'fetch the fixture',
-  sessionId: 'sess-1',
-  agentId: 'agent-1',
-  role: 'implementer',
-  worktree: '/repo/.kubic/wt/agent-1',
-  provenance: { parentSessionId: 'root-1', model: 'faux/faux' },
-};
-
-describe('§60 audit ledger', () => {
-  it('records an orchestrator approval decision as one OrgAuditRecord', async () => {
-    const dir = auditLedgerDir(repo());
-    mkdirSync(dir, { recursive: true });
-    const router = createWorkerAskRouter({ dir, maxPendingMs: 1_000 });
-    const outcome = await router.ask(askInput, { autoApprove: true });
-    expect(outcome.approved).toBe(true);
-    const records = readAuditLedger(dir);
-    expect(records).toHaveLength(1);
-    expect(records[0]).toMatchObject({
-      who: 'agent:agent-1',
-      what: 'tool:bash',
-      mode: 'orchestrator',
-      posture: 'approvals',
-      result: 'ok',
-      agent: { session: 'sess-1', role: 'implementer', parent: 'root-1' },
-      model: { provider: 'faux', id: 'faux' },
-    });
-  });
-
-  it('records a manager approve attempt as a denied decision', () => {
-    const dir = auditLedgerDir(repo());
-    mkdirSync(dir, { recursive: true });
-    const router = createWorkerAskRouter({ dir, maxPendingMs: 1_000 });
-    router.managerApprove('no-such-key');
-    const records = readAuditLedger(dir);
-    expect(records).toHaveLength(1);
-    expect(records[0]?.result).toBe('deny');
-  });
-
+describe('audit ledger', () => {
   it('solo decisions share the ledger and the format', () => {
     const root = repo();
     const dir = auditLedgerDir(root);
@@ -128,54 +79,8 @@ describe('§60 audit ledger', () => {
       }),
     );
     expect(readAuditLedger(dir)).toMatchObject([
-      { mode: 'solo', result: 'deny', reason: 'user denied' },
+      { who: 'agent:root', result: 'deny', reason: 'user denied' },
     ]);
-  });
-
-  // Issue #323: a merge approved by the run's `--yes` standing answer is not
-  // a user decision; the ledger row says which one it was.
-  it('merge-gate rows tell a --yes approval apart from a user answer', () => {
-    const root = repo();
-    const dir = auditLedgerDir(root);
-    const base = {
-      sessionId: 'orch-1',
-      agentId: 'worker-1',
-      branch: 'kubic/worker-1',
-      workspace: root,
-      posture: 'approvals',
-    };
-    appendToLedger(
-      dir,
-      mergeDecisionAudit({ ...base, approved: true, by: '--yes' }),
-    );
-    appendToLedger(
-      dir,
-      mergeDecisionAudit({ ...base, approved: true, by: 'user' }),
-    );
-    appendToLedger(
-      dir,
-      mergeDecisionAudit({
-        ...base,
-        approved: false,
-        by: 'user',
-        reason: 'denied',
-      }),
-    );
-    const records = readAuditLedger(dir);
-    expect(records.map((record) => record.permission.approval)).toEqual([
-      'approved by --yes',
-      'approved by user',
-      'denied',
-    ]);
-    expect(records[0]).toMatchObject({
-      who: 'agent:worker-1',
-      what: 'merge:kubic/worker-1',
-      mode: 'orchestrator',
-      result: 'ok',
-      agent: { session: 'orch-1', role: 'manager' },
-      permission: { permission: 'gate:merge' },
-    });
-    expect(records[2]).toMatchObject({ result: 'deny', reason: 'denied' });
   });
 
   it('redacts a secret-shaped field instead of dropping the decision', () => {
@@ -202,7 +107,7 @@ describe('§60 audit ledger', () => {
     expect(JSON.stringify(stored)).not.toContain('sk-live-abcdef1234567890');
   });
 
-  // Issue #359: the live-value refusal is a substring match, so a short or
+  // The live-value refusal is a substring match, so a short or
   // dummy key (`gw`, `solo`, `1`, or `ollama` for provider `ollama`) matched
   // the record's own provider name and the credential-use row was silently
   // dropped. Below the minimum length nothing is matched and the row lands.
@@ -278,85 +183,10 @@ describe('§60 audit ledger', () => {
     expect(errors).toHaveLength(1);
   });
 
-  // Issue #279: the generation a worker child records is the one its
-  // lifecycle layer stamped (KUBIC_WORKER_GENERATION); a solo row is 0.
-  it("reads a worker child's generation from its env, exactly", () => {
-    const base = {
-      sessionId: 's',
-      toolName: 'bash',
-      trigger: 'destructive-shell',
-      workspace: '/w',
-      approved: false,
-      reason: 'no',
-      posture: 'approvals',
-    };
-    const worker = { id: 'w-1', orchestratorSession: 'orch' };
-    const generationFor = (env: Record<string, string | undefined>) =>
-      soloDecisionAudit({ ...base, worker }, env).worker.generation;
-    expect(generationFor({ KUBIC_WORKER_GENERATION: '3' })).toBe(3);
-    expect(generationFor({ KUBIC_WORKER_GENERATION: '0' })).toBe(0);
-    expect(generationFor({ KUBIC_WORKER_GENERATION: '12' })).toBe(12);
-    for (const bad of ['', 'x', '-2', '1.5', ' ']) {
-      expect(generationFor({ KUBIC_WORKER_GENERATION: bad })).toBe(0);
-    }
-    expect(generationFor({})).toBe(0);
-    // An explicit generation from the caller wins over the env.
-    expect(
-      soloDecisionAudit(
-        { ...base, worker: { ...worker, generation: 5 } },
-        { KUBIC_WORKER_GENERATION: '3' },
-      ).worker.generation,
-    ).toBe(5);
-    // A solo row never inherits a stray env value.
-    expect(
-      soloDecisionAudit(base, { KUBIC_WORKER_GENERATION: '3' }).worker
-        .generation,
-    ).toBe(0);
-    expect(workerGenerationFromEnv({ KUBIC_WORKER_GENERATION: '7' })).toBe(7);
-  });
-
-  // Issue #282: the ledger must answer which worker (pid, generation) on
+  // The ledger must answer which worker (pid, generation) on
   // which base ran X, and at which thinking level — no hard-coded 0/unknown
   // for a field the run knows.
-  describe('audit provenance fields (issue #282)', () => {
-    const request = {
-      key: 'k1',
-      trigger: 'network' as const,
-      toolName: 'bash',
-      summary: 'curl example.com',
-      justification: 'fetch the fixture',
-      sessionId: 'sess-1',
-      agentId: 'worker-1',
-      role: 'implementer',
-      worktree: '/repo/.kubic/wt/worker-1',
-      provenance: { parentSessionId: 'orch-1', model: 'faux/faux' },
-    };
-    const approve = { approved: true, by: 'user' } as const;
-
-    it("records the worker's pid, generation, thinking level and worktree base", () => {
-      const input = orchestratorDecisionAudit(request, approve, {
-        posture: 'approvals',
-        pid: 4242,
-        generation: 1,
-        thinking: 'high',
-        base: 'abc123',
-      });
-      expect(input.worker).toMatchObject({ pid: 4242, generation: 1 });
-      expect(input.model.thinking).toBe('high');
-      expect(input.workspace.base).toBe('abc123');
-    });
-
-    it('keeps the honest 0/unknown fallback when the run knows nothing (e.g. a forged key)', () => {
-      const input = orchestratorDecisionAudit(
-        { key: 'k9' } as unknown as typeof request,
-        { approved: false, reason: 'no such ask' },
-        { posture: 'approvals' },
-      );
-      expect(input.worker).toMatchObject({ pid: 0, generation: 0 });
-      expect(input.model.thinking).toBe('unknown');
-      expect(input.workspace.base).toBe('unknown');
-    });
-
+  describe('audit provenance fields', () => {
     it('records thinking and base on solo rows', () => {
       const input = soloDecisionAudit({
         sessionId: 's',
@@ -393,7 +223,7 @@ describe('§60 audit ledger', () => {
       ).resolves.toBe('none');
     });
 
-    it('probes git in the workspace dir, not the spawn cwd (issue #282 review gap)', async () => {
+    it('probes git in the workspace dir, not the spawn cwd', async () => {
       // A scratch repo (the workspace) and a bare non-repo dir (the spawn
       // cwd): the probe must report the workspace's HEAD even though the
       // spawning shell sits elsewhere.
@@ -433,13 +263,6 @@ describe('§60 audit ledger', () => {
     });
 
     it("no live-path record carries 'unknown' for a field whose data exists", () => {
-      const orchestrated = orchestratorDecisionAudit(request, approve, {
-        posture: 'approvals',
-        pid: 4242,
-        generation: 1,
-        thinking: 'medium',
-        base: 'abc123',
-      });
       const solo = soloDecisionAudit({
         sessionId: 's',
         toolName: 'bash',
@@ -452,9 +275,7 @@ describe('§60 audit ledger', () => {
         by: 'user',
         posture: 'approvals',
       });
-      for (const record of [orchestrated, solo]) {
-        expect(JSON.stringify(record)).not.toContain('unknown');
-      }
+      expect(JSON.stringify(solo)).not.toContain('unknown');
     });
   });
 
@@ -477,19 +298,18 @@ describe('§60 audit ledger', () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, AUDIT_LEDGER_FILE),
-      '{"type":"orchestrator-ask-raised","detail":"legacy"}\n{torn\n',
+      '{"type":"legacy-event","detail":"legacy"}\n{torn\n',
     );
     expect(readAuditLedger(dir)).toEqual([]);
   });
 
-  // Issue #278 (§19): the run's start names the §19 mode, so the audit
+  // The run's start names the mode, so the audit
   // trail carries the autonomous combination the session records.
-  describe('run-start audit row (issue #278)', () => {
+  describe('run-start audit row', () => {
     it('records the mode, the command and the explicit flag in the reason', () => {
       const record = runStartAudit({
         sessionId: 'sess-1',
         command: 'kubic run',
-        mode: 'solo',
         runMode: 'autonomous',
         workspace: '/repo',
         posture: 'approvals',
@@ -497,7 +317,6 @@ describe('§60 audit ledger', () => {
       });
       expect(record.what).toBe('run:start');
       expect(record.who).toBe('user:cli');
-      expect(record.mode).toBe('solo');
       expect(record.agent).toEqual({ session: 'sess-1', role: 'root' });
       expect(record.posture).toBe('approvals');
       expect(record.result).toBe('ok');
@@ -505,94 +324,14 @@ describe('§60 audit ledger', () => {
       expect(record.reason).toContain('kubic run');
       expect(record.reason).toContain('--autonomous');
     });
-
-    it('names the orchestrator run and omits the flag when not explicit', () => {
-      const record = runStartAudit({
-        sessionId: 'orch-1',
-        command: 'kubic orchestrate',
-        mode: 'orchestrator',
-        runMode: 'interactive',
-        workspace: '/repo',
-        posture: 'approvals',
-        autonomous: false,
-      });
-      expect(record.what).toBe('run:start');
-      expect(record.mode).toBe('orchestrator');
-      expect(record.agent).toEqual({ session: 'orch-1', role: 'manager' });
-      expect(record.reason).toContain('interactive');
-      expect(record.reason).not.toContain('--autonomous');
-    });
   });
 
-  describe('privileged-action audit rows (issue #284)', () => {
+  describe('privileged-action audit rows', () => {
     it('defines the closed privileged-action set', () => {
       expect(PRIVILEGED_ACTION_KINDS).toEqual([
         'full-access-grant',
-        'merge',
-        'worktree-create',
-        'worktree-remove',
-        'worker-spawn',
-        'worker-terminate',
         'undo-restore',
       ]);
-    });
-
-    it('records a worker spawn with live registry provenance', () => {
-      const record = workerSpawnAudit({
-        sessionId: 'orch',
-        agentId: 'worker-1',
-        role: 'implementer',
-        pid: 4242,
-        generation: 0,
-        worktree: '/repo/.kubic/wt/worker-1',
-        base: 'abc123',
-        model: 'faux/faux-1',
-        thinking: 'off',
-        posture: 'approvals',
-      });
-      expect(record.who).toBe('agent:worker-1');
-      expect(record.what).toBe('worker-spawn:worker-1');
-      expect(record.mode).toBe('orchestrator');
-      expect(record.agent).toEqual({ session: 'orch', role: 'manager' });
-      expect(record.worker).toEqual({
-        pid: 4242,
-        generation: 0,
-        role: 'implementer',
-      });
-      expect(record.workspace).toEqual({
-        path: '/repo/.kubic/wt/worker-1',
-        base: 'abc123',
-      });
-      expect(record.model).toEqual({
-        provider: 'faux',
-        id: 'faux-1',
-        thinking: 'off',
-      });
-      expect(record.result).toBe('ok');
-    });
-
-    it('records worker termination with ok and error results', () => {
-      const base = {
-        sessionId: 'orch',
-        agentId: 'worker-1',
-        role: 'implementer',
-        pid: 4242,
-        generation: 0,
-        worktree: '/repo/.kubic/wt/worker-1',
-        base: 'abc123',
-        posture: 'approvals' as const,
-      };
-      const ok = workerTerminateAudit({ ...base, reason: 'ok', result: 'ok' });
-      expect(ok.what).toBe('worker-terminate:worker-1');
-      expect(ok.result).toBe('ok');
-      expect(ok.reason).toBe('ok');
-      const failed = workerTerminateAudit({
-        ...base,
-        reason: 'worker_failed',
-        result: 'error',
-      });
-      expect(failed.result).toBe('error');
-      expect(failed.reason).toBe('worker_failed');
     });
 
     it('records an undo restore with restored paths and skip count', () => {
@@ -605,7 +344,6 @@ describe('§60 audit ledger', () => {
       });
       expect(record.who).toBe('user:cli');
       expect(record.what).toBe('undo-restore');
-      expect(record.mode).toBe('solo');
       expect(record.result).toBe('error');
       expect(record.reason).toContain('2 file(s)');
       expect(record.reason).toContain('a.txt');
@@ -619,67 +357,29 @@ describe('§60 audit ledger', () => {
       });
       expect(clean.result).toBe('ok');
     });
-
-    it('records worktree creation and removal', () => {
-      const created = worktreeCreateAudit({
-        sessionId: 'orch',
-        agentId: 'worker-1',
-        path: '/repo/.kubic/wt/worker-1',
-        branch: 'kubic/orch/worker-1',
-        base: 'abc123',
-        posture: 'approvals',
-      });
-      expect(created.what).toBe('worktree-create:kubic/orch/worker-1');
-      expect(created.mode).toBe('orchestrator');
-      expect(created.workspace).toEqual({
-        path: '/repo/.kubic/wt/worker-1',
-        base: 'abc123',
-      });
-      const removed = worktreeRemoveAudit({
-        sessionId: 'cli',
-        path: '/repo/.kubic/wt/worker-1',
-        branch: 'kubic/orch/worker-1',
-      });
-      expect(removed.who).toBe('user:cli');
-      expect(removed.what).toBe('worktree-remove:kubic/orch/worker-1');
-      expect(removed.mode).toBe('solo');
-      expect(removed.workspace.path).toBe('/repo/.kubic/wt/worker-1');
-    });
-
-    it('names the worktree path on approved merges', () => {
-      const withTree = mergeDecisionAudit({
-        sessionId: 'orch',
-        agentId: 'worker-1',
-        branch: 'kubic/orch/worker-1',
-        workspace: '/repo',
-        worktree: '/repo/.kubic/wt/worker-1',
-        approved: true,
-        by: '--yes',
-        posture: 'approvals',
-      });
-      expect(withTree.what).toBe('merge:kubic/orch/worker-1');
-      expect(withTree.reason).toContain('/repo/.kubic/wt/worker-1');
-      const without = mergeDecisionAudit({
-        sessionId: 'orch',
-        agentId: 'worker-1',
-        branch: 'kubic/orch/worker-1',
-        workspace: '/repo',
-        approved: true,
-        by: '--yes',
-        posture: 'approvals',
-      });
-      expect(without.reason).toBe('approved');
-    });
   });
 
-  it('kubic audit reads the ledger records back, filtered by mode', async () => {
-    const dir = auditLedgerDir(repo());
-    mkdirSync(dir, { recursive: true });
-    const router = createWorkerAskRouter({ dir, maxPendingMs: 1_000 });
-    await router.ask(askInput, { autoApprove: true });
+  it('kubic audit reads the ledger records back, filtered by posture', async () => {
+    const root = repo();
+    const dir = auditLedgerDir(root);
+    const decision = {
+      sessionId: 's',
+      toolName: 'bash',
+      trigger: 'destructive-shell',
+      workspace: root,
+      approved: true,
+    };
+    appendToLedger(
+      dir,
+      soloDecisionAudit({ ...decision, posture: 'approvals' }),
+    );
+    appendToLedger(
+      dir,
+      soloDecisionAudit({ ...decision, posture: 'full-access' }),
+    );
     const lines: string[] = [];
     const code = await runAuditCommand(
-      { mode: 'orchestrator', json: true },
+      { posture: 'full-access', json: true },
       {
         loadRecords: () => readAuditLedger(dir),
         loadSecrets: () => [],
@@ -688,15 +388,15 @@ describe('§60 audit ledger', () => {
       },
     );
     expect(code).toBe(0);
-    const parsed = JSON.parse(lines.join('\n')) as unknown[];
-    expect(parsed).toHaveLength(1);
+    const parsed = JSON.parse(lines.join('\n')) as { posture: string }[];
+    expect(parsed.map((record) => record.posture)).toEqual(['full-access']);
   });
 });
 
-// Configured sink fan-out (issue #286; §58): appendToLedger fans out to the
+// Configured sink fan-out: appendToLedger fans out to the
 // configured [[audit]] sinks plus the mandatory repo ledger. Faux-only: a
 // fake transport captures syslog lines, never a socket.
-describe('configured sink fan-out (issue #286)', () => {
+describe('configured sink fan-out', () => {
   afterEach(() => {
     setAuditSinks([]);
   });
@@ -711,35 +411,27 @@ describe('configured sink fan-out (issue #286)', () => {
     };
   }
 
-  function spawnInput(): AuditInput {
-    return workerSpawnAudit({
+  function privilegedInput(): AuditInput {
+    return undoRestoreAudit({
       sessionId: 'sess-1',
-      agentId: 'worker-1',
-      role: 'implementer',
-      worktree: '/repo/.kubic/wt/worker-1',
-      generation: 0,
-      posture: 'restricted',
+      workspace: '/repo',
+      restored: ['a.txt'],
     });
   }
 
-  it('isPrivilegedAuditWhat keeps decisions, run starts and the seven kinds, drops the rest', () => {
+  it('isPrivilegedAuditWhat keeps decisions, run starts and the privileged kinds, drops the rest', () => {
     for (const what of [
       'tool:bash',
       'run:start',
       'posture:full-access',
-      // Review finding (issue #286): the revoke half of a privileged
+      // Review finding: the revoke half of a privileged
       // posture change reaches privileged sinks too.
       'posture:approvals',
-      'merge:kubic/worker-1',
-      'worker-spawn:worker-1',
-      'worker-terminate:worker-1',
       'undo-restore',
-      'worktree-create:kubic/worker-1',
-      'worktree-remove:kubic/worker-1',
     ]) {
       expect(isPrivilegedAuditWhat(what)).toBe(true);
     }
-    for (const what of ['state:dropped', 'credential:openai']) {
+    for (const what of ['credential:openai', 'merge:kubic/w-1']) {
       expect(isPrivilegedAuditWhat(what)).toBe(false);
     }
   });
@@ -756,7 +448,7 @@ describe('configured sink fan-out (issue #286)', () => {
     setAuditSinks(built.sinks);
     const errors: string[] = [];
     const input = {
-      ...spawnInput(),
+      ...privilegedInput(),
       reason: 'key sk-faux-test-key-0001 echoed',
     };
     const record = appendToLedger(dir, input, (message) => {
@@ -845,8 +537,8 @@ describe('configured sink fan-out (issue #286)', () => {
       errors.push(message);
     };
     // Same failing sink twice: one stderr note per process, two repo rows.
-    expect(appendToLedger(dir, spawnInput(), onError)).toBeDefined();
-    expect(appendToLedger(dir, spawnInput(), onError)).toBeDefined();
+    expect(appendToLedger(dir, privilegedInput(), onError)).toBeDefined();
+    expect(appendToLedger(dir, privilegedInput(), onError)).toBeDefined();
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain('syslog down');
     expect(readAuditLedger(dir)).toHaveLength(2);
@@ -873,20 +565,20 @@ describe('configured sink fan-out (issue #286)', () => {
     setAuditSinks(built.sinks);
     const dir = auditLedgerDir(root);
     mkdirSync(dir, { recursive: true });
-    appendToLedger(dir, spawnInput());
+    appendToLedger(dir, privilegedInput());
     expect(readAuditLedger(dir)).toHaveLength(1);
     const lines = readFileSync(target, 'utf8').trim().split('\n');
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({
-      what: 'worker-spawn:worker-1',
+      what: 'undo-restore',
     });
   });
 });
 
-// Audit-sink doctor checks (issue #286; §58): `kubic doctor` lists the
+// Audit-sink doctor checks: `kubic doctor` lists the
 // configured [[audit]] sinks with a reachability probe per sink, plus one
 // failing check per sink that recorded a runtime failure.
-describe('audit sink doctor checks (issue #286)', () => {
+describe('audit sink doctor checks', () => {
   const probes = {
     socketExists: (path: string): boolean => path === '/dev/log',
     udpAvailable: (): boolean => true,
@@ -998,29 +690,14 @@ describe('audit sink doctor checks (issue #286)', () => {
   });
 });
 
-// The closed privileged-action set (issue #284 review): every kind in
-// PRIVILEGED_ACTION_KINDS maps to a builder whose `what` carries the kind —
-// a kind without coverage, or coverage without a kind, fails here. The two
-// pre-union kinds keep their shipped shapes (`posture:full-access`,
-// `merge:<branch>`); the five #284 builders write `<kind>:<identity>`.
-describe('privileged-action kinds map to whats (issue #284)', () => {
+// The closed privileged-action set: every kind in PRIVILEGED_ACTION_KINDS
+// maps to a builder whose `what` carries the kind — a kind without
+// coverage, or coverage without a kind, fails here.
+describe('privileged-action kinds map to whats', () => {
   const sessionId = 'sess-kinds';
-  const spawn = {
-    sessionId,
-    agentId: 'worker-1',
-    role: 'implementer',
-    worktree: '/repo/.kubic/wt/worker-1',
-    generation: 0,
-    posture: 'restricted',
-  };
 
   it.each([
     ['full-access-grant', 'posture:full-access'],
-    ['merge', 'merge:kubic/worker-1'],
-    ['worktree-create', 'worktree-create:kubic/worker-1'],
-    ['worktree-remove', 'worktree-remove:kubic/worker-1'],
-    ['worker-spawn', 'worker-spawn:worker-1'],
-    ['worker-terminate', 'worker-terminate:worker-1'],
     ['undo-restore', 'undo-restore'],
   ] as const)('kind %s writes what %s', (kind, what) => {
     expect(PRIVILEGED_ACTION_KINDS).toContain(kind);
@@ -1031,49 +708,7 @@ describe('privileged-action kinds map to whats (issue #284)', () => {
             sessionId,
             command: 'kubic run',
             workspace: '/repo',
-            mode: 'solo',
           }).what,
-        ).toBe(what);
-        break;
-      case 'merge':
-        expect(
-          mergeDecisionAudit({
-            sessionId,
-            agentId: 'worker-1',
-            branch: 'kubic/worker-1',
-            workspace: '/repo',
-            approved: true,
-            by: 'user',
-            posture: 'approvals',
-          }).what,
-        ).toBe(what);
-        break;
-      case 'worktree-create':
-        expect(
-          worktreeCreateAudit({
-            sessionId,
-            agentId: 'worker-1',
-            path: '/repo/.kubic/wt/worker-1',
-            branch: 'kubic/worker-1',
-            posture: 'approvals',
-          }).what,
-        ).toBe(what);
-        break;
-      case 'worktree-remove':
-        expect(
-          worktreeRemoveAudit({
-            sessionId,
-            path: '/repo/.kubic/wt/worker-1',
-            branch: 'kubic/worker-1',
-          }).what,
-        ).toBe(what);
-        break;
-      case 'worker-spawn':
-        expect(workerSpawnAudit(spawn).what).toBe(what);
-        break;
-      case 'worker-terminate':
-        expect(
-          workerTerminateAudit({ ...spawn, reason: 'ok', result: 'ok' }).what,
         ).toBe(what);
         break;
       case 'undo-restore':
@@ -1089,17 +724,9 @@ describe('privileged-action kinds map to whats (issue #284)', () => {
     }
   });
 
-  it('the set is closed: no more and no fewer than the seven kinds', () => {
+  it('the set is closed: no more and no fewer than the two kinds', () => {
     expect([...PRIVILEGED_ACTION_KINDS].sort()).toEqual(
-      [
-        'full-access-grant',
-        'merge',
-        'undo-restore',
-        'worker-spawn',
-        'worker-terminate',
-        'worktree-create',
-        'worktree-remove',
-      ].sort(),
+      ['full-access-grant', 'undo-restore'].sort(),
     );
   });
 });

@@ -1,8 +1,8 @@
-// Tool policy enforcement on the solo lane (issue #15, slice B; §40).
+// Tool policy enforcement on the solo lane.
 // Layer-1 shaping: allowlist the conversation to the class-derived set and
 // refuse contradictory configurations with named reasons, never silent.
 //
-// Pi 1.0 (issue #394): the lane is a root conversation, so the allowlist is
+// Pi 1.0: the lane is a root conversation, so the allowlist is
 // a `conversation.configure({ tools: [...] })` — pi-durable stores tool
 // NAMES from the registration objects, and an array offers exactly those.
 import type { PermissionClasses } from '../../../agents/src/policy.js';
@@ -30,7 +30,7 @@ export type { PermissionClasses };
 // every name-based allowlist is mapped here. Names the registry does not
 // offer are dropped (the harness drops them anyway); the boot filters its
 // prompt `tools:` line to the same set, so the model is never told about a
-// tool it cannot call (§40.3).
+// tool it cannot call.
 export function toolsForNames(
   registry: Registry,
   names: readonly string[],
@@ -61,7 +61,7 @@ export async function applyToolPolicy(
     .snapshot()
     .tools()
     .map(({ tool }) => tool.name);
-  // Agreement (§40.3) is a role-time check: a declared tool set must not
+  // Agreement is a role-time check: a declared tool set must not
   // contradict the classes. The solo lane always registers the full set
   // and narrows via configure(), so here we enforce the grantable half —
   // classes must never demand a tool that is not registered.

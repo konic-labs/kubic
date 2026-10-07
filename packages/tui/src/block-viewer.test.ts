@@ -1,4 +1,4 @@
-// The block viewer (EPIC N, issue #463): one block whole in a framed,
+// The block viewer: one block whole in a framed,
 // scrolling overlay with copy and close.
 import { describe, expect, it } from 'vitest';
 import { createUiTheme } from '../../core/src/ui/style.js';
@@ -21,7 +21,7 @@ function viewer(rows: number, maxRows = 8) {
   return { view, events };
 }
 
-describe('block viewer (issue #463)', () => {
+describe('block viewer', () => {
   it('frames the block and says where it is', () => {
     const { view } = viewer(20);
     const lines = view.render(40);

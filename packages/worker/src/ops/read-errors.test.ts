@@ -1,4 +1,4 @@
-// Read on the real, unwrapped NodeExecutionEnv (issue #199; §9.1).
+// Read on the real, unwrapped NodeExecutionEnv.
 // The windowed read must call `fs.readFileRange` as a method — the real
 // NodeFileSystem reads `this.cwd` — and the op's catch must name the actual
 // failure: a missing path is `not_found`, a directory is `is_directory`, a
@@ -54,7 +54,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('read on the unwrapped NodeExecutionEnv (issue #199)', () => {
+describe('read on the unwrapped NodeExecutionEnv', () => {
   it('returns the content of an existing file', async () => {
     writeFileSync(join(dir, 'long.js'), 'one\ntwo\nthree\n');
     const env = new NodeExecutionEnv(dir);

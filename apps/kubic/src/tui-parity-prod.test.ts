@@ -1,4 +1,4 @@
-// Issue #113, prod path: `kubic tui` boots "the same solo lane" as
+// Prod path: `kubic tui` boots "the same solo lane" as
 // `kubic run` — so the interactive surface must carry the same context the
 // headless one does: skills discovery, `--role` documents, journal
 // retention, and the runtime exclude rules. And its deferred-settlement
@@ -132,7 +132,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('skills reach the TUI lane (issue #113, §29.3)', () => {
+describe('skills reach the TUI lane', () => {
   it("injects a discovered skill's block into the TUI system prompt", async () => {
     const home = tmpRoot('tui-skills-home-');
     writeSkill(join(home, '.agents', 'skills'), 'deploy-widget', 'Ship it');
@@ -188,7 +188,7 @@ describe('skills reach the TUI lane (issue #113, §29.3)', () => {
   });
 });
 
-describe('role documents drive the TUI lane (issue #113, §12.1)', () => {
+describe('role documents drive the TUI lane', () => {
   it('replaces the solo prompt and narrows the tool set on --role', async () => {
     const cwd = tmpRoot('tui-roles-cwd-');
     writeRole(
@@ -231,7 +231,7 @@ describe('role documents drive the TUI lane (issue #113, §12.1)', () => {
   });
 });
 
-describe('solo-lane projections reach the TUI lane (issue #133)', () => {
+describe('solo-lane projections reach the TUI lane', () => {
   // The same `runtimeLaneDeps` projection `kubic run` consumes: the TUI
   // lane must name itself and layer `--role` identically, or the shared
   // projection would have one consumer too many.
@@ -257,7 +257,7 @@ describe('solo-lane projections reach the TUI lane (issue #133)', () => {
     await bare.close?.();
   });
 
-  // Issue #227: the role's `[roles.<name>].model` is the selection default
+  // The role's `[roles.<name>].model` is the selection default
   // for BOTH boots (the shared projection), which is why the TUI resolves
   // the role BEFORE selectModel.
   it('a role model layer selects the pinned model on the TUI lane', async () => {
@@ -330,7 +330,7 @@ describe('solo-lane projections reach the TUI lane (issue #133)', () => {
   });
 });
 
-describe('journal retention reaches the TUI store (issue #113, §42.4)', () => {
+describe('journal retention reaches the TUI store', () => {
   it('constructs the session journal with the configured retention', async () => {
     const sessionsRoot = tmpRoot('tui-retention-');
     const boot = await bootTuiLane(undefined, {
@@ -338,7 +338,7 @@ describe('journal retention reaches the TUI store (issue #113, §42.4)', () => {
       models: fauxModels(['done']),
       env: new FakeExecutionEnv({}),
       // The window must be wider than an append's own latency: index
-      // appends are fsynced (issue #117), so the enforcement pass inside
+      // appends are fsynced, so the enforcement pass inside
       // `append` can run a millisecond or more after the caller read
       // Date.now() — a 1ms window dropped the just-written fresh entry.
       journalRetention: { maxAgeMs: 60_000 },
@@ -377,7 +377,7 @@ describe('journal retention reaches the TUI store (issue #113, §42.4)', () => {
   });
 });
 
-describe('kubic tui parses the parity flags (issue #113)', () => {
+describe('kubic tui parses the parity flags', () => {
   function fakeTerminal() {
     return terminalRig(100, 30);
   }
@@ -428,19 +428,18 @@ describe('kubic tui parses the parity flags (issue #113)', () => {
   });
 });
 
-describe('the TUI footer names the lane failure (issue #113)', () => {
+describe('the TUI footer names the lane failure', () => {
   it('reports the failed turn message, never a TTY excuse', async () => {
     // The 0.87 drive loop had a 'waiting-deferred' kind the footer had to
-    // explain; the durable turn polls a deferred response inside generation
-    // (D2), so the runner's contract is simply: the lane's failure message
-    // reaches the footer verbatim.
+    // explain; the durable turn polls a deferred response inside generation, so
+    // the runner's contract is simply: the lane's failure message reaches the
+    // footer verbatim.
     const app = {
       applyLaneEntries: () => {},
       applyPresentation: () => {},
       presentationSeed: () => ({
         sessionId: 'sess-1',
         model: 'faux/faux-1',
-        mode: 'solo' as const,
         approvalsSkipped: false,
       }),
       setUsage: () => {},
@@ -470,7 +469,7 @@ describe('the TUI footer names the lane failure (issue #113)', () => {
   });
 
   it("forgets a settled turn's kills, never an unsettled one's", async () => {
-    // Review finding (#395): `forgetLaneKills` drains the D1 conversation
+    // Review finding: `forgetLaneKills` drains the conversation
     // key, so forgetting a failed turn would strip a still-live run's bash
     // process groups of their handles and a later quit could not kill them.
     let forgotten = 0;
@@ -496,7 +495,6 @@ describe('the TUI footer names the lane failure (issue #113)', () => {
       presentationSeed: () => ({
         sessionId: 'sess-1',
         model: 'faux/faux-1',
-        mode: 'solo' as const,
         approvalsSkipped: false,
       }),
       setUsage: () => {},
@@ -514,14 +512,13 @@ describe('the TUI footer names the lane failure (issue #113)', () => {
     expect(forgotten).toBe(1);
   });
 
-  it('names the busy refusal the durable turn reports (D6.1)', async () => {
+  it('names the busy refusal the durable turn reports', async () => {
     const app = {
       applyLaneEntries: () => {},
       applyPresentation: () => {},
       presentationSeed: () => ({
         sessionId: 'sess-1',
         model: 'faux/faux-1',
-        mode: 'solo' as const,
         approvalsSkipped: false,
       }),
       setUsage: () => {},

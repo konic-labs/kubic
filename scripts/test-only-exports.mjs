@@ -1,22 +1,20 @@
-// Symbol-level reachability (issue #215): flags exports imported only by
-// tests. The file-level gate (reachability.mjs) cannot see inside a live
-// module; this check owns the inside: every export of the audited surface
-// needs a non-test caller or a row in docs/dead-surface.md ("Unwired
-// exports of reachable modules"). Stale rows fail too — a symbol that
-// gained a prod caller or no longer exists must leave the ledger, so
-// dispositions are executed, not forgotten.
+// Symbol-level reachability: flags exports imported only by tests. The
+// file-level gate (reachability.mjs) cannot see inside a live module; this
+// check owns the inside: every export of the audited surface needs a
+// non-test caller or an entry in UNWIRED_EXPORTS (dead-surface.mjs). Stale
+// entries fail too — a symbol that gained a production caller or no longer
+// exists must leave the list.
 //
-// Scope is the #215 audit surface (lane/** + the two worker-root modules
-// it names), not the whole repo: widening it is a separate decision with
-// the owners of every newly-flagged module. `*.test.ts` and
-// `lane/test-harness.ts` (test support by design) are neither audited nor
-// counted as callers. Matching is textual (word-boundary): comments and
-// strings count as callers, so the check under-flags — it never invents a
-// violation, it only misses exotic ones (dynamic access, re-export
-// barrels that rename).
+// Scope is the agent lane (lane/** plus prompts.ts and compaction.ts), not
+// the whole repo. `*.test.ts` and `lane/test-harness.ts` (test support by
+// design) are neither audited nor counted as callers. Matching is textual
+// (word-boundary): comments and strings count as callers, so the check
+// under-flags — it never invents a violation, it only misses exotic ones
+// (dynamic access, re-export barrels that rename).
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { UNWIRED_EXPORTS } from './dead-surface.mjs';
 
 const AUDIT_SCOPE = [
   'packages/worker/src/lane',
@@ -84,13 +82,12 @@ function exportedSymbols(source) {
   return [...names];
 }
 
-function ledgerRows(ledger) {
-  const rows = new Map();
-  const row = /^\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|/gm;
-  for (const match of ledger.matchAll(row)) {
-    rows.set(`${match[2]}::${match[1]}`, true);
+function listedKeys(unwired) {
+  const keys = new Set();
+  for (const [module, symbols] of Object.entries(unwired)) {
+    for (const symbol of Object.keys(symbols)) keys.add(`${module}::${symbol}`);
   }
-  return rows;
+  return keys;
 }
 
 // Use inside the defining module (beyond its own export statement) counts
@@ -103,13 +100,10 @@ function hasInternalUse(source, symbol) {
   return occurrences.length >= 2;
 }
 
-export function checkTestOnlyExports({ root, ledgerText } = {}) {
+export function checkTestOnlyExports({ root, unwired } = {}) {
   const repo = root ?? resolve(dirname(fileURLToPath(import.meta.url)), '..');
-  const ledger =
-    ledgerText ?? readFileSync(join(repo, 'docs/dead-surface.md'), 'utf8');
-  const rows = ledgerRows(ledger);
+  const rows = listedKeys(unwired ?? UNWIRED_EXPORTS);
   const audited = scopeFiles(repo);
-  const inScope = new Set(audited.map((file) => relative(repo, file)));
   // A caller is any non-test module but the defining file itself:
   // intra-scope calls (lane calling lane) are production callers.
   const pool = walk(join(repo, 'packages'))
@@ -122,7 +116,7 @@ export function checkTestOnlyExports({ root, ledgerText } = {}) {
   const callerSources = new Map(
     pool.map((file) => [file, readFileSync(file, 'utf8')]),
   );
-  const unledgered = [];
+  const unlisted = [];
   const stale = [];
   const seen = new Set();
   for (const file of audited) {
@@ -135,33 +129,34 @@ export function checkTestOnlyExports({ root, ledgerText } = {}) {
       const called =
         hasInternalUse(source, symbol) ||
         callers.some((caller) => pattern.test(callerSources.get(caller) ?? ''));
-      const ledgered = rows.has(key);
-      if (!called && !ledgered) unledgered.push({ symbol, file: rel });
-      // The symbol exists (it was just extracted from this file): a row
-      // for it is stale only when prod actually calls it now.
-      if (called && ledgered) stale.push(key);
+      const listed = rows.has(key);
+      if (!called && !listed) unlisted.push({ symbol, file: rel });
+      // The symbol exists (it was just extracted from this file): an entry
+      // for it is stale only when production code calls it now.
+      if (called && listed) stale.push(key);
       seen.add(key);
     }
   }
-  for (const key of rows.keys()) {
-    // Rows for modules outside this scope belong to their own checks
-    // (e.g. secrets-surface.test.ts); only in-scope rows are verified.
-    const module = key.split('::')[0] ?? '';
-    if (inScope.has(module) && !seen.has(key)) stale.push(key);
+  // An entry naming a symbol that no audited module exports (deleted, or
+  // a module outside the scope) is stale.
+  for (const key of rows) {
+    if (!seen.has(key)) stale.push(key);
   }
-  return { unledgered, stale };
+  return { unlisted, stale };
 }
 
 // Main-module guard: import.meta.main is spelling-proof (symlinks,
 // relative argv[1]) — the same guard reachability.mjs uses.
 if (import.meta.main) {
-  const { unledgered, stale } = checkTestOnlyExports();
-  for (const { symbol, file } of unledgered) {
-    console.log(`test-only export without a ledger row: ${symbol} (${file})`);
+  const { unlisted, stale } = checkTestOnlyExports();
+  for (const { symbol, file } of unlisted) {
+    console.log(
+      `test-only export not listed in UNWIRED_EXPORTS: ${symbol} (${file})`,
+    );
   }
   for (const key of stale) {
-    console.log(`stale ledger row (wired or deleted): ${key}`);
+    console.log(`stale UNWIRED_EXPORTS entry (wired or deleted): ${key}`);
   }
-  if (unledgered.length > 0 || stale.length > 0) process.exit(1);
-  console.log('no test-only exports outside the ledger');
+  if (unlisted.length > 0 || stale.length > 0) process.exit(1);
+  console.log('no test-only exports outside the list');
 }

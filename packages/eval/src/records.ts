@@ -1,18 +1,18 @@
-// Eval records (issue #53; design §48, §72, §73).
+// Eval records.
 // Every stored result carries how it ran: model/thinking/worktree/
 // generation, the record SIZE (smoke|standard|extended — an
-// implementation-side classification, not a design term; issue #260) and
-// the §47.1/§72 DETERMINISM tier (recorded|deterministic|live). Records
+// implementation-side classification, not a design term) and
+// the DETERMINISM tier (recorded|deterministic|live). Records
 // missing worktree, generation, size or determinism are rejected (never
 // stored) — a result that cannot be attributed cannot be reproduced, and a
 // reader must be able to tell how far to trust a comparison. Cost/latency/
-// tokens reconcile against §39 usage rows before a record is accepted.
+// tokens reconcile against usage rows before a record is accepted.
 import { type EvalCategory, isEvalCategory } from './categories.js';
 import type { EvalSignals } from './signals.js';
 
 // The record's size class (how much was run). Deliberately NOT called a
-// tier: §47.1's tiers are the determinism tiers below, and the two were
-// conflated before issue #260.
+// tier: tiers are the determinism tiers below, and the two were
+// conflated.
 export const EVAL_SIZES = ['smoke', 'standard', 'extended'] as const;
 
 export type EvalSize = (typeof EVAL_SIZES)[number];
@@ -21,7 +21,7 @@ export function isEvalSize(value: string): value is EvalSize {
   return (EVAL_SIZES as readonly string[]).includes(value);
 }
 
-// §47.1 determinism tiers, published with every result (§72): recorded
+// Determinism tiers, published with every result: recorded
 // scores an existing trajectory without re-executing anything;
 // deterministic re-executes pinned; live executes a model-backed suite.
 export const DETERMINISM_TIERS = ['recorded', 'deterministic', 'live'] as const;
@@ -94,16 +94,14 @@ export function validateEvalRecord(input: unknown): RecordValidation {
     errors.push('thinking must be a string or null');
   }
   if (!nonEmpty(candidate.worktree)) {
-    errors.push('worktree is required: record how the run executed (§73)');
+    errors.push('worktree is required: record how the run executed');
   }
   if (
     typeof candidate.generation !== 'number' ||
     !Number.isInteger(candidate.generation) ||
     !(candidate.generation >= 0)
   ) {
-    errors.push(
-      'generation is required: record which worker generation ran (§73)',
-    );
+    errors.push('generation is required: record which worker generation ran');
   }
   if (typeof candidate.size !== 'string' || !isEvalSize(candidate.size)) {
     errors.push(
@@ -115,7 +113,7 @@ export function validateEvalRecord(input: unknown): RecordValidation {
     !isEvalDeterminism(candidate.determinism)
   ) {
     errors.push(
-      `determinism is required: one of ${DETERMINISM_TIERS.join(', ')} (§47.1/§72) — refusing to store a record whose comparisons cannot be trusted`,
+      `determinism is required: one of ${DETERMINISM_TIERS.join(', ')} — refusing to store a record whose comparisons cannot be trusted`,
     );
   }
   if (errors.length > 0) return { valid: false, errors };
@@ -146,7 +144,7 @@ export interface ReconcileResult {
   errors: string[];
 }
 
-// §39 reconciliation: the record's tokens/cost/latency must agree with
+// Reconciliation: the record's tokens/cost/latency must agree with
 // the summed usage rows. Exact on tokens; cost within a cent fraction;
 // latency must cover the summed row latency (the run cannot be faster
 // than its measured requests).

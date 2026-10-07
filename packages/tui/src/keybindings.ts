@@ -1,5 +1,5 @@
-// The Kubic keybinding registry (issue #303; §16.6 "never hardcode key
-// strings", §16.9 "KeybindingsManager tracks definitions, conflicts, and user
+// The Kubic keybinding registry ("never hardcode key
+// strings", "KeybindingsManager tracks definitions, conflicts, and user
 // overrides"). Every key the app claims ahead of the editor — the global
 // toggles, the open panel's navigation and the approval decisions — is an
 // ACTION here with its default keys; the input path asks the registry which
@@ -38,7 +38,7 @@ export const KEY_ACTIONS = {
     description:
       'interrupt the running turn; idle: clear the draft, then press twice to quit',
   },
-  // Issue #454: Esc never quits. It closes what is open, interrupts a
+  // Esc never quits. It closes what is open, interrupts a
   // running turn, and (idle, empty editor) enters block mode.
   'app.cancel': {
     scope: 'global',
@@ -46,7 +46,7 @@ export const KEY_ACTIONS = {
     description:
       'close the open dropdown or overlay; else interrupt the running turn',
   },
-  // Issue #454: unbound by default (Esc used to quit); still bindable.
+  // Unbound by default (Esc used to quit); still bindable.
   'app.exit': {
     scope: 'global',
     keys: [],
@@ -62,17 +62,12 @@ export const KEY_ACTIONS = {
     keys: ['ctrl+p'],
     description: 'open the command palette',
   },
-  // Issue #462: `?` on an idle, empty editor lists every key; anywhere
+  // `?` on an idle, empty editor lists every key; anywhere
   // else it is the character.
   'help.keys': {
     scope: 'global',
     keys: ['?'],
     description: 'list every key (on an idle, empty editor)',
-  },
-  'session.mode': {
-    scope: 'global',
-    keys: ['ctrl+g'],
-    description: 'switch solo / orchestrator between turns',
   },
   'view.tree': {
     scope: 'global',
@@ -144,7 +139,7 @@ export const KEY_ACTIONS = {
     keys: [APPROVAL_PAGE_KEY],
     description: 'approval: next page of a long command',
   },
-  // Issue #467: steering answers.
+  // Steering answers.
   'approval.comment': {
     scope: 'approval',
     keys: APPROVAL_DEFAULT_KEYS.comment,
@@ -160,7 +155,7 @@ export const KEY_ACTIONS = {
     keys: APPROVAL_DEFAULT_KEYS['allow-edits'],
     description: 'approval: allow all edits this turn',
   },
-  // Issue #459: the card's explanation row (the model's justification).
+  // The card's explanation row (the model's justification).
   'approval.explain': {
     scope: 'approval',
     keys: ['?'],

@@ -1,4 +1,4 @@
-// Design tokens and the style engine (EPIC N, issue #444).
+// Design tokens and the style engine.
 import { describe, expect, it } from 'vitest';
 import {
   ansiBackground,
@@ -36,7 +36,7 @@ describe('colour depth detection', () => {
       'none',
     );
   });
-  it('FORCE_COLOR forces a depth even off a TTY (issue #319)', () => {
+  it('FORCE_COLOR forces a depth even off a TTY', () => {
     expect(detectColorLevel({ FORCE_COLOR: '3' }, false)).toBe('truecolor');
     expect(detectColorLevel({ FORCE_COLOR: '2' }, false)).toBe('256');
     expect(detectColorLevel({ FORCE_COLOR: '1' }, false)).toBe('16');
@@ -105,7 +105,7 @@ describe('palettes', () => {
       );
       expect(contrastRatio(palette.fg0, palette.bg2)).toBeGreaterThanOrEqual(7);
     });
-    // Issue #468: the text the new surfaces put on their own backgrounds —
+    // The text the new surfaces put on their own backgrounds —
     // the header and status line (bg1), a selected row (bg3) and the
     // approval card (warnBg).
     it(`${name}: text keeps its contrast on the surfaces`, () => {

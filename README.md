@@ -1,21 +1,15 @@
 # Kubic
 
 Kubic is Konic's open-source terminal coding agent: model-agnostic, built directly on the Pi agent
-harness, with a change journal that makes every edit reviewable and reversible, and an optional
-orchestrator mode that delegates to subagents in their own worktrees.
+harness, with a change journal that makes every edit reviewable and reversible.
 
 **Status: implemented.** A fresh clone plus Node >= 22.19 is enough to
 build a working `kubic` binary — see [Install](#install). Every command the
 binary dispatches is shipped and specified under [`docs/cli/`](docs/cli/):
-solo (`run`, `sessions`, `git`, `models`, `diff` / `undo` / `log` /
-`status`, `doctor`, `tui`), orchestrator mode (`orchestrate`, `clean`,
-`workers`), and the analysis surfaces (`eval`, `benchmark`, `replay`,
-`export`, `cost`, `perf`, `policy`, `audit`).
-
-What is still open is refinement, not reach: [EPIC I](https://github.com/konic-labs/kubic/issues/73)
-tracks the remaining wiring gaps (config layers read at runtime, the
-extensions bundle at startup, TUI input and views, journal reconciliation),
-each with its own issue. Out of scope for the install story: npm publishing,
+the agent (`run`, `tui`, `sessions`, `models`, `doctor`), the change
+journal (`diff` / `undo` / `log` / `status`, `git`, `commit`), and the
+analysis surfaces (`eval`, `benchmark`, `replay`, `export`, `cost`,
+`policy`, `audit`). Out of scope for the install story: npm publishing,
 auto-update, installers.
 
 ## What Kubic is
@@ -24,13 +18,7 @@ auto-update, installers.
 in a version-control-independent journal, so `kubic diff` and `kubic undo` work in a monorepo and in
 `~/Downloads` alike. Dangerous operations are approved by you.
 
-**Orchestrator mode is opt-in and session-scoped.** Turn it on and the `kubic orchestrate`
-command plays the manager: it registers the manager toolset, plans one step per worker,
-fans one worker process plus one git worktree per subagent out, then merges what they produce.
-Each worker runs its own plan step under an assigned role, and a worker's dangerous calls are
-routed to you for approval. The mode requires a git repository.
-
-There is no sandbox. Solo mode has no isolation at all, and Kubic says so plainly rather than
+There is no sandbox. Kubic runs with no isolation at all, and says so plainly rather than
 implying otherwise — see [`docs/architecture/solo.md`](docs/architecture/solo.md).
 
 ## Install

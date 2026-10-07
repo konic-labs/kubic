@@ -1,4 +1,4 @@
-// `kubic tui --session` after a crash (issue #147; §21). The interactive
+// `kubic tui --session` after a crash. The interactive
 // boot durably aborts a turn a dead process left open (its approvals would
 // need an overlay that is not on screen yet, and the operator is present to
 // re-send) and names that outcome in the editor footer from the first
@@ -107,7 +107,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
   expect(condition()).toBe(true);
 }
 
-describe('kubic tui --session after a crash (issue #147)', () => {
+describe('kubic tui --session after a crash', () => {
   it('boot aborts the pending work, names it, and the loop takes a prompt', async () => {
     const root = tmpRoot();
     const { id, submissionId } = await crashAfterAccept(root);
@@ -120,7 +120,7 @@ describe('kubic tui --session after a crash (issue #147)', () => {
       env: new FakeExecutionEnv({}),
     });
     try {
-      // #396's notice: the durable work, the settlement and — for #147's
+      // 's notice: the durable work, the settlement and —
       // "this very prompt" rule — the interrupted prompt itself.
       expect(boot.pendingNotice).toContain(`submission ${submissionId}`);
       expect(boot.pendingNotice).toContain('aborted after an interrupted run');
@@ -155,7 +155,7 @@ describe('kubic tui --session after a crash (issue #147)', () => {
     expect(fake.writes.join('')).toContain(
       'pending operation op-1 (run, started x) aborted',
     );
-    // Issue #148: the model reconciliation line shares the first footer.
+    // The model reconciliation line shares the first footer.
     expect(fake.writes.join('')).toContain(
       "model: session keeps its own model 'faux/a'",
     );

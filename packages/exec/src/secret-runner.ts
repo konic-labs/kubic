@@ -1,4 +1,4 @@
-// Runs `!command` secret refs (issue #224; §36.2): the production executor
+// Runs `!command` secret refs: the production executor
 // the run boots inject into the ledger key resolver. execFile, never a
 // shell — argv arrives verbatim, so quoting is parsing only, never
 // evaluation. One trailing newline is left for resolveSecretRef to strip;
@@ -7,11 +7,11 @@
 // text: a failing helper must not leak the material into run output).
 //
 // Lives in exec (not host): only packages/exec touches node:child_process
-// (§9 I/O confinement, issue #12). The host names the failure's provider
+// (I/O confinement). The host names the failure's provider
 // when it catches one (see secrets.ts); the runner itself never knows it.
 import { execFile } from 'node:child_process';
 
-/** A `!command` refusal from the production runner (issue #224). */
+/** A `!command` refusal from the production runner. */
 export class SecretCommandError extends Error {
   constructor(message: string) {
     super(message);

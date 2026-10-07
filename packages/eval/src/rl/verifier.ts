@@ -1,6 +1,6 @@
-// Reference verifier (issue #54; design §74).
+// Reference verifier.
 // tests-pass wired to the eval runner: the verdict reuses the eval
-// package's own signal derivation (computeSignals/gatesPass, issue #53)
+// package's own signal derivation (computeSignals/gatesPass)
 // over the parsed trajectory export — never a re-guess. Unknown signals
 // abstain, so an unverified run fails closed.
 import type { TrajectoryExport } from '../../../trajectory/src/schema.js';

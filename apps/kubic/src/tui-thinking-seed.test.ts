@@ -1,5 +1,5 @@
 // `kubic tui` seeds the status bar's thinking indicator from the lane's
-// committed level (issue #225, review cycle 2; §38.3). Before the fix the
+// committed level. Before the fix the
 // bar rendered the seed default (`off`) until the first turn's refresh, so
 // a session booted at `high` disagreed with its own lane on the first
 // frame. Faux provider only: zero network, zero paid tokens.
@@ -65,7 +65,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
   expect(condition()).toBe(true);
 }
 
-describe('kubic tui seeds the thinking indicator from the boot (issue #225)', () => {
+describe('kubic tui seeds the thinking indicator from the boot', () => {
   it('exposes the committed level on the boot', async () => {
     const root = tmpRoot();
     const boot = await bootTuiLane(undefined, bootOptions(root));

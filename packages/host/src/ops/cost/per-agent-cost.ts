@@ -1,11 +1,11 @@
-// Per-agent cost surface (issue #56; §49.2, §62 total-cost objective).
+// Per-agent cost surface (total-cost objective).
 // Every agent row carries its own cost; the task total is EXACTLY the sum
 // of the per-agent rows — Σ(per-agent) == task cost, never a second
 // accounting. Surfaces: one TUI row per agent plus a --json shape.
 // Pure: no I/O, no network, faux-only (fixture rows in tests).
 //
-// Issue #98 adds `cacheRead`/`cacheWrite` to the row as OPTIONAL additive
-// fields: they are the §62 lever-2 substrate (prefix hit-rate over real
+// `cacheRead`/`cacheWrite` are OPTIONAL additive row fields: they are the
+// lever-2 substrate (prefix hit-rate over real
 // usage rows) and a caller that has no usage rows simply omits them. The
 // documented `--json` top-level shape (`agents`, `taskTotal`) is unchanged.
 
@@ -17,12 +17,12 @@ export interface AgentCostInput {
   costUsd: number;
   input: number;
   output: number;
-  // §62 lever 2 (§98): prefix-cache counters off the session's usage rows.
+  // Lever 2: prefix-cache counters off the session's usage rows.
   cacheRead?: number;
   cacheWrite?: number;
-  // Issue #250 (§39): row identity below the (session, bucket) facts the
+  // Row identity below the (session, bucket) facts the
   // loader reads. `agent`/`role` come from the session's metadata
-  // (#164: absent for a solo run); `session` is always the session id;
+  // (absent for a solo run); `session` is always the session id;
   // `project` is the recorded workspace (`meta.workspace ?? meta.cwd`);
   // `request` is the transcript entry id (per-request rows only). All are
   // additive: older rows simply omit them, and `--json` echoes whatever
@@ -34,7 +34,7 @@ export interface AgentCostInput {
   request?: string;
 }
 
-// Issue #250 (§39): the level `kubic cost --by` aggregates at — request,
+// The level `kubic cost --by` aggregates at — request,
 // agent, session, project. The default is per-agent (role/model rows).
 export type CostGroupBy = 'request' | 'agent' | 'session' | 'project';
 
@@ -51,7 +51,7 @@ export function isCostGroupBy(value: string): value is CostGroupBy {
   return (COST_GROUP_BYS as readonly string[]).includes(value);
 }
 
-// Issue #250 (§39: `$0.002` rows): sub-cent costs print at 4 decimals so a
+// Sub-cent costs print at 4 decimals so a
 // $0.0023 row never reads $0.00; $1 and above stay at 2.
 export function formatCostUsd(value: number): string {
   return `$${value.toFixed(Math.abs(value) < 1 ? 4 : 2)}`;
@@ -61,7 +61,7 @@ function num(value: number | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
-// Issue #250: aggregate base facts (one per session per usage bucket, plus
+// Aggregate base facts (one per session per usage bucket, plus
 // per-request rows) to the `--by` level. `request` rows arrive already at
 // their level and pass through copied. Every other level sums counters over
 // its key, first-seen order, so the task total stays exactly Σ(rows).
@@ -117,7 +117,7 @@ export interface AgentCostEntry extends AgentCostInput {}
 export interface PerAgentCostSummary {
   perAgent: AgentCostEntry[];
   taskTotal: number;
-  // §62 lever 2 (§98): prefix hit-rate over the rows that carried cache
+  // Lever 2: prefix hit-rate over the rows that carried cache
   // counters. null when no row carried any (nothing to measure — never a
   // fabricated 0%).
   cache: PrefixHitRate | null;

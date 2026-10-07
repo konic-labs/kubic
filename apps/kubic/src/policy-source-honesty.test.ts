@@ -1,4 +1,4 @@
-// The installed-policy SOURCE is the config layer's own record (issue #86):
+// The installed-policy SOURCE is the config layer's own record:
 // the posture `doctor` prints and the posture the lane installs must name the
 // same origin, and neither may claim "config" for a directory that configured
 // nothing. This exists because the first implementation inferred `source` from
@@ -58,7 +58,7 @@ function configured(text: string) {
   };
 }
 
-describe('installed-policy source honesty (issue #86)', () => {
+describe('installed-policy source honesty', () => {
   it('a config-less directory installs the documented DEFAULT, not "config"', () => {
     const result = cliResult(loadRuntimeConfig(NO_CONFIG));
     const deps = installedPolicyDeps(result);
@@ -91,7 +91,7 @@ describe('installed-policy source honesty (issue #86)', () => {
     const installed = installSoloPolicy({ workspace: '/tmp/x', ...deps });
     expect(installed.posture.source).toBe('config');
     expect(installed.posture.classes.network).toBe('allowlist');
-    // Issue #166: the domain-less allowlist is reported, and the installed
+    // The domain-less allowlist is reported, and the installed
     // guards enforce it as `none` — `curl` raises the network trigger.
     expect(installed.posture.unsupported.map((u) => u.class)).toEqual([
       'network',
@@ -132,7 +132,7 @@ describe('installed-policy source honesty (issue #86)', () => {
   });
 
   it('the run path and doctor agree on the source for the same config', () => {
-    // §40.3: one projection, two consumers. Both read installedPolicyDeps,
+    // One projection, two consumers. Both read installedPolicyDeps,
     // so this pins the single-source rule rather than a coincidence.
     const noConfig = installedPolicyDeps(
       cliResult(loadRuntimeConfig(NO_CONFIG)),

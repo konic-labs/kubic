@@ -1,8 +1,8 @@
-// Live streaming of assistant text through the lane watch (issue #296; §61,
-// §15.2). The lane maps pi-durable's `message_update` text deltas into
-// `message-delta` events; the runner renders them as a draft and the
-// committed entry replaces it. The transcript is read once per turn, never
-// per event. Stub lane only: zero network, zero paid tokens.
+// Live streaming of assistant text through the lane watch. The lane maps
+// pi-durable's `message_update` text deltas into `message-delta` events; the
+// runner renders them as a draft and the committed entry replaces it. The
+// transcript is read once per turn, never per event. Stub lane only: zero
+// network, zero paid tokens.
 import { describe, expect, it } from 'vitest';
 import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
 import type {
@@ -55,7 +55,6 @@ function app() {
   return createTuiApp({
     sessionId: 's',
     model: 'faux/faux-1',
-    mode: 'solo',
     approvalsSkipped: false,
   });
 }
@@ -87,7 +86,7 @@ function stubLoop(
   } as unknown as TuiLaneLoop;
 }
 
-describe('live assistant streaming (issue #296)', () => {
+describe('live assistant streaming', () => {
   it('renders partial text before the message commits, then the entry once', async () => {
     const frames: string[] = [];
     const target = app();

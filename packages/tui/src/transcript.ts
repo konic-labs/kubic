@@ -1,7 +1,7 @@
-// Follow-end transcript fed by LaneSnapshot coarse cells (issue #23).
-// §16.1 follow-end pinned + manual scroll preserved; §18 text+tool/output
-// interleaved inspectable; §61 immediate deltas, one markdown rebuild per
-// entry; §80 streaming via replicated LaneSnapshot. Images and diff
+// Follow-end transcript fed by LaneSnapshot coarse cells.
+// Follow-end pinned + manual scroll preserved; text+tool/output
+// interleaved inspectable; immediate deltas, one markdown rebuild per
+// entry; streaming via replicated LaneSnapshot. Images and diff
 // rendering are out of scope.
 //
 // The ScrollView owns follow state (follow:'end', primary nearest,
@@ -35,14 +35,14 @@ export type TranscriptEntryKind =
   | 'text'
   | 'tool'
   | 'output'
-  // Issue #317: a compaction summary the lane placed in the branch.
+  // A compaction summary the lane placed in the branch.
   | 'compaction'
-  // Issue #457: the model's reasoning (Pi ThinkingContent), collapsed.
+  // The model's reasoning (Pi ThinkingContent), collapsed.
   | 'thinking'
-  // Issue #457: a settled turn's one-line receipt (UI only, never stored).
+  // A settled turn's one-line receipt (UI only, never stored).
   | 'receipt';
 
-// Issue #463: what block mode walks and copies — one block per prompt,
+// What block mode walks and copies — one block per prompt,
 // answer, thinking, tool card, compaction and receipt, as last drawn.
 export type TranscriptBlockKind =
   | 'prompt'
@@ -80,7 +80,7 @@ function withEdge(line: string, mark: string): string {
   return `${hit[1] ?? ''}${mark}${line.slice(hit[0].length)}`;
 }
 
-// Issue #457: what a settled turn did — the receipt cell's data.
+// What a settled turn did — the receipt cell's data.
 export interface TurnReceipt {
   readonly outcome: 'completed' | 'cancelled' | 'failed';
   readonly elapsedMs: number;
@@ -95,7 +95,7 @@ export interface TurnReceipt {
   readonly diffKey?: string;
 }
 
-// Issue #456: a file change's display record (the inline diff, or a new
+// A file change's display record (the inline diff, or a new
 // file's size and first lines) — a structural mirror of the worker's
 // ToolDisplay (dep-lint forbids tui → worker), sanitized at ingress.
 export type CellDisplay =
@@ -124,17 +124,17 @@ export interface TranscriptEntry {
   readonly isError?: boolean;
   // Pairs a call with its output so the output renders under the call.
   readonly toolCallId?: string;
-  // Issue #338: images attached to this prompt (§16.8). Rendered under the
+  // Images attached to this prompt. Rendered under the
   // prompt text as the real image or the terminal placeholder.
   readonly images?: readonly LaneImagePart[];
-  // Issue #455: when the entry was committed (ms since the epoch) — the
+  // When the entry was committed (ms since the epoch) — the
   // prompt block's `you · HH:MM:SS`.
   readonly timestamp?: number;
-  // Issue #456: a tool output's display record (edit/write).
+  // A tool output's display record (edit/write).
   readonly display?: CellDisplay;
-  // Issue #457: a thinking cell's measured generation time.
+  // A thinking cell's measured generation time.
   readonly durationMs?: number;
-  // Issue #457: a receipt cell's data.
+  // A receipt cell's data.
   readonly receipt?: TurnReceipt;
 }
 
@@ -151,7 +151,7 @@ export interface TranscriptDelta {
   readonly append: string;
 }
 
-// The transcript only needs the lane's identity: the §66 state shape
+// The transcript only needs the lane's identity: the presentation state shape
 // (presentation.ts) is the projector's business, and requiring all of it here
 // would make every cell-application carry fields it never reads.
 export interface LaneIdentity {
@@ -179,7 +179,7 @@ export function firstSentence(text: string): string {
 }
 
 /**
- * Issue #457 (01-J): `✓ turn 18.4s · 4 tools · 1 file +1 −1 · $0.031` with
+ * `✓ turn 18.4s · 4 tools · 1 file +1 −1 · $0.031` with
  * `^O review diff   /undo revert` on the right when files changed; the
  * right part drops first on a narrow terminal.
  */
@@ -228,7 +228,7 @@ export function renderReceipt(
     : fit(left, width);
 }
 
-// Issue #455: what the composition root knows about a call that the
+// What the composition root knows about a call that the
 // committed entries do not say — how long it took (or has been running) and
 // whether an approval holds it.
 export interface ToolCallState {
@@ -243,12 +243,12 @@ export function formatPromptTime(timestamp: number): string {
   const pad = (value: number): string => String(value).padStart(2, '0');
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
-// Issue #334: the label in front of a queued follow-up's first line. Plain
+// The label in front of a queued follow-up's first line. Plain
 // ASCII, because it prefixes untrusted prompt text and must never be
 // confused with a committed prompt row (`›`).
 export const QUEUED_LABEL = 'queued:';
 
-// Issue #458 (01-I): markdown on the design tokens — calm headings, inline
+// Markdown on the design tokens — calm headings, inline
 // code on bg2, fenced code in a fg3 `┌ lang` / `└` frame with highlighted
 // lines behind a `│` gutter, info links, fg2 `•` bullets, fg3 quote gutters.
 export function markdownThemeFor(theme: TuiTheme): MarkdownTheme {
@@ -304,7 +304,7 @@ function fit(line: string, width: number): string {
 
 // Cache keys are `${theme.level}\u0000${cell.id}`: the id is everything after
 // the first NUL (entry ids never contain one).
-// Issue #461: cache entries are per theme AND depth — a live theme switch
+// Cache entries are per theme AND depth — a live theme switch
 // at the same depth must repaint, not reuse the old colours. Names hold no
 // NUL, so the cell id is still everything after the first one.
 function themeKey(theme: TuiTheme): string {
@@ -316,7 +316,7 @@ function cellIdOf(key: string): string {
   return at === -1 ? key : key.slice(at + 1);
 }
 
-// The image cache keys are `cellId\u0000index` (#338): the id is everything
+// The image cache keys are `cellId\u0000index`: the id is everything
 // before the last separator, so the cell's components can be pruned with the
 // markdown caches when a snapshot drops the cell.
 function imageCellIdOf(key: string): string {
@@ -329,35 +329,35 @@ function imageCellIdOf(key: string): string {
 // construction (the composition root) takes effect on the next frame.
 class TranscriptDocument implements Component {
   cells: TranscriptEntry[] = [];
-  // Issue #463: block mode — the blocks of the last render, the selected
+  // Block mode — the blocks of the last render, the selected
   // one, and the blocks expanded one by one (`x`).
   blocks: TranscriptBlock[] = [];
   selected: string | undefined;
   readonly expandedCells = new Set<string>();
-  // Issue #462: the welcome block — fixed lines, or the preflight drawn at
+  // The welcome block — fixed lines, or the preflight drawn at
   // the frame's width.
   welcome: readonly string[] | ((width: number) => string[]) = [];
   pending: string | undefined;
-  // Issue #338: the images the echoed prompt carries.
+  // The images the echoed prompt carries.
   pendingImages: readonly LaneImagePart[] = [];
-  // Issue #334: follow-ups the conversation's inbox holds but no turn has
+  // Follow-ups the conversation's inbox holds but no turn has
   // placed yet. Rendered dim under the transcript (and under the pending
   // echo), so the operator sees the prompt was accepted — never dropped.
   queued: string[] = [];
-  // Issue #296: the in-flight generation's text (the lane's message deltas).
+  // The in-flight generation's text (the lane's message deltas).
   // Rendered as a plain draft after the committed cells; the committed
   // assistant entry replaces it, so it is never part of the cell list.
   stream: string | undefined;
   expanded = false;
   inline: ((width: number) => string[] | undefined) | undefined;
-  // Issue #455: per-call facts from the composition root, and the expand
+  // Per-call facts from the composition root, and the expand
   // key's cap for the card footers.
   toolState: ((toolCallId: string) => ToolCallState | undefined) | undefined;
   expandKey: (() => string) | undefined;
-  // Issue #458: a project file's `file://` URL (undefined: not a file).
+  // A project file's `file://` URL (undefined: not a file).
   fileUrl: ((path: string) => string | undefined) | undefined;
   private readonly markdownCache = new Map<string, Markdown>();
-  // Issue #298: the text each cached Markdown was built from, and the final
+  // The text each cached Markdown was built from, and the final
   // rendered lines of each cell. pi-tui's `setText` invalidates
   // unconditionally, so calling it every frame re-parsed every assistant
   // cell; the document therefore only pushes a cell's lines when its text,
@@ -370,7 +370,7 @@ class TranscriptDocument implements Component {
   // A parse is forced by constructing a Markdown or by setText; tests pin
   // that a steady frame adds none.
   private parses = 0;
-  // Issue #338: one component per attached image, keyed by cell and index —
+  // One component per attached image, keyed by cell and index —
   // the kitty protocol path allocates an image id that must be reused
   // across frames instead of re-uploaded.
   private readonly imageCache = new Map<string, Component>();
@@ -382,10 +382,10 @@ class TranscriptDocument implements Component {
     this.imageCache.clear();
   }
 
-  // Issue #298: the cells a snapshot carries REPLACE the previous set, so a
+  // The cells a snapshot carries REPLACE the previous set, so a
   // cache entry whose id left the snapshot is dead weight (a long session
   // would otherwise hold every markdown cell it ever showed). The image
-  // components are keyed by cell too (#338), so they are pruned the same way.
+  // components are keyed by cell too, so they are pruned the same way.
   setCells(cells: TranscriptEntry[]): void {
     this.cells = cells;
     const live = new Set(cells.map((cell) => cell.id));
@@ -415,7 +415,7 @@ class TranscriptDocument implements Component {
     const key = `${themeKey(theme)}\u0000${cell.id}`;
     let md = this.markdownCache.get(key);
     if (md === undefined) {
-      // Issue #458: file references become OSC 8 links — only where the
+      // File references become OSC 8 links — only where the
       // terminal opens them (Pi's fallback would print every URL inline).
       const resolve = this.fileUrl;
       md = new Markdown(
@@ -475,7 +475,7 @@ class TranscriptDocument implements Component {
     const inline = this.inline?.(w);
     if (inline !== undefined) return inline;
     const theme = tuiTheme();
-    // Issue #453: welcome lines wrap rather than cut — the honest lane
+    // Welcome lines wrap rather than cut — the honest lane
     // notice they carry is read whole.
     const welcome =
       typeof this.welcome === 'function' ? this.welcome(w) : this.welcome;
@@ -497,12 +497,12 @@ class TranscriptDocument implements Component {
     const gap = (): void => {
       if (out.length > 0 && out[out.length - 1] !== '') out.push('');
     };
-    // Issue #463: the blocks block mode walks — each cell's rows, as drawn.
+    // The blocks block mode walks — each cell's rows, as drawn.
     const blocks: TranscriptBlock[] = [];
     for (const cell of this.cells) {
       const before = out.length;
       const info = this.renderCell(cell, out, w, theme, outputs, called, gap);
-      // Issue #468: no style a cell opens (a wrapped code row's colour, say)
+      // No style a cell opens (a wrapped code row's colour, say)
       // bleeds past the row it was drawn on. Cached rows were closed when
       // they were cached, so a steady frame never scans them again.
       if (info?.closed !== true) {
@@ -532,7 +532,7 @@ class TranscriptDocument implements Component {
       }
     }
     if (this.stream !== undefined && this.stream !== '') {
-      // Issue #296 (§61): the in-flight generation's text, rendered as it
+      // The in-flight generation's text, rendered as it
       // arrives. Plain text, not markdown — the committed entry is the one
       // markdown rebuild per entry — and dim, because it is not committed.
       gap();
@@ -566,7 +566,7 @@ class TranscriptDocument implements Component {
     return out;
   }
 
-  // One cell's rows (issue #463: shared by the document and the block
+  // One cell's rows (shared by the document and the block
   // viewer), and what block mode copies from it. Undefined: no block (an
   // output drawn under its call, an empty receipt).
   private renderCell(
@@ -583,7 +583,7 @@ class TranscriptDocument implements Component {
         readonly kind: TranscriptBlockKind;
         readonly copy: string;
         readonly meta?: string;
-        /** Every row it pushed is already closed (#468): built that way. */
+        /** Every row it pushed is already closed: built that way. */
         readonly closed?: boolean;
       }
     | undefined {
@@ -613,7 +613,7 @@ class TranscriptDocument implements Component {
         };
       }
       case 'compaction': {
-        // Issue #317/#455: a rule names what happened; the summary
+        // A rule names what happened; the summary
         // follows, collapsed like a card body (Ctrl-X expands it).
         gap();
         const label = ` compacted${cell.detail === undefined ? '' : ` · ${cell.detail}`} `;
@@ -692,7 +692,7 @@ class TranscriptDocument implements Component {
     }
   }
 
-  // Issue #463: one block alone and whole (expanded), for the block viewer.
+  // One block alone and whole (expanded), for the block viewer.
   renderCellAlone(id: string, width: number): string[] {
     const w = Math.max(1, Math.floor(width));
     const cell = this.cells.find((candidate) => candidate.id === id);
@@ -717,11 +717,11 @@ class TranscriptDocument implements Component {
     return out.map(closeOpenStyles);
   }
 
-  // Issue #455 (01-B): the operator's own turn — a full-width bg2 block
+  // The operator's own turn — a full-width bg2 block
   // with the accent edge, the text fg0 bold, and `you · HH:MM:SS` on the
   // right when the entry carries its time.
-  // Issue #298: a committed prompt's block is cached like prose — drawn once
-  // per text, stamp, width and theme, its rows closed (#468) when cached —
+  // A committed prompt's block is cached like prose — drawn once
+  // per text, stamp, width and theme, its rows closed when cached —
   // so a steady frame does not redraw every prompt of a long session. True
   // when every row it pushed came closed (no attachment rows).
   private pushPrompt(
@@ -783,7 +783,7 @@ class TranscriptDocument implements Component {
     });
   }
 
-  // Issue #457 (01-F): reasoning collapses to its first sentence; ^X shows
+  // Reasoning collapses to its first sentence; ^X shows
   // all of it, italic, behind the gutter.
   private thinking(
     cell: TranscriptEntry,
@@ -820,7 +820,7 @@ class TranscriptDocument implements Component {
     ];
   }
 
-  // Issue #455 (01-D/E): a call and its result as one card.
+  // A call and its result as one card.
   private card(
     call: TranscriptEntry | undefined,
     result: TranscriptEntry | undefined,
@@ -854,7 +854,7 @@ class TranscriptDocument implements Component {
     );
   }
 
-  // Issue #338: one attached image under the prompt text. Protocol lines are
+  // One attached image under the prompt text. Protocol lines are
   // pushed unchanged (truncating a kitty/iTerm2 sequence would corrupt it);
   // the placeholder component already fits itself to the width.
   private renderImages(
@@ -877,7 +877,7 @@ class TranscriptDocument implements Component {
     });
   }
 
-  // A compaction summary (#317): collapsed shows the first rows behind a
+  // A compaction summary: collapsed shows the first rows behind a
   // gutter and says what it hides; expanded wraps everything.
   private renderBlock(
     out: string[],
@@ -957,15 +957,15 @@ export interface TranscriptView {
     prompt: string | undefined,
     images?: readonly LaneImagePart[],
   ): void;
-  // Issue #296: the streamed draft of the in-flight generation (undefined
+  // The streamed draft of the in-flight generation (undefined
   // clears it). The committed entry replaces it.
   setStream(text: string | undefined): void;
-  // Issue #334: the queued follow-ups (`pi.inbox`), newest last. A fresh
+  // The queued follow-ups (`pi.inbox`), newest last. A fresh
   // call REPLACES the rows — the inbox event is a snapshot, not a delta.
   setQueuedPrompts(prompts: readonly string[]): void;
   toggleExpanded(): boolean;
   readonly expanded: boolean;
-  // Issue #463: block mode — the blocks of the last render, the selection
+  // Block mode — the blocks of the last render, the selection
   // (drawn with an accent edge), one block's expand toggle, one block whole
   // for the viewer, and scrolling a block into view.
   blocks(): readonly TranscriptBlock[];
@@ -973,11 +973,11 @@ export interface TranscriptView {
   toggleBlock(id: string): boolean;
   blockLines(id: string, width: number): string[];
   reveal(id: string): void;
-  // Issue #298: cache counters the perf tests assert on — the live markdown
+  // Cache counters the perf tests assert on — the live markdown
   // entries and how many parses (constructor + setText) the document forced.
   markdownCacheSize(): number;
   markdownParses(): number;
-  // Issue #297: the live cell objects (a copy of the ARRAY; the objects are
+  // The live cell objects (a copy of the ARRAY; the objects are
   // the live ones). Tests pin that an identical snapshot preserves identity.
   liveCells(): ReadonlyArray<TranscriptEntry>;
 }
@@ -986,20 +986,20 @@ export interface TranscriptViewOptions {
   // Replaces the whole document while it returns lines (the approval's
   // inline fallback below the overlay's minimum width).
   readonly inline?: (width: number) => string[] | undefined;
-  // Issue #297: the op log is OPT-IN. It exists for `replayTranscript` and
+  // The op log is OPT-IN. It exists for `replayTranscript` and
   // the tests that drive it; production applies a snapshot on every lane
   // event, so an always-on log retained a deep copy of every one (O(N·E)
   // cells, tool outputs up to 20k chars). Absent means no log at all.
   readonly ops?: boolean;
-  // Issue #455: per-call facts (duration, running clock, waiting on an
+  // Per-call facts (duration, running clock, waiting on an
   // approval) and the expand key's cap for the card footers.
   readonly toolState?: (toolCallId: string) => ToolCallState | undefined;
   readonly expandKey?: () => string;
-  // Issue #458: resolves a project path to its `file://` URL.
+  // Resolves a project path to its `file://` URL.
   readonly fileUrl?: (path: string) => string | undefined;
 }
 
-// Issue #297: two cells are the same entry when every field the transcript
+// Two cells are the same entry when every field the transcript
 // renders matches — then a re-applied snapshot can keep the live object.
 function sameCell(left: TranscriptEntry, right: TranscriptEntry): boolean {
   return (
@@ -1030,7 +1030,7 @@ export function createTranscriptView(
     overscroll: 'chain',
   });
   const entries: TranscriptEntry[] = [];
-  // The live object per id: a re-applied snapshot reuses it (#297), and the
+  // The live object per id: a re-applied snapshot reuses it, and the
   // delta path mutates it in place.
   const byId = new Map<string, TranscriptEntry>();
   const logOps = options.ops === true;
@@ -1039,8 +1039,8 @@ export function createTranscriptView(
   let revision = -1;
   const log: TranscriptOp[] = [];
   const paint = (): void => {
-    // Issue #298: through setCells, so a cell that left the snapshot also
-    // leaves the markdown/line caches. Issue #297: only the ARRAY is copied
+    // Through setCells, so a cell that left the snapshot also
+    // leaves the markdown/line caches. Only the ARRAY is copied
     // (cheap references) — the cell objects themselves are reused.
     document.setCells(entries.slice());
     rebuilds += 1;
@@ -1105,13 +1105,13 @@ export function createTranscriptView(
       cells: ReadonlyArray<TranscriptEntry>,
       next: number,
     ): void {
-      // Stale resnapshots are ignored so a re-watch replays gap-free (§9.1).
+      // Stale resnapshots are ignored so a re-watch replays gap-free.
       // Single-lane assumption: the guard tracks one (laneId, revision)
       // slot, so callers follow exactly one lane at a time.
       if (lane.laneId === laneId && next <= revision) return;
       laneId = lane.laneId;
       revision = next;
-      // Issue #297: diff by id and keep the object of every unchanged cell.
+      // Diff by id and keep the object of every unchanged cell.
       // The TUI applies a snapshot per lane event, so copying every cell each
       // time allocated the whole document per event (and invalidated the
       // render caches keyed on the object's text).
@@ -1165,12 +1165,12 @@ export function createTranscriptView(
       document.pendingImages = images ?? [];
     },
     setStream(text: string | undefined): void {
-      // Issue #296 (review): the streamed draft is untrusted lane text like
+      // The streamed draft is untrusted lane text like
       // every other ingress — a delta carrying ESC/C0 must not reach a frame.
       document.stream = text === undefined ? undefined : sanitizeLaneText(text);
     },
     setQueuedPrompts(prompts: readonly string[]): void {
-      // Issue #334 (review): a queued draft is untrusted terminal input like
+      // A queued draft is untrusted terminal input like
       // every other operator-facing string — a paste can carry ESC/C0 and a
       // tab breaks the width math. Sanitized at ingress, exactly like the
       // pending echo and the journal rows.

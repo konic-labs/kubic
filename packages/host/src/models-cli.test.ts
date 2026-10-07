@@ -1,4 +1,4 @@
-// `kubic models` catalog CLI (issue #20, slice C; §17).
+// `kubic models` catalog CLI.
 // Lists providers/models with thinking support + pricing; --resolve
 // proves the selection chain end-to-end. Zero network: catalog reads are
 // local (refresh is an explicit, separate concern).
@@ -24,7 +24,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('kubic models (issue #20, slice C)', () => {
+describe('kubic models', () => {
   it('lists providers, models, and thinking support', async () => {
     const models = createModels();
     models.setProvider(fauxProvider().provider);
@@ -154,8 +154,8 @@ describe('kubic models (issue #20, slice C)', () => {
   });
 });
 
-// Issue #449: `kubic models <provider>` and `--all`.
-describe('kubic models provider filter (issue #449)', () => {
+// `kubic models <provider>` and `--all`.
+describe('kubic models provider filter', () => {
   function registry() {
     const models = createModels();
     models.setProvider(fauxProvider().provider);

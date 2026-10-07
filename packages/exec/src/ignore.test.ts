@@ -1,4 +1,4 @@
-// Shared .gitignore-subset matcher (issues #116, #172). The journal baseline
+// Shared .gitignore-subset matcher. The journal baseline
 // and the find/grep walk both call `isIgnored`, so these pin the semantics
 // they share — plus the adversarial-pattern bound the old regex compiler
 // lacked (a wildcard-heavy .gitignore must not cost exponential time).
@@ -9,7 +9,7 @@ function ignored(pattern: string, path: string, isDir = false): boolean {
   return isIgnored(parseIgnoreFile(pattern), path, isDir);
 }
 
-describe('gitignore-subset matcher (issues #116, #172)', () => {
+describe('gitignore-subset matcher', () => {
   it('matches *, ?, ** and negation with last-match-wins', () => {
     expect(ignored('*.log\n', 'a.log')).toBe(true);
     expect(ignored('*.log\n', 'sub/a.log')).toBe(true);
@@ -38,7 +38,7 @@ describe('gitignore-subset matcher (issues #116, #172)', () => {
     expect(ignored('build/\n', 'sub/build/out.js', false)).toBe(true);
   });
 
-  // Issue #353 (widening half): a glob dir rule matches directories by
+  // A glob dir rule matches directories by
   // its compiled glob, per segment — `*.egg-info/` must hide the whole
   // subtree, not hash it on every boot and sweep.
   it('matches a glob dir rule against each directory segment', () => {

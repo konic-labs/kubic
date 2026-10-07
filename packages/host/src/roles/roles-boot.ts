@@ -1,5 +1,4 @@
-// Role documents on the live path (issue #99, scope item 1; §12/§12.1,
-// §40.3, §41.4). The resolver (issue #43) owns parsing, layering and the
+// Role documents on the live path. The resolver owns parsing, layering and the
 // agreement check; this module is the boot seam that actually calls it —
 // loads `.kubic/roles/*.md` through the exec FileBridge, refuses a
 // contradictory role by name, projects the loaded set onto doctor, and
@@ -54,23 +53,23 @@ export class RoleBootError extends Error {
 
 export interface RolesDirInput {
   // The bridge slice the loader actually uses (matches loadRoleDocuments'
-  // own signature, issue #43). A full FileBridge satisfies it; tests drive
+  // own signature). A full FileBridge satisfies it; tests drive
   // an in-memory fixture with the same two methods.
   bridge: Pick<FileBridge, 'listDir' | 'readTextFile'>;
   cwd: string;
-  // Issue #229 (§35.1): the project root the repo documents resolve at —
+  // The project root the repo documents resolve at —
   // the nearest ancestor holding `.kubic/` (or the git top level). Absent
   // means the cwd itself, so a `kubic run --role` from a subdirectory finds
   // the same `<root>/.kubic/roles/*.md` as one from the root.
   projectRoot?: string;
-  // Issue #241 (§35): the home directory whose `.kubic/roles/*.md` load as
+  // The home directory whose `.kubic/roles/*.md` load as
   // a lower-precedence source below the project documents — personal roles
   // that apply in every repo. Absent means no global source (all existing
   // callers): the composition root passes the real home explicitly, tests
-  // inject a fixture. Never trust-gated (L-D27): only the repo documents
+  // inject a fixture. Never trust-gated: only the repo documents
   // are withheld from untrusted roots.
   home?: string;
-  // Issue #430 (§33, L-D27): project trust for the repo documents —
+  // Project trust for the repo documents —
   // exactly like project skills. The check runs against the project root
   // (one path, not per ancestor). Absent both inputs means untrusted:
   // repo documents are withheld, builtins still load. `KUBIC_TRUST_PROJECT`
@@ -78,25 +77,25 @@ export interface RolesDirInput {
   // the env opt-in in), never as a separate flag here.
   trusted?: boolean;
   trustProject?: (dir: string) => boolean;
-  // §58 enterprise policy (issue #288): when the effective policy gates
+  // Enterprise policy: when the effective policy gates
   // tools, a role declaring a denied tool is REFUSED at resolution — the same
   // check `kubic run --role` makes at boot (`resolveRole`'s grant gate). The
   // doctor probe reads it so a role the run would refuse is not shown green.
   // Absent means no enterprise tool policy is applied.
   toolPolicy?: EffectivePolicy;
-  // §35.1 config `[roles.<name>]` layers (issue #133), merged under each
+  // Config `[roles.<name>]` layers, merged under each
   // document exactly as `kubic run --role` merges them — so a role is judged
   // (contradictions, the enterprise tool gate) as it would actually run.
   // Absent means the documents alone.
   layers?: RoleLayerInput[];
-  // Issue #196 (§40.2): the run's config classes — the probe's detail then
+  // The run's config classes — the probe's detail then
   // names the EFFECTIVE classes (most restrictive merge with each role's)
   // the lane would install. Absent keeps the role's own tool list.
   classes?: PermissionClasses;
 }
 
-// Where a role's winning document came from (issue #203): the preset bundled
-// with the binary, a `~/.kubic/roles/*.md` personal document (issue #241),
+// Where a role's winning document came from: the preset bundled
+// with the binary, a `~/.kubic/roles/*.md` personal document,
 // or a project document the workspace overrides both with.
 export type RoleSource = 'builtin' | 'global' | 'repo';
 
@@ -106,40 +105,40 @@ export interface LoadedRoles {
   // when one won, the embedded preset's text otherwise. `rolePromptFor` reads
   // the `## Prompt` body from here, so an embedded role needs no file.
   texts: Record<string, string>;
-  // The winning layer per role name (issue #203): `builtin` for an embedded
+  // The winning layer per role name: `builtin` for an embedded
   // preset, `repo` for a `.kubic/roles/<name>.md` that overrode it.
   sources: Record<string, RoleSource>;
   resolved: ResolvedRole[];
-  // Documents that parsed but were refused (§40.3) — reported, never
+  // Documents that parsed but were refused — reported, never
   // silently dropped: a contradictory role is exactly what doctor must
   // show. Keyed by role name.
   refused: Array<{ name: string; reason: string }>;
-  // Issue #236: documents that FAILED to parse — reported by file stem,
+  // Documents that FAILED to parse — reported by file stem,
   // never thrown: one malformed document must not block every `--role`.
   // `selectRole` still refuses when the SELECTED name matches one of
   // these stems; doctor fails each one by name.
   invalid: Array<{ name: string; path: string; reason: string }>;
-  // Issue #236: declared names claimed by two or more documents of the
+  // Declared names claimed by two or more documents of the
   // same layer — refused by name (doctor fail + selection refusal), all
   // files listed. No copy wins: a forked name resolves to nothing, not
   // even a same-named builtin or a unique copy in the other layer. A
-  // single repo document overriding a builtin (issue #203), or a repo
-  // document over a unique global one (issue #241), is not a duplicate
+  // single repo document overriding a builtin, or a repo
+  // document over a unique global one, is not a duplicate
   // and still wins.
   duplicates: Array<{ name: string; paths: string[] }>;
-  // Repo documents withheld by project trust (issue #430, §33, L-D27) —
+  // Repo documents withheld by project trust —
   // named, never silently dropped: an untrusted root's roles are not
   // offered and `--role` naming one refuses with the trust message.
   // Empty when the root is trusted or holds no `.kubic/roles/`.
   withheld: Array<{ name: string; reason: string }>;
 }
 
-// The embedded presets are the lowest layer (issue #203): a workspace with no
-// `.kubic/roles/` still gets the five §12 roles, and a repo document of the
+// The embedded presets are the lowest layer: a workspace with no
+// `.kubic/roles/` still gets the five roles, and a repo document of the
 // same name REPLACES the preset instead of joining it (one document per role,
 // so a repo file can tighten or loosen its own role but not fork it). A
 // document declaring a name no preset has joins the set as a new role.
-// Issue #241: the lower layers arrive in precedence order (global personal
+// The lower layers arrive in precedence order (global personal
 // documents first, project documents last) and each REPLACES the same-named
 // winner below it — a project document wins over a global one, a global one
 // over a preset, under exactly the same per-document rules.
@@ -189,23 +188,23 @@ function listSourceDir(
 
 // Every .md under .kubic/roles, parsed and resolved. A parse failure is
 // named with the document's own path so a typo'd frontmatter cannot be
-// mistaken for "no roles configured". A refusal (§40.3) is NOT fatal here
+// mistaken for "no roles configured". A refusal is NOT fatal here
 // — the set is reported so doctor can fail it; the lane boot is where a
 // refused role stops a run.
 export function loadRoles(input: RolesDirInput): LoadedRoles {
   const root = input.projectRoot ?? input.cwd;
   const dir = `${root}/${ROLES_DIR}`;
-  // Issue #430 (§33, L-D27): the repo documents load only for a trusted
+  // The repo documents load only for a trusted
   // root — exactly like project skills. Builtins are unaffected.
   const repoTrusted =
     input.trustProject !== undefined
       ? input.trustProject(root)
       : (input.trusted ?? false);
   const withheld: Array<{ name: string; reason: string }> = [];
-  // Issue #241 (§35): the global personal documents, read under the same
+  // The global personal documents, read under the same
   // per-document rules as the repo ones — a listed document that cannot
   // be read throws named with its own path, a parse failure is recorded
-  // in `invalid` — but never under the trust gate (L-D27): only the repo
+  // in `invalid` — but never under the trust gate: only the repo
   // documents are withheld from untrusted roots. Loaded below, after the
   // shared `invalid` record exists.
   const globalDocs: Array<{
@@ -221,13 +220,13 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
   // roles configured".
   const repoDocs: Array<{ doc: ParsedRoleDoc; text: string; path: string }> =
     [];
-  // Issue #236: a document that fails to parse is recorded here — with
+  // A document that fails to parse is recorded here — with
   // the file stem, since the declared name is unknowable — instead of
   // aborting the whole load. Only the selected document can block
   // selection (see selectRole); the rest surface in doctor.
   const invalid: Array<{ name: string; path: string; reason: string }> = [];
   let entries: Array<{ name: string; path: string }>;
-  // Issue #241 (§35): load the global personal documents here — after
+  // Load the global personal documents here — after
   // `invalid` exists, before the repo layer below. Never trust-gated.
   if (input.home !== undefined) {
     for (const entry of listSourceDir(
@@ -325,7 +324,7 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
       throw error;
     }
   }
-  // Issue #236: partition out repo-vs-repo duplicate declared names —
+  // Partition out repo-vs-repo duplicate declared names —
   // only uniquely-declared documents reach the builtin merge below.
   const byName = new Map<string, string[]>();
   for (const { doc, path } of repoDocs) {
@@ -335,7 +334,7 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
   for (const [name, paths] of byName) {
     if (paths.length > 1) duplicates.push({ name, paths });
   }
-  // Issue #241: the same partitioning for global-vs-global forks — a
+  // The same partitioning for global-vs-global forks — a
   // global name claimed twice resolves to nothing, exactly like a repo
   // fork. A name claimed once globally and once (uniquely) in the repo
   // is NOT a fork: both layers pass the filter and the project document
@@ -396,24 +395,24 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
 // named reason — never an invented fallback.
 export interface RoleSelectionInput extends RolesDirInput {
   role: string;
-  // §35.1/§58 layering: layer-supplied tool_policy/tools over the document.
+  // Layering: layer-supplied tool_policy/tools over the document.
   // Empty in the shipped binary (no config layer populates roles yet).
   // (`layers` and `toolPolicy` are inherited from RolesDirInput: the role is
   // resolved under the config layers, and its declared tools are checked
-  // against the §58 enterprise policy — a denied tool refuses the role
+  // against the enterprise policy — a denied tool refuses the role
   // instead of reaching the lane.)
 }
 
 export interface SelectedRole {
   resolved: ResolvedRole;
   doc: ParsedRoleDoc;
-  // The winning document's markdown and its layer (issue #203) — callers read
+  // The winning document's markdown and its layer — callers read
   // the prompt from `markdown`, which works for an embedded preset too.
   markdown: string;
   source: RoleSource;
 }
 
-// Issue #236: one wording for the forked-name refusal — doctor and
+// One wording for the forked-name refusal — doctor and
 // selection refuse with the same named reason.
 function duplicateRefusal(dup: { name: string; paths: string[] }): string {
   return `role '${dup.name}' is declared by ${dup.paths.length} documents (${dup.paths.join(', ')}): refusing an ambiguous role`;
@@ -421,13 +420,13 @@ function duplicateRefusal(dup: { name: string; paths: string[] }): string {
 
 export function selectRole(input: RoleSelectionInput): SelectedRole {
   const loaded = loadRoles(input);
-  // Issue #236: a forked name is refused before anything else — no copy
+  // A forked name is refused before anything else — no copy
   // wins, not even a same-named builtin.
   const dup = loaded.duplicates.find((entry) => entry.name === input.role);
   if (dup !== undefined) {
     throw new RoleBootError(duplicateRefusal(dup));
   }
-  // Issue #236: selecting a document that failed to parse refuses with
+  // Selecting a document that failed to parse refuses with
   // that document's own parse error — checked before the builtin
   // fallback, so a malformed `planner.md` cannot silently run the
   // embedded planner preset. Nothing else can block selection.
@@ -439,7 +438,7 @@ export function selectRole(input: RoleSelectionInput): SelectedRole {
   }
   const doc = loaded.docs.find((entry) => entry.name === input.role);
   if (doc === undefined) {
-    // Issue #430 (§33, L-D27): a name the untrusted root withholds refuses
+    // A name the untrusted root withholds refuses
     // with the trust message, not the unknown-role message — the user must
     // learn it is trust, not a typo, that blocks them.
     const held = loaded.withheld.find((entry) => entry.name === input.role);
@@ -460,7 +459,7 @@ export function selectRole(input: RoleSelectionInput): SelectedRole {
   };
 }
 
-// §12.1/§40.3 on the lane: the role's resolved tool set becomes the lane's
+// On the lane: the role's resolved tool set becomes the lane's
 // allowlist (absence, not approval, withholds a tool) and the role's prompt
 // text replaces the solo constant. Both halves are the resolver's own
 // values — this function invents nothing.
@@ -489,7 +488,7 @@ export function rolePromptFor(doc: ParsedRoleDoc, markdown: string): string {
   return text;
 }
 
-// Doctor projection (§41.4, §50): one `role:<name>` check per resolved
+// Doctor projection: one `role:<name>` check per resolved
 // role, plus a named failure for every document that parsed but was
 // refused — so a contradiction is visible in `kubic doctor` even though
 // the lane is a different process.
@@ -522,7 +521,7 @@ export function rolesDoctorProbe(input: RolesDirInput): DoctorCheck[] {
       detail: refusal.reason,
     });
   }
-  // Issue #430 (§33, L-D27): withheld project roles are a trust state,
+  // Withheld project roles are a trust state,
   // not a breakage — warn (informational, never exit-flipping), never fail.
   for (const held of loaded.withheld) {
     checks.push({
@@ -533,7 +532,7 @@ export function rolesDoctorProbe(input: RolesDirInput): DoctorCheck[] {
       detail: held.reason,
     });
   }
-  // Issue #236: every document that failed to parse fails doctor by its
+  // Every document that failed to parse fails doctor by its
   // file stem, naming the file and the parse error.
   for (const bad of loaded.invalid) {
     checks.push({
@@ -544,7 +543,7 @@ export function rolesDoctorProbe(input: RolesDirInput): DoctorCheck[] {
       detail: `role document ${bad.path} is invalid: ${bad.reason}`,
     });
   }
-  // Issue #236: every forked name fails doctor, listing every file that
+  // Every forked name fails doctor, listing every file that
   // declares it.
   for (const forked of loaded.duplicates) {
     checks.push({

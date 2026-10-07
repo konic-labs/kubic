@@ -1,9 +1,9 @@
-// Sync git-cleanliness probe for the composition root (issue #78).
+// Sync git-cleanliness probe for the composition root.
 // `kubic benchmark --workspace worktree` refuses on a dirty tree through
 // the eval runner's injected ensureCleanWorktree hook, which is sync — so
 // this probe shells `git status --porcelain` synchronously instead of
 // going through the async ExecutionEnv shell. Only packages/exec may
-// spawn processes (I/O confinement, §9); fail-closed: a non-repo, a
+// spawn processes (I/O confinement); fail-closed: a non-repo, a
 // missing dir, or any git failure reads as NOT clean, so a benchmark is
 // refused rather than scored on an unverified tree.
 import { spawnSync } from 'node:child_process';
@@ -25,7 +25,7 @@ function gitOut(dir: string, args: string[]): string | null {
   }
 }
 
-// The §46 trajectory's base revision (issue #383): HEAD's sha and the
+// The trajectory's base revision: HEAD's sha and the
 // branch it is on (null when detached). Null outside a repository — the
 // caller records that explicitly instead of inventing a revision.
 export function gitHeadOf(
@@ -55,12 +55,12 @@ function gitOk(repoDir: string, args: string[]): boolean {
 const BASELINE_TMP_PREFIX = 'kubic-verify-base-';
 const BASELINE_CHECKOUT_NAME = 'base';
 
-// A throwaway checkout of `revision` for the verifier's baseline (issue
-// #267): `git worktree add --detach` into a fresh temp dir, `fn` runs there,
-// and the worktree is removed (and pruned) whatever `fn` does — the repo's
-// `git worktree list` is back to what it was. Null, with `fn` never run,
-// when `repoDir` is not a repository or the revision does not resolve: the
-// caller then simply has no baseline.
+// A throwaway checkout of `revision` for the verifier's baseline: `git worktree
+// add --detach` into a fresh temp dir, `fn` runs there, and the worktree is
+// removed (and pruned) whatever `fn` does — the repo's `git worktree list` is
+// back to what it was. Null, with `fn` never run, when `repoDir` is not a
+// repository or the revision does not resolve: the caller then simply has no
+// baseline.
 export async function withDetachedCheckout<T>(
   repoDir: string,
   revision: string,

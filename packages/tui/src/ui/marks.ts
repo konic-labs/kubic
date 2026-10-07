@@ -1,14 +1,13 @@
-// Small marks for the TUI kit (EPIC N, issue #452): badges, gauges, section
+// Small marks for the TUI kit: badges, gauges, section
 // labels and rules. All pure over a UiTheme; plain text at depth none.
 
 import { GAUGE } from '../../../core/src/ui/glyphs.js';
 import type { UiTheme } from '../../../core/src/ui/style.js';
 import type { TokenRole } from '../../../core/src/ui/tokens.js';
 
-export type BadgeKind = 'mode' | 'accent' | 'waiting' | 'ok' | 'error' | 'key';
+export type BadgeKind = 'accent' | 'waiting' | 'ok' | 'error' | 'key';
 
 const BADGE_ROLE: Record<Exclude<BadgeKind, 'key'>, TokenRole> = {
-  mode: 'fg0',
   accent: 'accent',
   waiting: 'warn',
   ok: 'ok',
@@ -16,9 +15,9 @@ const BADGE_ROLE: Record<Exclude<BadgeKind, 'key'>, TokenRole> = {
 };
 
 /**
- * ` SOLO ` on an inverse cell (`mode`, `accent`, `waiting`, `ok`, `error`),
- * or a raised key cap ` a ` (`key`). Without colour the text is bracketed
- * (`[SOLO]`) so it still reads as a badge.
+ * ` APPROVAL ` on an inverse cell (`accent`, `waiting`, `ok`, `error`), or a
+ * raised key cap ` a ` (`key`). Without colour the text is bracketed
+ * (`[APPROVAL]`) so it still reads as a badge.
  */
 export function badge(ui: UiTheme, text: string, kind: BadgeKind): string {
   if (!ui.enabled) return `[${text}]`;

@@ -1,4 +1,4 @@
-// `kubic setup` (issue #451; docs/ui/06-cli.html 06-E): from "installed" to
+// `kubic setup`: from "installed" to
 // "ready" in under a minute — pick a provider whose key is detected, a
 // default model and its thinking level, answer the project trust question
 // when there is one, and save `[model]` to the global config.toml (every

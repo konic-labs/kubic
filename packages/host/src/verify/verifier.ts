@@ -1,5 +1,5 @@
-// The run verifier (issue #267; design §48 gate signals, §74 Trajectory →
-// Verifier → Reward). The §48 gates (tests, build, lint, typecheck) are
+// The run verifier (gate signals, Trajectory →
+// Verifier → Reward). The gates (tests, build, lint, typecheck) are
 // observed, not labelled by hand: the configured `[verify]` commands run
 // through the exec seam in the run's worktree after the run settles —
 // `sh -c <command>` in its own process group, killed at the timeout. Exit 0

@@ -5,7 +5,6 @@ import {
 } from '../../../../packages/core/src/cli/exit-codes.js';
 import { registerAnalysisCommands } from '../commands/analysis.js';
 import { registerJournalCommands } from '../commands/journal.js';
-import { registerOrchestratorCommands } from '../commands/orchestrator.js';
 import { registerSoloCommands } from '../commands/solo.js';
 import type { CliConfigResult } from '../config-runtime.js';
 import { COMMAND_NAMES, ROOT_HELP } from '../dispatch.js';
@@ -179,7 +178,6 @@ describe('command registry', () => {
     const p = program(channels);
     const { ctx } = context([]);
     registerSoloCommands(p, ctx);
-    registerOrchestratorCommands(p, ctx);
     registerJournalCommands(p, ctx);
     registerAnalysisCommands(p, ctx);
     return p;
@@ -189,7 +187,7 @@ describe('command registry', () => {
     const names = registered().commands.map((command) => command.name());
     expect(new Set(names).size).toBe(names.length);
     expect([...names].sort()).toEqual([...COMMAND_NAMES].sort());
-    expect(COMMAND_NAMES.size).toBe(28);
+    expect(COMMAND_NAMES.size).toBe(24);
     expect(ROOT_HELP).toContain('run · tui · resume · attach · sessions');
   });
 
@@ -219,11 +217,6 @@ describe('command registry', () => {
       'trust',
       'tui',
     ]);
-    expect(owned(registerOrchestratorCommands)).toEqual([
-      'clean',
-      'orchestrate',
-      'workers',
-    ]);
     expect(owned(registerJournalCommands)).toEqual([
       'commit',
       'diff',
@@ -238,7 +231,6 @@ describe('command registry', () => {
       'cost',
       'eval',
       'export',
-      'perf',
       'policy',
       'replay',
     ]);
@@ -264,7 +256,6 @@ describe('command registry', () => {
       };
       for (const register of [
         registerSoloCommands,
-        registerOrchestratorCommands,
         registerJournalCommands,
         registerAnalysisCommands,
       ]) {
@@ -277,14 +268,10 @@ describe('command registry', () => {
     }
 
     it.each([
-      [['orchestrate', '-p', '--json', '--yes'], "'-p, --prompt <text>'"],
-      [['orchestrate', '-p', '--help'], "'-p, --prompt <text>'"],
-      [['orchestrate', '-p', 'hi', '--session', '--json'], "'--session <id>'"],
       [['diff', '--session', '--json'], "'--session <id>'"],
       [['log', '--session', '--json'], "'--session <id>'"],
       [['undo', '--session', '--json'], "'--session <id>'"],
       [['diff', '--session', '--help'], "'--session <id>'"],
-      [['clean', '--session', '--json'], "'--session <id>'"],
       [['cost', '--session', '--json'], "'--session <id>'"],
       [['tui', '--session', '--json'], "'--session <id>'"],
       [['policy', '--tool', '--json'], "'--tool <name>'"],

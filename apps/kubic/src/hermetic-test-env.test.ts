@@ -1,7 +1,7 @@
-// Hermetic unit-test environment (issue #377). The solo prod path reads
+// Hermetic unit-test environment. The solo prod path reads
 // the account's skill roots (~/.agents/skills, ~/.pi/agent/skills) through
 // homedir() and the project trust opt-in through KUBIC_TRUST_PROJECT, so
-// before #377 every system-prompt assertion depended on the developer's
+// before every system-prompt assertion depended on the developer's
 // machine. The vitest setup file (test/vitest-setup.ts) isolates HOME and
 // the KUBIC_* env per test file and refuses TCP sockets; these tests pin
 // that contract.
@@ -36,7 +36,7 @@ import {
 import { isLoopbackHost, isolateTestEnv } from '../../../test/hermetic-env.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
-// The solo prompt the lane committed for this session (#400's reader).
+// The solo prompt the lane committed for this session (the reader).
 async function committedPrompt(
   root: string,
   sessionId: string,
@@ -86,11 +86,11 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('hermetic unit-test environment (issue #377)', () => {
+describe('hermetic unit-test environment', () => {
   // The mutation runner executes vitest with a thread pool, where a worker's
   // process.env is a JS-side copy: setting HOME there never reaches the C
   // environment os.homedir() reads, so the HOME half of these assertions
-  // cannot hold there (issues #377, #385). The KUBIC_* half is JS-only and
+  // cannot hold there. The KUBIC_* half is JS-only and
   // still asserted; `npm run test:unit` (forks) proves the HOME isolation.
   const homedirIsolated = process.env.STRYKER_MUTATOR_WORKER === undefined;
 
@@ -108,7 +108,7 @@ describe('hermetic unit-test environment (issue #377)', () => {
   // Skipped under the mutation runner: its thread pool cannot isolate HOME
   // (a worker's process.env copy never reaches the C environment
   // os.homedir() reads), so the developer's real skills would leak into the
-  // prompt and this would test the runner, not Kubic (issues #377, #385).
+  // prompt and this would test the runner, not Kubic.
   it.skipIf(!homedirIsolated)(
     "keeps a developer's installed skills and trust opt-in out of the solo prompt",
     async () => {
@@ -167,7 +167,7 @@ describe('hermetic unit-test environment (issue #377)', () => {
     );
   });
 
-  it('allows a test-owned loopback server (issues #359 e2e, #377 guard)', () => {
+  it('allows a test-owned loopback server', () => {
     for (const host of [
       undefined,
       '',

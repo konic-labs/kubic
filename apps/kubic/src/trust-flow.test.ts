@@ -1,4 +1,4 @@
-// The end-to-end trust flow (issue #228, acceptance criteria 1–2) at the
+// The end-to-end trust flow at the
 // composition-root seam: `kubic trust` records, `kubic run` loads the
 // project layer with no env var set, `kubic trust --revoke` brings the
 // refusal back. The binary drives exactly these two halves (`runTrustCommand`
@@ -28,7 +28,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('kubic trust → kubic run → kubic trust --revoke (issue #228)', () => {
+describe('kubic trust → kubic run → kubic trust --revoke', () => {
   it('makes a committed .kubic/config.toml usable, then refuses it again', () => {
     const home = tmpDir('kubic-trust-flow-home-');
     const project = tmpDir('kubic-trust-flow-repo-');

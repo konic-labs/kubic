@@ -1,4 +1,4 @@
-// `kubic config` (issue #90; §50/§78) — RED first.
+// `kubic config`.
 // Presentation only over an injected load: the command must never re-derive
 // paths, trust, or env overrides of its own, and must fail closed with the
 // named reason instead of printing a default.
@@ -45,13 +45,7 @@ function runtime(): RuntimeConfig {
       maxAgeMs: 30 * 86_400_000,
       source: 'project',
     },
-    modes: { solo: true, orchestrator: false, source: 'defaults' },
-    orchestrator: {},
     verify: { commands: {} },
-    budgets: {
-      configured: false,
-      detail: 'no budgets are defaulted by config (§71)',
-    },
     projectTrusted: true,
     overriddenAttempts: [],
     modelPinOverrides: [],
@@ -78,7 +72,7 @@ function collect(): { lines: string[]; out: (line: string) => void } {
   return { lines, out: (line: string) => lines.push(line) };
 }
 
-describe('kubic config (issue #90)', () => {
+describe('kubic config', () => {
   it('renders the effective values with their layers, exit 0', () => {
     const { lines, out } = collect();
     const code = runConfigCommand({}, { load: runtime, out });
@@ -87,10 +81,9 @@ describe('kubic config (issue #90)', () => {
     expect(text).toContain('model.provider = "local" (global, consumed)');
     expect(text).toContain('approvals: route=deny (project)');
     expect(text).toContain('journal retention: 30 day(s)');
-    expect(text).toContain('budgets: none');
   });
 
-  it("renders a role's allowed set with its layer (issue #255)", () => {
+  it("renders a role's allowed set with its layer", () => {
     const { lines, out } = collect();
     const base = runtime();
     base.config.roles = {
@@ -116,8 +109,6 @@ describe('kubic config (issue #90)', () => {
     expect(view.approvals).toMatchObject({ route: 'deny', source: 'project' });
     expect(view.permissions).toMatchObject({ source: 'defaults' });
     expect(view.journal).toMatchObject({ retentionDays: 30 });
-    expect(view.modes).toMatchObject({ solo: true });
-    expect(view.budgets).toMatchObject({ configured: false });
     expect(view.projectTrusted).toBe(true);
     expect(Array.isArray(view.values)).toBe(true);
   });

@@ -1,13 +1,12 @@
-// The TUI chrome (EPIC N, issue #453; docs/ui/01-session.html 01-A and
-// 01-M): the one-row header and the context-aware key-hint row. The status
-// line is status-bar.ts. Pure renders over a UiTheme — plain text at colour
-// depth none, so snapshots read like the design.
+// The TUI chrome: the one-row header and the context-aware key-hint row. The
+// status line is status-bar.ts. Pure renders over a UiTheme — plain text at
+// colour depth none, so snapshots read like the design.
 //
 // Header: `■ KUBIC │ <project> ⎇ <branch> ●<dirty>` on the left, `session
-// <title> │ SOLO approvals on │ HH:MM` on the right, on bg1. As the width
-// shrinks the parts drop right to left — clock, session, approvals, branch —
-// and the project name is cut last. The brand and the mode badge never drop,
-// and neither does `approvals OFF`: full access must stay unmissable.
+// <title> │ approvals on │ HH:MM` on the right, on bg1. As the width shrinks
+// the parts drop right to left — clock, session, approvals, branch — and the
+// project name is cut last. The brand never drops, and neither does
+// `approvals OFF`: full access must stay unmissable.
 
 import { BRANCH, BRAND } from '../../core/src/ui/glyphs.js';
 import type { UiTheme } from '../../core/src/ui/style.js';
@@ -19,7 +18,6 @@ import { badge } from './ui/marks.js';
 import { fillLine } from './ui/surface.js';
 
 export interface HeaderInfo {
-  readonly mode: 'solo' | 'orchestrator';
   readonly approvalsSkipped: boolean;
   /** Basename of the project root. */
   readonly project?: string;
@@ -31,7 +29,7 @@ export interface HeaderInfo {
   readonly session?: string;
   /** Local `HH:MM`. */
   readonly clock?: string;
-  /** Approvals waiting for the operator (#459: the amber badge). */
+  /** Approvals waiting for the operator (the amber badge). */
   readonly waiting?: number;
 }
 
@@ -63,13 +61,7 @@ export function renderHeader(
     info.branch === undefined || info.branch === ''
       ? ''
       : `${ui.fg('fg2')(`  ${BRANCH} `)}${ui.fg('fg1')(info.branch)}${dirty}`;
-  const orchestrator = info.mode === 'orchestrator';
-  const mode = badge(
-    ui,
-    orchestrator ? 'ORCHESTRATOR' : 'SOLO',
-    orchestrator ? 'accent' : 'mode',
-  );
-  const approvals = `${ui.fg('fg2')(' approvals ')}${
+  const approvals = `${ui.fg('fg2')('approvals ')}${
     info.approvalsSkipped
       ? ui.style({ fg: 'err', bold: true })('OFF (full-access)')
       : ui.fg('ok')('on')
@@ -82,7 +74,7 @@ export function renderHeader(
     info.clock === undefined || info.clock === ''
       ? ''
       : ui.fg('fg2')(info.clock);
-  // Issue #459: what waits for the operator outranks the session name.
+  // What waits for the operator outranks the session name.
   const waiting =
     info.waiting !== undefined && info.waiting > 0
       ? badge(ui, `${info.waiting} WAITING`, 'waiting')
@@ -91,7 +83,7 @@ export function renderHeader(
     const parts = [
       waiting,
       rung.session ? session : '',
-      `${mode}${rung.approvals ? approvals : ''}`,
+      rung.approvals ? approvals : '',
       rung.clock ? clock : '',
     ].filter((part) => part !== '');
     return `${parts.join(sep)} `;
@@ -120,7 +112,7 @@ export function renderHeader(
   if (visibleWidth(brand) + 2 + visibleWidth(r) <= w) {
     return fill(leftRight(left(last), r, w));
   }
-  return fill(fitLine(`${brand}${mode}`, w));
+  return fill(fitLine(keepOff ? `${brand}${approvals}` : brand, w));
 }
 
 /** At most this many cells of the first prompt name the session. */
@@ -176,28 +168,18 @@ export type HintContext =
   | 'idle'
   | 'working'
   | 'approval'
-  // Issue #467: the approval card's comment or command input is open.
+  // The approval card's comment or command input is open.
   | 'approvalInput'
   | 'overlay'
   | 'palette'
   | 'model'
-  | 'blocks'
-  // Issue #465: the orchestrator dashboard, and its `/` filter.
-  | 'dashboard'
-  | 'filter'
-  // Issue #466: the dashboard's dispatch box, messaging or new-worker.
-  | 'dispatch'
-  | 'dispatchNew';
+  | 'blocks';
 
 export interface HintSetOptions {
-  /** Whether a busy turn takes follow-ups (the solo lane's inbox). */
-  readonly queues?: boolean;
   /** Whether `@` completes files (a file source exists). */
   readonly files?: boolean;
   /** The newline key that works on this terminal (`⇧⏎` or `^J`). */
   readonly newline?: string;
-  /** Issue #465: a run exists, so `tab` goes to its dashboard. */
-  readonly dashboard?: boolean;
 }
 
 export interface HintSet {
@@ -218,7 +200,7 @@ export function keyHintSet(
     const cap = keyCap(keys.label(action));
     return cap === '' ? [] : [[cap, label]];
   };
-  // Issue #454: quitting is a double press of the interrupt key.
+  // Quitting is a double press of the interrupt key.
   const quitHint = (): { right?: KeyHint } => {
     const cap = keyCap(keys.label('app.interrupt'));
     return cap === '' ? {} : { right: [`${cap} ${cap}`, 'quit'] };
@@ -245,7 +227,7 @@ export function keyHintSet(
       right: ['esc', 'back to the card'],
     };
   }
-  // Issue #460: the palette names its own keys (03-A).
+  // The palette names its own keys.
   if (context === 'palette') {
     return {
       hints: [
@@ -257,7 +239,7 @@ export function keyHintSet(
       right: ['esc', 'close'],
     };
   }
-  // Issue #463: block mode (01-D, 01-M).
+  // Block mode.
   if (context === 'blocks') {
     return {
       hints: [
@@ -270,46 +252,7 @@ export function keyHintSet(
       right: ['esc', 'back'],
     };
   }
-  // Issue #465: the orchestrator dashboard (04-E keys row).
-  if (context === 'dashboard') {
-    return {
-      hints: [
-        ['↑↓', 'select'],
-        ['⏎', 'open'],
-        ['a', 'answer awaiting'],
-        ['m', 'message'],
-        ['^N', 'new worker'],
-        ['x', 'stop'],
-        ['r', 'retry'],
-        ...bound('panel.diff', 'diff'),
-        ['/', 'filter'],
-        ['tab', 'manager'],
-      ],
-      ...quitHint(),
-    };
-  }
-  if (context === 'dispatch' || context === 'dispatchNew') {
-    return {
-      hints: [
-        ['⏎', 'send'],
-        ['↑↓', 'worker'],
-        ...(context === 'dispatchNew'
-          ? [['tab', 'role'] as const, ['^N', 'message instead'] as const]
-          : [['^N', 'new worker instead'] as const]),
-      ],
-      right: ['esc', 'back'],
-    };
-  }
-  if (context === 'filter') {
-    return {
-      hints: [
-        ['type', 'filter workers'],
-        ['⏎', 'keep'],
-      ],
-      right: ['esc', 'clear'],
-    };
-  }
-  // Issue #461: the model picker (03-D).
+  // The model picker.
   if (context === 'model') {
     return {
       hints: [
@@ -330,16 +273,13 @@ export function keyHintSet(
     };
   }
   if (context === 'working') {
-    const queues = options.queues !== false;
     return {
       hints: [
         ...bound('app.cancel', 'interrupt'),
-        ...(queues
-          ? [['⏎', 'queue'] as const, ...bound('prompt.steer', 'steer')]
-          : []),
+        ['⏎', 'queue'],
+        ...bound('prompt.steer', 'steer'),
         ...bound('transcript.expand', 'expand output'),
         ...bound('app.palette', 'palette'),
-        ...(options.dashboard === true ? [['tab', 'dashboard'] as const] : []),
       ],
       ...quitHint(),
     };
@@ -353,7 +293,6 @@ export function keyHintSet(
       ...bound('app.palette', 'palette'),
       ...bound('panel.diff', 'diff'),
       ...bound('panel.journal', 'journal'),
-      ...(options.dashboard === true ? [['tab', 'dashboard'] as const] : []),
     ],
     ...quitHint(),
   };

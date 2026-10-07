@@ -1,7 +1,6 @@
-// `kubic run --json` carries the run's real usage (issue #185; §39, §68):
-// the orchestrator builds each worker's §68 metrics from the child's own
-// report, so the report must carry the numbers — the SAME ones `kubic cost`
-// reads from the session — never zeros and never a bare ref.
+// `kubic run --json` carries the run's real usage: the report must carry
+// the numbers — the SAME ones `kubic cost` reads from the session — never
+// zeros and never a bare ref.
 //
 // Faux provider only: the faux model's usage is deterministic, zero
 // network, zero paid tokens.
@@ -32,7 +31,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('run envelope usage (issue #185)', () => {
+describe('run envelope usage', () => {
   it('reports the session usage rows, the tool calls and the model it ran', async () => {
     const root = mkdtempSync(join(tmpdir(), 'kubic-185-sessions-'));
     made.push(root);

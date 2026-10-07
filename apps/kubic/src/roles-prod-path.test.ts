@@ -1,10 +1,6 @@
-// Roles on the live solo path (issue #99, scope item 1; §12/§12.1, §40.3).
-// RED: .kubic/roles/*.md exist and are tracked, but nothing parses them at
-// runtime — loadRoleDocuments and roleDoctorChecks have test-only callers,
-// and the solo prompt is the hardcoded SOLO_ROLE constant. Every test below
-// fails until the composition root loads the documents through the resolver,
-// refuses a contradictory role by name, and applies the resolved tool set +
-// prompt on a live `--role` path.
+// Roles on the live solo path. Every test below fails until the composition
+// root loads the documents through the resolver, refuses a contradictory role
+// by name, and applies the resolved tool set + prompt on a live `--role` path.
 //
 // Faux provider only (zero network, zero paid tokens).
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -65,7 +61,7 @@ function writeRole(
   );
 }
 
-// The solo prompt the lane committed for this session (#400's reader): the
+// The solo prompt the lane committed for this session (the reader): the
 // run's own durable record of the bytes the model saw — the harness-spy
 // equivalent on the durable lane.
 async function committedPrompt(
@@ -107,7 +103,7 @@ afterEach(() => {
   }
 });
 
-describe('role documents drive a live solo lane (issue #99, §12.1)', () => {
+describe('role documents drive a live solo lane', () => {
   it("editing .kubic/roles/<name>.md changes the lane's system prompt on --role", async () => {
     const cwd = tmpRoot('roles-cwd-');
     writeRole(
@@ -175,7 +171,7 @@ describe('role documents drive a live solo lane (issue #99, §12.1)', () => {
 
   it('refuses a role whose declared tool set contradicts its permission classes, naming the reason', async () => {
     const cwd = tmpRoot('roles-cwd-');
-    // filesystem: read with a write tool registered — the §40.3
+    // filesystem: read with a write tool registered — the
     // contradiction the resolver refuses.
     writeRole(
       cwd,
@@ -251,7 +247,7 @@ describe('role documents drive a live solo lane (issue #99, §12.1)', () => {
   });
 });
 
-describe('kubic doctor reports every role document (issue #99, §41.4)', () => {
+describe('kubic doctor reports every role document', () => {
   it('surfaces roleDoctorChecks for the loaded documents, including a contradictory one', () => {
     const cwd = tmpRoot('roles-cwd-');
     writeRole(
@@ -308,7 +304,7 @@ describe('kubic doctor reports every role document (issue #99, §41.4)', () => {
   });
 });
 
-describe('project roles are trust-gated on the live path (issue #430, §33)', () => {
+describe('project roles are trust-gated on the live path', () => {
   const FRONTMATTER =
     'tools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n';
 

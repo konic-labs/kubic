@@ -1,9 +1,9 @@
-// Slice C: §52 failure taxonomy + §53 retry chooser (issue #14).
+// Failure taxonomy + retry chooser.
 import { describe, expect, it } from 'vitest';
 import { chooseRetry, classifyFailure, RetryBudget } from './failures.js';
 
-describe('failure taxonomy (issue #14, slice C)', () => {
-  it('preserves the §52 distinctions', () => {
+describe('failure taxonomy', () => {
+  it('preserves the distinctions', () => {
     expect(classifyFailure('process', 'spawn ENOENT', '').code).toBe(
       'process_spawn_failed',
     );
@@ -11,8 +11,8 @@ describe('failure taxonomy (issue #14, slice C)', () => {
       'process_crashed',
     );
     expect(classifyFailure('tool', 'exit 1', '').code).toBe('tool_failed');
-    expect(classifyFailure('budget', 'tokens exhausted', '').code).toBe(
-      'budget_exhausted',
+    expect(classifyFailure('limit', 'turns exhausted', '').code).toBe(
+      'run_limit',
     );
     expect(classifyFailure('model', 'tokens exhausted', '').code).toBe(
       'model_failed',
@@ -25,7 +25,7 @@ describe('failure taxonomy (issue #14, slice C)', () => {
     );
   });
 
-  // Remedy table keyed by code (issue #219): every branch names its exact
+  // Remedy table keyed by code: every branch names its exact
   // code, remedy and strategy — a wrong mapping fails here, not in a
   // trajectory review.
   it.each([
@@ -142,10 +142,10 @@ describe('failure taxonomy (issue #14, slice C)', () => {
       'retry_with_new_context',
     ],
     [
-      'budget',
+      'limit',
       'spent',
-      'budget_exhausted',
-      'Budget exhausted; raise the budget or narrow the task. Never retry.',
+      'run_limit',
+      'A run limit stopped the run; raise --max-turns or --timeout, or narrow the task. Never retry.',
       'abandon',
     ],
     [
@@ -193,13 +193,13 @@ describe('failure taxonomy (issue #14, slice C)', () => {
     expect(budget.remaining).toBe(3);
   });
 
-  it('abandons on budget exhaustion and denied approvals', () => {
-    const budget = chooseRetry(
-      classifyFailure('budget', 'spent', ''),
+  it('abandons on a run limit and denied approvals', () => {
+    const limited = chooseRetry(
+      classifyFailure('limit', 'spent', ''),
       {},
       new RetryBudget(3),
     );
-    expect(budget.decision).toBe('abandon');
+    expect(limited.decision).toBe('abandon');
     const denied = chooseRetry(
       classifyFailure('approval', 'denied', ''),
       {},
@@ -208,7 +208,7 @@ describe('failure taxonomy (issue #14, slice C)', () => {
     expect(denied.decision).toBe('abandon');
   });
 
-  it('spends retry budget separately from task budget', () => {
+  it('abandons once the retry budget is spent', () => {
     const retries = new RetryBudget(1);
     const failure = classifyFailure('provider', '500 upstream', '');
     const first = chooseRetry(failure, {}, retries);
@@ -244,11 +244,11 @@ describe('a missing provider response stays transient', () => {
   });
 });
 
-// Issue #155: the durable `model_error` reason names the generation task,
+// The durable `model_error` reason names the generation task,
 // not the failure's domain. A detail that names a provider rate-limit
-// refusal or a tool fault keeps its own §52 code instead of collapsing
+// refusal or a tool fault keeps its own failure code instead of collapsing
 // into model_failed.
-describe('generic model errors keep the detail domain (issue #155)', () => {
+describe('generic model errors keep the detail domain', () => {
   it('classifies a provider rate-limit detail as provider_transient', () => {
     const out = classifyFailure(
       'model',
@@ -269,7 +269,7 @@ describe('generic model errors keep the detail domain (issue #155)', () => {
     expect(out.code).toBe('tool_failed');
   });
 
-  it('keeps a plain model detail model_failed (the #395 pin)', () => {
+  it('keeps a plain model detail model_failed', () => {
     expect(
       classifyFailure('model', 'model_error', 'provider returned 500').code,
     ).toBe('model_failed');
@@ -280,7 +280,7 @@ describe('generic model errors keep the detail domain (issue #155)', () => {
   });
 });
 
-describe('retry budget attempts and cost (issue #209)', () => {
+describe('retry budget attempts and cost', () => {
   it('abandons the third failure with maxAttempts=2, naming the retry budget', () => {
     const retries = new RetryBudget(2);
     const failure = classifyFailure('provider', '500 upstream', '');

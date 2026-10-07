@@ -1,8 +1,7 @@
-// Cost/Model status line (issue #27; one row since EPIC N issue #453).
-// §39 usage rows aggregated with the cache split; §18 model + thinking,
-// context gauge, cost; §71 budget burn-down; the turn state word. The mode
-// and the approvals posture moved to the header (chrome.ts), which reads
-// them from this bar's state.
+// Cost/Model status line (one row).
+// Usage rows aggregated with the cache split; model + thinking,
+// context gauge, cost; the turn state word. The approvals posture moved to
+// the header (chrome.ts), which reads it from this bar's state.
 //
 // Structural usage mirror: the fields below repeat the shape read in
 // packages/worker/src/usage.ts (KubicUsageRow) WITHOUT importing it —
@@ -10,7 +9,7 @@
 // the Component seam stays in ./tui-boundary.js. No node:fs (I/O
 // confinement). Faux-only tests: fixtures, zero network.
 //
-// Issue #346: the TTFT/tool-ms segments were deleted, not repaired. Pi 1.0
+// The TTFT/tool-ms segments were deleted, not repaired. Pi 1.0
 // routes no streaming/timing field Kubic could read (message deltas stay
 // inside the harness; the lane watch commits whole entries), so the two
 // segments could never render — dead code, which was the bug.
@@ -57,13 +56,13 @@ export interface StatusSummary {
   readonly cacheRead: number;
   readonly cacheWrite: number;
   readonly costTotal: number;
-  // Issue #347: the prompt size of the last COMMITTED request — its input
+  // The prompt size of the last COMMITTED request — its input
   // plus BOTH cache counters. pi-ai normalises `input` to exclude the cached
   // prefix it reused (cacheRead) and the prefix it wrote (cacheWrite), so
   // input + cacheRead + cacheWrite is the context the model actually
   // processed, the same quantity the harness's own compaction baseline
   // counts. Undefined until a row names its committed entry: the seeded
-  // `pi.usage` buckets (#346) are cumulative, so reading them here would show
+  // `pi.usage` buckets are cumulative, so reading them here would show
   // total spend as context pressure.
   readonly contextTokens?: number;
 }
@@ -109,28 +108,7 @@ export function formatStatusCost(total: number): string {
   return `$${total.toFixed(2)}`;
 }
 
-export type StatusMode = 'solo' | 'orchestrator';
-
-// Issue #285 (§71): the opt-in solo budget the boot started with — a
-// structural mirror of the max* dims (dep-lint forbids tui → extensions,
-// the same reason StatusUsageRow mirrors KubicUsageRow). `toolCalls` is
-// the attempt count the boot feeds in (the gate's own counter — usage
-// rows undercount tools that report no usage); tokens/cost burn-down
-// reads from the usage summary the bar already holds. Absent (or an
-// empty `limits`) means the run is unbounded and the bar stays silent.
-export interface StatusBudgetLimits {
-  readonly maxTokens?: number;
-  readonly maxCostUsd?: number;
-  readonly maxToolCalls?: number;
-  readonly maxRuntimeMs?: number;
-}
-
-export interface StatusBudget {
-  readonly limits: StatusBudgetLimits;
-  readonly toolCalls: number;
-}
-
-// Issue #453: the word at the right end of the status line.
+// The word at the right end of the status line.
 export type StatusTurnState =
   | 'ready'
   | 'working'
@@ -142,25 +120,22 @@ export interface StatusBarState {
   readonly model: string;
   readonly thinking: string;
   readonly rows: ReadonlyArray<StatusUsageRow>;
-  // The session facts the header shows (issue #453 moved them off this
-  // line); the bar stays their one holder so posture and mode have a
-  // single source the app and the loop read.
-  readonly mode: StatusMode;
+  // The session facts the header shows; the bar stays their one holder so the
+  // posture has a single source the app and the loop read.
   readonly approvalsSkipped: boolean;
   readonly sessionId: string;
-  readonly budget?: StatusBudget;
-  // Issue #347 (§18): the model's context window and the token level at
-  // which the solo lane compacts (window − reserve, #399's policy; #239 will
+  // The model's context window and the token level at
+  // which the solo lane compacts (window − reserve, the policy; will
   // make the reserve configurable). Both absent means the gauge stays off —
   // an unknown window must never render a made-up percentage.
   readonly contextWindow?: number;
   readonly compactionThreshold?: number;
-  // Issue #453: the turn state word, when the running turn started (the
+  // The turn state word, when the running turn started (the
   // spinner's clock), and the session journal's change count.
   readonly turn?: StatusTurnState;
   readonly busySince?: number;
   readonly journalChanges?: number;
-  // Issue #467: an `allow all edits this turn` answer applies right now.
+  // An `allow all edits this turn` answer applies right now.
   readonly turnEdits?: boolean;
 }
 
@@ -201,10 +176,9 @@ interface StatusSegments {
   readonly ctxWindow: string;
   readonly cost: string;
   readonly journal: string;
-  readonly budget: string;
 }
 
-// Issue #347: the context gauge. Unknown (no window, or no committed
+// The context gauge. Unknown (no window, or no committed
 // request yet) means no segment at all — a wrong percentage is worse than a
 // missing one. At or above the compaction threshold the gauge and the
 // percentage take the warning colour: the next turn is about to compact.
@@ -230,51 +204,9 @@ function contextParts(
   };
 }
 
-// The §71 budget segment: one burn-down per set dimension (`tools 3/10`,
-// `$0.12/$0.50`, `tokens 1200/4096`) plus the wall-clock bound as static
-// limit text (the bar holds no elapsed source — `wall≤60s`). Empty when no
-// dimension is set: an unbounded run shows nothing budget-shaped. A breached
-// dimension takes the warning colour: the next tool call may not run.
-function budgetPart(
-  ui: UiTheme,
-  budget: StatusBudget | undefined,
-  summary: StatusSummary,
-): string {
-  if (budget === undefined) return '';
-  const { limits, toolCalls } = budget;
-  const segs: string[] = [];
-  let breached = false;
-  if (limits.maxToolCalls !== undefined) {
-    segs.push(`tools ${toolCalls}/${limits.maxToolCalls}`);
-    breached = breached || toolCalls > limits.maxToolCalls;
-  }
-  if (limits.maxCostUsd !== undefined) {
-    segs.push(
-      `${formatStatusCost(summary.costTotal)}/$${limits.maxCostUsd.toFixed(2)}`,
-    );
-    breached = breached || summary.costTotal > limits.maxCostUsd;
-  }
-  if (limits.maxTokens !== undefined) {
-    const tokens = summary.input + summary.output;
-    segs.push(`tokens ${tokens}/${limits.maxTokens}`);
-    breached = breached || tokens > limits.maxTokens;
-  }
-  if (limits.maxRuntimeMs !== undefined) {
-    const ms = limits.maxRuntimeMs;
-    segs.push(
-      `wall≤${ms >= 1000 && ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`}`,
-    );
-  }
-  if (segs.length === 0) return '';
-  const text = `budget ${segs.join(' · ')}`;
-  return breached
-    ? ui.style({ fg: 'warn', bold: true })(text)
-    : ui.fg('fg1')(text);
-}
-
 // What drops first as the line narrows, one rung at a time: the window
 // size, the journal count, the gauge cells, the thinking level, the context
-// segment, the budget; then the model name is cut. The cost and the state
+// segment; then the model name is cut. The cost and the state
 // word never drop.
 const RUNGS: ReadonlyArray<ReadonlyArray<keyof StatusSegments>> = [
   [],
@@ -283,7 +215,6 @@ const RUNGS: ReadonlyArray<ReadonlyArray<keyof StatusSegments>> = [
   ['ctxWindow', 'journal', 'ctxGauge'],
   ['ctxWindow', 'journal', 'ctxGauge', 'thinking'],
   ['ctxWindow', 'journal', 'ctxGauge', 'thinking', 'ctxPercent'],
-  ['ctxWindow', 'journal', 'ctxGauge', 'thinking', 'ctxPercent', 'budget'],
 ];
 
 function assemble(
@@ -304,14 +235,13 @@ function assemble(
   }
   parts.push(segments.cost);
   if (has('journal')) parts.push(segments.journal);
-  if (has('budget')) parts.push(segments.budget);
   return parts.join(sep);
 }
 
 /**
- * The one-row status line (EPIC N, issue #453; docs/ui 01-L):
- * `● model · thinking │ ctx ━━━ 31% of 200k │ $0.031 │ journal 2 changes │
- * budget …` and the turn state word on the right, painted on bg1. A
+ * The one-row status line:
+ * `● model · thinking │ ctx ━━━ 31% of 200k │ $0.031 │ journal 2 changes`
+ * and the turn state word on the right, painted on bg1. A
  * running turn turns the mark into the spinner.
  */
 export function renderStatusLine(
@@ -330,7 +260,7 @@ export function renderStatusLine(
       ? spinnerFrame(Math.max(0, now - (state.busySince ?? now)))
       : TOOL;
   const lead = ui.fg(role)(` ${mark} `);
-  // Issue #467: a turn's edits approved at once say so beside the state.
+  // A turn's edits approved at once say so beside the state.
   const word = `${
     state.turnEdits === true
       ? `${ui.fg('warn')('edits auto-approved this turn')}${ui.fg('fg3')(SEPARATOR)}`
@@ -346,7 +276,6 @@ export function renderStatusLine(
       changes > 0
         ? `${ui.fg('fg2')('journal ')}${ui.fg('fg1')(`${changes} change${changes === 1 ? '' : 's'}`)}`
         : '',
-    budget: budgetPart(ui, state.budget, summary),
   };
   const fill = (text: string): string => fillLine(ui, text, w, 'bg1');
   for (const drop of RUNGS) {
@@ -368,7 +297,7 @@ export function renderStatusLine(
 }
 
 export interface StatusBarOptions {
-  // Issue #453: the turn facts read at render time (the app's busy,
+  // The turn facts read at render time (the app's busy,
   // approval and cancel state), so the state word never lags a frame.
   readonly live?: () => Pick<
     StatusBarState,
@@ -398,14 +327,6 @@ export class StatusBar implements Component {
   // safe (approvalsSkipped: false) and callers re-pass the flag.
   setApprovalsSkipped(skipped: boolean): void {
     this.setState({ ...this.barState, approvalsSkipped: skipped });
-  }
-
-  // Issue #327: the session mode toggle lands on the always-visible
-  // indicator within one frame (the same synchronous path the skip flag
-  // takes). Session-scoped by construction: fresh instances start from the
-  // seed's mode and callers re-pass every change.
-  setMode(mode: StatusMode): void {
-    this.setState({ ...this.barState, mode });
   }
 
   setRows(rows: ReadonlyArray<StatusUsageRow>): void {

@@ -1,4 +1,4 @@
-// Preference-pair + DPO policy tests (issue #54, RED first).
+// Preference-pair + DPO policy tests.
 // Env failures (tool_failed/workspace_failed) never train capability
 // preference; cross-boundary runs never form a trainable pair — both
 // surface as tagged exclusions instead.
@@ -24,7 +24,7 @@ function failing(overrides = {}) {
   });
 }
 
-describe('pairs answer one prompt and one task (issue #269)', () => {
+describe('pairs answer one prompt and one task', () => {
   it('different prompts return pair:null tagged prompt-mismatch-excluded', () => {
     const built = buildPreferencePair(
       passing({ promptText: 'task A' }),
@@ -110,7 +110,7 @@ describe('pairs answer one prompt and one task (issue #269)', () => {
       expect(checked.valid).toBe(false);
       if (!checked.valid) {
         expect(checked.errors).toContain(
-          'taskRef is required: carry both task refs (§74)',
+          'taskRef is required: carry both task refs',
         );
       }
     }
@@ -125,7 +125,7 @@ describe('pairs answer one prompt and one task (issue #269)', () => {
   });
 });
 
-describe('buildPreferencePair (issue #54)', () => {
+describe('buildPreferencePair', () => {
   it('builds a within-boundary pair from pass-vs-capability-fail', () => {
     const built = buildPreferencePair(passing({}), failing({}));
     expect(built.pair).not.toBeNull();
@@ -204,7 +204,7 @@ describe('buildPreferencePair (issue #54)', () => {
   });
 });
 
-describe('buildDpoRecord (issue #54)', () => {
+describe('buildDpoRecord', () => {
   it('builds a schema-valid DPO record from an eligible pair', () => {
     const built = buildDpoRecord(passing({}), failing({}));
     expect(built.record).not.toBeNull();

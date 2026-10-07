@@ -1,4 +1,4 @@
-// Per-file mutation gate (issue #66): Stryker's `thresholds.break` enforces
+// Per-file mutation gate: Stryker's `thresholds.break` enforces
 // the total score only, so `npm run test:mutation` also runs this check over
 // the JSON report to enforce ≥ `--min` (default 80) on every mutated file.
 //
@@ -7,7 +7,7 @@
 // with no scored mutants pass with a note (Stryker's own `allowEmpty`
 // governs empty runs).
 //
-// Ratchet (issue #72): with `--baseline`, a file's bar is
+// Ratchet: with `--baseline`, a file's bar is
 // min(--min, its baseline score) — a file below --min may not drop below
 // its baseline, one at or above --min must stay >= --min, and files new to
 // the baseline must meet --min.

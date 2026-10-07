@@ -27,9 +27,8 @@ Each command group owns one module under `apps/kubic/src/commands/`:
 | Module | Commands |
 | --- | --- |
 | `solo.ts` | run, tui, doctor, models, config, sessions |
-| `orchestrator.ts` | orchestrate, clean, workers |
 | `journal.ts` | diff, undo, log, status, git |
-| `analysis.ts` | cost, perf, policy, audit, eval, benchmark, replay, export |
+| `analysis.ts` | cost, policy, audit, eval, benchmark, replay, export |
 
 A module exports `register<Group>Commands: CommandRegistrar`, i.e.
 `(program: KubicProgram, ctx: CommandContext) => void`. The context carries
@@ -77,18 +76,17 @@ new literals.
   stderr — `exitCodeForParseError` maps them; never commander's default 1.
 - `--help` / `-h` exits 0 on every command; commander answers it before
   any action runs, so a help request is side-effect free — no lane boot, no
-  runtime-exclude write, no extension load (issue #245). `--version` / `-V`
+  runtime-exclude write, no extension load. `--version` / `-V`
   is root-only.
 - Throw `CliUsageError(message)` from an action for a semantic usage error
   (exit 2) or `CliExitError(code, message)` for any other documented code:
   the program prints `error: <message>` on stderr and exits with the code.
 - Anything else thrown reaches the root catch-all: one `error: <message>`
   line, exit 1, the stack only with `KUBIC_DEBUG=1`.
-- An unknown top-level command or root option is a usage error (exit 2,
-  issue #372) reported on stderr with a did-you-mean or prompt hint (issue
-  #450); a bare `kubic` off a TTY prints the root help and exits 1 (POSIX
+- An unknown top-level command or root option is a usage error reported on stderr with a did-you-mean or prompt hint (issue
+  ); a bare `kubic` off a TTY prints the root help and exits 1 (POSIX
   usage-on-no-args); a bare `kubic` on a TTY opens the TUI.
-- **Errors on a terminal** (issue #450): the logger's level prefixes become
+- **Errors on a terminal**: the logger's level prefixes become
   status marks on a colour stderr (`✕`, `▲`, `ℹ`, `✓`; plain `error:` /
   `warn:` / `info:` / `ok:` words otherwise), commander usage errors are an
   `errorBlock`, and name lookups use `suggest()` (`packages/core/src/suggest.ts`)
@@ -101,7 +99,7 @@ new literals.
   (`createLineLogger(err, { debug, theme })` over the stderr line channel),
   which writes every level to stderr as `<level>: <message>`. `debug`
   shows only under `KUBIC_DEBUG=1`, or a command's own `--debug` where it
-  declares one (`run`, `workers`) — there is no global `--debug`
+  declares one (`run`) — there is no global `--debug`
   (`debugEnabled`). Refusals such as a broken config are diagnostics too.
 - **Diagnostics colour follows stderr**: the logger's theme comes from
   `themeFor(process.stderr)` (a handler's `errTheme`), never from the
@@ -118,8 +116,8 @@ new literals.
   row markers such as `●` for a default row), plain space-aligned text
   otherwise (pipes, CI, NO_COLOR), aligned by terminal display width (wide
   CJK cells count 2).
-- **The output kit** (`packages/core/src/cli/kit.ts`, issue #445) is the TTY
-  layer for human-facing output (`docs/ui/06-cli.html`): `brandHeading`,
+- **The output kit** (`packages/core/src/cli/kit.ts`) is the TTY
+  layer for human-facing output (``): `brandHeading`,
   `sectionLabel`, `statusMark` (✓ ▲ ✕ ○ ℹ and the spinner frame),
   `alignedRows`, `receipt`, `nextActions`, `errorBlock`, `hintLine`
   (backtick spans highlighted) and `kvLine`. Use it only when

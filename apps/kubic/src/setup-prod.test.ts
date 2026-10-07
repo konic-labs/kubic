@@ -1,4 +1,4 @@
-// The first-run rule for a bare `kubic` (issue #451).
+// The first-run rule for a bare `kubic`.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

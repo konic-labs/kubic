@@ -2,16 +2,16 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    // `apps/*/src` is collected too (issue #135): the composition root's
+    // `apps/*/src` is collected too: the composition root's
     // dispatch seam is a testable surface, not a silently-unrun directory.
     include: ['packages/*/src/**/*.test.ts', 'apps/*/src/**/*.test.ts'],
     environment: 'node',
-    // Hermetic env (issue #377): temp HOME, no ambient KUBIC_* variables,
+    // Hermetic env: temp HOME, no ambient KUBIC_* variables,
     // non-loopback TCP connects refused — see test/hermetic-env.ts. Credential-shaped
-    // env vars are scrubbed first (issues #221, #322) so no test can see
+    // env vars are scrubbed first so no test can see
     // the developer's provider keys.
     globalSetup: ['./test/vitest-global-setup.ts'],
-    // Issue #319: fail any test that leaves a coloured TUI theme behind.
+    // Fail any test that leaves a coloured TUI theme behind.
     setupFiles: [
       './vitest.setup.mjs',
       './test/vitest-setup.ts',

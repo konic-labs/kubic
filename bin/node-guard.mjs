@@ -1,4 +1,4 @@
-// Node-version guard for the `kubic` launcher (issue #128).
+// Node-version guard for the `kubic` launcher.
 //
 // Extracted from bin/kubic.js so the comparison is table-testable without
 // an old runtime (scripts/binary-contract.test.mjs) while the launcher

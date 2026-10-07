@@ -1,4 +1,4 @@
-// The ^P palette's overlay view (EPIC N, issue #460): the query through
+// The ^P palette's overlay view: the query through
 // Pi's Input, navigation and the row actions through the palette state.
 import { describe, expect, it } from 'vitest';
 import { createUiTheme } from '../../core/src/ui/style.js';
@@ -30,7 +30,7 @@ function view() {
   return { palette, ran, closed: () => closed };
 }
 
-describe('palette view (issue #460)', () => {
+describe('palette view', () => {
   it('types into the query and filters the rows', () => {
     const { palette } = view();
     for (const ch of 'mod') palette.handleInput(ch);

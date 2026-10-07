@@ -4,7 +4,7 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "description": "Kubic — model-agnostic terminal coding agent (Solo default, orchestrator opt-in)",
+  "description": "Kubic — model-agnostic terminal coding agent",
   "bin": {
     "kubic": "bin/kubic.js"
   },

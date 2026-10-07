@@ -1,7 +1,6 @@
-// Shared fake Terminal for headless TUI tests (issue #403; consolidation in
-// #321): writes + start/stop counters, a mutable size, a resize trigger and
-// an input injector, so no test needs its own copy or a timing sleep to read
-// back what the TUI drew.
+// Shared fake Terminal for headless TUI tests: writes + start/stop counters, a
+// mutable size, a resize trigger and an input injector, so no test needs its
+// own copy or a timing sleep to read back what the TUI drew.
 //
 // It lives at the repo root because `packages/tui` and `packages/host` tests
 // both import it: `host -> tui` is a forbidden dependency edge

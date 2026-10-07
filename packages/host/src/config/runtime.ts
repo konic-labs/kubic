@@ -1,18 +1,14 @@
-// Runtime config load at the composition root (issue #90; §35.1, §36, §40,
-// §41, §42.4, §71).
+// Runtime config load at the composition root.
 //
 // One call turns the six config layers into the values the product actually
 // runs on: provider/model selection, approval policy + routes, permission
-// classes, journal retention, modes, and a fail-closed budget posture.
+// classes and journal retention.
 // Precedence: enterprise > global > project (trust-gated) > workspace >
 // session > agent, then the documented env overrides, then an explicit CLI
 // flag. The first layer to set a leaf owns it; every attempt to override a
 // set leaf is reported in `overriddenAttempts`, never applied.
 //
-// §71: budgets are NEVER defaulted — a [budgets] key is refused outright
-// (config.ts owns that key) and an absent budget key yields no limits, which
-// this module reports rather than invents.
-// §36: secrets never appear in config — a `$VAR` / `!command` ref anywhere in
+// secrets never appear in config — a `$VAR` / `!command` ref anywhere in
 // the effective config is refused by name, never substituted or echoed.
 //
 // File access arrives as the exec FileBridge (I/O confinement): this module
@@ -43,9 +39,6 @@ import {
   ConfigError,
   type ConfigLayer,
   checkGitignoreSplit,
-  checkOrchestratorManager,
-  checkOrchestratorMaxWorkers,
-  checkOrchestratorRoot,
   checkOutOfScopeEntries,
   checkRoleModelRef,
   checkSessionCompaction,
@@ -67,7 +60,7 @@ import { parseSecretRef } from './secrets.js';
 // own default when nothing set it.
 export type ConfigValueSource = ConfigLayer | 'env' | 'cli' | 'defaults';
 
-// Days→ms is the only conversion journal retention needs: §42.4 bounds are
+// Days→ms is the only conversion journal retention needs: bounds are
 // ms, the config key is days.
 export const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -84,15 +77,13 @@ export const RUNTIME_ENV_OVERRIDES = {
 
 export const RUNTIME_DEFAULTS = {
   approvalsRoute: 'ask-user',
-  modesSolo: true,
-  modesOrchestrator: false,
 } as const;
 
 // Every documented config key, with the observable effect it has at runtime —
 // or an explicit marker for a key the product deliberately does not consume.
 // docs/cli/configuration.md and example.toml are parsed against THIS table by
 // config-docs.test.ts, so a documented key can never quietly stop doing
-// anything. Three dispositions (issue #133):
+// anything. Three dispositions:
 //
 //   effect           — consumed: the value reaches a code path.
 //   kept             — a decision: the key is reserved and reported, and the
@@ -106,9 +97,9 @@ export type RuntimeKeyEffect =
 
 export type RuntimeKeyDisposition = 'consumed' | 'kept' | 'pending' | 'unknown';
 
-// The table lookup is section-or-key (issue #90's rule): `roles.implementer.
+// The table lookup is section-or-key (the rule): `roles.implementer.
 // model` resolves through `roles`. Undefined means the table has no row for
-// the key at all — `config-doctor` flags exactly that by name (issue #133).
+// the key at all — `config-doctor` flags exactly that by name.
 export function keyEffectFor(key: string): RuntimeKeyEffect | undefined {
   const direct = RUNTIME_KEY_EFFECTS[key];
   if (direct !== undefined) return direct;
@@ -154,40 +145,32 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   'model.timeoutMs': {
     effect:
-      'per-request provider timeout on the solo lane (`settings.stream`), layered per role by `[roles.<name>].timeoutMs` (§37.4)',
+      'per-request provider timeout on the solo lane (`settings.stream`), layered per role by `[roles.<name>].timeoutMs`',
   },
   'model.maxRetries': {
     effect:
-      'provider/SDK retries inside one request attempt on the solo lane (`settings.stream`), layered per role by `[roles.<name>].maxRetries` (§37.4)',
+      'provider/SDK retries inside one request attempt on the solo lane (`settings.stream`), layered per role by `[roles.<name>].maxRetries`',
   },
   'model.maxRetryDelayMs': {
     effect:
-      'cap on the server-requested retry delay on the solo lane (`settings.stream`), layered per role by `[roles.<name>].maxRetryDelayMs` (§37.4)',
+      'cap on the server-requested retry delay on the solo lane (`settings.stream`), layered per role by `[roles.<name>].maxRetryDelayMs`',
   },
   'model.cacheRetention': {
     effect:
-      'prompt cache retention preference on the solo lane (`settings.stream`), layered per role by `[roles.<name>].cacheRetention` (§37.4)',
+      'prompt cache retention preference on the solo lane (`settings.stream`), layered per role by `[roles.<name>].cacheRetention`',
   },
   'model.escalate': {
     effect:
-      'escalation ladder rungs the run/tui lane climbs one-way (§38.4); a role escalate wins for that role',
+      'escalation ladder rungs the run/tui lane climbs one-way; a role escalate wins for that role',
   },
   'model.maxEscalations': {
     effect:
-      'climbs allowed per run on the escalation ladder (§38.4); unset means the ladder length',
+      'climbs allowed per run on the escalation ladder; unset means the ladder length',
   },
-  'modes.solo': {
-    effect:
-      'selects solo (the architecture) — solo=true with orchestrator=true is refused',
-  },
-  'modes.orchestrator': {
-    effect:
-      'selects orchestrator mode; contradictory [modes] values are refused by name',
-  },
-  'approvals.route': { effect: 'approval routing (ask-user | deny) — §41' },
+  'approvals.route': { effect: 'approval routing (ask-user | deny)' },
   'approvals.maxPendingMs': {
     effect:
-      'pending-approval bound on the solo lane and the orchestrator; a pending ask denies on timeout',
+      'pending-approval bound on the lane; a pending ask denies on timeout',
   },
   'approvals.autoApprove': {
     effect:
@@ -202,22 +185,22 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
       'installed on the solo lane: an approval without justification is denied',
   },
   'permissions.filesystem': {
-    effect: 'permission classes for the lane: derived tool allowlist (§40)',
+    effect: 'permission classes for the lane: derived tool allowlist',
   },
   'permissions.shell': {
-    effect: 'permission classes for the lane: derived tool allowlist (§40)',
+    effect: 'permission classes for the lane: derived tool allowlist',
   },
   'permissions.network': {
-    effect: 'permission classes for the lane: derived tool allowlist (§40)',
+    effect: 'permission classes for the lane: derived tool allowlist',
   },
   'permissions.git': {
-    effect: 'permission classes for the lane: derived tool allowlist (§40)',
+    effect: 'permission classes for the lane: derived tool allowlist',
   },
   'permissions.credentials': {
-    effect: 'permission classes for the lane: derived tool allowlist (§40)',
+    effect: 'permission classes for the lane: derived tool allowlist',
   },
   'journal.retentionDays': {
-    effect: 'journal age bound (maxAgeMs) enforced on every append — §42.4',
+    effect: 'journal age bound (maxAgeMs) enforced on every append',
   },
   'journal.maxBytes': {
     effect:
@@ -225,21 +208,11 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   'journal.outOfScope': {
     effect:
-      'paths excluded from the §42.5 baseline and the end-of-run sweep (self + children)',
+      'paths excluded from the baseline and the end-of-run sweep (self + children)',
   },
   roles: {
     effect:
-      'per-role model/tool/thinking/request-option defaults, requires and the allowed model set, layered under the role document (§12.1, §38.2)',
-  },
-  'orchestrator.root': {
-    effect: 'parent directory for orchestrator worktrees',
-  },
-  'orchestrator.maxWorkers': {
-    effect: 'default admission cap for the orchestrator scheduler (§45)',
-  },
-  'orchestrator.manager': {
-    effect:
-      'opt-in driver for `kubic orchestrate`: "lane" routes the run through the model-driven manager lane, "template" (the default) keeps the deterministic plan',
+      'per-role model/tool/thinking/request-option defaults, requires and the allowed model set, layered under the role document',
   },
   'ui.theme': {
     effect:
@@ -261,50 +234,49 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   'session.autoCompact': {
     effect:
-      'threshold compaction on the solo lane (run, tui, workers): false disables it, true is the automatic default',
+      'threshold compaction on the lane (run, tui): false disables it, true is the automatic default',
   },
   'session.reserveTokens': {
     effect:
-      'reserved-room tokens on the solo lane (run, tui, workers), clamped per model to at most a quarter of its context window',
+      'reserved-room tokens on the lane (run, tui), clamped per model to at most a quarter of its context window',
   },
   'session.keepRecentTokens': {
-    effect:
-      'verbatim recent-context window on the solo lane (run, tui, workers)',
+    effect: 'verbatim recent-context window on the lane (run, tui)',
   },
   'verify.tests': {
     effect:
-      'tests gate command run in the worktree after each run settles; exit status → signal:tests (§48)',
+      'tests gate command run in the worktree after each run settles; exit status → signal:tests',
   },
   'verify.build': {
     effect:
-      'build gate command run in the worktree after each run settles; exit status → signal:build (§48)',
+      'build gate command run in the worktree after each run settles; exit status → signal:build',
   },
   'verify.lint': {
     effect:
-      'lint gate command run in the worktree after each run settles; exit status → signal:lint (§48)',
+      'lint gate command run in the worktree after each run settles; exit status → signal:lint',
   },
   'verify.typecheck': {
     effect:
-      'typecheck gate command run in the worktree after each run settles; exit status → signal:typecheck (§48)',
+      'typecheck gate command run in the worktree after each run settles; exit status → signal:typecheck',
   },
   'verify.timeoutMs': {
     effect: 'per-command bound for the [verify] gates (a timeout is a fail)',
   },
-  // §29.2 (issue #237): the top-level `skills` array — NOT a `[skills]`
+  // The top-level `skills` array — NOT a `[skills]`
   // section. Entries resolve against their declaring file at load and
-  // reach `run`, `tui` and orchestrator workers with source 'settings';
-  // project-layer entries apply only for a trusted project.
+  // reach `run` and `tui` with source 'settings'; project-layer entries
+  // apply only for a trusted project.
   skills: {
     effect:
-      'settings skills for `kubic run`, `kubic tui` and orchestrator workers (loaded with source `settings`)',
+      'settings skills for `kubic run` and `kubic tui` (loaded with source `settings`)',
   },
-  // §58 enterprise [policy] (issue #288). The allow/deny and model keys reach
+  // Enterprise [policy]. The allow/deny and model keys reach
   // the live path (lane tool intersection, model selection gate, `kubic
   // policy`). The rest are resolved into the effective policy and only listed
   // here (`kubic config`): parsing them is the contract, enforcement is not
   // invented, and `kubic doctor` does not report them yet.
   policy: {
-    kept: '§58 enterprise policy section: resolved once per process into the effective policy; the per-key rows below say what each key does',
+    kept: 'enterprise policy section: resolved once per process into the effective policy; the per-key rows below say what each key does',
   },
   'policy.allowed_models': {
     effect:
@@ -331,23 +303,14 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   'policy.filesystem_policy': {
     kept: 'resolved into the effective policy but NOT enforced as its own gate: the lane derives filesystem reach from [permissions] classes today',
   },
-  'policy.require_credential_broker': {
-    kept: 'resolved into the effective policy but NOT enforced: the credential broker is not on the worker spawn path yet, so this key protects nothing today (doctor does not report it yet)',
-  },
-  'policy.deny_local_credentials': {
-    kept: 'resolved into the effective policy but NOT enforced: the local-credential check is not on the worker spawn path yet, so this key protects nothing today (doctor does not report it yet)',
-  },
   'policy.data_policy': {
     kept: 'carried and reported; no local mechanism can promise a provider-side training policy, so it is never claimed as enforced',
   },
   'policy.logging_policy': {
     kept: 'carried and reported; the one shipped audit ledger is not (yet) selected by this key',
   },
-  'policy.agent_policy': {
-    kept: 'max_agents/max_cost_usd resolve into the effective policy but are NOT enforced: the orchestrator cap is a named follow-up (doctor does not report it yet)',
-  },
   audit: {
-    kept: '[[audit]] sinks are parsed, validated and built: appendToLedger fans every §60 row out to the configured sinks plus the mandatory repo ledger (level = privileged keeps decisions and privileged actions only)',
+    kept: '[[audit]] sinks are parsed, validated and built: appendToLedger fans every audit row out to the configured sinks plus the mandatory repo ledger (level = privileged keeps decisions and privileged actions only)',
   },
 };
 
@@ -357,7 +320,7 @@ export interface RuntimeModelSelection {
   thinking?: string;
 }
 
-// The effective thinking level (issue #225; §38.3) with where it came from.
+// The effective thinking level with where it came from.
 // `cli`/`env` sources are per-run overrides that beat a session's persisted
 // level; a file-layer source is the config default, which a persisted
 // session level and a role default both beat (resolved at lane boot).
@@ -366,9 +329,9 @@ export interface RuntimeThinking {
   source: ConfigValueSource;
 }
 
-// A cli/env model pin the frozen enterprise `[model]` overrode (issue #295;
-// §35.1): reported instead of being dropped silently, so `kubic run --model x`
-// against an enterprise pin says it ran the pin, not `x`.
+// A cli/env model pin the frozen enterprise `[model]` overrode: reported
+// instead of being dropped silently, so `kubic run --model x` against an
+// enterprise pin says it ran the pin, not `x`.
 export interface ModelPinOverride {
   // The input that carried the ignored pin: `--model` (cli layer) or
   // `KUBIC_MODEL` (env layer).
@@ -393,12 +356,12 @@ export interface RuntimeJournal {
   // Undefined means "no age bound configured" — never an invented default.
   retentionDays?: number;
   maxAgeMs?: number;
-  // The configured byte bound (issue #350); undefined means the store's own
+  // The configured byte bound; undefined means the store's own
   // default applies (100 MiB), never an invented value here.
   maxBytes?: number;
   /**
-   * §35 out-of-scope paths (issue #115): undefined means none declared — the
-   * §42.5 walk still skips `.git/`, `.kubic/` and `.gitignore` hits on its
+   * Out-of-scope paths: undefined means none declared — the
+   * Walk still skips `.git/`, `.kubic/` and `.gitignore` hits on its
    * own. Declared entries exclude the path itself and everything under it.
    * The leaf's own layer lives in `sources['journal.outOfScope']`; `source`
    * below is the retention bound's origin.
@@ -432,46 +395,11 @@ export interface RuntimeCompaction {
   source: ConfigValueSource;
 }
 
-// The merged `[model]` escalation ladder (issue #210; §38.4): steps plus
+// The merged `[model]` escalation ladder: steps plus
 // the per-run bound, projected once per config load.
 export interface RuntimeEscalation {
   steps: string[];
   maxEscalations: number;
-}
-
-export interface RuntimeModes {
-  solo: boolean;
-  orchestrator: boolean;
-  source: ConfigValueSource;
-}
-
-export interface RuntimeOrchestrator {
-  /**
-   * §35/§44 worktree parent (issue #133): the spawned set lives at
-   * `<root>/<worktreeRoot>/<agent>`. Undefined means the shipped
-   * `.kubic/wt` — never an invented path.
-   */
-  root?: string;
-  /**
-   * §45 worker cap (issue #133): the default the scheduler resolves through
-   * resolveMaxConcurrency. Undefined means no configured cap; an explicit
-   * session/argv cap still wins.
-   */
-  maxWorkers?: number;
-  /**
-   * The delegation driver (issue #431, L-D34): `"lane"` opts the run
-   * into the model-driven manager lane, anything else (including absent)
-   * keeps the deterministic template plan.
-   */
-  manager?: 'lane' | 'template';
-}
-
-export interface RuntimeBudgets {
-  // §71: nothing is capped until the operator configures a limit, and config
-  // cannot express a budget at all — so this is always false today, reported
-  // rather than implied.
-  configured: boolean;
-  detail: string;
 }
 
 export interface ConfigLayerReport {
@@ -485,7 +413,7 @@ export interface RuntimeConfigInputs {
   bridge: Pick<FileBridge, 'exists' | 'readTextFile'>;
   home: string;
   cwd: string;
-  // Issue #229 (§35.1): the project root the project layer resolves at —
+  // The project root the project layer resolves at —
   // the nearest ancestor holding `.kubic/` (or the git top level). Absent
   // means the load resolves it from the cwd itself (findProjectRoot), so
   // a run from a subdirectory reads the same committed config as one from
@@ -495,7 +423,7 @@ export interface RuntimeConfigInputs {
   enterprisePath?: string;
   productPath?: string;
   env?: Record<string, string | undefined>;
-  // Trust gate for the project layer (§35.1). An explicit true is the
+  // Trust gate for the project layer. An explicit true is the
   // caller's accepted trust prompt; KUBIC_TRUST_PROJECT=1 also opts in.
   projectTrusted?: boolean;
   cli?: { model?: RuntimeModelSelection; thinking?: string };
@@ -504,7 +432,7 @@ export interface RuntimeConfigInputs {
   agent?: KubicConfig;
 }
 
-// §48 gate commands (issue #267): what `kubic run` verifies after each
+// Gate commands: what `kubic run` verifies after each
 // settled run. Empty `commands` means nothing is verified — every gate
 // stays unknown, never a guessed pass.
 export interface RuntimeVerify {
@@ -515,7 +443,7 @@ export interface RuntimeVerify {
 export interface RuntimeConfig {
   config: KubicConfig;
   /**
-   * §58 enterprise policy (issue #288), resolved ONCE per process from the
+   * Enterprise policy, resolved ONCE per process from the
    * per-layer `[policy]` sections (enterprise > product > … > agent) — the
    * same merge the config layers use, with deny accumulation and layer
    * provenance. Empty when no layer declares `[policy]`.
@@ -526,7 +454,7 @@ export interface RuntimeConfig {
   // Undefined when nothing set a level: the lane then boots at the session's
   // persisted level, a role default, or Pi's 'off'.
   thinking: RuntimeThinking | undefined;
-  // The merged `[model]` escalation ladder (issue #210; §38.4): the steps
+  // The merged `[model]` escalation ladder: the steps
   // plus the bound (defaulting to the ladder length — the ladder itself
   // bounds). Undefined when no layer named rungs: escalation is opt-in.
   // A role's own ladder wins per run at the lane, not here.
@@ -538,10 +466,7 @@ export interface RuntimeConfig {
   // Undefined when no layer declares `[agent] systemPromptFile` — the
   // lane assembles its prompt unchanged.
   systemPromptFile?: RuntimeSystemPrompt;
-  modes: RuntimeModes;
-  orchestrator: RuntimeOrchestrator;
   verify: RuntimeVerify;
-  budgets: RuntimeBudgets;
   projectTrusted: boolean;
   overriddenAttempts: string[];
   // The cli/env model pins a frozen enterprise `[model]` overrode (also named
@@ -559,7 +484,7 @@ export interface EffectiveConfigValue {
   // machine view never disagree about what the value is.
   value: string;
   layer: ConfigValueSource;
-  // Issue #133: what the key-effect table says this key does — 'consumed'
+  // What the key-effect table says this key does — 'consumed'
   // (an effect row), 'kept' (a recorded decision), 'pending' (a named
   // follow-up), or 'unknown' (no row at all; config-doctor flags it).
   disposition: RuntimeKeyDisposition;
@@ -591,11 +516,9 @@ export interface EffectiveConfigView {
   };
   model: RuntimeModelSelection | undefined;
   modelSource: ConfigValueSource;
-  // The effective thinking level with its source (issue #225), so
+  // The effective thinking level with its source, so
   // `kubic config --json` reports what the lane boots with.
   thinking: RuntimeThinking | undefined;
-  modes: RuntimeModes;
-  budgets: RuntimeBudgets;
   projectTrusted: boolean;
   overriddenAttempts: string[];
   layers: ConfigLayerReport[];
@@ -632,7 +555,7 @@ function formatValue(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((item) => formatValue(item)).join(', ')}]`;
   }
-  // Tables render as JSON (issue #255): the role `models` set is the
+  // Tables render as JSON: the role `models` set is the
   // first array-of-tables in config, and without this branch it printed
   // `[object Object]`. Strings redact leaf-wise, never the structure.
   if (isRecord(value)) return JSON.stringify(redactDeep(value));
@@ -650,7 +573,7 @@ function redactDeep(value: unknown): unknown {
   return value;
 }
 
-// §36: a secret reference must never live in config — `$VAR` and
+// A secret reference must never live in config — `$VAR` and
 // `!command args` are models.json ref forms, resolved at request time. A
 // config value shaped like one is refused by name, never echoed: the message
 // carries the path, not the material.
@@ -660,7 +583,7 @@ function assertNoSecretRefs(config: KubicConfig): void {
       const ref = parseSecretRef(value);
       if (ref.kind === 'env' || ref.kind === 'command') {
         throw new ConfigError(
-          `${path || 'config'}: secrets never appear in config (§36) — provider keys live in models.json instead (apiKey / header refs, resolved at request time)`,
+          `${path || 'config'}: secrets never appear in config — provider keys live in models.json instead (apiKey / header refs, resolved at request time)`,
         );
       }
       return;
@@ -717,8 +640,8 @@ function envFlag(raw: string | undefined): boolean {
 
 interface LoadedLayers {
   inputs: LayerInput[];
-  // Each present layer's own parsed config, in precedence order: the §58
-  // policy resolution (issue #288) needs per-layer inputs so a lower layer
+  // Each present layer's own parsed config, in precedence order: the
+  // policy resolution needs per-layer inputs so a lower layer
   // can narrow a higher one's deny list without the pre-flattened merge
   // dropping the addition.
   perLayer: Array<{ layer: ConfigLayer; config: KubicConfig }>;
@@ -764,7 +687,7 @@ function loadLayers(
         trusted: true,
       });
       if (programmatic !== undefined) {
-        // Issue #237: programmatic layers declare no file, so their
+        // Programmatic layers declare no file, so their
         // relative `skills` entries anchor at the invoking cwd.
         const resolved = resolveConfigSkills(
           programmatic,
@@ -784,9 +707,9 @@ function loadLayers(
     });
     if (layer === 'project' && !projectTrusted) {
       if (present) {
-        // Refused pre-trust, before the file is read (§35.1). Named by path
+        // Refused pre-trust, before the file is read. Named by path
         // so the operator knows exactly which layer is waiting on trust,
-        // and with the remedies named (issue #228): the durable grant or the
+        // and with the remedies named: the durable grant or the
         // per-invocation env opt-in, never a bare issue number.
         throw new ProjectUntrustedError(
           `project-local config refused pre-trust: ${path} — run 'kubic trust' to accept this project, or set KUBIC_TRUST_PROJECT=1 for this invocation`,
@@ -796,7 +719,7 @@ function loadLayers(
     }
     if (!present || path === undefined) continue;
     const parsed = parseLayerConfig(layer, inputs.bridge.readTextFile(path));
-    // Issue #237 (§29.2): relative `skills` entries anchor at the config
+    // Relative `skills` entries anchor at the config
     // file that declared them — a project config's `../shared/skills`
     // names the project's sibling, wherever the run was invoked from.
     const resolved = resolveConfigSkills(parsed, path);
@@ -852,7 +775,7 @@ function approvalsFrom(
   routeOverride: 'ask-user' | 'deny' | undefined,
 ): RuntimeApprovals {
   const approvals: ApprovalsConfig = config.approvals ?? {};
-  // Issue #230: the host has exactly one store placement — per session
+  // The host has exactly one store placement — per session
   // (<session>/approvals.json). A shared, cross-session store is not
   // implemented, so `sessionScoped = false` is refused by name rather than
   // printed as an effective policy that no lane enforces.
@@ -885,48 +808,18 @@ function approvalsFrom(
   };
 }
 
-function modesFrom(
-  config: KubicConfig,
-  sources: Record<string, ConfigValueSource>,
-): RuntimeModes {
-  const modes = config.modes ?? {};
-  // Solo is the architecture and delegation is a mode (§3/§10): setting one
-  // flag true selects that mode and turns the other off. Only an explicit
-  // true/false pair is a contradiction and is refused by name.
-  if (modes.solo === true && modes.orchestrator === true) {
-    throw new ConfigError(
-      'modes: at most one of solo/orchestrator may be true — solo is the architecture, delegation is a mode',
-    );
-  }
-  const solo =
-    modes.solo ??
-    (modes.orchestrator === true ? false : RUNTIME_DEFAULTS.modesSolo);
-  const orchestrator =
-    modes.orchestrator ??
-    (modes.solo === true ? false : RUNTIME_DEFAULTS.modesOrchestrator);
-  const set = modes.solo !== undefined || modes.orchestrator !== undefined;
-  return {
-    solo,
-    orchestrator,
-    source: set
-      ? (sources['modes.solo'] ?? sources['modes.orchestrator'] ?? 'defaults')
-      : 'defaults',
-  };
-}
-
-// [agent] systemPromptFile (issue #240; §63 `system_prompt_file`): resolve
-// the configured path against the declaring layer and read it now, through
-// the bridge — fail-closed. `~` expands to the home directory; an absolute
-// path is taken as typed; a relative path resolves against the declaring
-// config file's directory (programmatic session/agent layers are never
-// files, so a relative path there is refused, never guessed). The project
-// layer additionally requires containment in the project root: a trusted
-// path outside it is refused by name. Global and higher layers are
-// unrestricted. A missing or unreadable file is a named ConfigError.
-// Source attribution for the programmatic session/agent layers (issues
-// #239, #240): first layer in precedence order that sets the leaf. File
-// layers always win over these (they precede them), so this is only the
-// fallback when no file source recorded the key.
+// [agent] systemPromptFile: resolve the configured path against the declaring
+// layer and read it now, through the bridge — fail-closed. `~` expands to the
+// home directory; an absolute path is taken as typed; a relative path resolves
+// against the declaring config file's directory (programmatic session/agent
+// layers are never files, so a relative path there is refused, never guessed).
+// The project layer additionally requires containment in the project root: a
+// trusted path outside it is refused by name. Global and higher layers are
+// unrestricted. A missing or unreadable file is a named ConfigError. Source
+// attribution for the programmatic session/agent layers: first layer in
+// precedence order that sets the leaf. File layers always win over these (they
+// precede them), so this is only the fallback when no file source recorded the
+// key.
 function programmaticSourceFor(
   inputs: RuntimeConfigInputs,
   key: string,
@@ -1006,7 +899,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   const merged = mergeLayered(loaded.inputs);
   const config = merged.config;
   assertNoSecretRefs(config);
-  // §58 enterprise policy (issue #288): resolved once, from EACH layer's own
+  // Enterprise policy: resolved once, from EACH layer's own
   // `[policy]` section in precedence order — never from the pre-flattened
   // merge, so a lower layer's added deny accumulates (the first-wins leaf
   // merge would drop it) while a lower allow can never lift an enterprise
@@ -1033,15 +926,15 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   const cliThinking = checkThinkingLevel(inputs.cli?.thinking, '--thinking');
   const cliModel = inputs.cli?.model;
   const fileModel = modelFrom(config);
-  // §35.1: enterprise keys are frozen against every override — a lower file
+  // Enterprise keys are frozen against every override — a lower file
   // layer, an env override, and a CLI flag included. Nothing un-sets them.
   const frozen = (key: string): boolean => loaded.sources[key] === 'enterprise';
-  // §38.3 thinking level (issue #225): --thinking > KUBIC_MODEL_THINKING >
+  // Thinking level: --thinking > KUBIC_MODEL_THINKING >
   // the file layers — and an enterprise level is frozen against both (an
   // explicit flag is refused by name; the env override is not applied).
   let thinking: RuntimeThinking | undefined;
   const fileThinking = config.model?.thinking;
-  // Issue #226 (§35.1): an env override a frozen enterprise level drops
+  // An env override a frozen enterprise level drops
   // is reported in `overriddenAttempts` (never applied), mirroring the
   // model-pin overrides below. The flag is refused by name above, so only
   // the env input can land here; an equal value overrode nothing.
@@ -1096,7 +989,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     modelSource = 'defaults';
   }
 
-  // §35.1 (issue #295): a frozen enterprise pin drops every cli/env pin
+  // A frozen enterprise pin drops every cli/env pin
   // without a word unless it is recorded here — the composition root turns
   // each entry into one stderr note. A pin equal to the enterprise one
   // overrode nothing.
@@ -1134,7 +1027,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
         RUNTIME_ENV_OVERRIDES.journalRetentionDays,
       )
     : config.journal?.retentionDays;
-  // §35 out-of-scope paths (issue #115): validated here too, because the
+  // Out-of-scope paths: validated here too, because the
   // programmatic session/agent layers never pass through the TOML parser —
   // an empty entry is refused by name, never half-applied.
   const outOfScopeEntries = checkOutOfScopeEntries(
@@ -1157,7 +1050,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
       : (loaded.sources['journal.retentionDays'] ?? 'defaults'),
   };
 
-  // Session compaction policy (issue #239; §27.1): re-validated here,
+  // Session compaction policy: re-validated here,
   // because the programmatic session/agent layers never pass through the
   // TOML parser — a bad value there is refused by name, never carried to
   // the lane. Unset means the lane defaults (never an invented value here).
@@ -1205,33 +1098,17 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     source: compactionSource,
   };
 
-  // §35/§44/§45 orchestrator keys (issue #133): validated here too, because
-  // the programmatic session/agent layers never pass through the TOML
-  // parser — an escaping root or a non-positive cap is refused by name,
-  // never half-applied.
-  const orchestratorRoot = checkOrchestratorRoot(
-    config.orchestrator?.root,
-    'orchestrator',
-  );
-  const orchestratorMaxWorkers = checkOrchestratorMaxWorkers(
-    config.orchestrator?.maxWorkers,
-    'orchestrator',
-  );
-  const orchestratorManager = checkOrchestratorManager(
-    config.orchestrator?.manager,
-    'orchestrator',
-  );
-  // §12.1 per-role model pins (issue #133): validated here too, because the
+  // Per-role model pins: validated here too, because the
   // programmatic session/agent layers never pass through the TOML parser — a
   // malformed `provider/id` ref is refused by name, never carried to the lane.
   for (const [name, role] of Object.entries(config.roles ?? {})) {
     checkRoleModelRef(role.model, name);
-    // Issue #225: the programmatic session/agent layers never pass through
+    // The programmatic session/agent layers never pass through
     // the TOML parser — a malformed role thinking default is refused by
     // name here, never carried to the lane.
     checkThinkingLevel(role.thinking, `'roles.${name}': 'thinking'`);
   }
-  // §48 gate commands (issue #267): re-validated for the programmatic
+  // Gate commands: re-validated for the programmatic
   // layers, which never pass through the TOML parser.
   const verifyConfig =
     config.verify === undefined
@@ -1267,7 +1144,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   if (approvals.source === 'env') loaded.sources['approvals.route'] = 'env';
   if (retentionEnvApplies) loaded.sources['journal.retentionDays'] = 'env';
 
-  // [agent] systemPromptFile (issue #240): the declaring layer's file
+  // [agent] systemPromptFile: the declaring layer's file
   // resolves a relative path; anything else means no declaring file.
   // The programmatic session/agent layers merge values without recording
   // sources (loadLayers records file layers only), so a key set there
@@ -1282,7 +1159,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
       ? loaded.paths[systemPromptSource as ConfigLayer]
       : undefined;
 
-  // The merged `[model]` escalation ladder (issue #210; §38.4): steps
+  // The merged `[model]` escalation ladder: steps
   // from the winning layer, bound defaulting to the ladder length so the
   // ladder itself bounds when no explicit max is set.
   const modelEscalate = config.model?.escalate;
@@ -1314,7 +1191,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     permissions,
     journal,
     compaction,
-    // [agent] systemPromptFile (issue #240): resolved + read at load, so
+    // [agent] systemPromptFile: resolved + read at load, so
     // the lane boots and the `kubic config` report share one derivation.
     systemPromptFile: resolveSystemPromptFile({
       bridge: inputs.bridge,
@@ -1326,22 +1203,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
       source: systemPromptSource,
       layerPath: systemPromptLayerPath,
     }),
-    modes: modesFrom(config, loaded.sources),
-    orchestrator: {
-      ...(orchestratorRoot === undefined ? {} : { root: orchestratorRoot }),
-      ...(orchestratorMaxWorkers === undefined
-        ? {}
-        : { maxWorkers: orchestratorMaxWorkers }),
-      ...(orchestratorManager === undefined
-        ? {}
-        : { manager: orchestratorManager }),
-    },
     verify,
-    budgets: {
-      configured: false,
-      detail:
-        'no budgets are defaulted by config (§71): nothing is capped until you configure a limit, and [budgets] keys are refused outright',
-    },
     projectTrusted,
     overriddenAttempts: [
       ...merged.overriddenAttempts,
@@ -1372,7 +1234,7 @@ export function effectiveConfigView(
       disposition: runtimeKeyDisposition(keyEffectFor(key)),
     });
   }
-  // [agent] systemPromptFile (issue #240): the report names the EFFECTIVE
+  // [agent] systemPromptFile: the report names the EFFECTIVE
   // (resolved) path, not the declared spelling — same derivation the lane
   // boots with. The layer stays the declaring one.
   if (runtime.systemPromptFile !== undefined) {
@@ -1404,7 +1266,7 @@ export function effectiveConfigView(
         ? {}
         : { outOfScope: [...runtime.journal.outOfScope] }),
     },
-    // The reportable compaction policy (issue #239): configured values
+    // The reportable compaction policy: configured values
     // default-filled, so the report names what the lane will run with. The
     // reserve is the EFFECTIVE one through the same clamp the lane's live
     // getter uses — with no conversation there is no model window yet, so
@@ -1424,15 +1286,13 @@ export function effectiveConfigView(
     modelSource: runtime.modelSource,
     thinking:
       runtime.thinking === undefined ? undefined : { ...runtime.thinking },
-    modes: { ...runtime.modes },
-    budgets: { ...runtime.budgets },
     projectTrusted: runtime.projectTrusted,
     overriddenAttempts: [...runtime.overriddenAttempts],
     layers: runtime.layers.map((layer) => ({ ...layer })),
   };
 }
 
-// The effective compaction policy as one reportable line (issue #239): what
+// The effective compaction policy as one reportable line: what
 // the lane runs with. The reserve is already clamped through the lane's own
 // clamp; the lane re-clamps per model at boot (at most a quarter of its
 // window), so a small-window model may compact sooner than this line's
@@ -1452,7 +1312,7 @@ export function compactionSummaryLine(compaction: {
 // verbatim — and an operator cannot paste one back into a shared log.
 export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
   const lines: string[] = [];
-  // The disposition split up front (issue #133): a reader sees how many
+  // The disposition split up front: a reader sees how many
   // values are consumed, how many are kept decisions, and how many are
   // pending — before the per-value lines repeat it.
   const counts = { consumed: 0, kept: 0, pending: 0, unknown: 0 };
@@ -1493,7 +1353,7 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
       `selected model: first available provider (${view.modelSource}) — no model pin configured`,
     );
   }
-  // The effective thinking level with its source (issue #225): what the
+  // The effective thinking level with its source: what the
   // lane boots with before the model clamp. The `model.thinking` value row
   // above names the file default; this names the winner.
   if (view.thinking !== undefined) {
@@ -1501,7 +1361,7 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
       `thinking level: ${view.thinking.level} (${view.thinking.source})`,
     );
   }
-  // An always-ask capability in autoApprove never applies (issue #324): named
+  // An always-ask capability in autoApprove never applies: named
   // and left out of the count, never printed as an approval nothing grants.
   const ignoredAutoApprove = [
     ...new Set(alwaysAskAutoApprove(view.approvals.autoApprove)),
@@ -1531,12 +1391,6 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
   );
   lines.push(compactionSummaryLine(view.compaction));
   lines.push(
-    `modes: solo=${String(view.modes.solo)}, orchestrator=${String(view.modes.orchestrator)} (${view.modes.source})`,
-  );
-  lines.push(
-    `budgets: ${view.budgets.configured ? 'configured' : 'none'} — ${view.budgets.detail}`,
-  );
-  lines.push(
     `project layer: ${view.projectTrusted ? 'trusted' : "distrusted (refused pre-trust; run 'kubic trust' to accept this project, or set KUBIC_TRUST_PROJECT=1 for this invocation)"}`,
   );
   lines.push(
@@ -1547,7 +1401,7 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
   return lines;
 }
 
-// Repository ignore split (§35/D35): config + roles are committed, the five
+// Repository ignore split: config + roles are committed, the five
 // runtime prefixes are ignored. Reads the workspace's ignore wiring through
 // the bridge (repo `.gitignore` + local `.git/info/exclude`) and reports the
 // missing prefixes by name — the same check the config tests pin, now on a
@@ -1581,7 +1435,7 @@ export function checkWorkspaceIgnoreSplit(
   cwd: string,
   git?: IgnoreSplitGit,
 ): { missing: string[]; checked: string[]; applicable: boolean } {
-  // Issue #292: when a git runner is injected the toplevel and the exclude
+  // When a git runner is injected the toplevel and the exclude
   // resolve the way the writer resolves them — `${cwd}/.git` is a FILE in
   // a linked worktree (so `${cwd}/.git/info/exclude` fails ENOTDIR) and is
   // absent from a subdirectory. Without a runner this module stays
@@ -1612,7 +1466,7 @@ export function checkWorkspaceIgnoreSplit(
   };
 }
 
-// The git seam for the ignore-split check (issue #292). Injected so this
+// The git seam for the ignore-split check. Injected so this
 // module never spawns a process; the prod caller passes a spawnSync runner
 // mirroring the writer's.
 export type IgnoreSplitGit = (

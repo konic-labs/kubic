@@ -1,7 +1,7 @@
-// §48 gate signals have a producer on the live path (issue #267): the
+// Gate signals have a producer on the live path: the
 // configured `[verify]` commands run in the run's worktree after it settles,
 // a baseline run at the base revision detects regressions, and the labels
-// land in the §46 trajectory — so the reference verifier and the §74
+// land in the trajectory — so the reference verifier and the
 // preference builder work on run-produced files without hand-set labels.
 // Faux provider only (scripted replies, a real bash tool call); a fixture
 // git repo in a temp dir; zero network.
@@ -52,8 +52,6 @@ function tmp(prefix: string): string {
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
-  vi.stubEnv('KUBIC_WORKER_ID', undefined);
-  vi.stubEnv('KUBIC_APPROVALS_DIR', undefined);
 });
 
 afterEach(() => {
@@ -65,7 +63,7 @@ afterEach(() => {
   }
 });
 
-// The test's git driver (issue #420): one injected sandbox per test, so
+// The test's git driver: one injected sandbox per test, so
 // the fixture setup and the baseline worktree git the verify path shells
 // share the scrubbed view. The fixture keeps its own tmp dir.
 let driver: GitSandbox | undefined;
@@ -142,7 +140,7 @@ async function run(
   );
 }
 
-describe('the run verifier writes §48 gate signals (issue #267)', () => {
+describe('the run verifier writes gate signals', () => {
   it('a passing test command yields signal:tests=pass and no regression', {
     timeout: 30_000,
   }, async () => {
@@ -281,7 +279,7 @@ describe('the run verifier writes §48 gate signals (issue #267)', () => {
   });
 });
 
-describe('[verify] config reaches the run (issue #267)', () => {
+describe('[verify] config reaches the run', () => {
   it('projects the configured commands and timeout into the run deps', () => {
     const cwd = tmp('verify-config-');
     const configPath = `${cwd}/.kubic/config.toml`;

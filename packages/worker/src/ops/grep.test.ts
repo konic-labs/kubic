@@ -1,11 +1,7 @@
-// Grep bounds on the node seam (issue #180; §27.5): a match on a huge line
+// Grep bounds on the node seam: a match on a huge line
 // must not flood the context, binary files must not be searched, an
 // oversized file must be skipped WITHOUT being read, and the whole result
 // must fit a byte budget. include stays a documented substring test.
-//
-// RED-first note: each test below was watched failing against grep as it
-// shipped (whole-file reads with no size check, unclipped match text, no
-// binary skip, no result budget).
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -45,7 +41,7 @@ function inv(): ToolInvocation {
   );
 }
 
-describe('grep bounds (issue #180)', () => {
+describe('grep bounds', () => {
   it('clips a matching line at the line cap and sets linesTruncated', async () => {
     const root = tmp('grep-180-line-');
     const long = `needle ${'x'.repeat(1_000_000)}`;

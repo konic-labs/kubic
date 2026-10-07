@@ -5,7 +5,6 @@
 > `packages/host/src/config/trust-store.ts` (the store + the one trust
 > report), `packages/host/src/trust-cli.ts` (`kubic trust`),
 > `apps/kubic/src/config-runtime.ts` (the prompt and the load gate).
-> Issue [#228](https://github.com/konic-labs/kubic/issues/228).
 
 A repository can commit `.kubic/config.toml`, and that file is
 configuration: it can change the model, the approval policy, the permission
@@ -20,7 +19,7 @@ error: project-local config refused pre-trust: <path>/.kubic/config.toml — run
 ```
 
 The same gate covers the project `models.json`, ancestor project skills,
-and the project role documents (issue #430), so a repository cannot point
+and the project role documents, so a repository cannot point
 a provider — and your API key — at its own URL, nor inject lane instructions,
 either. The flip side is what a grant means: **one `yes` covers all four**.
 A trusted project's `models.json` may name any `*_API_KEY` (or `KUBIC_*`)
@@ -33,9 +32,9 @@ root, so the decision is checked against **the directory the file lives
 in**: a grant for `/repo` covers `/repo`'s committed `models.json` and
 skills even when a run starts in `/repo/pkg`, while a grant for `/repo/pkg`
 never reaches `/repo`. Outside a repository only the cwd itself is
-searched, and a user skill root is never reported as a project skill. The decision is threaded to every consuming lane
-(`run`, `tui`, `replay`, `models`, `doctor`, and orchestrate worker
-children).
+searched, and a user skill root is never reported as a project skill.
+The decision is threaded to every consuming command (`run`, `tui`,
+`replay`, `models` and `doctor`).
 
 ## `kubic trust`
 
@@ -83,9 +82,8 @@ Decisions live in one user-owned file, `~/.kubic/trust.json`:
   at `/a`. Ancestor-resolving consumers (the project `models.json`, project
   skills) check the store for the directory they resolved, so a grant for
   `/a` still applies to `/a`'s own files from any subdirectory.
-- **Writes are atomic**: a locked read → tmp+rename update (the same
-  primitive the orchestrator state files use), keys sorted, so two
-  concurrent grants cannot lose one another.
+- **Writes are atomic**: a locked read → tmp+rename update, keys sorted,
+  so two concurrent grants cannot lose one another.
 - **A broken store fails closed**: reads treat it as "no decision" (every
   command refuses the project layer by name), while `kubic trust` reports
   the broken file and exits 1 instead of overwriting it.
@@ -98,7 +96,7 @@ repository cannot write it, and `kubic trust` is the only writer.
 `kubic tui` — and a bare `kubic` on an interactive terminal — resolves
 trust before the config load and before the alt-screen opens. When a
 project `config.toml` is present and no decision is recorded, it asks once,
-as one row in the first screen's language (issue #462), answered with one
+as one row in the first screen's language, answered with one
 key:
 
 ```
@@ -136,18 +134,6 @@ accepts the project layer for one invocation and records nothing. Anything
 other than `1`/`true` contributes nothing (the store's decision, if any,
 still applies). This is the escape hatch for scripts and CI; `kubic trust`
 is the durable form.
-
-`kubic orchestrate` inherits this to its worker children, decided **per root**:
-a store grant is keyed to one exact directory (a grant for `/repo/pkg` never
-reaches `/repo`), so the run checks the decision for the repository root whose
-`models.json` it loads — not for the directory you launched from. When that
-root is trusted (by the store or the env var), the manager loads its project
-`models.json` and each child is spawned with `KUBIC_TRUST_PROJECT=1` unless it
-was already exported, because a child runs in its own worktree — a different
-path from the recorded decision. A grant for a subdirectory, run from that
-subdirectory, therefore trusts nothing at the repo root: the root's
-`models.json` stays ignored and the children receive no trust. `kubic tui`'s
-orchestrator mode uses the same per-root check.
 
 ## Reporting
 

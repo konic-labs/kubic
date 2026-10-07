@@ -1,4 +1,4 @@
-// "Did you mean …?" for mistyped names (EPIC N, issue #450): commands,
+// "Did you mean …?" for mistyped names: commands,
 // providers and model ids. Pure; shared by the CLI dispatcher (apps), the
 // model selection refusals (worker) and `kubic models <provider>` (host).
 //

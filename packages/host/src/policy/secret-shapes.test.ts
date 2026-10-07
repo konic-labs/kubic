@@ -1,4 +1,4 @@
-// Shared secret-shape backstop tests (issue #57 fix cycle 2).
+// Shared secret-shape backstop tests.
 // Case-transform bypass: uppercasing a prefix must never evade detection.
 // Faux-only, zero network.
 import { describe, expect, it } from 'vitest';
@@ -37,7 +37,7 @@ describe('case-insensitive prefixes', () => {
   });
 });
 
-describe('bearer/AKIA/PEM case bypass (fix cycle 3)', () => {
+describe('bearer/AKIA/PEM case bypass', () => {
   it.each(['BEARER', 'bEaReR', 'BeArEr', 'bearer'])(
     'detects %s-scheme tokens case-insensitively',
     (scheme) => {

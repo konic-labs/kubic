@@ -1,4 +1,4 @@
-// RL dataset export entry (issue #54; design §74).
+// RL dataset export entry.
 // Six dataset types over trajectory exports (read-only): SFT, DPO,
 // GRPO, preference pairs, tool-use, coding. New files only — this entry
 // is self-contained and is not wired into the package index.

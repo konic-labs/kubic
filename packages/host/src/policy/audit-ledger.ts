@@ -1,22 +1,17 @@
-// The durable §60 audit ledger: ONE record format (OrgAuditRecord, the 14
-// section-60 fields) in ONE append-only JSONL file per repo, written through
-// emitAudit's validation and read back by `kubic audit`.
+// The durable audit ledger: ONE record format (OrgAuditRecord, 13 fields) in
+// ONE append-only JSONL file per repo, written through emitAudit's
+// validation and read back by `kubic audit`.
 //
-// Location: <repo>/.kubic/orchestrator/approvals/audit.jsonl — the path the
-// orchestrator's approval layer already owned, and one the shipped runtime
-// ignore rules (`.kubic/orchestrator/`) keep out of the user's commit path.
-// Solo approval decisions append to the same ledger (same file, same shape),
-// so `kubic audit --mode solo|orchestrator` slices one trail.
+// Location: <repo>/.kubic/audit/audit.jsonl, which the shipped runtime
+// ignore rules (`.kubic/audit/`) keep out of the user's commit path.
 //
-// File access goes through the exec FileBridge (I/O confinement, §9).
+// File access goes through the exec FileBridge (I/O confinement).
 
 import { basename, dirname, join, resolve } from 'node:path';
-import type { RunMode } from '../../../agents/src/budget.js';
+import type { RunMode } from '../../../agents/src/policy.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import type { AuditTableConfig } from '../config/config.js';
 import { matchableSecrets } from '../config/secrets.js';
-import type { OrchestratorApprovalRequest } from '../orchestrator/approvals/request.js';
-import type { OrchestratorVerdict } from '../orchestrator/approvals/routing.js';
 import {
   type AuditInput,
   type AuditSink,
@@ -37,16 +32,15 @@ import {
 
 export const AUDIT_LEDGER_FILE = 'audit.jsonl';
 
-// The ledger's directory for a repo root (the orchestrator approvals dir).
+// The ledger's directory for a repo root.
 export function auditLedgerDir(repoRoot: string): string {
-  return join(repoRoot, '.kubic', 'orchestrator', 'approvals');
+  return join(repoRoot, '.kubic', 'audit');
 }
 
-// The repo runtime root for a working directory (issue #279): the MAIN
+// The repo runtime root for a working directory: the MAIN
 // checkout's toplevel — what `git rev-parse --path-format=absolute
-// --git-common-dir` names the parent of — so a run from a subdirectory and a
-// worker child in a linked worktree both resolve to the one directory
-// `kubic audit` reads. Resolved from the filesystem (no git spawn): the
+// --git-common-dir` names the parent of — so a run from a subdirectory or a
+// linked worktree resolves to the one directory `kubic audit` reads. Resolved from the filesystem (no git spawn): the
 // nearest ancestor holding `.git`; a `.git` FILE (linked worktree) is
 // followed to its gitdir and that gitdir's `commondir`. Outside a repository,
 // the directory itself.
@@ -102,7 +96,7 @@ export function auditLedgerDirFor(cwd: string): string {
   return auditLedgerDir(resolveRepoRuntimeRoot(cwd));
 }
 
-// The base revision a solo run started from (issue #282): `git rev-parse
+// The base revision a solo run started from: `git rev-parse
 // HEAD` in the WORKSPACE, captured ONCE at run start — `none` outside git
 // or when git cannot run. Best-effort by contract: a failed probe is never a
 // run failure, and the record then honestly says `none`. The workspace
@@ -158,7 +152,6 @@ function isOrgAuditRecord(value: unknown): value is OrgAuditRecord {
     typeof record.who === 'string' &&
     typeof record.what === 'string' &&
     typeof record.when === 'string' &&
-    (record.mode === 'solo' || record.mode === 'orchestrator') &&
     typeof record.posture === 'string' &&
     (record.result === 'ok' ||
       record.result === 'deny' ||
@@ -168,7 +161,7 @@ function isOrgAuditRecord(value: unknown): value is OrgAuditRecord {
 
 // A ledger that exists but cannot be read (permission denied, a directory in
 // its place, an I/O error) — named, so `kubic audit` never reports it as an
-// empty trail (issue #279).
+// empty trail.
 export class AuditLedgerReadError extends Error {
   readonly path: string;
   constructor(path: string, cause: unknown) {
@@ -180,7 +173,7 @@ export class AuditLedgerReadError extends Error {
   }
 }
 
-// Every §60 record in the ledger, oldest first. A missing ledger (ENOENT) is
+// Every audit record in the ledger, oldest first. A missing ledger (ENOENT) is
 // an empty trail; any other read failure throws AuditLedgerReadError. A torn
 // or foreign line (e.g. a pre-unification router event) is skipped, never
 // guessed into a record.
@@ -206,7 +199,7 @@ export function readAuditLedger(dir: string): OrgAuditRecord[] {
   return records;
 }
 
-// Placeholder for a §60 field the recording site genuinely does not know.
+// Placeholder for a field the recording site genuinely does not know.
 // The record stays honest: it says "unknown", it never invents a value.
 const UNKNOWN = 'unknown';
 
@@ -231,7 +224,11 @@ function parseModel(model: string | undefined): {
     : { provider: UNKNOWN, id: model };
 }
 
-function verdictFields(verdict: OrchestratorVerdict): {
+type Verdict =
+  | { approved: true; by: string }
+  | { approved: false; reason: string };
+
+function verdictFields(verdict: Verdict): {
   approval: string;
   result: 'ok' | 'deny';
   reason: string;
@@ -249,93 +246,7 @@ function verdictFields(verdict: OrchestratorVerdict): {
       };
 }
 
-// §60 record for an orchestrator worker's approval decision.
-export function orchestratorDecisionAudit(
-  request: OrchestratorApprovalRequest,
-  verdict: OrchestratorVerdict,
-  options: {
-    posture: string;
-    pid?: number;
-    generation?: number;
-    /**
-     * The resolved thinking level (issue #282): the worker's own level on
-     * the orchestrator path. Absent keeps the honest `unknown` — e.g. a
-     * manager approve of a forged key belongs to no worker.
-     */
-    thinking?: string;
-    /**
-     * The worktree's base revision (issue #282), captured at creation.
-     * Absent keeps the honest `unknown`.
-     */
-    base?: string;
-  },
-): AuditInput {
-  const { approval, result, reason } = verdictFields(verdict);
-  return {
-    who: `agent:${request.agentId || UNKNOWN}`,
-    what: `tool:${request.toolName || UNKNOWN}`,
-    agent: {
-      session: request.sessionId || UNKNOWN,
-      role: request.role || UNKNOWN,
-      ...(request.provenance?.parentSessionId
-        ? { parent: request.provenance.parentSessionId }
-        : {}),
-    },
-    model: {
-      ...parseModel(request.provenance?.model),
-      thinking: options.thinking ?? UNKNOWN,
-    },
-    worker: {
-      pid: options.pid ?? 0,
-      generation: options.generation ?? 0,
-      role: request.role || UNKNOWN,
-    },
-    workspace: {
-      path: request.worktree || UNKNOWN,
-      base: options.base ?? UNKNOWN,
-    },
-    permission: { permission: `trigger:${request.trigger}`, approval },
-    credential: { sentinel: 'none' },
-    network: { ...NO_NETWORK },
-    mode: 'orchestrator',
-    posture: options.posture,
-    result,
-    reason,
-  };
-}
-
-// §60 record for approval state that failed authentication and was ignored
-// (issue #149; §41.2): a worker — or anything else on the machine — planted an
-// answer, a memoized decision or a full-access record this run's manager never
-// sealed. Recorded so the drop is never silent; the state itself is never
-// honoured, so the record is a `deny` with the reason it was refused.
-export interface DroppedStateInput {
-  sessionId: string;
-  /** What was refused, e.g. `decision`, `full-access record`, `answer`. */
-  what: string;
-  /** Why, e.g. `no MAC from this run's manager`. */
-  detail: string;
-}
-
-export function droppedStateAudit(input: DroppedStateInput): AuditInput {
-  return {
-    who: 'agent:unknown',
-    what: 'state:dropped',
-    agent: { session: input.sessionId || UNKNOWN, role: UNKNOWN },
-    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
-    worker: { pid: process.pid, generation: 0, role: UNKNOWN },
-    workspace: { path: UNKNOWN, base: UNKNOWN },
-    permission: { permission: `state:${input.what}`, approval: 'denied' },
-    credential: { sentinel: 'none' },
-    network: { ...NO_NETWORK },
-    mode: 'orchestrator',
-    posture: 'approvals',
-    result: 'deny',
-    reason: `${input.what} refused: ${input.detail}`,
-  };
-}
-
-// §60 record for a solo approval decision (the in-process lane's ask).
+// Audit record for a solo approval decision (the in-process lane's ask).
 export interface SoloDecisionInput {
   sessionId: string;
   toolName: string;
@@ -344,7 +255,7 @@ export interface SoloDecisionInput {
   model?: string;
   thinking?: string;
   /**
-   * The base revision the run started from (issue #282): `git rev-parse
+   * The base revision the run started from: `git rev-parse
    * HEAD` captured once at run start, `none` outside git. Absent keeps the
    * honest `unknown`.
    */
@@ -352,64 +263,27 @@ export interface SoloDecisionInput {
   approved: boolean;
   by?: string;
   reason?: string;
-  /** Issue #467: an approval's recorded note (an edited command). */
+  /** An approval's recorded note (an edited command). */
   note?: string;
   posture: string;
-  /**
-   * Set when this lane is an orchestrator-managed worker child (issue #279):
-   * the record is then an orchestrator record for that worker, carrying the
-   * orchestration's session as its parent — never a mislabelled solo one.
-   */
-  worker?: { id: string; orchestratorSession: string; generation?: number };
 }
 
-// The generation the lifecycle layer stamped on this worker child
-// (KUBIC_WORKER_GENERATION, the §3.8 allowlist): a non-negative integer, else
-// 0 — the same reading the §46 trajectory's provenance uses.
-export function workerGenerationFromEnv(
-  env: Record<string, string | undefined>,
-): number {
-  const raw = env.KUBIC_WORKER_GENERATION;
-  const parsed = raw === undefined || raw === '' ? Number.NaN : Number(raw);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
-}
-
-export function soloDecisionAudit(
-  input: SoloDecisionInput,
-  env: Record<string, string | undefined> = process.env,
-): AuditInput {
+export function soloDecisionAudit(input: SoloDecisionInput): AuditInput {
   const { approval, result, reason } = verdictFields(
     input.approved
       ? { approved: true, by: input.by ?? 'user' }
       : { approved: false, reason: input.reason ?? 'denied' },
   );
-  // Issue #467: an approval's own note (an edited command names both) is
+  // An approval's own note (an edited command names both) is
   // its recorded reason.
   const recorded =
     input.approved && input.note !== undefined ? input.note : reason;
-  const worker = input.worker;
-  const role = worker === undefined ? 'root' : 'worker';
   return {
-    who: `agent:${worker === undefined ? 'root' : worker.id || UNKNOWN}`,
+    who: 'agent:root',
     what: `tool:${input.toolName || UNKNOWN}`,
-    agent: {
-      session: input.sessionId || UNKNOWN,
-      role,
-      ...(worker === undefined || worker.orchestratorSession === ''
-        ? {}
-        : { parent: worker.orchestratorSession }),
-    },
+    agent: { session: input.sessionId || UNKNOWN, role: 'root' },
     model: { ...parseModel(input.model), thinking: input.thinking || UNKNOWN },
-    // A worker child's generation comes from the env its lifecycle layer set
-    // (issue #279) unless the caller supplies one; a solo run is generation 0.
-    worker: {
-      pid: process.pid,
-      generation:
-        worker === undefined
-          ? 0
-          : (worker.generation ?? workerGenerationFromEnv(env)),
-      role,
-    },
+    worker: { pid: process.pid, generation: 0, role: 'root' },
     workspace: {
       path: input.workspace || UNKNOWN,
       base: input.base ?? UNKNOWN,
@@ -417,100 +291,42 @@ export function soloDecisionAudit(
     permission: { permission: `trigger:${input.trigger || UNKNOWN}`, approval },
     credential: { sentinel: 'none' },
     network: { ...NO_NETWORK },
-    mode: worker === undefined ? 'solo' : 'orchestrator',
     posture: input.posture,
     result,
     reason: recorded,
   };
 }
 
-// §60 record for one orchestrator MERGE-gate decision (issue #323). The
-// approval names who decided: `--yes` (the run's standing answer, which
-// covers merges only) or `user` (a decider answered, or none existed and
-// the gate denied closed) — never an inferred approval dressed as a user's.
-export interface MergeDecisionInput {
-  sessionId: string;
-  agentId: string;
-  branch: string;
-  workspace: string;
-  /** The worker worktree merged from (issue #284): named in the reason. */
-  worktree?: string;
-  approved: boolean;
-  by: '--yes' | 'user';
-  reason?: string;
-  posture: string;
-}
-
-export function mergeDecisionAudit(input: MergeDecisionInput): AuditInput {
-  const { approval, result, reason } = verdictFields(
-    input.approved
-      ? { approved: true, by: input.by }
-      : { approved: false, reason: input.reason ?? 'denied' },
-  );
-  return {
-    who: `agent:${input.agentId || UNKNOWN}`,
-    what: `merge:${input.branch || UNKNOWN}`,
-    agent: { session: input.sessionId || UNKNOWN, role: 'manager' },
-    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
-    worker: { pid: process.pid, generation: 0, role: 'manager' },
-    workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
-    permission: { permission: 'gate:merge', approval },
-    credential: { sentinel: 'none' },
-    network: { ...NO_NETWORK },
-    mode: 'orchestrator',
-    posture: input.posture,
-    result,
-    // An approved merge names the worktree it merged from (issue #284);
-    // without one the reason keeps its shipped 'approved'.
-    reason:
-      input.approved && input.worktree !== undefined
-        ? `approved from ${input.worktree}`
-        : reason,
-  };
-}
-
-// The privileged actions (issue #284, §60): the closed set of manager- and
-// user-level operations beyond approval decisions that each emit one
-// OrgAuditRecord with the same provenance block as decisions. The `what`
-// each kind writes is fixed beside it: full-access-grant writes
-// `posture:full-access` (fullAccessEnabledAudit) and merge writes
-// `merge:<branch>` (mergeDecisionAudit) — both predate the union and keep
-// their shipped shapes; the five builders below write `<kind>:<identity>`.
+// The privileged actions: the closed set of user-level
+// operations beyond approval decisions that each emit one OrgAuditRecord
+// with the same provenance block as decisions. full-access-grant writes
+// `posture:full-access` (fullAccessEnabledAudit); undo-restore writes
+// `undo-restore` (undoRestoreAudit).
 export const PRIVILEGED_ACTION_KINDS = [
   'full-access-grant',
-  'merge',
-  'worktree-create',
-  'worktree-remove',
-  'worker-spawn',
-  'worker-terminate',
   'undo-restore',
 ] as const;
 
 export type PrivilegedActionKind = (typeof PRIVILEGED_ACTION_KINDS)[number];
 
-// The `level = "privileged"` filter (issue #286; §58): a `[[audit]]` sink
-// at the privileged level keeps approval decisions (`tool:<name>`, solo and
-// orchestrator) and the seven privileged-action whats, and drops the rest
-// (`state:dropped`, `credential:<provider>`). The repo
-// ledger always keeps everything — the level only gates configured sinks.
+// The `level = "privileged"` filter: a `[[audit]]` sink
+// at the privileged level keeps approval decisions (`tool:<name>`) and the
+// privileged-action whats, and drops the rest (`credential:<provider>`).
+// The repo ledger always keeps everything — the level only gates
+// configured sinks.
 export function isPrivilegedAuditWhat(what: string): boolean {
   return (
     what.startsWith('tool:') ||
-    // Issue #278: the run-start row is a decision-grade record (it names
-    // the autonomous combination), not a privileged ACTION — the seven
+    // The run-start row is a decision-grade record (it names
+    // the autonomous combination), not a privileged ACTION — the action
     // kinds stay closed.
     what === 'run:start' ||
     what === 'posture:full-access' ||
-    // Review finding (issue #286): the revoke half of a privileged
+    // Review finding: the revoke half of a privileged
     // posture change reaches privileged sinks too — the disable half of
     // a grant must never vanish while the grant is kept.
     what === 'posture:approvals' ||
-    what === 'undo-restore' ||
-    what.startsWith('merge:') ||
-    what.startsWith('worktree-create:') ||
-    what.startsWith('worktree-remove:') ||
-    what.startsWith('worker-spawn:') ||
-    what.startsWith('worker-terminate:')
+    what === 'undo-restore'
   );
 }
 
@@ -526,7 +342,7 @@ export interface ConfiguredAuditSink {
   stderrNoted: boolean;
 }
 
-// The process's configured `[[audit]]` sinks (issue #286): empty means the
+// The process's configured `[[audit]]` sinks: empty means the
 // repo ledger only (current behavior). The composition root sets them once
 // per process from the loaded config; tests reset with `setAuditSinks([])`.
 let configuredAuditSinks: ConfiguredAuditSink[] = [];
@@ -561,10 +377,10 @@ export interface BuiltAuditSinks {
   problems: string[];
 }
 
-// Build the process's configured sinks from parsed `[[audit]]` tables
-// (issue #286). `syslogTransport` injects the syslog wire for tests — prod
-// builds real transports from the target (unix socket path, defaulting per
-// platform, or `host[:port]` UDP defaulting to 514).
+// Build the process's configured sinks from parsed `[[audit]]` tables.
+// `syslogTransport` injects the syslog wire for tests — prod builds real
+// transports from the target (unix socket path, defaulting per platform, or
+// `host[:port]` UDP defaulting to 514).
 export function buildConfiguredSinks(
   tables: readonly AuditTableConfig[],
   overrides: { syslogTransport?: SyslogTransport } = {},
@@ -641,7 +457,7 @@ export function buildConfiguredSinks(
   return { sinks, problems };
 }
 
-// A `[[audit]] file` sink (issue #286): one validated record per line at
+// A `[[audit]] file` sink: one validated record per line at
 // the EXACT target path (unlike the repo ledger, which owns its filename).
 // Fail-open dirs like the repo ledger: the parent is created when missing.
 function createTargetFileSink(target: string): AuditSink {
@@ -666,7 +482,7 @@ export interface AuditSinkProbes {
   udpAvailable(): boolean;
 }
 
-// One syslog target's reachability (issue #286): unix sockets must exist,
+// One syslog target's reachability: unix sockets must exist,
 // UDP needs a creatable socket (connectionless — delivery stays
 // best-effort). Garbage targets fail closed.
 export function isSyslogTargetAvailable(
@@ -690,7 +506,7 @@ export interface AuditSinkDoctorInput {
   probes: AuditSinkProbes;
 }
 
-// The `[[audit]]` doctor report (issue #286; §58): one check per configured
+// The `[[audit]]` doctor report: one check per configured
 // table — reachable sinks pass naming target and level, missing sockets
 // and unbuilt tables fail — plus the runtime failures the process recorded
 // (`audit:sink:<kind>`). No tables means no checks, so the default matrix
@@ -808,71 +624,7 @@ export function auditSinksDoctorChecks(
   });
 }
 
-// §60 record for a worker spawn (issue #284): the manager's act of starting
-// a worker child. pid/generation come from the live registry row at launch
-// (0/unknown where the row is absent — the honest fallback, never a guess).
-export interface WorkerSpawnInput {
-  sessionId: string;
-  agentId: string;
-  role: string;
-  pid?: number;
-  generation?: number;
-  worktree: string;
-  base?: string;
-  model?: string;
-  thinking?: string;
-  posture: string;
-}
-
-export function workerSpawnAudit(input: WorkerSpawnInput): AuditInput {
-  return {
-    who: `agent:${input.agentId || UNKNOWN}`,
-    what: `worker-spawn:${input.agentId || UNKNOWN}`,
-    agent: { session: input.sessionId || UNKNOWN, role: 'manager' },
-    model: { ...parseModel(input.model), thinking: input.thinking || UNKNOWN },
-    worker: {
-      pid: input.pid ?? 0,
-      generation: input.generation ?? 0,
-      role: input.role,
-    },
-    workspace: { path: input.worktree, base: input.base || UNKNOWN },
-    permission: {
-      permission: 'worker:spawn',
-      approval: `started by orchestrator ${input.sessionId || UNKNOWN}`,
-    },
-    credential: { sentinel: 'none' },
-    network: { ...NO_NETWORK },
-    mode: 'orchestrator',
-    posture: input.posture,
-    result: 'ok',
-    reason: `spawned ${input.role} worker ${input.agentId || UNKNOWN}`,
-  };
-}
-
-// §60 record for a worker's end (issue #284): brackets the child process
-// lifetime with the spawn row — one terminate per spawn. reason names how
-// the process ended ('ok' or the failure code); result is 'ok' only for a
-// clean end.
-export interface WorkerTerminateInput extends WorkerSpawnInput {
-  reason: string;
-  result: 'ok' | 'error';
-}
-
-export function workerTerminateAudit(input: WorkerTerminateInput): AuditInput {
-  const spawned = workerSpawnAudit(input);
-  return {
-    ...spawned,
-    what: `worker-terminate:${input.agentId || UNKNOWN}`,
-    permission: {
-      permission: 'worker:terminate',
-      approval: `reaped by orchestrator ${input.sessionId || UNKNOWN}`,
-    },
-    result: input.result,
-    reason: input.reason,
-  };
-}
-
-// §60 record for a journal undo restore (issue #284): the user-level act of
+// Audit record for a journal undo restore: the user-level act of
 // putting files back. restored names the restored paths, skipped counts the
 // steps left in place — a partial restore (exit 1) records 'error'.
 export interface UndoRestoreInput {
@@ -898,7 +650,6 @@ export function undoRestoreAudit(input: UndoRestoreInput): AuditInput {
     permission: { permission: 'journal:undo', approval: 'user command' },
     credential: { sentinel: 'none' },
     network: { ...NO_NETWORK },
-    mode: 'solo',
     posture: 'approvals',
     result: skipped > 0 ? 'error' : 'ok',
     reason:
@@ -907,68 +658,7 @@ export function undoRestoreAudit(input: UndoRestoreInput): AuditInput {
   };
 }
 
-// §60 record for a worker worktree creation (issue #284): the manager lane's
-// fresh `git worktree add`, recorded with the base just captured there.
-export interface WorktreeCreateInput {
-  sessionId: string;
-  agentId: string;
-  path: string;
-  branch: string;
-  base?: string;
-  posture: string;
-}
-
-export function worktreeCreateAudit(input: WorktreeCreateInput): AuditInput {
-  return {
-    who: `agent:${input.agentId || UNKNOWN}`,
-    what: `worktree-create:${input.branch || UNKNOWN}`,
-    agent: { session: input.sessionId || UNKNOWN, role: 'manager' },
-    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
-    worker: { pid: process.pid, generation: 0, role: 'manager' },
-    workspace: { path: input.path, base: input.base || UNKNOWN },
-    permission: {
-      permission: 'worktree:create',
-      approval: `created by orchestrator ${input.sessionId || UNKNOWN}`,
-    },
-    credential: { sentinel: 'none' },
-    network: { ...NO_NETWORK },
-    mode: 'orchestrator',
-    posture: input.posture,
-    result: 'ok',
-    reason: `branch ${input.branch || UNKNOWN} for worker ${input.agentId || UNKNOWN}`,
-  };
-}
-
-// §60 record for a worker worktree removal (issue #284): `kubic clean`
-// disposing a spawned tree. base is unknowable by construction — the tree
-// is gone when the row is written — so the row honestly says 'unknown' and
-// identifies the tree by path and branch instead.
-export interface WorktreeRemoveInput {
-  sessionId: string;
-  path: string;
-  /** Null for a non-spawned tree (still disposed, still recorded). */
-  branch: string | null;
-}
-
-export function worktreeRemoveAudit(input: WorktreeRemoveInput): AuditInput {
-  return {
-    who: 'user:cli',
-    what: `worktree-remove:${input.branch || UNKNOWN}`,
-    agent: { session: input.sessionId || UNKNOWN, role: 'user' },
-    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
-    worker: { pid: process.pid, generation: 0, role: 'user' },
-    workspace: { path: input.path, base: UNKNOWN },
-    permission: { permission: 'worktree:remove', approval: 'user command' },
-    credential: { sentinel: 'none' },
-    network: { ...NO_NETWORK },
-    mode: 'solo',
-    posture: 'approvals',
-    result: 'ok',
-    reason: `removed worktree ${input.path} (branch ${input.branch || UNKNOWN})`,
-  };
-}
-
-// §60 record for one credential use (issue #359; §36.1 rule 4): the ref
+// Audit record for one credential use: the ref
 // (as a sentinel), the role and the purpose — never the value.
 export interface CredentialUseInput {
   sessionId: string;
@@ -977,7 +667,6 @@ export interface CredentialUseInput {
   ref: string;
   purpose: string;
   workspace: string;
-  mode?: 'solo' | 'orchestrator';
   when?: string;
 }
 
@@ -1000,14 +689,13 @@ export function credentialUseAudit(input: CredentialUseInput): AuditInput {
     },
     credential: { sentinel: toCredentialSentinel(input.ref) },
     network: { ...NO_NETWORK },
-    mode: input.mode ?? 'solo',
     posture: 'credentials',
     result: 'ok',
     reason: input.purpose,
   };
 }
 
-// §60 record for switching a session to full access (issue #308, §41.4):
+// Audit record for switching a session to full access:
 // who enabled it (the user, through the CLI), when, for which session, and
 // through which command. One row per enable; the per-ask rows that follow
 // carry posture 'full-access' on their own.
@@ -1016,7 +704,6 @@ export interface FullAccessEnabledInput {
   /** The originating command line, e.g. `kubic run --dangerously-skip-approvals`. */
   command: string;
   workspace: string;
-  mode: 'solo' | 'orchestrator';
 }
 
 export function fullAccessEnabledAudit(
@@ -1035,37 +722,34 @@ export function fullAccessEnabledAudit(
     },
     credential: { sentinel: 'none' },
     network: { ...NO_NETWORK },
-    mode: input.mode,
     posture: 'full-access',
     result: 'ok',
     reason: `full access enabled for session ${input.sessionId || UNKNOWN} by ${input.command}`,
   };
 }
 
-// §60 record for a run's start (issue #278, §19): the §19 mode the run
+// Audit record for a run's start: the mode the run
 // resolved — explicit `--autonomous` or off by default — so the audit trail
 // names the autonomous combination the session records. A run record, not a
 // privileged action: it is kept at the privileged sink level beside the
 // decisions, while PRIVILEGED_ACTION_KINDS stays the closed action set.
 export interface RunStartInput {
   sessionId?: string;
-  /** The originating command, e.g. `kubic run`, `kubic orchestrate`. */
+  /** The originating command, e.g. `kubic run`. */
   command: string;
-  mode: 'solo' | 'orchestrator';
-  /** The run's §19 mode (issue #278). */
+  /** The run's mode. */
   runMode: RunMode;
   workspace?: string;
   posture: string;
   /** Whether `--autonomous` was passed explicitly. */
   autonomous: boolean;
-  /** The resolved worktree base revision (review #278): the solo caller
-   *  passes its `runBase`; the sync orchestrate hook leaves it absent and
-   *  the row stays honestly `unknown`. */
+  /** The resolved worktree base revision: the caller passes
+   *  its `runBase`; absent, the row stays honestly `unknown`. */
   base?: string;
 }
 
 export function runStartAudit(input: RunStartInput): AuditInput {
-  const role = input.mode === 'solo' ? 'root' : 'manager';
+  const role = 'root';
   return {
     who: 'user:cli',
     what: 'run:start',
@@ -1082,7 +766,6 @@ export function runStartAudit(input: RunStartInput): AuditInput {
     },
     credential: { sentinel: 'none' },
     network: { ...NO_NETWORK },
-    mode: input.mode,
     posture: input.posture,
     result: 'ok',
     reason:
@@ -1091,16 +774,14 @@ export function runStartAudit(input: RunStartInput): AuditInput {
   };
 }
 
-// §60 record for switching a session BACK to enforced approvals (issue
-// #309, §41.4): the TUI's in-session toggle off, the symmetric half of
-// `fullAccessEnabledAudit`. One row per disable, so the ledger carries the
-// whole posture history in order.
+// audit record for switching a session BACK to enforced approvals: the TUI's
+// in-session toggle off, the symmetric half of `fullAccessEnabledAudit`. One
+// row per disable, so the ledger carries the whole posture history in order.
 export interface FullAccessDisabledInput {
   sessionId: string;
   /** The originating action, e.g. `kubic tui /approvals off`. */
   command: string;
   workspace: string;
-  mode: 'solo' | 'orchestrator';
 }
 
 export function fullAccessDisabledAudit(
@@ -1119,14 +800,13 @@ export function fullAccessDisabledAudit(
     },
     credential: { sentinel: 'none' },
     network: { ...NO_NETWORK },
-    mode: input.mode,
     posture: 'approvals',
     result: 'ok',
     reason: `full access disabled for session ${input.sessionId || UNKNOWN} by ${input.command}`,
   };
 }
 
-// §60 record for a posture.json change made DURING a session (issue #325):
+// Audit record for a posture.json change made DURING a session:
 // the change is refused — the boot posture stays in force and the file is
 // restored — and recorded once, so a model-written grant is never mistaken
 // for the user's.
@@ -1150,7 +830,6 @@ export function postureChangedAudit(input: PostureChangedInput): AuditInput {
     permission: { permission: 'posture:change', approval: 'denied' },
     credential: { sentinel: 'none' },
     network: { ...NO_NETWORK },
-    mode: 'solo',
     posture: boot,
     result: 'deny',
     reason: `posture.json changed during the session (${boot} -> ${seen}); ignored and restored — the posture decided at boot stays in force`,
@@ -1189,8 +868,8 @@ export function appendToLedger(
     // but only values long enough to be matched as a substring: a short or
     // dummy key (`gw`, `ollama` for provider `ollama`) is a word the record
     // legitimately carries, and refusing over it silently dropped the
-    // credential-use row (issue #359).
-    // Configured `[[audit]]` sinks (issue #286) fan out beside the repo
+    // credential-use row.
+    // Configured `[[audit]]` sinks fan out beside the repo
     // ledger, which always leads and is mandatory: the `what` is checked
     // pre-redaction (a redacted `what` would never match the level filter).
     // A configured sink's failure is recorded on its entry and noted on

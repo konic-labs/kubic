@@ -1,5 +1,5 @@
-// Test-only fixture builder for RL export tests (issue #54).
-// Builds minimal valid TrajectoryExport records (schema major 1, §46)
+// Test-only fixture builder for RL export tests.
+// Builds minimal valid TrajectoryExport records (schema major 1)
 // so exporter tests exercise the real trajectory contract, faux-only.
 import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
 

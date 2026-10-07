@@ -1,4 +1,4 @@
-// The one-key prompt (issue #462, the trust question): the key is the
+// The one-key prompt (the trust question): the key is the
 // answer; never off a TTY; null on Ctrl-C / Esc; raw mode restored.
 import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
@@ -32,7 +32,7 @@ const CHOICES = [
   { key: 'v', label: 'view file', value: 'view' },
 ] as const;
 
-describe('promptKey (issue #462)', () => {
+describe('promptKey', () => {
   it('answers with the first chosen key, case-insensitive', async () => {
     const { io, feed, input, written } = fakeIo();
     const pending = promptKey({

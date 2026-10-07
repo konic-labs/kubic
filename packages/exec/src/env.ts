@@ -1,18 +1,18 @@
-// ExecutionEnv seam (issue #12, slice A; §9, §20.2, §3.7).
+// ExecutionEnv seam.
 // Every tool runs through this seam — no tool imports node:fs/child_process
 // directly (enforced by scripts/dep-lint.mjs: only packages/exec may).
-// Solo has no isolation (§3.7): confinement here is a cwd guardrail against
+// Solo has no isolation: confinement here is a cwd guardrail against
 // accidental escapes, not a sandbox boundary.
 //
-// Slice A: FileSystem + Shell interfaces, provenance on every result,
+// FileSystem + Shell interfaces, provenance on every result,
 // NodeExecutionEnv (cwd-scoped), FakeExecutionEnv (hermetic tests).
-// Slice B: streaming onUpdate, throttled change-gated checkpoints,
+// Streaming onUpdate, throttled change-gated checkpoints,
 // recordFinal crash-resume read point, detached process-group kill.
-// Slice C (replay declarations + tool-call machine) is NOT reimplemented
+// Replay declarations and the tool-call state machine are NOT reimplemented
 // here: the Pi harness owns the tool-call state machine
 // (`planned → effect_pending → outcome_ready → completed`, `replay:
 // "never" | "safe"`) and the admission gate. Kubic declares a policy per
-// operation and hands it to the harness (§20.2; issue #97).
+// operation and hands it to the harness.
 
 import { spawn } from 'node:child_process';
 import {
@@ -65,7 +65,7 @@ export interface FileSystem {
   listDir(path: string): string[];
   stat(path: string): StatInfo;
   /**
-   * Symlink-aware stat (issue #172). `stat()` follows links, so a walk
+   * Symlink-aware stat. `stat()` follows links, so a walk
    * cannot tell a symlinked directory from a real one and would descend a
    * loop, returning the same files under every route. `lstat()` lets the
    * walk skip links entirely (a dangling one included, instead of throwing).
@@ -74,14 +74,14 @@ export interface FileSystem {
    */
   lstat?(path: string): StatInfo & { isSymbolicLink: boolean };
   /**
-   * Read `[start, end)` bytes (issue #122; mirrors #107's FileBridge seam).
+   * Read `[start, end)` bytes (mirrors the FileBridge seam).
    * Optional so existing seams stay valid; absent = whole-file reads only
    * (test doubles). The node seam implements it, so every production read
    * windowing is bounded.
    */
   readFileRange?(path: string, start: number, end: number): Uint8Array;
   /**
-   * The physical path `path` names — every symlink resolved (issue #140).
+   * The physical path `path` names — every symlink resolved.
    * `stat` follows links but only reports a target; a writer needs the
    * location the OS would actually open, so a tmp+rename lands beside the
    * real file instead of replacing the link with a regular file. The
@@ -93,7 +93,7 @@ export interface FileSystem {
    */
   realpath?(path: string): string;
   /**
-   * Remove a file (issue #140): the tmp+rename writer's cleanup of the tmp
+   * Remove a file: the tmp+rename writer's cleanup of the tmp
    * a failed write or rename left behind. Optional (test doubles have no
    * cleanup): absent = a failed write leaves its tmp for the operator.
    */
@@ -109,23 +109,23 @@ export interface FileSystem {
 export interface ShellResult {
   exitCode: number;
   /**
-   * The signal the leader died from, when it was signalled (issue #151):
-   * `exitCode` already carries 128+signal, but the NAME is what a worker row
-   * records so `kubic workers` can say SIGKILL rather than 137.
+   * The signal the leader died from, when it was signalled:
+   * `exitCode` already carries 128+signal; the name is kept so a report can
+   * say SIGKILL rather than 137.
    */
   signal?: string | null;
   /**
-   * The group SIGKILL escalation fired before the leader settled (issue
-   * #249): the command's own cooperative shutdown did not finish inside the
-   * kill grace, so it was forced. Absent when no kill was requested or the
-   * leader settled on the SIGTERM alone.
+   * The group SIGKILL escalation fired before the leader settled: the command's
+   * own cooperative shutdown did not finish inside the kill grace, so it was
+   * forced. Absent when no kill was requested or the leader settled on the
+   * SIGTERM alone.
    */
   forced?: boolean;
   stdout: string;
   stderr: string;
   provenance: Provenance;
   /**
-   * Issue #339: set when processes of the command's group outlived the
+   * Set when processes of the command's group outlived the
    * leader. `killed` — the group was signalled (SIGTERM, then SIGKILL
    * after KILL_GRACE_MS) before settling; `detached` — the caller opted
    * into keeping background jobs, so they were left running. Absent when
@@ -139,7 +139,7 @@ export interface ProcessSnapshot {
   stderr: string;
   exitCode: number | null;
   /**
-   * Issue #464: how many characters (UTF-16 code units) the capped
+   * How many characters (UTF-16 code units) the capped
    * accumulators have dropped from the head of each stream so far. Past the
    * cap a snapshot keeps its length while its head moves, so a reader that
    * follows a stream (the worker fact scanner) needs this to find where the
@@ -165,12 +165,12 @@ export interface SpawnOptions {
   checkpointKey?: string;
   checkpointStore?: CheckpointStore;
   /**
-   * Per-stream output accumulation cap in bytes (issue #121). The tail is
+   * Per-stream output accumulation cap in bytes. The tail is
    * kept (endings usually carry the error) and the final result gains a
    * header naming the dropped leading bytes. Default: 10 MiB per stream —
    * a chatty child (`yes`, a verbose build) must not OOM the run. Measured
    * in bytes of the DECODED stream (invalid UTF-8 arrives as U+FFFD, which
-   * costs 3 bytes) and trimmed on code-point boundaries (issue #354), so a
+   * costs 3 bytes) and trimmed on code-point boundaries, so a
    * CJK or emoji stream cannot admit 3-4x the cap and the kept tail never
    * starts with half a surrogate pair.
    */
@@ -183,7 +183,7 @@ export interface SpawnOptions {
    */
   killGraceMs?: number;
   /**
-   * Issue #339: leave processes the command backgrounded running after the
+   * Leave processes the command backgrounded running after the
    * leader exits (they are detached, and outlive Kubic). Default false —
    * the whole group is signalled once the leader exits, so no orphans.
    */
@@ -211,11 +211,11 @@ export interface ExecutionEnv {
 function confine(cwd: string, path: string): string {
   // Lexical guardrail only: resolve() defeats `..` and absolute escapes but
   // does NOT resolve symlinks — a symlink inside the cwd can still point
-  // out. Acceptable: solo has no isolation (§3.7), this is an accidental-
+  // out. Acceptable: solo has no isolation, this is an accidental-
   // escape guard, not a sandbox boundary.
   const abs = resolve(cwd, path);
   if (abs === cwd || abs.startsWith(cwd + sep)) return abs;
-  // Issue #140: the cwd itself may be reached through a symlink (macOS
+  // The cwd itself may be reached through a symlink (macOS
   // resolves /tmp and /var to /private/…), so a caller holding a path the
   // OS resolved spells the same tree with the physical prefix. Accepting
   // both keeps the guardrail — the path is still this workspace — without
@@ -304,8 +304,8 @@ class NodeFileSystem implements FileSystem {
     chmodSync(confine(this.cwd, path), mode);
   }
 
-  // Range read (issue #122): same openSync/readSync/closeSync + confine()
-  // technique as #107's file bridge — one chunk of memory, not the file.
+  // Range read: same openSync/readSync/closeSync + confine()
+  // technique as the file bridge — one chunk of memory, not the file.
   readFileRange(path: string, start: number, end: number): Uint8Array {
     const handle = openSync(confine(this.cwd, path), 'r');
     try {
@@ -325,16 +325,16 @@ function encodeSnapshot(snapshot: ProcessSnapshot): string {
   return `${snapshot.exitCode ?? 'run'}|${snapshot.stdout.length}|${snapshot.stdout}|${snapshot.stderr}`;
 }
 
-// Durable recovery checkpoints (§20.4): at most every
+// Durable recovery checkpoints: at most every
 // CHECKPOINT_INTERVAL_MS and only when the encoded snapshot changed.
 // Clock is injectable so throttle behavior is unit-testable.
 //
-// Honest limit (issue #97): this store is the seam, not a wired product
+// Honest limit: this store is the seam, not a wired product
 // path — no production caller supplies one to SpawnOptions today, so a
-// `kubic run`/`kubic orchestrate` invocation persists no checkpoint and
+// `kubic run` invocation persists no checkpoint and
 // nothing resumes from one. The in-memory store is what the exec/lane
 // tests drive; crash recovery for a tool call is the harness's own
-// pending-progress snapshot (§20.4).
+// pending-progress snapshot.
 export class MemoryCheckpointStore implements CheckpointStore {
   private readonly snapshots = new Map<string, ProcessSnapshot>();
   private readonly lastWrite = new Map<
@@ -374,7 +374,7 @@ export class MemoryCheckpointStore implements CheckpointStore {
   }
 }
 
-// Default per-stream child-output accumulation cap (issue #121). Chosen
+// Default per-stream child-output accumulation cap. Chosen
 // far above any legitimate tool result (the model-facing cap is smaller
 // still) but far below OOM territory: the accumulator is the thing the
 // cap bounds, so the run can never hold a child's whole output in memory.
@@ -385,13 +385,12 @@ export const MAX_CHILD_OUTPUT_BYTES = 10 * 1024 * 1024;
 // hangs on a child that ignores SIGTERM.
 export const KILL_GRACE_MS = 2000;
 
-// §3.8 "never inherit ambient authority": every child the exec seam spawns
+// "never inherit ambient authority": every child the exec seam spawns
 // (the bash tool, host git calls) starts from this allowlist, never from
 // kubic's whole environment — a provider API key in the parent must not be
-// one `echo $X` away from the model. Aligned with the worker launch
-// allowlist (packages/worker/src/lifecycle/env.ts), plus the POSIX session
-// basics a shell tool needs. No SSH_AUTH_SOCK / credential helpers: those
-// are authority, not environment.
+// one `echo $X` away from the model. It carries the POSIX session basics a
+// shell tool needs. No SSH_AUTH_SOCK / credential helpers: those are
+// authority, not environment.
 export const TOOL_ENV_ALLOWLIST: readonly string[] = [
   'PATH',
   'HOME',
@@ -411,7 +410,7 @@ export const TOOL_ENV_ALLOWLIST: readonly string[] = [
   // Network reachability and trust roots (not credentials): tools behind
   // a corporate proxy or custom CA must keep working. Both spellings of
   // the proxy vars are conventional — and their VALUES are scrubbed of
-  // userinfo before they reach a child (issue #366): a proxy URL's
+  // userinfo before they reach a child: a proxy URL's
   // `user:password@` is a credential the name does not reveal.
   'HTTP_PROXY',
   'HTTPS_PROXY',
@@ -438,11 +437,11 @@ export const TOOL_ENV_ALLOWLIST: readonly string[] = [
 
 const ALLOWED_UPPER = new Set(TOOL_ENV_ALLOWLIST.map((k) => k.toUpperCase()));
 
-// Issue #366: the proxy variables are allowlisted for reachability, but a
+// The proxy variables are allowlisted for reachability, but a
 // proxy URL can carry userinfo — `http://user:password@proxy:3128` — which is
-// a credential in the §3.8 sense even though the NAME looks benign, so
-// `looksSecret` never sees it. §36.1 rule 2: a credential must never reach an
-// agent-visible string, and the model's shell can read the child env. The
+// a credential even though the NAME looks benign, so `looksSecret` never sees
+// it. A credential must never reach an agent-visible string, and the model's
+// shell can read the child env. The
 // value keeps its scheme, host and port and loses the userinfo; a proxy that
 // REQUIRES that auth is therefore not usable from a tool child (Kubic does
 // not broker proxy auth — see docs/architecture/journal-and-safety.md).
@@ -455,7 +454,7 @@ const PROXY_VARS = new Set(['HTTP_PROXY', 'HTTPS_PROXY']);
 // lower-cased host) creeps into a value other tools must match byte for byte.
 // The scheme is anchored at position 0: searching the whole value for '://'
 // let a scheme-less value whose PATH contains '://' slice the authority out
-// of the path and return the credential untouched (issue #366 review). The
+// of the path and return the credential untouched. The
 // strip assumes a valid URL-shaped value; a raw '/' inside malformed
 // userinfo still ends the authority early, exactly as `urlsplit` would.
 const SCHEME_AT_START = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
@@ -486,7 +485,7 @@ function looksSecret(upper: string): boolean {
 
 // Pure: the allowlisted subset of `base` (plus LC_* / XDG_* vars). A
 // secret-shaped name is dropped even if it matches a pattern (LC_*_KEY), and
-// a proxy URL loses its userinfo (issue #366) — the one credential an
+// a proxy URL loses its userinfo — the one credential an
 // allowlisted NAME could hide.
 export function toolSpawnEnv(
   base: NodeJS.ProcessEnv = process.env,
@@ -507,7 +506,7 @@ export function toolSpawnEnv(
   return out;
 }
 
-// Issue #339: once the leader exits, pipe data it wrote is drained for at
+// Once the leader exits, pipe data it wrote is drained for at
 // most this long. Anything still holding stdout/stderr after the window is
 // a background job, never the command's own output, so the streams are
 // destroyed instead of waiting for 'close' (which never comes while a
@@ -542,7 +541,7 @@ function groupAlive(pgid: number): boolean {
 // Is the LEADER still a process? Asked of the OS, not of the child object:
 // `exitCode`/`signalCode` are set when the 'exit' event is delivered, which
 // can lag the process's actual death — and the delayed group SIGKILL this
-// guards against (issue #142) is scheduled in exactly that window.
+// guards against is scheduled in exactly that window.
 function leaderAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -582,7 +581,7 @@ async function reapGroup(pgid: number, graceMs: number): Promise<void> {
 }
 
 // UTF-8 byte length of a code point, computed without allocating a string
-// for it (issue #354): the output accumulator trims on code-point
+// for it: the output accumulator trims on code-point
 // boundaries, so it needs each code point's encoded size.
 function utf8Length(codePoint: number): number {
   if (codePoint < 0x80) return 1;
@@ -600,24 +599,24 @@ class NodeShell implements Shell {
 
   spawn(cmd: string, args: string[], options: SpawnOptions): ProcessHandle {
     // Detached process group: kill() signals the whole group so spawned
-    // grandchildren die too (§9 leak cleanup) — no orphans.
-    // Issue #339: stdin is 'ignore' — a stdin reader (cat, read -p, a
+    // grandchildren die too (leak cleanup) — no orphans.
+    // Stdin is 'ignore' — a stdin reader (cat, read -p, a
     // REPL, a commit hook) sees EOF at once instead of blocking the turn
     // on a pipe nobody ever ends.
     const groups = process.platform !== 'win32';
     const child = spawn(cmd, args, {
       cwd: this.cwd,
       detached: groups,
-      // §3.8: an explicit allowlisted env, never the inherited one.
+      // An explicit allowlisted env, never the inherited one.
       env: toolSpawnEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    // Issue #121: capped accumulation. The tail is kept — endings carry
+    // Capped accumulation. The tail is kept — endings carry
     // the error — and the final result names exactly what was dropped.
     // `peek` feeds progress snapshots (bounded by the same cap), `final`
     // produces the settled stream with the truncation header.
     //
-    // Issue #354: the cap is documented in BYTES and must be measured in
+    // The cap is documented in BYTES and must be measured in
     // bytes. Counting UTF-16 code units admitted up to ~3x the intended
     // memory for CJK text (one unit, three bytes), misstated the dropped
     // size, and let `slice(-cap)` start the kept tail with half a surrogate
@@ -667,7 +666,7 @@ class NodeShell implements Shell {
     };
     const stdoutAcc = makeAccumulator();
     const stderrAcc = makeAccumulator();
-    // Issue #112: pipe chunks are arbitrary byte slices — Buffer.toString()
+    // Pipe chunks are arbitrary byte slices — Buffer.toString()
     // per chunk corrupts any multi-byte UTF-8 codepoint split across a
     // chunk boundary (U+FFFD on both sides). One StringDecoder per stream
     // carries split codepoints across writes; decoder.end() on settle
@@ -675,7 +674,7 @@ class NodeShell implements Shell {
     const outDec = new StringDecoder('utf8');
     const errDec = new StringDecoder('utf8');
     let settled = false;
-    // Issue #249: did the SIGKILL escalation beat the LEADER's own exit?
+    // Did the SIGKILL escalation beat the LEADER's own exit?
     // Derived from the leader, never from the handle settling: `finish()`
     // awaits the whole group drain, so a grandchild that outlives the
     // SIGTERM would otherwise report a cooperative settle as forced.
@@ -705,7 +704,7 @@ class NodeShell implements Shell {
     };
     // A configured checkpoint store means this run wants durable recovery:
     // every update requests a checkpoint and the store's own gate
-    // (≤2s, change-only) decides what is durable (§20.4).
+    // (≤2s, change-only) decides what is durable.
     const wantCheckpoint =
       options.checkpointKey !== undefined &&
       options.checkpointStore !== undefined;
@@ -720,11 +719,11 @@ class NodeShell implements Shell {
     const done = new Promise<ShellResult>((resolveDone) => {
       // A spawn that cannot start the child emits 'error' and never
       // 'close'. Unhandled, Node re-throws it as an uncaught exception and
-      // the caller dies raw — no result, no exit code (issue #85: this is
+      // the caller dies raw — no result, no exit code (this is
       // the `spawn <path> ENOENT` crash). Settle wait() with a named
       // failure instead, so every caller reads it through the same seam.
       child.on('error', (error: Error) => {
-        // A spawn error means no leader exists (issue #249): nothing to force.
+        // A spawn error means no leader exists: nothing to force.
         leaderExited = true;
         if (settled) return;
         settled = true;
@@ -748,7 +747,7 @@ class NodeShell implements Shell {
         options.onUpdate?.({ ...result }, undefined);
         resolveDone(result);
       });
-      // Issue #339: settle on the leader's 'exit' plus a short drain
+      // Settle on the leader's 'exit' plus a short drain
       // window, not on 'close' — 'close' waits for every holder of the
       // pipes, and a backgrounded job inherits them. After the drain the
       // process group is reaped (unless keepBackground), so the tool never
@@ -762,9 +761,9 @@ class NodeShell implements Shell {
         if (finishing || settled) return;
         finishing = true;
         if (drainTimer !== undefined) clearTimeout(drainTimer);
-        // Issue #249 review: the group SIGKILL escalation belongs to a LIVE
+        // The group SIGKILL escalation belongs to a LIVE
         // leader. Once the handle settles, a pending timer could signal a
-        // recycled pgid (the #142 stranger hazard) — the settle path reaps
+        // recycled pgid (the stranger hazard) — the settle path reaps
         // the group itself.
         if (escalationTimer !== undefined) clearTimeout(escalationTimer);
         const heldPipes = !streamsClosed;
@@ -816,7 +815,7 @@ class NodeShell implements Shell {
         resolveDone(result);
       };
       child.on('exit', (code, signal) => {
-        // The leader is gone, whatever else the group is doing (issue #249):
+        // The leader is gone, whatever else the group is doing:
         // recorded before the settle guard so a finishing handle still knows.
         leaderExited = true;
         if (settled || finishing) return;
@@ -865,7 +864,7 @@ class NodeShell implements Shell {
         // settles the handle while group members that ignore it live on,
         // so the escalation is not gated on the leader surviving the grace.
         //
-        // Issue #142: it IS gated on the leader being alive when kill() was
+        // It IS gated on the leader being alive when kill() was
         // called (asked of the OS — see leaderAlive). A leader that has
         // already exited owns no process group any more — its pgid may be
         // recycled — so a delayed group SIGKILL could hit a stranger.
@@ -875,7 +874,7 @@ class NodeShell implements Shell {
         if (!leaderAlive(pid)) return;
         escalationTimer = setTimeout(() => {
           // The leader is still up when the grace elapses: its cooperative
-          // shutdown did not finish, so this is a FORCED kill (issue #249).
+          // shutdown did not finish, so this is a FORCED kill.
           // The LEADER's exit is the test — a group member that outlives the
           // SIGTERM is the escalation's cleanup, not a forced worker.
           if (!leaderExited) forced = true;
@@ -917,14 +916,14 @@ export interface FakeScript {
   stderr: string;
 }
 
-// One shell.spawn call, recorded for exact-argv assertions (issue #212).
+// One shell.spawn call, recorded for exact-argv assertions.
 export interface FakeSpawnCall {
   cmd: string;
   args: string[];
   provenance: Provenance;
 }
 
-// Script key for an exact argv array (issue #356): JSON serialization
+// Script key for an exact argv array: JSON serialization
 // distinguishes `['commit', '-m', 'work in progress']` (one message
 // element) from `['commit', '-m', 'work', 'in', 'progress']` (split),
 // which the legacy `${cmd} ${args.join(' ')}` keys conflate. Tests
@@ -937,7 +936,7 @@ export function argvKey(cmd: string, ...args: string[]): string {
 export interface FakeOptions {
   // Strict mode: an argv with no scripted answer throws instead of
   // exiting 0, so a test that must not see an argv fails loudly instead
-  // of passing silently. ON by default (issue #356) — suites that
+  // of passing silently. ON by default — suites that
   // script only the answers they read opt out explicitly per test with
   // `allowUnscripted: true`.
   strict?: boolean;
@@ -948,7 +947,7 @@ export interface FakeOptions {
 }
 
 // The fake's missing-path error carries Node's `ENOENT` code, so ops that
-// map errno codes (read, issue #199) see the same shape as the real seam.
+// map errno codes see the same shape as the real seam.
 function fakeNoSuchFile(path: string): Error {
   return Object.assign(new Error(`fake fs: no such file: ${path}`), {
     code: 'ENOENT',
@@ -996,7 +995,7 @@ export class FakeExecutionEnv implements ExecutionEnv {
     },
     stat: (path: string) => {
       const hit = this.files.get(path);
-      // Byte sizes (issue #356): string length counts UTF-16 code units,
+      // Byte sizes: string length counts UTF-16 code units,
       // so multibyte content reports fewer "bytes" than git/du would.
       if (hit !== undefined)
         return {
@@ -1017,7 +1016,7 @@ export class FakeExecutionEnv implements ExecutionEnv {
       if (count === 0) throw fakeNoSuchFile(path);
       return { isFile: false, isDirectory: true, size, mode: 0o755 };
     },
-    // Byte-window read (issue #356): same [start, end) byte semantics as
+    // Byte-window read: same [start, end) byte semantics as
     // the node seam (clamped at EOF), so fake-based read tests exercise
     // the ranged path instead of the whole-file fallback.
     readFileRange: (path: string, start: number, end: number): Uint8Array => {
@@ -1042,7 +1041,7 @@ export class FakeExecutionEnv implements ExecutionEnv {
         args: [...args],
         provenance: options.provenance,
       });
-      // Exact argv-array keys first (issue #356), legacy joined strings
+      // Exact argv-array keys first, legacy joined strings
       // second: existing script maps keep resolving unchanged.
       const script =
         this.scriptMap.get(key) ??
@@ -1099,7 +1098,7 @@ export class FakeExecutionEnv implements ExecutionEnv {
       this.strict = options.strict ?? !(options.allowUnscripted ?? false);
     } else {
       this.provenance = ROOT_PROVENANCE;
-      // Strict by default (issue #356): an explicit `strict` wins,
+      // Strict by default: an explicit `strict` wins,
       // otherwise `allowUnscripted: true` opts out. The options may ride
       // second or third.
       const opts = provenance ?? options;

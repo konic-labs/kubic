@@ -42,7 +42,7 @@ function inv(id: string, store: MemoryMemoStore): ToolInvocation {
   );
 }
 
-describe('bash operation (issue #13, slice D)', () => {
+describe('bash operation', () => {
   it('runs echo and threads provenance', async () => {
     const out = await callOperation(
       'bash',
@@ -141,7 +141,7 @@ describe('bash operation (issue #13, slice D)', () => {
   });
 });
 
-describe('replay acceptance (issue #13)', () => {
+describe('replay acceptance', () => {
   it('safe ops share the invocation id without side effects', async () => {
     const store = new MemoryMemoStore();
     const env = new FakeExecutionEnv({});
@@ -216,7 +216,7 @@ describe('replay acceptance (issue #13)', () => {
     };
   }
 
-  it('a failed never-replay op is not memoized, and a later call re-executes (issue #217)', async () => {
+  it('a failed never-replay op is not memoized, and a later call re-executes', async () => {
     const env = new FakeExecutionEnv({});
     env.fs.writeFile('x.txt', 'aaa\n');
     const counts = { gets: 0, sets: 0 };
@@ -232,7 +232,7 @@ describe('replay acceptance (issue #13)', () => {
     expect(counts.gets).toBe(2);
   });
 
-  it('a memoized never-replay answer returns without re-executing (issue #217)', async () => {
+  it('a memoized never-replay answer returns without re-executing', async () => {
     // The memo key is the registry's (`op-result-<name>`); seeding it is
     // what a pre-crash attempt's success would have stored.
     const store = new MemoryMemoStore();
@@ -251,7 +251,7 @@ describe('replay acceptance (issue #13)', () => {
     expect(counts.sets).toBe(0);
   });
 
-  it('memoOnce returns the existing value without a setMemo write (issue #217)', async () => {
+  it('memoOnce returns the existing value without a setMemo write', async () => {
     const store = new MemoryMemoStore();
     const base = createInvocation(
       { invocationId: 'inv-nrm', operationId: 'op-nr', turnId: 't-nr' },
@@ -311,7 +311,7 @@ describe('replay acceptance (issue #13)', () => {
   });
 });
 
-describe('bash handle tracking (issue #11, slice C)', () => {
+describe('bash handle tracking', () => {
   it('hands its process kill to trackHandle', async () => {
     const tracked: Array<() => void> = [];
     const out = await callOperation(

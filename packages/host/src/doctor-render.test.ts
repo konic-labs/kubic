@@ -1,4 +1,4 @@
-// `kubic doctor` grouped summary (issue #448; docs/ui/06-cli.html 06-C).
+// `kubic doctor` grouped summary.
 import { describe, expect, it } from 'vitest';
 import { createCliTheme } from '../../core/src/cli/theme.js';
 import type { DoctorCheck } from './doctor.js';
@@ -31,7 +31,6 @@ const CHECKS: DoctorCheck[] = [
     '0 effective value(s); project layer not trusted',
   ),
   check('dep:models-json', 'pass', 'no models.json (built-in providers only)'),
-  check('dep:credentials:roles', 'pass', 'implementer→no provider'),
   check(
     'limit:resources',
     'warn',
@@ -52,11 +51,6 @@ const CHECKS: DoctorCheck[] = [
     'warn',
     'detection only (not enforcement): network=none is a lexical bash command detector',
     'detection-only',
-  ),
-  check(
-    'extension:bundle',
-    'pass',
-    'loaded 1 (kubic/budget: budget: none configured), refused 2 (owned-path traversal)',
   ),
   check('role:planner', 'pass', 'builtin role — 5 tool(s): bash'),
   check('role:reviewer', 'pass', 'builtin role — 5 tool(s): bash'),
@@ -100,7 +94,6 @@ describe('doctor groups and short forms', () => {
     expect(doctorGroup('provider:anthropic')).toBe('providers');
     expect(doctorGroup('limit:provider-availability')).toBe('providers');
     expect(doctorGroup('dep:node')).toBe('runtime');
-    expect(doctorGroup('dep:credentials:roles')).toBe('roles');
     expect(doctorGroup('role:planner')).toBe('roles');
     expect(doctorGroup('policy:installed')).toBe('policy');
     expect(doctorGroup('audit:sinks')).toBe('policy');
@@ -118,7 +111,6 @@ describe('doctor groups and short forms', () => {
       'anthropic  23 models  key from ANTHROPIC_API_KEY',
     );
     expect(short('dep:node')).toBe('node 24.13.0');
-    expect(short('extension:bundle')).toBe('extensions 1 loaded, 2 refused');
     expect(short('policy:installed')).toBe(
       'workspace-write · network none · 18 tools',
     );
@@ -140,7 +132,7 @@ describe('the grouped summary', () => {
       columns: 120,
     });
     expect(lines[0]).toBe(
-      '■ kubic doctor · 21 checks · 16 ok · 5 warnings · 0 failed',
+      '■ kubic doctor · 19 checks · 14 ok · 5 warnings · 0 failed',
     );
     const text = lines.join('\n');
     expect(text).toContain(
@@ -153,9 +145,7 @@ describe('the grouped summary', () => {
     expect(text).toContain(
       '▲ honest limits: solo no isolation · journal not backup',
     );
-    expect(text).toMatch(
-      /^ROLES {7}✓ role credentials {3}✓ planner {3}✓ reviewer/m,
-    );
+    expect(text).toMatch(/^ROLES {7}✓ planner {3}✓ reviewer/m);
     expect(lines.at(-1)).toBe(
       '5 warnings, nothing blocking · kubic doctor --verbose for the full report',
     );

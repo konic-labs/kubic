@@ -1,4 +1,4 @@
-// Kubic license identity (issue #59; §75.1): single source of truth for
+// Kubic license identity: single source of truth for
 // the MIT license id, so `kubic --version` and `kubic doctor` report the
 // same license string that LICENSE and the package.json fields declare.
 import { describe, expect, it } from 'vitest';
@@ -9,7 +9,7 @@ import {
   KUBIC_LICENSE_FILE,
 } from './license.js';
 
-describe('kubic license identity (issue #59)', () => {
+describe('kubic license identity', () => {
   it('declares the MIT license id', () => {
     expect(KUBIC_LICENSE).toBe('MIT');
   });

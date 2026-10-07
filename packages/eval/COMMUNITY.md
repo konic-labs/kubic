@@ -1,4 +1,4 @@
-# Community eval contributions (§76.1)
+# Community eval contributions
 
 Anyone can add a benchmark suite. The path is stub-first: land the suite
 as `stub: true`, then implement it — the matrix reports stubs as
@@ -52,7 +52,7 @@ kubic benchmark --suite my-suite --workspace worktree \
 missing any of them are rejected (exit 2), never stored. Every record
 carries `success`, `costUsd`, `tokens`, `latencyMs`, `toolCalls`,
 `model`, `thinking`, `worktree`, `generation`, `size`, and
-`determinism` (§47.1: `recorded` for `--trajectory`, `live` for
+`determinism` (`recorded` for `--trajectory`, `live` for
 `--task`).
 
 ## 3. `--json` shapes
@@ -87,7 +87,7 @@ Benchmark matrix (exit 0 all pass, 1 a suite failed, 2 usage):
 - [ ] `npx vitest run packages/eval` green.
 - [ ] `npx tsc --noEmit -p tsconfig.base.json` clean.
 - [ ] `npx biome ci packages/eval` clean.
-- [ ] Cost/latency/tokens reconcile with the §39 usage rows
+- [ ] Cost/latency/tokens reconcile with the usage rows
       (`reconcileUsage`).
-- [ ] RL export fields (Phase 4, #54) untouched — records stay complete
+- [ ] RL export fields untouched — records stay complete
       so the exporter can build on them.

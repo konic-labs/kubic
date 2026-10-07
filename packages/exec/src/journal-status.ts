@@ -1,7 +1,7 @@
-// Journal log + status core (issue #18, slice C; §42.2).
+// Journal log + status core.
 // Log is the journal as a timeline; status summarizes reversibility plus
 // repository state (or an explicit non-repo note — the journal works
-// identically outside git by design, §43.2).
+// identically outside git by design).
 
 import { execFileSync } from 'node:child_process';
 import { isAbsolute, join } from 'node:path';
@@ -16,20 +16,20 @@ import {
   isUndoableCreate,
 } from './journal.js';
 
-/** Issue #378: one side of a head-moved marker, human-readable. */
+/** One side of a head-moved marker, human-readable. */
 export function formatHeadState(state: HeadState): string {
   const stash = state.stash > 0 ? ` (stash ${state.stash})` : '';
   return `${state.branch}@${state.head.slice(0, 12)}${stash}`;
 }
 
-/** Issue #378: `from -> to` for a marker, a status warning, an undo refusal. */
+/** `from -> to` for a marker, a status warning, an undo refusal. */
 export function formatHeadMove(from: HeadState, to: HeadState): string {
   return `${formatHeadState(from)} -> ${formatHeadState(to)}`;
 }
 
 export function renderLog(store: FileJournalStore): string[] {
   return store.entries().map((e) => {
-    // Issue #378: markers are not file rows — one greppable line naming
+    // Markers are not file rows — one greppable line naming
     // the move, in the same column shape as every other line.
     if (
       e.op === 'marker' &&
@@ -65,7 +65,7 @@ export interface RepoState {
   // null when git is unavailable or the query fails: reported as unknown,
   // never guessed.
   dirty: boolean | null;
-  // Issue #380: the repo root (`rev-parse --show-toplevel`), null when it
+  // The repo root (`rev-parse --show-toplevel`), null when it
   // cannot be read.
   repoRoot: string | null;
   // Ahead/behind against the upstream: null when there is no upstream or
@@ -81,7 +81,7 @@ export interface JournalStatus {
   entries: number;
   reversible: number;
   nonReversible: number;
-  // Reconciliation finds (issue #87): entries an end-of-run sweep appended
+  // Reconciliation finds: entries an end-of-run sweep appended
   // because nothing intercepted their change. Usually non-reversible — the
   // baseline holds hashes, never before-content — but NOT a subset of
   // `nonReversible`: when an earlier attributed entry in the same run stored
@@ -90,25 +90,24 @@ export interface JournalStatus {
   // because it is the only evidence of work that bypassed every Kubic
   // operation.
   unattributed: number;
-  // Issue #111: entries whose content is unexpectedly missing under a
+  // Entries whose content is unexpectedly missing under a
   // recorded hash (corrupt/torn blob, or a delta that refuses to
   // reconstruct) — designed absences (unattributed hash-only pre-images,
   // deletes) are not counted.
   corrupt: number;
-  // Issue #343: index lines dropped because they do not parse — a torn
+  // Index lines dropped because they do not parse — a torn
   // tail left by a crash or a full disk. Not the same thing as `corrupt`
   // (that counts missing content); a dropped line has no entry at all, so
   // nothing else in this object would show it.
   corruptLines: number;
-  // Issue #378: every HEAD move the sweeps observed, oldest first. `undo`
+  // Every HEAD move the sweeps observed, oldest first. `undo`
   // refuses to restore entries from before a move without `--force`.
   headMoves: { from: HeadState; to: HeadState }[];
   repo: RepoState | null;
 }
 
-// Issue #126: resolve the repository's HEAD with pure file reads. In a
-// linked worktree — exactly the trees `kubic orchestrate` creates and
-// retains — `.git` is a pointer FILE (`gitdir: <path>`) whose target holds
+// Resolve the repository's HEAD with pure file reads. In a
+// linked worktree `.git` is a pointer FILE (`gitdir: <path>`) whose target holds
 // the real HEAD; reading `.git/HEAD` there would call a live branch
 // `(detached)`. The pointer is followed (absolute, or relative to the
 // worktree root), and an unreadable or malformed pointer is named
@@ -245,7 +244,7 @@ export function journalStatus(
   let corrupt = 0;
   const headMoves: { from: HeadState; to: HeadState }[] = [];
   for (const e of entries) {
-    // Issue #378: the marker counts as journaled work (unattributed and,
+    // The marker counts as journaled work (unattributed and,
     // with nothing to restore, non-reversible) and its move is collected
     // for the warning — never a corruption count.
     if (
@@ -261,10 +260,10 @@ export function journalStatus(
     // An agent create reverts by removal: its pre-state is "absent".
     if (before !== null || isUndoableCreate(e)) reversible++;
     if (e.unattributed === true) unattributed++;
-    // Same corruption predicate as diffEntries (issue #111): content
+    // Same corruption predicate as diffEntries: content
     // unexpectedly null while its hash is recorded. An unattributed entry's
     // hash-only pre-image is a designed absence, never corruption — nor is
-    // the sweep's hash-only after-side (issue #120).
+    // the sweep's hash-only after-side.
     const beforeLost =
       e.beforeHash !== null &&
       before === null &&
@@ -288,7 +287,7 @@ export function journalStatus(
   };
 }
 
-// One-line reconciliation summary for `kubic log` (issue #87): the count of
+// One-line reconciliation summary for `kubic log`: the count of
 // sweep finds over the whole journal, printed after the timeline so an
 // operator sees non-tool effects without scanning every line for the
 // `reconciled` marker. `log` prints it even when the journal is empty —
@@ -298,9 +297,7 @@ export function reconciliationSummary(store: FileJournalStore): string {
   return reconciliationSummaryFor(store.entries());
 }
 
-// Issue #364: the same line over an already-merged entry list — `log
-// --session <orch>` counts the orchestration's workers together with its
-// own journal instead of reporting the primary store alone.
+// The same line over an entry list.
 export function reconciliationSummaryFor(
   entries: readonly { unattributed?: boolean }[],
 ): string {

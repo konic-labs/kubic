@@ -1,24 +1,18 @@
-// Layered TOML config with enterprise supremacy (issue #38; design §35).
+// Layered TOML config with enterprise supremacy.
 // Roots: ~/.kubic/ (global) + .kubic/ (project-local, trust-gated).
 // Precedence: Enterprise > Global > Project > Workspace > Session > Agent —
 // a lower layer can never override a key set by a higher layer (enterprise
 // keys are frozen against every override attempt).
-// Canonical shape: agent/model/thinking, mode flags, approvals
-// (ask-user + deny-on-timeout), journal retention, per-role model/tools,
-// orchestrator root, ui, session store + retention. No budgets: budget
-// keys are rejected, never defaulted. Secrets never appear here (see
-// secrets.ts).
+// Canonical shape: agent/model/thinking, approvals (ask-user +
+// deny-on-timeout), journal retention, per-role model/tools, ui, session
+// store + retention. Secrets never appear here (see secrets.ts).
 //
 // File access arrives as a FileBridge (exec-owned I/O confinement) — this
 // module never touches node:fs directly. Never imports worker impl.
 
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
-import {
-  hasGitignoreMetacharacters,
-  hasUnsafeCharacters,
-  RUNTIME_EXCLUDE_ENTRIES,
-} from '../../../exec/src/runtime-exclude.js';
+import { RUNTIME_EXCLUDE_ENTRIES } from '../../../exec/src/runtime-exclude.js';
 import { assertNoMcpConfig, McpUnsupportedError } from './stances.js';
 
 export const CONFIG_LAYERS = [
@@ -47,16 +41,9 @@ export class ProjectUntrustedError extends ConfigError {
   }
 }
 
-export class BudgetKeyError extends ConfigError {
-  constructor(message: string) {
-    super(message);
-    this.name = 'BudgetKeyError';
-  }
-}
-
 export interface AgentConfig {
   name?: string;
-  // System prompt augmentation (issue #240; §63 `system_prompt_file`): a
+  // System prompt augmentation: a
   // path whose contents the runtime appends to the assembled lane prompt.
   // Resolved against the declaring config file's directory (`~` expands to
   // the home directory); the project layer additionally requires trust
@@ -68,7 +55,7 @@ export interface ModelConfig {
   provider?: string;
   id?: string;
   thinking?: string;
-  // §37.4 request options (issue #257): per-provider request tuning Pi
+  // Request options: per-provider request tuning Pi
   // reads at every use (timeoutMs, maxRetries, maxRetryDelayMs,
   // cacheRetention). Absent means the provider default; a `[roles.<n>]`
   // table overrides each key it sets.
@@ -76,15 +63,10 @@ export interface ModelConfig {
   maxRetries?: number;
   maxRetryDelayMs?: number;
   cacheRetention?: string;
-  /** Escalation ladder rungs (§38.4, issue #210): ordered concrete refs. */
+  /** Escalation ladder rungs: ordered concrete refs. */
   escalate?: string[];
-  /** Escalation bound (§38.4, issue #210): climbs allowed per run. */
+  /** Escalation bound: climbs allowed per run. */
   maxEscalations?: number;
-}
-
-export interface ModesConfig {
-  solo?: boolean;
-  orchestrator?: boolean;
 }
 
 export interface ApprovalsConfig {
@@ -95,7 +77,7 @@ export interface ApprovalsConfig {
   requireJustification?: boolean;
 }
 
-// Permission classes (§40) as a config section (issue #90): the values are
+// Permission classes as a config section: the values are
 // validated against the agents-owned level vocabulary (validateClasses) when
 // the runtime projection consumes them — never re-listed here.
 export interface PermissionsConfig {
@@ -109,7 +91,7 @@ export interface PermissionsConfig {
 export interface JournalConfig {
   retentionDays?: number;
   /**
-   * The journal's byte bound (issue #350): the WHOLE store — `index.jsonl`
+   * The journal's byte bound: the WHOLE store — `index.jsonl`
    * plus the blobs it references — is pruned on every append to stay under
    * this. Content addressing dedupes blobs, so without the index in the
    * bound a file toggling between two contents grew the journal without
@@ -117,8 +99,8 @@ export interface JournalConfig {
    */
   maxBytes?: number;
   /**
-   * §35 out-of-scope paths (issue #115): workspace-relative paths excluded
-   * from the §42.5 baseline and the end-of-run sweep. An entry excludes the
+   * Out-of-scope paths: workspace-relative paths excluded
+   * from the baseline and the end-of-run sweep. An entry excludes the
    * path itself and everything under it — `dist` ⇒ `dist`, `dist/a.js`,
    * `dist/sub/b.js`. Plain paths only (patterns belong in `.gitignore`);
    * `.git/` and `.kubic/` stay hard-skipped before any config.
@@ -128,39 +110,27 @@ export interface JournalConfig {
 
 export interface RoleConfig {
   model?: string;
-  // §37.4 request options (issue #257): per-key overrides of the `[model]`
+  // Request options: per-key overrides of the `[model]`
   // tuning for lanes booted as this role.
   timeoutMs?: number;
   maxRetries?: number;
   maxRetryDelayMs?: number;
   cacheRetention?: string;
   tools?: string[];
-  // Issue #196 (§41.1): tool names that always require approval under
+  // Tool names that always require approval under
   // this role — forwarded to the resolver layers like `tools`.
   requires?: string[];
-  // §12.1/§63 per-role thinking default (issue #225): one of
+  // Per-role thinking default: one of
   // THINKING_LEVELS, below the session-persisted level and above
   // `[model].thinking` in the lane's resolution.
   thinking?: string;
-  // The per-role allowed model set (issue #255; §38.2): normalized
+  // The per-role allowed model set: normalized
   // entries (`provider/id` or `provider/*`, optional per-entry
   // thinking). Absent or empty means all models.
   models?: RoleModelEntry[];
-  // The per-role escalation ladder (issue #210; §38.4): ordered concrete
+  // The per-role escalation ladder: ordered concrete
   // rungs, winning over the `[model]` ladder for this role when set.
   escalate?: string[];
-}
-
-export interface OrchestratorConfig {
-  root?: string;
-  maxWorkers?: number;
-  /**
-   * The delegation driver (issue #431, L-D34): `"lane"` routes
-   * `kubic orchestrate` through the model-driven manager lane (opt-in),
-   * `"template"` keeps the deterministic plan (default). Absent means the
-   * default — never an invented driver.
-   */
-  manager?: 'lane' | 'template';
 }
 
 export interface UiConfig {
@@ -171,12 +141,12 @@ export interface UiConfig {
 export interface SessionConfig {
   store?: string;
   dir?: string;
-  // Retention for session state (issue #119): the default keep-window for
+  // Retention for session state: the default keep-window for
   // `kubic sessions prune`, in days. Unset means "off" — prune then
   // demands an explicit --keep-days rather than inventing a window; 0 also
   // means off (retention disabled, never "everything is old").
   retentionDays?: number;
-  // Compaction policy (issue #239; §27.1, §63): whether threshold
+  // Compaction policy: whether threshold
   // compaction runs, the reserved-room tokens and the verbatim recent
   // window the solo lane compacts under. Unset means the lane defaults
   // (automatic, 16384 reserved, 20000 kept recent).
@@ -185,7 +155,7 @@ export interface SessionConfig {
   keepRecentTokens?: number;
 }
 
-// §48 gate commands (issue #267): each runs as `sh -c <command>` in the
+// Gate commands: each runs as `sh -c <command>` in the
 // run's worktree after the run settles, and its exit status becomes the
 // trajectory's `signal:<gate>` label (0 = pass). An absent gate stays
 // `unknown`. timeoutMs bounds each command (a timeout is a fail).
@@ -204,59 +174,49 @@ export const VERIFY_COMMAND_KEYS = [
   'typecheck',
 ] as const;
 
-// §58 Enterprise Policy (issue #288): the documented flat `[policy]` surface.
+// Enterprise Policy: the documented flat `[policy]` surface.
 // The parser accepts exactly these keys and normalizes them for the policy
 // engine's own vocabulary (`layerPolicyFromConfig` in host/policy). Unknown
 // keys fail closed and are named; a value the engine has no enforceable leaf
 // for is still parsed and carried (`dataPolicy`, `loggingPolicy`) so doctor
 // can report it rather than silently dropping it.
-export interface PolicyAgentConfig {
-  maxAgents?: number;
-  maxCostUsd?: number;
-}
-
 export interface PolicyConfig {
   allowedModels?: string[];
   allowedProviders?: string[];
   allowedTools?: string[];
   deniedTools?: string[];
-  // 'proxy' is the §58 spelling of the engine's 'allowlist' mode; the engine
+  // 'proxy' is the spelling of the engine's 'allowlist' mode; the engine
   // mode names are accepted too so the two vocabularies meet in one place.
   networkPolicy?: string;
   allowedDomains?: string[];
-  // 'workspace-only' is the §58 spelling of the engine's 'workspace-write'.
+  // 'workspace-only' is the spelling of the engine's 'workspace-write'.
   filesystemPolicy?: string;
-  requireCredentialBroker?: boolean;
-  denyLocalCredentials?: boolean;
   dataPolicy?: string;
   loggingPolicy?: string;
-  agentPolicy?: PolicyAgentConfig;
 }
 
-// §58 `[[audit]]` (parsed here; built in policy/audit-ledger.ts).
+// `[[audit]]` (parsed here; built in policy/audit-ledger.ts).
 export interface AuditTableConfig {
   sink: string;
   level?: string;
   target?: string;
-  // Review finding (issue #286): docs promise a name or a number 0–23.
+  // Review finding: docs promise a name or a number 0–23.
   facility?: string | number;
 }
 
 export interface KubicConfig {
   agent?: AgentConfig;
   model?: ModelConfig;
-  modes?: ModesConfig;
   approvals?: ApprovalsConfig;
   permissions?: PermissionsConfig;
   journal?: JournalConfig;
   roles?: Record<string, RoleConfig>;
-  // Issue #237 (§29.2): a top-level `skills` array of files or
+  // A top-level `skills` array of files or
   // directories — NOT a `[skills]` section. Entries are stored as written
   // (relative stays relative); the config LOAD resolves each layer's
   // entries against that layer's file directory, so a project config's
   // relative entry anchors at the project, never the invoking cwd.
   skills?: string[];
-  orchestrator?: OrchestratorConfig;
   ui?: UiConfig;
   session?: SessionConfig;
   verify?: VerifyConfig;
@@ -277,12 +237,10 @@ const THINKING_LEVELS = [
 const KNOWN_SECTIONS = new Set([
   'agent',
   'model',
-  'modes',
   'approvals',
   'permissions',
   'journal',
   'roles',
-  'orchestrator',
   'ui',
   'session',
   'verify',
@@ -290,27 +248,27 @@ const KNOWN_SECTIONS = new Set([
   'audit',
 ]);
 
-// Exported for the docs-drift gate (issue #90): the page's Shape paragraph
+// Exported for the docs-drift gate: the page's Shape paragraph
 // and example.toml must name exactly these sections.
 export const KNOWN_CONFIG_SECTIONS: readonly string[] = [...KNOWN_SECTIONS];
 
-// Canonical example (§35.2/§63) — kept in sync with example.toml (pinned by
-// test). Committed shape only: sessions/journal/artifacts/worktrees are
-// runtime state, never config.
-export const EXAMPLE_TOML = `# Kubic canonical config example (issue #38; design §35.2/§63).
+// Canonical example — kept in sync with example.toml (pinned by
+// test). Committed shape only: sessions/journal/artifacts/audit are runtime
+// state, never config.
+export const EXAMPLE_TOML = `# Kubic canonical config example.
 # Committed to the repo: .kubic/config.toml + .kubic/roles/*.md
-# Never committed: sessions/ journal/ artifacts/ wt/ orchestrator/
+# Never committed: sessions/ journal/ artifacts/ audit/
 
-# Settings skills (issue #237; design §29.2): files or directories, resolved
+# Settings skills: files or directories, resolved
 # against this file's directory — "./skills" names "<root>/.kubic/skills"
 # ("../skills" would name "<root>/skills").
 skills = ["./skills"]
 
 [agent]
 name = "kubic"
-# Prompt augmentation (design §63 system_prompt_file): the sibling SYSTEM.md
+# Prompt augmentation: the sibling SYSTEM.md
 # is read at load and appended to the assembled lane prompt (ahead of the
-# skills block) for run, tui, replay and worker children. Relative to this
+# skills block) for run, tui and replay. Relative to this
 # file's directory; a leading ~/ expands to home. A project-layer path
 # additionally requires trust and containment in the project root; a missing
 # or unreadable file is a named ConfigError, never a silent skip.
@@ -320,10 +278,6 @@ systemPromptFile = "SYSTEM.md"
 provider = "local"
 id = "llama3"
 thinking = "medium"
-
-[modes]
-solo = true
-orchestrator = false
 
 [approvals]
 route = "ask-user"
@@ -351,10 +305,6 @@ models = ["local/*", { id = "acme/big", thinking = "high" }]
 model = "local/llama3"
 tools = ["read", "write", "edit", "bash"]
 
-[orchestrator]
-root = ".kubic/wt"
-maxWorkers = 4
-
 [ui]
 theme = "dark"
 statusBar = true
@@ -363,9 +313,9 @@ statusBar = true
 store = "jsonl"
 dir = ".kubic/sessions"
 retentionDays = 30
-# Compaction policy (§27.1): automatic threshold compaction, a 4000-token
-# reserved room and a 5000-token verbatim recent window on the run, tui
-# and worker lanes. All three are optional — unset means the lane defaults
+# Compaction policy: automatic threshold compaction, a 4000-token
+# reserved room and a 5000-token verbatim recent window on the run and tui
+# lanes. All three are optional — unset means the lane defaults
 # (automatic, 16384 reserved, 20000 kept recent).
 autoCompact = true
 reserveTokens = 4000
@@ -384,11 +334,8 @@ denied_tools = []
 network_policy = "proxy"
 allowed_domains = ["registry.npmjs.org", "github.com"]
 filesystem_policy = "workspace-only"
-require_credential_broker = true
-deny_local_credentials = true
 data_policy = "no-external-training"
 logging_policy = "full-audit"
-agent_policy = { max_agents = 2, max_cost_usd = 5.0 }
 
 [[audit]]
 sink = "syslog"
@@ -397,14 +344,6 @@ level = "privileged"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export function assertNoBudgetKeys(raw: unknown): void {
-  if (isRecord(raw) && Object.hasOwn(raw, 'budgets')) {
-    throw new BudgetKeyError(
-      'config key [budgets] is forbidden: budgets are never defaulted by config (issue #38)',
-    );
-  }
 }
 
 function stripTrailingComment(line: string): string {
@@ -539,7 +478,7 @@ function parseScalar(text: string, lineNo: number): unknown {
     return splitTopLevel(inner, lineNo).map((item) => {
       const value = parseScalar(item, lineNo);
       // Inline-table elements are the per-entry shape some array keys
-      // validate themselves (issue #255 `[roles.*].models`); nested
+      // validate themselves (`[roles.*].models`); nested
       // arrays stay unsupported, and every other array key still
       // refuses tables through its own typed checker.
       if (Array.isArray(value)) {
@@ -551,10 +490,9 @@ function parseScalar(text: string, lineNo: number): unknown {
   throw new ConfigError(`line ${lineNo}: cannot parse value ${token}`);
 }
 
-// §58's `agent_policy = { max_agents = 2, max_cost_usd = 5.0 }` (issue #288):
-// a TOML inline table is the only nested shape the [policy] surface uses, so
-// the parser supports exactly one level of it. Guarded like the section
-// parser: dunder keys are refused and duplicates are named.
+// A TOML inline table (`{ id = "acme/big", thinking = "high" }` in a role's
+// `models` list): the parser supports exactly one level of it. Guarded like
+// the section parser: dunder keys are refused and duplicates are named.
 function parseInlineTable(
   inner: string,
   lineNo: number,
@@ -621,7 +559,7 @@ function setPath(
   node[leaf] = value;
 }
 
-// `[[audit]]` (issue #288): append a fresh table to the array at `path` and
+// `[[audit]]`: append a fresh table to the array at `path` and
 // return it so following key lines land inside that element. The path walk
 // mirrors setPath's guards (dunder segments refused, collisions named) and
 // the array container is created on first sight.
@@ -667,7 +605,7 @@ function parseTomlDocument(text: string): Record<string, unknown> {
   const root: Record<string, unknown> = {};
   let section: string[] = [];
   // The table key lines land in: `root` for ordinary sections, the newest
-  // element for an `[[array-of-tables]]` header (issue #288).
+  // element for an `[[array-of-tables]]` header.
   let table: Record<string, unknown> = root;
   const lines = text.split('\n');
   lines.forEach((rawLine, index) => {
@@ -776,7 +714,7 @@ function optStringArray(
   return [...(value as string[])];
 }
 
-// §35 out-of-scope paths (issue #115): a string array of plain relative
+// Out-of-scope paths: a string array of plain relative
 // paths. The shape check is the same one every other string-array key gets
 // (`optStringArray`) and the extra rule is that an empty entry is refused by
 // name: a workspace-relative path never starts with `/`, so an empty entry
@@ -801,150 +739,7 @@ export function checkOutOfScopeEntries(
   return entries;
 }
 
-// §35/§44 orchestrator worktree parent (issue #133): a workspace-relative
-// directory — never an absolute path, never a `..` segment, never a
-// trailing `/` — so the spawned set can never be steered outside the repo
-// and the value can be used verbatim as an ignore entry. The runtime
-// projection re-checks this rule because programmatic session/agent layers
-// never pass through this parser.
-//
-// Hardening (issue #133 review; the metacharacter rule re-reviewed), all
-// re-checked by the projection:
-//   * control characters are refused by name — the value is shipped to
-//     `.git/info/exclude` verbatim, so a newline would inject arbitrary
-//     gitignore patterns (hiding files from `git add -A` and the pre-merge
-//     clean-tree guard), and an ESC or bidi override would reach
-//     operator-facing messages. The set is the shared one in
-//     @kubic/exec's runtime-exclude module; the value is never echoed.
-//   * gitignore metacharacters are refused by name (issue #133
-//     re-review) — git reads the entry as a pattern, so `*`/`?`/`[`/`]`
-//     would match paths other than the named directory (same hiding harm),
-//     a leading `#` would turn the line into a comment, and a backslash
-//     would escape the next character (a trailing one leaves an entry that
-//     matches nothing). Refused, never escaped into a different rule.
-//   * a root whose exclude entry (`<root>/`) would ignore the committed
-//     half (`.kubic/config.toml`, `.kubic/roles/*.md`) is refused — the
-//     worktree parent must never make D35's committed files invisible to
-//     git. The segment compare is case-insensitive (issue #133
-//     fix-cycle-3): git case-folds ignore patterns on a case-insensitive
-//     filesystem (`core.ignorecase=true`, the macOS default), so `.KUBIC/`
-//     hides the committed half exactly like `.kubic/` does.
-//   * a root that names the workspace itself or carries a `.` segment is
-//     refused by name (issue #133 fix-cycle-3): `.`, `./`, `foo/.` all
-//     resolve to a directory the derived `<root>/` entry cannot match, so
-//     the worktree set would stay unignored and the pre-merge clean-tree
-//     guard would refuse every merge. Never normalized — the value the
-//     operator wrote is the value that would ship.
-const COMMITTED_CONFIG_DIR_SEGMENTS: readonly (readonly string[])[] = [
-  ['.kubic'],
-  ['.kubic', 'roles'],
-];
-
-// Segment-wise (never a string prefix), so `.kubic/roles-archive` is not
-// mistaken for `.kubic/roles`, and equivalent spellings of the same
-// directory (`.kubic//roles`, `.kubic/./roles`) are caught. The compare
-// folds case per segment (issue #133 fix-cycle-3): git case-folds ignore
-// patterns on a case-insensitive filesystem, so a case variant of the
-// committed half hides exactly the same files.
-function isCommittedConfigHalfRoot(value: string): boolean {
-  const segments = value
-    .split('/')
-    .filter((segment) => segment !== '' && segment !== '.');
-  return COMMITTED_CONFIG_DIR_SEGMENTS.some(
-    (dir) =>
-      segments.length === dir.length &&
-      dir.every((segment, index) => segments[index].toLowerCase() === segment),
-  );
-}
-
-// §35/§44 root path shape (issue #133 fix-cycle-3): workspace-relative only —
-// never empty, never absolute, never climbing out with `..`, never ending in
-// `/` (the exclude-entry derivation appends one). Exported because the
-// derivation (apps/kubic/src/config-runtime.ts) re-checks the same rule for
-// programmatic callers that never pass through this parser; both call sites
-// refuse by the same name.
-export function checkOrchestratorRootShape(
-  value: string,
-  keyPath: string,
-): void {
-  if (value.trim() === '') {
-    throw new ConfigError(
-      `'${keyPath}': 'root' must be a workspace-relative path`,
-    );
-  }
-  if (
-    value.startsWith('/') ||
-    value.split('/').includes('..') ||
-    value.endsWith('/')
-  ) {
-    throw new ConfigError(
-      `'${keyPath}': 'root' must be a workspace-relative path (no leading '/', no '..' segments, no trailing '/')`,
-    );
-  }
-}
-
-// A `.` segment names the directory it sits in (issue #133 fix-cycle-3): `.`
-// is the workspace itself, `./` matches nothing at all, and `foo/.` is
-// spelled `foo`. The derived `<root>/` entry would then ignore nothing — the
-// worktree set would stay untracked and the pre-merge clean-tree guard would
-// refuse every merge. Refused by name, never normalized: the value the
-// operator wrote is the value that would ship. Exported for the derivation's
-// own re-check (programmatic callers).
-export function checkOrchestratorRootNoOp(
-  value: string,
-  keyPath: string,
-): void {
-  if (value.split('/').includes('.')) {
-    throw new ConfigError(
-      `'${keyPath}': 'root' must not name the workspace or carry a '.' segment — the derived exclude entry would match nothing and the worktree set would stay unignored`,
-    );
-  }
-}
-
-export function checkOrchestratorRoot(
-  value: unknown,
-  keyPath: string,
-): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'string') {
-    throw new ConfigError(
-      `'${keyPath}': 'root' must be a workspace-relative path`,
-    );
-  }
-  checkOrchestratorRootShape(value, keyPath);
-  if (hasUnsafeCharacters(value)) {
-    throw new ConfigError(
-      `'${keyPath}': 'root' must be a workspace-relative path (control characters are refused — the value is shipped to git's exclude file verbatim)`,
-    );
-  }
-  if (hasGitignoreMetacharacters(value)) {
-    throw new ConfigError(
-      `'${keyPath}': 'root' must be a workspace-relative path (gitignore metacharacters are refused — the value is shipped to git's exclude file verbatim)`,
-    );
-  }
-  checkCommittedConfigHalfRoot(value, keyPath);
-  checkOrchestratorRootNoOp(value, keyPath);
-  return value;
-}
-
-// D35: the exclude entry `<root>/` must never ignore the committed half
-// (`.kubic/config.toml`, `.kubic/roles/*.md`). Exported for the runtime
-// projection (apps/kubic/src/config-runtime.ts), which re-checks the same
-// rule at the one exclude-entry derivation every consumer shares (issue
-// #133 re-review): a programmatic caller that bypassed the config load can
-// never hand the writer an entry that would hide the committed files.
-export function checkCommittedConfigHalfRoot(
-  value: string,
-  keyPath: string,
-): void {
-  if (isCommittedConfigHalfRoot(value)) {
-    throw new ConfigError(
-      `'${keyPath}': 'root' must not cover the committed config half ('.kubic/config.toml', '.kubic/roles/*.md') — pick a runtime path like '.kubic/wt'`,
-    );
-  }
-}
-
-// §42.4 journal byte bound (issue #350): a positive integer or nothing. 0 is
+// Journal byte bound: a positive integer or nothing. 0 is
 // refused by name — it is not "retention off" (unset is), it is a bound
 // nothing can fit, so every append would be refused and every tool write
 // would fail as journal_failed. Refused here rather than clamped.
@@ -956,10 +751,7 @@ export function checkJournalMaxBytes(value: unknown): number | undefined {
   return value;
 }
 
-// §45 worker cap (issue #133): a positive integer or nothing. A value that
-// could never admit a worker is refused here, by name — never clamped into
-// one silently. The scheduler's own validation stays as the second layer.
-// Session compaction policy (issue #239; §27.1): shared by the TOML parser
+// Session compaction policy: shared by the TOML parser
 // and the runtime projection, which re-checks because the programmatic
 // session/agent layers never pass through the parser. A non-boolean switch
 // and a non-positive-safe-integer token count are refused by key name —
@@ -998,36 +790,7 @@ export function checkSessionCompaction(
   };
 }
 
-// The delegation driver (issue #431, L-D34): exactly `"lane"` or
-// `"template"` — anything else is refused by name, never coerced into a
-// driver the operator did not ask for.
-export function checkOrchestratorManager(
-  value: unknown,
-  keyPath: string,
-): 'lane' | 'template' | undefined {
-  if (value === undefined) return undefined;
-  if (value !== 'lane' && value !== 'template') {
-    throw new ConfigError(
-      `'${keyPath}': 'manager' must be "lane" or "template"`,
-    );
-  }
-  return value;
-}
-
-export function checkOrchestratorMaxWorkers(
-  value: unknown,
-  keyPath: string,
-): number | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
-    throw new ConfigError(
-      `'${keyPath}': 'maxWorkers' must be a positive integer`,
-    );
-  }
-  return value;
-}
-
-// §37.4 request options (issue #257): the four tuning keys `[model]` and
+// Request options: the four tuning keys `[model]` and
 // `[roles.<name>]` share. `timeoutMs` bounds one provider request (a
 // positive integer of milliseconds — 0 would refuse every request, so it is
 // refused by name); `maxRetries`/`maxRetryDelayMs` are non-negative
@@ -1086,7 +849,7 @@ export function checkModelStreamTuning(
   return out;
 }
 
-// §12.1 per-role model pin (issue #133): a `provider/id` ref, never a bare
+// Per-role model pin: a `provider/id` ref, never a bare
 // provider or a half ref — the run path turns exactly this shape into a
 // selection. Refused by name here so a malformed pin never reaches the lane;
 // the runtime projection re-checks for the programmatic layers.
@@ -1108,7 +871,7 @@ export function checkRoleModelRef(
   return value;
 }
 
-// One scoped-model entry (issue #255; §38.2): the allowed-set member a
+// One scoped-model entry: the allowed-set member a
 // `[roles.*].models` array holds. String entries normalize to this shape
 // at parse, so every layer downstream matches one shape.
 export interface RoleModelEntry {
@@ -1118,7 +881,7 @@ export interface RoleModelEntry {
   thinking?: string;
 }
 
-// The escalation ladder (issue #210; §38.4): ordered concrete
+// The escalation ladder: ordered concrete
 // `provider/id` rungs — never wildcards (a rung names the exact model the
 // lane switches to, so one-way validation stays decidable) and never
 // empty strings. Refused by name per entry, like the scoped-model set.
@@ -1162,7 +925,7 @@ export function checkMaxEscalations(
   return value;
 }
 
-// The per-role allowed set (issue #255; §38.2): an array of `provider/id`
+// The per-role allowed set: an array of `provider/id`
 // or `provider/*` refs, each optionally carrying per-entry thinking as a
 // table (`{ id, thinking? }`). An empty array parses (it means all
 // models). Refused by name per entry so a malformed set never reaches
@@ -1222,7 +985,7 @@ function checkRoleModelPattern(value: string, label: string): string {
   }
   return value;
 }
-// One thinking-level rule for every spelling of it (issue #225): the
+// One thinking-level rule for every spelling of it: the
 // `[model]` and `[roles.*]` keys, KUBIC_MODEL_THINKING and --thinking all
 // refuse a value outside THINKING_LEVELS by the name the operator used.
 export function checkThinkingLevel(
@@ -1289,7 +1052,7 @@ function checkNoUnknown(
   }
 }
 
-// §58 keys and their allowed values (issue #288). The engine vocabulary
+// Keys and their allowed values. The engine vocabulary
 // names are accepted alongside the design's spellings so one section can
 // carry either; the translation to LayerPolicy lives in host/policy.
 const POLICY_KEYS = new Set([
@@ -1300,11 +1063,8 @@ const POLICY_KEYS = new Set([
   'network_policy',
   'allowed_domains',
   'filesystem_policy',
-  'require_credential_broker',
-  'deny_local_credentials',
   'data_policy',
   'logging_policy',
-  'agent_policy',
 ]);
 
 const NETWORK_POLICIES = ['proxy', 'none', 'allowlist', 'full'] as const;
@@ -1346,44 +1106,8 @@ function parsePolicySection(raw: unknown): PolicyConfig {
       `'policy': 'filesystem_policy' must be one of ${FILESYSTEM_POLICIES.join(', ')}`,
     );
   }
-  const requireCredentialBroker = optBoolean(
-    raw,
-    'require_credential_broker',
-    'policy',
-  );
-  const denyLocalCredentials = optBoolean(
-    raw,
-    'deny_local_credentials',
-    'policy',
-  );
   const dataPolicy = reqString(raw, 'data_policy', 'policy', true);
   const loggingPolicy = reqString(raw, 'logging_policy', 'policy', true);
-  let agentPolicy: PolicyAgentConfig | undefined;
-  const rawAgentPolicy = raw.agent_policy;
-  if (rawAgentPolicy !== undefined) {
-    if (!isRecord(rawAgentPolicy)) {
-      throw new ConfigError("'policy.agent_policy' must be a table");
-    }
-    checkNoUnknown(
-      rawAgentPolicy,
-      new Set(['max_agents', 'max_cost_usd']),
-      'policy.agent_policy',
-    );
-    const maxAgents = optNumber(
-      rawAgentPolicy,
-      'max_agents',
-      'policy.agent_policy',
-    );
-    const maxCostUsd = optNumber(
-      rawAgentPolicy,
-      'max_cost_usd',
-      'policy.agent_policy',
-    );
-    agentPolicy = {
-      ...(maxAgents === undefined ? {} : { maxAgents }),
-      ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
-    };
-  }
   return {
     ...(allowedModels === undefined ? {} : { allowedModels }),
     ...(allowedProviders === undefined ? {} : { allowedProviders }),
@@ -1392,17 +1116,12 @@ function parsePolicySection(raw: unknown): PolicyConfig {
     ...(networkPolicy === undefined ? {} : { networkPolicy }),
     ...(allowedDomains === undefined ? {} : { allowedDomains }),
     ...(filesystemPolicy === undefined ? {} : { filesystemPolicy }),
-    ...(requireCredentialBroker === undefined
-      ? {}
-      : { requireCredentialBroker }),
-    ...(denyLocalCredentials === undefined ? {} : { denyLocalCredentials }),
     ...(dataPolicy === undefined ? {} : { dataPolicy }),
     ...(loggingPolicy === undefined ? {} : { loggingPolicy }),
-    ...(agentPolicy === undefined ? {} : { agentPolicy }),
   };
 }
 
-// `[[audit]]` (issue #288): each element names a sink kind and a level; a
+// `[[audit]]`: each element names a sink kind and a level; a
 // `target` (path or host:port) and `facility` are accepted for the sink
 // follow-up. Unknown kinds, levels and keys are refused by name.
 function parseAuditTables(raw: unknown): AuditTableConfig[] {
@@ -1434,7 +1153,7 @@ function parseAuditTables(raw: unknown): AuditTableConfig[] {
       );
     }
     const target = reqString(entry, 'target', path, true);
-    // Review finding (issue #286): docs promise a name or a number
+    // Review finding: docs promise a name or a number
     // 0–23, so a TOML number rides through as-is; a fractional or
     // out-of-range number is refused here, by name.
     const facilityRaw = entry.facility;
@@ -1462,9 +1181,8 @@ function parseAuditTables(raw: unknown): AuditTableConfig[] {
 
 function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
   assertNoMcpConfig(raw);
-  assertNoBudgetKeys(raw);
   for (const key of Object.keys(raw)) {
-    // Issue #237: `skills` is a top-level array key, not a section.
+    // `skills` is a top-level array key, not a section.
     if (key !== 'skills' && !KNOWN_SECTIONS.has(key)) {
       throw new ConfigError(`unknown section '[${key}]'`);
     }
@@ -1521,17 +1239,6 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
       ...checkModelStreamTuning(model, 'model'),
       ...(escalate === undefined ? {} : { escalate }),
       ...(maxEscalations === undefined ? {} : { maxEscalations }),
-    };
-  }
-  const modes = raw.modes;
-  if (modes !== undefined) {
-    if (!isRecord(modes)) throw new ConfigError("'[modes]' must be a table");
-    checkNoUnknown(modes, new Set(['solo', 'orchestrator']), 'modes');
-    const solo = optBoolean(modes, 'solo', 'modes');
-    const orchestrator = optBoolean(modes, 'orchestrator', 'modes');
-    config.modes = {
-      ...(solo === undefined ? {} : { solo }),
-      ...(orchestrator === undefined ? {} : { orchestrator }),
     };
   }
   const approvals = raw.approvals;
@@ -1665,31 +1372,6 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
     }
     config.roles = parsed;
   }
-  const orchestrator = raw.orchestrator;
-  if (orchestrator !== undefined) {
-    if (!isRecord(orchestrator)) {
-      throw new ConfigError("'[orchestrator]' must be a table");
-    }
-    checkNoUnknown(
-      orchestrator,
-      new Set(['root', 'maxWorkers', 'manager']),
-      'orchestrator',
-    );
-    const root = checkOrchestratorRoot(orchestrator.root, 'orchestrator');
-    const maxWorkers = checkOrchestratorMaxWorkers(
-      orchestrator.maxWorkers,
-      'orchestrator',
-    );
-    const manager = checkOrchestratorManager(
-      orchestrator.manager,
-      'orchestrator',
-    );
-    config.orchestrator = {
-      ...(root === undefined ? {} : { root }),
-      ...(maxWorkers === undefined ? {} : { maxWorkers }),
-      ...(manager === undefined ? {} : { manager }),
-    };
-  }
   const ui = raw.ui;
   if (ui !== undefined) {
     if (!isRecord(ui)) throw new ConfigError("'[ui]' must be a table");
@@ -1744,7 +1426,7 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
   if (audit !== undefined) {
     config.audit = parseAuditTables(audit);
   }
-  // Issue #237 (§29.2): `skills = [...]` — files or directories. Kept
+  // `skills = [...]` — files or directories. Kept
   // as written here; the load resolves relative entries against the
   // declaring file's directory. A non-string entry names the layer.
   const skills = raw.skills;
@@ -1765,7 +1447,7 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
   return config;
 }
 
-// Issue #237 (§29.2): resolve one layer's `skills` entries against the
+// Resolve one layer's `skills` entries against the
 // directory of the config FILE that declared them — never the invoking
 // cwd. Absolute entries pass through; `~` and env vars are NOT expanded
 // (a config file is not a shell). Returns a copy; the input is untouched.
@@ -1797,11 +1479,11 @@ function formatValue(value: unknown, inlineTables = false): string {
   if (Array.isArray(value)) {
     return `[${value.map((item) => formatValue(item, true)).join(', ')}]`;
   }
-  // Inline tables (issue #255): the role `models` set carries `{ id,
+  // Inline tables: the role `models` set carries `{ id,
   // thinking? }` entries, and the canonical example pins them — they
   // emit back in the same inline form so the example round-trips. Only
   // array items take this branch: a bare nested table as a direct value
-  // stays refused (issue #69), exactly as before.
+  // stays refused, exactly as before.
   if (isRecord(value)) {
     if (!inlineTables) {
       throw new ConfigError('cannot serialize nested tables as values');
@@ -1826,12 +1508,10 @@ function emitTable(
   lines.push('');
 }
 
-// The `[policy]` TOML spelling of each PolicyConfig field (issue #288): the
-// serializer must emit what the parser accepts, and the §58 surface is
-// snake_case while the TS shape is camelCase. `agentPolicy` is emitted as
-// its own sub-table, so it is not in this list.
-type PolicyFlatField = Exclude<keyof PolicyConfig, 'agentPolicy'>;
-const POLICY_TOML_KEYS: ReadonlyArray<[PolicyFlatField, string]> = [
+// The `[policy]` TOML spelling of each PolicyConfig field: the
+// serializer must emit what the parser accepts, and the surface is
+// snake_case while the TS shape is camelCase.
+const POLICY_TOML_KEYS: ReadonlyArray<[keyof PolicyConfig, string]> = [
   ['allowedModels', 'allowed_models'],
   ['allowedProviders', 'allowed_providers'],
   ['allowedTools', 'allowed_tools'],
@@ -1839,15 +1519,13 @@ const POLICY_TOML_KEYS: ReadonlyArray<[PolicyFlatField, string]> = [
   ['networkPolicy', 'network_policy'],
   ['allowedDomains', 'allowed_domains'],
   ['filesystemPolicy', 'filesystem_policy'],
-  ['requireCredentialBroker', 'require_credential_broker'],
-  ['denyLocalCredentials', 'deny_local_credentials'],
   ['dataPolicy', 'data_policy'],
   ['loggingPolicy', 'logging_policy'],
 ];
 
 export function serializeTomlConfig(config: KubicConfig): string {
   const lines: string[] = [];
-  // Issue #237: the top-level `skills` array serializes before the first
+  // The top-level `skills` array serializes before the first
   // table (TOML keys precede tables).
   if (config.skills !== undefined) {
     lines.push(
@@ -1860,9 +1538,6 @@ export function serializeTomlConfig(config: KubicConfig): string {
   }
   if (config.model !== undefined) {
     emitTable(lines, 'model', config.model as Record<string, unknown>);
-  }
-  if (config.modes !== undefined) {
-    emitTable(lines, 'modes', config.modes as Record<string, unknown>);
   }
   if (config.approvals !== undefined) {
     emitTable(lines, 'approvals', config.approvals as Record<string, unknown>);
@@ -1886,13 +1561,6 @@ export function serializeTomlConfig(config: KubicConfig): string {
       );
     }
   }
-  if (config.orchestrator !== undefined) {
-    emitTable(
-      lines,
-      'orchestrator',
-      config.orchestrator as Record<string, unknown>,
-    );
-  }
   if (config.ui !== undefined) {
     emitTable(lines, 'ui', config.ui as Record<string, unknown>);
   }
@@ -1903,23 +1571,13 @@ export function serializeTomlConfig(config: KubicConfig): string {
     emitTable(lines, 'verify', config.verify as Record<string, unknown>);
   }
   if (config.policy !== undefined) {
-    const { agentPolicy, ...rest } = config.policy;
+    const policy = config.policy;
     const record: Record<string, unknown> = {};
     for (const [field, tomlKey] of POLICY_TOML_KEYS) {
-      const value = rest[field];
+      const value = policy[field];
       if (value !== undefined) record[tomlKey] = value;
     }
     if (Object.keys(record).length > 0) emitTable(lines, 'policy', record);
-    if (agentPolicy !== undefined) {
-      emitTable(lines, 'policy.agent_policy', {
-        ...(agentPolicy.maxAgents === undefined
-          ? {}
-          : { max_agents: agentPolicy.maxAgents }),
-        ...(agentPolicy.maxCostUsd === undefined
-          ? {}
-          : { max_cost_usd: agentPolicy.maxCostUsd }),
-      });
-    }
   }
   if (config.audit !== undefined) {
     for (const entry of config.audit) {
@@ -2042,13 +1700,13 @@ export function defaultLayerPaths(args: {
 }
 
 // Committed vs gitignored split: config.toml + roles/*.md are committed;
-// sessions/journal/artifacts/worktrees/orchestrator state are runtime —
-// gitignored and never committed.
+// sessions/journal/artifacts/audit state are runtime — gitignored and never
+// committed.
 export const COMMITTED_CONFIG_FILES = ['config.toml', 'roles/'] as const;
 
-// The rule set is owned by the module that writes it (issue #91):
-// @kubic/exec `runtime-exclude.ts` is what `kubic run` / `kubic
-// orchestrate` ship into a user repo, so this list is a projection of
+// The rule set is owned by the module that writes it:
+// @kubic/exec `runtime-exclude.ts` is what `kubic run` ships into a user
+// repo, so this list is a projection of
 // that module — never a second hand-maintained copy. `config.test.ts`
 // pins the two together, so a rule added there cannot go unchecked here.
 export const GITIGNORE_REQUIRED_ENTRIES = [...RUNTIME_EXCLUDE_ENTRIES] as const;
@@ -2074,9 +1732,6 @@ function withLayerContext(layer: ConfigLayer, error: unknown): never {
   if (error instanceof McpUnsupportedError) {
     throw new McpUnsupportedError(`layer '${layer}': ${error.message}`);
   }
-  if (error instanceof BudgetKeyError) {
-    throw new BudgetKeyError(`layer '${layer}': ${error.message}`);
-  }
   if (error instanceof ConfigError) {
     throw new ConfigError(`layer '${layer}': ${error.message}`);
   }
@@ -2085,7 +1740,7 @@ function withLayerContext(layer: ConfigLayer, error: unknown): never {
   );
 }
 
-// Parse one layer's text with the layer named on every failure (issue #90):
+// Parse one layer's text with the layer named on every failure:
 // the runtime load parses layers itself so it can record which layer set
 // which leaf, and a failure must still name the offending layer.
 export function parseLayerConfig(
@@ -2122,7 +1777,7 @@ export function loadLayered(
     try {
       inputs.push({
         layer,
-        // Issue #237: relative `skills` entries anchor at this file.
+        // Relative `skills` entries anchor at this file.
         config: resolveConfigSkills(
           parseTomlConfig(bridge.readTextFile(path)),
           path,

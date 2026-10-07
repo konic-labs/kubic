@@ -1,4 +1,4 @@
-// Preference-pair builder + cross-boundary policy (issue #54; §74).
+// Preference-pair builder + cross-boundary policy.
 // A trainable pair needs three things: a verifier preference signal
 // (chosen passes, rejected fails), no env failure on either side (env
 // breakage is not a capability difference), and one boundary (same
@@ -7,7 +7,7 @@
 // of capability training without losing the evidence.
 // Read-only reuse: the transfer snapshot {taskId, worktree, grantRef}
 // mirrors the agents TransferLogRecord shape without importing it;
-// pairs carry refs only (#32 artifacts, #49 graph edges) — never
+// pairs carry refs only — never
 // transcripts or file contents.
 import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
 import { checkFailureCategory, checkProvenance, checkVerifier } from './sft.js';
@@ -25,7 +25,7 @@ export const PAIR_SCHEMA = 'pair/1';
 
 // Refs-only side: where the run happened and what it concluded —
 // task/worktree/grant refs plus the bounded completion text, never the
-// transcript (#32) and never embedded file contents.
+// transcript and never embedded file contents.
 export interface PreferenceSide {
   completion: string;
   provenance: RlProvenance;
@@ -126,7 +126,7 @@ export function buildPreferencePair(
       rejectedCategory: rejected.failureCategory,
     },
   });
-  // A pair ranks two answers to ONE prompt (#269): pairing task A's
+  // A pair ranks two answers to ONE prompt: pairing task A's
   // prompt with task B's completion teaches nothing but noise, so a
   // different prompt text or task id is excluded before any other policy.
   if (rejectedPrompt !== prompt) {

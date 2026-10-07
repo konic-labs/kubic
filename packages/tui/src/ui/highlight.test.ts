@@ -1,4 +1,4 @@
-// Syntax highlighting (EPIC N, issue #458): calm roles over lowlight's
+// Syntax highlighting: calm roles over lowlight's
 // scopes, plain fallbacks that never throw.
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createUiTheme, stripStyles } from '../../../core/src/ui/style.js';
@@ -17,7 +17,7 @@ beforeAll(async () => {
   await loadHighlighter();
 });
 
-describe('code highlighting (issue #458)', () => {
+describe('code highlighting', () => {
   it('loads the grammars on demand', () => {
     expect(highlighterReady()).toBe(true);
   });

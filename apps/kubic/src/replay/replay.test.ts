@@ -1,7 +1,6 @@
-// `kubic replay` at declared determinism tiers (issue #52; §47, §47.1,
-// §72, §78). Faux-only: the re-execution runner is injected (zero
-// network); trajectory fixtures are built with the versioned #51
-// exporter so tests always run against the current stable contract.
+// `kubic replay` at declared determinism tiers. Faux-only: the re-execution
+// runner is injected (zero network); trajectory fixtures are built with the
+// versioned exporter so tests always run against the current stable contract.
 import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -70,16 +69,16 @@ export function fixtureTrajectory(
       agentId: 'agent-1',
       pid: null,
       generation: 1,
-      worktree: '/repo/.kubic/wt/agent-1',
+      worktree: '/repo',
       model: 'acme/m1',
     },
     environment: {
       capturedFrom: 'used',
-      cwd: '/repo/.kubic/wt/agent-1',
+      cwd: '/repo',
       env: {},
     },
     worktree: {
-      path: '/repo/.kubic/wt/agent-1',
+      path: '/repo',
       baseRevision: 'abc123',
       branch: null,
     },
@@ -137,7 +136,7 @@ function deps(o: Capture, run?: ReplayCommandDeps['run']): ReplayCommandDeps {
   };
 }
 
-describe('replay recorded exact (§47 exact; §47.1 Recorded)', () => {
+describe('replay recorded exact (exact; Recorded)', () => {
   it('resolves a relative trajectory path against the working directory, not /', async () => {
     const dir = tmpRoot();
     writeTrajectory(dir, 'rel.json');
@@ -176,7 +175,7 @@ describe('replay recorded exact (§47 exact; §47.1 Recorded)', () => {
     expect(text).toMatch(/result: completed/);
   });
 
-  it('publishes the tier in the --json envelope (§72)', async () => {
+  it('publishes the tier in the --json envelope', async () => {
     const dir = tmpRoot();
     const path = writeTrajectory(dir, 't.json');
     const o = out();
@@ -226,8 +225,8 @@ describe('replay recorded exact (§47 exact; §47.1 Recorded)', () => {
     expect(envelope.error.code).toBe('trajectory-malformed');
   });
 
-  it('exits 2 with trajectory-malformed when a §46 section is structurally wrong', async () => {
-    // Issue #331: actions:null used to reach the describe/compare code and
+  it('exits 2 with trajectory-malformed when a trajectory section is structurally wrong', async () => {
+    // Actions:null used to reach the describe/compare code and
     // die as a raw TypeError (generic exit 1). It is now refused by the
     // parser with a named path, on the same exit-2 code as any other
     // malformed trajectory.
@@ -285,7 +284,7 @@ describe('replay recorded exact (§47 exact; §47.1 Recorded)', () => {
   });
 });
 
-describe('replay deterministic (§47 different-model; §47.1 Deterministic)', () => {
+describe('replay deterministic (different-model; Deterministic)', () => {
   function detArgs(dir: string): {
     traj: string;
     lock: string;
@@ -397,7 +396,7 @@ describe('replay deterministic (§47 different-model; §47.1 Deterministic)', ()
     expect(envelope.result.summary).toBe('replayed ok');
   });
 
-  it('maps runner termini to §78 codes 1/5/6', async () => {
+  it('maps runner termini to exit codes 1/5/6', async () => {
     const dir = tmpRoot();
     const { traj, lock } = detArgs(dir);
     const cases = [
@@ -435,7 +434,7 @@ describe('replay deterministic (§47 different-model; §47.1 Deterministic)', ()
     const dir = tmpRoot();
     const { traj, lock } = detArgs(dir);
     const termini = [
-      'budget_exhausted',
+      'turn_limit',
       'approval_denied',
       'bogus-terminus',
       undefined,
@@ -504,7 +503,7 @@ describe('replay deterministic (§47 different-model; §47.1 Deterministic)', ()
   });
 });
 
-describe('replay pins: the lockfile and role config are enforced (issue #272, §72)', () => {
+describe('replay pins: the lockfile and role config are enforced', () => {
   function digest(text: string): string {
     return `sha256:${createHash('sha256').update(text, 'utf8').digest('hex')}`;
   }
@@ -680,8 +679,8 @@ describe('replay pins: the lockfile and role config are enforced (issue #272, §
   });
 });
 
-describe('replay live (§47.1 Live)', () => {
-  // Issue #272: --role-config is the pin artifact naming the role the
+describe('replay live', () => {
+  // --role-config is the pin artifact naming the role the
   // re-execution boots as (`{"role": "<name>"}`); the role document itself
   // lives at `.kubic/roles/<name>.md` in the pinned worktree.
   function writeRoleConfig(dir: string, name: string, body?: string): string {
@@ -839,7 +838,7 @@ describe('replay live (§47.1 Live)', () => {
   });
 });
 
-describe('replay compare/regression (§47 --diff-against)', () => {
+describe('replay compare/regression (diff-against)', () => {
   function writeVariant(dir: string, name: string, variant: string): string {
     const path = join(dir, name);
     const base = fixtureTrajectory();
@@ -993,7 +992,7 @@ describe('replay compare/regression (§47 --diff-against)', () => {
   });
 });
 
-describe('replay tier honesty (negative tests; §47.1)', () => {
+describe('replay tier honesty (negative tests)', () => {
   it('recorded refuses execution flags — it replays the trajectory alone', async () => {
     const dir = tmpRoot();
     const traj = writeTrajectory(dir, 't.json');
@@ -1154,7 +1153,7 @@ describe('replay tier honesty (negative tests; §47.1)', () => {
 // are commander's — one `error: …` line on stderr, exit 2, pinned in
 // apps/kubic/src/commands/analysis.test.ts. The handler keeps the tiered
 // envelope for the semantic refusals below.
-describe('replay semantic-error envelopes (§78 exit 2 with tier; --json)', () => {
+describe('replay semantic-error envelopes (exit 2 with tier; --json)', () => {
   it('emits a tiered envelope when the trajectory is missing', async () => {
     const o = out();
     const exit = await runReplayCommand({ json: true }, deps(o));

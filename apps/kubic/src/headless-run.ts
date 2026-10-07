@@ -1,5 +1,5 @@
-// Prod `kubic run -p` runner (issue #28): the composition root drives the
-// real solo lane headless and derives the §78 terminus from the lane's own
+// Prod `kubic run -p` runner: the composition root drives the
+// real solo lane headless and derives the terminus from the lane's own
 // settled outcome (E1). Everything durable lands under
 // <sessionsRoot>/<id>/ (E3): the transcript and usage rows in the session
 // store, file effects in <id>/journal/ via lane interception, and the
@@ -10,24 +10,17 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { RunMode } from '../../../packages/agents/src/budget.js';
-import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import {
   checkAgreement,
+  type PermissionClasses,
+  type RunMode,
   SOLO_DEFAULTS,
   validateClasses,
 } from '../../../packages/agents/src/policy.js';
 import { expandSkillInvocation } from '../../../packages/agents/src/skills/skills.js';
-import {
-  type AgentTask,
-  validateAgentTask,
-} from '../../../packages/agents/src/task.js';
 import type { ExecutionEnv } from '../../../packages/exec/src/env.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import {
-  createNodeFileBridge,
-  type FileBridge,
-} from '../../../packages/exec/src/file-bridge.js';
+import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import {
   gitHeadOf,
   withDetachedCheckout,
@@ -41,22 +34,12 @@ import {
   type RunReconciliation,
 } from '../../../packages/exec/src/journal-reconcile.js';
 import { createSecretCommandRunner } from '../../../packages/exec/src/secret-runner.js';
-import {
-  budgetLimitsOf,
-  budgetToolGate,
-  ExtensionBudgetError,
-  firstBreachedLimit,
-} from '../../../packages/extensions/src/runtime.js';
-import type {
-  BundleLoad,
-  PostureOptions,
-} from '../../../packages/extensions/src/startup.js';
+import { TIMEOUT_REASON_MARKER } from '../../../packages/host/src/approval-timeout.js';
 import {
   enableSessionFullAccess,
   fullAccessInForceWarning,
   type InstalledSoloPolicy,
   installSoloPolicy,
-  orchestratedWorkerFromEnv,
   type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
@@ -82,32 +65,12 @@ import {
   shouldEmitSoloNotice,
 } from '../../../packages/host/src/limits/solo-warning.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
-import {
-  readSessionRunUsage,
-  readSessionToolCalls,
-  readSessionUsage,
-  totalSessionUsage,
-} from '../../../packages/host/src/ops/cost/cost-cli.js';
+import { readSessionRunUsage } from '../../../packages/host/src/ops/cost/cost-cli.js';
 import {
   RunSpans,
   runSpanHooks,
   serializeSpanArtifact,
 } from '../../../packages/host/src/ops/perf/run-spans.js';
-import {
-  BUDGET_EXHAUSTED,
-  type BudgetLimit,
-  createRunBudgetEnforcer,
-  type OrchestratorBudget,
-  parseWorkerBudgetEnv,
-  RUN_EXIT_BUDGET,
-  type RunBudgetPrior,
-} from '../../../packages/host/src/orchestrator/approvals/budgets.js';
-import {
-  createWorkerMailboxSeat,
-  TIMEOUT_REASON_MARKER,
-  workerAskIdentity,
-} from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
-import { createAskUserTool } from '../../../packages/host/src/orchestrator/approvals/worker-question-tool.js';
 import {
   appendToLedger,
   auditLedgerDirFor,
@@ -132,10 +95,7 @@ import {
   type SelectedRole,
   selectRole,
 } from '../../../packages/host/src/roles/roles-boot.js';
-import type {
-  RunProgressSink,
-  RunToolSink,
-} from '../../../packages/host/src/run-cli.js';
+import type { RunProgressSink } from '../../../packages/host/src/run-cli.js';
 import {
   DEFAULT_RUN_TIMEOUT_MS,
   type HeadlessRunResult,
@@ -145,7 +105,6 @@ import {
   mapLaneOutcomeToFailure,
   type RetryRecord,
   SESSION_ID_PATTERN,
-  type SoloBudgetLimits,
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import { bootSkills } from '../../../packages/host/src/skills-boot.js';
@@ -181,7 +140,6 @@ import {
   createSession,
   laneConversationIdOf,
   openSessionStore,
-  readSessionMetadata,
   type SessionHandle,
   sessionsTouchingWorkspace,
 } from '../../../packages/worker/src/lane/session-store.js';
@@ -203,8 +161,6 @@ import {
   turnAbort,
   turnLaneRecord,
 } from '../../../packages/worker/src/lane/turn.js';
-import { withRoleGrant } from '../../../packages/worker/src/lifecycle/env.js';
-import { readyMarker } from '../../../packages/worker/src/lifecycle/spawn.js';
 import {
   ModelSelectError,
   type ModelSelection,
@@ -232,10 +188,6 @@ import {
   selectModelUnderPolicy,
 } from './config-runtime.js';
 import {
-  loadExtensionStartup,
-  prodExtensionStartupOptions,
-} from './extension-startup.js';
-import {
   hasExplicitModelSelection,
   roleModelSelection,
 } from './model-projection.js';
@@ -245,130 +197,120 @@ export interface HeadlessRunOptions {
   sessionId?: string;
   timeoutMs?: number;
   maxTurns?: number;
-  // §29.3 skills surface (issue #99): `--no-skills` disables layered
+  // Skills surface: `--no-skills` disables layered
   // discovery and `--skill <path>` adds one explicitly (repeatable —
   // explicit intent applies even under --no-skills).
   noSkills?: boolean;
   skills?: string[];
-  // Issue #183 (§29.4): `--invoke-skill <name>` — one explicit skill
+  // `--invoke-skill <name>` — one explicit skill
   // (hidden included) whose content runs as the turn prompt, with the
   // run's prompt as instructions. Unknown names fail the run closed.
   invokeSkill?: string;
-  // §12.1 role selection (issue #99): `--role <name>` boots the lane as
+  // Role selection: `--role <name>` boots the lane as
   // the role document `.kubic/roles/<name>.md` defines — its prompt text
   // replaces the solo constant and its resolved tool set becomes the
   // lane's allowlist. Absent means the solo default, unchanged.
   role?: string;
-  // §50 debug channel (issue #98): when set, the run emits its lane/tool
+  // Debug channel: when set, the run emits its lane/tool
   // debug lines to the injected sink (stderr in prod). The span artifact is
   // written either way — spans are the durable half.
   debug?: boolean;
-  // §41.4 (issue #308): `--dangerously-skip-approvals` — full access for the
+  // `--dangerously-skip-approvals` — full access for the
   // session this run creates or resumes, recorded in its posture.json and
   // the audit ledger, never in config.
   dangerouslySkipApprovals?: boolean;
-  // §40.1 mechanism 1 (issue #273): `--tools <a,b>` narrows the run's tool
+  // `--tools <a,b>` narrows the run's tool
   // set (intersected with the classes/role/enterprise sets — never widened);
   // `--no-tools` is the empty set. Mutually exclusive, validated before the
   // lane boots.
   tools?: readonly string[];
   noTools?: boolean;
-  // §19 (issue #278): explicit autonomous mode, recorded on the run's
+  // Explicit autonomous mode, recorded on the run's
   // session. Absent means off (interactive), never assumed.
   autonomous?: boolean;
-  // §71 (issue #283): the opt-in solo budget — the bundle builds with
-  // these limits. Absent means empty limits, never defaults.
-  budget?: SoloBudgetLimits;
-  // Issue #447: live progress on an interactive terminal (heading, compact
+  // Live progress on an interactive terminal (heading, compact
   // solo notice, one line per tool call). Absent: today's stderr warning
   // block and no progress output.
   progress?: RunProgressSink;
-  // Issue #464: an orchestrator worker's tool facts (its manager follows
-  // them on stdout). Absent outside a worker.
-  toolFacts?: RunToolSink;
 }
 
 export interface HeadlessRunDeps {
   sessionsRoot?: string;
   models?: MutableModels;
   model?: ModelSelection;
-  // §37.4 request options (issue #257): the merged `[model]` tuning plus
+  // Request options: the merged `[model]` tuning plus
   // every `[roles.<name>]` table that sets a key (runtimeStreamTuning).
   // The boot resolves them against the run's role into `settings.stream`.
   // Absent means untuned — the provider defaults stand.
   streamTuning?: StreamTuningTables;
-  // The lane's agent id (issue #133): the configured `[agent].name`, threaded
+  // The lane's agent id: the configured `[agent].name`, threaded
   // from runtimeLaneDeps. Absent means 'root' — the shipped behaviour, byte
   // for byte (journal attribution and `kubic diff --agent` follow it).
   agentId?: string;
   env?: ExecutionEnv;
   context?: Context;
-  /** Preloaded extension startup object (tests); otherwise loaded here. */
-  extensions?: BundleLoad;
-  /** Prod inputs for the startup load — tests drive missing bundles here. */
-  extensionOptions?: PostureOptions;
-  /** Progress receipt for the extension load (one line, never swallowed). */
+  /** Diagnostics sink (reconcile and overlap notices, skill-load reports). */
   debug?: (line: string) => void;
-  // Runtime config projections (issue #90): the permission classes and the
+  // Runtime config projections: the permission classes and the
   // journal retention bound the loaded configuration produced. Absent means
   // the lane's own defaults and an unbounded journal (never an invented
   // limit).
   policyClasses?: PermissionClasses;
-  // Issue #86: the config layer's own record of where the classes came from
+  // The config layer's own record of where the classes came from
   // ('default' when nothing configured them). Absent means 'default' — the
   // documented safe default, never an assumed operator choice.
   policySource?: 'config' | 'default';
-  // Issue #230: the config `[approvals]` policy (route, maxPendingMs,
+  // The config `[approvals]` policy (route, maxPendingMs,
   // autoApprove, requireJustification, sessionScoped). Absent means the
   // documented defaults.
   approvals?: SoloApprovalConfig;
-  // §58 enterprise policy (issue #288): the composition root resolves it
+  // Enterprise policy: the composition root resolves it
   // once (`runtimePolicy` in config-runtime) and threads it here. A run only
   // gates its tool set and model selection when the layer actually
   // configured those halves — an absent [policy] section never narrows
   // anything.
   modelPolicy?: EffectivePolicy;
   journalRetention?: JournalRetention;
-  // §48 gate commands (issue #267), from `[verify]` via runtimeRunDeps. Run
+  // Gate commands, from `[verify]` via runtimeRunDeps. Run
   // in the worktree after the run settles; their verdicts become the
   // trajectory's `signal:*` labels. Absent means nothing is verified.
   verify?: RuntimeVerify;
-  // §38.3 thinking level (issue #225), from `runtimeLaneDeps` via
+  // Thinking level, from `runtimeLaneDeps` via
   // prodRunDeps: the effective level with its source. A per-run source
   // (`cli` `--thinking` / `env` `KUBIC_MODEL_THINKING`, enterprise-frozen
   // included) is the lane's override; a file-layer source is the lane's
   // config default. Absent means the lane boots at the session's stored
   // level, a role default, or Pi's 'off'.
   thinking?: RuntimeThinking;
-  // The installed-policy seat (issue #86). Absent means the shipped
+  // The installed-policy seat. Absent means the shipped
   // DEFAULT: the documented SOLO_DEFAULTS classes plus the destructive/
   // network/confine guards and the approval ask, all derived by
   // installSoloPolicy. Tests inject a variant here; nothing else may skip
   // the install, which is why the default is not an opt-in.
   policy?: InstalledSoloPolicy;
-  // Declared out-of-scope paths for the §42.5 baseline (issue #87; §35).
-  // Populated by `[journal] outOfScope` through runtimeRunDeps (issue #115);
+  // Declared out-of-scope paths for the baseline.
+  // Populated by `[journal] outOfScope` through runtimeRunDeps;
   // absent means the mechanism's own skips only — `.git/`, `.kubic/` and
   // `.gitignore` hits.
   reconcileOutOfScope?: string[];
-  // [agent] systemPromptFile contents (issue #240), from the same config
+  // [agent] systemPromptFile contents, from the same config
   // load — the boot composes them ahead of the skills block. Absent means
   // the lane assembles its prompt unchanged.
   systemPromptSection?: string;
-  // §27.1 (issue #239): the `[session]` compaction policy from the same
-  // config load — the boot hands it to #399's settings. Absent means the
+  // The `[session]` compaction policy from the same
+  // config load — the boot hands it to the settings. Absent means the
   // lane defaults (automatic, the default reserve, the default recent
   // window).
   compaction?: SoloCompactionOptions;
-  // Debug sink for the §50 lines (issue #98). Defaults to stderr so a live
+  // Debug sink for the debug lines. Defaults to stderr so a live
   // `kubic run --debug` emits without the composition root wiring anything;
   // tests inject an array collector instead.
   debugSink?: DebugSink;
-  // Operator notices (issue #147): the line naming what happened to a
+  // Operator notices: the line naming what happened to a
   // pending operation a crashed run left open. Defaults to stderr; tests
   // inject a collector.
   notice?: (line: string) => void;
-  // §29.3 skills inputs (issue #99). Absent means the prod defaults: the
+  // Skills inputs. Absent means the prod defaults: the
   // real home directory, this process's cwd, and the documented trust
   // opt-in (`KUBIC_TRUST_PROJECT`, the same switch the config layer reads).
   // Tests inject a home/cwd/trust triple to drive discovery over a fixture.
@@ -377,27 +319,27 @@ export interface HeadlessRunDeps {
     cwd?: string;
     trusted?: boolean;
     trustProject?: (dir: string) => boolean;
-    // Issue #237 (§29.2): the config `skills` projection — resolved at
+    // The config `skills` projection — resolved at
     // load, loaded with source 'settings'. Absent means none configured.
     settingsSkills?: string[];
   };
-  // Issue #228 (§35.1): the per-path trust check (the store's resolved-root
+  // The per-path trust check (the store's resolved-root
   // decision plus the env opt-in), threaded from the composition root's
   // config load. It gates the project models.json and the ancestor project
   // skills on the path each resolves to. Absent falls back to the env flag.
   trustProject?: (path: string) => boolean;
-  // §12.1 role-document inputs (issue #99). Absent means the prod defaults:
+  // Role-document inputs. Absent means the prod defaults:
   // this process's cwd (so `.kubic/roles/*.md` is read from the workspace)
   // through the real FileBridge. Tests inject a fixture cwd.
   roles?: {
     cwd?: string;
     layers?: RoleLayerInput[];
-    // Issue #430 (§33, L-D27): project trust for the repo documents.
+    // Project trust for the repo documents.
     // The composition root threads the config load's per-path check here
     // (`runtimeLaneDeps`); absent both means the root is untrusted.
     trusted?: boolean;
     trustProject?: (dir: string) => boolean;
-    // Issue #241 (§35): the home directory whose `.kubic/roles` layer
+    // The home directory whose `.kubic/roles` layer
     // under the project documents. Absent means no global source — the
     // composition root passes the real home; tests inject a fixture.
     homeDir?: string;
@@ -427,19 +369,13 @@ const INTERRUPT_SIGNALS: readonly InterruptSignal[] = [
   'SIGHUP',
 ];
 
-// The bounded wait a worker CHILD gives the manager for an answer to a
-// challenged call (issue #105, §41.2): long enough for a human to read the
-// dialog, short enough that a run never looks hung. The child denies closed
-// with the named status when it elapses.
-const DEFAULT_WORKER_APPROVAL_BOUND_MS = 120_000;
-
 // Guard exhaustion surfaces as control flow, never as a lane failure:
-// caught below and mapped to budget_exhausted (--max-turns) or timeout
-// (wall clock) with the ref triple intact.
-class TurnBudgetError extends Error {
+// caught below and mapped to turn_limit (--max-turns) or timeout (wall
+// clock) with the ref triple intact.
+class TurnLimitError extends Error {
   readonly turns: number;
   constructor(turns: number) {
-    super(`turn budget exhausted after ${turns} turns`);
+    super(`turn limit reached after ${turns} turns`);
     this.turns = turns;
   }
 }
@@ -452,23 +388,8 @@ class WallClockError extends Error {
   }
 }
 
-// §71 child-side budget exhaustion (issue #208): the worker's own lane hit a
-// dimension of the KUBIC_BUDGET the manager handed down. Control flow, never a
-// lane failure: caught below and mapped to budget_exhausted (exit 3) with the
-// exact limit that tripped.
-export class BudgetExceededError extends Error {
-  readonly limit: BudgetLimit;
-  constructor(limit: BudgetLimit) {
-    super(
-      `budget ${BUDGET_EXHAUSTED} (limit=${limit}): the worker exceeded its configured ${limit} budget, exit ${RUN_EXIT_BUDGET}`,
-    );
-    this.name = 'BudgetExceededError';
-    this.limit = limit;
-  }
-}
-
 // An interrupt (SIGINT/SIGTERM/SIGHUP) ends the turn like a guard does:
-// control flow, mapped to `cancelled` (issue #280) after the drain — the
+// control flow, mapped to `cancelled` after the drain — the
 // run's exit code is 128+signo, the POSIX convention `kubic tui` uses.
 class InterruptedError extends Error {
   readonly signal: string;
@@ -488,7 +409,7 @@ function refs(
   };
 }
 
-// Issue #209 review: the user-facing overflow line must tell the truth.
+// The user-facing overflow line must tell the truth.
 // The decision hook fires for every decision (including abandon), but
 // only a retry_with_new_context compacts and retries — anything else
 // stays silent, and the failure terminus already reports the failure.
@@ -499,7 +420,7 @@ export function overflowRecoveryNotice(
   return `context overflow — compacting and retrying once (${decision.reason})`;
 }
 
-// Issue #209 review: the envelope record carries whether the retry
+// The envelope record carries whether the retry
 // happened, so --json distinguishes retried-then-failed (retried: true)
 // from decided-to-retry-but-compaction-refused and abandoned
 // (retried: false). Absent when the lane made no decision.
@@ -518,7 +439,7 @@ function finished(
   errorMessage?: string,
   signal?: string,
   failure?: ClassifiedFailure,
-  // Issue #209: the retry decision when the lane made one (solo overflow
+  // The retry decision when the lane made one (solo overflow
   // recovery) — strategy, reason, notBefore and whether the retry
   // happened, also on success.
   retry?: RetryRecord,
@@ -543,7 +464,7 @@ function storeFailure(
 ): HeadlessRunResult {
   const message = error instanceof Error ? error.message : String(error);
   const terminus = mapCaughtErrorToTerminus(error);
-  // Issue #155: a caught failure carries its §52 classification too, so the
+  // A caught failure carries its failure classification too, so the
   // envelope never has to guess the domain from the exit code.
   const failure =
     terminus === 'workspace_unavailable'
@@ -560,13 +481,13 @@ function storeFailure(
   };
 }
 
-// The named non-answer a completed run with no assistant text reports
-// (issue #129): the summary is the model's own output or this sentence —
-// never the operator's prompt echoed back as if it were a result.
+// The named non-answer a completed run with no assistant text reports: the
+// summary is the model's own output or this sentence — never the operator's
+// prompt echoed back as if it were a result.
 export const NO_ASSISTANT_TEXT_SUMMARY =
   '(no assistant text — the run settled without output)';
 
-// The lane's appended prompt sections (issue #240), shared by the headless
+// The lane's appended prompt sections, shared by the headless
 // and interactive boots: the `[agent] systemPromptFile` text first (the
 // user's own instructions), the skills block second (discovered context).
 // Undefined when neither is set, so the lane assembles its prompt
@@ -586,7 +507,7 @@ export function composePromptSections(
 // Final assistant text of the settled run for the result summary. A run
 // that left no assistant text yields undefined; the caller reports the
 // named non-answer (NO_ASSISTANT_TEXT_SUMMARY) instead of the prompt.
-// Takes the shared transcript (#400): newest assistant item wins.
+// Takes the shared transcript: newest assistant item wins.
 export function assistantSummary(
   items: readonly TranscriptItem[],
 ): string | undefined {
@@ -600,10 +521,10 @@ export function assistantSummary(
   return undefined;
 }
 
-// §78 terminus + §52 failure for a settled turn (issue #155): the §52 code
+// Terminus + failure for a settled turn: the failure code
 // and its message go through the same settlement kernel the lane record
-// does, so budget/approval/workspace/provider failures keep their 3/4/5/6
-// classes and the precise code rides beside the terminus.
+// does, so approval/workspace/provider failures keep their 4/5/6 classes
+// and the precise code rides beside the terminus.
 function failedTurnTerminus(outcome: TurnOutcome): LaneOutcomeTerminus {
   if (outcome.kind !== 'failed') return { terminus: 'failed' };
   return mapLaneOutcomeToFailure('failed', {
@@ -612,11 +533,10 @@ function failedTurnTerminus(outcome: TurnOutcome): LaneOutcomeTerminus {
   });
 }
 
-// §78 terminus for a guard that stopped the run before or instead of a
-// settlement (issue #280): an interrupt is `cancelled` (128+signo), a
-// wall-clock bound is `timeout` (exit 1 — never the budget code), and the
-// remaining guards — `--max-turns` and a configured §71 budget — are
-// `budget_exhausted` (exit 3) with the ref triple intact.
+// The terminus for a guard that stopped the run before or instead of a
+// settlement: an interrupt is `cancelled` (128+signo), a wall-clock bound is
+// `timeout` (exit 1), and `--max-turns` is `turn_limit` (exit 3), each with
+// the ref triple intact.
 function stoppedResult(
   id: string,
   error: Error,
@@ -635,66 +555,10 @@ function stoppedResult(
   if (error instanceof WallClockError) {
     return finished(id, 'timeout', error.message, error.message);
   }
-  const stopped = finished(
-    id,
-    'budget_exhausted',
-    error.message,
-    error.message,
-  );
-  // Issue #285 (§71 observability): a tripped §71 gate names its limit
-  // on the result, so the trajectory can record the breach without
-  // parsing the message. Issue #440: the worker child's KUBIC_BUDGET meter
-  // trips its own error, and names its limit the same way. Other guards
-  // (e.g. --max-turns) carry no limit.
-  return error instanceof ExtensionBudgetError ||
-    error instanceof BudgetExceededError
-    ? { ...stopped, budgetBreach: { limit: error.limit } }
-    : stopped;
+  return finished(id, 'turn_limit', error.message, error.message);
 }
 
-// Issue #440 (§71): the limits a run started with, as its trajectory records
-// them: the solo `--budget`, a worker child's KUBIC_BUDGET, or under both
-// the tighter bound of each dimension. Undefined when neither is set.
-const BUDGET_LIMIT_KEYS = [
-  'maxTokens',
-  'maxCostUsd',
-  'maxRuntimeMs',
-  'maxToolCalls',
-] as const;
-
-function runBudgetLimits(
-  flag: SoloBudgetLimits | undefined,
-  worker: OrchestratorBudget | undefined,
-): SoloBudgetLimits | undefined {
-  if (flag === undefined && worker === undefined) return undefined;
-  const limits: SoloBudgetLimits = {};
-  for (const key of BUDGET_LIMIT_KEYS) {
-    const bounds = [flag?.[key], worker?.[key]].filter(
-      (bound): bound is number => bound !== undefined,
-    );
-    if (bounds.length > 0) limits[key] = Math.min(...bounds);
-  }
-  return limits;
-}
-
-// Issue #440 (§71): what a resumed session already spent (its billed tokens
-// and cost, and its committed tool calls), read from the run's own open
-// storage, so its budget continues instead of restarting.
-async function sessionSpend(
-  session: SessionHandle,
-  context: Context,
-): Promise<RunBudgetPrior> {
-  const totals = totalSessionUsage(
-    await readSessionUsage(session.storage, context),
-  );
-  return {
-    tokens: totals.input + totals.output,
-    costUsd: totals.costUsd,
-    toolCalls: await readSessionToolCalls(session.storage, context),
-  };
-}
-
-// §46 capture of the run's transcript (#400's readers): the live conversation
+// Capture of the run's transcript (the readers): the live conversation
 // while the lane is open, the session storage otherwise. A read failure
 // leaves the trajectory without actions, never the run without its result.
 async function captureEntries(
@@ -789,7 +653,7 @@ async function appendPromptEntry(
     context,
   );
   try {
-    // Issue #265: a forked session's prompt lands on its lane conversation.
+    // A forked session's prompt lands on its lane conversation.
     const conversation =
       session.meta.conversation === undefined
         ? await harness.root(context)
@@ -811,7 +675,7 @@ async function appendPromptEntry(
   }
 }
 
-// #247: `submit` writes `pi.user` itself, so a run that reached its turn has
+// `submit` writes `pi.user` itself, so a run that reached its turn has
 // exactly ONE user entry. Every other exit path — no model, a refused role,
 // a signal between boot and the turn, a busy refusal — still keeps the
 // prompt durable (the pre-1.0 guarantee `kubic run -p` always had) through
@@ -848,86 +712,47 @@ async function ensurePromptDurable(
   }
 }
 
-// Issue #185 (§39, §68): the finished run reports its OWN usage — the
-// session's usage rollup (what `kubic cost` reads), the tool calls it
-// executed and the model that answered — so an orchestrator building a
-// worker's §68 metrics reads real numbers from the child's report. Read
-// after the session is closed; a run that never created a session, or a
-// read that fails, keeps the refs-only report (never invented numbers).
+// The finished run reports its OWN usage — the session's usage
+// rollup (what `kubic cost` reads), the tool calls it executed and the
+// model that answered. Read after the session is closed; a run that never
+// created a session, or a read that fails, keeps the refs-only report
+// (never invented numbers).
 
-// What the settled run leaves for its §46 trajectory (issue #383): filled
+// What the settled run leaves for its trajectory: filled
 // as the run boots, read once after it settles.
-// §67 (issue #191): read the manager-written task named by KUBIC_TASK_FILE.
-// Absent/empty means no task (a solo run, or a worker the manager gave no
-// grant); an unreadable or invalid file, or one naming a different worktree,
-// is a named refusal — never a half-applied grant.
-function readAgentTask(
-  bridge: Pick<FileBridge, 'readTextFile'>,
-  path: string | undefined,
-): { task?: AgentTask; error?: string } {
-  if (path === undefined || path === '') return {};
-  let raw: string;
-  try {
-    raw = bridge.readTextFile(path);
-  } catch (error) {
-    return {
-      error: `agent task ${path} is unreadable: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    return {
-      error: `agent task ${path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
-  const validation = validateAgentTask(parsed);
-  if (!validation.valid) {
-    return {
-      error: `agent task ${path} refused: ${validation.errors.join('; ')}`,
-    };
-  }
-  return { task: validation.task };
-}
-
 interface RunCapture {
   startedAt: number;
   sessionsRoot?: string;
   sessionId?: string;
   cwd?: string;
   model?: { provider: string; id: string };
-  // §38.3 (issue #225): the thinking level the lane actually booted with
+  // The thinking level the lane actually booted with
   // (post-clamp) — the trajectory names the applied level, the same source
   // as the envelope, never the request that may have been clamped.
   thinking?: string;
   role?: string;
-  /** §67 (issue #191): the manager's task, when this run was handed one. */
-  task?: AgentTask;
-  /** Issue #440 (§71): the KUBIC_BUDGET a worker child ran under. */
-  workerBudget?: OrchestratorBudget;
   skills: string[];
   entries: unknown[];
   lane?: RunOutcome['lane'];
   interrupted: boolean;
-  // Every provider key the request-time resolver has handed out so far
-  // (issue #359): what the debug channel, the session writes, the result and
-  // the trajectory are scrubbed of. Empty until a models.json key is used.
+  // Every provider key the request-time resolver has handed out so far: what
+  // the debug channel, the session writes, the result and the trajectory are
+  // scrubbed of. Empty until a models.json key is used.
   liveSecrets: () => string[];
 }
 
-// kubic run -p (issue #28) plus its §46 trajectory (issue #383): every run
+// kubic run -p plus its trajectory: every run
 // that attached a session writes <sessions-root>/<id>/trajectory.json when
 // it settles — completed or not — and the result's trajectory ref names
 // that file. A trajectory that cannot be written is reported on the warning
 // channel; it never changes the run's own result.
 
-// Issue #150: the `[lane]` debug line for a retry or compaction event, or
+// The `[lane]` debug line for a retry or compaction event, or
 // undefined for any other event. The 1.0 harness reports the attempt and the
-// error (#398's contract — no maxAttempts, no notBefore).
-// Issue #246: a lane fault (pi-durable `task_failed` — Pi 1.0 has no
-// `handler_error` event) maps to the §50 handler_error line, and a
-// committed response maps to the §50 [model] token line. Both reuse the
+// error (the contract — no maxAttempts, no notBefore).
+// A lane fault (pi-durable `task_failed` — Pi 1.0 has no
+// `handler_error` event) maps to the handler_error line, and a
+// committed response maps to the [model] token line. Both reuse the
 // spans vocabulary formatters, so every path emits byte-identical lines.
 export function laneActivityDebugLine(
   event: KubicLaneEvent,
@@ -958,23 +783,9 @@ export function laneActivityDebugLine(
   return undefined;
 }
 
-// Issue #364: the run's agent id. An orchestrated worker child carries its
-// orchestrator-assigned identity in KUBIC_WORKER_ID (set by launch, §3.8
-// allowlisted) — a non-empty value wins, so the worker's journal, reconcile
-// and trajectory entries are tagged with the worker id instead of 'root'
-// and `kubic diff --agent <id>` can see them. Blank means absent (issue
-// #159); without it the configured `[agent].name` applies, then 'root' —
-// the solo behaviour, byte for byte. `env` is injectable so tests drive
-// the precedence without touching the process environment.
-export function resolveRunAgentId(
-  depsAgentId: string | undefined,
-  env: Readonly<Record<string, string | undefined>> = process.env,
-): string {
-  const workerId = env.KUBIC_WORKER_ID;
-  // Review follow-up: a whitespace-only id is blank too — the
-  // trim-consistent blank test (issue #159); the raw value is returned
-  // otherwise, never the trimmed one.
-  if (workerId !== undefined && workerId.trim() !== '') return workerId;
+// The run's agent id: the configured `[agent].name`, else 'root'. It tags
+// the run's journal, reconcile and trajectory entries.
+export function resolveRunAgentId(depsAgentId: string | undefined): string {
   return depsAgentId ?? 'root';
 }
 
@@ -983,7 +794,7 @@ export async function runHeadlessPrompt(
   options: HeadlessRunOptions,
   deps: HeadlessRunDeps = {},
 ): Promise<HeadlessRunResult> {
-  // The settled run's §46 trajectory capture (issue #383).
+  // The settled run's trajectory capture.
   const capture: RunCapture = {
     startedAt: Date.now(),
     skills: [],
@@ -991,17 +802,17 @@ export async function runHeadlessPrompt(
     interrupted: false,
     liveSecrets: () => [],
   };
-  // Issue #148/#308: the live lane model and the approval posture the lane
+  // The live lane model and the approval posture the lane
   // was installed with travel on the result (and so the --json envelope),
   // whatever path the run ends on.
   const report: {
     model?: string;
     posture?: 'approvals' | 'full-access';
-    // Issue #278 (§19): the run's §19 mode, set from the session record
+    // The run's mode, set from the session record
     // once the session exists and merged onto the result below.
     mode?: RunMode;
   } = {};
-  // The base the run starts from (issue #267): captured before any turn, so
+  // The base the run starts from: captured before any turn, so
   // an agent that commits mid-run cannot move the baseline it is judged by.
   const base = gitHeadOf(deps.env?.cwd ?? process.cwd());
   const result = await runHeadlessPromptOnce(
@@ -1031,7 +842,7 @@ export async function runHeadlessPrompt(
       settled = {
         ...settledMode,
         usage: measured.usage,
-        // Issue #148: the live lane model reported by the boot wins over the
+        // The live lane model reported by the boot wins over the
         // session's recorded usage model — a pin may have switched models in
         // this run, and the result must name the one that actually ran.
         ...(settledMode.model !== undefined || measured.model === undefined
@@ -1042,7 +853,7 @@ export async function runHeadlessPrompt(
       settled = settledMode;
     }
   }
-  // Issue #359: a provider that echoes the key it rejected puts the value in
+  // A provider that echoes the key it rejected puts the value in
   // the run's own failure text. The result (the --json envelope) and the
   // trajectory's prompt are scrubbed of every live provider key before either
   // leaves the run; the session JSONL (which the trajectory's entries are
@@ -1051,7 +862,7 @@ export async function runHeadlessPrompt(
   const scrub = <T>(value: T): T =>
     liveKeys.length === 0 ? value : (redactSecretValues(value, liveKeys) as T);
   settled = scrub(settled);
-  // kubic run -p plus its §46 trajectory (issue #383): every run that
+  // kubic run -p plus its trajectory: every run that
   // attached a session writes <sessions-root>/<id>/trajectory.json when it
   // settles — completed or not — and the result's trajectory ref names that
   // file. A trajectory that cannot be written is reported on the warning
@@ -1059,7 +870,7 @@ export async function runHeadlessPrompt(
   if (capture.sessionId === undefined || capture.sessionsRoot === undefined) {
     return settled;
   }
-  // §48 gates after settlement (issue #267): the configured `[verify]`
+  // Gates after settlement: the configured `[verify]`
   // commands run in the run's worktree — the same workspace the lane ran
   // in — and their verdicts become the trajectory's `signal:*` labels. A
   // run that never reached a workspace (a refused boot) has nothing to
@@ -1080,48 +891,13 @@ export async function runHeadlessPrompt(
       );
     }
   }
-  // Issue #285 (§71 observability): the trajectory names the §71
-  // budget the run started with, the measured spend and — on a tripped
-  // run — the breach. Issue #440: a worker child's KUBIC_BUDGET is recorded
-  // the same way. Unbounded runs carry no block at all.
-  const limits = runBudgetLimits(options.budget, capture.workerBudget);
-  const trajectoryBudget =
-    limits === undefined
-      ? undefined
-      : {
-          limits,
-          ...(settled.usage === undefined
-            ? {}
-            : {
-                usage: {
-                  tokens: settled.usage.input + settled.usage.output,
-                  costUsd: settled.usage.costUsd,
-                  toolCalls: settled.usage.toolCalls,
-                },
-              }),
-          ...(settled.budgetBreach === undefined
-            ? {}
-            : { exhausted: { ...settled.budgetBreach } }),
-        };
   try {
     const path = persistRunTrajectory({
       sessionsRoot: capture.sessionsRoot,
       sessionId: capture.sessionId,
-      ...(trajectoryBudget === undefined ? {} : { budget: trajectoryBudget }),
       agentId: resolveRunAgentId(deps.agentId),
       role: capture.role ?? 'solo',
       prompt: scrub(prompt),
-      // §67 (issue #191): the worker's task is recorded with the run, so a
-      // trajectory names the grant the agent actually ran under.
-      ...(capture.task === undefined
-        ? {}
-        : {
-            task: {
-              taskId: capture.task.taskId,
-              objective: capture.task.objective,
-              role: capture.task.role,
-            },
-          }),
       entries: capture.entries,
       ...(capture.model === undefined ? {} : { model: capture.model }),
       ...(capture.thinking === undefined ? {} : { thinking: capture.thinking }),
@@ -1147,7 +923,7 @@ export async function runHeadlessPrompt(
   }
 }
 
-// §48 gates after settlement (issue #267): the `[verify]` commands run in
+// Gates after settlement: the `[verify]` commands run in
 // the run's worktree, then — when the run started from a git revision — in
 // a throwaway detached checkout of that revision, so a gate that passed
 // before the run and fails after it is recorded as a regression. The
@@ -1184,12 +960,12 @@ async function runHeadlessPromptOnce(
   report: {
     model?: string;
     posture?: 'approvals' | 'full-access';
-    // Issue #278 (§19): the run's §19 mode, set from the session record.
+    // The run's mode, set from the session record.
     mode?: RunMode;
   },
   capture: RunCapture,
 ): Promise<HeadlessRunResult> {
-  // Issue #148: every result after the lane booted names the model the
+  // Every result after the lane booted names the model the
   // lane actually ran (the live lane model, never the bare selection).
   const result = await runHeadlessPromptImpl(
     prompt,
@@ -1210,7 +986,7 @@ async function runHeadlessPromptImpl(
   report: {
     model?: string;
     posture?: 'approvals' | 'full-access';
-    // Issue #278 (§19): the run's §19 mode, set from the session record.
+    // The run's mode, set from the session record.
     mode?: RunMode;
   },
   capture: RunCapture,
@@ -1237,7 +1013,7 @@ async function runHeadlessPromptImpl(
   }
   // Same ceiling as the CLI (defense-in-depth for direct callers): above
   // 2^31-1 ms setTimeout clamps to 1 ms, which would fire the "bound"
-  // immediately and misreport budget_exhausted.
+  // immediately and misreport a timeout.
   if (
     options.timeoutMs !== undefined &&
     options.timeoutMs > MAX_RUN_TIMEOUT_MS
@@ -1252,13 +1028,13 @@ async function runHeadlessPromptImpl(
     const invalid = `invalid maxTurns ${JSON.stringify(options.maxTurns)} (need a positive integer of turns)`;
     return finished('unassigned', 'usage', invalid, invalid);
   }
-  // Issue #183 (§29.4): the turn prompt `--invoke-skill` expands to.
+  // The turn prompt `--invoke-skill` expands to.
   // Assigned after the skills boot below; every downstream prompt use
   // reads this, never the raw parameter.
   let effectivePrompt = prompt;
-  // §40.1 mechanism 1 (issue #273): the per-invocation tool selection is
+  // The per-invocation tool selection is
   // validated before any lane boots — mutual exclusion, unknown names and
-  // the §40.3 agreement with the permission classes all fail closed as the
+  // the agreement with the permission classes all fail closed as the
   // usage terminus (exit 2), never a silently narrowed run.
   if (options.tools !== undefined && options.noTools === true) {
     const invalid = '--tools and --no-tools are mutually exclusive';
@@ -1284,21 +1060,9 @@ async function runHeadlessPromptImpl(
       );
     }
   }
-  // §71 child-side budget (issue #208): the manager hands each worker its
-  // resolved spec through the §3.8 allowlisted KUBIC_BUDGET. A malformed
-  // payload fails closed as a usage terminus — a silently dropped limit is
-  // the false sense of cost control this issue exists to remove.
-  let runBudget: OrchestratorBudget | undefined;
-  try {
-    runBudget = parseWorkerBudgetEnv(process.env.KUBIC_BUDGET);
-  } catch (error) {
-    const invalid = error instanceof Error ? error.message : String(error);
-    return finished('unassigned', 'usage', invalid, invalid);
-  }
-  if (runBudget !== undefined) capture.workerBudget = runBudget;
   const root = deps.sessionsRoot ?? defaultSessionsRoot();
   const context = deps.context ?? BACKGROUND_CONTEXT;
-  // §50 debug channel: `--debug` routes the span lines AND the run's
+  // Debug channel: `--debug` routes the span lines AND the run's
   // diagnostics (extension receipt, reconcile/overlap notices, skill-load
   // reports, drain failures) to one sink. An injected deps.debug still wins;
   // without either, the diagnostics are off — the prod `kubic run` wires
@@ -1307,9 +1071,9 @@ async function runHeadlessPromptImpl(
     options.debug === true
       ? (deps.debugSink ?? ((line: string) => console.error(line)))
       : undefined;
-  // The §50 vocabulary is closed: a diagnostic without its own class rides
+  // The vocabulary is closed: a diagnostic without its own class rides
   // the sink as `[session]`.
-  // Issue #359: every resolved provider key is redacted from the debug
+  // Every resolved provider key is redacted from the debug
   // channel — the values are known only once the resolver has run, so the
   // redaction reads them at emit time.
   const rawDebug: ((line: string) => void) | undefined =
@@ -1322,36 +1086,8 @@ async function runHeadlessPromptImpl(
     rawDebug === undefined
       ? undefined
       : redactingSink(rawDebug, () => capture.liveSecrets());
-  // Extension startup (issue #93): the solo lane loads the first-party
-  // bundle set through the trust gates BEFORE any store or lane exists — a
-  // missing/refused bundle fails this run closed (ExtensionStartupError maps
-  // to `failed` below with the named message) instead of running bare. The
-  // receipt always fires, so refusals are reported, never swallowed.
-  let extensions: BundleLoad | undefined;
-  try {
-    extensions =
-      deps.extensions ??
-      (await loadExtensionStartup('run', process.cwd(), {
-        receipt: (line) => debug?.(line),
-        // Issue #283 (§71): an explicit test double wins; otherwise the
-        // opt-in budget rides into the prod startup options — absence
-        // keeps the historical bare call (empty limits, never defaulted).
-        ...(deps.extensionOptions === undefined
-          ? options.budget === undefined
-            ? {}
-            : {
-                options: prodExtensionStartupOptions(
-                  process.cwd(),
-                  options.budget,
-                ),
-              }
-          : { options: deps.extensionOptions }),
-      }));
-  } catch (error) {
-    return storeFailure(undefined, error);
-  }
-  // §49.3 spans on the live path (issue #98): the run, its lane accept/drive
-  // steps and every harness tool call are recorded on the §29 SpanRecorder
+  // Spans on the live path: the run, its lane accept/drive
+  // steps and every harness tool call are recorded on the SpanRecorder
   // and persisted to <root>/<id>/spans.jsonl when the run settles. The
   // recorder is created before the store so a store failure still leaves a
   // (run-only) trace behind.
@@ -1359,7 +1095,7 @@ async function runHeadlessPromptImpl(
   const runSpan = spans.startRun();
   // Every session write goes through the one bridge, so it is the choke
   // point for scrubbing the live provider keys out of the session JSONL and
-  // the span artifact (issue #359): a provider echoing a rejected key in its
+  // the span artifact: a provider echoing a rejected key in its
   // error body must not persist it.
   const bridge = redactBridgeWrites(createNodeFileBridge(root), () =>
     capture.liveSecrets(),
@@ -1373,7 +1109,7 @@ async function runHeadlessPromptImpl(
             store,
             {
               cwd: deps.env?.cwd ?? process.cwd(),
-              // Issue #278 (§19): the run's mode is always recorded —
+              // The run's mode is always recorded —
               // explicit `--autonomous` or off by default.
               mode: options.autonomous === true ? 'autonomous' : 'interactive',
             },
@@ -1386,27 +1122,20 @@ async function runHeadlessPromptImpl(
   const id = session.id;
   capture.sessionId = id;
   capture.sessionsRoot = root;
-  // Issue #278 (§19): the result and envelope name the session's recorded
+  // The result and envelope name the session's recorded
   // mode — a resumed or attached session keeps the creating run's mode.
-  // A pre-#278 record (no mode) falls back to this invocation's flag.
+  // A pre record (no mode) falls back to this invocation's flag.
   report.mode =
     session.meta.mode ??
     (options.autonomous === true ? 'autonomous' : 'interactive');
-  // Issue #246: the §50 [session] line names the session and its #164
-  // parent. Best-effort (telemetry never fails a run): a fresh or torn
-  // session simply has no parent.
-  try {
-    const meta = await readSessionMetadata(session.storage, context);
-    debug?.(`[session] id=${id} parent=${meta?.parentSessionId ?? 'none'}`);
-  } catch {
-    // A failed metadata read is not a run failure.
-  }
-  // Declared outside the try so the `finally` sweep below can reach it
-  // (issue #87): assigned once the lane's env (the workspace root) exists.
+  // The [session] debug line names the session.
+  debug?.(`[session] id=${id}`);
+  // Declared outside the try so the `finally` sweep below can reach it:
+  // assigned once the lane's env (the workspace root) exists.
   let reconciliation: RunReconciliation | undefined;
-  // Issue #325: the installed policy's end-of-session posture check.
+  // The installed policy's end-of-session posture check.
   let settlePolicy: (() => void) | undefined;
-  // Issue #109: the booted lane is hoisted so every exit path can stop the
+  // The booted lane is hoisted so every exit path can stop the
   // in-flight turn — a guard firing mid-turn must not abandon the tool
   // processes it interrupted.
   let solo: SoloLane | undefined;
@@ -1414,7 +1143,7 @@ async function runHeadlessPromptImpl(
   // states the durable conversation abort (plus the kill drain) instead of
   // dropping handles for work that is still running.
   let abandoned = false;
-  // The run's guard (issue #84): every wait runs on this cancellable context,
+  // The run's guard: every wait runs on this cancellable context,
   // cancelled by the wall clock, the turn count (guard) or a signal. The
   // DURABLE stop is conversation.abort() on the divert paths; this context
   // only stops waiting.
@@ -1432,17 +1161,17 @@ async function runHeadlessPromptImpl(
     guardError ??= error;
     guard.cancel(turnAbort(reason, error.message));
   };
-  // Counted from the committed usage events (#398): one per assistant
+  // Counted from the committed usage events: one per assistant
   // response, the turn unit `--max-turns` bounds.
   let turns = 0;
 
-  // The run's guard timer (issue #84): armed with the wall-clock bound once
+  // The run's guard timer: armed with the wall-clock bound once
   // the session exists, cleared on every exit path.
   let deadline: ReturnType<typeof setTimeout> | undefined;
   // Interrupts (SIGINT/SIGTERM/SIGHUP): installed from here until the finally
   // has drained, so the default handler can no longer kill the run past its
   // own cleanup. The first signal kills the running children synchronously
-  // (they sit in their own process groups and never saw the signal — D1 keys
+  // (they sit in their own process groups and never saw the signal — keys
   // them by conversation id) and cancels the guard; the listeners detach at
   // once, so a second Ctrl-C force-quits through the default handler.
   const signals = deps.signals ?? process;
@@ -1494,13 +1223,12 @@ async function runHeadlessPromptImpl(
       // write is not a run failure.
     }
   };
-  // Solo no-isolation notice (issue #89): the trust model is announced on
+  // Solo no-isolation notice: the trust model is announced on
   // stderr before the first turn, once per process start, using the module
-  // strings verbatim so `kubic tui` reads identically. Suppressed for
-  // orchestrator-managed children (KUBIC_WORKER_ID set — `kubic doctor`
-  // reports that mode's own worktree limit) and for the documented
-  // KUBIC_NO_NOTICE opt-out. stderr, never stdout: `--json` stays parseable.
-  // Issue #447: with a progress sink the notice is its compact one-liner,
+  // strings verbatim so `kubic tui` reads identically. Suppressed by the
+  // documented KUBIC_NO_NOTICE opt-out. stderr, never stdout: `--json`
+  // stays parseable.
+  // With a progress sink the notice is its compact one-liner,
   // printed by `progress.begin` once the lane has booted (still before the
   // first turn); the three-line block stays for every other run.
   const soloNotice = shouldEmitSoloNotice(process.env);
@@ -1513,68 +1241,30 @@ async function runHeadlessPromptImpl(
     bridge.createDir(join(id, 'journal'));
     // The wall clock starts with the run's own work (the pending settlement
     // and the turn), not with the boot: a slow boot is not a slow turn. The
-    // prompt entry is written by `submit` itself (#247), so there is no
+    // prompt entry is written by `submit` itself, so there is no
     // pre-boot prompt write to fail here.
-    // Review #283 (med): an accepted `maxRuntimeMs` with no live path
-    // was a dead limit. The guard arms at the tighter of the two
-    // wall-clock bounds — a breached --budget trips the §71 error
-    // (`budget_exhausted`, exit 3), never the timeout one.
     const boundMs = options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
-    const budgetMs = options.budget?.maxRuntimeMs;
-    const wallClockBudget = budgetMs !== undefined && budgetMs <= boundMs;
     deadline = setTimeout(
-      () =>
-        tripGuard(
-          wallClockBudget
-            ? new ExtensionBudgetError('wallClock')
-            : new WallClockError(boundMs),
-        ),
-      wallClockBudget && budgetMs !== undefined ? budgetMs : boundMs,
+      () => tripGuard(new WallClockError(boundMs)),
+      boundMs,
     );
     const afterBound = bootInterrupted();
     if (afterBound !== undefined) return afterBound;
-    // Readiness handshake (issue #94; §13): when this process IS a worker
-    // (`kubic orchestrate` launches it with KUBIC_WORKER_ID in the §3.8
-    // allowlist), announce that the worker is up the moment its session is
-    // attached and its prompt recorded. The orchestrator's launch waits
-    // for exactly this line — a child that never prints it is terminal
-    // SPAWN_FAILED instead of a silent hang, and the latency to it is the
-    // §61 startup sample. An ordinary `kubic run` has no worker id and
-    // prints nothing extra.
-    const workerId = process.env.KUBIC_WORKER_ID;
-    if (workerId !== undefined && workerId !== '') {
-      process.stdout.write(`${readyMarker(workerId)}\n`);
-    }
-    // §12.1 role selection (issue #99; issue #133 adds the config layers):
+    // Role selection (adds the config layers):
     // `--role` loads the role document and derives ALL THREE halves of the
     // lane boot from it — the prompt text (the document's `## Prompt`), the
     // tool allowlist (the resolved set), and the model default (a layer's
     // `[roles.<name>].model` pin). It resolves BEFORE the model selection so
     // the pin can act as the selection default. All four refusals are
     // fail-closed with a named reason: an unknown role, a contradictory
-    // document (§40.3), a document with no instructions, and a parse failure.
+    // document, a document with no instructions, and a parse failure.
     // Nothing is invented, and an absent --role leaves the solo boot
     // byte-identical.
     let role: { resolved: ResolvedRole; prompt: string } | undefined;
-    // Issue #181 (§29.4): the resolved role document's `skills` list for
+    // The resolved role document's `skills` list for
     // the skill gate — hoisted because `selected` lives in the branch.
     let roleDocSkills: string[] | undefined;
-    // §67 (issue #191): the manager hands the worker its task — the
-    // capability grant travels with the work, so the child registers exactly
-    // `task.toolNames` instead of re-deriving a role from its own worktree
-    // (a checkout of HEAD, not the working tree the plan was composed from).
-    // A task that cannot be read or validated fails the run closed, and a
-    // task naming a different worktree than the child's cwd is a mismatch,
-    // never a silent adaptation.
-    const agentTask = readAgentTask(bridge, process.env.KUBIC_TASK_FILE);
-    if (agentTask.error !== undefined) {
-      return finished(id, 'failed', agentTask.error, agentTask.error);
-    }
-    const task = agentTask.task;
-    if (task !== undefined) {
-      capture.task = task;
-    }
-    // §58 enterprise gates (issue #288): one local view of the resolved
+    // Enterprise gates: one local view of the resolved
     // policy, so the role resolution, the model selection and the lane tool
     // set all read the same object.
     const enterprisePolicy = deps.modelPolicy;
@@ -1583,29 +1273,19 @@ async function runHeadlessPromptImpl(
         ? (tool: string): boolean =>
             isToolAllowedByEnterprise(enterprisePolicy, tool)
         : undefined;
-    // The stored model of a resumed session is gated too (issue #288): the
+    // The stored model of a resumed session is gated too: the
     // selection is checked at boot, the stored one only by this closure.
     const modelGate =
       enterprisePolicy !== undefined && hasModelPolicy(enterprisePolicy)
         ? (provider: string, modelId: string): boolean =>
             isModelAllowed(enterprisePolicy, provider, modelId)
         : undefined;
-    if (task !== undefined) {
-      // The task IS the assignment: its role name and tool set are
-      // authoritative, and the prompt was composed by the manager (it already
-      // carries the role's `## Prompt` text). No role document is read, so an
-      // uncommitted `.kubic/roles/<name>.md` in the manager's working tree
-      // still gives the worker the tool set the manager resolved.
-      capture.role = task.role;
-      debug?.(
-        `[policy] task=${task.taskId} role=${task.role} tools=${task.toolNames.join(',')}`,
-      );
-    } else if (options.role !== undefined) {
+    if (options.role !== undefined) {
       const rolesBridge = createNodeFileBridge(
         deps.roles?.cwd ?? process.cwd(),
       );
       const rolesCwd = deps.roles?.cwd ?? process.cwd();
-      // Issue #229: role documents resolve at the project root, so
+      // Role documents resolve at the project root, so
       // `--role` from a subdirectory finds `<root>/.kubic/roles/*.md`.
       const rolesRoot = findProjectRoot(rolesBridge, rolesCwd, homedir());
       let selected: SelectedRole;
@@ -1618,7 +1298,7 @@ async function runHeadlessPromptImpl(
           ...(deps.roles?.layers === undefined
             ? {}
             : { layers: deps.roles.layers }),
-          // Issue #430 (§33, L-D27): an untrusted root's documents are
+          // An untrusted root's documents are
           // withheld — `--role` naming one refuses with the trust message.
           ...(deps.roles?.trusted === undefined
             ? {}
@@ -1626,12 +1306,12 @@ async function runHeadlessPromptImpl(
           ...(deps.roles?.trustProject === undefined
             ? {}
             : { trustProject: deps.roles.trustProject }),
-          // Issue #241 (§35): the global `~/.kubic/roles` layer under the
+          // The global `~/.kubic/roles` layer under the
           // project documents — absent means no global source.
           ...(deps.roles?.homeDir === undefined
             ? {}
             : { home: deps.roles.homeDir }),
-          // §58 enterprise policy (issue #288): a role document declaring a
+          // Enterprise policy: a role document declaring a
           // denied tool is refused here, by name, before the lane boots.
           ...(enterprisePolicy === undefined
             ? {}
@@ -1643,7 +1323,7 @@ async function runHeadlessPromptImpl(
       }
       let promptText: string;
       try {
-        // The prompt comes from the winning document (issue #203): a repo
+        // The prompt comes from the winning document: a repo
         // override's text, or the preset embedded in the binary.
         promptText = rolePromptFor(selected.doc, selected.markdown);
       } catch (error) {
@@ -1657,34 +1337,30 @@ async function runHeadlessPromptImpl(
       roleDocSkills = selected.doc.skills;
       capture.role = selected.resolved.name;
     } else {
-      // Issue #246: the stock solo run resolves no role document — the
-      // §50 [policy] line still names the default role it runs as.
+      // The stock solo run resolves no role document — the
+      // [policy] line still names the default role it runs as.
       debug?.(`[policy] role=solo (default)`);
     }
     // A refused models.json is a config error the user must see: it goes
     // to the warning channel unconditionally; a successful load is a
     // receipt for the debug channel only.
     let models: MutableModels;
-    // Issue #221: the implicit pick only considers customs and built-ins
+    // The implicit pick only considers customs and built-ins
     // whose auth is configured — a keyless built-in is never picked.
     let fallbackProviders: readonly string[] | undefined;
     if (deps.models === undefined) {
-      // Request-time provider keys (issue #359, §36.1): a models.json key is
-      // resolved per request and each use lands in the §60 ledger of the
-      // run's workspace — a worker's under its own worktree root.
-      const worker = process.env.KUBIC_WORKER_ID;
+      // Request-time provider keys: a models.json key is
+      // resolved per request and each use lands in the ledger of the
+      // run's workspace.
       let identityWords: string[] | undefined;
       const keyResolver = createLedgerModelKeyResolver({
         workspace: deps.env?.cwd ?? process.cwd(),
-        role:
-          role?.resolved.name ??
-          (worker === undefined || worker === '' ? 'root' : `worker:${worker}`),
+        role: role?.resolved.name ?? 'root',
         sessionId: () => id,
-        mode: worker === undefined || worker === '' ? 'solo' : 'orchestrator',
         onError: (message) =>
           debug?.(`[session] credential use not audited: ${message}`),
         // A dummy key that IS its provider's name (LM Studio's `lm-studio`)
-        // is identity, not a secret (issue #359): the catalog's provider and
+        // is identity, not a secret: the catalog's provider and
         // model ids are read once assembled — a line emitted before that
         // (the models receipts) has nothing to exempt yet.
         identity: () => {
@@ -1694,26 +1370,17 @@ async function runHeadlessPromptImpl(
           identityWords = catalogIdentity(catalog);
           return identityWords;
         },
-        // `!command` secret refs (issue #224) execute in the run's
+        // `!command` secret refs execute in the run's
         // workspace through the production runner — rerun per request.
         runCommand: createSecretCommandRunner({
           cwd: deps.env?.cwd ?? process.cwd(),
         }),
       });
       capture.liveSecrets = keyResolver.live;
-      // Worker role credentials (issue #200; §36.3): when this process IS an
-      // orchestrator worker, its provider key travelled as a
-      // KUBIC_ROLE_<role>_* grant. The models assembly reads the grant back
-      // under the provider-key names its auth resolution asks for; the plain
-      // names exist only in this view, never in the child's process env. A
-      // plain `kubic run` holds no grant, so the view is the identity.
-      const modelsEnv = withRoleGrant(
-        Object.fromEntries(
-          Object.entries(process.env).filter(
-            (entry): entry is [string, string] => entry[1] !== undefined,
-          ),
+      const modelsEnv = Object.fromEntries(
+        Object.entries(process.env).filter(
+          (entry): entry is [string, string] => entry[1] !== undefined,
         ),
-        options.role ?? 'worker',
       );
       const assembled = await assembleModels(
         deps.modelsCwd ?? process.cwd(),
@@ -1759,10 +1426,10 @@ async function runHeadlessPromptImpl(
     try {
       // An explicit pin (replay re-execution at the declared model, or the
       // `[model]`/env/cli pin runtimeModelPin projects) wins over default
-      // selection; the role layer's own `provider/id` pin (issue #133) is
+      // selection; the role layer's own `provider/id` pin is
       // the next default, and `kubic run` with neither takes the first
       // usable provider (customs first; never a keyless built-in). The
-      // §58 enterprise policy (issue #288) gates the explicit/role
+      // Enterprise policy gates the explicit/role
       // selection and the implicit provider pool the same way on this
       // path and on `kubic tui`.
       const explicitSelection = fauxPinned
@@ -1775,7 +1442,7 @@ async function runHeadlessPromptImpl(
         roleSelection,
         fallbackProviders,
         enterprisePolicy,
-        // The role's allowed set (issue #255; §38.2) gates the
+        // The role's allowed set gates the
         // explicit/role selection and the implicit pick alike.
         roleModelScope(role?.resolved),
       );
@@ -1792,80 +1459,18 @@ async function runHeadlessPromptImpl(
     }
     capture.model = { provider: model.provider, id: model.id };
     const env = deps.env ?? new NodeExecutionEnv(process.cwd());
-    // §67 (issue #191): the task names the worktree the child must run in —
-    // a mismatch is a fail-closed refusal, never a silent adaptation. The
-    // physical path is compared (the env's own realpath), so a symlinked
-    // worktree root is the same worktree.
-    if (task !== undefined) {
-      // The compare needs an UNCONFINED physical path: the env's own
-      // `realpath` confines to `env.cwd` first, so a same-tree path spelled
-      // differently (a logical root against a physical cwd) would throw and
-      // read as a mismatch — a false refusal, not a normalized compare. The
-      // bridge resolves absolute paths without confinement; a path that
-      // cannot be resolved compares as null and is reported.
-      const unconfined = createNodeFileBridge(env.cwd);
-      const physical = (path: string): string | null => {
-        try {
-          return unconfined.realPath?.(path) ?? path;
-        } catch {
-          return null;
-        }
-      };
-      if (physical(task.worktree) !== physical(env.cwd)) {
-        const message = `agent task '${task.taskId}' names worktree ${task.worktree}, but this run is in ${env.cwd}`;
-        return finished(id, 'failed', message, message);
-      }
-    }
     capture.cwd = env.cwd;
-    // Installed policy (issue #86; §40, §41): the composition root derives
+    // Installed policy: the composition root derives
     // the classes and interceptor options the lane runs on, ONCE, from the
     // same function doctor reads (host/approvals.installSoloPolicy). Config-
-    // sourced classes (issue #90) replace the documented SOLO_DEFAULTS; the
+    // sourced classes replace the documented SOLO_DEFAULTS; the
     // destructive/network/confine guards and the approval ask are installed
     // either way, so a run with no config is no longer a run with no policy.
     // The workspace root is explicit — the lane cannot invent one.
-    // Per-worker approvals (issue #105): when this process IS an
-    // orchestrator-managed worker child, the orchestration's run told it where
-    // the ask mailbox is. The seat published there is what turns a challenged
-    // call into a question for the USER instead of a dead end.
-    const approvalMailboxDir = process.env.KUBIC_APPROVALS_DIR;
-    // Issue #149: the manager's public verification key. An answer in the
-    // mailbox is a verdict only when it carries this manager's MAC — the
-    // mailbox is a directory the worker itself can write, so without the key
-    // there is nothing to verify and no seat to attach.
-    const approvalVerifyKey = process.env.KUBIC_APPROVALS_VERIFY_KEY;
-    // Issue #230: the manager hands its child a bound below its own config
-    // maxPendingMs; absent or malformed keeps the shipped child default.
-    const workerBoundRaw = process.env.KUBIC_APPROVALS_BOUND_MS;
-    const workerBoundMs =
-      workerBoundRaw !== undefined && /^[1-9]\d*$/.test(workerBoundRaw)
-        ? Number(workerBoundRaw)
-        : DEFAULT_WORKER_APPROVAL_BOUND_MS;
-    const approvalsSeat =
-      approvalMailboxDir === undefined ||
-      approvalMailboxDir.trim() === '' ||
-      approvalVerifyKey === undefined ||
-      approvalVerifyKey.trim() === ''
-        ? undefined
-        : createWorkerMailboxSeat({
-            dir: approvalMailboxDir,
-            // The child's own bound. It sits BELOW the orchestration's bound on
-            // purpose: the child denies closed with the named status rather
-            // than outliving the run that would answer it.
-            maxPendingMs: workerBoundMs,
-            verifyKey: approvalVerifyKey,
-            // Issue #159: the §12 role this child was booted as, so the ask it
-            // publishes (`kubic audit`) names the role that asked, not a
-            // hardcoded label. Absent means an unroled worker.
-            role: options.role ?? 'worker',
-            // A refused (unsigned, forged or stale) answer is named on the
-            // debug surface instead of reading as a silent denial.
-            onRefused: (detail) => debug?.(`approvals: ${detail}`),
-          });
     const warnLine =
       deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`));
-    // §41.4 (issue #308): the explicit flag enables full access for THIS
-    // session through the one host enable path (posture.json + one §60 row +
+    // The explicit flag enables full access for THIS
+    // session through the one host enable path (posture.json + one audit row +
     // the shared warning) BEFORE the policy is installed, so the lane boots
     // under the posture the user asked for.
     const fullAccessGrant =
@@ -1879,13 +1484,13 @@ async function runHeadlessPromptImpl(
               debug?.(`audit: ledger append failed: ${message}`),
           })
         : undefined;
-    // The `provider/id` the §60 rows name (issue #148): seeded with the
+    // The `provider/id` the audit rows name: seeded with the
     // selection and re-pointed at the model the lane REPORTS once the boot
     // has applied the stored-model rule — the policy is installed before the
     // lane exists, so it reads this at record time instead of freezing the
     // pre-boot pick.
     let liveModelRef = `${model.provider}/${model.id}`;
-    // §60 audit identity (issue #282): the base revision this run started
+    // Audit identity: the base revision this run started
     // from — `git rev-parse HEAD` captured once here, `none` outside git.
     // The policy is installed before the lane boots, so the revision is
     // resolved now and carried on the install.
@@ -1902,7 +1507,7 @@ async function runHeadlessPromptImpl(
         })
         .wait(),
     );
-    // The thinking level the lane runs (issue #282): re-pointed at the
+    // The thinking level the lane runs: re-pointed at the
     // conversation's agent document once the boot has applied the stored
     // level — read at record time, like the model.
     let liveThinkingRef: string | undefined;
@@ -1910,17 +1515,13 @@ async function runHeadlessPromptImpl(
       deps.policy ??
       installSoloPolicy({
         workspace: env.cwd,
-        // Issue #196 (§40.2): the lane enforces the most restrictive
+        // The lane enforces the most restrictive
         // merge of the config classes and the role's — a role declaring
         // `network: none` runs under it even when config allows full.
-        // A worker child's task carries the manager-planned classes
-        // (merged again with the child's own config — the tightest of
-        // the three wins); otherwise the `--role` document's classes.
-        // No grant anywhere means the config (or the lane default).
+        // No role means the config (or the lane default).
         ...((): { classes?: PermissionClasses; requires?: string[] } => {
-          const grantClasses =
-            task?.resources?.classes ?? role?.resolved.classes;
-          const requires = task?.resources?.requires ?? role?.resolved.requires;
+          const grantClasses = role?.resolved.classes;
+          const requires = role?.resolved.requires;
           if (grantClasses === undefined)
             return {
               ...(deps.policyClasses === undefined
@@ -1939,44 +1540,23 @@ async function runHeadlessPromptImpl(
         // The layer's own record, so the posture's `source` is the same
         // answer doctor prints — never inferred from the object's shape.
         source: deps.policySource ?? 'default',
-        // Issue #230: the configured approval policy, never the defaults.
+        // The configured approval policy, never the defaults.
         ...(deps.approvals ?? {}),
         sessionDir: join(root, id),
-        // The session root in use is refused control-plane state (#324).
+        // The session root in use is refused control-plane state.
         sessionsRoot: root,
-        // §60 audit identity for the ledger record of each resolved ask.
+        // Audit identity for the ledger record of each resolved ask.
         sessionId: id,
         model: () => liveModelRef,
-        // Issue #282: the thinking level at record time, and the base
+        // The thinking level at record time, and the base
         // revision captured above.
         thinking: () => liveThinkingRef,
         base: runBase,
-        // Per-worker approvals (issue #105): an orchestrator-managed child
-        // (`kubic orchestrate` set KUBIC_APPROVALS_DIR) attaches the mailbox
-        // seat, so a challenged call it cannot answer itself reaches the USER
-        // through the manager instead of dying at "no approval surface". The
-        // wait is bounded inside the seat, so a manager that never answers
-        // denies closed rather than hanging the child's turn.
-        ...(approvalsSeat === undefined
-          ? {}
-          : { answer: approvalsSeat, maxPendingMs: workerBoundMs }),
-        // Issue #279: a worker child's §60 records are orchestrator records
-        // in the main repo ledger (seat-answered asks: the manager's).
-        ...((): {
-          orchestratedWorker?: {
-            workerId: string;
-            orchestratorSession: string;
-          };
-        } => {
-          const worker = orchestratedWorkerFromEnv(process.env);
-          return worker === undefined ? {} : { orchestratedWorker: worker };
-        })(),
       });
     report.posture = installed.posture.fullAccess ? 'full-access' : 'approvals';
     settlePolicy = installed.settle;
-    // Issue #278 (§19): the run's start names the §19 mode in the §60
-    // ledger — a fresh session only (a resume continues the recorded run,
-    // and a worker child attaches to its manager-created session).
+    // The run's start names the mode in the
+    // ledger — a fresh session only (a resume continues the recorded run).
     // Best-effort: a dead ledger never fails the run.
     if (options.sessionId === undefined) {
       const runMode =
@@ -1986,12 +1566,11 @@ async function runHeadlessPromptImpl(
         runStartAudit({
           sessionId: id,
           command: 'kubic run',
-          mode: 'solo',
           runMode,
           workspace: env.cwd,
           posture: report.posture,
           autonomous: options.autonomous === true,
-          // Review #278 (low): the resolved base was in scope
+          // Review (low): the resolved base was in scope
           // (`runBase`, passed to installSoloPolicy above) while the row
           // hardcoded `unknown`.
           base: runBase,
@@ -1999,7 +1578,7 @@ async function runHeadlessPromptImpl(
         (message) => debug?.(`audit: run start not recorded: ${message}`),
       );
     }
-    // A headless run on a full-access session is never silent (issue #308):
+    // A headless run on a full-access session is never silent:
     // the grant's own warning when this run enabled it, otherwise the named
     // in-force warning — on stderr, so stdout stays consumable.
     if (installed.posture.fullAccess) {
@@ -2009,7 +1588,7 @@ async function runHeadlessPromptImpl(
       join(root, id, 'journal'),
       deps.journalRetention ?? {},
     );
-    // §42.5 baseline (issue #87, §42.1 mechanism 2): captured ONCE, before
+    // Baseline: captured ONCE, before
     // the first turn, as a metadata walk (hashes only, no blobs) that skips
     // `.git/`, `.kubic/` and `.gitignore` hits on its own. A capture failure
     // is not a run failure — the sweep then simply has no baseline to
@@ -2021,7 +1600,7 @@ async function runHeadlessPromptImpl(
         runId: id,
         sessionId: id,
         agentId: resolveRunAgentId(deps.agentId),
-        // #107 review follow-up: a very large file (or a bridge without ranged
+        // Review follow-up: a very large file (or a bridge without ranged
         // reads) is named on the existing debug channel rather than silently
         // costing its size at boot.
         onNotice: (detail: string) => debug?.(`reconcile: ${detail}`),
@@ -2034,7 +1613,7 @@ async function runHeadlessPromptImpl(
         `reconcile: baseline capture failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    // Repo-level overlap warning (issue #118; §42.5 blind spot): two
+    // Repo-level overlap warning (blind spot): two
     // DIFFERENT sessions in one workspace are legal — this is a warning on
     // the debug channel, never a block. But each run sweeps against its own
     // boot baseline, so a live sibling's in-progress changes land in this
@@ -2055,44 +1634,10 @@ async function runHeadlessPromptImpl(
         `reconcile: overlap probe failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    // Issue #440 (§71): a resumed session's budget continues from what the
-    // session already spent, so a resume never restarts the allowance. The
-    // gate and the worker child's meter start at its committed tool calls,
-    // and the meter at its billed tokens and cost too (the solo flag reads
-    // those from the same ledger after each turn). A fresh session has
-    // spent nothing, and a run without a budget never reads.
-    const gateToolLimit =
-      extensions === undefined
-        ? undefined
-        : budgetLimitsOf(extensions).maxToolCalls;
-    const spent =
-      options.sessionId !== undefined &&
-      (runBudget !== undefined || gateToolLimit !== undefined)
-        ? await sessionSpend(session, context)
-        : undefined;
-    // Live facet consumption (issue #93): the loaded worker facet becomes a
-    // real tool-wrap contribution on the solo lane's tool stack, so the
-    // budget the CLI started with bounds every tool call. The contribution
-    // composes through the lane's own documented seam ({ id, wrap }) and the
-    // installed policy's wrappers compose outermost of it (issue #86); the
-    // harness is destructured too so the §49.3 tool-span hooks can attach
-    // (issue #98).
-    const contributions = [
-      ...installed.contributions,
-      // Issue #283 (§71): a refused call trips the run guard — the
-      // model cannot talk past the budget, the run ends budget_exhausted
-      // (exit 3) with the limit named instead of settling completed.
-      ...(extensions === undefined
-        ? []
-        : [
-            budgetToolGate(
-              extensions,
-              (limit) => tripGuard(new ExtensionBudgetError(limit)),
-              { priorToolCalls: spent?.toolCalls ?? 0 },
-            ),
-          ]),
-    ];
-    // §29.3 skills on the live path (issue #99): discovery runs at boot
+    // The installed policy's tool wrappers; the harness is
+    // destructured too so the tool-span hooks can attach.
+    const contributions = [...installed.contributions];
+    // Skills on the live path: discovery runs at boot
     // through the real FileBridge, the project roots stay gated behind the
     // documented trust opt-in, and the model-visible blocks are appended to
     // the assembled system prompt as a suffix section. A refusal here is
@@ -2110,26 +1655,25 @@ async function runHeadlessPromptImpl(
       ...(trustProject === undefined ? {} : { trustProject }),
       ...(options.noSkills === undefined ? {} : { noSkills: options.noSkills }),
       ...(options.skills === undefined ? {} : { cliSkills: options.skills }),
-      // Issue #237 (§29.2): the config `skills` projection loads with
+      // The config `skills` projection loads with
       // source 'settings'.
       ...(deps.skills?.settingsSkills === undefined
         ? {}
         : { settingsSkills: deps.skills.settingsSkills }),
-      // Issue #181 (§29.4): the injected set depends on the resolved
-      // role and the installed classes — a worker child gates on its
-      // task role (no document is read there), else `--role`.
-      ...(task?.role === undefined && role?.resolved.name === undefined
+      // The injected set depends on the resolved
+      // role and the installed classes.
+      ...(role?.resolved.name === undefined
         ? {}
-        : { role: task?.role ?? (role?.resolved.name as string) }),
+        : { role: role.resolved.name }),
       ...(roleDocSkills === undefined ? {} : { roleSkills: roleDocSkills }),
       classes: installed.classes,
-      // Issue #177: an unresolvable explicit --skill warns on stderr —
+      // An unresolvable explicit --skill warns on stderr —
       // never only on the debug channel — so a typo cannot read as loaded.
       warn: warnLine,
       log: (line) => debug?.(`skills: ${line}`),
     });
     capture.skills = skills.skills.map((skill) => skill.name);
-    // Issue #183 (§29.4): `--invoke-skill` expands against the invocable
+    // `--invoke-skill` expands against the invocable
     // set (admitted + gate-passed, hidden included, withheld excluded) —
     // the skill content runs as the turn prompt with the operator's prompt
     // as instructions. An unknown name fails the run with the named error
@@ -2158,7 +1702,7 @@ async function runHeadlessPromptImpl(
     }
     const beforeBoot = bootInterrupted();
     if (beforeBoot !== undefined) return beforeBoot;
-    // Issue #148 (§26.1): a pin (the faux pin, the `[model]`/env pin, or
+    // A pin (the faux pin, the `[model]`/env pin, or
     // the role's model) is an explicit selection and switches a resumed
     // session whose stored model differs; the default pick never does —
     // the session keeps its own model. Either way it is named on stderr.
@@ -2168,37 +1712,16 @@ async function runHeadlessPromptImpl(
       pin: deps.model,
       roleModel: role?.resolved.model,
     });
-    // §71 child-side enforcement (issue #208): one meter for the run, built
-    // BEFORE the lane so its beforeTool gate can subscribe BEFORE the policy
-    // interceptors — the hook chain stops at the first block, so a later
-    // subscriber would never count a blocked/denied attempt. A breach stops
-    // the turn, so the run ends BUDGET_EXHAUSTED (exit 3) with the dimension
-    // named — never a silent overspend.
-    const budgetPlan = runBudget;
-    const budgetEnforcer =
-      budgetPlan === undefined
-        ? undefined
-        : createRunBudgetEnforcer(
-            budgetPlan,
-            (termination) => {
-              tripGuard(new BudgetExceededError(termination.limit));
-            },
-            spent,
-          );
-    // §37.4 request options (issue #257): the merged `[model]` tuning with
+    // Request options: the merged `[model]` tuning with
     // the run's role layered over it becomes this lane's `settings.stream`.
-    // A task names its own role (a worker child's assignment); otherwise
-    // `--role` does. Orchestrator worker children boot through this same
-    // path under their task role, so each worker carries its own role's
-    // tuning on its own harness.
-    const streamRoleName = options.role ?? task?.role;
+    const streamRoleName = options.role;
     const stream = resolveStreamOptions(
       deps.streamTuning?.model,
       streamRoleName === undefined
         ? undefined
         : deps.streamTuning?.roles?.[streamRoleName],
     );
-    // Issue #225 (§38.3): the lane's thinking request. A per-run source
+    // The lane's thinking request. A per-run source
     // (cli `--thinking` / env `KUBIC_MODEL_THINKING`, enterprise-frozen
     // included) is the override and beats the session's stored level; a
     // file-layer source is the config default the stored level and the
@@ -2206,8 +1729,8 @@ async function runHeadlessPromptImpl(
     // to the effective model — the notice channel stays the model's (a
     // clamp names the model, the request, and the level applied).
     const requestThinking = deps.thinking;
-    // A matching set entry's thinking wins over the flat role default
-    // (issue #255; §38.2) — resolved against the SELECTED model.
+    // A matching set entry's thinking wins over the flat role default —
+    // resolved against the SELECTED model.
     const roleThinking = resolveRoleThinking(
       role?.resolved,
       model.provider,
@@ -2236,7 +1759,7 @@ async function runHeadlessPromptImpl(
                   }),
             ...(roleThinking === undefined ? {} : { role: roleThinking }),
           };
-    // Issue #210 (§38.4/affinity): the session id pins the boot model for
+    // The session id pins the boot model for
     // the task — escalation is the only path off it (the headless lane
     // climbs only via the single auto trigger; explicit switches are a
     // TUI affordance).
@@ -2253,29 +1776,10 @@ async function runHeadlessPromptImpl(
         sessionId: id,
         agentId: resolveRunAgentId(deps.agentId),
         journal,
-        // §37.4 (issue #257): an untuned run omits `stream` — the
+        // An untuned run omits `stream` — the
         // provider defaults stand, never an invented Kubic one.
         ...(stream === undefined ? {} : { settings: { stream } }),
-        // Issue #154 (§14.2): an orchestrator worker child can ask the USER a
-        // free-text question through its run's mailbox (the same dir and
-        // verify key the approval seat uses); a solo run has nobody to ask.
-        ...(approvalsSeat === undefined ||
-        approvalMailboxDir === undefined ||
-        approvalVerifyKey === undefined
-          ? {}
-          : {
-              interactionTools: [
-                createAskUserTool({
-                  dir: approvalMailboxDir,
-                  verifyKey: approvalVerifyKey,
-                  maxPendingMs: workerBoundMs,
-                  sessionId: workerAskIdentity().sessionId,
-                  agentId: workerAskIdentity().agentId,
-                  role: options.role ?? 'worker',
-                }),
-              ],
-            }),
-        // [agent] systemPromptFile (issue #240): the configured file text
+        // [agent] systemPromptFile: the configured file text
         // lands ahead of the skills block — the user's own instructions
         // first, discovered context second. Shared with the TUI boot.
         ...(() => {
@@ -2285,65 +1789,51 @@ async function runHeadlessPromptImpl(
           );
           return sections === undefined ? {} : { promptSections: sections };
         })(),
-        // Issue #173: the advertised skills outside the cwd stay readable.
+        // The advertised skills outside the cwd stay readable.
         ...(skills.readRoots.length === 0
           ? {}
           : { skillReadRoots: skills.readRoots }),
-        // §67 (issue #191): a task's tool set is the grant, and it outranks
-        // any role document; without a task the role document's resolved set
-        // is what narrows the lane (absence, not approval).
-        ...(task !== undefined
-          ? { toolAllowlist: [...task.toolNames] }
-          : role === undefined
-            ? {}
-            : {
-                rolePrompt: role.prompt,
-                ...(role.resolved.tools.length === 0
-                  ? {}
-                  : { toolAllowlist: role.resolved.tools }),
-              }),
-        // The explicit CLI selection narrows whatever the task or role
-        // granted: the lane intersects it (never widens).
+        // The role document's resolved set narrows the lane (absence, not
+        // approval).
+        ...(role === undefined
+          ? {}
+          : {
+              rolePrompt: role.prompt,
+              ...(role.resolved.tools.length === 0
+                ? {}
+                : { toolAllowlist: role.resolved.tools }),
+            }),
+        // The explicit CLI selection narrows whatever the role granted: the
+        // lane intersects it (never widens).
         ...(options.noTools === true ? { noTools: true } : {}),
         ...(options.tools === undefined
           ? {}
           : { toolSelection: [...options.tools] }),
-        // §27.1 (issue #239): the configured compaction policy reaches the
-        // lane boot — absent means #399's own defaults. Worker children
-        // inherit it because they are `kubic run` processes loading the
-        // same committed config.
+        // The configured compaction policy reaches the
+        // lane boot — absent means the own defaults.
         ...(deps.compaction === undefined
           ? {}
           : { compaction: deps.compaction }),
-        // One policy object carrying every mechanism (#86 + #90 + #93, #397):
-        // the classes come from the config layer when it supplies them and
-        // from the documented safe default otherwise, the interceptors are
-        // always installed, the extension facet composes as a tool-wrap
-        // contribution on the same stack, and the two hook factories register
-        // the budget gate (`kubic.budget`, first) and the tool spans
-        // (`kubic.spans`, after policy). SoloPolicyOptions' fields are
-        // independent, so this is a union, not a choice.
+        // One policy object carrying every mechanism: the
+        // classes come from the config layer when it supplies them and from
+        // the documented safe default otherwise, the interceptors are always
+        // installed, and the hook factory registers the tool spans
+        // (`kubic.spans`, after policy).
         policy: {
           classes: installed.classes,
           interceptors: installed.interceptors,
           ...(contributions.length === 0 ? {} : { contributions }),
-          // §71 (issue #208): the budget meter goes FIRST. The chain stops
-          // at the first block, so this is what makes a destructive or
-          // network-denied call still count against maxToolCalls.
-          ...(budgetEnforcer === undefined
-            ? {}
-            : { beforePolicyHooks: () => budgetEnforcer.hooks() }),
-          // §49.3 (issue #98): the tool spans, installed after policy so a
-          // blocked call never opens one (issue #397's ordering rule).
+          // The tool spans, installed after policy so a
+          // blocked call never opens one (the ordering rule).
           spanHooks: () => runSpanHooks(spans),
-          // §58 enterprise tool gate (issue #288): the same predicate drives
+          // Enterprise tool gate: the same predicate drives
           // the active tool set and the prompt tools line.
           ...(toolGate === undefined ? {} : { toolAllowed: toolGate }),
           ...(modelGate === undefined ? {} : { modelAllowed: modelGate }),
         },
       });
     } catch (error) {
-      // A stored session model that is no longer registered (issue #148)
+      // A stored session model that is no longer registered
       // is the same terminus as an unknown selection: exit 6, named.
       if (error instanceof ModelSelectError) {
         return finished(
@@ -2355,20 +1845,20 @@ async function runHeadlessPromptImpl(
       }
       throw error;
     }
-    // The boot reconciled the selection with the session's stored model
-    // (issue #148): the trajectory and the audit rows name what the lane
-    // reports, the same source as the envelope and the usage rows.
+    // The boot reconciled the selection with the session's stored model: the
+    // trajectory and the audit rows name what the lane reports, the same source
+    // as the envelope and the usage rows.
     const running = await liveModel(solo, context);
     if (running !== undefined) {
       capture.model = { provider: running.provider, id: running.id };
       liveModelRef = `${running.provider}/${running.id}`;
     }
-    // Issue #282: the thinking level the lane actually runs (pi-durable
+    // The thinking level the lane actually runs (pi-durable
     // defaults an unset level to `off`, the same answer `/thinking`
-    // reports) — the §60 rows name this, not the pre-boot pick.
+    // reports) — the audit rows name this, not the pre-boot pick.
     liveThinkingRef =
       (await solo.conversation.agent(context)).thinkingLevel ?? 'off';
-    // Issue #225 (§38.3): what the lane booted with (post-clamp), read
+    // What the lane booted with (post-clamp), read
     // from the committed agent doc — the same source the envelope reports.
     // Unset stays unset: the trajectory omits the key rather than
     // inventing a level the lane never committed.
@@ -2380,15 +1870,14 @@ async function runHeadlessPromptImpl(
       ...(report.model === undefined ? {} : { model: report.model }),
       notice: soloNotice,
     });
-    // §71 (issue #208) + the turn guard: one event subscription per
-    // conversation (#398) feeds the budget meter's usage half and counts the
-    // run's turns for `--max-turns`. Durable retries are the harness's own
+    // The turn guard: one event subscription per conversation counts
+    // the run's turns for `--max-turns`. Durable retries are the harness's own
     // (they commit no assistant entry), so a turn is one committed response.
     const detachEvents = await subscribeLaneEvents(
       solo.harness,
       solo.conversation.id,
       (event) => {
-        // Issue #150 (§20.6, §27.1): a retry backoff and a compaction are
+        // A retry backoff and a compaction are
         // named on the debug channel — tens of silent seconds otherwise.
         const activity = laneActivityDebugLine(event);
         if (activity !== undefined) debug?.(activity);
@@ -2399,7 +1888,6 @@ async function runHeadlessPromptImpl(
             args: event.args,
           };
           options.progress?.toolStart(start);
-          options.toolFacts?.toolStart(start);
           return;
         }
         if (event.type === 'tool-end') {
@@ -2410,14 +1898,12 @@ async function runHeadlessPromptImpl(
             ...(event.entry === undefined ? {} : { entry: event.entry }),
           };
           options.progress?.toolEnd(end);
-          options.toolFacts?.toolEnd(end);
           return;
         }
         if (event.type !== 'usage') return;
-        budgetEnforcer?.onUsage(event.row);
         turns += 1;
         if (options.maxTurns !== undefined && turns > options.maxTurns) {
-          tripGuard(new TurnBudgetError(turns - 1));
+          tripGuard(new TurnLimitError(turns - 1));
         }
       },
       context,
@@ -2425,15 +1911,15 @@ async function runHeadlessPromptImpl(
     try {
       const beforeTurn = bootInterrupted();
       if (beforeTurn !== undefined) return beforeTurn;
-      // Issue #147 (§21): a turn a dead process left open would refuse this
+      // A turn a dead process left open would refuse this
       // prompt. The documented policy: when the pending run carries this very
-      // prompt (an orchestrator worker re-launched on its reattached session,
-      // a retried script), it is resumed AS this run — never re-prompted.
+      // prompt (a retried script), it is resumed AS this run — never
+      // re-prompted.
       // Otherwise it is resumed first under the same guard and then this
       // prompt is admitted; a resume that cannot settle (guard fired,
       // approval with no TTY) is durably aborted. Each choice is named on
       // stderr.
-      // §49.3 lane spans (§98): `accept` covers admitting this run's work —
+      // Lane spans: `accept` covers admitting this run's work —
       // the pending turn a dead process left, settled first — and `drive`
       // covers the durable turn itself (submit → wait → settlement). Tool
       // spans nest under `drive` because `startLane('drive')` is the lane
@@ -2449,7 +1935,7 @@ async function runHeadlessPromptImpl(
           );
           if (
             pendingPrompt !== undefined &&
-            // Issue #183: an `--invoke-skill` retry coalesces with its
+            // An `--invoke-skill` retry coalesces with its
             // own pending expanded prompt (identical to `prompt` for
             // non-invoke runs).
             pendingPrompt === effectivePrompt &&
@@ -2481,7 +1967,7 @@ async function runHeadlessPromptImpl(
       // prompting twice, while a fresh invocation is a fresh prompt.
       const requestId = `kubic-run:${randomUUID()}`;
       let outcome: TurnOutcome;
-      // Issue #209: the solo overflow-recovery decision, when the lane
+      // The solo overflow-recovery decision, when the lane
       // made one — carried into the envelope on every exit path below.
       let retryDecision: RetryDecision | undefined;
       let retryRetried = false;
@@ -2490,7 +1976,7 @@ async function runHeadlessPromptImpl(
         if (resumed !== undefined) {
           outcome = await awaitTurn(resumed, guard.context);
         } else {
-          // Issue #209: a context overflow compacts (#399) and retries
+          // A context overflow compacts and retries
           // once on the fresh context; every other outcome passes through
           // exactly as runTurn reports it.
           const recovered = await runTurnWithOverflowRecovery(
@@ -2501,7 +1987,7 @@ async function runHeadlessPromptImpl(
               context: guard.context,
               // Headless keeps today's refusal: a run that somehow finds the
               // conversation busy fails by name instead of queueing behind a
-              // turn nobody is watching (#334 owns follow-up UX).
+              // turn nobody is watching.
               whenBusy: 'reject',
               onRetryDecision: (decision) => {
                 const text = overflowRecoveryNotice(decision);
@@ -2528,23 +2014,23 @@ async function runHeadlessPromptImpl(
           return finished(id, 'failed', message, message);
         }
         const message = 'run guard exhausted';
-        return finished(id, 'budget_exhausted', message, message);
+        return finished(id, 'turn_limit', message, message);
       }
-      // The installed policy refused an approval (issue #86). The block reaches
+      // The installed policy refused an approval. The block reaches
       // the model as a tool error, so the lane settles `completed` — but a
       // dangerous operation the user never approved did NOT happen, and
       // reporting exit 0 would be the dishonest half of this issue. Read the
       // recorded refusals directly: a run whose policy denied an approval maps
-      // to the §78 approval terminus (exit 4) with the refusal named. Checked
+      // to the approval terminus (exit 4) with the refusal named. Checked
       // BEFORE the outcome is mapped: a denial OUTRANKS a settled turn.
       //
-      // Issue #129: exit 4 covers the whole approval terminus; the STATUS is
+      // Exit 4 covers the whole approval terminus; the STATUS is
       // the honest half. A denial whose reason carries the timeout marker is
       // a bound that elapsed, everything else is a refusal — a script can
       // tell "the operator said no" from "nobody answered in time". The
-      // timeout latch (#110) has not yet put a structured `code` on
-      // RecordedApprovalDeny, so classification keys off the orchestrator's
-      // one TIMEOUT_REASON_MARKER string (the same one classifyVerdict uses)
+      // timeout latch has not yet put a structured `code` on
+      // RecordedApprovalDeny, so classification keys off the one
+      // TIMEOUT_REASON_MARKER string (the same one classifyVerdict uses)
       // rather than a private regex that could drift from the producers.
       const denials = installed.denials();
       if (denials.length > 0) {
@@ -2561,44 +2047,6 @@ async function runHeadlessPromptImpl(
         return finished(id, terminus, message, message);
       }
       if (outcome.kind === 'completed') {
-        // Issue #283 (§71): the opt-in budget's billed dimensions are
-        // enforced from the session ledger once the turn settles — read
-        // through the run's own open storage (never the lock-guarded
-        // reader), so fixture rows and the just-settled turn both count.
-        // The gate above owns toolCalls mid-turn, this owns tokens/cost
-        // after it. A breach outranks the settled turn: the spend is
-        // real, so the run reports budget_exhausted (exit 3) with the
-        // limit named.
-        if (extensions !== undefined) {
-          const totals = totalSessionUsage(
-            await readSessionUsage(session.storage, context),
-          );
-          const breached = firstBreachedLimit(extensions, {
-            tokens: totals.input + totals.output,
-            costUsd: totals.costUsd,
-          });
-          if (breached !== undefined) {
-            const message = `extension budget exhausted: ${breached} limit breached (opt-in --budget)`;
-            // Issue #285 (§71 observability): the post-turn ledger
-            // breach knows the spend and the bound — record both.
-            const spent =
-              breached === 'cost'
-                ? totals.costUsd
-                : totals.input + totals.output;
-            const bound =
-              breached === 'cost'
-                ? budgetLimitsOf(extensions).maxCostUsd
-                : budgetLimitsOf(extensions).maxTokens;
-            return {
-              ...finished(id, 'budget_exhausted', message, message),
-              budgetBreach: {
-                limit: breached,
-                used: spent,
-                ...(bound === undefined ? {} : { max: bound }),
-              },
-            };
-          }
-        }
         const items = entriesToTranscript(
           await readConversationEntries(solo.conversation, context),
         );
@@ -2629,7 +2077,7 @@ async function runHeadlessPromptImpl(
   } catch (error) {
     return storeFailure(id, error);
   } finally {
-    // Issue #109: drain in-flight work FIRST — the sweep must observe the
+    // Drain in-flight work FIRST — the sweep must observe the
     // tree after orphaned tool processes are dead, or their late writes
     // land outside both the journal and the reconciliation. Runs on every
     // exit path (guard exhaustion, an abandoned turn, an unexpected throw,
@@ -2648,7 +2096,7 @@ async function runHeadlessPromptImpl(
     // In-flight work is dead: a later signal takes the default path again.
     detachSignals();
     if (deadline !== undefined) clearTimeout(deadline);
-    // §42.1 mechanism 2 (issue #87): the end-of-run sweep — after the last
+    // The end-of-run sweep — after the last
     // turn, on every exit path (completed, guard exhaustion, deferred wait,
     // malformed outcome, an unexpected throw). Runs BEFORE the session close
     // so a close failure cannot skip it, and never changes the mapped
@@ -2665,17 +2113,17 @@ async function runHeadlessPromptImpl(
       }
     }
     flushSpans();
-    // Issue #325: a posture.json written after the last ask is restored to
+    // A posture.json written after the last ask is restored to
     // the boot posture (and recorded) before the session closes.
     try {
       settlePolicy?.();
     } catch {
       // Best-effort: the mapped result stands.
     }
-    // The prompt guarantee first (#247): a run that never admitted the
+    // The prompt guarantee first: a run that never admitted the
     // prompt still gets its one durable entry, and the transcript decides —
     // never a second copy for a prompt that is already carried. Done before
-    // the capture below so the §46 trajectory carries the fallback write.
+    // the capture below so the trajectory carries the fallback write.
     try {
       await ensurePromptDurable(
         solo,
@@ -2690,8 +2138,8 @@ async function runHeadlessPromptImpl(
         `session: prompt not persisted: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    // The §46 trajectory's entries (issue #383), read while the session is
-    // still open through the shared transcript adapter (#400); a read
+    // The trajectory's entries, read while the session is
+    // still open through the shared transcript adapter; a read
     // failure leaves the trajectory without actions, never the run without
     // its result.
     capture.entries = await captureEntries(solo, session, context);
@@ -2720,7 +2168,7 @@ async function runHeadlessPromptImpl(
   }
 }
 
-// The provider ids and model ids a run names (issue #359): the words a live
+// The provider ids and model ids a run names: the words a live
 // key value must not be scrubbed out of. Empty before the catalog exists.
 function catalogIdentity(models: MutableModels | undefined): string[] {
   if (models === undefined) return [];
@@ -2732,7 +2180,7 @@ function catalogIdentity(models: MutableModels | undefined): string[] {
     ]);
 }
 
-// The `provider/id` the lane actually runs (issue #148): the live
+// The `provider/id` the lane actually runs: the live
 // conversation's agent model, else the boot's effective model. Tolerant of
 // liveness gaps, which report nothing rather than fail.
 async function liveModel(

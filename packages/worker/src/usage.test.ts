@@ -1,6 +1,5 @@
-// Slice C: usage rows + kubic models CLI (issue #20; §39, §17/§18).
-// Issue #433 deleted summarizeUsage (no supplier, no caller — `kubic cost
-// --session <run>` is the roll-up surface); usageRowFromEntry stays.
+// Usage rows + kubic models CLI. `kubic cost --session <run>` is the roll-up
+// surface; usageRowFromEntry builds the rows.
 import { describe, expect, it } from 'vitest';
 import type {
   ConversationId,
@@ -22,8 +21,8 @@ function usage(over: Partial<Usage>): Usage {
   };
 }
 
-describe('usage rows (issue #20, slice C)', () => {
-  it('builds a per-response row from the assistant entry that answered (#287, #398)', () => {
+describe('usage rows', () => {
+  it('builds a per-response row from the assistant entry that answered', () => {
     const committed = entry(7, 'pi.assistant', {
       role: 'assistant',
       content: [],

@@ -1,4 +1,4 @@
-// Kubic colour tokens (EPIC N, issue #444; docs/ui/README.md "Colour tokens").
+// Kubic colour tokens (/README.md "Colour tokens").
 // One set of semantic roles for every terminal surface. A palette assigns a
 // colour value to each role; `style.ts` turns roles into escape sequences for
 // the terminal's colour depth.
@@ -34,7 +34,7 @@ export const TOKEN_ROLES = [
   'addBg',
   'del',
   'delBg',
-  // Issue #456: the changed words inside an added / removed diff line.
+  // The changed words inside an added / removed diff line.
   'addWordBg',
   'delWordBg',
 ] as const;

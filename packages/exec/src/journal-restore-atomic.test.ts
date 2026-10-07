@@ -1,12 +1,9 @@
-// Restore atomicity (issue #117, slice 2): `kubic undo` must never leave a
+// Restore atomicity: `kubic undo` must never leave a
 // half-written file — that is the worst possible failure mode for a recovery
 // tool, and the write/edit ops have taken tmp+rename care for years while
 // restoreEntry wrote in place. A crash mid-restore now leaves the target
 // untouched and at most a `<target>.kubic-restore-<pid>.tmp` sibling, which
 // the failed write cleans up best-effort.
-//
-// RED: restoreEntry writes the target file directly, so a torn write lands
-// on the real file and no `.kubic-restore-*` path ever exists.
 import {
   chmodSync,
   existsSync,
@@ -112,7 +109,7 @@ function seed(): {
   return { store, root, recorded };
 }
 
-describe('restore atomicity (issue #117, slice 2)', () => {
+describe('restore atomicity', () => {
   it('a crash mid-write leaves the target untouched and no .kubic-restore-* litter', () => {
     const { store, root, recorded } = seed();
     hooks.tornWrite = (path) => path.includes('.kubic-restore-');
@@ -154,15 +151,13 @@ describe('restore atomicity (issue #117, slice 2)', () => {
   });
 });
 
-// Issue #117 review fix 2: the tmp+rename restore must not reset the target's
-// mode (main's in-place writeFileSync preserved the inode's mode; the rename
-// replaces the inode with the tmp's) and must not leave world-readable crash
-// residue behind. The tmp is created 0600, the existing target's mode is
-// copied onto it before the rename, and a successful restore sweeps stale
+// The tmp+rename restore must not reset the target's mode (main's
+// in-place writeFileSync preserved the inode's mode; the rename replaces the
+// inode with the tmp's) and must not leave world-readable crash residue behind.
+// The tmp is created 0600, the existing target's mode is copied onto it before
+// the rename, and a successful restore sweeps stale
 // `<target>.kubic-restore-*.tmp` siblings.
-// RED: the tmp is created with the umask default (0644 here), so a 0600 file
-// becomes 0644, a 755 script loses its exec bit, and crash residue is 0644.
-describe('restore mode preservation + residue sweep (issue #117 review)', () => {
+describe('restore mode preservation + residue sweep', () => {
   it('keeps a 0600 target at 0600 across the restore', () => {
     const { store, root, recorded } = seed();
     chmodSync(join(root, 'f.txt'), 0o600);

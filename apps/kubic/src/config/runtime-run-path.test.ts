@@ -1,4 +1,4 @@
-// Config → live run path (issue #90, acceptance criterion 1): a
+// Config → live run path: a
 // `.kubic/config.toml` value must measurably change a live behaviour, not
 // merely parse. This drives the production headless runner (`kubic run`'s
 // own adapter) with the projections the composition root injects and checks
@@ -51,10 +51,7 @@ beforeEach(() => {
   // The solo no-isolation notice goes straight to process.stderr (its text
   // and gating are pinned in limits/solo-warning.test.ts and
   // solo-notice-prod.test.ts); the documented opt-out keeps these runs quiet.
-  // Orchestrator-child inputs are cleared so the host shell cannot leak in.
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
-  vi.stubEnv('KUBIC_WORKER_ID', undefined);
-  vi.stubEnv('KUBIC_APPROVALS_DIR', undefined);
 });
 
 afterEach(() => {
@@ -64,7 +61,7 @@ afterEach(() => {
   }
 });
 
-describe('config feeds the live run path (issue #90)', () => {
+describe('config feeds the live run path', () => {
   it('projects [journal] retentionDays into a journal bound that prunes on append', () => {
     const root = tmpRoot();
     const runtime = loadRuntimeConfig({
@@ -181,7 +178,7 @@ describe('config feeds the live run path (issue #90)', () => {
   });
 
   it('excludes a configured out-of-scope directory from the run’s baseline and sweep', async () => {
-    // §35/§42.5 end to end (issue #115): the config key must reach the
+    // End to end: the config key must reach the
     // headless lane's reconciliation, not merely parse. `vendor/` is declared
     // out of scope; a change under it during the run is never baselined,
     // never swept, and never shown by `kubic diff`.
@@ -268,7 +265,7 @@ describe('config feeds the live run path (issue #90)', () => {
       projectTrusted: false,
       env: {},
     });
-    // §40/§12.1: an absent [permissions] section resolves to the solo
+    // An absent [permissions] section resolves to the solo
     // defaults — never to the most permissive or restrictive extreme.
     expect(runtime.permissions.classes).toEqual({
       ...SOLO_DEFAULTS,
@@ -301,7 +298,7 @@ describe('config feeds the live run path (issue #90)', () => {
   });
 });
 
-describe('solo-lane projections reach the live path (issue #133)', () => {
+describe('solo-lane projections reach the live path', () => {
   const NO_SPLIT = { missing: [], checked: [], applicable: false };
 
   function namedRuntime(workspace: string, toml: string): RuntimeConfig {
@@ -320,7 +317,7 @@ describe('solo-lane projections reach the live path (issue #133)', () => {
   }
 
   it('threads [journal] maxBytes from config into the journal store bound', () => {
-    // §42.4/issue #350: the key must reach the store the run's journal is
+    // /: the key must reach the store the run's journal is
     // built on — the bound covers index.jsonl plus the blobs it references,
     // and an entry that cannot fit is refused (journal_failed, file
     // untouched) instead of landing a record the same append's pruning would

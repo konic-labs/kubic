@@ -1,4 +1,4 @@
-// The `--model` flag as an input to the ONE config load (issue #227).
+// The `--model` flag as an input to the ONE config load.
 // Dispatch loads the config before commander parses, so the session
 // override has to be read from the raw argv exactly once and handed to
 // `loadConfig` — the commands' own commander definitions then re-parse the
@@ -25,7 +25,7 @@ afterAll(() => {
   rmSync(fixture, { recursive: true, force: true });
 });
 
-describe('cliModelFromArgs (issue #227)', () => {
+describe('cliModelFromArgs', () => {
   it('reads both spellings for the commands that own the flag', () => {
     expect(
       cliModelFromArgs('run', ['--model', 'faux/small', '-p', 'hi']),
@@ -64,7 +64,7 @@ describe('cliModelFromArgs (issue #227)', () => {
   });
 });
 
-describe('the --model flag feeds the one config load (issue #227)', () => {
+describe('the --model flag feeds the one config load', () => {
   it('kubic config --model shows the cli layer', async () => {
     let seen: string | undefined;
     const deps: DispatchDeps = {
@@ -96,12 +96,12 @@ describe('the --model flag feeds the one config load (issue #227)', () => {
   });
 });
 
-// Issue #295: on a terminal the bare `kubic --model p/id` IS `kubic tui --model
+// On a terminal the bare `kubic --model p/id` IS `kubic tui --model
 // p/id`. The pre-scan must read the SAME argv the runner receives — for the bare
 // form the flag is the requested "command" token, not part of `rest` — or the
 // interactive session boots the default model with no error and no note (the
 // TUI no longer patches the flag over the loaded config).
-describe('the bare `kubic --model` form feeds the one config load (issue #295)', () => {
+describe('the bare `kubic --model` form feeds the one config load', () => {
   async function bareLoad(
     requested: string,
     rest: string[],

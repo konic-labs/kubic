@@ -1,5 +1,5 @@
-// The solo boot against the REAL #393 tools and #399 compaction (review #394
-// low 4 / coordinator item 4). Only `./interceptors.js` is mocked: #397's
+// The solo boot against the REAL tools and compaction (review low 4 /
+// coordinator item 4). Only `./interceptors.js` is mocked: 's
 // `policyInterceptorHooks` is not merged yet, so solo.ts cannot load without
 // the mock; the tool adapter, the compaction policy and the harness are real.
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -76,7 +76,7 @@ function handle(id = 'sess-1'): TestSession {
     dir: `/tmp/kubic-solo-durable/${id}`,
     storage,
     meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
-    // #395/D8.1: the boot adopts the storage, so the handle must expose it.
+    // The boot adopts the storage, so the handle must expose it.
     adopt: () => storage,
     release: vi.fn(async () => undefined),
   };
@@ -159,7 +159,7 @@ describe('the boot against the real Kubic tools and compaction policy', () => {
       BACKGROUND_CONTEXT,
     );
     expect(JSON.stringify(page.items)).toContain('real adapter reads this');
-    // The prompt's tools: line names exactly the offered set (§40.3).
+    // The prompt's tools: line names exactly the offered set.
     const system = page.items.find((entry) => SystemEntry.is(entry));
     const message = (
       system?.model as unknown as Array<{

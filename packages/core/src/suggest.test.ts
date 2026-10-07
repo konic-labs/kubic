@@ -1,4 +1,4 @@
-// "Did you mean …?" (issue #450).
+// "Did you mean …?".
 import { describe, expect, it } from 'vitest';
 import { editDistance, suggest } from './suggest.js';
 

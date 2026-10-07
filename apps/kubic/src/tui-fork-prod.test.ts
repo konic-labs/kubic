@@ -1,4 +1,4 @@
-// Issue #332 (§22.1, §66 session.fork; the EPIC K re-baseline): pi-durable
+// Pi-durable
 // branches by forking, so `/fork <entry>` and `/tree` fork the live session
 // into a NEW session and switch the TUI to it. The next prompt continues from
 // the fork; the abandoned path stays in the original session. Faux provider,
@@ -127,7 +127,7 @@ function sessionDirs(root: string): string[] {
   return readdirSync(root).filter((entry) => !entry.startsWith('.'));
 }
 
-describe('/fork and /tree in the TUI (issue #332)', () => {
+describe('/fork and /tree in the TUI', () => {
   it('/fork <entry> switches to a new session; the next prompt continues from the fork', {
     timeout: 30000,
   }, async () => {

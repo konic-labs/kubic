@@ -1,4 +1,4 @@
-// `ls` bounds (issue #187; §27.5 bounded tool output): entries arrive
+// `ls` bounds (bounded tool output): entries arrive
 // sorted by name, at most the entry cap, with `truncated` + a notice naming
 // the total when the cap stopped the listing. FakeExecutionEnv fs only —
 // no real filesystem.
@@ -23,7 +23,7 @@ function inv(id: string): ToolInvocation {
   );
 }
 
-describe('ls bounds (issue #187)', () => {
+describe('ls bounds', () => {
   it('caps a 2000-entry dir at sorted entries with truncated + notice', async () => {
     const context = ctx();
     // Created in reverse so the result must sort, not echo insertion.

@@ -1,5 +1,4 @@
-// Kubic operations as pi-durable tools (issue #393; issues #168, #11, #121,
-// #176; §37.5, §40.3, §39.1 lever 5).
+// Kubic operations as pi-durable tools.
 // The model is told the truth about its tools: every tool carries its real
 // parameter schema (not a loose record), declares json_schema constrained
 // sampling with strict 'prefer', and read/bash/grep results come back as
@@ -205,7 +204,7 @@ function shellEnv(options: {
   return { env, spawns };
 }
 
-describe('kubicToolsToPiTools (issue #168)', () => {
+describe('kubicToolsToPiTools', () => {
   const tools = kubicToolsToPiTools(toolContext());
 
   it('emits every operation with its registry schema, never a loose record', () => {
@@ -251,7 +250,7 @@ describe('kubicToolsToPiTools (issue #168)', () => {
     expect(byName.edit).toMatch(/oldText/);
   });
 
-  it('bash states its default and maximum timeout and the background-job rule (issue #339)', () => {
+  it('bash states its default and maximum timeout and the background-job rule', () => {
     const bash = tools.find((t) => t.name === 'bash')?.description;
     // Literal numbers on purpose: the text must track the shipped limits.
     expect(bash).toContain(
@@ -267,7 +266,7 @@ describe('kubicToolsToPiTools (issue #168)', () => {
     ['find', 'never follows or lists symlinks', "the result's notice names"],
     ['grep', 'never follows symlinks', 'the header names which one'],
   ])(
-    '%s states its ignore rules, symlink rule and walk caps (issue #172)',
+    '%s states its ignore rules, symlink rule and walk caps',
     (name, symlinks, cap) => {
       const description = tools.find((t) => t.name === name)?.description;
       expect(description).toContain(
@@ -348,13 +347,13 @@ describe('kubicToolsToPiTools (issue #168)', () => {
 
   it('read refuses binary content with size and type, never replacement chars', async () => {
     const env = new FakeExecutionEnv({});
-    // Seam without ranged reads (issue #356): the literal-U+FFFD fixture
+    // Seam without ranged reads: the literal-U+FFFD fixture
     // only refuses on the fallback path, which treats a surviving U+FFFD
     // as evidence the decode replaced bytes (fail-closed by design).
     env.fs.readFileRange = undefined;
     env.fs.writeFile('logo.png', '\uFFFDPNG\r\n\u001a\n');
     const out = await text('read', { path: 'logo.png' }, toolContext({ env }));
-    // BYTE size (issue #356): U+FFFD is 3 bytes in UTF-8, so the 8-char
+    // BYTE size: U+FFFD is 3 bytes in UTF-8, so the 8-char
     // fixture stats as 10 bytes.
     expect(out).toBe(
       `[read logo.png: binary file (10B, invalid UTF-8) — read serves text only; use bash for byte-level inspection]\n`,
@@ -379,7 +378,7 @@ describe('kubicToolsToPiTools (issue #168)', () => {
     );
   });
 
-  it('grep names the walk entry cap and the directory that exhausted it (issue #172)', async () => {
+  it('grep names the walk entry cap and the directory that exhausted it', async () => {
     const env = new FakeExecutionEnv({});
     for (let i = 0; i < WALK_MAX_ENTRIES + 10; i += 1) {
       env.fs.writeFile(`zzz/f${i}.txt`, 'nothing\n');
@@ -391,7 +390,7 @@ describe('kubicToolsToPiTools (issue #168)', () => {
     );
   });
 
-  it('grep names the depth cap and where the walk was pruned (issue #172)', async () => {
+  it('grep names the depth cap and where the walk was pruned', async () => {
     const env = new FakeExecutionEnv({});
     const deep = Array.from({ length: WALK_MAX_DEPTH + 2 }, () => 'd').join(
       '/',
@@ -403,7 +402,7 @@ describe('kubicToolsToPiTools (issue #168)', () => {
     );
   });
 
-  it('grep names maxMatches as the limit when the match cap stopped the search (issue #172)', async () => {
+  it('grep names maxMatches as the limit when the match cap stopped the search', async () => {
     const env = new FakeExecutionEnv({});
     env.fs.writeFile('a.txt', 'hit 1\nhit 2\nhit 3\n');
     expect(
@@ -417,7 +416,7 @@ describe('kubicToolsToPiTools (issue #168)', () => {
     );
   });
 
-  it('find carries the same cap notices in its JSON result (issue #172)', async () => {
+  it('find carries the same cap notices in its JSON result', async () => {
     const env = new FakeExecutionEnv({});
     env.fs.writeFile('a.txt', 'x');
     env.fs.writeFile('b.txt', 'x');
@@ -485,7 +484,7 @@ describe('kubicToolsToPiTools (issue #168)', () => {
     });
   });
 
-  it('a failed never-replay op writes no memo on the lane either (issue #217)', async () => {
+  it('a failed never-replay op writes no memo on the lane either', async () => {
     // The lane sets keepEffectMemo: false, so the registry memo never
     // engages there — success (above) or failure, no second durable copy.
     const env = new FakeExecutionEnv({});
@@ -520,7 +519,7 @@ describe('kubicToolsToPiTools (issue #168)', () => {
   });
 });
 
-describe('kubicToolsToPiTools on the pi-durable surface (issue #393)', () => {
+describe('kubicToolsToPiTools on the pi-durable surface', () => {
   it('names the call in the result details', async () => {
     const out = await run(
       'read',
@@ -538,12 +537,12 @@ describe('kubicToolsToPiTools on the pi-durable surface (issue #393)', () => {
       ok: true,
       toolCallId: 'call-1',
       invocationId: 'call-1',
-      // Issue #456: a new file's display record rides along.
+      // A new file's display record rides along.
       display: { kind: 'write', newFile: true, lines: 1, preview: 'x' },
     });
   });
 
-  // §20.2: Kubic's `never`/`safe` maps onto pi-durable's `unsafe`/`safe`, so
+  // Kubic's `never`/`safe` maps onto pi-durable's `unsafe`/`safe`, so
   // an interrupted effect is never rerun. Pinned per op: flipping one is a
   // crash-safety change, not a detail.
   it('maps every op replay flag onto the pi-durable vocabulary', () => {
@@ -577,7 +576,7 @@ describe('kubicToolsToPiTools on the pi-durable surface (issue #393)', () => {
     const tools = kubicToolsToPiTools(toolContext());
     for (const t of tools) {
       // bash streams, so its retained window is the interrupted path's
-      // content and is bounded like the #121 cap instead (see the next
+      // content and is bounded like the cap instead (see the next
       // test); every other tool only reports its bounded result.
       expect(t.outputLimits, t.name).toEqual(
         t.name === 'bash'
@@ -587,7 +586,7 @@ describe('kubicToolsToPiTools on the pi-durable surface (issue #393)', () => {
     }
   });
 
-  // #121 on the interrupted path: pi-durable hands the model the retained
+  // On the interrupted path: pi-durable hands the model the retained
   // live output (renderBashText never runs), so the window must be the same
   // order of magnitude as a capped bash result, and the tail is what
   // `clip()` keeps.
@@ -605,7 +604,7 @@ describe('kubicToolsToPiTools on the pi-durable surface (issue #393)', () => {
     expect(limits.maxBytes).toBeLessThanOrEqual(8 * 1024 * 1024);
   });
 
-  it('journal interception is attributed to the pi-durable call id (issue #17)', async () => {
+  it('journal interception is attributed to the pi-durable call id', async () => {
     const env = new FakeExecutionEnv({});
     const journal = new FileJournalStore(scratch('kubic-adapter-j-'));
     const context = toolContext({ env, journal });
@@ -681,7 +680,7 @@ describe('kubicToolsToPiTools on the pi-durable surface (issue #393)', () => {
     expect(api.output).toEqual(['--- stdout ---\nhead-tail', 'tail']);
   });
 
-  it('does not copy a never-replay result into a memo on the lane (issue #153)', async () => {
+  it('does not copy a never-replay result into a memo on the lane', async () => {
     const shell = shellEnv({
       result: {
         exitCode: 0,
@@ -705,7 +704,7 @@ describe('kubicToolsToPiTools on the pi-durable surface (issue #393)', () => {
     expect(second.text).toBe(first.text);
   });
 
-  it('registers the call kill handle under the conversation id (issue #11, #395 seam)', async () => {
+  it('registers the call kill handle under the conversation id', async () => {
     // A killed child settles with the shell's signal code, as the real seam
     // reports it (exitCode is a number there, never null).
     const shell = shellEnv({
@@ -738,7 +737,7 @@ describe('kubicToolsToPiTools on the pi-durable surface (issue #393)', () => {
     expect(out.text).toBe('[bash exit 143 (bash)]\n(no output)\n');
   });
 
-  it('drops the kill handle once the call settles (issue #142)', async () => {
+  it('drops the kill handle once the call settles', async () => {
     const shell = shellEnv({});
     const kills = new OperationKillRegistry();
     const api = drive({ conversationId: 7 });
@@ -757,7 +756,7 @@ describe('kubicToolsToPiTools on the pi-durable surface (issue #393)', () => {
   });
 });
 
-describe('renderGrepText (issue #172)', () => {
+describe('renderGrepText', () => {
   const match = { path: 'a.ts', line: 3, text: 'x' };
 
   it('appends the notice after the truncated marker', () => {
@@ -785,7 +784,7 @@ describe('renderGrepText (issue #172)', () => {
     ).toBe('[grep /p/: 1 match]\na.ts:3: x\n');
   });
 
-  it('names clipped lines and skipped files (issue #180)', () => {
+  it('names clipped lines and skipped files', () => {
     // A clipped line read as a whole one is a wrong answer, and a skipped
     // file is a place the pattern was never looked for.
     expect(
@@ -814,9 +813,9 @@ describe('renderGrepText (issue #172)', () => {
   });
 });
 
-// Issue #456: a file change's display record rides the result details (the
+// A file change's display record rides the result details (the
 // UI's record); the model-facing text stays the op's own result.
-describe('file-change display records (issue #456)', () => {
+describe('file-change display records', () => {
   it('puts the inline diff of an edit in the details, never in the text', async () => {
     const env = new FakeExecutionEnv({});
     env.fs.writeFile('cart.js', 'a\nexisting.qty = qty;\nb\n');

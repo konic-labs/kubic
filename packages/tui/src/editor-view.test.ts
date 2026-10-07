@@ -1,5 +1,4 @@
-// Prompt editor component for the interactive loop (issue #88).
-// RED: packages/tui/src/editor-view.ts does not exist yet.
+// Prompt editor component for the interactive loop.
 //
 // Pure headless snapshots (no VirtualTerminal in Pi 0.85.1): the editor is
 // driven byte-by-byte like the real input listener feeds it. Faux-only,
@@ -13,7 +12,7 @@ function typed(text: string, into: PromptEditor): void {
   for (const ch of text) into.handleInput(ch);
 }
 
-describe('prompt editor (issue #88)', () => {
+describe('prompt editor', () => {
   it('submits the typed prompt on Enter and clears the draft', () => {
     const editor = new PromptEditor();
     const submitted: string[] = [];
@@ -70,10 +69,10 @@ describe('prompt editor (issue #88)', () => {
   });
 });
 
-// Issue #340 (§16.5): a resumed session's earlier prompts are recallable
+// A resumed session's earlier prompts are recallable
 // with Up — the editor is seeded from the committed user entries, newest
 // last, bounded so a very long session stays cheap to resume.
-describe('seeded prompt history (issue #340)', () => {
+describe('seeded prompt history', () => {
   const UP = '\x1b[A';
 
   it('Up recalls the most recent seeded prompt, then older ones', () => {

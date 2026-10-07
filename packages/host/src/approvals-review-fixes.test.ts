@@ -1,8 +1,8 @@
-// Adversarial review of the #324/#355/#357 detector fixes (approvals.ts): the
+// Adversarial review of the detector fixes (approvals.ts): the
 // first cut let `cd` tracking REPLACE the path as typed, so a literal
 // `.kubic/journal` write stopped being refused whenever a `cd` that does not
 // really change the directory at the write came before it. Each block below
-// was written RED first. The rule they pin: classify BOTH the token as typed
+// was written. The rule they pin: classify BOTH the token as typed
 // (against the workspace) AND the cd-tracked resolution, and raise if EITHER
 // is control-plane (or, for outside-write, outside) — phantom, conditional,
 // subshell, quoted or echoed `cd`s can then only over-trigger, never hide a
@@ -417,7 +417,7 @@ describe('the cheap remaining bypasses of the new surface (MAJOR 5)', () => {
       'rm .kubic/conf*',
       'rm .kubic/rol*/r.md',
       'rm .kubic/sess*/x',
-      'rm .kubic/orch*',
+      'rm .kubic/aud*',
       'rm ~/.kubic/sess*/x',
       'rm $HOME/.kubic/*',
       'cd .kubic && rm jour*/*',
@@ -436,7 +436,7 @@ describe('the cheap remaining bypasses of the new surface (MAJOR 5)', () => {
       'rm src/*.ts',
       'rm -rf build/*',
       'echo x > out-?.txt',
-      'rm .kubic/wt*/x',
+      'rm .kubic/cache*/x',
       'rm .kubic/[a]bc',
       'rm .kubic/{one,two}/x',
       'rm ./*.log',
@@ -444,7 +444,7 @@ describe('the cheap remaining bypasses of the new surface (MAJOR 5)', () => {
       expect(refusal(command), command).toBeUndefined();
     }
     // Under .kubic but not a protected sub: still an ask, as the literal is.
-    expect(triggers('rm .kubic/wt*/x')).toContain(KUBIC_STATE_WRITE);
+    expect(triggers('rm .kubic/cache*/x')).toContain(KUBIC_STATE_WRITE);
     expect(triggers('rm src/*.ts')).not.toContain(KUBIC_STATE_WRITE);
   });
 

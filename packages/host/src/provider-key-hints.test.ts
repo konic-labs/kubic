@@ -1,9 +1,9 @@
-// What a keyless provider needs (issue #461): the variable Pi's own auth
+// What a keyless provider needs: the variable Pi's own auth
 // check reads, so the model picker can say `set OPENAI_API_KEY`.
 import { describe, expect, it } from 'vitest';
 import { providerKeyHints } from './provider-key-hints.js';
 
-describe('provider key hints (issue #461)', () => {
+describe('provider key hints', () => {
   it('names the variable Pi reads, an *_API_KEY first', async () => {
     const hints = await providerKeyHints([
       'openai',

@@ -1,4 +1,4 @@
-// The #392 SessionHandle seam on the solo boot (issue #395, D8.1): the lane
+// The SessionHandle seam on the solo boot: the lane
 // hands the handle's storage to the Harness through `adopt()`, so the handle
 // records that a harness owns it and its `release()` gives the lock back
 // without closing a storage a live harness is using.
@@ -64,7 +64,7 @@ async function boot(handle: SessionHandle): Promise<SoloLane> {
   });
 }
 
-describe('solo boot adopts the session storage (issue #395, D8.1)', () => {
+describe('solo boot adopts the session storage', () => {
   it('adopts the handle and keeps the storage usable after release', async () => {
     const tracked = trackableHandle('sess-adopt');
     const solo = await boot(tracked.handle);

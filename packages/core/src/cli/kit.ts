@@ -1,4 +1,4 @@
-// The CLI output kit (EPIC N, issue #445; docs/ui/06-cli.html). Pure helpers
+// The CLI output kit. Pure helpers
 // that render the 06 look from the shared tokens: a brand heading, section
 // labels, status marks, aligned rows, receipts, next actions, error blocks
 // and hint lines. Every helper returns strings without a trailing newline;

@@ -6,7 +6,6 @@ import type {
   AgentSummary,
   KubicPresentationState,
   LaneSnapshot,
-  WorkerSummary,
 } from './presentation.js';
 import {
   isPresentationCommand,
@@ -19,8 +18,8 @@ const SOURCE = readFileSync(
   'utf8',
 );
 
-describe('presentation contract (issue #5, §66)', () => {
-  it('state carries exactly the §66 seven fields', () => {
+describe('presentation contract', () => {
+  it('state carries exactly the six fields', () => {
     expect(Object.keys(PRESENTATION_STATE_FIELDS).sort()).toEqual([
       'agents',
       'approvals',
@@ -28,7 +27,6 @@ describe('presentation contract (issue #5, §66)', () => {
       'lanes',
       'session',
       'usage',
-      'workers',
     ]);
     // Values are the closed-world marker, not just the keys: flipping any
     // field to false must fail (mutation: BooleanLiteral true→false).
@@ -36,18 +34,14 @@ describe('presentation contract (issue #5, §66)', () => {
       session: true,
       agents: true,
       lanes: true,
-      workers: true,
       approvals: true,
       usage: true,
       connection: true,
     });
   });
 
-  it('command union is exactly the §66 eighteen', () => {
+  it('command union is exactly the thirteen', () => {
     expect([...PRESENTATION_COMMANDS].sort()).toEqual([
-      'agent.cancel',
-      'agent.send',
-      'agent.spawn',
       'approval.respond',
       'lane.abort',
       'lane.compact',
@@ -61,8 +55,6 @@ describe('presentation contract (issue #5, §66)', () => {
       'session.fork',
       'session.navigate',
       'thinking.cycle',
-      'worker.inspect',
-      'worker.terminate',
     ]);
   });
 
@@ -87,9 +79,6 @@ describe('presentation contract (issue #5, §66)', () => {
     >();
     expectTypeOf<KubicPresentationState['lanes']>().toEqualTypeOf<
       ReadonlyMap<string, LaneSnapshot>
-    >();
-    expectTypeOf<KubicPresentationState['workers']>().toEqualTypeOf<
-      ReadonlyMap<string, WorkerSummary>
     >();
   });
 

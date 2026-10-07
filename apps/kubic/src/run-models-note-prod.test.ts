@@ -18,7 +18,7 @@ function tmpRoot(prefix: string): string {
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
-  // The project models.json is trust-gated (issue #322); these cases are
+  // The project models.json is trust-gated; these cases are
   // about a trusted file's load/refusal receipt.
   vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
 });
@@ -30,7 +30,7 @@ afterEach(() => {
 });
 
 describe('kubic run surfaces the models.json note', () => {
-  it('warns that an untrusted project models.json was ignored (issue #322)', async () => {
+  it('warns that an untrusted project models.json was ignored', async () => {
     vi.stubEnv('KUBIC_TRUST_PROJECT', '');
     const cwd = tmpRoot('models-note-untrusted-');
     writeFileSync(

@@ -1,4 +1,4 @@
-// Shared vitest setup (issue #319): the TUI theme is a process-global, so a
+// Shared vitest setup: the TUI theme is a process-global, so a
 // test that leaves a coloured theme active changes what every later test in
 // the same worker renders. After each test the theme is reset to 'none'; a
 // test that left it coloured fails by name instead of breaking a neighbour.

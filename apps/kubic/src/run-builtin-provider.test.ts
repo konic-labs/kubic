@@ -1,4 +1,4 @@
-// `kubic run` over a Pi built-in provider (issue #221): with the provider's
+// `kubic run` over a Pi built-in provider: with the provider's
 // env key set and a `[model]` pin naming it, the run selects the BUILT-IN
 // (its catalog entry, its auth from the env key). Zero network: the built-in
 // keeps its id, catalog and auth, and only its stream is swapped for Pi's
@@ -33,7 +33,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('kubic run on a built-in provider (issue #221)', () => {
+describe('kubic run on a built-in provider', () => {
   it('selects the pinned built-in anthropic model when its key is set', async () => {
     const assembled = await assembleModels(
       tmpRoot('builtin-cwd-'),

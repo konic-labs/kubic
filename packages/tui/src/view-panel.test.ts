@@ -1,6 +1,6 @@
-// The diff panel's "follow the run" selection (issues #96, #311). While no
+// The diff panel's "follow the run" selection. While no
 // tool call is pinned the panel shows the run's most recent change, and a
-// change made with `bash` is journaled only by the §42.5 sweep — as an
+// change made with `bash` is journaled only by the sweep — as an
 // UNATTRIBUTED row (toolCallId null) — so the selection must reach those rows
 // too or Ctrl-O says `no changes` for a change the user just watched happen.
 import { describe, expect, it } from 'vitest';
@@ -32,7 +32,7 @@ function row(
 const paths = (panel: DiffPanel): string[] =>
   panel.visibleRows().map((r) => r.path);
 
-describe('DiffPanel following the run (issue #311)', () => {
+describe('DiffPanel following the run', () => {
   it('shows the call the run last touched when it wrote something', () => {
     const panel = new DiffPanel([
       row('a.txt', 'c1', 10),

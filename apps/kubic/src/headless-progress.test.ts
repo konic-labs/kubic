@@ -1,4 +1,4 @@
-// The headless runner feeds the `kubic run` progress sink (issue #447):
+// The headless runner feeds the `kubic run` progress sink:
 // begin once the lane booted (with the solo-notice decision), then one
 // toolStart/toolEnd pair per tool call — and the three-line stderr warning
 // block is replaced by the sink's compact notice. Faux provider, no network.
@@ -18,7 +18,7 @@ import {
 } from '../../../packages/worker/src/pi-boundary.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
-describe('headless run progress (issue #447)', () => {
+describe('headless run progress', () => {
   const made: string[] = [];
   function tmp(prefix: string): string {
     const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -28,7 +28,6 @@ describe('headless run progress (issue #447)', () => {
 
   beforeEach(() => {
     vi.stubEnv('KUBIC_NO_NOTICE', '');
-    vi.stubEnv('KUBIC_WORKER_ID', '');
   });
 
   afterEach(() => {

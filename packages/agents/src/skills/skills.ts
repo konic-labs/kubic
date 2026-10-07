@@ -1,4 +1,4 @@
-// Skills loader (issue #36; design §29). Markdown-only skills from
+// Skills loader. Markdown-only skills from
 // own-config + repo only: user roots (~/.pi/agent/skills,
 // ~/.agents/skills), project roots (.pi/skills + .agents/skills in the cwd
 // up to the git top-level — the cwd alone outside a repository —
@@ -13,8 +13,8 @@
 // module never touches node:fs — all reads go through the injected exec
 // FileBridge; tests back it with FakeExecutionEnv.
 //
-// Frontmatter contract (minimal subset, hand-parsed, no deps — Pi parity
-// per issue #186: kebab-case keys, block sequences and folded/literal
+// Frontmatter contract (minimal subset, hand-parsed, no deps — Pi parity:
+// kebab-case keys, block sequences and folded/literal
 // scalars for the contract keys, recursive discovery; deeper YAML —
 // anchors, tags, nested maps, indent indicators — reads as plain values):
 //   name: string (fallback: directory basename)
@@ -59,7 +59,7 @@ export interface DiscoverSkillsOptions {
   // every project ancestor is in scope. Production callers pass
   // `trustProject` so the decision is checked per ancestor instead.
   trusted: boolean;
-  // Issue #228 review: per-directory trust. Takes precedence over
+  // Per-directory trust. Takes precedence over
   // `trusted`: a project/package skill is loaded only when its own
   // directory is trusted, so a grant for a child never walks up into an
   // untrusted parent (and a grant for a parent applies from a child cwd).
@@ -72,18 +72,18 @@ export interface DiscoverSkillsOptions {
 
 export interface DiscoverSkillsResult {
   skills: LoadedSkill[];
-  // Explicit --skill values that resolved to nothing (issue #177): the
+  // Explicit --skill values that resolved to nothing: the
   // caller reports these on stderr — a silent skip reads as a loaded skill.
   unknownSkills: string[];
-  // Issue #238: every skill the walk met but did not load — excluded by
+  // Every skill the walk met but did not load — excluded by
   // distrust or confinement, or failed reads — each with its reason, so
   // the `kubic skills` listing (and the TUI notice) can name what was
   // left out instead of dropping it silently.
   skipped: SkippedSkill[];
 }
 
-// Issue #238: a skill the walk met but did not load. `excluded` is
-// policy — distrust, or a package entry confined away (issue #423);
+// A skill the walk met but did not load. `excluded` is
+// policy — distrust, or a package entry confined away;
 // `error` is a failed read. The name of an excluded project skill is the
 // directory basename: the frontmatter name is unknowable without reading
 // the file, which trust forbids.
@@ -98,7 +98,7 @@ export interface SkippedSkill {
 }
 
 export interface GateContext {
-  // Issue #181 (§29.4): absent means the lane booted with no role — the
+  // Absent means the lane booted with no role — the
   // role-scoping check is skipped (only the capability check applies), so
   // a plain `kubic run` still sees role-scoped skills it can actually run.
   role?: string;
@@ -124,7 +124,7 @@ function joinPosix(...parts: string[]): string {
   return `/${segments.join('/')}`;
 }
 
-// Issue #177 (§29.2/§29.3): explicit skill paths anchor at the invoking
+// Explicit skill paths anchor at the invoking
 // cwd, never at '/' and never at whatever root the caller's bridge
 // carries. Absolute values pass through (normalized); relative values —
 // './rel-skill', 'rel-skill', '../up/skill', 'rel/SKILL.md' — resolve
@@ -176,7 +176,7 @@ function ancestorsOf(cwd: string): string[] {
   return out;
 }
 
-// Issue #189 (§29.2): the repository top level, Pi-style — the nearest
+// The repository top level, Pi-style — the nearest
 // ancestor (itself included) holding a `.git` entry. Probed through the
 // injected bridge (I/O confinement: no node:fs here); an unreadable path
 // reads as "no marker", never fatal.
@@ -193,7 +193,7 @@ function findRepoRoot(bridge: FileBridge, cwd: string): string | undefined {
   return undefined;
 }
 
-// Issue #189: the trusted-ancestor chain for project + package skills is
+// The trusted-ancestor chain for project + package skills is
 // the repo root down to the cwd, far-to-near — the cwd alone outside a
 // repository. Trusting one repo must not trust instructions from a parent
 // directory, a shared /tmp, or $HOME, and a package.json above the root
@@ -241,7 +241,7 @@ function parseFrontmatterValue(raw: string): FrontmatterValue {
   return value;
 }
 
-// Issue #186: is this frontmatter line a continuation of the block opened
+// Is this frontmatter line a continuation of the block opened
 // at keyIndent — a blank line, or anything indented past the key?
 function isBlockContinuation(line: string, keyIndent: number): boolean {
   if (line.trim() === '') return true;
@@ -249,7 +249,7 @@ function isBlockContinuation(line: string, keyIndent: number): boolean {
   return indent !== -1 && indent > keyIndent;
 }
 
-// Issue #186: a `- item` block sequence under an empty-valued key.
+// A `- item` block sequence under an empty-valued key.
 // Returns undefined when the continuation holds no list items, so plain
 // indented text still reads as an empty value (fail-open, as before).
 function collectBlockSequence(
@@ -279,7 +279,7 @@ function collectBlockSequence(
   return { items, next };
 }
 
-// Issue #186: a `>` folded or `|` literal block scalar. Chomping is clip
+// A `>` folded or `|` literal block scalar. Chomping is clip
 // by default (one trailing newline, then clipped), `-` strips and `+`
 // keeps; blank lines separate folded paragraphs and are kept in literals.
 function collectBlockScalar(
@@ -337,7 +337,7 @@ export function parseSkillFile(
       (line, index) => index > 0 && line.trim() === '---',
     );
     if (closing > 0) {
-      // Issue #186 (§29, Pi parity): the contract keys accept YAML block
+      // The contract keys accept YAML block
       // sequences and folded/literal scalars — not just flow values.
       // Only the contract subset is supported (no anchors, tags, nested
       // maps, or indent indicators); anything else reads as a plain value.
@@ -411,7 +411,7 @@ export function parseSkillFile(
     filePath,
     roles,
     requiredTools,
-    // Issue #186 (§29, Pi parity): the canonical kebab-case key hides
+    // The canonical kebab-case key hides
     // the skill; the camelCase spelling stays as an alias.
     disableModelInvocation:
       frontmatter['disable-model-invocation'] === true ||
@@ -434,7 +434,7 @@ function loadSkillFile(
     raw = bridge.readTextFile(filePath);
   } catch {
     log?.(`skill skipped (unreadable ${filePath})`);
-    // Issue #238: the failed read is reported, not just logged, so the
+    // The failed read is reported, not just logged, so the
     // listing can show it as an error with its reason.
     note?.({
       name: basenameOf(dirnameOf(filePath)),
@@ -459,7 +459,7 @@ function loadSkillDir(
 }
 
 // A --skill value is a directory, a SKILL.md file, or a bare name. Paths
-// anchor at the invoking cwd (issue #177) — never at '/' (joinPosix's
+// anchor at the invoking cwd — never at '/' (joinPosix's
 // rooting turned './my-skill' into '/my-skill/SKILL.md') and never at the
 // bridge's own root (which is the sessions root on `kubic run`). A bare
 // name resolves against the discovery roots first (first hit wins — the
@@ -486,7 +486,7 @@ function loadExplicitSkill(
   return loadSkillDir(bridge, joinPosix(cwd, value), 'cli', log);
 }
 
-// Issue #186 (§29): recursive discovery, Pi-style — every SKILL.md-bearing
+// Recursive discovery, Pi-style — every SKILL.md-bearing
 // directory under the root, at any depth. Dot-dirs, node_modules and
 // symlinked dirs are never descended into (a repo root otherwise walks the
 // whole dependency tree, and a symlink cycle never terminates — both probed
@@ -562,7 +562,7 @@ function readPackageSkillDirs(
   );
 }
 
-// Issue #423: a package-declared skill dir is confined to the ancestor
+// A package-declared skill dir is confined to the ancestor
 // whose package.json declared it (the trusted root it was discovered
 // under). An absolute path or a `..` escape landing outside never loads,
 // and neither does a symlink resolving outside (realpath, so links
@@ -570,7 +570,7 @@ function readPackageSkillDirs(
 // bridge's realPath seam the check is lexical only.
 //
 // The boundary is deliberately the DECLARING package's directory, not
-// the repo root: per the per-ancestor trust model (issue #228) a grant
+// the repo root: per the per-ancestor trust model a grant
 // for `/repo/pkg` covers `/repo/pkg` only, so a `/repo/pkg` entry for
 // `../sibling` is refused even though the sibling is inside the same
 // repo. A transient realPath failure fails closed (error skip, never a
@@ -591,7 +591,7 @@ function confinedPackageDir(
   if (!isWithinDir(lexical, ancestor)) {
     const reason = `package skill '${declared}' outside trusted root '${ancestor}'`;
     log?.(`skill skipped (${reason})`);
-    // Issue #238: the confinement refusal is reported, not just logged.
+    // The confinement refusal is reported, not just logged.
     return {
       name: basenameOf(lexical),
       filePath: joinPosix(lexical, 'SKILL.md'),
@@ -604,7 +604,7 @@ function confinedPackageDir(
   try {
     resolved = normalizeSkillPath(bridge.realPath?.(lexical) ?? lexical);
   } catch {
-    // Review on #423: a transient realPath failure must fail closed —
+    // Review on: a transient realPath failure must fail closed —
     // falling back to the lexical path would load a skill whose target
     // was never verified. Reported as an error, like an unreadable file.
     const reason = `package skill '${declared}' unresolvable under trusted root '${ancestor}' (realPath failed)`;
@@ -647,7 +647,7 @@ export function discoverSkills(
   } = options;
   const byName = new Map<string, LoadedSkill>();
   const roots: string[] = [];
-  // Issue #238: every met-but-not-loaded skill, each with its reason.
+  // Every met-but-not-loaded skill, each with its reason.
   const skipped: SkippedSkill[] = [];
   const note = (skip: SkippedSkill): void => {
     skipped.push(skip);
@@ -658,7 +658,7 @@ export function discoverSkills(
 
   if (!noSkills) {
     // Low precedence first: user roots, then project ancestors far-to-near.
-    // Issue #237 (§35 tree): `~/.kubic/skills` joins the Pi-compatible
+    // `~/.kubic/skills` joins the Pi-compatible
     // roots LAST, so a Kubic-native skill wins a same-name conflict with
     // a Pi-carried one — the tool-specific directory overrides the
     // portable fallback.
@@ -667,7 +667,7 @@ export function discoverSkills(
       joinPosix(homeDir, '.agents/skills'),
       joinPosix(homeDir, '.kubic/skills'),
     ];
-    // Issue #189: a user root is never relabelled 'project'. When the
+    // A user root is never relabelled 'project'. When the
     // repo root is $HOME itself (or $HOME is otherwise on the chain),
     // the project probe would re-list ~/.agents/skills under 'project'
     // and shadow the user entry — skip those exact roots here.
@@ -678,7 +678,7 @@ export function discoverSkills(
         add(loadSkillDir(bridge, dir, 'user', log, note));
       }
     }
-    // Issue #238: distrust names what it leaves out instead of staying
+    // Distrust names what it leaves out instead of staying
     // silent — directory names only (the walk reads no contents, so
     // nothing crosses the trust boundary). Package.json entries stay
     // unenumerated: naming them means reading the project file. An
@@ -715,7 +715,7 @@ export function discoverSkills(
       }
       // Package-declared dirs: nearest package.json wins per name via the
       // same shadowing map (ancestors far-to-near so nearer shadows).
-      // Issue #423: each entry is confined to the ancestor that declared
+      // Each entry is confined to the ancestor that declared
       // it — absolute paths, `..` escapes and outside-resolving symlinks
       // are refused with a reason, never loaded under project trust.
       for (const dir of readPackageSkillDirs(bridge, ancestor, log)) {
@@ -733,16 +733,15 @@ export function discoverSkills(
   }
 
   // Explicit intent always applies, even under --no-skills or distrust.
-  // Settings dirs anchor at the invoking cwd like --skill values (issue
-  // #177): a relative dir in the settings file is cwd-relative, not
-  // bridge-root-relative.
+  // Settings dirs anchor at the invoking cwd like --skill values: a relative
+  // dir in the settings file is cwd-relative, not bridge-root-relative.
   for (const dir of settingsSkills) {
     add(
       loadSkillDir(bridge, resolveSkillPath(cwd, dir), 'settings', log, note),
     );
   }
   // An explicit --skill that resolves to nothing is reported, not just
-  // debug-logged (issue #177): the caller warns on stderr, so a typo
+  // debug-logged: the caller warns on stderr, so a typo
   // cannot read as a loaded skill.
   const unknownSkills: string[] = [];
   for (const value of cliSkills) {
@@ -761,7 +760,7 @@ export function gateSkills(
   const visible: LoadedSkill[] = [];
   const withheld: WithheldSkill[] = [];
   for (const skill of skills) {
-    // Issue #181: no role on the lane means no role scoping — the skill
+    // No role on the lane means no role scoping — the skill
     // is judged on capability alone.
     if (
       context.role !== undefined &&
@@ -785,7 +784,7 @@ export function gateSkills(
   return { visible, withheld };
 }
 
-// Issue #186 (§29.3 agentskills.io shape, Pi parity): quotes escape too —
+// Quotes escape too —
 // a description carrying `"` or `'` must not break the block.
 function escapeXml(value: string): string {
   return value
@@ -820,7 +819,7 @@ export function invokeSkill(skills: LoadedSkill[], name: string): string {
   return hit.content;
 }
 
-// Explicit invocation expansion (issue #183, §29.4): a hidden skill runs
+// Explicit invocation expansion: a hidden skill runs
 // by giving the model its content, with the operator's instructions
 // appended — the turn prompt carries both, so the skill is reachable
 // without ever entering the system prompt. Withheld skills are not in the

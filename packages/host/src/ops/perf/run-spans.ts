@@ -1,14 +1,14 @@
-// Run spans on the live headless path (issue #98; §49.3, §50, §61).
+// Run spans on the live headless path.
 // Maps the real headless-run events (lane accept, lane drive, harness tool
-// hooks) onto the §29 SpanRecorder, so a live `kubic run` records spans
-// instead of leaving §49.3 unimplemented. Destination is documented in
+// hooks) onto the SpanRecorder, so a live `kubic run` records spans
+// instead of leaving unimplemented. Destination is documented in
 // docs/packages/host.md and docs/cli/commands.md:
 //   - durable artifact: <sessions-root>/<id>/spans.jsonl (one JSON record
 //     per span, written by the composition root next to the journal),
-//   - stderr debug lines on the existing §50 vocabulary (`[agent]` lane
+//   - stderr debug lines on the existing vocabulary (`[agent]` lane
 //     lines, `[tool]` in/out lines) behind `kubic run --debug`.
 // No new debug class is invented: DEBUG_CLASSES stays the pinned eight.
-// Since issue #397 the attachment is a pi-durable `ToolTask` hook (beforeTool
+// Since the attachment is a pi-durable `ToolTask` hook (beforeTool
 // opens the span, afterTool closes it and returns the result unchanged).
 // Never blocks a tool call — the handlers return undefined except for the
 // untouched result, so telemetry can only observe the lane, never fail it.
@@ -27,8 +27,6 @@ export const RUN_SPAN_NAMES = {
   accept: 'kubic.lane.accept',
   drive: 'kubic.lane.drive',
   tool: 'pi.tool.execute',
-  workerStart: 'kubic.worker.start',
-  workerStartup: 'kubic.worker.startup',
 } as const;
 
 export type RunSpanName = (typeof RUN_SPAN_NAMES)[keyof typeof RUN_SPAN_NAMES];
@@ -36,9 +34,6 @@ export type RunSpanName = (typeof RUN_SPAN_NAMES)[keyof typeof RUN_SPAN_NAMES];
 export interface RunSpanRecord extends SpanRecord {
   // Present on pi.tool.execute spans only: which tool the call ran.
   toolName?: string;
-  // Present on manager-side worker spans only (issue #290): the worker
-  // session the span belongs to, so manager and worker traces join on it.
-  sessionId?: string;
 }
 
 export class RunSpans {
@@ -46,9 +41,6 @@ export class RunSpans {
   private readonly debug: DebugLog;
   private readonly lines: string[] = [];
   private readonly toolNames = new Map<string, string>();
-  private readonly spanSessions = new Map<string, string>();
-  // Manager-side worker spans (issue #290): start id → nested startup id.
-  private readonly workerStartups = new Map<string, string>();
   private readonly openCalls = new Map<string, string>();
   private readonly endMs = new Map<string, number | null>();
   private readonly startMs = new Map<string, number>();
@@ -125,11 +117,9 @@ export class RunSpans {
   trace(): RunSpanRecord[] {
     return this.recorder.trace().map((span) => {
       const toolName = this.toolNames.get(span.id);
-      const sessionId = this.spanSessions.get(span.id);
       return {
         ...span,
         ...(toolName === undefined ? {} : { toolName }),
-        ...(sessionId === undefined ? {} : { sessionId }),
       };
     });
   }
@@ -138,53 +128,8 @@ export class RunSpans {
     return [...this.lines];
   }
 
-  // Manager-side worker launch (issue #290): opens the worker.start span
-  // with its nested worker.startup span, both tagged with the worker
-  // session id. The startup span opens at launch — startup begins when
-  // the child is spawned — and endWorkerStartup pins its duration to the
-  // registry's startupMs (never a second wall-clock read).
-  startWorker(workerSessionId: string): string {
-    const start = this.recorder.start(RUN_SPAN_NAMES.workerStart);
-    const startup = this.recorder.start(RUN_SPAN_NAMES.workerStartup, start);
-    this.remember(start);
-    this.remember(startup);
-    this.spanSessions.set(start, workerSessionId);
-    this.spanSessions.set(startup, workerSessionId);
-    this.workerStartups.set(start, startup);
-    this.debug.agent(`worker start session=${workerSessionId}`);
-    return start;
-  }
-
-  // Pins the nested startup span's duration to the registry's number
-  // (issue #290): the artifact duration equals startupMs exactly. A null
-  // startupMs — the launch never became ready — closes the startup with
-  // zero duration; the failure itself lands on the worker.start span via
-  // endWorker. Repeat closes are no-ops.
-  endWorkerStartup(startId: string, startupMs: number | null): void {
-    const startup = this.workerStartups.get(startId);
-    if (startup === undefined || this.endMs.get(startup) !== null) return;
-    const started = this.recorder.get(startup)?.startMs ?? 0;
-    const ended = startupMs === null ? started : started + startupMs;
-    this.recorder.endAt(startup, ended);
-    this.endMs.set(startup, ended);
-  }
-
-  endWorker(startId: string, error?: string): void {
-    if (!this.workerStartups.has(startId)) return;
-    const elapsed = this.close(startId, error);
-    this.debug.agent(`worker end ms=${String(elapsed)}${this.suffix(error)}`);
-  }
-
-  // The two spans of one worker launch, for the per-worker artifact.
-  // Unknown ids flush nothing.
-  flushWorker(startId: string): RunSpanRecord[] {
-    const startup = this.workerStartups.get(startId);
-    const ids = new Set([startId, ...(startup === undefined ? [] : [startup])]);
-    return this.trace().filter((span) => ids.has(span.id));
-  }
-
   private remember(id: string): void {
-    // Issue #243: one keyed read, never a trace copy plus linear find.
+    // One keyed read, never a trace copy plus linear find.
     const span = this.recorder.get(id);
     this.startMs.set(id, span?.startMs ?? 0);
     this.endMs.set(id, null);
@@ -195,7 +140,7 @@ export class RunSpans {
   private close(id: string, error?: string): number {
     if (this.endMs.get(id) === null) {
       this.recorder.end(id, error);
-      // Issue #243: one keyed read, never a trace copy plus linear find.
+      // One keyed read, never a trace copy plus linear find.
       const span = this.recorder.get(id);
       this.endMs.set(id, span?.endMs ?? null);
     }
@@ -215,7 +160,7 @@ export class RunSpans {
   }
 }
 
-// Per-turn spans for event-driven surfaces (issue #290): the TUI folds
+// Per-turn spans for event-driven surfaces: the TUI folds
 // the conversation's committed lane events, so a turn is a run-start…run-end
 // pair with tool calls in between — not the headless lane accept/drive
 // shape. Each turn gets its own RunSpans keyed by the run-start inputs:
@@ -268,7 +213,7 @@ export class TurnSpans {
   }
 }
 
-// What a turn-driven surface (the TUI) passes its runner (issue #290):
+// What a turn-driven surface (the TUI) passes its runner:
 // the per-turn tracker plus where a settled turn's artifact lines go.
 export interface TurnSpansSink {
   turns: TurnSpans;
@@ -292,18 +237,17 @@ export function serializeSpanArtifact(
         endMs: span.endMs,
         ...(span.error === undefined ? {} : { error: span.error }),
         ...(span.toolName === undefined ? {} : { toolName: span.toolName }),
-        ...(span.sessionId === undefined ? {} : { sessionId: span.sessionId }),
       }),
     )
     .join('\n')}\n`;
 }
 
-// Harness hook attachment for the `kubic.spans` extension (issue #397):
+// Harness hook attachment for the `kubic.spans` extension:
 // opens a pi.tool.execute span on beforeTool and closes it on afterTool.
 // Handlers never block a call; afterTool returns the result unchanged.
 //
 // ORDERING: install this extension AFTER the blocking policy extension
-// (`kubic.budget` → `kubic.policy` → `kubic.spans` → `kubic`). The harness
+// (`kubic.policy` → `kubic.spans` → `kubic`). The harness
 // skips later hooks once a block is returned, so a blocked call then never
 // opens a span — the same shape the removed pi-agent-core attachToolSpans
 // had. Installed before a blocking hook, a blocked call would open a span

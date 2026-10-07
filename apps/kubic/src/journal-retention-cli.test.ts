@@ -1,4 +1,4 @@
-// Read-time journal self-heal (issue #119, AC "aged journal entries pruned
+// Read-time journal self-heal (AC "aged journal entries pruned
 // on `kubic log --session <id>` when config sets retentionDays"): with
 // `session.retentionDays` set, the log path prunes entries older than the
 // window from a SESSION journal as it reads it; with retention off (unset or
@@ -136,7 +136,7 @@ function seedCase(): {
   return { sessionsRoot, root, journalDir };
 }
 
-describe('read-time journal self-heal (issue #119)', () => {
+describe('read-time journal self-heal', () => {
   it('log --session prunes aged entries and keeps the fresh one when config sets retentionDays', async () => {
     const { sessionsRoot, root, journalDir } = seedCase();
     // Fixture sanity: both entries are on disk before the read.
@@ -201,7 +201,7 @@ describe('read-time journal self-heal (issue #119)', () => {
       {
         root,
         sessionsRoot,
-        // Issue #362: both sessions were recorded for this workspace.
+        // Both sessions were recorded for this workspace.
         sessionWorkspaces: async () =>
           new Map([
             ['sess-old', root],
@@ -249,7 +249,7 @@ describe('read-time journal self-heal (issue #119)', () => {
     expect(o.lines.join('\n')).toContain('aged.txt');
   });
 
-  it('a refused config leaves no window either: log --session never writes (issue #242)', async () => {
+  it('a refused config leaves no window either: log --session never writes', async () => {
     // A typo refuses the whole load, so the read path has no window —
     // exactly like the unset case — and writes nothing.
     const { sessionsRoot, root, journalDir } = seedCase();

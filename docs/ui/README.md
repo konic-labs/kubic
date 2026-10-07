@@ -1,14 +1,13 @@
 # Kubic UI design (v1)
 
 The design reference for Kubic's terminal surfaces: the TUI and the CLI's
-human-facing output. Tracked by EPIC N
-([#442](https://github.com/konic-labs/kubic/issues/442)).
+human-facing output. Tracked.
 
 The mockups are plain HTML and CSS. Open [index.html](index.html) in a
 browser (no build, no server). Every screen is drawn on a real character
 grid — one row is one terminal line and colour is per cell — so what is
 drawn can be built one-to-one on pi-tui. Refer to a mockup element by its
-note id, for example `01-D` or `06-B`.
+note id, for example `` or ``.
 
 | Page | Screen |
 | --- | --- |
@@ -16,7 +15,6 @@ note id, for example `01-D` or `06-B`.
 | [01-session.html](01-session.html) | Solo session: transcript blocks, tool cards, inline diff, thinking, receipt, editor, status line, key hints; mid-turn state |
 | [02-approval.html](02-approval.html) | Inline approval cards: shell command, file edit with diff preview |
 | [03-palette.html](03-palette.html) | `^P` command palette and the bare `/model` picker |
-| [04-orchestrator.html](04-orchestrator.html) | Orchestrator dashboard |
 | [05-welcome.html](05-welcome.html) | First launch preflight; the no-key exit |
 | [06-cli.html](06-cli.html) | CLI: help, run, doctor, models, setup, errors |
 | [kubic.css](kubic.css) | Tokens and the character-grid rules the mockups use |
@@ -31,7 +29,7 @@ note id, for example `01-D` or `06-B`.
 - **Every block earns its row.** No permanent banners. Header, status line
   and key hints are one row each; tool output shows the useful slice.
 - **Say the state.** Waiting, working, failed and done each have one glyph
-  and one colour, used the same way in the TUI, the dashboard and the CLI.
+  and one colour, used the same way in the TUI and the CLI.
 - **Keys follow focus.** The hint row shows only what works right now.
   Esc backs out; it never quits.
 - **Plain when piped.** Colour, spinners and boxes are a terminal layer.
@@ -96,7 +94,6 @@ grey reads worse than none) and `bg3` selection uses bright black.
 | `^X` | Expand output, diffs and thinking |
 | `^O` / `^R` | Diff panel / journal panel |
 | `^T` | Tool tree |
-| `^G` | Solo ↔ orchestrator |
 | `Alt+M` / `Alt+T` | Model picker / cycle thinking (on macOS, Option must send Esc+; `/model` and `^P` always work) |
 | `?` | All keys (idle, empty editor) |
 | Block mode | `↑↓`/`jk` move, `⏎` view, `y` copy, `Y` copy command, `x` expand, `esc` back |
@@ -105,31 +102,28 @@ grey reads worse than none) and `bg3` selection uses bright black.
 
 | Notes | Issue |
 | --- | --- |
-| Tokens, palettes, style engine | [#444](https://github.com/konic-labs/kubic/issues/444) |
-| CLI output kit | [#445](https://github.com/konic-labs/kubic/issues/445) |
-| 06-A help | [#446](https://github.com/konic-labs/kubic/issues/446) |
-| 06-B `kubic run` | [#447](https://github.com/konic-labs/kubic/issues/447) |
-| 06-C `kubic doctor` | [#448](https://github.com/konic-labs/kubic/issues/448) |
-| 06-D `kubic models`, tables | [#449](https://github.com/konic-labs/kubic/issues/449) |
-| 06-F errors | [#450](https://github.com/konic-labs/kubic/issues/450) |
-| 06-E setup | [#451](https://github.com/konic-labs/kubic/issues/451) |
-| TUI kit (frames, surfaces, badges, gauges, hints, matching) | [#452](https://github.com/konic-labs/kubic/issues/452) |
-| 01-A header, 01-L status line, 01-M key hints, `/safety` | [#453](https://github.com/konic-labs/kubic/issues/453) |
-| 01-K editor, mid-turn frame, key model | [#454](https://github.com/konic-labs/kubic/issues/454) |
-| 01-B prompt, 01-C prose, 01-D tool card, 01-E collapsed read | [#455](https://github.com/konic-labs/kubic/issues/455) |
-| 01-G inline diff | [#456](https://github.com/konic-labs/kubic/issues/456) |
-| 01-F thinking, 01-J receipt | [#457](https://github.com/konic-labs/kubic/issues/457) |
-| 01-I markdown, highlighting, links | [#458](https://github.com/konic-labs/kubic/issues/458) |
-| 02-A … 02-E approval cards | [#459](https://github.com/konic-labs/kubic/issues/459) |
-| 03-A … 03-C palette | [#460](https://github.com/konic-labs/kubic/issues/460) |
-| 03-D, 03-E pickers | [#461](https://github.com/konic-labs/kubic/issues/461) |
-| 05-A … 05-F preflight | [#462](https://github.com/konic-labs/kubic/issues/462) |
-| Block mode (01-D footer, 01-M) | [#463](https://github.com/konic-labs/kubic/issues/463) |
-| 04 data: activity, run phases, diff stats | [#464](https://github.com/konic-labs/kubic/issues/464) |
-| 04-A, 04-B, 04-C, 04-E dashboard | [#465](https://github.com/konic-labs/kubic/issues/465) |
-| 04-D preview, 04-F dispatch | [#466](https://github.com/konic-labs/kubic/issues/466) |
-| 02-D/E/F richer answers (`e`, `A`, `c`) | [#467](https://github.com/konic-labs/kubic/issues/467) |
-| Light/terminal themes, 256/16 colour, narrow terminals | [#468](https://github.com/konic-labs/kubic/issues/468) |
+| Tokens, palettes, style engine | |
+| CLI output kit | |
+| help | |
+| `kubic run` | |
+| `kubic doctor` | |
+| `kubic models`, tables | |
+| errors | |
+| setup | |
+| TUI kit (frames, surfaces, badges, gauges, hints, matching) | |
+| header status line key hints, `/safety` | |
+| editor, mid-turn frame, key model | |
+| prompt prose tool card collapsed read | |
+| inline diff | |
+| thinking receipt | |
+| markdown, highlighting, links | |
+| approval cards | |
+| palette | |
+| pickers | |
+| preflight | |
+| Block mode | |
+|/E/F richer answers (`e`, `A`, `c`) | |
+| Light/terminal themes, 256/16 colour, narrow terminals | |
 
 ## Not designed yet
 
@@ -137,8 +131,7 @@ The diff/journal panels and an inline (non-full-screen) TUI variant.
 
 Since drawn or checked: the light theme has its own token set and a light
 mock in `index.html` (`:root[data-theme="light"]` / `.theme-light` in
-`kubic.css`, the values of `LIGHT_PALETTE`), and the render matrix (#468:
-`packages/tui/src/ui/matrix.test.ts`, the CLI matrices in core, host and
+`kubic.css`, the values of `LIGHT_PALETTE`), and the render matrix (`packages/tui/src/ui/matrix.test.ts`, the CLI matrices in core, host and
 apps) renders every surface in the dark, light and terminal palettes at
 truecolor, 256, 16 and no colour, from 60 to 140 columns: no line overflows,
 none leaks a style, and the full-width surfaces paint their whole row. At 16

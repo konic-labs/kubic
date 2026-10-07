@@ -1,4 +1,4 @@
-// The CLI output kit (EPIC N, issue #445; docs/ui/06-cli.html).
+// The CLI output kit.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   alignedRows,

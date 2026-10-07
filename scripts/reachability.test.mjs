@@ -1,7 +1,7 @@
-// Reachability gate tests (issue #102). The gate's job is to fail when a
-// dead file lands without a ledger row, when a row goes stale, and when a
-// row's file becomes reachable — never to re-report what the ledger already
-// carries. Fixtures build throwaway trees so the real repo is never mutated.
+// Reachability gate tests. The gate's job is to fail when a dead file lands
+// without a listing, when a listing goes stale, and when a listed file
+// becomes reachable — never to re-report what the list already carries.
+// Fixtures build throwaway trees so the real repo is never mutated.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -13,7 +13,6 @@ import {
   checkSurface,
   computeReachable,
   deadFiles,
-  parseLedger,
 } from './reachability.mjs';
 
 const ROOT = join(import.meta.dirname, '..');
@@ -108,41 +107,8 @@ test('test files are never counted as production sources', () => {
   );
 });
 
-test('the ledger parses LOC, path and disposition rows', () => {
-  withTree(
-    {
-      'docs/dead-surface.md':
-        '| LOC | file | owner | disposition |\n| --- | --- | --- | --- |\n| 12 | `packages/a/src/x.ts` | #99 | wire: later |\n',
-    },
-    (root) => {
-      const rows = parseLedger(root);
-      assert.equal(rows.size, 1);
-      assert.deepEqual(rows.get('packages/a/src/x.ts'), {
-        loc: 12,
-        disposition: '#99 wire: later',
-      });
-    },
-  );
-});
-
-test('a 3-column ledger row parses too (disposition only)', () => {
-  withTree(
-    {
-      'docs/dead-surface.md':
-        '| LOC | file | disposition |\n| --- | --- | --- |\n| 7 | `packages/a/src/y.ts` | keep: seam |\n',
-    },
-    (root) => {
-      const rows = parseLedger(root);
-      assert.deepEqual(rows.get('packages/a/src/y.ts'), {
-        loc: 7,
-        disposition: 'keep: seam',
-      });
-    },
-  );
-});
-
-test('checkSurface reports uncovered, stale and wired rows separately', () => {
-  // The three ways the ledger and the tree disagree must each go red on
+test('checkSurface reports uncovered, stale and wired entries separately', () => {
+  // The three ways the list and the tree disagree must each go red on
   // their own — a gate that only ever returns [] would pass the real-tree
   // test below vacuously.
   withTree(
@@ -151,14 +117,13 @@ test('checkSurface reports uncovered, stale and wired rows separately', () => {
       'apps/app/src/wired.ts': 'export const w = 1;\n',
       'apps/app/src/dead.ts': 'export const d = 1;\n',
       'apps/app/src/ledgered.ts': 'export const l = 1;\n',
-      'docs/dead-surface.md':
-        '| LOC | file | disposition |\n| --- | --- | --- |\n' +
-        '| 1 | `apps/app/src/ledgered.ts` | keep: seam |\n' +
-        '| 1 | `apps/app/src/wired.ts` | wire: done |\n' +
-        '| 1 | `apps/app/src/gone.ts` | delete: done |\n',
     },
     (root) => {
-      const result = checkSurface(root);
+      const result = checkSurface(root, {
+        'apps/app/src/ledgered.ts': 'kept as a seam',
+        'apps/app/src/wired.ts': 'wired since',
+        'apps/app/src/gone.ts': 'deleted since',
+      });
       assert.deepEqual(result.dead, [
         'apps/app/src/dead.ts',
         'apps/app/src/ledgered.ts',
@@ -179,14 +144,13 @@ test('the CLI gate runs from a path containing a space', () => {
   try {
     mkdirSync(spaced);
     cpSync(join(ROOT, 'scripts'), join(spaced, 'scripts'), { recursive: true });
-    cpSync(join(ROOT, 'docs'), join(spaced, 'docs'), { recursive: true });
     mkdirSync(join(spaced, 'packages', 'a', 'src'), { recursive: true });
     mkdirSync(join(spaced, 'apps', 'app', 'src'), { recursive: true });
     writeFileSync(
       join(spaced, 'apps', 'app', 'src', 'main.ts'),
       'export const x = 1;\n',
     );
-    // One dead file with no ledger row: the gate MUST fail loudly here.
+    // One dead file that is not listed: the gate MUST fail loudly here.
     writeFileSync(
       join(spaced, 'packages', 'a', 'src', 'dead.ts'),
       'export const dead = 1;\n',
@@ -201,18 +165,18 @@ test('the CLI gate runs from a path containing a space', () => {
       1,
       `expected exit 1 from a spaced path, got ${result.status} (silent pass = the bug)`,
     );
-    assert.match(result.stderr, /no ledger row/);
+    assert.match(result.stderr, /runtime-dead and not listed/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
 });
 
-test('the real tree’s gate state is the ledger’s state', () => {
-  // Locks in the shipped invariant: every dead file is ledgered, no row is
-  // stale and no row has gone reachable. If a sibling issue wires or deletes
-  // a file without updating the ledger, this fails with the offending path.
+test('the real tree matches the dead-surface list', () => {
+  // Every dead file is listed, no entry names a missing file and no entry
+  // has gone reachable. A change that wires or deletes a listed file
+  // without updating the list fails here with the offending path.
   const result = checkSurface(ROOT);
-  assert.deepEqual(result.uncovered, [], 'dead files must all be ledgered');
-  assert.deepEqual(result.stale, [], 'no ledger row may name a missing file');
-  assert.deepEqual(result.wired, [], 'no ledger row may still be reachable');
+  assert.deepEqual(result.uncovered, [], 'dead files must all be listed');
+  assert.deepEqual(result.stale, [], 'no entry may name a missing file');
+  assert.deepEqual(result.wired, [], 'no entry may still be reachable');
 });

@@ -1,9 +1,9 @@
-// Issue #461: one read of the session summaries serves the palette and
+// One read of the session summaries serves the palette and
 // `/resume` for a short while — a summary parses a whole session file.
 import { describe, expect, it } from 'vitest';
 import { cachedSummaries, SESSION_SUMMARY_TTL_MS } from './tui-run.js';
 
-describe('cached session summaries (issue #461)', () => {
+describe('cached session summaries', () => {
   it('shares one read within the window, per asking session', async () => {
     let now = 1000;
     let reads = 0;

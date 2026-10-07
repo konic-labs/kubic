@@ -1,10 +1,10 @@
-// Run spans on the live headless path (issue #98, criterion 1): drives the
+// Run spans on the live headless path: drives the
 // composition-root adapter (`apps/kubic/src/headless-run.ts`) against a real
 // lane with faux models — the same black-box standard as
 // run-prod-path.test.ts — and asserts a live run actually EMITS the
 // lane/tool spans at the documented destination:
 //   - durable: <sessions-root>/<id>/spans.jsonl (one JSON record per span),
-//   - stderr debug: the §50 `[tool]` in/out and `[agent]` lane lines behind
+//   - stderr debug: the `[tool]` in/out and `[agent]` lane lines behind
 //     `--debug` (injected sink here, console.error in prod).
 // Faux provider only: zero network, zero paid tokens.
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -84,7 +84,7 @@ function readSpans(root: string, id: string): SpanLine[] {
     .map((line) => JSON.parse(line) as SpanLine);
 }
 
-describe('live run emits lane/tool spans (issue #98, criterion 1)', () => {
+describe('live run emits lane/tool spans', () => {
   it('writes run → lane accept/drive → tool spans to <sessions>/<id>/spans.jsonl', async () => {
     const root = tmpRoot();
     const env = new FakeExecutionEnv({});
@@ -127,7 +127,7 @@ describe('live run emits lane/tool spans (issue #98, criterion 1)', () => {
     );
   });
 
-  it('emits the §50 tool/agent debug lines on the injected sink', async () => {
+  it('emits the tool/agent debug lines on the injected sink', async () => {
     const root = tmpRoot();
     const env = new FakeExecutionEnv({});
     env.fs.writeFile('a.txt', 'spans read this\n');
@@ -149,7 +149,7 @@ describe('live run emits lane/tool spans (issue #98, criterion 1)', () => {
     expect(joined).toMatch(/\[agent\] lane accept start/);
     expect(joined).toMatch(/\[agent\] lane drive start/);
     expect(joined).toMatch(/\[agent\] run start/);
-    // §50 vocabulary is closed: no invented debug class on the run path.
+    // Vocabulary is closed: no invented debug class on the run path.
     for (const line of lines) {
       expect(line).toMatch(
         /^\[(policy|worker|session|tool|model|agent|exit|handles)\]/,

@@ -1,7 +1,7 @@
-// Honest-limits doctor checks (issue #58; §59.1, §78, §50).
-// RED first: static §59.1 notices plus dynamic provider/dep/policy
+// Honest-limits doctor checks.
+// Static notices plus dynamic provider/dep/policy
 // builders with honest messages; provider-down maps to exit 6; --json
-// matches the #29 envelope shape. Faux-only: injected values, no I/O.
+// matches the envelope shape. Faux-only: injected values, no I/O.
 import { describe, expect, it } from 'vitest';
 import { MCP_ARRIVAL_REQUIREMENTS } from '../config/stances.js';
 import type { DoctorCheck } from '../doctor.js';
@@ -17,17 +17,15 @@ import {
   limitsDoctorExit,
   policyEnforceabilityCheck,
   providerAvailabilityCheck,
-  resourceEnforcementCheck,
   staticLimitChecks,
 } from './doctor-limits.js';
 
-describe('static §59.1 limit notices (issue #58)', () => {
+describe('static limit notices', () => {
   it('covers every applicable limit with honest warn notices', () => {
     const checks = staticLimitChecks();
     const ids = checks.map((check) => check.id);
     expect(ids).toEqual([
       'limit:solo-no-isolation',
-      'limit:worktrees-writers-only',
       'limit:no-injection-prevention',
       'limit:policy-offer',
       'limit:journal-not-backup',
@@ -45,7 +43,6 @@ describe('static §59.1 limit notices (issue #58)', () => {
       .map((check) => check.detail)
       .join('\n');
     expect(text).toMatch(/no isolation/);
-    expect(text).toMatch(/writers only/);
     expect(text).toMatch(/no .*injection.*prevention/i);
     expect(text).toMatch(/not enforcement/);
     expect(text).toMatch(/not a backup/);
@@ -53,7 +50,7 @@ describe('static §59.1 limit notices (issue #58)', () => {
   });
 });
 
-describe('doctor matrix (issue #58)', () => {
+describe('doctor matrix', () => {
   it('missing provider fails provider-down naming exit 6', () => {
     const check = providerAvailabilityCheck([
       { id: 'local', reachable: false },
@@ -87,7 +84,7 @@ describe('doctor matrix (issue #58)', () => {
     expect(check.detail).toContain('git');
   });
 
-  it('unenforceable MCP request fails policy-mismatch as v1-unsupported', () => {
+  it('unenforceable MCP request fails policy-mismatch as unsupported', () => {
     const check = policyEnforceabilityCheck({
       route: 'ask-user',
       autoApprove: ['mcp:filesystem'],
@@ -95,7 +92,9 @@ describe('doctor matrix (issue #58)', () => {
     expect(check.status).toBe('fail');
     expect(check.reason).toBe('policy-mismatch');
     expect(check.detail).toContain('mcp:filesystem');
-    expect(check.detail).toMatch(/unsupported in v1/);
+    expect(check.detail).toMatch(
+      /unsupported: no third-party tools or MCP servers/,
+    );
   });
 
   it('extension request fails the same honest way', () => {
@@ -107,7 +106,7 @@ describe('doctor matrix (issue #58)', () => {
     expect(check.reason).toBe('policy-mismatch');
   });
 
-  it('config-level mcp refusal names the §33 arrival requirements', () => {
+  it('config-level mcp refusal names the arrival requirements', () => {
     const check = policyEnforceabilityCheck({
       route: 'ask-user',
       autoApprove: [],
@@ -126,7 +125,7 @@ describe('doctor matrix (issue #58)', () => {
       mcp: { servers: [] },
     });
     expect(check.status).toBe('fail');
-    expect(check.detail).toMatch(/unsupported in v1/);
+    expect(check.detail).toMatch(/config key \[mcp\] is unsupported/);
   });
 
   it('invalid policy shape defers to policy:approvals without double-failing', () => {
@@ -148,7 +147,7 @@ describe('doctor matrix (issue #58)', () => {
   });
 });
 
-describe('§78 exit mapping (issue #58)', () => {
+describe('exit mapping', () => {
   function fail(reason: DoctorCheck['reason']): DoctorCheck {
     return {
       id: 'x',
@@ -159,7 +158,7 @@ describe('§78 exit mapping (issue #58)', () => {
     };
   }
 
-  it('provider failure exits 6, matching kubic run §78', () => {
+  it('provider failure exits 6, matching kubic run', () => {
     expect(LIMITS_DOCTOR_EXIT_PROVIDER).toBe(6);
     expect(LIMITS_DOCTOR_EXIT_PROVIDER).toBe(RUN_EXIT_PROVIDER_PROBE_FAILED);
     expect(limitsDoctorExit([fail('provider-down')])).toBe(6);
@@ -193,7 +192,7 @@ describe('§78 exit mapping (issue #58)', () => {
     expect(text).toContain('0 fail');
   });
 
-  it('provider-down exits 6 end-to-end via runDoctorCommand (§78)', async () => {
+  it('provider-down exits 6 end-to-end via runDoctorCommand', async () => {
     const lines: string[] = [];
     const code = await runDoctorCommand(
       {},
@@ -210,7 +209,7 @@ describe('§78 exit mapping (issue #58)', () => {
   });
 });
 
-describe('limits --json shape §50/78 (issue #58)', () => {
+describe('limits --json shape /78', () => {
   it('builds the {ok, exitCode, checks} envelope the doctor --json uses', async () => {
     const checks: DoctorCheck[] = [
       ...staticLimitChecks(),
@@ -223,7 +222,7 @@ describe('limits --json shape §50/78 (issue #58)', () => {
     expect(Object.keys(report).sort()).toEqual(['checks', 'exitCode', 'ok']);
   });
 
-  it('matches the #29 doctor --json key shape check-for-check', async () => {
+  it('matches the doctor --json key shape check-for-check', async () => {
     const jsonLines: string[] = [];
     await runDoctorCommand(
       { json: true },
@@ -247,7 +246,7 @@ describe('limits --json shape §50/78 (issue #58)', () => {
   });
 });
 
-describe('collectLimitChecks (issue #58)', () => {
+describe('collectLimitChecks', () => {
   it('aggregates static, provider, dep, and policy checks', () => {
     const checks = collectLimitChecks({
       providers: [{ id: 'local', reachable: true }],
@@ -259,60 +258,5 @@ describe('collectLimitChecks (issue #58)', () => {
     expect(ids).toContain('limit:provider-availability');
     expect(ids).toContain('limit:deps-present');
     expect(ids).toContain('policy:enforceability');
-  });
-});
-
-describe('resource enforcement posture (§82, issue #163)', () => {
-  it('names the limits a run actually enforces, and warns about the rest', () => {
-    // Availability is not enforcement (issue #163 review): with no configured
-    // cap, a stock run enforces wall clock only — the line says so instead of
-    // claiming protection the run does not deliver.
-    const stock = resourceEnforcementCheck({
-      platform: 'darwin',
-      memoryProbe: true,
-      diskProbe: true,
-      configured: {},
-    });
-    expect(stock).toMatchObject({
-      id: 'limit:resources',
-      status: 'warn',
-      reason: 'ok',
-    });
-    expect(stock.detail).toContain('enforced: wall clock');
-    expect(stock.detail).toContain('NOT enforced: memory');
-    expect(stock.detail).toContain('disk');
-    expect(stock.detail).toContain('no CLI flag/config key sets a cap');
-  });
-
-  it('passes only when every available limit is also configured', () => {
-    const configured = resourceEnforcementCheck({
-      platform: 'darwin',
-      memoryProbe: true,
-      diskProbe: true,
-      configured: { memoryLimitMb: 512, diskQuotaMb: 64 },
-    });
-    expect(configured.status).toBe('pass');
-    expect(configured.detail).toContain(
-      'memory (RSS sampling + --max-old-space-size 512MB)',
-    );
-    expect(configured.detail).toContain('disk (per-worktree quota 64MB)');
-    expect(configured.detail).not.toContain('NOT enforced');
-  });
-
-  it('warns when a limit cannot be enforced on this platform', () => {
-    const degraded = resourceEnforcementCheck({
-      platform: 'win32',
-      memoryProbe: false,
-      diskProbe: false,
-      configured: { memoryLimitMb: 512, diskQuotaMb: 64 },
-    });
-    expect(degraded.status).toBe('warn');
-    // A configured cap with no probe is still NOT enforced: the platform
-    // cannot observe it.
-    expect(degraded.detail).toContain(
-      'NOT enforced: memory (no RSS probe on win32)',
-    );
-    expect(degraded.detail).toContain('disk (no worktree probe on win32)');
-    expect(degraded.detail).toContain('enforced: wall clock');
   });
 });

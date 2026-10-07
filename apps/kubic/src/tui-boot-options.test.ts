@@ -1,4 +1,4 @@
-// The deps→boot-options projection of `kubic tui` (issue #227). The prod
+// The deps→boot-options projection of `kubic tui`. The prod
 // runner hands `tuiDepsWithDefaults` the config projections and commander's
 // parity flags; this pins what reaches `bootTuiLane` — including the model
 // pin — without opening a terminal.
@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveEffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
 import { tuiBootOptions, tuiDepsWithDefaults } from './tui-run.js';
 
-describe('tuiBootOptions (issue #227)', () => {
+describe('tuiBootOptions', () => {
   it('forwards the model pin and every config projection', () => {
     const options = tuiBootOptions(
       {
@@ -25,7 +25,7 @@ describe('tuiBootOptions (issue #227)', () => {
     expect(options.reconcileOutOfScope).toEqual(['dist']);
   });
 
-  it('forwards the §58 enterprise policy the run path gates with (issue #288)', () => {
+  it('forwards the enterprise policy the run path gates with', () => {
     const modelPolicy = resolveEffectivePolicy([
       { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
     ]).policy;
@@ -41,7 +41,7 @@ describe('tuiBootOptions (issue #227)', () => {
     ).toBe(false);
   });
 
-  it('forwards the session compaction projection (issue #239)', () => {
+  it('forwards the session compaction projection', () => {
     const options = tuiBootOptions(
       {
         out: () => {},
@@ -60,7 +60,7 @@ describe('tuiBootOptions (issue #227)', () => {
     ).toBe(false);
   });
 
-  it('forwards the system prompt file section (issue #240)', () => {
+  it('forwards the system prompt file section', () => {
     const options = tuiBootOptions(
       { out: () => {}, systemPromptSection: 'Be terse.' },
       undefined,
@@ -73,7 +73,7 @@ describe('tuiBootOptions (issue #227)', () => {
     ).toBe(false);
   });
 
-  it('forwards the roles projection with the global home (issue #241)', () => {
+  it('forwards the roles projection with the global home', () => {
     // The TUI resolves `--role` through the same global `~/.kubic/roles`
     // layer as `kubic run`: the projection must carry the home directory
     // or the boot's global documents silently vanish.
@@ -101,7 +101,7 @@ describe('tuiBootOptions (issue #227)', () => {
     expect('model' in options).toBe(false);
   });
 
-  it('forwards the effective thinking level with its source (issue #225)', () => {
+  it('forwards the effective thinking level with its source', () => {
     const options = tuiBootOptions(
       { out: () => {}, thinking: { level: 'high', source: 'cli' } },
       undefined,
@@ -137,7 +137,7 @@ describe('tuiBootOptions (issue #227)', () => {
   });
 });
 
-describe('tuiDepsWithDefaults (issue #227)', () => {
+describe('tuiDepsWithDefaults', () => {
   it('keeps the channels and adds the terminal + boot seams', () => {
     const out = () => {};
     const err = () => {};

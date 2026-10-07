@@ -1,9 +1,9 @@
-// ApprovalSurface: the TUI's answer seat for the host's approval asks
-// (issue #96; §41, §16.4). This is the module that turns approval-view.ts
-// from a dead component into the surface the installed policy needs.
+// ApprovalSurface: the TUI's answer seat for the host's approval asks. This is
+// the module that turns approval-view.ts from a dead component into the surface
+// the installed policy needs.
 //
 // Why this exists at all: the host installs the approval ask on the run path
-// (packages/host/src/approvals.ts, issue #86) but no command could answer it —
+// (packages/host/src/approvals.ts) but no command could answer it —
 // the headless runner has no TTY and the TUI had no overlay — so every
 // challenged call was refused with NO_ANSWER_SURFACE_REASON. The TUI is the
 // only command with a user attached, so it is the one that has to collect the
@@ -19,7 +19,7 @@
 //   - sanitisation at ingress: the request fields are tool-call content, so
 //     they are cleaned before a render function sees them.
 //
-// Presentation + collection only (§66): this module never decides a policy
+// Presentation + collection only: this module never decides a policy
 // question. It reports what the USER pressed, and `deny` is what it reports
 // when nobody can press anything.
 
@@ -57,7 +57,7 @@ export interface ApprovalSurfaceOptions {
   // request would sit invisible until the operator happened to press a key
   // (the bug the end-to-end test caught: the frame never showed the overlay).
   onChange?: (() => void) | undefined;
-  // Issue #315: the arming delay (APPROVAL_ARMING_MS when absent; 0 turns it
+  // The arming delay (APPROVAL_ARMING_MS when absent; 0 turns it
   // off), the quiet period a swallowed key restarts it with and the window in
   // which the same decision key counts as a terminal repeat
   // (APPROVAL_QUIET_MS / APPROVAL_REPEAT_MS when absent; both are off when the
@@ -81,13 +81,13 @@ function defaultArmTimer(ms: number, fire: () => void): () => void {
 // surface does not care which host service asked.
 export type SurfaceRequest = ApprovalViewRequest;
 
-/** Issue #467: the card's one-line input — a denial comment or a command. */
+/** The card's one-line input — a denial comment or a command. */
 export interface ApprovalInput {
   readonly kind: 'comment' | 'edit';
   readonly text: string;
 }
 
-/** Issue #467: the longest comment the card takes (the host bounds it too). */
+/** The longest comment the card takes (the host bounds it too). */
 export const APPROVAL_COMMENT_MAX_CHARS = 500;
 /** And the longest command an edit may grow to. */
 export const APPROVAL_EDIT_MAX_CHARS = 16 * 1024;
@@ -101,7 +101,7 @@ export interface ApprovalSurface {
   // Called by the decider. Resolves when the user decides (or when the
   // session gives up); never rejects.
   //
-  // Issue #232: the optional AbortSignal is the asker's own bound. An abort
+  // The optional AbortSignal is the asker's own bound. An abort
   // WITHDRAWS exactly this ask — the shown one is cleared and the next queued
   // ask is shown, a queued one is dropped from the queue — and resolves it as
   // a deny, so a stale question never blocks the surface and a decision
@@ -113,35 +113,31 @@ export interface ApprovalSurface {
   // The request currently shown, if any (queued requests are not shown).
   pending(): SurfaceRequest | undefined;
   isShowing(): boolean;
-  // Issue #315: false during the arming window after a request appears —
+  // False during the arming window after a request appears —
   // every decision key but the immediate deny is ignored until then. The
   // window measures QUIET time: it restarts (for the longer APPROVAL_QUIET_MS)
   // on every key the modal swallows, and a decision key that repeats the
   // previous key inside APPROVAL_REPEAT_MS is swallowed as a terminal repeat.
   isArmed(): boolean;
-  // Issue #316: false while the dialog cannot show the whole command (the
+  // False while the dialog cannot show the whole command (the
   // overlay is too short): every allow key is inert then, deny always works.
   isAllowable(): boolean;
-  // Issue #315: the app dropped a key while a request shows without asking
+  // The app dropped a key while a request shows without asking
   // `decide` (a held-key repeat): that is typing too, so the arming window
   // restarts. A no-op when nothing shows.
   noteDroppedKey(): void;
-  // Issue #467: `c` (comment) or `e` (edit) opened a one-line input on the
+  // `c` (comment) or `e` (edit) opened a one-line input on the
   // card. While it is open, `typeInto` takes the keys first: text, Backspace,
   // Ctrl-U, Esc (back to the card) and Enter (send) — `settled` when Enter
   // answered the ask, `consumed` for any other key it used, undefined for a
   // key it leaves alone (a global key). `decide` takes no key meanwhile.
   inputMode(): ApprovalInput | undefined;
   typeInto(data: string): 'settled' | 'consumed' | undefined;
-  // Issue #465: the shown request just came on screen (the dashboard's `a`
-  // opened its card): it arms from now, like a fresh ask — a key pressed
-  // with the one that opened it cannot answer it. A no-op when nothing shows.
-  reveal(): void;
-  // Issue #316: the page of a long command the dialog shows, and the
+  // The page of a long command the dialog shows, and the
   // `v` key that advances it (wrapping back to the first page).
   commandPage(): number;
   nextCommandPage(): boolean;
-  // Issue #459: the asks waiting behind the shown one (the card's `i of n`
+  // The asks waiting behind the shown one (the card's `i of n`
   // and its `next:` row), and the `?` explanation row, closed again for
   // every new ask.
   queued(): readonly SurfaceRequest[];
@@ -158,16 +154,16 @@ export interface ApprovalSurface {
   // this when it attaches the overlay, and every surface change calls it so a
   // lane-arrived ask paints a frame instead of waiting for a keypress.
   renderRequest: (() => void) | undefined;
-  // Issue #316: the app's own answer to "does the shown dialog fit the overlay
+  // The app's own answer to "does the shown dialog fit the overlay
   // it is composited on right now?" (it knows the live terminal size). Absent
   // means it does — a host that cannot report a size keeps the fixed layout.
   fitCheck: (() => boolean) | undefined;
   // Verifies the resolved key map; throws naming the conflicting key, a
-  // prose allow-session key (issue #315), or an approval key that shadows
+  // prose allow-session key, or an approval key that shadows
   // one of the caller's `reserved` global keys.
   checkKeys(reserved?: ReadonlyArray<string>): boolean;
   keys(): Record<ApprovalAction, readonly string[]>;
-  // The answer seat itself (issue #96): field-for-field the host's
+  // The answer seat itself: field-for-field the host's
   // `SoloPolicyInput.answer` shape (packages/host/src/approvals.ts), typed
   // structurally because the TUI package must not import host implementation
   // — the composition root's own typecheck pins the compatibility. Asking
@@ -183,7 +179,7 @@ export interface ApprovalSurface {
 interface PendingAsk {
   readonly request: SurfaceRequest;
   readonly resolve: (decision: ApprovalDecision) => void;
-  // Issue #232: detaches the abort listener an ask installed. A settled ask
+  // Detaches the abort listener an ask installed. A settled ask
   // must not react to a signal that fires later.
   detach?: () => void;
 }
@@ -217,7 +213,7 @@ function sanitizeRequest(request: SurfaceRequest): SurfaceRequest {
   };
 }
 
-// Issue #459: a preview carries file content — untrusted like the rest.
+// A preview carries file content — untrusted like the rest.
 // Each diff row is cleaned after its number prefix, so tabs expand from the
 // content's own first column.
 function sanitizePreview(
@@ -245,7 +241,7 @@ function decisionFor(action: ApprovalAction): ApprovalDecision {
   if (action === 'allow-session') {
     return { approved: true, by: 'allow-session' };
   }
-  // Issue #467: the host's `ALLOW_TURN_EDITS`.
+  // The host's `ALLOW_TURN_EDITS`.
   if (action === 'allow-edits') {
     return { approved: true, by: 'allow-turn-edits' };
   }
@@ -284,7 +280,7 @@ export function createApprovalSurface(
   let windowMs = armingMs;
   // The previous key the surface saw, for the terminal-repeat rule.
   let lastKey: { readonly data: string; readonly at: number } | undefined;
-  // Issue #467: the card's open input, if any (closed for every new ask).
+  // The card's open input, if any (closed for every new ask).
   let input: ApprovalInput | undefined;
   let page = 0;
   let explain = false;
@@ -298,7 +294,7 @@ export function createApprovalSurface(
   };
   const isArmed = (): boolean =>
     shown !== undefined && now() - shownAt >= windowMs;
-  // Issue #315: (re)start the arming window and the repaint timer that
+  // (re)start the arming window and the repaint timer that
   // unlocks the key hints when it ends.
   const startArming = (ask: PendingAsk, ms: number): void => {
     shownAt = now();
@@ -313,7 +309,7 @@ export function createApprovalSurface(
       });
     }
   };
-  // Issue #315: a swallowed key is typing, and typing means the operator is
+  // A swallowed key is typing, and typing means the operator is
   // not answering yet — so the next decision needs a fresh quiet period.
   // Repaints when this re-locked hints that were showing as live.
   const restartArming = (): void => {
@@ -327,7 +323,7 @@ export function createApprovalSurface(
     if (shown !== undefined) return;
     shown = queue.shift();
     if (shown === undefined) return;
-    // Issue #315: every request — the next queued one included — starts its
+    // Every request — the next queued one included — starts its
     // own arming window, and the frame repaints when it arms so the key
     // hints unlock visibly.
     page = 0;
@@ -346,7 +342,7 @@ export function createApprovalSurface(
     }
     ask.resolve(decision);
   };
-  // Issue #232: the asker's bound expired (or the asker went away). Withdraw
+  // The asker's bound expired (or the asker went away). Withdraw
   // THIS ask — the shown one clears and the next queued ask takes the screen,
   // a queued one leaves the queue — and resolve it as a deny. Nothing else on
   // the surface changes: the withdrawal is not a decision the user made.
@@ -368,7 +364,7 @@ export function createApprovalSurface(
     // Kitty-protocol terminal's Esc ('\x1b[27u') resolves like the legacy
     // byte. Deny first is that module's documented precedence.
     const match = resolveApprovalKey(data, overrides);
-    // Issue #315: the same byte again inside the OS auto-repeat window is a
+    // The same byte again inside the OS auto-repeat window is a
     // held key, not a new press (legacy terminals flag no repeats). Esc is
     // exempt — it only ever denies.
     const at = now();
@@ -380,8 +376,8 @@ export function createApprovalSurface(
     if (match !== undefined) {
       const immediate = match.key === APPROVAL_IMMEDIATE_KEY;
       // Inside the arming window only the immediate deny acts; a repeat never
-      // decides; and while the dialog cannot show the whole command (issue
-      // #316) only deny does.
+      // decides; and while the dialog cannot show the whole command only deny
+      // does.
       if (
         (immediate || (isArmed() && !repeated)) &&
         (match.action === 'deny' || isAllowable())
@@ -455,7 +451,7 @@ export function createApprovalSurface(
       if (current === undefined || input !== undefined) return false;
       const action = findAction(data);
       if (action === undefined) return false;
-      // Issue #467: `c` and `e` open the card's input instead of answering;
+      // `c` and `e` open the card's input instead of answering;
       // `e` and `A` act only on the asks the host offered them for.
       if (action === 'comment') {
         input = { kind: 'comment', text: '' };
@@ -539,13 +535,6 @@ export function createApprovalSurface(
     isArmed,
     isAllowable,
     noteDroppedKey: restartArming,
-    reveal: (): void => {
-      const current = shown;
-      if (current === undefined) return;
-      const wasArmed = isArmed();
-      startArming(current, armingMs);
-      if (wasArmed && armingMs > 0) notify();
-    },
     commandPage: (): number => page,
     nextCommandPage: (): boolean => {
       if (shown === undefined) return false;

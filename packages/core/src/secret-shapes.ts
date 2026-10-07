@@ -1,7 +1,6 @@
-// Shared secret-shape backstop (issue #57 fix cycle 1; §36 broker, §60 audit).
-// Lives in @kubic/core since issue #192 so the WORKER redactor (approval
-// summaries, block reasons, the mailbox ask JSON) composes the same table the
-// HOST backstop (audit, policy, ledger) uses — the dependency direction is
+// Shared secret-shape backstop. Lives in @kubic/core so the lane redactor
+// (approval summaries, block reasons) composes the same table the host
+// backstop (audit, policy, ledger) uses — the dependency direction is
 // core ← host/worker, so this is the only place both may share it.
 // Fail-closed detection for live secret material that was never listed in a
 // caller-supplied secrets inventory: sk-style keys, AWS access keys, GitHub
@@ -9,10 +8,10 @@
 // carry a 'faux' marker and stay inert — shapes below never match them unless
 // combined with a real-looking prefix run (e.g. 'sk-faux-test-key-0001').
 // Faux-only, zero network.
-// Case-transform bypass note (fix cycle 2): the sk-/gh-/xox- prefixes match
-// case-insensitively, so uppercasing never evades any call site. Fix cycle 3
+// Case-transform bypass note: the sk-/gh-/xox- prefixes match
+// case-insensitively, so uppercasing never evades any call site. Fix
 // extends the same treatment to the remaining shapes: the bearer scheme is
-// matched case-insensitively per RFC 7235 §2.1 (BEARER/bEaReR/BeArEr all
+// matched case-insensitively per RFC 7235 (BEARER/bEaReR/BeArEr all
 // hit), as are the AKIA prefix and the PEM header line.
 // Residual limit (by design, not enforced): material split across separately
 // scanned strings so no single scan carries the full shape is not reassembled
@@ -24,18 +23,18 @@ const SHAPE_SOURCES: readonly string[] = [
   // OpenAI-style keys: sk- plus a long run (covers sk-live-*, sk-test-*,
   // sk-proj-*). The {8,} run keeps faux markers like '«redacted:sk-…»'
   // (ellipsis is outside the class) from matching.
-  '\\b[Ss][Kk]-[A-Za-z0-9_\\-]{8,}', // case-insensitive prefix (fix cycle 2)
+  '\\b[Ss][Kk]-[A-Za-z0-9_\\-]{8,}', // case-insensitive prefix
   // AWS access key id: AKIA + 16 alphanumerics, case-insensitive prefix and
-  // material (fix cycle 3) so lowercasing never evades any call site.
+  // material so lowercasing never evades any call site.
   '\\b[Aa][Kk][Ii][Aa][0-9A-Za-z]{16}\\b',
   // GitHub-shaped tokens: ghp_/gho_/ghu_/ghs_/ghr_/gh_ + material.
-  '\\b[Gg][Hh][a-zA-Z]*_[A-Za-z0-9]{8,}', // case-insensitive prefix (fix cycle 2)
+  '\\b[Gg][Hh][a-zA-Z]*_[A-Za-z0-9]{8,}', // case-insensitive prefix
   // Slack-shaped tokens: xox[bpasr]- + material.
-  '\\b[Xx][Oo][Xx][BbPpAaSsRr]?-[A-Za-z0-9\\-]{8,}', // case-insensitive prefix (fix cycle 2)
-  // PEM private-key blocks, case-insensitive header (fix cycle 3).
+  '\\b[Xx][Oo][Xx][BbPpAaSsRr]?-[A-Za-z0-9\\-]{8,}', // case-insensitive prefix
+  // PEM private-key blocks, case-insensitive header.
   '-----[Bb][Ee][Gg][Ii][Nn] [A-Za-z0-9 ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]-----',
-  // Bearer tokens on the wire, case-insensitive scheme per RFC 7235 §2.1
-  // (fix cycle 3): BEARER/bEaReR/BeArEr never evade any call site.
+  // Bearer tokens on the wire, case-insensitive scheme per RFC 7235:
+  // BEARER/bEaReR/BeArEr never evade any call site.
   '\\b[Bb][Ee][Aa][Rr][Ee][Rr]\\s+[A-Za-z0-9\\-._~+/=]{10,}',
 ];
 

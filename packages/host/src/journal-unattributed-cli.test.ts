@@ -1,6 +1,6 @@
-// Journal CLI surfacing of the unattributed count (issue #87): `kubic status`
-// names reconciliation finds on their own line, `kubic log` closes with the
-// summary line. RED: neither exists today.
+// Journal CLI surfacing of the unattributed count: `kubic status` names
+// reconciliation finds on their own line, `kubic log` closes with the summary
+// line.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -54,7 +54,7 @@ function seedUnattributed(): { journalDir: string; root: string } {
   return { journalDir, root };
 }
 
-describe('journal CLI unattributed count (issue #87)', () => {
+describe('journal CLI unattributed count', () => {
   it('status names the unattributed count on its own line', async () => {
     const { journalDir, root } = seedUnattributed();
     const lines: string[] = [];

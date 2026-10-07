@@ -1,10 +1,10 @@
-// Org audit trail (issue #57; §83 P4 engine, §60 record, §85 flow).
+// Org audit trail (P4 engine, audit record, flow).
 // Every privileged action is auditable at org scope with exactly the 14
-// §60 fields. Credential material never lands here: the credential leaf
+// Fields. Credential material never lands here: the credential leaf
 // carries a sentinel naming the ref, and any secret-shaped value in it is
 // refused loudly. Sinks are syslog-first ([[audit]] order); a sink failure
 // — or zero sinks — throws instead of losing records silently.
-// Read-only wrt doctor (#29), broker/ScopedToken (#38), approvals (#41):
+// Read-only wrt doctor, broker/ScopedToken, approvals:
 // nothing is imported from worker impl and nothing existing is modified.
 // Faux-only, zero network; no node:fs (sinks are injected).
 
@@ -27,7 +27,6 @@ export const AUDIT_FIELDS = [
   'permission',
   'credential',
   'network',
-  'mode',
   'posture',
   'result',
   'reason',
@@ -35,21 +34,19 @@ export const AUDIT_FIELDS = [
 
 export type AuditField = (typeof AUDIT_FIELDS)[number];
 
-export type AuditMode = 'solo' | 'orchestrator';
-
 export type AuditDecision = 'allow' | 'deny';
 
 export type AuditResult = 'ok' | 'deny' | 'error';
 
-// Exactly 14 top-level fields (§60): who/what/when; agent session/role/
-// parent; model provider/id/thinking; worker pid/gen/role; workspace
-// path+base; permission/approval; credential sentinel (never secret);
-// network host/port/decision/bytes; mode; posture; result+reason.
+// Exactly 13 top-level fields: who/what/when; agent session/role; model
+// provider/id/thinking; worker pid/gen/role; workspace path+base;
+// permission/approval; credential sentinel (never secret); network
+// host/port/decision/bytes; posture; result+reason.
 export interface OrgAuditRecord {
   who: string;
   what: string;
   when: string;
-  agent: { session: string; role: string; parent?: string };
+  agent: { session: string; role: string };
   model: { provider: string; id: string; thinking: string };
   worker: { pid: number; generation: number; role: string };
   workspace: { path: string; base: string };
@@ -61,7 +58,6 @@ export interface OrgAuditRecord {
     decision: AuditDecision;
     bytes: number;
   };
-  mode: AuditMode;
   posture: string;
   result: AuditResult;
   reason: string;
@@ -122,7 +118,7 @@ export function createMemorySink(name = 'memory'): MemoryAuditSink {
   };
 }
 
-// RFC 5424 facilities (issue #286; §58): names plus local0–local7 for the
+// RFC 5424 facilities: names plus local0–local7 for the
 // enterprise collector. A `[[audit]] facility` that names none of these is
 // refused at sink construction, never silently mapped to a wrong facility.
 const SYSLOG_FACILITIES: Readonly<Record<string, number>> = {
@@ -173,7 +169,7 @@ export type SyslogTarget =
   | { kind: 'unix'; path: string }
   | { kind: 'udp'; host: string; port: number };
 
-// The platform's syslog socket (issue #286): `/var/run/syslog` on macOS,
+// The platform's syslog socket: `/var/run/syslog` on macOS,
 // `/dev/log` elsewhere. No import needed — `process.platform` is global.
 export function defaultSyslogSocketPath(): string {
   return process.platform === 'darwin' ? '/var/run/syslog' : '/dev/log';
@@ -210,7 +206,7 @@ export function parseSyslogTarget(target: string | undefined): SyslogTarget {
   return { kind: 'udp', host, port };
 }
 
-// The injectable syslog transport (issue #286): one RFC 5424 line per
+// The injectable syslog transport: one RFC 5424 line per
 // call, synchronously (`appendAudit` refuses async sinks). Prod transports
 // (unix datagram, UDP) live in `syslog-transport.ts` — this module stays
 // socket-free so its tests never touch the network.
@@ -297,14 +293,6 @@ function validateRecord(
   requireText(record.when, 'when');
   requireText(record.agent.session, 'agent.session');
   requireText(record.agent.role, 'agent.role');
-  if (
-    record.agent.parent !== undefined &&
-    typeof record.agent.parent !== 'string'
-  ) {
-    throw new AuditSinkError(
-      "audit record 'agent.parent' must be a string when present",
-    );
-  }
   requireText(record.model.provider, 'model.provider');
   requireText(record.model.id, 'model.id');
   requireText(record.model.thinking, 'model.thinking');
@@ -347,9 +335,6 @@ function validateRecord(
     throw new AuditSinkError(
       "audit record 'network.bytes' must be a non-negative integer",
     );
-  }
-  if (record.mode !== 'solo' && record.mode !== 'orchestrator') {
-    throw new AuditSinkError("audit record 'mode' must be solo|orchestrator");
   }
   if (
     record.result !== 'ok' &&
@@ -445,15 +430,15 @@ export interface EmitAuditOptions {
 
 // Build, validate, and loudly append one org audit record. Mode and
 // posture are required on every record — there is no default posture. The
-// input spreads onto exactly the 14 §60 fields: any unknown top-level key
+// input spreads onto exactly the 14 fields: any unknown top-level key
 // is rejected fail-closed with AuditShapeError, never kept.
 const ALLOWED_AUDIT_INPUT_KEYS = new Set<string>([...AUDIT_FIELDS, 'when']);
 
-// Exactly-14 holds below the top level too (fix cycle 2): every nested
-// section carries a fixed section-60 shape, so unknown nested keys are
+// The fixed shape holds below the top level too: every nested section
+// carries a fixed shape, so unknown nested keys are
 // rejected fail-closed with AuditShapeError, never kept and persisted.
 const ALLOWED_NESTED_AUDIT_KEYS: Record<string, readonly string[]> = {
-  agent: ['session', 'role', 'parent'],
+  agent: ['session', 'role'],
   model: ['provider', 'id', 'thinking'],
   worker: ['pid', 'generation', 'role'],
   workspace: ['path', 'base'],
@@ -470,7 +455,7 @@ function rejectUnknownNestedKeys(input: AuditInput): void {
       for (const key of Object.keys(value)) {
         if (!allowed.includes(key)) {
           throw new AuditShapeError(
-            `audit record has unknown nested key '${section}.${key}': refused (exact section-60 shape)`,
+            `audit record has unknown nested key '${section}.${key}': refused (exact record shape)`,
           );
         }
       }
@@ -486,7 +471,7 @@ export function emitAudit(
   for (const key of Object.keys(input)) {
     if (!ALLOWED_AUDIT_INPUT_KEYS.has(key)) {
       throw new AuditShapeError(
-        `audit record has unknown top-level key '${key}': refused (exactly 14 section-60 fields)`,
+        `audit record has unknown top-level key '${key}': refused (exactly 13 fields)`,
       );
     }
   }
@@ -501,53 +486,39 @@ export function emitAudit(
 }
 
 export interface AuditQuery {
-  mode?: AuditMode;
   posture?: string;
   result?: AuditResult;
-  /**
-   * An ORCHESTRATION session id (issue #159; §23): matches the run's own rows
-   * (`agent.session` is the run) and every worker it spawned (`agent.session`
-   * is the worker's `<orch>-<agent>`, `agent.parent` is the run) — so one
-   * filter reads a whole run's decisions.
-   */
+  /** A session id: matches that session's rows. */
   session?: string;
 }
 
-// Full-access (and any other posture/mode slice) is queryable: exact match
-// on each supplied dimension.
+// Full-access (and any other posture slice) is queryable: exact match on
+// each supplied dimension.
 export function queryAudits(
   records: readonly OrgAuditRecord[],
   query: AuditQuery,
 ): OrgAuditRecord[] {
   return records.filter(
     (record) =>
-      (query.mode === undefined || record.mode === query.mode) &&
       (query.posture === undefined || record.posture === query.posture) &&
       (query.result === undefined || record.result === query.result) &&
-      (query.session === undefined ||
-        record.agent.session === query.session ||
-        record.agent.parent === query.session),
+      (query.session === undefined || record.agent.session === query.session),
   );
 }
 
-// §85 flow fixture: the canonical privileged-action record. Its JSON must
-// match WORKED_EXAMPLE_JSON (§60 worked example) byte-for-byte.
-export const FLOW_AUDIT_FIXTURE: OrgAuditRecord = {
+// An example record: a fixture for tests and the shape `kubic audit` prints.
+export const EXAMPLE_AUDIT_RECORD: OrgAuditRecord = {
   who: 'ege@example.com',
   what: 'tool.call',
   when: '2023-11-14T22:13:20.000Z',
-  agent: { session: 'sess-1', role: 'implementer', parent: 'sess-0' },
+  agent: { session: 'sess-1', role: 'implementer' },
   model: { provider: 'local', id: 'llama3', thinking: 'medium' },
-  worker: { pid: 1234, generation: 2, role: 'implementer' },
-  workspace: { path: '/repo/wt/57', base: '/repo' },
+  worker: { pid: 1234, generation: 0, role: 'implementer' },
+  workspace: { path: '/repo', base: 'a1b2c3d' },
   permission: { permission: 'write', approval: 'approved:tester' },
   credential: { sentinel: 'sentinel:$API_KEY' },
   network: { host: 'example.com', port: 443, decision: 'allow', bytes: 512 },
-  mode: 'orchestrator',
   posture: 'restricted',
   result: 'ok',
   reason: 'policy allow',
 };
-
-export const WORKED_EXAMPLE_JSON =
-  '{"who":"ege@example.com","what":"tool.call","when":"2023-11-14T22:13:20.000Z","agent":{"session":"sess-1","role":"implementer","parent":"sess-0"},"model":{"provider":"local","id":"llama3","thinking":"medium"},"worker":{"pid":1234,"generation":2,"role":"implementer"},"workspace":{"path":"/repo/wt/57","base":"/repo"},"permission":{"permission":"write","approval":"approved:tester"},"credential":{"sentinel":"sentinel:$API_KEY"},"network":{"host":"example.com","port":443,"decision":"allow","bytes":512},"mode":"orchestrator","posture":"restricted","result":"ok","reason":"policy allow"}';

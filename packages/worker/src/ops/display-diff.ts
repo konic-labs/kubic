@@ -1,4 +1,4 @@
-// The display record of a file change (EPIC N, issue #456): what the TUI
+// The display record of a file change: what the TUI
 // renders inline under an `edit` or `write` card. It rides the tool result's
 // `details` — the UI's record — never the model-facing text, so the model's
 // context does not pay for it.

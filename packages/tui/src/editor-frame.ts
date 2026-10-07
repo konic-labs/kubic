@@ -1,5 +1,4 @@
-// The framed editor and the working line (EPIC N, issue #454; docs/ui
-// 01-K and the mid-turn frame).
+// The framed editor and the working line (and the mid-turn frame).
 //
 // Pi's Editor draws a rule above and below its lines and nothing at the
 // sides. The frame closes the box: ` ┌─…─┐ `, ` │ › <text>   @ file  / cmd │ `,
@@ -124,8 +123,6 @@ export function formatTurnClock(elapsedMs: number): string {
 
 export interface WorkingInfo {
   readonly elapsedMs: number;
-  /** The solo lane takes follow-ups; the orchestrator lane does not. */
-  readonly queues: boolean;
   /** This turn's tokens, once a usage row reported them. */
   readonly input?: number;
   readonly output?: number;
@@ -162,9 +159,7 @@ export function renderWorkingLine(
   if (interrupt !== '') {
     keys.push(`${ui.fg('fg1')(interrupt)}${ui.fg('fg2')(' interrupt')}`);
   }
-  if (info.queues) {
-    keys.push(`${ui.fg('fg1')(RETURN_KEY)}${ui.fg('fg2')(' queue a message')}`);
-  }
+  keys.push(`${ui.fg('fg1')(RETURN_KEY)}${ui.fg('fg2')(' queue a message')}`);
   for (let count = keys.length; count > 0; count -= 1) {
     const right = `${keys.slice(0, count).join('   ')} `;
     if (visibleWidth(left) + 2 + visibleWidth(right) <= w) {

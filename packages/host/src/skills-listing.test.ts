@@ -1,4 +1,4 @@
-// The `kubic skills` listing core (issue #238): one row per skill with
+// The `kubic skills` listing core: one row per skill with
 // its status and reason, the doctor counts line, and the TUI's one-time
 // boot notice. Pure data in, pure data out — no bridge, no network.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -56,7 +56,7 @@ function booted(): BootSkills {
       },
     ],
     block: undefined,
-    // Issue #183: admitted + gate-passed, hidden included, withheld
+    // Admitted + gate-passed, hidden included, withheld
     // excluded — `quiet` stays (invocation-only), `deploy` does not.
     invocable: [
       {
@@ -99,7 +99,7 @@ function booted(): BootSkills {
   };
 }
 
-describe('summarizeSkills (issue #238)', () => {
+describe('summarizeSkills', () => {
   it('maps every skill to visible/hidden/withheld/excluded/error with reasons', () => {
     expect(summarizeSkills(booted())).toEqual([
       {
@@ -141,7 +141,7 @@ describe('summarizeSkills (issue #238)', () => {
   });
 });
 
-describe('skillsDoctorSummary (issue #238)', () => {
+describe('skillsDoctorSummary', () => {
   it('reports counts and warns on errors, never fails', () => {
     const summary = skillsDoctorSummary(booted());
     expect(summary.id).toBe('skills');
@@ -162,7 +162,7 @@ describe('skillsDoctorSummary (issue #238)', () => {
   });
 });
 
-describe('describeSkillSkips (issue #238)', () => {
+describe('describeSkillSkips', () => {
   it('returns undefined when nothing was skipped', () => {
     expect(describeSkillSkips([])).toBeUndefined();
   });
@@ -184,7 +184,7 @@ function writeSkill(home: string, cwd: string): void {
   void home;
 }
 
-describe('skillsDoctorProbe carries the counts line first (issue #238)', () => {
+describe('skillsDoctorProbe carries the counts line first', () => {
   it('summary first, then the per-skill warns', () => {
     const home = tmpRoot('kubic-238-home-');
     const cwd = tmpRoot('kubic-238-cwd-');
@@ -200,7 +200,7 @@ describe('skillsDoctorProbe carries the counts line first (issue #238)', () => {
   });
 });
 
-describe('bootSkills passes discovery skips through (issue #238)', () => {
+describe('bootSkills passes discovery skips through', () => {
   it('an untrusted project skill reaches the listing as excluded', () => {
     const cwd = tmpRoot('kubic-238-skipped-');
     const dir = join(cwd, '.pi', 'skills', 'gem');

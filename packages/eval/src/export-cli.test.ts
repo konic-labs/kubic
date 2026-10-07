@@ -1,5 +1,5 @@
-// `kubic export` command surface (issue #78): trajectory-export
-// inspection plus RL dataset export over trajectory files. RED first.
+// `kubic export` command surface: trajectory-export
+// inspection plus RL dataset export over trajectory files.
 import { describe, expect, it, vi } from 'vitest';
 import type { TrajectoryExport } from '../../trajectory/src/schema.js';
 import {
@@ -11,7 +11,7 @@ import {
 } from './export-cli.js';
 import { makeExport } from './rl/fixtures.js';
 
-// One controllable failure seam (issue #370): the export-failed mapping
+// One controllable failure seam: the export-failed mapping
 // needs a builder that throws something the handler does not recognise.
 // Null by default, so every other test drives the real builders.
 const injected = vi.hoisted(() => ({ error: null as unknown }));
@@ -73,7 +73,7 @@ function out(): {
   };
 }
 
-describe('export command (issue #78)', () => {
+describe('export command', () => {
   it('describes a trajectory export without --type: exit 0 with provenance', async () => {
     const o = out();
     const exit = await runExportCommand(
@@ -234,7 +234,7 @@ describe('export command (issue #78)', () => {
     expect(envelope.excluded.tag).toBe('env-failure-excluded');
   });
 
-  it('--type dpo over mismatched prompts prints the exclusion, exit 0, no record (#269)', async () => {
+  it('--type dpo over mismatched prompts prints the exclusion, exit 0, no record', async () => {
     const o = out();
     const exit = await runExportCommand(
       { trajectory: 'chosen.json', type: 'dpo', against: 'rej.json' },
@@ -253,7 +253,7 @@ describe('export command (issue #78)', () => {
     expect(o.lines.join('\n')).not.toMatch(/dpo\/1/);
   });
 
-  it('--type grpo over mismatched prompts is refused with exit 2 (#269)', async () => {
+  it('--type grpo over mismatched prompts is refused with exit 2', async () => {
     const o = out();
     const exit = await runExportCommand(
       { trajectory: 'a.json', type: 'grpo', against: 'b.json' },
@@ -308,7 +308,7 @@ describe('export command (issue #78)', () => {
     expect(envelope.exitCode).toBe(EXPORT_EXIT_USAGE);
     expect(envelope.error).toEqual({
       code: 'rl-refused',
-      message: 'provenance.base is required: record the base revision (§46)',
+      message: 'provenance.base is required: record the base revision',
     });
     expect(envelope).not.toHaveProperty('record');
     expect(o.lines.join('\n')).not.toMatch(/"schema":\s*"sft\/1"/);
@@ -325,7 +325,7 @@ describe('export command (issue #78)', () => {
     ).toBe(EXPORT_EXIT_USAGE);
     expect(text.lines).toEqual([]);
     expect(text.errs).toEqual([
-      'error: [rl-refused] provenance.base is required: record the base revision (§46)',
+      'error: [rl-refused] provenance.base is required: record the base revision',
     ]);
   });
 
@@ -485,7 +485,7 @@ describe('export command (issue #78)', () => {
   });
 });
 
-describe('export --dataset (issue #270)', () => {
+describe('export --dataset', () => {
   // The batch mode's filesystem seam over an in-memory store: listing
   // resolves the operand, the JSONL is appended line by line.
   function datasetDeps(store: Record<string, string>) {

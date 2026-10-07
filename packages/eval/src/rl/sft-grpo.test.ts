@@ -1,4 +1,4 @@
-// SFT + GRPO exporter tests (issue #54, RED first).
+// SFT + GRPO exporter tests.
 // Both types generate against a schema and validate fail-closed:
 // stripped provenance/labels are errors, not warnings.
 import { describe, expect, it } from 'vitest';
@@ -8,7 +8,7 @@ import { canonicalJson } from './manifest.js';
 import { buildSftRecord, validateSftRecord } from './sft.js';
 import { RlProvenanceError } from './types.js';
 
-describe('buildSftRecord (issue #54)', () => {
+describe('buildSftRecord', () => {
   it('generates a schema-valid SFT record from a passing trajectory', () => {
     const built = buildSftRecord(
       makeExport({ evalLabels: { 'signal:tests': 'pass' } }),
@@ -19,7 +19,7 @@ describe('buildSftRecord (issue #54)', () => {
     expect(built.verifier.verdict).toBe('pass');
   });
 
-  it('embeds the §52 category on failed runs', () => {
+  it('embeds the failure category on failed runs', () => {
     const built = buildSftRecord(
       makeExport({ status: 'failed', failureCategory: 'model_failed' }),
     );
@@ -49,7 +49,7 @@ describe('buildSftRecord (issue #54)', () => {
   });
 });
 
-describe('buildGrpoGroup (issue #54)', () => {
+describe('buildGrpoGroup', () => {
   it('generates a schema-valid GRPO group with verifier rewards', () => {
     const group = buildGrpoGroup([
       makeExport({ evalLabels: { 'signal:tests': 'pass' } }),
@@ -62,14 +62,14 @@ describe('buildGrpoGroup (issue #54)', () => {
     expect(group.candidates[1]?.reward).toBe(0);
   });
 
-  it('refuses to build from fewer than two candidates (issue #269)', () => {
+  it('refuses to build from fewer than two candidates', () => {
     expect(() => buildGrpoGroup([])).toThrow(RlProvenanceError);
     expect(() => buildGrpoGroup([makeExport()])).toThrow(
       'GRPO refused: a group needs at least two candidates (got 1)',
     );
   });
 
-  it('refuses to build from candidates that answer different prompts (issue #269)', () => {
+  it('refuses to build from candidates that answer different prompts', () => {
     expect(() =>
       buildGrpoGroup([
         makeExport({ promptText: 'task a' }),
@@ -145,7 +145,7 @@ describe('buildGrpoGroup (issue #54)', () => {
   });
 });
 
-describe('canonicalJson manifest determinism (issue #54)', () => {
+describe('canonicalJson manifest determinism', () => {
   it('is byte-identical for the same trajectory + verifier', () => {
     const exported = makeExport({ evalLabels: { 'signal:tests': 'pass' } });
     const first = canonicalJson(buildSftRecord(exported));

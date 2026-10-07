@@ -1,11 +1,10 @@
-// AgentTreeView: always-visible one-node tree (issue #24).
-// §18 tree always visible one node with live tool calls; §80 one-node +
-// collapsing; §16.5 AgentTreeView; §16.7 click expand/collapse, wheel
-// chains; §49.1 glyphs ✓/●/◌ with the root's $cost in/out tokens. Solo-only:
-// root + tool children — no worktree/worker columns (layout unchanged for
-// later). Issue #345 adds the tool row's args + outcome and the ✗ error
-// glyph, groups calls per turn (run-start closes a group) and measures
-// truncation in columns.
+// AgentTreeView: always-visible one-node tree.
+// Tree always visible one node with live tool calls; one-node +
+// collapsing; AgentTreeView; click expand/collapse, wheel
+// chains; glyphs ✓/●/◌ with the root's $cost in/out tokens: the root
+// and its tool children. Tool rows carry their args + outcome and the ✗ error
+// glyph; calls are grouped per turn (run-start closes a group) and truncation
+// is measured in columns.
 //
 // The lane feed accepts the worker's KubicLaneEvent shape structurally
 // (packages/worker/src/lane/events.ts) WITHOUT importing it: the tui
@@ -32,7 +31,7 @@ export function rootGlyph(status: RunStatus): string {
   return '◌';
 }
 
-// Issue #345: a finished call that failed gets its own glyph — ✓ on an error
+// A finished call that failed gets its own glyph — ✓ on an error
 // was the bug. The colour is applied at render time (styleTreeLine), so the
 // glyph stays distinct with NO_COLOR too.
 export function toolGlyph(state: ToolCallState, error = false): string {
@@ -45,7 +44,7 @@ export interface TreeToolCall {
   name: string;
   done: boolean;
   error: boolean;
-  // Issue #345: the key argument (the bash command, the read/edit path) and
+  // The key argument (the bash command, the read/edit path) and
   // the finished call's outcome (a test summary, a non-zero exit). Both are
   // derived from untrusted model/tool output and sanitized at ingress.
   argsSummary?: string;
@@ -53,7 +52,7 @@ export interface TreeToolCall {
   durationMs?: number;
 }
 
-// The conversation's own spend, summed from usage events (#345; §49.1): the
+// The conversation's own spend, summed from usage events: the
 // root row shows `$cost in/out`. `seen` keeps the segment off a fresh tree
 // that has not heard a usage row yet.
 export interface TreeUsage {
@@ -63,7 +62,7 @@ export interface TreeUsage {
   outputTokens: number;
 }
 
-// One completed turn, rolled up (#345): the tree only ever folds past turns
+// One completed turn, rolled up: the tree only ever folds past turns
 // into a count line, so it keeps the counts — not the calls — and its state
 // stays bounded by the number of turns, never by the session's tool calls.
 export interface TreeTurnSummary {
@@ -76,30 +75,12 @@ export interface AgentTreeState {
   rootStatus: RunStatus;
   // The LIVE turn's calls; a run-start rolls them into `previousTurns`.
   tools: TreeToolCall[];
-  // One entry per completed turn, oldest first (#345): earlier turns fold
+  // One entry per completed turn, oldest first: earlier turns fold
   // into a single line that names how many turns and calls it covers, so the
   // live turn is its own group instead of mixing into one count.
   previousTurns: TreeTurnSummary[];
   collapsed: boolean;
   usage: TreeUsage;
-  // Issue #342 (§18): orchestrator mode's worker nodes under the manager
-  // root. Empty in solo, which therefore renders exactly as before.
-  workers: TreeWorker[];
-}
-
-// One orchestrator worker node (issue #342; §16.5 WorkerStatusView /
-// AgentInspector data): role, live status, generation (a replacement is the
-// next generation), worktree, model and the worker's own spend once known.
-export interface TreeWorker {
-  readonly workerId: string;
-  readonly role?: string;
-  readonly status: string;
-  readonly generation?: number;
-  readonly worktree?: string;
-  readonly model?: string;
-  readonly inputTokens?: number;
-  readonly outputTokens?: number;
-  readonly costUsd?: number;
 }
 
 export function createTreeState(label = 'solo'): AgentTreeState {
@@ -110,7 +91,6 @@ export function createTreeState(label = 'solo'): AgentTreeState {
     previousTurns: [],
     collapsed: false,
     usage: { seen: false, costTotal: 0, inputTokens: 0, outputTokens: 0 },
-    workers: [],
   };
 }
 
@@ -126,7 +106,7 @@ function previousDurationMs(state: AgentTreeState): number {
   return state.previousTurns.reduce((sum, turn) => sum + turn.durationMs, 0);
 }
 
-// Issue #333 (§66): the tree renders the replicated presentation state the
+// The tree renders the replicated presentation state the
 // host projector folds — there is ONE lane input (the snapshot below), not a
 // second event-driven path beside it. The summarizers stay here, so the state
 // never carries a display string.
@@ -143,8 +123,6 @@ export interface TreeToolSnapshot {
 export interface TreeLaneSnapshot {
   readonly status: RunStatus;
   readonly tools: ReadonlyArray<TreeToolSnapshot>;
-  // Issue #342: the orchestrator's workers, replacing the previous list.
-  readonly workers?: ReadonlyArray<TreeWorker>;
   readonly usage?: {
     readonly costTotal: number;
     readonly inputTokens: number;
@@ -156,7 +134,6 @@ export function applyTreeSnapshot(
   state: AgentTreeState,
   lane: TreeLaneSnapshot,
 ): void {
-  if (lane.workers !== undefined) state.workers = [...lane.workers];
   // A new turn (the root goes back to running) closes the previous group, the
   // same boundary the run-start event draws in the event-driven path.
   if (
@@ -236,69 +213,6 @@ function rootLine(state: AgentTreeState): string {
   return `${head} ${cost} ${tokens}`;
 }
 
-const WORKER_LIVE = new Set([
-  'spawning',
-  'starting',
-  'ready',
-  'running',
-  'waiting',
-  'settling',
-]);
-const WORKER_FAILED = new Set([
-  'failed',
-  'cancelled',
-  'timeout',
-  'budget_exhausted',
-  'spawn_failed',
-]);
-
-export function workerGlyph(status: string): string {
-  if (WORKER_LIVE.has(status)) return '●';
-  if (status === 'completed') return '✓';
-  return WORKER_FAILED.has(status) ? '✗' : '◌';
-}
-
-const lastSegment = (path: string): string =>
-  path.replace(/\/+$/, '').split('/').pop() ?? path;
-
-// `● alpha  implementer  running  g1  wt:alpha  $0.0123 1.2k/300` — every
-// field is optional except the id and status; the worktree is its last path
-// segment (the inspector shows the full path).
-function workerLine(worker: TreeWorker): string {
-  const parts = [`${workerGlyph(worker.status)} ${worker.workerId}`];
-  if (worker.role !== undefined) parts.push(worker.role);
-  parts.push(worker.status);
-  if (worker.generation !== undefined) parts.push(`g${worker.generation}`);
-  if (worker.worktree !== undefined)
-    parts.push(`wt:${lastSegment(worker.worktree)}`);
-  if (worker.costUsd !== undefined || worker.inputTokens !== undefined) {
-    const cost =
-      worker.costUsd === undefined
-        ? ''
-        : `${formatStatusCost(worker.costUsd)} `;
-    parts.push(
-      `${cost}${formatTreeTokens(worker.inputTokens ?? 0)}/${formatTreeTokens(worker.outputTokens ?? 0)}`,
-    );
-  }
-  return `  ${parts.join('  ')}`;
-}
-
-// Issue #342 (§16.5 AgentInspector): the selected node in full — the lines a
-// capturing overlay shows. Unknown fields say so instead of being omitted, so
-// the operator can tell "not reported yet" from "nothing".
-export function renderAgentInspector(worker: TreeWorker): string[] {
-  const unknown = 'not reported yet';
-  return [
-    `agent ${worker.workerId}`,
-    `role: ${worker.role ?? unknown}`,
-    `status: ${worker.status}${worker.generation === undefined ? '' : ` (generation ${worker.generation})`}`,
-    `worktree: ${worker.worktree ?? unknown}`,
-    `model: ${worker.model ?? unknown}`,
-    `tokens: ${worker.inputTokens === undefined ? unknown : `${worker.inputTokens} in / ${worker.outputTokens ?? 0} out`}`,
-    `cost: ${worker.costUsd === undefined ? unknown : `$${worker.costUsd.toFixed(4)}`}`,
-  ];
-}
-
 // One line covers every completed turn: the live turn below is visibly its
 // own group, and the count still names how much history the fold hides.
 function earlierTurnsLine(callCount: number, turnCount: number): string {
@@ -319,19 +233,6 @@ export function renderTreeLines(
 ): string[] {
   const w = Math.max(0, Math.floor(width));
   const lines = [rootLine(state)];
-  if (state.workers.length > 0 && !state.collapsed) {
-    // Issue #342: the manager is the root and the workers are its nodes; the
-    // row cap folds the oldest into one count, like tool calls.
-    const shown = state.workers.slice(-TREE_MAX_TOOL_LINES);
-    const hidden = state.workers.length - shown.length;
-    if (hidden > 0) {
-      lines.push(`  … ${hidden} more ${hidden === 1 ? 'worker' : 'workers'}`);
-    }
-    for (const worker of shown.slice(hidden > 0 ? 1 : 0)) {
-      lines.push(workerLine(worker));
-    }
-    return lines.map((line) => styleTreeLine(fitLine(line, w)));
-  }
   if (state.collapsed) {
     if (previousCalls(state) + state.tools.length > 0) {
       lines.push(`  ${collapsedSummary(state)}`);
@@ -363,7 +264,7 @@ export function renderTreeLines(
 // Tool lines shown before older calls fold into a count (one row is the
 // root, so root + TREE_MAX_TOOL_LINES fits layout's TREE_MAX_ROWS of 6).
 // A previous-turns fold line takes one of these slots, so the live turn
-// shows one call fewer (#345).
+// shows one call fewer.
 export const TREE_MAX_TOOL_LINES = 5;
 
 // Colour is applied AFTER truncation, over the plain line, so widths are
@@ -440,8 +341,8 @@ export class AgentTreeView implements Component {
     return this.treeState;
   }
 
-  // Issue #305: `/new` and `/resume` show another session's work; the tree
-  // starts empty (the label is the view's own default). Issue #453: the
+  // `/new` and `/resume` show another session's work; the tree
+  // starts empty (the label is the view's own default). The
   // caller says whether it starts collapsed — solo hides the tree row until
   // Ctrl-T opens it.
   reset(label?: string, collapsed = false): void {
@@ -479,7 +380,7 @@ export class AgentTreeView implements Component {
   }
 
   private onMouse(event: TreeMouseEvent): TreeMouseResult {
-    // Click toggles collapse and returns focus to the editor (§16.7).
+    // Click toggles collapse and returns focus to the editor.
     // Wheel/move/drag/release chain through (undefined) so the
     // transcript keeps scrolling under the tree.
     if (event.type !== 'click') return undefined;

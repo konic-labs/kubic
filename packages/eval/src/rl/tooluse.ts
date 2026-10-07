@@ -1,9 +1,9 @@
-// Tool-use exporter (issue #54; design §74).
+// Tool-use exporter.
 // One record per trajectory: the bounded action sequence with
 // observation refs. Observation text is carried as recorded —
 // bounded upstream by the trajectory truncation contract
 // (MAX_OBSERVATION_BYTES with byte counts kept) — alongside the
-// provenance, §52 label, and reference-verifier verdict.
+// provenance, label, and reference-verifier verdict.
 import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
 import { checkFailureCategory, checkProvenance, checkVerifier } from './sft.js';
 import {

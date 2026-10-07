@@ -1,5 +1,4 @@
-// Slice C: git stage/commit/branch/checkpoint effect ops (issue #19; §43.1).
-// RED: git_stage/git_commit/git_branch/git_checkpoint do not exist yet.
+// Git stage/commit/branch/checkpoint effect ops.
 import { describe, expect, it } from 'vitest';
 import { argvKey, FakeExecutionEnv } from '../../../exec/src/env.js';
 import { OperationKillRegistry } from '../lane/abort.js';
@@ -17,7 +16,7 @@ function ctx(
   };
 }
 
-// Human form of the recorded argv, for exact-argv pins (issue #356).
+// Human form of the recorded argv, for exact-argv pins.
 function argvOf(env: FakeExecutionEnv): string[] {
   return env.calls.map((c) => `${c.cmd} ${c.args.join(' ')}`);
 }
@@ -29,7 +28,7 @@ function inv(id: string): ToolInvocation {
   );
 }
 
-describe('git effects (issue #19, slice C)', () => {
+describe('git effects', () => {
   it('git_stage stages explicit paths only (never -A)', async () => {
     const env = new FakeExecutionEnv({
       [argvKey('git', 'add', '--', 'a.txt')]: {
@@ -46,7 +45,7 @@ describe('git effects (issue #19, slice C)', () => {
     );
     expect(out.ok).toBe(true);
     if (out.ok) expect(out.result.staged).toEqual(['a.txt']);
-    // Exact argv pin (issue #356): a `git add -A` mutant derives a
+    // Exact argv pin: a `git add -A` mutant derives a
     // different key, hits no script, and strict mode throws — so this
     // assertion failing is the mutant being killed.
     expect(argvOf(env)).toEqual(['git add -- a.txt']);
@@ -144,7 +143,7 @@ describe('git effects (issue #19, slice C)', () => {
       expect(out.result.sha).toBe('abc1234567890');
       expect(out.result.files).toEqual(['a.txt', 'b.txt']);
     }
-    // Single message element, not split (issue #356): the joined legacy
+    // Single message element, not split: the joined legacy
     // key conflated `['-m', 'work in progress']` with five elements; the
     // argv-array key does not, and the recorded call proves which the
     // op issued.
@@ -168,7 +167,7 @@ describe('git effects (issue #19, slice C)', () => {
       run: { exitCode: 1, stdout: 'x'.repeat(300), stderr: '' },
       message: `git_commit failed (exit 1): ${'x'.repeat(200)}`,
     },
-  ])('git_commit failure $name (issue #193)', async ({ run, message }) => {
+  ])('git_commit failure $name', async ({ run, message }) => {
     const out = await callOperation(
       'git_commit',
       { message: 'm' },
@@ -236,7 +235,7 @@ describe('git effects (issue #19, slice C)', () => {
   });
 });
 
-describe('git kill registry (issue #190)', () => {
+describe('git kill registry', () => {
   // The op hands its kill to the lane registry under the invocation's
   // operation id and unregisters on settle — before this change runGit
   // never called trackHandle, so the registry stayed empty mid-flight.

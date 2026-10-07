@@ -1,6 +1,6 @@
-// Coding exporter (issue #54; design §74).
+// Coding exporter.
 // One record per trajectory: prompt + completion with diff refs and the
-// reference-verifier verdict. Refs only (#32): diffRefs are changed
+// reference-verifier verdict. Refs only: diffRefs are changed
 // paths, hunkCounts are per-file hunk counts — hunk contents and file
 // contents never enter the record.
 import type { TrajectoryExport } from '../../../trajectory/src/schema.js';

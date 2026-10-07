@@ -1,5 +1,5 @@
 // Terminal display width for CLI output (moved from table.ts for the output
-// kit, issue #445). Cells, not UTF-16 length: ANSI escapes and zero-width
+// kit). Cells, not UTF-16 length: ANSI escapes and zero-width
 // code points count 0, wide CJK and emoji count 2.
 
 import { stripVTControlCharacters } from 'node:util';
@@ -92,7 +92,7 @@ export function truncateVisible(text: string, width: number): string {
 }
 
 /**
- * Issue #468: plain text as rows of at most `width` cells — broken at spaces
+ * Plain text as rows of at most `width` cells — broken at spaces
  * where one fits, a word longer than a row cut where the row ends. Never
  * drops a character (a failure's detail must read whole).
  */

@@ -1,7 +1,7 @@
-// Out-of-scope path semantics (issue #115; §35 workspace out-of-scope paths,
-// §42.5 baseline/sweep) — RED first.
+// Out-of-scope path semantics (workspace out-of-scope paths,
+// baseline/sweep).
 //
-// The §35 mechanism existed but matched entries with exact string equality:
+// The mechanism existed but matched entries with exact string equality:
 // an entry naming a directory only ever worked because the walk prunes a
 // directory it matches, so the *matcher's* contract was never stated or
 // pinned — and a path that reaches the sweep from anywhere but that one walk
@@ -75,7 +75,7 @@ function recordingBridge(reads: string[]): FileBridge {
   };
 }
 
-describe('out-of-scope matching (issue #115, §35/§42.5)', () => {
+describe('out-of-scope matching', () => {
   it('matches the path itself and everything under it, path-boundary aware', () => {
     expect(isOutOfScope('dist', ['dist'])).toBe(true);
     expect(isOutOfScope('dist/a.js', ['dist'])).toBe(true);

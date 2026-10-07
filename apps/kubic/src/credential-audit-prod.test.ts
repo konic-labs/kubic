@@ -1,6 +1,6 @@
-// Request-time credential use, audited (issue #359; §36.1 rules 3-4, §60).
+// Request-time credential use, audited.
 // A models.json provider key (`apiKeyEnv`, a `$ENV` ref) is resolved through
-// resolveSecretRef on EVERY request, each use appends one §60 ledger record
+// resolveSecretRef on EVERY request, each use appends one ledger record
 // (ref sentinel, role, purpose — never the value), and the value never lands
 // in a persisted file of the run or on the debug channel.
 //
@@ -79,9 +79,9 @@ async function fakeProvider(
     req.resume();
     req.on('end', () => {
       if (options.rejectEchoingKey === true) {
-        // A gateway that reflects the rejected credential in its error body
-        // (issue #359): the value reaches the run through the provider's
-        // own error text, not through anything the run wrote itself.
+        // A gateway that reflects the rejected credential in its error body:
+        // the value reaches the run through the provider's own error text, not
+        // through anything the run wrote itself.
         res.writeHead(401, { 'content-type': 'application/json' });
         res.end(
           JSON.stringify({
@@ -159,7 +159,7 @@ function writeModelsJson(
 
 // Every seam of a headless run that defaults to process.cwd() (or the env's
 // trust switch) pinned to the temp workspace: the project models.json is
-// trust-gated (issue #322; §35.1) and this suite covers a trusted file's key
+// trust-gated and this suite covers a trusted file's key
 // use, not the trust decision — so trust comes from the injected check, not
 // KUBIC_TRUST_PROJECT, and skills/roles/models are read from the workspace,
 // never the real cwd (a Stryker sandbox is a directory inside the checkout).
@@ -183,7 +183,7 @@ function filesUnder(dir: string): string[] {
   return out;
 }
 
-describe('createModelKeyResolver (issue #359)', () => {
+describe('createModelKeyResolver', () => {
   it('resolves through resolveSecretRef with exactly one audit event per use, never the value', async () => {
     const events: unknown[] = [];
     const resolver = createModelKeyResolver({
@@ -235,11 +235,11 @@ describe('createModelKeyResolver (issue #359)', () => {
   });
 });
 
-// Issue #224 (§36.2): the resolver serves parsed secret refs — an explicit
+// The resolver serves parsed secret refs — an explicit
 // `$VAR` fails closed naming the variable, a `!command` runs the injected
 // runner on every resolve (rerun per request, never cached), one audit
 // record per use carrying the ref but never the value.
-describe('createModelKeyResolver ref uses (issue #224)', () => {
+describe('createModelKeyResolver ref uses', () => {
   it('resolves an env ref with one audit event per use, never the value', async () => {
     const events: unknown[] = [];
     const resolver = createModelKeyResolver({
@@ -381,7 +381,7 @@ describe('createModelKeyResolver ref uses (issue #224)', () => {
   });
 });
 
-describe('a first-use audit failure never carries the value (issue #359)', () => {
+describe('a first-use audit failure never carries the value', () => {
   it('the resolved value is registered as live BEFORE its audit event fires', async () => {
     const seenAtAudit: string[][] = [];
     const resolver = createModelKeyResolver({
@@ -472,7 +472,7 @@ describe('a first-use audit failure never carries the value (issue #359)', () =>
 // row, and the ledger refused every `credential:lm-studio` row (the record
 // carries the provider name). A value that is (or sits inside) the run's
 // provider/model ids is identity, never a secret.
-describe('a dummy key equal to its provider id (issue #359)', () => {
+describe('a dummy key equal to its provider id', () => {
   const KEY = 'lm-studio';
 
   it('a key matching its provider id does not blank identity, and its use is still audited', async () => {
@@ -571,7 +571,7 @@ describe('a dummy key equal to its provider id (issue #359)', () => {
   });
 });
 
-describe('createLedgerModelKeyResolver with a short or provider-named key (issue #359)', () => {
+describe('createLedgerModelKeyResolver with a short or provider-named key', () => {
   it('appends a ledger row for EVERY use — a dummy key named like its provider is not a secret to refuse over', async () => {
     const workspace = tmpRoot('ws-359-short-');
     const errors: string[] = [];
@@ -607,7 +607,7 @@ describe('createLedgerModelKeyResolver with a short or provider-named key (issue
   });
 });
 
-describe('kubic run: models.json key use is audited (issue #359)', () => {
+describe('kubic run: models.json key use is audited', () => {
   it('appends one ledger record per request; kubic audit shows it without the value; nothing persisted carries it', async () => {
     const provider = await fakeProvider();
     const workspace = tmpRoot('ws-359-');
@@ -636,13 +636,12 @@ describe('kubic run: models.json key use is audited (issue #359)', () => {
     await run();
     // The key really went out on each request (the resolver fed Pi)...
     expect(provider.auths).toEqual([`Bearer ${SECRET}`, `Bearer ${SECRET}`]);
-    // ...and each use is one §60 record: sentinel ref, role, purpose.
+    // ...and each use is one audit record: sentinel ref, role, purpose.
     const ledger = readAuditLedger(auditLedgerDir(workspace));
     const uses = ledger.filter((record) => record.what === 'credential:gw');
     expect(uses).toHaveLength(2);
     expect(uses[0]).toMatchObject({
       who: 'agent:root',
-      mode: 'solo',
       agent: { session: sessionId, role: 'root' },
       credential: { sentinel: 'sentinel:$GW_API_KEY' },
       permission: { permission: 'credential:use' },
@@ -679,11 +678,11 @@ describe('kubic run: models.json key use is audited (issue #359)', () => {
     expect(debugLines.filter((line) => line.includes('skills:'))).toEqual([]);
   });
 
-  // Issue #224 end to end: a `!command` apiKey runs the production runner
+  // End to end: a `!command` apiKey runs the production runner
   // per request — the command prints the key from the process env, so
-  // models.json carries the ref but never the value — and the §60 ledger
+  // models.json carries the ref but never the value — and the ledger
   // holds one value-less record for the use.
-  it('a !command apiKey resolves through the runner; the ledger holds the ref, never the value (issue #224)', async () => {
+  it('a !command apiKey resolves through the runner; the ledger holds the ref, never the value', async () => {
     const provider = await fakeProvider();
     const workspace = tmpRoot('ws-224-');
     const sessionsRoot = tmpRoot();
@@ -721,7 +720,6 @@ describe('kubic run: models.json key use is audited (issue #359)', () => {
     expect(uses).toHaveLength(1);
     expect(uses[0]).toMatchObject({
       who: 'agent:root',
-      mode: 'solo',
       credential: { sentinel: `sentinel:${command}` },
       permission: { permission: 'credential:use' },
       reason: 'model-request:gw',
@@ -873,7 +871,7 @@ describe('kubic run: models.json key use is audited (issue #359)', () => {
   it('assembleModels without a resolver keeps the plain env auth (no audit)', async () => {
     const workspace = tmpRoot('ws-359-');
     writeModelsJson(workspace, 'http://127.0.0.1:9/v1');
-    // A trusted project file (issue #322) without a resolver: the plain
+    // A trusted project file without a resolver: the plain
     // env-key auth stays in place and nothing is audited.
     const assembled = await assembleModels(
       workspace,

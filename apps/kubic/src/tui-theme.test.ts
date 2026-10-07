@@ -1,4 +1,4 @@
-// The `[ui] theme` boot path (issue #304; §16.9 "Themes are JSON with a
+// The `[ui] theme` boot path ("Themes are JSON with a
 // schema"): a built-in name, a JSON theme file, and the named refusal for a
 // file that is missing or invalid — before the alt-screen opens.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -77,7 +77,7 @@ function bridgeFor(root: string) {
   return createNodeFileBridge(root);
 }
 
-describe('resolveTuiTheme (issue #304)', () => {
+describe('resolveTuiTheme', () => {
   it('defaults to the shipped brand palette', () => {
     const files = bridgeFor(tmpRoot());
     expect(resolveTuiTheme(undefined, 'truecolor', files).accent('x')).toBe(
@@ -121,7 +121,7 @@ describe('resolveTuiTheme (issue #304)', () => {
     );
   });
 
-  // Issue #304 review: `readTextFile` is an unbounded `readFileSync`, so a
+  // `readTextFile` is an unbounded `readFileSync`, so a
   // config `[ui] theme` naming a FIFO would wedge the process before the
   // alt-screen opens and `/dev/zero` would read forever. The regular-file
   // check must come first, and a huge file is refused unread.
@@ -179,7 +179,7 @@ describe('resolveTuiTheme (issue #304)', () => {
   });
 });
 
-describe('kubic tui rejects a bad theme at boot (issue #304)', () => {
+describe('kubic tui rejects a bad theme at boot', () => {
   it('prints one named error and exits 2 before the screen opens', async () => {
     const root = tmpRoot();
     const errors: string[] = [];
@@ -242,7 +242,7 @@ describe('kubic tui rejects a bad theme at boot (issue #304)', () => {
   });
 });
 
-describe('/theme in the TUI (issue #461)', () => {
+describe('/theme in the TUI', () => {
   const type = (
     fake: ReturnType<typeof recordingTerminal>,
     text: string,

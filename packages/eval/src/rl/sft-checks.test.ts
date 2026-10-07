@@ -1,4 +1,4 @@
-// The RL record checkers (design §74; issue #54). checkProvenance,
+// The RL record checkers. checkProvenance,
 // checkFailureCategory and checkVerifier return the exact error list a
 // stripped wire record produces; preference.ts reuses them, so their
 // messages are part of the export contract. Direct unit tests pin the
@@ -16,7 +16,7 @@ const VALID_PROVENANCE = {
   base: 'b',
 };
 
-describe('checkProvenance (design §74)', () => {
+describe('checkProvenance', () => {
   it('accepts the provenance a built record carries', () => {
     expect(checkProvenance(extractProvenance(makeExport({})))).toEqual([]);
     expect(checkProvenance(VALID_PROVENANCE)).toEqual([]);
@@ -26,7 +26,7 @@ describe('checkProvenance (design §74)', () => {
   it('requires a provenance object', () => {
     for (const value of [undefined, null, 'x', 7, ['x']]) {
       expect(checkProvenance(value)).toEqual([
-        'provenance is required: proc/gen/worktree/model/base (§74)',
+        'provenance is required: proc/gen/worktree/model/base',
       ]);
     }
   });
@@ -65,8 +65,8 @@ describe('checkProvenance (design §74)', () => {
   });
 });
 
-describe('checkFailureCategory (design §74, §52)', () => {
-  it('accepts null (no failure) and a known §52 code', () => {
+describe('checkFailureCategory', () => {
+  it('accepts null (no failure) and a known failure code', () => {
     expect(checkFailureCategory({ failureCategory: null })).toEqual([]);
     expect(checkFailureCategory({ failureCategory: 'tool_timeout' })).toEqual(
       [],
@@ -75,21 +75,21 @@ describe('checkFailureCategory (design §74, §52)', () => {
 
   it('requires the field to be present at all', () => {
     expect(checkFailureCategory({})).toEqual([
-      'failureCategory is required: embed the §52 category (§74)',
+      'failureCategory is required: embed the failure category',
     ]);
   });
 
   it('rejects an unknown code by name, never defaulting to null', () => {
     expect(checkFailureCategory({ failureCategory: 'completed' })).toEqual([
-      'unknown §52 failure category "completed"',
+      'unknown failure category "completed"',
     ]);
     expect(checkFailureCategory({ failureCategory: undefined })).toEqual([
-      'unknown §52 failure category undefined',
+      'unknown failure category undefined',
     ]);
   });
 });
 
-describe('checkVerifier (design §74)', () => {
+describe('checkVerifier', () => {
   it('accepts pass and fail verdicts', () => {
     expect(checkVerifier({ verdict: 'pass' })).toEqual([]);
     expect(checkVerifier({ verdict: 'fail' })).toEqual([]);
@@ -98,7 +98,7 @@ describe('checkVerifier (design §74)', () => {
   it('requires a verifier object', () => {
     for (const value of [undefined, null, 'pass', ['pass']]) {
       expect(checkVerifier(value)).toEqual([
-        'verifier is required: wire the reference verifier (§74)',
+        'verifier is required: wire the reference verifier',
       ]);
     }
   });

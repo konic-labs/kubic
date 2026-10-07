@@ -1,15 +1,14 @@
-// Boot-time skill discovery + prompt injection (issue #99, scope item 2;
-// design §29, §29.3). The §29 discovery roots are traversed through the
-// exec FileBridge (I/O confinement: this module never imports node:fs) and
-// the model-visible blocks are produced by the skills loader's own
-// formatter — no second format lives here.
+// Boot-time skill discovery + prompt injection. The discovery roots are
+// traversed through the exec FileBridge (I/O confinement: this module never
+// imports node:fs) and the model-visible blocks are produced by the skills
+// loader's own formatter — no second format lives here.
 //
-// Fail-open by design, and stated: a skill that cannot be read is reported
-// on the log sink and skipped by the loader itself; an unusable discovery
-// root yields no skills. Skills are context, never a gate — a run must not
-// die because a SKILL.md is malformed. What is NOT fail-open is the trust
-// gate: project roots are traversed only under an explicit trust opt-in
-// (§29.3), and the loader is told, never asked to guess.
+// Fail-open by design, and stated: a skill that cannot be read is reported on
+// the log sink and skipped by the loader itself; an unusable discovery root
+// yields no skills. Skills are context, never a gate — a run must not die
+// because a SKILL.md is malformed. What is NOT fail-open is the trust gate:
+// project roots are traversed only under an explicit trust opt-in, and the
+// loader is told, never asked to guess.
 
 import { basename, dirname, resolve, sep } from 'node:path';
 import type { PermissionClasses } from '../../agents/src/policy.js';
@@ -33,11 +32,11 @@ export interface BootSkillOptions {
   bridge: FileBridge;
   cwd: string;
   homeDir: string;
-  // §29.3 trust gate: false keeps every project root (`.pi/skills`,
+  // Trust gate: false keeps every project root (`.pi/skills`,
   // `.agents/skills`, package-declared dirs) out of discovery — unless
   // `trustProject` is given, which checks each ancestor on its own.
   trusted: boolean;
-  // Issue #228 review: per-ancestor trust. Production passes the store's
+  // Per-ancestor trust. Production passes the store's
   // per-path check, so a grant for the tree a skill lives in applies and a
   // grant for a child never reaches an untrusted parent.
   trustProject?: (dir: string) => boolean;
@@ -45,29 +44,29 @@ export interface BootSkillOptions {
   // (the loader's own contract: explicit intent always applies).
   noSkills?: boolean;
   cliSkills?: string[];
-  // Issue #237 (§29.2): the config `skills` projection — files or
+  // The config `skills` projection — files or
   // directories, already resolved against their declaring file at load.
   // Loads with source 'settings', same as explicit intent: it applies
   // even under --no-skills or distrust (the config layer was trusted
   // when read, or refused before reading).
   settingsSkills?: string[];
-  // Issue #177: an explicit --skill that resolves to nothing warns here,
+  // An explicit --skill that resolves to nothing warns here,
   // on stderr — never on the debug log sink the TUI drops and --debug
   // gates. The message is the loader's own skip text, so run and tui name
   // the same value.
   warn?: (line: string) => void;
   log?: (line: string) => void;
-  // Issue #181 (§29.4): the resolved role name for role-scoped skills.
+  // The resolved role name for role-scoped skills.
   // Absent means the lane booted with no role — role scoping is skipped
   // and the capability check alone decides. The caller passes the name
-  // the lane resolved (a worker child's task role, else `--role`).
+  // the lane resolved (`--role`).
   role?: string;
-  // Issue #181 (§29.4): the resolved role document's `skills` list, by
+  // The resolved role document's `skills` list, by
   // skill name. Absent means the document declares none — no restriction.
   // A declared list restricts the visible set to its names (merged with
   // the skill-side `roles:` check: both must admit).
   roleSkills?: string[];
-  // Issue #181 (§29.4): the capability classes the lane enforces, for the
+  // The capability classes the lane enforces, for the
   // capability-aware check. Absent means the documented SOLO_DEFAULTS —
   // the same default the lane installs, so the gate never withholds what
   // the lane would run.
@@ -76,7 +75,7 @@ export interface BootSkillOptions {
 
 export interface BootSkills {
   skills: LoadedSkill[];
-  // Issue #183 (§29.4): the invocable set for explicit invocation —
+  // The invocable set for explicit invocation —
   // admitted + gate-passed, hidden included, withheld excluded. This is
   // `gated.visible`: the role `skills` list and the role/capability gate
   // have already removed what the lane must not offer, while
@@ -85,27 +84,27 @@ export interface BootSkills {
   invocable: LoadedSkill[];
   // The `<skills>` block for the system prompt, or undefined when no skill
   // is model-visible. Undefined — not an empty block — so a skill-less
-  // boot assembles byte-identical prompt bytes (issue #33: the prompt
+  // boot assembles byte-identical prompt bytes (the prompt
   // prefix is cache-keyed, and an empty block would shift it for every
   // session that has no skills).
   block: string | undefined;
   // Model-invisible skills (disableModelInvocation). Reported so a caller
   // can name them if it needs to; never injected.
   hidden: string[];
-  // Issue #181 (§29.4): skills the role/capability gate withheld, with
+  // Skills the role/capability gate withheld, with
   // the reason each was not offered. Reported (debug log + here) — never
   // silently dropped. `kubic doctor` reads this same list.
   withheld: WithheldSkill[];
-  // Issue #177: the explicit --skill values that resolved to nothing. The
+  // The explicit --skill values that resolved to nothing. The
   // boot already warned each one via `warn`; reported as well so a caller
   // that renders its own diagnostics (doctor, tests) can read them.
   unknownSkills: string[];
-  // Issue #238: every skill the walk met but did not load (excluded by
+  // Every skill the walk met but did not load (excluded by
   // distrust or confinement, or failed reads), each with its reason —
   // the `kubic skills` listing and the TUI notice name these instead of
   // dropping them.
   skipped: SkippedSkill[];
-  // Issue #173 (§29.3): the read-only roots of every ADVERTISED skill that
+  // The read-only roots of every ADVERTISED skill that
   // lives outside the cwd (user roots under $HOME, trusted ancestor project
   // roots, explicit --skill paths): a `SKILL.md` opens its skill directory
   // (so the model can follow the skill's own relative references), a flat
@@ -153,12 +152,12 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
     ...(options.log === undefined ? {} : { log: options.log }),
   };
   const { skills, unknownSkills, skipped } = discoverSkills(load);
-  // Issue #177: explicit intent that resolved to nothing is a visible
+  // Explicit intent that resolved to nothing is a visible
   // warning, not a debug line — otherwise a typo reads as a loaded skill.
   for (const value of unknownSkills) {
     options.warn?.(`skill skipped (unknown skill '${value}')`);
   }
-  // Issue #181 (§29.4, role-scoped + capability-aware): the injected set
+  // The injected set
   // depends on the resolved role and the installed capability classes —
   // a skill the role or the grant cannot use is not offered, with the
   // reason logged (and returned) instead of failing silently mid-task.
@@ -210,7 +209,7 @@ export type {
   SkillSource,
   SkippedSkill,
 } from '../../agents/src/skills/skills.js';
-// The role/capability gate (§29.4, issue #181): applied in `bootSkills`
+// The role/capability gate: applied in `bootSkills`
 // above — discovery stays in the loader (it owns the roots and trust),
 // while the grant (the resolved role, its `skills` list, the installed
 // classes) is a boot input the caller holds. Withheld skills are reported
@@ -218,7 +217,7 @@ export type {
 // dropped.
 export type { LoadedSkill, WithheldSkill };
 
-// The `kubic skills` listing row (issue #238): one per skill the boot met,
+// The `kubic skills` listing row: one per skill the boot met,
 // loaded or not. `visible` reached the prompt; `hidden` stays
 // model-invisible by its own flag; `withheld` failed the role/capability
 // gate; `excluded` was left out by policy (distrust, confinement); `error`
@@ -288,7 +287,7 @@ export function summarizeSkills(booted: BootSkills): SkillRow[] {
   return rows;
 }
 
-// The TUI's one-time boot notice (issue #238): the loader lines the TUI
+// The TUI's one-time boot notice: the loader lines the TUI
 // used to drop, as a single summary — `undefined` when nothing was
 // skipped, so a clean boot stays silent.
 export function describeSkillSkips(
@@ -303,12 +302,12 @@ export function describeSkillSkips(
   return `skills: ${skipped.length} skipped (${parts.join(', ')}) — run \`kubic skills\` for every skill and why it was left out`;
 }
 
-// Doctor surface (issue #181, §29.4): the same boot the lane runs, judged
+// Doctor surface: the same boot the lane runs, judged
 // with the lane's classes and no role — a skill the default lane would
 // not offer warns here with the gate's reason, never green. `kubic run
 // --role` narrows further; that narrowing is named by the run's own
 // debug log, not here.
-// Issue #238: the summary line rides first — counts of what the boot
+// The summary line rides first — counts of what the boot
 // met (loaded, hidden, withheld, errors). Errors warn (a skill the lane
 // silently misses is worth a look); the line never fails.
 export function skillsDoctorProbe(input: BootSkillOptions): DoctorCheck[] {
@@ -325,7 +324,7 @@ export function skillsDoctorProbe(input: BootSkillOptions): DoctorCheck[] {
   ];
 }
 
-// The `kubic doctor` skills line (issue #238): counts of what the boot
+// The `kubic doctor` skills line: counts of what the boot
 // met — loaded, hidden, withheld, errors. Errors warn (a skill the lane
 // silently misses is worth a look); the line never fails, and anything
 // narrower (a role's own narrowing) stays on the run's debug log.

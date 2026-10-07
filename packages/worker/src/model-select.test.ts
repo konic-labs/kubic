@@ -1,6 +1,4 @@
-// Slice B: model selection, one-way escalation, thinking clamp
-// (issue #20; §38).
-// RED: selectModel/escalateModel/clampThinking do not exist yet.
+// Model selection, one-way escalation, thinking clamp.
 import { describe, expect, it } from 'vitest';
 import {
   clampThinking,
@@ -19,7 +17,7 @@ function modelsWithFaux(): ReturnType<typeof createModels> {
   return models;
 }
 
-describe('model selection + escalation + thinking (issue #20, slice B)', () => {
+describe('model selection + escalation + thinking', () => {
   it('selects explicit provider/id and fails named when unknown', () => {
     const models = modelsWithFaux();
     const fauxId = models.getModels('faux')[0]?.id ?? 'faux-model';
@@ -33,7 +31,7 @@ describe('model selection + escalation + thinking (issue #20, slice B)', () => {
     );
   });
 
-  it('names the closest provider and model when one is near (issue #450)', () => {
+  it('names the closest provider and model when one is near', () => {
     const models = modelsWithFaux();
     const fauxId = models.getModels('faux')[0]?.id ?? 'faux-model';
     expect(() => selectModel(models, { provider: 'fuax', id: fauxId })).toThrow(
@@ -81,9 +79,9 @@ describe('model selection + escalation + thinking (issue #20, slice B)', () => {
     ).toThrow(/bounded/);
   });
 
-  // Issue #216: the thinking.json sidecar (save/loadThinkingLevel) is
+  // The thinking.json sidecar (save/loadThinkingLevel) is
   // deleted — the level persists as durable agent state through
-  // `configure()` + `pi.agent` (issue #225: solo.test.ts pins it across
+  // `configure()` + `pi.agent` (solo.test.ts pins it across
   // close and reopen), so attach restores it from the storage and no
   // sidecar read exists to test here.
   it('thinking clamps to model support', () => {
@@ -96,7 +94,7 @@ describe('model selection + escalation + thinking (issue #20, slice B)', () => {
   });
 });
 
-describe('thinking level resolution at lane boot (issue #225; §38.3)', () => {
+describe('thinking level resolution at lane boot', () => {
   function reasoningModel() {
     const models = createModels();
     const faux = fauxProvider({
@@ -158,7 +156,7 @@ describe('thinking level resolution at lane boot (issue #225; §38.3)', () => {
     ).toThrow(/"banana".*KUBIC_MODEL_THINKING/);
   });
 
-  it('parses --thinking against the known levels (issue #225)', () => {
+  it('parses --thinking against the known levels', () => {
     expect(parseThinkingFlag('high')).toBe('high');
     expect(() => parseThinkingFlag('banana')).toThrow(
       /unknown thinking level 'banana'/,

@@ -1,4 +1,4 @@
-// The transcript's blocks (EPIC N, issue #463; docs/ui 01-D, 01-M): what
+// The transcript's blocks: what
 // block mode navigates — one block per prompt, answer, thinking, tool card
 // and receipt, with real row offsets, the text a copy takes, the selected
 // block's edge and a per-block expand.
@@ -34,7 +34,7 @@ function view() {
   return transcript;
 }
 
-describe('transcript blocks (issue #463)', () => {
+describe('transcript blocks', () => {
   it('lists one block per prompt, answer, thinking and tool card, in order', () => {
     const transcript = view();
     transcript.render(80);

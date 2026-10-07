@@ -1,9 +1,6 @@
-// One §60 audit ledger per repo (issue #279; §60).
-// Before this issue the solo writer used the raw cwd while `kubic audit` walked
-// up to the nearest `.git`: a run from <repo>/sub wrote <repo>/sub/.kubic/…
-// (untracked, and never read), every worker child wrote a mislabelled
-// mode=solo record into its own worktree (lost at cleanup), and an unreadable
-// ledger was reported as "no audit records".
+// One audit ledger per repo: a run from <repo>/sub writes the ledger at the
+// repo root (where `kubic audit` reads it), never <repo>/sub/.kubic/…, and an
+// unreadable ledger is reported by name, never as "no audit records".
 //
 // Fixture repos only (real git, hermetic global config); every temp dir and
 // file mode is restored in afterEach. No network, no model.
@@ -98,19 +95,19 @@ function capture() {
   };
 }
 
-describe('resolveRepoRuntimeRoot (issue #279)', () => {
+describe('resolveRepoRuntimeRoot', () => {
   it('names the main checkout from a subdirectory, a linked worktree, and outside git', () => {
     const { repo, sub } = fixtureRepo();
     expect(resolveRepoRuntimeRoot(sub)).toBe(repo);
-    const wt = join(repo, '.kubic', 'wt', 'worker-1');
-    git(repo, ['worktree', 'add', '-q', '-b', 'kubic/worker-1', wt]);
+    const wt = join(repo, 'linked');
+    git(repo, ['worktree', 'add', '-q', '-b', 'linked', wt]);
     expect(resolveRepoRuntimeRoot(wt)).toBe(repo);
     const loose = tmpRoot('loose-');
     expect(resolveRepoRuntimeRoot(loose)).toBe(loose);
   });
 });
 
-describe('solo decisions land in the repo ledger (issue #279)', () => {
+describe('solo decisions land in the repo ledger', () => {
   it('a run from <repo>/sub appends to <repo>/.kubic/…/audit.jsonl and creates nothing under sub', async () => {
     const { repo, sub } = fixtureRepo();
     const installed = installSoloPolicy({
@@ -120,12 +117,12 @@ describe('solo decisions land in the repo ledger (issue #279)', () => {
     expect((await installed.ask(DESTRUCTIVE)).approved).toBe(false);
     const records = readAuditLedger(auditLedgerDir(repo));
     expect(records).toHaveLength(1);
-    expect(records[0]?.mode).toBe('solo');
+    expect(records[0]?.who).toBe('agent:root');
     expect(existsSync(join(sub, '.kubic'))).toBe(false);
     expect(git(repo, ['status', '--porcelain'])).toBe('');
   });
 
-  it('kubic audit --mode solo lists it from the root and from sub', async () => {
+  it('kubic audit lists it from the root and from sub', async () => {
     const { repo, sub } = fixtureRepo();
     const installed = installSoloPolicy({
       workspace: sub,
@@ -135,7 +132,7 @@ describe('solo decisions land in the repo ledger (issue #279)', () => {
     for (const cwd of [repo, sub]) {
       const io = capture();
       const code = await runAuditCommand(
-        { mode: 'solo', json: true },
+        { json: true },
         {
           ...io.deps,
           loadRecords: () => readAuditLedger(auditLedgerDirFor(cwd)),
@@ -147,49 +144,7 @@ describe('solo decisions land in the repo ledger (issue #279)', () => {
   });
 });
 
-describe('orchestrated worker children (issue #279)', () => {
-  function workerFixture() {
-    const { repo } = fixtureRepo();
-    const wt = join(repo, '.kubic', 'wt', 'worker-1');
-    git(repo, ['worktree', 'add', '-q', '-b', 'kubic/worker-1', wt]);
-    return { repo, wt };
-  }
-
-  const worker = { workerId: 'worker-1', orchestratorSession: 'orch-279' };
-
-  it('a local decision appears once in the main ledger with mode orchestrator, nothing in the worktree', async () => {
-    const { repo, wt } = workerFixture();
-    const installed = installSoloPolicy({
-      workspace: wt,
-      sessionDir: tmpRoot('session-'),
-      route: 'deny',
-      orchestratedWorker: worker,
-    });
-    expect((await installed.ask(DESTRUCTIVE)).approved).toBe(false);
-    const records = readAuditLedger(auditLedgerDir(repo));
-    expect(records).toHaveLength(1);
-    expect(records[0]?.mode).toBe('orchestrator');
-    expect(records[0]?.who).toBe('agent:worker-1');
-    expect(JSON.stringify(records[0])).toContain('orch-279');
-    expect(existsSync(join(wt, '.kubic', 'orchestrator'))).toBe(false);
-  });
-
-  it('a decision answered through the manager seat is left to the manager record', async () => {
-    const { repo, wt } = workerFixture();
-    const installed = installSoloPolicy({
-      workspace: wt,
-      sessionDir: tmpRoot('session-'),
-      orchestratedWorker: worker,
-      answer: async () => ({ approved: true, by: 'user' }),
-    });
-    expect((await installed.ask(DESTRUCTIVE)).approved).toBe(true);
-    // The manager's worker-asks ledger append is the one record.
-    expect(readAuditLedger(auditLedgerDir(repo))).toEqual([]);
-    expect(existsSync(join(wt, '.kubic', 'orchestrator'))).toBe(false);
-  });
-});
-
-describe('solo provenance fields (issue #282)', () => {
+describe('solo provenance fields', () => {
   it('records the thinking level and the base revision the run captured at start', async () => {
     const { repo, sub } = fixtureRepo();
     const base = git(repo, ['rev-parse', 'HEAD']).trim();
@@ -228,7 +183,7 @@ describe('solo provenance fields (issue #282)', () => {
   });
 });
 
-describe('an unreadable ledger is an error, not an empty trail (issue #279)', () => {
+describe('an unreadable ledger is an error, not an empty trail', () => {
   const skip =
     process.platform === 'win32' ||
     (typeof process.getuid === 'function' && process.getuid() === 0);

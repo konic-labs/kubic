@@ -1,4 +1,4 @@
-// Issue #211: `kubic run --role x` with a prompt-less role document fails
+// `kubic run --role x` with a prompt-less role document fails
 // closed with the named refusal instead of booting an instruction-less
 // role. Full headless run on the faux provider (zero network, zero paid
 // tokens); temp dirs and env restored in afterEach.
@@ -42,7 +42,7 @@ function models(): ReturnType<typeof createModels> {
   return catalog;
 }
 
-describe('run --role with a prompt-less document (issue #211)', () => {
+describe('run --role with a prompt-less document', () => {
   it('exits failed with the named refusal, never booting the lane', async () => {
     const sessionsRoot = tmp('kubic-role-prompt-sessions-');
     const ws = tmp('kubic-role-prompt-ws-');

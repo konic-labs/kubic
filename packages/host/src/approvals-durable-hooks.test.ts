@@ -1,7 +1,7 @@
-// Approval interception through pi-durable ToolTask hooks (issues #16, #96,
-// #232, #397). The approvals here are driven end to end: a REAL Harness over
-// Storage with the faux provider, the production `createApprovalAsk` adapter,
-// and `policyInterceptorHooks` as the lane's policy extension.
+// Approval interception through pi-durable ToolTask hooks. The approvals here
+// are driven end to end: a REAL Harness over Storage with the faux provider,
+// the production `createApprovalAsk` adapter, and `policyInterceptorHooks` as
+// the lane's policy extension.
 //
 // The durable contract under test: `beforeTool` runs BEFORE the harness
 // commits the tool's intent, so a crash while a seat is deciding re-runs the
@@ -29,6 +29,7 @@ import {
   type Storage,
   Type,
 } from '../../worker/src/pi-boundary.js';
+import { TIMEOUT_REASON_MARKER } from './approval-timeout.js';
 import {
   type ApprovalRequest,
   ApprovalService,
@@ -39,7 +40,6 @@ import {
   triggerContextFor,
   validatePolicy,
 } from './approvals.js';
-import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
 
 const COMMAND = 'rm -rf /tmp/x';
 
@@ -174,7 +174,7 @@ async function waitUntil(predicate: () => boolean, ms = 2_000): Promise<void> {
   }
 }
 
-describe('approval hooks on a real harness (issues #96, #397)', () => {
+describe('approval hooks on a real harness', () => {
   it('lets an allow-once seat answer the challenged call through', async () => {
     const workspace = mkTmp('kubic-approval-allow-');
     let asks = 0;
@@ -217,7 +217,7 @@ describe('approval hooks on a real harness (issues #96, #397)', () => {
     }
   });
 
-  it('a seat that never answers times out to deny and stops tracking the ask (#232)', async () => {
+  it('a seat that never answers times out to deny and stops tracking the ask', async () => {
     const workspace = mkTmp('kubic-approval-timeout-');
     let asks = 0;
     const booted = await bootHarness({
@@ -246,7 +246,7 @@ describe('approval hooks on a real harness (issues #96, #397)', () => {
   });
 });
 
-describe('approval resume after a crash (issues #232, #397)', () => {
+describe('approval resume after a crash', () => {
   it('re-asks on resume and never runs the tool unapproved', async () => {
     const workspace = mkTmp('kubic-approval-crash-');
     const sessions = join(workspace, 'session');

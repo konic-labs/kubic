@@ -1,4 +1,4 @@
-// Prod syslog transports (issue #286): thin dgram wrappers behind the
+// Prod syslog transports: thin dgram wrappers behind the
 // injectable `SyslogTransport`. The socket factory is injectable, so these
 // tests never open a real socket.
 import { describe, expect, it, vi } from 'vitest';
@@ -7,7 +7,7 @@ import {
   createUnixSyslogTransport,
 } from './syslog-transport.js';
 
-describe('syslog transports (issue #286)', () => {
+describe('syslog transports', () => {
   it('sends unix datagrams to the socket path', () => {
     const send = vi.fn();
     const close = vi.fn();
@@ -35,7 +35,7 @@ describe('syslog transports (issue #286)', () => {
     expect(close).toHaveBeenCalled();
   });
 
-  // Review finding (issue #286): a target that vanishes after the doctor
+  // Review finding: a target that vanishes after the doctor
   // probe raises an async socket error — best-effort delivery must swallow
   // it, never throw it out of the synchronous sink.
   it.each([

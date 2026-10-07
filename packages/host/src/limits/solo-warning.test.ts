@@ -1,5 +1,5 @@
-// Solo no-isolation warning text (issue #58; §59.1i-ii, §3.7).
-// RED first: fresh solo start must announce no isolation — one TUI line
+// Solo no-isolation warning text.
+// Fresh solo start must announce no isolation — one TUI line
 // plus a `kubic run` stderr block. Faux-only: pure strings, no I/O.
 import { describe, expect, it } from 'vitest';
 import {
@@ -8,7 +8,7 @@ import {
   soloTuiLine,
 } from './solo-warning.js';
 
-describe('solo startup warning (issue #58)', () => {
+describe('solo startup warning', () => {
   it('TUI line announces no isolation in one line', () => {
     const line = soloTuiLine();
     expect(line).toMatch(/no isolation/);

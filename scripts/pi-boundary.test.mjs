@@ -21,7 +21,7 @@ const PI_DEPS = [
   '@earendil-works/pi-durable',
   '@earendil-works/pi-tui',
 ];
-// Dropped in the Pi 1.0 migration (issue #390): pi-agent-core lost the
+// Dropped in the Pi 1.0 migration: pi-agent-core lost the
 // harness, and nothing imports pi-protocol / pi-telemetry directly.
 const REMOVED_PI_DEPS = [
   '@earendil-works/pi-agent-core',
@@ -49,7 +49,7 @@ function scratchDir(prefix) {
   return dir;
 }
 
-// Issue #197: every `export` statement in either Pi boundary file must be
+// Every `export` statement in either Pi boundary file must be
 // preceded by the JUSTIFICATION block the file's own template requires.
 // Returns the 1-based line numbers of unjustified exports.
 function unjustifiedExports(source) {
@@ -69,7 +69,7 @@ function unjustifiedExports(source) {
   return bad;
 }
 
-// Issue #401 / commit 83ee635: exactly ONE hoisted copy of every Pi package.
+// / commit 83ee635: exactly ONE hoisted copy of every Pi package.
 // Walks the lockfile's `packages` map (v3 is authoritative) and returns one
 // `{ name, paths }` entry per `@earendil-works/*` package resolved at more
 // than one path — a hoisted root copy plus a nested one under a workspace or
@@ -90,7 +90,7 @@ function duplicatePiCopies(lock) {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-describe('pi pinning + boundary (issue #4)', () => {
+describe('pi pinning + boundary', () => {
   it('worker pins all four Pi deps exactly and drops the removed three', () => {
     const pkg = JSON.parse(
       readFileSync(join(ROOT, 'packages', 'worker', 'package.json'), 'utf8'),
@@ -131,7 +131,7 @@ describe('pi pinning + boundary (issue #4)', () => {
     }
   });
 
-  it('both Pi boundary files justify every export (issue #197)', () => {
+  it('both Pi boundary files justify every export', () => {
     for (const rel of [
       join('packages', 'worker', 'src', 'pi-boundary.ts'),
       join('packages', 'tui', 'src', 'tui-boundary.ts'),
@@ -145,7 +145,7 @@ describe('pi pinning + boundary (issue #4)', () => {
     }
   });
 
-  it('the justification gate fails a fixture export without one (#197)', () => {
+  it('the justification gate fails a fixture export without one', () => {
     assert.deepEqual(unjustifiedExports('export const x = 1;\n'), [1]);
     assert.deepEqual(unjustifiedExports('// note\nexport const x = 1;\n'), [2]);
     assert.deepEqual(
@@ -238,8 +238,8 @@ describe('pi pinning + boundary (issue #4)', () => {
     assert.ok(yml.includes('check:pi'), 'ci.yml must run check:pi');
   });
 
-  // Issue #401 / commit 83ee635: the built binary could not load
-  // @earendil-works/chord from dist/ because the #390 lockfile NESTED a
+  // / commit 83ee635: the built binary could not load
+  // @earendil-works/chord from dist/ because the lockfile NESTED a
   // second copy of pi-ai and chord (under packages/worker and under
   // pi-durable) instead of hoisting them — all at 1.0.2, so the pin check
   // below stayed green, vitest resolved from source so the suite stayed
@@ -247,7 +247,7 @@ describe('pi pinning + boundary (issue #4)', () => {
   // `@earendil-works/*` package is the invariant a lockfile refresh must not
   // break; two copies of pi-ai would also give Kubic and pi-durable separate
   // module instances.
-  it('the lockfile resolves exactly one copy of every Pi package (issue #401)', () => {
+  it('the lockfile resolves exactly one copy of every Pi package', () => {
     const lock = JSON.parse(
       readFileSync(join(ROOT, 'package-lock.json'), 'utf8'),
     );
@@ -259,7 +259,7 @@ describe('pi pinning + boundary (issue #4)', () => {
     );
   });
 
-  it('the one-copy gate fails a fixture lock with a nested duplicate (#401)', () => {
+  it('the one-copy gate fails a fixture lock with a nested duplicate', () => {
     const fixture = {
       lockfileVersion: 3,
       packages: {

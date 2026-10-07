@@ -1,9 +1,7 @@
-// Slice: run-scoped reconciliation lifecycle (issue #87; §42.1 mechanism 2,
-// §42.5). The mechanism (captureBaseline/reconcile) landed in #17 but every
-// caller was a test; this module is the wrapper the composition root calls:
-// capture ONCE at lane boot, persist the hashes beside the session journal,
-// sweep ONCE at run end.
-// RED: packages/exec/src/journal-reconcile.ts does not exist yet.
+// Slice: run-scoped reconciliation lifecycle. The mechanism
+// (captureBaseline/reconcile) landed but every caller was a test; this module
+// is the wrapper the composition root calls: capture ONCE at lane boot, persist
+// the hashes beside the session journal, sweep ONCE at run end.
 import { execFileSync } from 'node:child_process';
 import {
   existsSync,
@@ -57,7 +55,7 @@ function journalStore(): FileJournalStore {
   return new FileJournalStore(tmpRoot('j-reconcile-'));
 }
 
-describe('run-scoped reconciliation lifecycle (issue #87)', () => {
+describe('run-scoped reconciliation lifecycle', () => {
   it('captures the baseline at boot and persists it beside the session journal', () => {
     const root = workspace();
     const store = journalStore();
@@ -266,7 +264,7 @@ describe('run-scoped reconciliation lifecycle (issue #87)', () => {
     expect(run.sweep()).toBe(1);
     const sweepEntry = store.entries().find((e) => e.unattributed === true);
     if (sweepEntry === undefined) throw new Error('missing sweep entry');
-    // Issue #341: the before-side is the path's expected state — the tool's
+    // The before-side is the path's expected state — the tool's
     // after-content this run — not the boot baseline, so undo walks the
     // chain v3 → v2 (this entry) → v1 (the tool entry).
     expect(sweepEntry.beforeHash).toBe(sha256Hex('v2-tool\n'));
@@ -275,11 +273,11 @@ describe('run-scoped reconciliation lifecycle (issue #87)', () => {
   });
 });
 
-// Issue #374 (§42.1): an interactive session is one process but many runs —
+// An interactive session is one process but many runs —
 // every prompt re-baselines, so a sweep journals only what changed during
 // that turn, tagged with the turn, and an edit made between prompts is
 // absorbed instead of attributed to the agent.
-describe('per-turn rebaseline (issue #374)', () => {
+describe('per-turn rebaseline', () => {
   const begin = (root: string, store: FileJournalStore) =>
     beginReconciliation({
       store,
@@ -341,15 +339,15 @@ describe('per-turn rebaseline (issue #374)', () => {
   });
 });
 
-// Git pre-images end to end (issue #371): the sweep restores bash-made
+// Git pre-images end to end: the sweep restores bash-made
 // changes to clean tracked files from the object store, through the
 // existing before-blob mechanism — `journal-undo.ts` needed no new path.
 //
-// Real git in sandboxed throwaway repos (issue #365): the repo setup runs
+// Real git in sandboxed throwaway repos: the repo setup runs
 // through the sandbox's scrubbed env, and the sandbox is activated into
 // process.env while the production code (which spawns git on the inherited
 // environment) runs.
-describe('git pre-images end to end (issue #371)', () => {
+describe('git pre-images end to end', () => {
   function gitRepo(): GitSandbox {
     const repo = createGitSandbox({
       prefix: 'journal-git-',
@@ -475,7 +473,7 @@ describe('git pre-images end to end (issue #371)', () => {
   });
 });
 
-describe('HEAD-move markers end to end (issue #378)', () => {
+describe('HEAD-move markers end to end', () => {
   function twoCommitRepo(): GitSandbox {
     const repo = createGitSandbox({
       prefix: 'journal-head-',
@@ -564,7 +562,7 @@ describe('HEAD-move markers end to end (issue #378)', () => {
   });
 });
 
-describe('sweep attribution (issue #364)', () => {
+describe('sweep attribution', () => {
   it('tags unattributed sweep entries with the run agent id', () => {
     const root = workspace();
     const store = new FileJournalStore(tmpRoot('j-agent-'));

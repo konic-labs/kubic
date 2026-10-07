@@ -2,7 +2,7 @@
 // git subcommands. These tests drive the real program (createKubicProgram +
 // registerJournalCommands) with recording runners, so they pin exactly what
 // commander parses into each typed request, the generated help, and the
-// §78 exit codes for usage errors — without touching a journal or a repo.
+// Exit codes for usage errors — without touching a journal or a repo.
 // One end-to-end block wires the real host handlers over a temp journal to
 // pin the `--json` stdout/stderr split.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -201,7 +201,7 @@ describe('journal commands: parsed requests reach the runner', () => {
     ]);
   });
 
-  // Issue #271: `kubic diff <path>` scopes like `--path` — the operand
+  // `kubic diff <path>` scopes like `--path` — the operand
   // was never declared, so commander rejected it as excess.
   it('diff takes the path operand, equivalent to --path', async () => {
     const r = await kubic(['diff', 'src/a.ts']);
@@ -222,7 +222,7 @@ describe('journal commands: parsed requests reach the runner', () => {
     }
   });
 
-  it('kubic commit -m <message> is kubic git commit (issue #268)', async () => {
+  it('kubic commit -m <message> is kubic git commit', async () => {
     const plain = await kubic(['commit', '-m', 'fix: handle empty input']);
     expect(plain.code).toBe(0);
     expect(plain.git).toEqual([

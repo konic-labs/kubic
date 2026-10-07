@@ -25,7 +25,7 @@ function load(source, fnName) {
   return new Function(`${body}; return ${fnName};`)();
 }
 
-describe('patch-vitest-runner (issue #72)', () => {
+describe('patch-vitest-runner', () => {
   const [helpersPatch, , runnerPatch] = PATCHES;
 
   it('names a test by vitest 5 fullTestName, matching what testNamePattern sees', () => {

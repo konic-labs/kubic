@@ -1,4 +1,4 @@
-// Doctor's config section (issue #90, criterion 3): unknown or unsupported
+// Doctor's config section: unknown or unsupported
 // keys fail closed with a named reason AND appear in doctor — nothing is
 // silently ignored.
 //
@@ -14,7 +14,7 @@ export interface ConfigDoctorInput {
   effectiveValues: number | undefined;
   refusal: string | undefined;
   projectTrusted: boolean | undefined;
-  // Issue #228: how the project layer was trusted (or not) — the store
+  // How the project layer was trusted (or not) — the store
   // decision, the env opt-in and the store path. Optional so existing
   // fixtures stay valid; absent falls back to the boolean wording.
   projectTrust:
@@ -22,23 +22,22 @@ export interface ConfigDoctorInput {
         decision: boolean | null;
         envTrust: boolean;
         storePath: string;
-        // Issue #228 review: the store exists but could not be read or
+        // The store exists but could not be read or
         // parsed — named instead of reported as "no decision recorded".
         storeError?: string;
       }
     | undefined;
-  // Accepted keys whose effective value has NO row in the key-effect table
-  // (issue #133): the table is the claim that every accepted key does
-  // something, so a key it cannot explain is reported by name, not glossed.
+  // Accepted keys whose effective value has NO row in the key-effect table: the
+  // table is the claim that every accepted key does something, so a key it
+  // cannot explain is reported by name, not glossed.
   unexplainedKeys: string[];
-  // The committed-vs-runtime ignore split for this workspace (§35/D35):
+  // The committed-vs-runtime ignore split for this workspace:
   // runtime prefixes absent from both the repo .gitignore and its local
   // exclude file are reported by name. Outside a git repository the check
   // does not apply (there is no commit path to protect).
   ignoreSplitMissing: string[];
   ignoreSplitApplicable: boolean;
-  budgetsConfigured: boolean;
-  // The effective compaction policy line (issue #239), shared with
+  // The effective compaction policy line, shared with
   // `kubic config` — appended to the passing detail so doctor names the
   // reserve the lanes run with. Absent on older callers (tests).
   compactionSummary?: string;
@@ -46,7 +45,7 @@ export interface ConfigDoctorInput {
 
 export const CONFIG_DOCTOR_ID = 'config-load';
 
-// Issue #228: the trust half of the detail, naming the exact provenance —
+// The trust half of the detail, naming the exact provenance —
 // the store file that records the grant, the env opt-in, or the remedy when
 // the project layer has no accepted decision.
 function projectTrustDetail(input: ConfigDoctorInput): string {
@@ -103,7 +102,6 @@ export function configDoctorProbe(input: ConfigDoctorInput): DepProbe {
     ok: true,
     detail:
       `${input.effectiveValues ?? 0} effective value(s); ${projectTrustDetail(input)}; ` +
-      `budgets ${input.budgetsConfigured ? 'configured' : 'none (§71: nothing is capped until you configure a limit)'}; ` +
       `runtime ignore split ${input.ignoreSplitApplicable ? 'complete' : 'not applicable (not a git repository)'}` +
       (input.compactionSummary === undefined
         ? ''
@@ -123,7 +121,6 @@ export function buildConfigDoctorInput(
           disposition: string;
         }>;
         projectTrusted: boolean;
-        budgetsConfigured: boolean;
         ignoreSplitMissing: string[];
         ignoreSplitApplicable: boolean;
         projectTrust?: ConfigDoctorInput['projectTrust'];
@@ -145,7 +142,6 @@ export function buildConfigDoctorInput(
       unexplainedKeys: [],
       ignoreSplitMissing: loaded.ignoreSplitMissing,
       ignoreSplitApplicable: loaded.ignoreSplitApplicable,
-      budgetsConfigured: false,
     };
   }
   return {
@@ -153,14 +149,13 @@ export function buildConfigDoctorInput(
     refusal: undefined,
     projectTrusted: loaded.projectTrusted,
     projectTrust: loaded.projectTrust,
-    // 'unknown' is the view's own word for "no effect row explains this key"
-    // (issue #133) — one derivation, so doctor and `kubic config` agree.
+    // 'unknown' is the view's own word for "no effect row explains this key" —
+    // one derivation, so doctor and `kubic config` agree.
     unexplainedKeys: loaded.values
       .filter((value) => value.disposition === 'unknown')
       .map((value) => value.key),
     ignoreSplitMissing: loaded.ignoreSplitMissing,
     ignoreSplitApplicable: loaded.ignoreSplitApplicable,
-    budgetsConfigured: loaded.budgetsConfigured,
     ...(loaded.compactionSummary === undefined
       ? {}
       : { compactionSummary: loaded.compactionSummary }),

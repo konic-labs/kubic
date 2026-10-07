@@ -1,8 +1,7 @@
-// Steering answers on the approval card (issue #467; docs/ui 02-A, 02-E,
-// 02-F): `c` denies with a comment, `e` edits a command before allowing it,
-// `A` approves the turn's edits — each only where the host offered it, each
-// behind the arming delay, and the card's input never lets typed text reach
-// a decision key.
+// Steering answers on the approval card: `c` denies with a comment, `e` edits a
+// command before allowing it, `A` approves the turn's edits — each only where
+// the host offered it, each behind the arming delay, and the card's input never
+// lets typed text reach a decision key.
 import { describe, expect, it } from 'vitest';
 import { createApprovalSurface } from './approval-surface.js';
 
@@ -30,7 +29,7 @@ function type(
   for (const ch of text) expect(surface.typeInto(ch)).toBe('consumed');
 }
 
-describe('deny with a comment (issue #467)', () => {
+describe('deny with a comment', () => {
   it('opens an input and denies with the words', async () => {
     const surface = createApprovalSurface({ armingMs: 0 });
     const pending = surface.ask(SHELL);
@@ -71,7 +70,7 @@ describe('deny with a comment (issue #467)', () => {
   });
 });
 
-describe('edit then allow (issue #467)', () => {
+describe('edit then allow', () => {
   it('prefills the command and allows the edit', async () => {
     const surface = createApprovalSurface({ armingMs: 0 });
     const pending = surface.ask(SHELL);
@@ -110,7 +109,7 @@ describe('edit then allow (issue #467)', () => {
   });
 });
 
-describe('allow all edits this turn (issue #467)', () => {
+describe('allow all edits this turn', () => {
   it('answers an offered ask with the turn batch', async () => {
     const surface = createApprovalSurface({ armingMs: 0 });
     const pending = surface.ask(WRITE);

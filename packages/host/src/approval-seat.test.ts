@@ -1,12 +1,9 @@
-// The installed policy's answer seat (issue #96, acceptance criterion 1).
-// RED: installSoloPolicy refuses a challenged call immediately with
-// NO_ANSWER_SURFACE_REASON because no command could collect a verdict. The
-// interactive TUI is a command that CAN, so the policy must consult a seat
-// when one is attached — and keep the immediate refusal (no 60s stall) when
-// one is not.
+// The installed policy's answer seat. The interactive TUI is a command that
+// CAN, so the policy must consult a seat when one is attached — and keep the
+// immediate refusal (no 60s stall) when one is not.
 //
 // Faux provider only: zero network, zero paid tokens. The lane is real and
-// boots through the shared faux harness factory (#401).
+// boots through the shared faux harness factory.
 import { describe, expect, it } from 'vitest';
 import {
   bootFauxLane,
@@ -74,7 +71,7 @@ async function runDestructive(
   }
 }
 
-describe('installed policy answer seat (issue #96, criterion 1)', () => {
+describe('installed policy answer seat', () => {
   it('lets an approving seat resolve the challenged call', async () => {
     const result = await runDestructive(async () => ({
       approved: true,

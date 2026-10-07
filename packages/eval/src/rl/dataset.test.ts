@@ -1,4 +1,4 @@
-// RL dataset batch export (issue #270; design §74). A directory/glob of
+// RL dataset batch export. A directory/glob of
 // trajectory exports in, one JSONL of dataset records plus a manifest out.
 // The in-memory fs keeps the tests hermetic (no temp dirs, no network) and
 // lets the streaming claim be observed directly: one append per record.
@@ -90,7 +90,7 @@ function memoryFs(files: Record<string, string>): MemoryFs {
   };
 }
 
-describe('resolveDatasetFiles (issue #270)', () => {
+describe('resolveDatasetFiles', () => {
   const entries = {
     'traj/a.json': '{}',
     'traj/b.json': '{}',
@@ -127,7 +127,7 @@ describe('resolveDatasetFiles (issue #270)', () => {
   });
 });
 
-describe('exportDataset (issue #270)', () => {
+describe('exportDataset', () => {
   it('turns 4 fixtures (2 tasks × pass/fail) into exactly 2 DPO lines, excluded=0', () => {
     const m = memoryFs({
       'traj/t1-pass.json': JSON.stringify(passing({ taskId: 'task-1' })),

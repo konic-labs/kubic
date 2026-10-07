@@ -1,4 +1,4 @@
-// Issue #124: journal retention was O(n^2) I/O — every append stat'd every
+// Journal retention was O(n^2) I/O — every append stat'd every
 // referenced blob (`blobBytes` over the kept set) and the byte-bound loop
 // re-stat'd everything once per dropped entry. These tests count `fileInfo`
 // calls through an instrumented FileBridge double. What they pin (drop set,
@@ -35,7 +35,7 @@ vi.mock('./file-bridge.js', async (importOriginal) => {
         fileInfo: (path: string) => {
           counts.fileInfo += 1;
           // Blob stats are the O(M) cost this issue removed; the append's
-          // own index tail probe (issue #343) is one lstat per append and
+          // own index tail probe is one lstat per append and
           // is deliberately not counted here.
           if (path.includes(`${'/'}blobs${'/'}`)) counts.blobInfo += 1;
           return bridge.fileInfo(path);
@@ -89,7 +89,7 @@ function uniqueContent(i: number): string {
 }
 
 // Live-stat truth: the unique blob bytes the index references right now.
-// A missing blob counts zero — exactly what the pre-#124 `blobBytes` saw.
+// A missing blob counts zero — exactly what the pre `blobBytes` saw.
 function referencedBytes(dir: string, store: FileJournalStore): number {
   const seen = new Set<string>();
   let total = 0;
@@ -107,8 +107,8 @@ function referencedBytes(dir: string, store: FileJournalStore): number {
   return total;
 }
 
-describe('blob size cache (issue #124, slice 1)', () => {
-  it('append #51 over 50 entries and 30 unique blobs stats zero times', () => {
+describe('blob size cache', () => {
+  it('append over 50 entries and 30 unique blobs stats zero times', () => {
     const store = new FileJournalStore(tmpRoot(), FAST);
     for (let i = 0; i < 50; i++) {
       store.append(entry({ path: `f${i}.txt`, after: uniqueContent(i) }));
@@ -118,13 +118,13 @@ describe('blob size cache (issue #124, slice 1)', () => {
     store.append(entry({ path: 'f50.txt', after: uniqueContent(50) }));
     // Before the size cache this append stat'd every unique referenced blob
     // (30 here, growing per entry). Now the only stat is the integrity check
-    // on the ONE blob the append is about to reuse (issue #344) — content-20
+    // on the ONE blob the append is about to reuse — content-20
     // already exists — never the referenced set.
     expect(counts.blobInfo).toBe(1);
   });
 });
 
-describe('retention reference counting (issue #124, slice 2)', () => {
+describe('retention reference counting', () => {
   it('dropping the older of two entries sharing a before-blob keeps the shared blob', () => {
     const store = new FileJournalStore(tmpRoot());
     store.append(
@@ -147,7 +147,7 @@ describe('retention reference counting (issue #124, slice 2)', () => {
     const pruned = store.enforceRetention({ maxBytes: 10 });
     // The freed bytes are exactly the older entry's unique blob: the shared
     // before-blob survives because b.txt still references it. The kept line
-    // alone is over the 10-byte bound (issue #350 counts the index), so the
+    // alone is over the 10-byte bound, so the
     // excess is reported rather than hidden.
     expect(pruned.entries).toBe(1);
     expect(pruned.bytes).toBe(3);
@@ -176,13 +176,13 @@ describe('retention reference counting (issue #124, slice 2)', () => {
         bytesDelta: -4,
       }),
     );
-    // The newest entry is never dropped (issue #348), so the shared blob's
+    // The newest entry is never dropped, so the shared blob's
     // last reference is released by dropping the two older ones.
     store.append(entry({ path: 'c.txt', after: 'c\n' }));
     const pruned = store.enforceRetention({ maxBytes: 2 });
     // 15 unique blob bytes referenced, 7 of them the shared blob counted
     // once — pins both the drop set and the refcounted byte arithmetic. The
-    // kept line is over the 2-byte bound (the index counts, issue #350).
+    // kept line is over the 2-byte bound (the index counts).
     expect(pruned.entries).toBe(2);
     expect(pruned.bytes).toBe(13);
     expect(pruned.overBound).toBeGreaterThan(0);
@@ -192,7 +192,7 @@ describe('retention reference counting (issue #124, slice 2)', () => {
   });
 });
 
-describe('retention fast path (issue #124, slice 2)', () => {
+describe('retention fast path', () => {
   it('100 appends far under the bound pay zero per-append retention I/O', () => {
     const store = new FileJournalStore(tmpRoot(), {
       ...FAST,
@@ -204,7 +204,7 @@ describe('retention fast path (issue #124, slice 2)', () => {
       store.append(entry({ path: `f${i}.txt`, after: uniqueContent(i) }));
     }
     // Sizes are recorded at write time and no prune runs: the only blob
-    // stat is the #344 integrity check on a blob the append is about to
+    // stat is the integrity check on a blob the append is about to
     // reuse — at most one per append, never the 30-strong referenced set.
     expect(counts.blobInfo).toBeLessThanOrEqual(100);
     // And the pass is skipped outright: no per-append index reads — one
@@ -222,7 +222,7 @@ describe('retention fast path (issue #124, slice 2)', () => {
     }
     const pruned = store.enforceRetention({ maxBytes: 20 });
     // Drop-oldest-first until the store fits — the bound counts the index's
-    // own lines as well as the blobs (issue #350), so with 20 bytes only the
+    // own lines as well as the blobs, so with 20 bytes only the
     // newest entry survives. The freed bytes are its 290 blob bytes: the
     // refcounted arithmetic is unchanged, the bound is not.
     expect(pruned.entries).toBe(99);
@@ -232,7 +232,7 @@ describe('retention fast path (issue #124, slice 2)', () => {
   });
 });
 
-describe('retention fast path with an age policy (issue #349)', () => {
+describe('retention fast path with an age policy', () => {
   const DAY_MS = 24 * 60 * 60 * 1000;
 
   it('100 appends with an age policy read the index at most once', () => {
@@ -356,7 +356,7 @@ describe('retention fast path with an age policy (issue #349)', () => {
   });
 });
 
-describe('prune stats bound (issue #124, slice 2)', () => {
+describe('prune stats bound', () => {
   it('a genuine prune on a cold store stats at most once per unique blob', () => {
     const dir = tmpRoot();
     const seed = new FileJournalStore(dir, FAST);
@@ -367,12 +367,12 @@ describe('prune stats bound (issue #124, slice 2)', () => {
     const cold = new FileJournalStore(dir); // fresh instance, no cache warmth
     counts.fileInfo = 0;
     counts.blobInfo = 0;
-    // The whole-store bound (index lines + blobs, issue #350) with 150 bytes
+    // The whole-store bound (index lines + blobs) with 150 bytes
     // leaves only the newest entry.
     const pruned = cold.enforceRetention({ maxBytes: 150 });
     // 49 drops over 30 unique blobs: at most one BLOB stat per unique blob
     // total, never drops × M. (The pass's own index stats — the read-time
-    // size and the unchanged-check before the rename, issue #337 — are not
+    // size and the unchanged-check before the rename — are not
     // blob stats and are counted separately.)
     expect(counts.blobInfo).toBeLessThanOrEqual(30);
     expect(pruned.entries).toBe(49);
@@ -389,7 +389,7 @@ describe('prune stats bound (issue #124, slice 2)', () => {
 // under-count — and the fast path then skipped pruning passes while the
 // journal grew past its bound. The pre-change code stayed bounded after
 // every append; this must too.
-describe('hash-only before refs are tracked (issue #124, review finding 1)', () => {
+describe('hash-only before refs are tracked', () => {
   it('reconcile-shaped appends over unaccounted orphan blobs stay within maxBytes after every append', () => {
     const dir = tmpRoot();
     mkdirSync(join(dir, 'blobs'), { recursive: true });
@@ -433,7 +433,7 @@ describe('hash-only before refs are tracked (issue #124, review finding 1)', () 
 // loop kept (a missing blob counted zero) — and inflate the returned bytes.
 // The pre-change code live-statted every pass; a slow pass must re-derive
 // its truth the same way.
-describe('slow passes re-stat referenced blobs (issue #124, review finding 2)', () => {
+describe('slow passes re-stat referenced blobs', () => {
   it('external blob mutation never corrupts the drop set or the reported freed bytes', () => {
     const dir = tmpRoot();
     const store = new FileJournalStore(dir);
@@ -446,7 +446,7 @@ describe('slow passes re-stat referenced blobs (issue #124, review finding 2)', 
     // External mutation between passes: f0's blob vanishes, f1's blob is
     // replaced with different-length content. Live truth is now 0 + 6 + 100
     // = 106 blob bytes — set the bound to exactly the store's live size
-    // (index lines included, issue #350), so live-stat truth drops nothing.
+    // (index lines included), so live-stat truth drops nothing.
     // Cached (phantom) sizes of 100 each would inflate the derived total to
     // 300 and corrupt the drop set.
     rmSync(join(dir, 'blobs', e0.afterHash ?? ''));

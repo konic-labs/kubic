@@ -1,5 +1,4 @@
-// Slice B: write/edit interception into the journal (issue #17; §42.1).
-// RED: OpContext carries no journal and no toolCallId yet.
+// Write/edit interception into the journal.
 import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -43,7 +42,7 @@ function inv(): ToolInvocation {
   );
 }
 
-describe('journal interception (issue #17, slice B)', () => {
+describe('journal interception', () => {
   it('records write with op hashes and the lane toolCallId', async () => {
     const journal = new FileJournalStore(journalDir());
     const c = ctx(journal);
@@ -119,7 +118,7 @@ describe('journal interception (issue #17, slice B)', () => {
     }
   });
 
-  // Issue #348: an entry too large for the journal is refused by the store,
+  // An entry too large for the journal is refused by the store,
   // and the tool must surface that as journal_failed with the target file
   // untouched — the journal-first order is what makes the refusal safe.
   it('surfaces an over-bound entry as journal_failed, file untouched', async () => {
@@ -142,7 +141,7 @@ describe('journal interception (issue #17, slice B)', () => {
   });
 });
 
-describe('journal tool attribution (issue #335)', () => {
+describe('journal tool attribution', () => {
   it("records the intercepting tool's name on the entry", async () => {
     const journal = new FileJournalStore(journalDir());
     const c = ctx(journal);

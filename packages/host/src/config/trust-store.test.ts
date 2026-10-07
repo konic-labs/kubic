@@ -1,11 +1,11 @@
-// Persistent project-trust store (issue #228; §35.1). The store is the
+// Persistent project-trust store. The store is the
 // durable half of the trust decision: one JSON file under `~/.kubic/`,
 // keyed by the canonical project path, holding true (trusted) or false
 // (declined) — an absent key is "no decision yet". Trust is exact-path:
 // a decision for one directory is never inherited by its children or
 // leaked to a sibling (`/a` never trusts `/a-sibling`).
 //
-// RED first: the module does not exist yet.
+// The module does not exist yet.
 
 import {
   closeSync,
@@ -47,7 +47,7 @@ function storeFor(home: string): ProjectTrustStore {
   return new ProjectTrustStore(projectTrustStorePath(home));
 }
 
-describe('project trust store (issue #228)', () => {
+describe('project trust store', () => {
   it('records a trust decision and reads it back', () => {
     const home = tmpDir();
     const project = tmpDir();
@@ -235,7 +235,7 @@ describe('project trust store (issue #228)', () => {
   });
 });
 
-describe('project trust report (issue #228)', () => {
+describe('project trust report', () => {
   function projectWithConfig(): string {
     const project = tmpDir();
     mkdirSync(join(project, '.kubic'), { recursive: true });

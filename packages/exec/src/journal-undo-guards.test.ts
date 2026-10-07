@@ -1,4 +1,4 @@
-// Undo containment and the walk's link handling (issue #358; §42).
+// Undo containment and the walk's link handling.
 //
 // Undo of an agent-created file is a forced `rm`, and its containment was
 // exercised only indirectly, from the worker package. The guards that make it
@@ -7,9 +7,6 @@
 // baseline walk's symlink skip or `probeFileState`'s shape handling. A
 // regression in any of them could delete a file outside the workspace (or
 // through a symlinked directory) with nothing to catch it.
-//
-// RED: these call the real functions; with the guard removed from
-// `removeCreatedEntry` the escape cases delete the outside file and fail.
 import {
   chmodSync,
   existsSync,
@@ -79,7 +76,7 @@ function refusal(result: RestoreResult): string {
   return result.reason;
 }
 
-describe('removeCreatedEntry containment (issue #358)', () => {
+describe('removeCreatedEntry containment', () => {
   it('refuses a parent-relative escape and the outside file survives', () => {
     const root = tmpRoot('ws-');
     const outside = tmpRoot('outside-');
@@ -162,7 +159,7 @@ describe('removeCreatedEntry containment (issue #358)', () => {
   });
 });
 
-describe('isUndoableCreate (issue #358)', () => {
+describe('isUndoableCreate', () => {
   it('accepts only an attributed create with a null before and a real after', () => {
     const shapes: Array<Partial<JournalEntryInput>> = [
       { op: 'create', beforeHash: null, after: 'x\n' },
@@ -181,7 +178,7 @@ describe('isUndoableCreate (issue #358)', () => {
   });
 });
 
-describe('baseline symlink handling (issue #358)', () => {
+describe('baseline symlink handling', () => {
   it('ignores a symlink to a file and a symlink to a directory outside root', () => {
     const root = tmpRoot('ws-');
     const outside = tmpRoot('outside-');
@@ -199,7 +196,7 @@ describe('baseline symlink handling (issue #358)', () => {
   });
 });
 
-describe('probeFileState shapes (issue #358)', () => {
+describe('probeFileState shapes', () => {
   it('follows a symlink for its content hash, and stays inside on restore', () => {
     const root = tmpRoot('ws-');
     const outside = tmpRoot('outside-');
@@ -246,7 +243,7 @@ describe('probeFileState shapes (issue #358)', () => {
   });
 });
 
-describe('restore through a symlinked parent (issue #358)', () => {
+describe('restore through a symlinked parent', () => {
   it('refuses a journaled edit reached through a symlink, with the reason', () => {
     const root = tmpRoot('ws-');
     const outside = tmpRoot('outside-');

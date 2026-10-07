@@ -1,9 +1,9 @@
-// Kubic's control plane is not the model's to rewrite (issue #324; §59, §60).
-// A write/edit/bash-redirect into `<workspace>/.kubic/` (config.toml, roles/,
+// Kubic's control plane is not the model's to rewrite. A
+// write/edit/bash-redirect into `<workspace>/.kubic/` (config.toml, roles/,
 // anything else there) is the named `kubic-state-write` capability, which
 // ALWAYS asks — autoApprove and full access never answer it. Writes into the
-// state Kubic's own guarantees rest on (`.kubic/journal/`,
-// `.kubic/orchestrator/`, `.kubic/sessions/`) are refused outright: a tool
+// state Kubic's own guarantees rest on (`.kubic/journal/`, `.kubic/audit/`,
+// `.kubic/sessions/`) are refused outright: a tool
 // error, never an ask. Detection is lexical, like every other shell detector
 // here — the bash gap is documented, not hidden.
 // Faux provider only: zero network, zero paid tokens.
@@ -32,7 +32,6 @@ import {
   triggerContextFor,
   validatePolicy,
 } from '../../../packages/host/src/approvals.js';
-import { ORCHESTRATOR_TRIGGERS } from '../../../packages/host/src/orchestrator/approvals/request.js';
 import {
   attachSession,
   openSessionStore,
@@ -102,11 +101,10 @@ async function transcriptOf(root: string, sessionId: string): Promise<string> {
   }
 }
 
-describe('kubic-state-write detection (issue #324)', () => {
-  it('is a named capability in both vocabularies', () => {
+describe('kubic-state-write detection', () => {
+  it('is a named capability', () => {
     expect(KUBIC_STATE_WRITE).toBe('kubic-state-write');
     expect(CAPABILITIES).toContain('kubic-state-write');
-    expect(ORCHESTRATOR_TRIGGERS).toContain('kubic-state-write');
   });
 
   it.each([
@@ -143,13 +141,13 @@ describe('kubic-state-write detection (issue #324)', () => {
   });
 });
 
-describe('refused control-plane state (issue #324)', () => {
+describe('refused control-plane state', () => {
   it.each([
     ['write', { path: '.kubic/journal/index.jsonl', content: '' }],
     [
       'edit',
       {
-        path: '.kubic/orchestrator/approvals/audit.jsonl',
+        path: '.kubic/audit/audit.jsonl',
         oldText: 'a',
         newText: 'b',
       },
@@ -158,7 +156,7 @@ describe('refused control-plane state (issue #324)', () => {
     ['write', { path: '.Kubic/Journal/index.jsonl', content: '' }],
     ['bash', { command: 'echo x > .kubic/journal/index.jsonl' }],
     ['bash', { command: "bash -c 'echo x > .kubic/journal/index.jsonl'" }],
-    ['bash', { command: 'true | tee -a .kubic/orchestrator/state.json' }],
+    ['bash', { command: 'true | tee -a .kubic/audit/audit.jsonl' }],
     ['bash', { command: 'cp x .kubic/sessions/s/posture.json' }],
   ])('refuses %s %j with a named reason', (tool, args) => {
     const reason = controlPlaneRefusal(tool, args, WS);
@@ -178,13 +176,13 @@ describe('refused control-plane state (issue #324)', () => {
   });
 });
 
-// The control plane is not only `<workspace>/.kubic/` (issue #324 review): an
-// orchestrator worker's workspace is its worktree at <repo>/.kubic/wt/<agent>,
-// so the manager's real state sits two levels ABOVE it; the session root and
-// the global config live under ~/.kubic. Every one of those is classified.
-describe('control plane beyond the workspace (issue #324)', () => {
+// The control plane is not only `<workspace>/.kubic/`: a run from a
+// subdirectory has the project's real state ABOVE its workspace, and the
+// session root and the global config live under ~/.kubic. Every one of those
+// is classified.
+describe('control plane beyond the workspace', () => {
   const HOME = '/home/u';
-  const WT = '/work/repo/.kubic/wt/worker-1';
+  const SUB = '/work/repo/packages/a';
   const classes = {
     filesystem: 'workspace-write',
     shell: true,
@@ -192,43 +190,47 @@ describe('control plane beyond the workspace (issue #324)', () => {
     git: 'workspace',
     credentials: 'none',
   } as const;
-  const wtCtx = triggerContextFor(classes, WT, { home: HOME });
+  const subCtx = triggerContextFor(classes, SUB, { home: HOME });
   const soloCtx = triggerContextFor(classes, WS, { home: HOME });
 
   it.each([
-    [
-      'write',
-      { path: '../../orchestrator/approvals/audit.jsonl', content: '' },
-    ],
+    ['write', { path: '../../.kubic/audit/audit.jsonl', content: '' }],
     ['write', { path: '/work/repo/.kubic/journal/index.jsonl', content: '' }],
-    ['bash', { command: 'echo x > ../../journal/index.jsonl' }],
-    ['bash', { command: 'cp a ../../orchestrator/decisions/d.json' }],
-    ['write', { path: '../../sessions/s1/posture.json', content: '{}' }],
-  ])('a worker in its worktree is refused %s %j', (tool, args) => {
-    expect(controlPlaneRefusal(tool, args, WT, { home: HOME })).toMatch(
+    ['bash', { command: 'echo x > ../../.kubic/journal/index.jsonl' }],
+    ['bash', { command: 'cp a ../../.kubic/audit/d.json' }],
+    ['write', { path: '../../.kubic/sessions/s1/posture.json', content: '{}' }],
+  ])('a subdirectory run is refused %s %j', (tool, args) => {
+    expect(controlPlaneRefusal(tool, args, SUB, { home: HOME })).toMatch(
       /Kubic control-plane state/,
     );
-    expect(detectTriggers(tool, args, wtCtx)).toContain('kubic-state-write');
+    expect(detectTriggers(tool, args, subCtx)).toContain('kubic-state-write');
   });
 
-  it("a worker writing the repo's config.toml is asked, not refused", () => {
-    const args = { path: '../../config.toml', content: 'x' };
-    expect(controlPlaneRefusal('write', args, WT, { home: HOME })).toBe(
+  it("a subdirectory run writing the project's config.toml is asked, not refused", () => {
+    const args = { path: '../../.kubic/config.toml', content: 'x' };
+    expect(controlPlaneRefusal('write', args, SUB, { home: HOME })).toBe(
       undefined,
     );
-    expect(detectTriggers('write', args, wtCtx)).toContain('kubic-state-write');
+    expect(detectTriggers('write', args, subCtx)).toContain(
+      'kubic-state-write',
+    );
   });
 
   it.each([
     ['write', { path: 'src/app.ts', content: 'x' }],
-    ['write', { path: `${WT}/README.md`, content: 'x' }],
+    ['write', { path: `${SUB}/README.md`, content: 'x' }],
     ['bash', { command: 'echo hi > out.txt' }],
-  ])('a worker writing its own worktree stays silent: %s %j', (tool, args) => {
-    expect(detectTriggers(tool, args, wtCtx)).not.toContain(
-      'kubic-state-write',
-    );
-    expect(controlPlaneRefusal(tool, args, WT, { home: HOME })).toBe(undefined);
-  });
+  ])(
+    'a subdirectory run writing its own files stays silent: %s %j',
+    (tool, args) => {
+      expect(detectTriggers(tool, args, subCtx)).not.toContain(
+        'kubic-state-write',
+      );
+      expect(controlPlaneRefusal(tool, args, SUB, { home: HOME })).toBe(
+        undefined,
+      );
+    },
+  );
 
   it.each([
     ['write', { path: '/home/u/.kubic/sessions/s1/posture.json', content: '' }],
@@ -282,23 +284,23 @@ describe('control plane beyond the workspace (issue #324)', () => {
     expect(JSON.stringify(verdict)).toMatch(/Kubic control-plane state/);
   });
 
-  it('full access in a worker worktree refuses the manager ledger and asks for the repo config', async () => {
+  it('full access in a subdirectory run refuses the project ledger and asks for the project config', async () => {
     const root = tmpRoot();
     enableFullAccess(new FileApprovalStore(root), 'test');
     const policy = installSoloPolicy({
-      workspace: WT,
+      workspace: SUB,
       sessionDir: root,
       home: HOME,
     });
     const ledger = await policy.ask({
       toolName: 'write',
-      args: { path: '../../orchestrator/approvals/audit.jsonl', content: '' },
+      args: { path: '../../.kubic/audit/audit.jsonl', content: '' },
       toolCallId: 't1',
     });
     expect(JSON.stringify(ledger)).toMatch(/Kubic control-plane state/);
     const config = await policy.ask({
       toolName: 'write',
-      args: { path: '../../config.toml', content: 'x' },
+      args: { path: '../../.kubic/config.toml', content: 'x' },
       toolCallId: 't2',
     });
     expect(config).toMatchObject({ approved: false });
@@ -312,7 +314,7 @@ describe('control plane beyond the workspace (issue #324)', () => {
   });
 });
 
-describe('kubic-state-write always asks (issue #324)', () => {
+describe('kubic-state-write always asks', () => {
   it('autoApprove never answers it', async () => {
     const service = new ApprovalService({
       policy: validatePolicy({
@@ -377,7 +379,7 @@ describe('kubic-state-write always asks (issue #324)', () => {
   });
 });
 
-describe('prod run path: control-plane writes (issue #324)', () => {
+describe('prod run path: control-plane writes', () => {
   it('a faux write to .kubic/config.toml is asked (headless: denied, named) and the file is unchanged', async () => {
     const sessionsRoot = tmpRoot();
     const workspace = tmpRoot('ws-324-');
@@ -410,7 +412,7 @@ describe('prod run path: control-plane writes (issue #324)', () => {
   it('a faux edit to the audit ledger is refused and the existing bytes are untouched', async () => {
     const sessionsRoot = tmpRoot();
     const workspace = tmpRoot('ws-324-');
-    const dir = join(workspace, '.kubic', 'orchestrator', 'approvals');
+    const dir = join(workspace, '.kubic', 'audit');
     mkdirSync(dir, { recursive: true });
     const ledger = join(dir, 'audit.jsonl');
     writeFileSync(ledger, '{"who":"agent:x","result":"deny"}\n');
@@ -423,7 +425,7 @@ describe('prod run path: control-plane writes (issue #324)', () => {
         models: modelsWith([
           fauxToolUse([
             fauxToolCall('edit', {
-              path: '.kubic/orchestrator/approvals/audit.jsonl',
+              path: '.kubic/audit/audit.jsonl',
               oldText: '"result":"deny"',
               newText: '"result":"ok"',
             }),
@@ -442,12 +444,12 @@ describe('prod run path: control-plane writes (issue #324)', () => {
     expect(after).not.toContain('{"who":"agent:x","result":"ok"}');
   });
 
-  it("a worker run from its worktree cannot edit the manager's audit ledger", async () => {
+  it("a run from a subdirectory cannot edit the project's audit ledger", async () => {
     const sessionsRoot = tmpRoot();
     const repo = tmpRoot('repo-324-');
-    const workspace = join(repo, '.kubic', 'wt', 'worker-1');
+    const workspace = join(repo, 'packages', 'a');
     mkdirSync(workspace, { recursive: true });
-    const dir = join(repo, '.kubic', 'orchestrator', 'approvals');
+    const dir = join(repo, '.kubic', 'audit');
     mkdirSync(dir, { recursive: true });
     const ledger = join(dir, 'audit.jsonl');
     writeFileSync(ledger, '{"who":"agent:x","result":"deny"}\n');
@@ -459,7 +461,7 @@ describe('prod run path: control-plane writes (issue #324)', () => {
         models: modelsWith([
           fauxToolUse([
             fauxToolCall('edit', {
-              path: '../../orchestrator/approvals/audit.jsonl',
+              path: '../../.kubic/audit/audit.jsonl',
               oldText: '"result":"deny"',
               newText: '"result":"ok"',
             }),

@@ -1,9 +1,7 @@
-// §37.4 request options per model/role (issue #257).
+// Request options per model/role.
 // The `[model]` table carries the defaults, a `[roles.<name>]` table
 // overrides them per key, and the winner becomes pi-durable
-// `settings.stream` on the lane's own harness — orchestrator workers boot
-// their own lane, so a role's tuning reaches exactly that worker. Absent
-// fields stay absent: the harness (and below it the provider SDK) applies
+// `settings.stream` on the lane's own harness. Absent fields stay absent: the harness (and below it the provider SDK) applies
 // its own defaults, never an invented Kubic one.
 
 import type {
@@ -11,7 +9,7 @@ import type {
   ConversationStreamOptions,
 } from './pi-boundary.js';
 
-/** The four §37.4 keys, as parsed from `[model]` / `[roles.<name>]`. */
+/** The four keys, as parsed from `[model]` / `[roles.<name>]`. */
 export interface ModelStreamTuning {
   timeoutMs?: number;
   maxRetries?: number;

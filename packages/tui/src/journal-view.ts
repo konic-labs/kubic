@@ -1,4 +1,4 @@
-// JournalView: file→hunks journal diffs (issue #25; §80, §42).
+// JournalView: file→hunks journal diffs.
 // Text only. Filters mirror `kubic diff --path/--agent` (host
 // journal-cli.ts over exec diffEntries): exact match on path and agent.
 // The flattened text is line-for-line equal to `kubic diff` output:

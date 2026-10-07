@@ -55,7 +55,7 @@ const deps = {
   ensureCleanWorktree: () => true,
 };
 
-describe('eval command (issue #53)', () => {
+describe('eval command', () => {
   it('scores --task and prints a record', async () => {
     const o = out();
     const exit = await runEvalCommand(
@@ -206,7 +206,7 @@ describe('eval command (issue #53)', () => {
   });
 });
 
-describe('eval --trajectory provenance (issue #256)', () => {
+describe('eval --trajectory provenance', () => {
   const exported = JSON.stringify(
     makeExport({ model: 'acme/m1', generation: 3 }),
   );
@@ -235,7 +235,7 @@ describe('eval --trajectory provenance (issue #256)', () => {
       model: 'acme/m1',
       worktree: '/wt/agent-1',
       generation: 3,
-      // Scoring an existing export re-executes nothing (issue #260, §47.1).
+      // Scoring an existing export re-executes nothing.
       determinism: 'recorded',
     });
   });
@@ -301,7 +301,7 @@ describe('eval --trajectory provenance (issue #256)', () => {
   });
 });
 
-describe('benchmark command (issue #53)', () => {
+describe('benchmark command', () => {
   it('runs the full matrix: >=1 suite per category, stubs marked skipped', async () => {
     const o = out();
     const exit = await runBenchmarkCommand(
@@ -344,7 +344,7 @@ describe('benchmark command (issue #53)', () => {
       expect(stub.success).toBe(false);
       expect((stub as { skipped?: boolean }).skipped).toBe(true);
     }
-    // Issue #260: every row publishes the determinism tier it ran (or would
+    // Every row publishes the determinism tier it ran (or would
     // run) at.
     for (const row of envelope.results) {
       expect((row as { determinism?: string }).determinism).toBe('live');
@@ -378,7 +378,7 @@ describe('benchmark command (issue #53)', () => {
     expect(o.lines.join('\n')).toMatch(/swe-bench-mini/);
   });
 
-  it('refuses a stub-only matrix instead of reporting ok (issue #264)', async () => {
+  it('refuses a stub-only matrix instead of reporting ok', async () => {
     const json = out();
     const exit = await runBenchmarkCommand(
       {
@@ -420,7 +420,7 @@ describe('benchmark command (issue #53)', () => {
     expect(text.lines.join('\n')).not.toContain('ok');
   });
 
-  it('validates provenance once before the matrix (issue #264)', async () => {
+  it('validates provenance once before the matrix', async () => {
     // The stub branch never reached runEvalTask, so the size check was
     // skipped entirely and the run exited 0.
     const o = out();
@@ -446,7 +446,7 @@ describe('benchmark command (issue #53)', () => {
     expect(envelope.error.message).toMatch(/size is required/);
   });
 
-  it('keeps a mixed matrix green when every executed suite passes (issue #264)', async () => {
+  it('keeps a mixed matrix green when every executed suite passes', async () => {
     const o = out();
     const exit = await runBenchmarkCommand(
       {
@@ -514,7 +514,7 @@ describe('eval/benchmark semantics over parsed options', () => {
   });
 
   it('refuses a non-integer generation (exit 2, stderr only)', async () => {
-    // Issue #266: '' read as 0 and '1e3' as 1000 before the digit check;
+    // '' read as 0 and '1e3' as 1000 before the digit check;
     // '-1' was and stays refused.
     for (const generation of ['1.5', 'three', ' ', '', '1e3', ' 2 ', '-1']) {
       const o = out();
@@ -564,7 +564,7 @@ describe('eval/benchmark semantics over parsed options', () => {
     expect(o.errs[0]).toMatch(/inline JSON is malformed/);
   });
 
-  it('scores a --trajectory FILE (issue #258)', async () => {
+  it('scores a --trajectory FILE', async () => {
     const o = out();
     const exit = await runEvalCommand(
       { suite: 'swe-bench-mini', trajectory: 'run.json', ...PROVENANCE },
@@ -572,7 +572,7 @@ describe('eval/benchmark semantics over parsed options', () => {
         ...deps,
         readFile: (path: string) => {
           expect(path).toBe('run.json');
-          // PROVENANCE's worktree must agree with the export's (§48).
+          // PROVENANCE's worktree must agree with the export's.
           return JSON.stringify(makeExport({ worktree: '/wt/a' }));
         },
         out: o.write,
@@ -583,7 +583,7 @@ describe('eval/benchmark semantics over parsed options', () => {
     expect(o.lines.join('\n')).toMatch(/determinism=recorded/);
   });
 
-  it('reads --trajectory - from stdin (issue #258)', async () => {
+  it('reads --trajectory - from stdin', async () => {
     const o = out();
     const exit = await runEvalCommand(
       { suite: 'swe-bench-mini', trajectory: '-', ...PROVENANCE },
@@ -621,7 +621,7 @@ describe('eval/benchmark semantics over parsed options', () => {
   it('names a malformed trajectory file (trajectory-malformed, exit 2)', async () => {
     for (const [body, message] of [
       ['{not json', /is not valid JSON/],
-      ['{}', /is not a valid §46 export/],
+      ['{}', /is not a valid export/],
     ] as const) {
       const o = out();
       const exit = await runEvalCommand(
@@ -646,7 +646,7 @@ describe('eval/benchmark semantics over parsed options', () => {
     expect(o.errs[0]).toMatch(/no file reader/);
   });
 
-  it('names a record-validation failure invalid-record (issue #266)', async () => {
+  it('names a record-validation failure invalid-record', async () => {
     const broken = {
       runSuite: async () => ({
         success: true,
@@ -671,7 +671,7 @@ describe('eval/benchmark semantics over parsed options', () => {
     expect(envelope.error.message).toMatch(/costUsd/);
   });
 
-  it('keeps the benchmark refusal code and its completed rows (issue #266)', async () => {
+  it('keeps the benchmark refusal code and its completed rows', async () => {
     let calls = 0;
     const halfRed = {
       runSuite: async () => {
@@ -820,7 +820,7 @@ describe('eval/benchmark semantics over parsed options', () => {
       ok: false,
       exitCode: EVAL_EXIT_USAGE,
       error: { code: 'eval-failed', message: 'suite exploded' },
-      // Issue #266: the refusal keeps the rows already completed.
+      // The refusal keeps the rows already completed.
       results: [],
     });
   });

@@ -1,10 +1,8 @@
-// Crash recovery through the durable session store (issue #14, slice B;
-// EPIC K #401 port). A process that dies mid-turn leaves its placed input
-// durably recorded; the next attach reopens the same JSONL session and
-// `settlePending`'s `resume` drives that work to completion. Pi 0.87's
-// per-operation drive is gone — the durable submission IS the pending work
-// (#396 owns the decision surface; this file pins it end to end through the
-// session store, the shared faux harness factory and the real lane).
+// Crash recovery through the durable session store. A process that dies
+// mid-turn leaves its placed input durably recorded; the next attach reopens
+// the same JSONL session and `settlePending`'s `resume` drives that work to
+// completion. Pi 0.87's per-operation drive is gone — the durable submission IS
+// the pending work.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,7 +31,7 @@ function scratch(prefix: string): string {
   return dir;
 }
 
-describe('session resume (issue #14, slice B)', () => {
+describe('session resume', () => {
   it('resumes the work a killed process left and completes it after attach', async () => {
     const root = scratch('resume-');
     const sessionId = 'sess-resume-1';
@@ -57,7 +55,7 @@ describe('session resume (issue #14, slice B)', () => {
     // Second "process": attach the same session. The first process died
     // holding its session lock (it never closed), so the fixture rewrites
     // lock.json as that crashed holder: a fake pid with liveness stubbed
-    // dead (hermetic — no real process is ever signalled; issue #118). A
+    // dead (hermetic — no real process is ever signalled). A
     // live holder would refuse this attach, correctly.
     writeFileSync(
       join(root, sessionId, 'lock.json'),

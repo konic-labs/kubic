@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`kubicToolsToPiTools (issue #168) > bash: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > bash: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {
@@ -22,7 +22,7 @@ exports[`kubicToolsToPiTools (issue #168) > bash: schema snapshot 1`] = `
 }
 `;
 
-exports[`kubicToolsToPiTools (issue #168) > edit: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > edit: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {
@@ -55,7 +55,7 @@ exports[`kubicToolsToPiTools (issue #168) > edit: schema snapshot 1`] = `
 }
 `;
 
-exports[`kubicToolsToPiTools (issue #168) > find: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > find: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {
@@ -91,7 +91,7 @@ exports[`kubicToolsToPiTools (issue #168) > find: schema snapshot 1`] = `
 }
 `;
 
-exports[`kubicToolsToPiTools (issue #168) > git_branch: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > git_branch: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {
@@ -104,7 +104,7 @@ exports[`kubicToolsToPiTools (issue #168) > git_branch: schema snapshot 1`] = `
 }
 `;
 
-exports[`kubicToolsToPiTools (issue #168) > git_checkpoint: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > git_checkpoint: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {
@@ -121,7 +121,7 @@ exports[`kubicToolsToPiTools (issue #168) > git_checkpoint: schema snapshot 1`] 
 }
 `;
 
-exports[`kubicToolsToPiTools (issue #168) > git_commit: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > git_commit: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {
@@ -142,7 +142,7 @@ exports[`kubicToolsToPiTools (issue #168) > git_commit: schema snapshot 1`] = `
 }
 `;
 
-exports[`kubicToolsToPiTools (issue #168) > git_conflict_status: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > git_conflict_status: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {},
@@ -150,7 +150,7 @@ exports[`kubicToolsToPiTools (issue #168) > git_conflict_status: schema snapshot
 }
 `;
 
-exports[`kubicToolsToPiTools (issue #168) > git_diff: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > git_diff: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {
@@ -171,7 +171,7 @@ exports[`kubicToolsToPiTools (issue #168) > git_diff: schema snapshot 1`] = `
 }
 `;
 
-exports[`kubicToolsToPiTools (issue #168) > git_log: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > git_log: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {
@@ -189,7 +189,7 @@ exports[`kubicToolsToPiTools (issue #168) > git_log: schema snapshot 1`] = `
 }
 `;
 
-exports[`kubicToolsToPiTools (issue #168) > git_merge: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > git_merge: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {
@@ -206,7 +206,7 @@ exports[`kubicToolsToPiTools (issue #168) > git_merge: schema snapshot 1`] = `
 }
 `;
 
-exports[`kubicToolsToPiTools (issue #168) > git_show: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > git_show: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {
@@ -223,7 +223,7 @@ exports[`kubicToolsToPiTools (issue #168) > git_show: schema snapshot 1`] = `
 }
 `;
 
-exports[`kubicToolsToPiTools (issue #168) > git_stage: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > git_stage: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {
@@ -243,7 +243,7 @@ exports[`kubicToolsToPiTools (issue #168) > git_stage: schema snapshot 1`] = `
 }
 `;
 
-exports[`kubicToolsToPiTools (issue #168) > git_status: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > git_status: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {},
@@ -251,7 +251,7 @@ exports[`kubicToolsToPiTools (issue #168) > git_status: schema snapshot 1`] = `
 }
 `;
 
-exports[`kubicToolsToPiTools (issue #168) > git_worktree_list: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > git_worktree_list: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {},
@@ -259,7 +259,7 @@ exports[`kubicToolsToPiTools (issue #168) > git_worktree_list: schema snapshot 1
 }
 `;
 
-exports[`kubicToolsToPiTools (issue #168) > grep: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > grep: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {
@@ -290,7 +290,7 @@ exports[`kubicToolsToPiTools (issue #168) > grep: schema snapshot 1`] = `
 }
 `;
 
-exports[`kubicToolsToPiTools (issue #168) > ls: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > ls: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {
@@ -304,7 +304,7 @@ exports[`kubicToolsToPiTools (issue #168) > ls: schema snapshot 1`] = `
 }
 `;
 
-exports[`kubicToolsToPiTools (issue #168) > read: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > read: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {
@@ -331,7 +331,7 @@ exports[`kubicToolsToPiTools (issue #168) > read: schema snapshot 1`] = `
 }
 `;
 
-exports[`kubicToolsToPiTools (issue #168) > write: schema snapshot 1`] = `
+exports[`kubicToolsToPiTools > write: schema snapshot 1`] = `
 {
   "additionalProperties": false,
   "properties": {

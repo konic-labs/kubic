@@ -1,5 +1,4 @@
-// Slice A: models.json custom/local providers (issue #20; §37).
-// RED: parseModelsJson/registerCustomProviders do not exist yet.
+// Models.json custom/local providers.
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_RESERVE_TOKENS,
@@ -13,7 +12,7 @@ import {
 } from './models-config.js';
 import { createModels } from './pi-boundary.js';
 
-describe('models.json apiKeyEnv allowlist (issue #322)', () => {
+describe('models.json apiKeyEnv allowlist', () => {
   const withKeyEnv = (apiKeyEnv: string) => ({
     providers: [
       {
@@ -47,7 +46,7 @@ describe('models.json apiKeyEnv allowlist (issue #322)', () => {
   });
 });
 
-describe('models.json custom providers (issue #20, slice A)', () => {
+describe('models.json custom providers', () => {
   it('parses an Ollama-style local provider', () => {
     const specs = parseModelsJson({
       providers: [
@@ -64,7 +63,7 @@ describe('models.json custom providers (issue #20, slice A)', () => {
     expect(specs[0]?.models[0]?.id).toBe('llama3');
   });
 
-  it('the §38.5 local example loads verbatim', () => {
+  it('the local example loads verbatim', () => {
     const specs = parseModelsJson(LOCAL_MODELS_EXAMPLE);
     expect(specs).toHaveLength(1);
     expect(specs[0]?.models.length).toBeGreaterThan(0);
@@ -135,7 +134,7 @@ describe('models.json custom providers (issue #20, slice A)', () => {
     expect(models.getModels('local').map((m) => m.id)).toContain('llama3');
   });
 
-  // Issue #113 smoke follow-up: gateways like opencode-go require a
+  // Smoke follow-up: gateways like opencode-go require a
   // per-provider header (x-opencode-session) on every request — pi-ai's
   // createProvider accepts static ProviderHeaders, so models.json passes
   // them through instead of kubic hard-coding any gateway.
@@ -217,11 +216,11 @@ describe('models.json defaults (compaction headroom)', () => {
   });
 });
 
-// Issue #359 (§36.1 rules 3-4): a models.json provider key is resolved at
+// A models.json provider key is resolved at
 // REQUEST time through the host's resolver hook, once per auth resolution,
 // so each use can be audited. Availability checks never resolve (and so
 // never count as a use).
-describe('models.json request-time key resolution (issue #359)', () => {
+describe('models.json request-time key resolution', () => {
   const spec = parseModelsJson({
     providers: [
       {
@@ -285,11 +284,11 @@ describe('models.json request-time key resolution (issue #359)', () => {
   });
 });
 
-// Issue #224 (§36.2): `apiKey` and header ref forms resolve per request
+// `apiKey` and header ref forms resolve per request
 // through the same hook — env reads, command runs (rerun every request,
 // never on the side-effect-free check), escaped literals never touching it.
 // Zero network: auth envelopes only, never a request.
-describe('models.json request-time ref resolution (issue #224)', () => {
+describe('models.json request-time ref resolution', () => {
   const env: Record<string, string> = {
     GW_API_KEY: 'sk-ref-env-12345678',
     KUBIC_GATEWAY_TOKEN: 'gw-header-token-12345678',
@@ -300,9 +299,7 @@ describe('models.json request-time ref resolution (issue #224)', () => {
   };
   const signal = new AbortController().signal;
 
-  // The $VAR fixture is allowlisted (issue #322 keeps guarding every env
-  // the file may name, apiKey refs included — the issue's `$MY_KEY` would
-  // refuse at parse, which the schema tests pin).
+  // The $VAR fixture is allowlisted.
   function hook() {
     const calls: Array<{ provider: string; raw: string }> = [];
     const values: Record<string, string> = {

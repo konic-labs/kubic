@@ -1,140 +1,67 @@
 # `@kubic/agents`
 
-> Agent definitions over the Pi harness.
-> Owner: issue
-> [#63](https://github.com/konic-labs/kubic/issues/63).
-> Source: `packages/agents/src` (read-only — this page quotes it, never moves it).
+> Permission classes and skills for the agent lane.
+> Source: `packages/agents/src`.
 >
 > File name note: this page lives at `agents-pkg.md` (not `agents.md`)
 > because the harness reserves the `agents.md` filename; it is still the
 > canonical page for `packages/agents`.
 
-`@kubic/agents` owns the spawn contract: the task and the capability
-grant travel together — there is no way to hand an agent work without
-also deciding what it may touch (issue #6; §67). Kubic ships with no
-budgets by default: `createBudget` never injects limits (issue #9; §71).
+`@kubic/agents` owns two things the lane is built from: the five
+permission classes that shape the tool set, and the skill registry that
+discovers, gates and injects skills. Neither is a boundary — solo mode has
+no isolation; the classes decide which tools the model is offered.
 
 ## Public API (`packages/agents/src`)
 
 | Module | Exports |
 | --- | --- |
-| `task.ts` | `AgentTask`, `AGENT_TASK_FIELDS`, `AgentRole`, `ModelSelection`, `ScopedModel`, `TaskResources`, `TaskArtifactRef`, `WorkspaceMode`, `WORKSPACE_MODES`, `TaskValidation`, `validateAgentTask`, `AgentTaskInput`, `buildAgentTask` (live on the delegation path, issue #191) |
-| `budget.ts` | `AgentBudget`, `RetryBudget`, `createBudget`, `BudgetLimit`, `BUDGET_LIMITS`, `BUDGET_OWNERSHIP`, `BudgetEnforcer`, `BudgetTermination`, `terminateForBudget`, `ReplayPin`, `REPLAY_PIN_FIELDS`, `REPLAY_PIN_DIMS`, `diffReplayPin`, `RunMode`, `BlockedSpawnOutcome`, `resolveBlockedSpawn` |
-| `policy.ts` | `PermissionClasses`, `FilesystemLevel`, `FILESYSTEM_LEVELS`, `ShellLevel`, `SHELL_LEVELS`, `NetworkLevel`, `NETWORK_LEVELS`, `GitLevel`, `GIT_LEVELS`, `CredentialLevel`, `CREDENTIAL_LEVELS`, `SOLO_DEFAULTS`, `toolsForClasses`, `AgreementCheck`, `checkAgreement`, `checkGrantable`, `validateClasses`, `PolicyValidationError` |
-| `graph.ts` | `EdgeKind`, `EDGE_KINDS`, `AgentEdge`, `EDGE_FIELDS`, `GraphError`, `GraphStore`, `createGraph`, `addNode`, `addEdge`, `consumers`, `producers`, `topoOrder`, `subgraph`, `renderDag`, `CostRollup`, `rollupCost`, `serializeGraph`, `attachGraph`, `estimateEdgeTokens` |
-| `skills/skills.ts` | Skill registry (discovery, gating, prompt injection — wired at solo boot, issue #99) |
-| `spec.ts` | `SubagentSpec`, `SUBAGENT_SPEC_FIELDS`, `SpecValidation`, `validateSubagentSpec`, `SessionKey`, `specKeyOf`, `GenerationState`, `createGenerationState`, `allocateGeneration`, `GenerationCheck`, `validateGenerationSend`, `SpawnRequest`, `SpawnHandle`, `SpawnOutcome`, `spawnAgent`, `SessionSnapshot`, `SessionConfig`, `forkSessionConfig`, `ChildSession`, `openChildSession`, `WorkerProvenance`, `provenanceFor`, `SubagentResult`, `SubagentResultStatus`, `SUBAGENT_RESULT_STATUSES`, `buildSubagentResult`, `validateSubagentResult` (runtime-dead today; consumed only by `roles/roles-data.ts`, owned by #104) |
-| `roles.ts` | Pointer | Role presets live in `@kubic/host` `roles/roles-data.ts` over `.kubic/roles/*.md` (#44, closed) |
-| `lifecycle.ts` | Pointer | Lifecycle owner is `@kubic/worker` `lifecycle/` (#42) |
-| `index.ts` | Pointer | No barrel — import per-module paths |
+| `policy.ts` | `PermissionClasses`, `FilesystemLevel`, `FILESYSTEM_LEVELS`, `ShellLevel`, `SHELL_LEVELS`, `NetworkLevel`, `NETWORK_LEVELS`, `GitLevel`, `GIT_LEVELS`, `CredentialLevel`, `CREDENTIAL_LEVELS`, `SOLO_DEFAULTS`, `toolsForClasses`, `AgreementCheck`, `checkAgreement`, `checkGrantable`, `UnsupportedLevel`, `effectiveNetworkLevel`, `effectiveCredentialLevel`, `checkExpressible`, `describeUnsupported`, `validateClasses`, `PolicyValidationError`, `RunMode` |
+| `skills/skills.ts` | Skill registry: `discoverSkills`, `gateSkills`, `formatSkillsForSystemPrompt`, `invokeSkill`, `expandSkillInvocation`, `parseSkillFile` and their types |
+| `index.ts` | No barrel — import per-module paths |
 
-## Contracts
+## Permission classes (`policy.ts`)
 
-### `AgentTask` (`task.ts`, §67)
-
-| Field | Type | Required |
+| Class | Levels | Solo default |
 | --- | --- | --- |
-| `taskId` | `string` (non-empty) | yes |
-| `parentSessionId` | `string` (non-empty) | yes |
-| `role` | `AgentRole` (`string`; closed union lands with #44) | yes |
-| `objective` | `string` (non-empty) | yes |
-| `worktree` | `string` (absolute path) | yes |
-| `constraints` | `string[]` | no |
-| `relevantFiles` | `string[]` | no |
-| `previousFindings` | `string` | no |
-| `expectedOutput` | `string` | no |
-| `model` | `ModelSelection` | no |
-| `scopedModels` | `ScopedModel[]` | no |
-| `workspaceMode` | `'shared' \| 'worktree' \| 'copy'` | yes |
-| `toolNames` | `string[]` (non-empty) | yes |
-| `budget` | `AgentBudget` (key must be present; `{}` = no limits) | yes |
-| `resources` | `TaskResources` | no |
-| `artifacts` | `TaskArtifactRef[]` | no |
+| `filesystem` | `none`, `read`, `workspace-write`, `full` | `workspace-write` |
+| `shell` | `false`, `read-only-allowlist`, `true` | `true` |
+| `network` | `none`, `allowlist`, `full` | `none` |
+| `git` | `false`, `workspace`, `full` | `workspace` |
+| `credentials` | `none`, `allowlist` | `none` |
 
-`AGENT_TASK_FIELDS` pins all 16 keys via
-`satisfies Record<keyof AgentTask, true>`. `buildAgentTask` assembles and
-validates the task the manager hands a worker or resolver (issue #191):
-`workspaceMode` is always `worktree` on that path (§11.1), the manager writes
-the JSON into the worker's session dir, names it to the child in
-`KUBIC_TASK_FILE`, and the child registers exactly `task.toolNames` — the
-capability grant travels with the work, never re-derived from the child's own
-worktree. Supporting shapes:
+`toolsForClasses` derives the tool allowlist from the classes;
+`checkAgreement` refuses a tool list that contradicts them and
+`checkGrantable` refuses classes that demand a tool the lane did not
+register — both with a named reason, never by silently narrowing. A level
+the tool set cannot express is reported by `checkExpressible` as
+unsupported (naming the level the lane actually enforces), never silently
+widened. `RunMode` is `autonomous` only when the user asked for it
+explicitly (`--autonomous`) and `interactive` otherwise; it is recorded on
+the session and in the audit trail.
 
-| Interface | Fields |
-| --- | --- |
-| `ModelSelection` | `provider: string`, `model: string`, `thinking?: string` |
-| `ScopedModel` | `scope: string`, `provider: string`, `model: string` |
-| `TaskResources` | `skills?: string[]`, `promptTemplates?: string[]` |
-| `TaskArtifactRef` | `artifactId: string` |
+## Skills (`skills/skills.ts`)
 
-### `AgentBudget` (`budget.ts`, §71–§72)
-
-| Field | Type |
-| --- | --- |
-| `maxTokens` | `number` (optional) |
-| `maxCostUsd` | `number` (optional) |
-| `maxRuntimeMs` | `number` (optional) |
-| `maxToolCalls` | `number` (optional) |
-| `retryBudget` | `RetryBudget` (optional; `{ maxAttempts: number, maxCostUsd: number }`) |
-
-`BUDGET_LIMITS` is `['tokens', 'cost', 'wallClock', 'toolCalls',
-'retries']`, owned per `BUDGET_OWNERSHIP` (tokens → harness context
-accounting; cost → host usage roll-up; wallClock → host watchdog;
-toolCalls → `before_tool` per-call gate; retries → separate retry
-budget). Exhaustion is `BudgetTermination` (`status:
-'budget_exhausted'`, `limit: BudgetLimit`) — a distinct termination,
-never a generic failure. `ReplayPin` has **8 fields** (`task`, `model`,
-`thinking`, `toolSet`, `worktree`, `baseRevision`, `systemPrompt`,
-`resources`), pinned closed-world by `REPLAY_PIN_FIELDS`
-(`satisfies Record<keyof ReplayPin, true>`). `diffReplayPin` reports on
-**6** comparability *dimensions* — `REPLAY_PIN_DIMS` is `task`,
-`model+thinking` (the two fields are only meaningful together),
-`toolSet`, `worktree`, `baseRevision`, `prompt+resources` — so a pin
-diff names the dim that changed, not all eight raw fields.
-
-### `SubagentSpec` (`spec.ts`, §6.2)
-
-| Field | Type |
-| --- | --- |
-| `sessionId` | `string` |
-| `parentSessionId` | `string` |
-| `role` | `AgentRole` |
-| `model` | `ModelSelection` |
-| `systemPrompt` | `string` (optional) |
-| `resources` | `TaskResources` (optional) |
-| `toolNames` | `string[]` |
-| `budget` | `AgentBudget` (optional) |
-| `worktreePath` | `string` |
-| `generation` | `number` |
-
-`SUBAGENT_SPEC_FIELDS` pins all 10 keys. Related: `SpawnRequest`
-(`task`, `sessionId`, `systemPrompt?`, `scopedModels`, `isGitWorktree`)
-→ `spawnAgent` → `SpawnOutcome` (`ok: true` with `spec` +
-`SpawnHandle{sessionId, generation, worktreePath}`, or `ok: false`
-`SPAWN_FAILED`); `GenerationState` (`lastBySession`) with first-spawn-1
-monotonic allocation; `SessionSnapshot`/`SessionConfig`
-(`forkSessionConfig` deep-copies resources + nested `retryBudget`);
-`ChildSession` (own empty transcript); `WorkerProvenance`
-(`sessionId`, `generation`, `parentSessionId`); `SubagentResult`
-(`status: 'completed' \| 'failed'`, `summary`, `provenance`, `error?` —
-never a transcript, §69).
+Markdown-only skills from local files: user roots (`~/.pi/agent/skills`,
+`~/.agents/skills`), project roots (`.pi/skills` and `.agents/skills` from
+the cwd up to the git top level, after the project is trusted),
+package-declared skill directories, the settings array and repeatable
+`--skill` paths. Later sources shadow earlier ones on a name conflict.
+There is no fetcher, no installer and no network: every skill resolves to
+a local `SKILL.md`, and every read goes through the injected exec
+`FileBridge`. `gateSkills` hides a skill whose required tools the run
+does not grant; `formatSkillsForSystemPrompt` renders the visible ones
+into the prompt. Command behaviour is on the
+[CLI pages](../cli/commands.md).
 
 ## Dep-direction neighbours
 
 - May import: [@kubic/core](core.md), [@kubic/exec](exec.md) only — never
   host/worker/tui/trajectory/eval.
-- Imported by: [@kubic/worker](worker.md), [@kubic/host](host.md),
-  [@kubic/extensions](extensions.md) (budget bundle delegates to
-  `createBudget` read-only).
-- Never imported by [@kubic/trajectory](trajectory.md): trajectory imports
-  nothing from any package (dep-lint FORBIDDEN) — it holds only string
-  stump fields (e.g. `workerId`) and structural snapshots pinned by the
-  golden fixture test, never a live import.
+- Imported by: [@kubic/worker](worker.md), [@kubic/host](host.md).
 
 ```text
-core ──→ agents ←── exec
-           ↑   ↑
-        worker host …
+core, exec ──→ agents ──→ worker, host
 ```
 
 Back to the [docs index](../README.md).

@@ -1,6 +1,6 @@
-// Exclusive lock-file primitive (issue #118; §21–§22 session locking).
+// Exclusive lock-file primitive (session locking).
 //
-// Exec owns node:fs (I/O confinement, §9): the worker's session-store keeps
+// Exec owns node:fs (I/O confinement): the worker's session-store keeps
 // the lock SEMANTICS (holder liveness, stale-steal rules, SessionLockError)
 // and calls these three functions for the raw I/O. LOCAL FILESYSTEM ONLY:
 // O_EXCL create is atomic on a local filesystem — no network/shared-disk
@@ -26,7 +26,7 @@ import { dirname, join } from 'node:path';
  */
 export function createLockFile(path: string, payload: string): boolean {
   try {
-    // Issue #361: a session directory is Kubic's private state — 0700 for the
+    // A session directory is Kubic's private state — 0700 for the
     // directory this call creates, 0600 for the lock file. Both are applied
     // at creation only; an existing path keeps its own mode (`tightenStateDir`
     // is what closes a loose one).
@@ -40,7 +40,7 @@ export function createLockFile(path: string, payload: string): boolean {
 }
 
 /**
- * Issue #361: the permission bits of a state directory when it is
+ * The permission bits of a state directory when it is
  * group- or world-accessible — what `kubic doctor` warns about and what the
  * next open tightens. undefined when the path is missing, unreadable, or
  * already private, so a probe never invents a finding.
@@ -58,7 +58,7 @@ export function looseStateDirMode(path: string): number | undefined {
 }
 
 /**
- * Issue #361: close a loose state directory (0700) — called when a state
+ * Close a loose state directory (0700) — called when a state
  * store is opened, so an existing group- or world-readable
  * `~/.kubic/sessions` (or a journal directory) stops being readable by other
  * local users. Returns true when it tightened something. Best-effort: a
@@ -110,7 +110,7 @@ const PROC_STAT_STARTTIME_INDEX = 19;
 const LINUX_CLOCK_TICK_MS = 10;
 
 /**
- * Issue #145: the pure half of the start-time reader — `starttime` ticks
+ * The pure half of the start-time reader — `starttime` ticks
  * from a `/proc/<pid>/stat` text with a `/proc/stat` boot time. Exported
  * so the field arithmetic is pinned by a fixture test on every platform
  * (the file reads themselves only exist on Linux).
@@ -157,7 +157,7 @@ function readProcBootTimeMs(): number | undefined {
 }
 
 /**
- * Issue #145: when `pid` started, as epoch milliseconds — the pid-reuse
+ * When `pid` started, as epoch milliseconds — the pid-reuse
  * guard behind the session lock's stale rule. Linux-only (`/proc` is the
  * only source that needs no spawn and no privileges); `undefined` on any
  * other platform and for any unreadable pid, so the caller falls back to
@@ -171,14 +171,14 @@ export function processStartTimeOf(pid: number): number | undefined {
 }
 
 /**
- * Issue #145: land `payload` at `lockPath` atomically — the stale-takeover
+ * Land `payload` at `lockPath` atomically — the stale-takeover
  * claim. The payload is written to a unique temp file in the same directory
  * (same filesystem, a link requirement) and hard-linked into place: the
  * link is the test-and-set, so exactly one racer's claim lands per
  * generation and every loser sees EEXIST. Returns `true` when this call's
  * payload landed, `false` when an occupant is already there (left
  * untouched). The temp name is dropped either way, so no litter survives.
- * Issue #424: a temp-name collision (EEXIST on the exclusive create —
+ * A temp-name collision (EEXIST on the exclusive create —
  * vanishingly rare, but raw-thrown before) retries under a fresh name
  * instead of throwing. LOCAL FILESYSTEM ONLY, like every lock read here.
  */

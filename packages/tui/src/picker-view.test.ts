@@ -1,4 +1,4 @@
-// The "choose one" overlay (EPIC N, issue #461): filtering through Pi's
+// The "choose one" overlay: filtering through Pi's
 // Input, moving, expanding a folded group, the side control and choosing.
 import { describe, expect, it } from 'vitest';
 import { createUiTheme } from '../../core/src/ui/style.js';
@@ -50,7 +50,7 @@ function view() {
   return { picker, chosen, moves, sides, closed: () => closed };
 }
 
-describe('picker view (issue #461)', () => {
+describe('picker view', () => {
   it('starts on the current row and chooses with enter', () => {
     const { picker, chosen } = view();
     picker.handleInput('\r');

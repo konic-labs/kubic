@@ -1,17 +1,17 @@
-# Kubic canonical config example (issue #38; design §35.2/§63).
+# Kubic canonical config example.
 # Committed to the repo: .kubic/config.toml + .kubic/roles/*.md
-# Never committed: sessions/ journal/ artifacts/ wt/ orchestrator/
+# Never committed: sessions/ journal/ artifacts/ audit/
 
-# Settings skills (issue #237; design §29.2): files or directories, resolved
+# Settings skills: files or directories, resolved
 # against this file's directory — `./skills` names `<root>/.kubic/skills`
 # (`../skills` would name `<root>/skills`).
 skills = ["./skills"]
 
 [agent]
 name = "kubic"
-# Prompt augmentation (design §63 system_prompt_file): the sibling SYSTEM.md
+# Prompt augmentation: the sibling SYSTEM.md
 # is read at load and appended to the assembled lane prompt (ahead of the
-# skills block) for run, tui, replay and worker children. Relative to this
+# skills block) for run, tui and replay. Relative to this
 # file's directory; a leading ~/ expands to home. A project-layer path
 # additionally requires trust and containment in the project root; a missing
 # or unreadable file is a named ConfigError, never a silent skip.
@@ -21,10 +21,6 @@ systemPromptFile = "SYSTEM.md"
 provider = "local"
 id = "llama3"
 thinking = "medium"
-
-[modes]
-solo = true
-orchestrator = false
 
 [approvals]
 route = "ask-user"
@@ -52,10 +48,6 @@ models = ["local/*", { id = "acme/big", thinking = "high" }]
 model = "local/llama3"
 tools = ["read", "write", "edit", "bash"]
 
-[orchestrator]
-root = ".kubic/wt"
-maxWorkers = 4
-
 [ui]
 theme = "dark"
 statusBar = true
@@ -64,9 +56,9 @@ statusBar = true
 store = "jsonl"
 dir = ".kubic/sessions"
 retentionDays = 30
-# Compaction policy (§27.1): automatic threshold compaction, a 4000-token
-# reserved room and a 5000-token verbatim recent window on the run, tui
-# and worker lanes. All three are optional — unset means the lane defaults
+# Compaction policy: automatic threshold compaction, a 4000-token
+# reserved room and a 5000-token verbatim recent window on the run and tui
+# lanes. All three are optional — unset means the lane defaults
 # (automatic, 16384 reserved, 20000 kept recent).
 autoCompact = true
 reserveTokens = 4000
@@ -85,11 +77,8 @@ denied_tools = []
 network_policy = "proxy"
 allowed_domains = ["registry.npmjs.org", "github.com"]
 filesystem_policy = "workspace-only"
-require_credential_broker = true
-deny_local_credentials = true
 data_policy = "no-external-training"
 logging_policy = "full-audit"
-agent_policy = { max_agents = 2, max_cost_usd = 5.0 }
 
 [[audit]]
 sink = "syslog"

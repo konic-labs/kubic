@@ -1,41 +1,27 @@
 # Kubic documentation
 
-Scaffold for the `docs/` tree (issue
-[#61](https://github.com/konic-labs/kubic/issues/61), EPIC G
-[#60](https://github.com/konic-labs/kubic/issues/60)). Every Kubic feature
-gets one home here, separated by area so architecture rationale, package
-APIs, and CLI operations never mix. Content pages land in child issues
-[#62](https://github.com/konic-labs/kubic/issues/62),
-[#63](https://github.com/konic-labs/kubic/issues/63), and
-[#64](https://github.com/konic-labs/kubic/issues/64); this index, the
-separation rules, and the ownership map are the scaffold those issues
-build on.
+Every Kubic feature has one home here, separated by area so architecture
+rationale, package APIs and CLI behaviour never mix.
 
-## Separation of concerns (SoC)
-
-| Area | Directory | Belongs here | Does NOT belong here |
+| Area | Directory | Belongs here | Does not belong here |
 | --- | --- | --- | --- |
-| Architecture | [architecture/](architecture/README.md) | Topology and why: solo vs orchestrator, change journal, approvals safety model, package map | API signatures, CLI flags, config keys |
-| Packages | [packages/](packages/README.md) | One page per package: public API, contracts, dep-direction neighbours | Architecture rationale, CLI usage |
-| CLI & operations | [cli/](cli/README.md) | Commands, flags, exit codes, config precedence, `doctor` diagnostics | Package internals |
-| Contributing | [contributing.md](contributing.md) | Workflow (LC0–LC6), Conventional Commits, the docs-update rule | Feature documentation |
-| UI design | [ui/](ui/README.md) | Terminal design system: colour tokens, glyphs, key map, screen mockups (EPIC N, #442) | Implementation details, CLI flags |
+| Architecture | [architecture/](architecture/README.md) | Topology and why: solo mode, the change journal, the approvals safety model, the package map | API signatures, CLI flags, config keys |
+| Packages | [packages/](packages/README.md) | One page per package: public API, contracts, dependency neighbours | Architecture rationale, CLI usage |
+| CLI & operations | [cli/](cli/README.md) | Commands, flags, exit codes, configuration, `doctor` diagnostics | Package internals |
+| Contributing | [contributing.md](contributing.md) | Workflow, Conventional Commits, the docs-update rule | Feature documentation |
+| UI design | [ui/](ui/README.md) | The terminal design system: colour tokens, glyphs, key map, screen mockups | Implementation details, CLI flags |
 
-## Page index and owners
+## Pages
 
-`stub` pages hold their headings so links resolve; their owner issue
-replaces the stub notice with content.
-
-### Architecture (owner: #62)
+### Architecture
 
 | Page | Covers |
 | --- | --- |
 | [overview.md](architecture/overview.md) | System overview and package map |
-| [solo.md](architecture/solo.md) | Solo mode: single trust zone, no isolation (§59.1) |
-| [orchestrator.md](architecture/orchestrator.md) | Orchestrator mode: manager + workers + worktrees |
-| [journal-and-safety.md](architecture/journal-and-safety.md) | Change journal and approvals safety model |
+| [solo.md](architecture/solo.md) | Solo mode: a single trust zone, no isolation |
+| [journal-and-safety.md](architecture/journal-and-safety.md) | The change journal and the approvals safety model |
 
-### Packages (owner: #63)
+### Packages
 
 | Package | Docs page |
 | --- | --- |
@@ -47,54 +33,34 @@ replaces the stub notice with content.
 | `packages/trajectory` | [packages/trajectory.md](packages/trajectory.md) |
 | `packages/eval` | [packages/eval.md](packages/eval.md) |
 | `packages/tui` | [packages/tui.md](packages/tui.md) |
-| `packages/extensions` | [packages/extensions.md](packages/extensions.md) |
 | `apps/kubic` (composition root) | [cli/commands.md](cli/commands.md) |
 
-### CLI & operations (owner: #64)
+### CLI & operations
 
 | Page | Covers |
 | --- | --- |
 | [commands.md](cli/commands.md) | Every `kubic` command and flag |
-| [issue-81-live-smoke.md](smoke/issue-81-live-smoke.md) | Live provider smoke record: settled run + diff + undo + doctor, with gaps |
-| [exit-codes.md](cli/exit-codes.md) | Exit-code table (all six codes) |
+| [exit-codes.md](cli/exit-codes.md) | The exit-code table |
 | [configuration.md](cli/configuration.md) | Config precedence and secrets |
 | [doctor-and-debug.md](cli/doctor-and-debug.md) | `kubic doctor` diagnostics and debugging |
-| [contributing.md](contributing.md) | Contributor workflow (LC0–LC6) |
-| [contributing-cli.md](contributing-cli.md) | Building CLI commands: commander registry, exit codes, `--json`, output helpers |
+| [tools.md](cli/tools.md) | The tools the model calls |
+| [trust.md](cli/trust.md) | Project trust |
+| [skills.md](cli/skills.md) | `kubic skills`: which skills loaded and why any were left out |
+| [contributing.md](contributing.md) | Contributor workflow |
+| [contributing-cli.md](contributing-cli.md) | Building CLI commands: the commander registry, exit codes, `--json`, output helpers |
 
 ## Standards
 
 1. **One page per area, one area per page.** Architecture pages explain
-   why; package pages specify APIs and contracts field-for-field;
-   CLI pages specify behaviour operators see. Cross-link instead of
-   duplicating.
-2. **Docs update in the same commit as the code.** Each implementation
-   wave updates its docs page in the same commit — a behaviour change
-   without its docs page is incomplete and fails review. See
-   [contributing.md](contributing.md).
-3. **No broken internal links.** `node scripts/check-docs-links.mjs`
-   must pass; it runs in CI via `npm test`. External URLs and
-   same-page anchors are exempt.
-4. **Honest limits, stated plainly.** Solo mode has no isolation and
-   docs must never imply otherwise.
-5. **Contracts quoted exactly.** Package pages mirror
-   `packages/*/src` type definitions field-for-field; dep-direction
-   claims must match `scripts/dep-lint.mjs`.
-6. **Stubs stay linked.** A stub page keeps its headings and back-link
-   to this index so the tree never has dead ends.
+   why; package pages specify APIs and contracts; CLI pages specify the
+   behaviour operators see. Cross-link instead of duplicating.
+2. **Docs change with the code.** A behaviour change ships its docs page
+   in the same commit. See [contributing.md](contributing.md).
+3. **No broken internal links.** `npm run docs:check` must pass. External
+   URLs and same-page anchors are exempt.
+4. **Honest limits, stated plainly.** Solo mode has no isolation, and the
+   docs never imply otherwise.
 
-## Contributing a docs page (#62–#64 path)
-
-1. Pick up the stub for your area from the index above.
-2. Replace the stub notice with content, keeping the page's headings.
-3. Update this index only if you add or rename a page (content edits
-   need no index change).
-4. Run `node scripts/check-docs-links.mjs` and the package checks in
-   [contributing.md](contributing.md) before committing.
-5. Land code and docs together per the same-commit rule.
-
-## Source material (read-only, do not move)
-
-Package-level contracts live with their code and are quoted — not
-copied — by package pages: `packages/trajectory/CONTRACT.md`,
-`packages/eval/COMMUNITY.md`, `packages/extensions/FACETS.md`.
+Package-level contracts live with their code and are quoted, not copied,
+by the package pages: `packages/trajectory/CONTRACT.md` and
+`packages/eval/COMMUNITY.md`.

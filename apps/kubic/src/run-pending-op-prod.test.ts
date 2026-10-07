@@ -1,4 +1,4 @@
-// Re-attach after a crash, prod paths (issue #147; §21). A process that died
+// Re-attach after a crash, prod paths. A process that died
 // mid-turn leaves the lane's operation open; `kubic run --session` must
 // settle it (resume, bounded by the run's guards) and then accept the new
 // prompt instead of failing with LaneBusy, and `kubic sessions attach` must
@@ -92,7 +92,7 @@ async function crashAfterAccept(
   // The process is gone: its storage is closed (commits flushed, no live
   // writer left) and the lock file is rewritten as the dead holder. The
   // handle's own release() cannot stand in for the death any more — the
-  // lane adopted the storage (D8.1), so release only gives the lock back
+  // lane adopted the storage, so release only gives the lock back
   // and would leave a live writer on the file.
   await session.storage.close(BACKGROUND_CONTEXT);
   writeFileSync(
@@ -118,7 +118,7 @@ function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
 
-describe('kubic run --session after a crash (issue #147)', () => {
+describe('kubic run --session after a crash', () => {
   it('resumes the pending op, then accepts the new prompt without LaneBusy', async () => {
     const root = tmpRoot();
     const { id, submissionId } = await crashAfterAccept(root, 'first task');
@@ -230,7 +230,7 @@ describe('kubic run --session after a crash (issue #147)', () => {
   });
 });
 
-describe('kubic sessions attach with a pending op (issue #147)', () => {
+describe('kubic sessions attach with a pending op', () => {
   it('prints the pending operation line', async () => {
     const root = tmpRoot();
     const { id, submissionId } = await crashAfterAccept(root, 'first task');

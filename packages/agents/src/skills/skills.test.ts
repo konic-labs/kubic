@@ -1,4 +1,4 @@
-// Skills loader tests (issue #36; §29). Faux-only: FakeExecutionEnv + an
+// Skills loader tests. Faux-only: FakeExecutionEnv + an
 // in-test FileBridge adapter (fs access stays inside packages/exec).
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -101,7 +101,7 @@ function bridgeFromEnv(
     remove: (): void => undefined,
     createTempDir: (): string => '/fake-tmp',
     createTempFile: (): string => '/fake-tmp-file',
-    // Issue #423: symlink stand-in — the fake fs cannot model links, so
+    // Symlink stand-in — the fake fs cannot model links, so
     // tests declare lexical-prefix → target mappings here. Longest prefix
     // wins, applied iteratively so chained links resolve fully.
     realPath: (path: string): string => {
@@ -133,7 +133,7 @@ function setup(): { env: FakeExecutionEnv; bridge: FileBridge } {
 const HOME = '/fakehome';
 const CWD = '/fakehome/proj';
 
-describe('skill discovery (issue #36)', () => {
+describe('skill discovery', () => {
   it('loads user skills from both home roots', () => {
     const { env, bridge } = setup();
     env.fs.writeFile(
@@ -156,7 +156,7 @@ describe('skill discovery (issue #36)', () => {
     ]);
   });
 
-  it('discovers ~/.kubic/skills as a third user root (issue #237)', () => {
+  it('discovers ~/.kubic/skills as a third user root', () => {
     const { env, bridge } = setup();
     env.fs.writeFile(
       `${HOME}/.kubic/skills/gamma/SKILL.md`,
@@ -172,7 +172,7 @@ describe('skill discovery (issue #36)', () => {
     expect(result.skills[0]?.source).toBe('user');
   });
 
-  it('prefers ~/.kubic/skills over the Pi-compatible roots on name conflict (issue #237)', () => {
+  it('prefers ~/.kubic/skills over the Pi-compatible roots on name conflict', () => {
     const { env, bridge } = setup();
     env.fs.writeFile(
       `${HOME}/.agents/skills/lint/SKILL.md`,
@@ -235,7 +235,7 @@ describe('skill discovery (issue #36)', () => {
     );
   });
 
-  it('checks trust per ancestor: a child grant never reaches the parent (issue #228 review)', () => {
+  it('checks trust per ancestor: a child grant never reaches the parent', () => {
     const { env, bridge } = setup();
     env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
     env.fs.writeFile(
@@ -258,7 +258,7 @@ describe('skill discovery (issue #36)', () => {
     expect(result.skills.map((skill) => skill.name).sort()).toEqual(['near']);
   });
 
-  it('lets a parent grant cover the parent tree from a child cwd (issue #228 review)', () => {
+  it('lets a parent grant cover the parent tree from a child cwd', () => {
     const { env, bridge } = setup();
     env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
     env.fs.writeFile(
@@ -302,7 +302,7 @@ describe('skill discovery (issue #36)', () => {
     expect(result.skills[0]?.description).toBe('Near skill');
   });
 
-  it('stops the ancestor walk at the git top level (issue #189)', () => {
+  it('stops the ancestor walk at the git top level', () => {
     const { env, bridge } = setup();
     env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
     env.fs.writeFile(
@@ -322,7 +322,7 @@ describe('skill discovery (issue #36)', () => {
     expect(result.skills.map((skill) => skill.name)).toEqual(['insider']);
   });
 
-  it('loads repo-root skills from a nested cwd (issue #189)', () => {
+  it('loads repo-root skills from a nested cwd', () => {
     const { env, bridge } = setup();
     env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
     env.fs.writeFile(
@@ -338,7 +338,7 @@ describe('skill discovery (issue #36)', () => {
     expect(result.skills.map((skill) => skill.name)).toEqual(['rooted']);
   });
 
-  it('searches only the cwd outside a repository (issue #189)', () => {
+  it('searches only the cwd outside a repository', () => {
     const { env, bridge } = setup();
     env.fs.writeFile(
       '/plain/.agents/skills/parent-skill/SKILL.md',
@@ -357,7 +357,7 @@ describe('skill discovery (issue #36)', () => {
     expect(result.skills.map((skill) => skill.name)).toEqual(['own-skill']);
   });
 
-  it('ignores a package.json above the git root (issue #189)', () => {
+  it('ignores a package.json above the git root', () => {
     const { env, bridge } = setup();
     env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
     env.fs.writeFile(
@@ -385,7 +385,7 @@ describe('skill discovery (issue #36)', () => {
     expect(result.skills.map((skill) => skill.name)).toEqual(['ok']);
   });
 
-  it('keeps home skills user-only, never relabelled project (issue #189)', () => {
+  it('keeps home skills user-only, never relabelled project', () => {
     const { env, bridge } = setup();
     env.fs.writeFile(
       `${HOME}/.agents/skills/home-skill/SKILL.md`,
@@ -401,7 +401,7 @@ describe('skill discovery (issue #36)', () => {
     expect(result.skills[0]?.source).toBe('user');
   });
 
-  it('never lists a user root as a project root when the repo root is $HOME (issue #189)', () => {
+  it('never lists a user root as a project root when the repo root is $HOME', () => {
     const { env, bridge } = setup();
     env.fs.writeFile(`${HOME}/.git/HEAD`, 'ref: refs/heads/main\n');
     env.fs.writeFile(
@@ -509,11 +509,11 @@ describe('skill discovery (issue #36)', () => {
   });
 });
 
-// Package-declared skill confinement (issue #423): a package.json entry
+// Package-declared skill confinement: a package.json entry
 // naming an absolute path, a `..` escape, or a symlink resolving outside
 // the declaring ancestor never loads — each refusal carries its reason on
 // the log sink.
-describe('package-declared skill confinement (issue #423)', () => {
+describe('package-declared skill confinement', () => {
   it('refuses absolute and ../-escape package entries outside the declaring dir', () => {
     const { env, bridge } = setup();
     env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
@@ -541,8 +541,8 @@ describe('package-declared skill confinement (issue #423)', () => {
     expect(
       lines.filter((line) => /outside trusted root/.test(line)),
     ).toHaveLength(2);
-    // Review on #423: the refusals are reported, not just logged —
-    // both entries land in `skipped` with reasons (issue #238 surface).
+    // Review on: the refusals are reported, not just logged —
+    // both entries land in `skipped` with reasons.
     expect(result.skipped).toEqual([
       {
         name: 'evil',
@@ -659,7 +659,7 @@ describe('package-declared skill confinement (issue #423)', () => {
   });
 });
 
-describe('skipped-skill reporting (issue #238)', () => {
+describe('skipped-skill reporting', () => {
   it('names untrusted project skills as excluded with the reason', () => {
     const { env, bridge } = setup();
     env.fs.writeFile(
@@ -755,7 +755,7 @@ describe('skipped-skill reporting (issue #238)', () => {
     expect(lines.some((line) => /unreadable/.test(line))).toBe(true);
   });
 
-  it('reports confined-away package entries as excluded skips (issue #423)', () => {
+  it('reports confined-away package entries as excluded skips', () => {
     const { env, bridge } = setup();
     env.fs.writeFile('/repo/.git/HEAD', 'ref: refs/heads/main\n');
     env.fs.writeFile(
@@ -781,7 +781,7 @@ describe('skipped-skill reporting (issue #238)', () => {
   });
 });
 
-describe('role scoping and capability gating (issue #36)', () => {
+describe('role scoping and capability gating', () => {
   it('hides role-restricted skills from other roles with a reason', () => {
     const { env, bridge } = setup();
     env.fs.writeFile(
@@ -840,7 +840,7 @@ describe('role scoping and capability gating (issue #36)', () => {
     expect(logged.join('\n')).toContain('write');
   });
 
-  // Issue #181 (§29.4): no role on the lane means no role scoping — the
+  // No role on the lane means no role scoping — the
   // capability check alone decides, so a plain run keeps role-scoped
   // skills it can actually run.
   it('skips role scoping when the lane booted with no role', () => {
@@ -938,7 +938,7 @@ describe('role scoping and capability gating (issue #36)', () => {
   });
 });
 
-describe('skill CLI flags (issue #36)', () => {
+describe('skill CLI flags', () => {
   it('ships no fetcher module or flag', () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const names = readdirSync(here);
@@ -951,9 +951,9 @@ describe('skill CLI flags (issue #36)', () => {
   });
 });
 
-// Frontmatter + explicit-skill hardening (issue #69): every parse branch
+// Frontmatter + explicit-skill hardening: every parse branch
 // pinned so a dropped quote style or gate fails loudly.
-describe('skill frontmatter hardening (issue #69)', () => {
+describe('skill frontmatter hardening', () => {
   it('parses single- and double-quoted frontmatter values', () => {
     const parsed = parseSkillFile(
       '/x/skill/SKILL.md',
@@ -1032,7 +1032,7 @@ describe('skill frontmatter hardening (issue #69)', () => {
   });
 });
 
-describe('explicit skill loading hardening (issue #69)', () => {
+describe('explicit skill loading hardening', () => {
   it('logs and skips unreadable skill dirs', () => {
     const { env, bridge } = setup();
     env.fs.writeFile('/oops/other.txt', 'x');
@@ -1051,7 +1051,7 @@ describe('explicit skill loading hardening (issue #69)', () => {
     expect(lines.some((line) => /unreadable/.test(line))).toBe(true);
   });
 
-  it('reports unknown --skill names without failing (issue #177)', () => {
+  it('reports unknown --skill names without failing', () => {
     const { bridge } = setup();
     const lines: string[] = [];
     const result = discoverSkills({
@@ -1169,11 +1169,11 @@ describe('explicit skill loading hardening (issue #69)', () => {
   });
 });
 
-// Explicit skill paths anchor at the invoking cwd (issue #177, §29.2/§29.3):
+// Explicit skill paths anchor at the invoking cwd:
 // `./rel-skill`, `rel-skill` and `../up/skill` load from cwd-relative
 // locations, `rel/SKILL.md` never consults the bridge's own root, and a
 // stray filesystem-root hit never wins over the discovery roots.
-describe('explicit skill paths anchor at the invoking cwd (issue #177)', () => {
+describe('explicit skill paths anchor at the invoking cwd', () => {
   it('loads --skill ./rel-skill from the cwd', () => {
     const { env, bridge } = setup();
     env.fs.writeFile(
@@ -1299,7 +1299,7 @@ describe('explicit skill paths anchor at the invoking cwd (issue #177)', () => {
   });
 });
 
-describe('skill gating and invocation hardening (issue #69)', () => {
+describe('skill gating and invocation hardening', () => {
   it('escapes XML metacharacters in the system prompt', () => {
     const xml = formatSkillsForSystemPrompt([
       {
@@ -1319,7 +1319,7 @@ describe('skill gating and invocation hardening (issue #69)', () => {
     expect(() => invokeSkill([], 'ghost')).toThrow(/unknown skill/);
   });
 
-  it('expands an explicit invocation to the skill content plus instructions (issue #183)', () => {
+  it('expands an explicit invocation to the skill content plus instructions', () => {
     const skills = [
       { name: 'secret', content: 'Hidden content.' },
       { name: 'open', content: 'Open content.' },
@@ -1346,11 +1346,11 @@ describe('skill gating and invocation hardening (issue #69)', () => {
   });
 });
 
-// Pi skill-contract parity (issue #186, §29): the canonical kebab-case
+// Pi skill-contract parity: the canonical kebab-case
 // `disable-model-invocation`, block sequences and folded/literal scalars
 // for the contract keys, and recursive discovery. Deeper YAML (anchors,
 // tags, nested maps, indent indicators) stays plain values by design.
-describe('Pi skill-contract parity (issue #186)', () => {
+describe('Pi skill-contract parity', () => {
   it('hides disable-model-invocation skills, keeping camelCase as an alias', () => {
     const kebab = parseSkillFile(
       '/x/hide/SKILL.md',

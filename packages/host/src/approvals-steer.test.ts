@@ -1,4 +1,4 @@
-// Steering an approval (EPIC N, issue #467; docs/ui 02-A, 02-E, 02-F): a
+// Steering an approval: a
 // denial carries the operator's comment to the model, an edited command runs
 // instead of the proposed one after it is judged again, and "allow all edits
 // this turn" approves the turn's edit/write asks of the same kind — never
@@ -89,7 +89,7 @@ async function rig(options: {
 
 const ran = (env: FakeExecutionEnv): string => JSON.stringify(env.calls);
 
-describe('deny with a comment (issue #467)', () => {
+describe('deny with a comment', () => {
   it("tells the model why, and records the operator's words", async () => {
     const r = await rig({
       answer: () => ({
@@ -119,7 +119,7 @@ describe('deny with a comment (issue #467)', () => {
   });
 });
 
-describe('edit then allow (issue #467)', () => {
+describe('edit then allow', () => {
   it('runs the edited command instead, judged again first', async () => {
     const r = await rig({
       answer: () => ({
@@ -202,7 +202,7 @@ describe('edit then allow (issue #467)', () => {
   });
 });
 
-describe('allow all edits this turn (issue #467)', () => {
+describe('allow all edits this turn', () => {
   const writeCall = (path: string) =>
     fauxToolCall('write', { path, content: 'x\n' });
 

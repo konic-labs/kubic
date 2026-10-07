@@ -1,11 +1,10 @@
-// Audit and trajectory identity on the prod run/tui paths (issues #148, #279,
-// #295; §60, §46). The §60 row of every resolved ask and the §46 trajectory
-// name the model the lane ACTUALLY runs — after the stored-model rule (#148)
-// reconciled a resumed session, and after a TUI `/model` switch — and an
-// orchestrated worker child's records carry its own identity (#279).
+// Audit and trajectory identity on the prod run/tui paths. The audit row of
+// every resolved ask and the trajectory name the model the lane ACTUALLY
+// runs — after the stored-model rule reconciled a resumed session, and after
+// a TUI `/model` switch — and every row carries the run's own identity.
 //
 // Faux provider only: zero network, zero paid tokens. Real workspaces in temp
-// dirs (the ledger lives under <workspace>/.kubic/orchestrator/approvals).
+// dirs (the ledger lives under <workspace>/.kubic/audit).
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,7 +12,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { installSoloPolicy } from '../../../packages/host/src/approvals.js';
-import { createApprovalSigner } from '../../../packages/host/src/orchestrator/approvals/seal.js';
 import {
   auditLedgerDir,
   readAuditLedger,
@@ -47,11 +45,6 @@ function tmpRoot(prefix: string): string {
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
   vi.stubEnv('KUBIC_PROVIDER', '');
-  vi.stubEnv('KUBIC_WORKER_ID', '');
-  vi.stubEnv('KUBIC_WORKER_GENERATION', '');
-  vi.stubEnv('KUBIC_ORCHESTRATOR_SESSION', '');
-  vi.stubEnv('KUBIC_APPROVALS_DIR', '');
-  vi.stubEnv('KUBIC_APPROVALS_VERIFY_KEY', '');
 });
 
 afterEach(() => {
@@ -81,7 +74,7 @@ function catalog(steps: FauxMessage[]): MutableModels {
 }
 
 // The seams of a headless run that default to process.cwd() — the tool env
-// (and so the §60 ledger's workspace), skills discovery, role documents and
+// (and so the ledger's workspace), skills discovery, role documents and
 // models.json — pinned to a temp workspace, so a run never reads or writes the
 // real cwd (a Stryker sandbox is a directory inside the checkout: the ledger
 // resolver would climb out of it into the real repo).
@@ -127,7 +120,7 @@ async function sessionOnSmall(root: string): Promise<string> {
   return id;
 }
 
-describe('kubic run: the audit row and the trajectory name the model the lane runs (issue #148)', () => {
+describe('kubic run: the audit row and the trajectory name the model the lane runs', () => {
   it('an unpinned resume of a faux/small session records faux/small, not the selected default faux/big', async () => {
     const root = tmpRoot('audit-id-root-');
     const workspace = tmpRoot('audit-id-ws-');
@@ -141,14 +134,14 @@ describe('kubic run: the audit row and the trajectory name the model the lane ru
         ...hermetic(workspace),
       },
     );
-    // The lane ran on the session's own model (issue #148) ...
+    // The lane ran on the session's own model ...
     expect(result.model).toBe('faux/small');
     expect(result.terminus).toBe('approval_denied');
-    // ... so the §60 row of the refused ask names it ...
+    // ... so the audit row of the refused ask names it ...
     const records = readAuditLedger(auditLedgerDir(workspace));
     const record = records.find((r) => r.what === 'tool:bash');
     expect(record?.model).toMatchObject({ provider: 'faux', id: 'small' });
-    // ... and so does the §46 trajectory (model and provenance).
+    // ... and so does the trajectory (model and provenance).
     const exported = parseTrajectoryExportJSON(
       readFileSync(result.trajectoryRef ?? '', 'utf8'),
     );
@@ -199,7 +192,7 @@ function type(fake: ReturnType<typeof fakeTerminal>, text: string): void {
   fake.feed('\r');
 }
 
-describe('kubic tui: the audit row names the model the lane runs (issues #148, #227, #295)', () => {
+describe('kubic tui: the audit row names the model the lane runs', () => {
   it('after `/model alt/m1` the refused ask is recorded on alt/m1, not the boot model', async () => {
     const workspace = tmpRoot('audit-id-tui-ws-');
     const sessionsRoot = tmpRoot('audit-id-tui-root-');
@@ -286,74 +279,8 @@ describe('kubic tui: the audit row names the model the lane runs (issues #148, #
   });
 });
 
-// Issue #279: an orchestrator-managed worker child (`kubic orchestrate` sets
-// KUBIC_WORKER_ID / KUBIC_ORCHESTRATOR_SESSION / KUBIC_WORKER_GENERATION on
-// each one) writes ITS §60 rows as orchestrator records in the main ledger.
-// The composition root reads that identity from the real process env; before
-// this test nothing pinned the read (deleting it left the suite green).
-describe('an orchestrated worker child records its own identity (issue #279)', () => {
-  function workerEnv(): void {
-    vi.stubEnv('KUBIC_WORKER_ID', 'w-7');
-    vi.stubEnv('KUBIC_ORCHESTRATOR_SESSION', 'orch-1');
-    vi.stubEnv('KUBIC_WORKER_GENERATION', '3');
-  }
-
-  it('a locally decided ask is ONE orchestrator row for the worker, with its pid, generation and role', async () => {
-    workerEnv();
-    const root = tmpRoot('audit-id-worker-root-');
-    const workspace = tmpRoot('audit-id-worker-ws-');
-    const result = await runHeadlessPrompt(
-      'clean up',
-      {},
-      {
-        sessionsRoot: root,
-        models: catalog([DESTRUCTIVE(), fauxAssistantMessage('done')]),
-        ...hermetic(workspace),
-      },
-    );
-    expect(result.terminus).toBe('approval_denied');
-    const records = readAuditLedger(auditLedgerDir(workspace)).filter(
-      (r) => r.what === 'tool:bash',
-    );
-    expect(records).toHaveLength(1);
-    expect(records[0]).toMatchObject({
-      who: 'agent:w-7',
-      mode: 'orchestrator',
-      result: 'deny',
-      agent: { session: result.sessionId, role: 'worker', parent: 'orch-1' },
-      worker: { pid: process.pid, generation: 3, role: 'worker' },
-    });
-  });
-
-  it('an ask answered through the manager seat is recorded by the manager only: the child appends nothing', async () => {
-    workerEnv();
-    vi.stubEnv('KUBIC_APPROVALS_DIR', tmpRoot('audit-id-worker-mailbox-'));
-    // The manager's public key travels with the mailbox (issue #149): without
-    // it the child has nothing to verify an answer with and attaches no seat.
-    // The seat's own bound: nobody answers, so it denies closed — still the
-    // manager's decision to record, never a second child row.
-    vi.stubEnv('KUBIC_APPROVALS_VERIFY_KEY', createApprovalSigner().verifyKey);
-    vi.stubEnv('KUBIC_APPROVALS_BOUND_MS', '60');
-    const root = tmpRoot('audit-id-worker-seat-root-');
-    const workspace = tmpRoot('audit-id-worker-seat-ws-');
-    const result = await runHeadlessPrompt(
-      'clean up',
-      {},
-      {
-        sessionsRoot: root,
-        models: catalog([DESTRUCTIVE(), fauxAssistantMessage('done')]),
-        ...hermetic(workspace),
-      },
-    );
-    expect(result.terminus).not.toBe('completed');
-    expect(
-      readAuditLedger(auditLedgerDir(workspace)).filter(
-        (r) => r.what === 'tool:bash',
-      ),
-    ).toEqual([]);
-  });
-
-  it('a plain solo run (no worker env) still records mode solo with generation 0', async () => {
+describe('a run records its own identity', () => {
+  it('a locally decided ask is one root row with the process pid and generation 0', async () => {
     const root = tmpRoot('audit-id-solo-root-');
     const workspace = tmpRoot('audit-id-solo-ws-');
     await runHeadlessPrompt(
@@ -371,14 +298,13 @@ describe('an orchestrated worker child records its own identity (issue #279)', (
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
       who: 'agent:root',
-      mode: 'solo',
       agent: { role: 'root' },
       worker: { pid: process.pid, generation: 0, role: 'root' },
     });
   });
 });
 
-describe('installSoloPolicy audit model (issues #148, #227)', () => {
+describe('installSoloPolicy audit model', () => {
   const call = (id: string) => ({
     toolName: 'bash',
     args: { command: 'rm -rf build' },

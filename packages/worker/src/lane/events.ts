@@ -1,11 +1,9 @@
-// Solo-lane event consumer on pi-durable's committed watch (issues #11,
-// #398; §15, §15.3, §20.6, §27.1). Exactly one subscription per
-// conversation relays the §15 groups Kubic routes — run status, tool
-// status, usage, faults — plus the retry and compaction state the 1.0
-// harness commits, the inbox queue the TUI renders (#334) and the
-// in-flight generation's text deltas (#296). Everything else (thinking
-// deltas, navigation, config) stays inside Pi: Kubic defines no parallel
-// event vocabulary.
+// Solo-lane event consumer on pi-durable's committed watch. Exactly one
+// subscription per conversation relays the groups Kubic routes — run status,
+// tool status, usage, faults — plus the retry and compaction state the 1.0
+// harness commits, the inbox queue the TUI renders and the in-flight
+// generation's text deltas. Everything else (thinking deltas, navigation,
+// config) stays inside Pi: Kubic defines no parallel event vocabulary.
 //
 // `watchEvents` is experimental upstream, so it is isolated here: every
 // Kubic consumer sees `KubicLaneEvent`, and `viewState()` (`pi.live`) can
@@ -50,7 +48,7 @@ export interface KubicLaneCompaction {
   readonly error?: string;
 }
 
-// One queued submission of the conversation's inbox (#334): the id and the
+// One queued submission of the conversation's inbox: the id and the
 // mode (`followUp` / `steer`, or a passive `write`). The text is the
 // submitter's own — the inbox document carries no content — so a renderer
 // keys its own prompt text by id and drops the row when the id leaves.
@@ -78,7 +76,7 @@ export type KubicLaneEvent =
       entry?: EntryRecord;
     }
   | {
-      // Issue #296: the running generation's text, appended as it streams.
+      // The running generation's text, appended as it streams.
       // The partial is not committed yet, so there is no entry to name; the
       // consumer renders it as a draft and the committed `message_end` entry
       // replaces it. Only text deltas are routed — thinking stays Pi's.
@@ -88,12 +86,12 @@ export type KubicLaneEvent =
   | {
       type: 'usage';
       // The committed assistant response, labelled with the provider/model
-      // that answered (#287); `entry` carries its transcript cell.
+      // that answered; `entry` carries its transcript cell.
       row: KubicUsageRow;
       entry: EntryRecord;
     }
   | {
-      // Issue #317: a committed entry that carries no assistant response —
+      // A committed entry that carries no assistant response —
       // a user turn, a compaction summary, a reset handoff. The transcript
       // folds it live instead of waiting for the next full read.
       type: 'entry';
@@ -188,7 +186,7 @@ function snapshotEvent(snapshot: SnapshotEvent): KubicLaneEvent {
 
 // One pi-durable agent event in Kubic's vocabulary; undefined for the
 // kinds Kubic does not route (message deltas, inbox, deferred polls — a
-// deferred turn is surfaced by the submission, #395).
+// deferred turn is surfaced by the submission).
 export function toKubicLaneEvent(
   event: AgentEvent,
 ): KubicLaneEvent | undefined {
@@ -224,9 +222,9 @@ export function toKubicLaneEvent(
       };
     }
     case 'message_update': {
-      // Issue #296: the streamed text of the in-flight generation (§61:
-      // deltas render as they arrive). A whole-message change or a thinking
-      // delta carries no text for the transcript, so it maps to nothing.
+      // The streamed text of the in-flight generation (deltas render as they
+      // arrive). A whole-message change or a thinking delta carries no text for
+      // the transcript, so it maps to nothing.
       const text = event.changes
         .map((change) => (change.type === 'text_delta' ? change.delta : ''))
         .join('');
@@ -273,7 +271,7 @@ export function toKubicLaneEvent(
   }
 }
 
-// The single event subscription for one conversation (§15.3). The attachment
+// The single event subscription for one conversation. The attachment
 // snapshot is delivered through the sink first (late join), then every
 // commit's batch in order, so no event between the snapshot and the
 // listener's activation can be lost. The returned stop is idempotent.

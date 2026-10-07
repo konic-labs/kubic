@@ -1,4 +1,4 @@
-// `kubic run --model provider/id` (issue #227; §38.1, §35.1). The flag is
+// `kubic run --model provider/id`. The flag is
 // the `cli` config layer: it beats `KUBIC_MODEL` and `[model]`, never a
 // frozen enterprise key, and the projection (`runtimeModelPin`) is the same
 // one the lane boots from — so these tests go through the REAL load and the
@@ -57,7 +57,7 @@ function catalog(texts: string[]): MutableModels {
   return models;
 }
 
-describe('kubic run --model (issue #227)', () => {
+describe('kubic run --model', () => {
   it('selects the model the flag names, over the first provider', async () => {
     const config = loadCliConfig({
       cwd: tmpRoot('run-227-cwd-'),

@@ -1,7 +1,6 @@
-// #398: the lane event consumer on pi-durable's committed watch (§15,
-// §15.3, §20.6, §27.1). One subscription per conversation; the sink sees
-// Kubic's own vocabulary (run, tool, usage, fault, retry, compaction,
-// snapshot) and never another conversation's events.
+// The lane event consumer on pi-durable's committed watch. One subscription per
+// conversation; the sink sees Kubic's own vocabulary (run, tool, usage, fault,
+// retry, compaction, snapshot) and never another conversation's events.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -84,7 +83,7 @@ function toolResultEntry(id: number, isError = false): EntryRecord {
   });
 }
 
-describe('toKubicLaneEvent (§15.3)', () => {
+describe('toKubicLaneEvent', () => {
   it('maps run start/end and tool start/end', () => {
     expect(
       toKubicLaneEvent({ type: 'run_start', inputs: [1 as SubmissionId] }),
@@ -136,7 +135,7 @@ describe('toKubicLaneEvent (§15.3)', () => {
     });
   });
 
-  it('maps a streamed text delta into the live draft (issue #296)', () => {
+  it('maps a streamed text delta into the live draft', () => {
     expect(
       toKubicLaneEvent({
         type: 'message_update',
@@ -186,7 +185,7 @@ describe('toKubicLaneEvent (§15.3)', () => {
     ).toMatchObject({ type: 'tool-end', isError: true });
   });
 
-  it('maps an assistant entry to a usage row with its real provider/model (#287)', () => {
+  it('maps an assistant entry to a usage row with its real provider/model', () => {
     const committed = assistantEntry(7);
     expect(toKubicLaneEvent({ type: 'message_end', entry: committed })).toEqual(
       {
@@ -202,7 +201,7 @@ describe('toKubicLaneEvent (§15.3)', () => {
     );
   });
 
-  it('carries non-assistant message ends as committed entries (#317)', () => {
+  it('carries non-assistant message ends as committed entries', () => {
     // A compaction summary and a reset handoff are user messages with no
     // usage row; the transcript still needs the entry, so it rides its own
     // event instead of being dropped.
@@ -265,7 +264,7 @@ describe('toKubicLaneEvent (§15.3)', () => {
     ).toEqual({ type: 'fault', code: 'pi.generation', message: 'boom' });
   });
 
-  it('maps an inbox update to the queued items, ids as strings (#334)', () => {
+  it('maps an inbox update to the queued items, ids as strings', () => {
     expect(
       toKubicLaneEvent({
         type: 'inbox_update',
@@ -427,7 +426,7 @@ async function runTurn(lane: TestLane, prompt: string): Promise<void> {
 const flush = (): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, 0));
 
-describe('subscribeLaneEvents over watchEvents (#398)', () => {
+describe('subscribeLaneEvents over watchEvents', () => {
   it('streams a faux tool turn as run, tool, usage, run-end in order', async () => {
     const lane = await boot({
       responses: [
@@ -504,7 +503,7 @@ describe('subscribeLaneEvents over watchEvents (#398)', () => {
     expect(seen.at(-1)?.type).toBe('run-end');
   });
 
-  it('labels usage rows with the provider and model that answered (#287)', async () => {
+  it('labels usage rows with the provider and model that answered', async () => {
     const lane = await boot({
       responses: [fauxAssistantMessage(fauxText('hi'))],
     });
@@ -531,7 +530,7 @@ describe('subscribeLaneEvents over watchEvents (#398)', () => {
     }
   });
 
-  it('usage rows carry the committed entry usage verbatim, totals sum it (#287)', async () => {
+  it('usage rows carry the committed entry usage verbatim, totals sum it', async () => {
     // The harness measures usage at commit (the provider hint is not
     // preserved verbatim), so the honest pin is pass-through fidelity:
     // every row deep-equals its own entry's message usage, and the totals

@@ -1,4 +1,4 @@
-// Project-root resolution (issue #229; §35.1). The config project layer,
+// Project-root resolution. The config project layer,
 // the repo role documents and the runtime-exclude check all resolve their
 // files from ONE root — the nearest ancestor holding `.kubic/` (or the git
 // top level), the cwd itself outside a repository — so a run from a

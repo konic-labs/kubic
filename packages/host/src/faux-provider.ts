@@ -1,7 +1,7 @@
 // The faux testing provider (`KUBIC_PROVIDER=faux`): Pi's faux provider
 // with a scripted echo behaviour, so the shipped binary can be driven end
-// to end — `kubic run`, `kubic tui`, `kubic orchestrate` workers — with no
-// network, no credentials and no paid tokens.
+// to end — `kubic run`, `kubic tui` — with no network, no credentials and
+// no paid tokens.
 //
 // It is a TESTING provider. It is never selected implicitly: only the exact
 // env value `KUBIC_PROVIDER=faux` turns it on, and every surface that runs a

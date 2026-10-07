@@ -1,8 +1,8 @@
-// The queued follow-up rows are rendered from the replicated state (issue
-// #333 review): the app writes `lane.queued` on EVERY presentation apply, so
-// a state that resolved the inbox only at its own `inbox` event wiped the row
-// on the next lane event (a tool end, a delta) and left it gone for the rest
-// of the turn. Stub lane only: zero network, zero paid tokens.
+// The queued follow-up rows are rendered from the replicated state: the app
+// writes `lane.queued` on EVERY presentation apply, so a state that resolved
+// the inbox only at its own `inbox` event wiped the row on the next lane event
+// (a tool end, a delta) and left it gone for the rest of the turn. Stub lane
+// only: zero network, zero paid tokens.
 import { describe, expect, it } from 'vitest';
 import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
 import type {
@@ -16,7 +16,6 @@ function app() {
   return createTuiApp({
     sessionId: 's',
     model: 'faux/faux-1',
-    mode: 'solo',
     approvalsSkipped: false,
   });
 }
@@ -52,7 +51,7 @@ function runner(
   return { turn, queuedText };
 }
 
-describe('queued follow-up rows from the state (issue #333 review)', () => {
+describe('queued follow-up rows from the state', () => {
   it('keeps the row across later lane events', async () => {
     const target = app();
     const { turn } = runner(target, [

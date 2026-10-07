@@ -1,4 +1,4 @@
-// models.json schema (issue #223; §38.5, §37.2, §39, §27.1): the spec's
+// models.json schema: the spec's
 // object form, cache costs, input modalities, and validated
 // contextWindow/maxTokens. Zero network: registration only.
 import { describe, expect, it } from 'vitest';
@@ -48,8 +48,8 @@ function withProvider(extra: Record<string, unknown>) {
   };
 }
 
-describe('models.json schema (issue #223)', () => {
-  it('parses and registers the §38.5 block as written', async () => {
+describe('models.json schema', () => {
+  it('parses and registers the block as written', async () => {
     const specs = parseModelsJson(JSON.parse(DOCS_EXAMPLE));
     expect(specs.map((s) => s.id)).toEqual(['local']);
     const models = createModels();
@@ -143,7 +143,7 @@ describe('models.json schema (issue #223)', () => {
     expect(() => parseModelsJson(one(model))).toThrow(`'${field}'`);
   });
 
-  it('accepts an allowlisted $ENV apiKey ref, and still refuses apiKey together with apiKeyEnv (issue #224)', () => {
+  it('accepts an allowlisted $ENV apiKey ref, and still refuses apiKey together with apiKeyEnv', () => {
     const env = parseModelsJson(withProvider({ apiKey: '$OPENAI_API_KEY' }));
     expect(env[0]?.apiKey).toBe('$OPENAI_API_KEY');
     expect(env[0]?.apiKeyRef).toEqual({
@@ -158,11 +158,11 @@ describe('models.json schema (issue #223)', () => {
     ).toThrow(/apiKey/);
   });
 
-  // Issue #224 (§36.2): `apiKey` takes the full ref table — a !command or
+  // `apiKey` takes the full ref table — a !command or
   // an escaped/plain literal (unescaped at parse, so the wire never sees
   // the backslash). Refusal is for what cannot name a credential: a
   // non-allowlisted variable, an empty command.
-  it('parses apiKey !command / escaped refs (issue #224)', () => {
+  it('parses apiKey !command / escaped refs', () => {
     const command = parseModelsJson(
       withProvider({ apiKey: '!op read "my vault/item"' }),
     );
@@ -184,10 +184,10 @@ describe('models.json schema (issue #223)', () => {
     expect(plain[0]?.headerRefs).toBeUndefined();
   });
 
-  // Issue #224: the #322 allowlist guards `apiKey: "$VAR"` exactly as it
+  // The allowlist guards `apiKey: "$VAR"` exactly as it
   // guards `apiKeyEnv` — the file may not choose an arbitrary secret — and
   // an empty command stays a named refusal.
-  it('refuses a non-allowlisted apiKey variable and empty commands (issue #224)', () => {
+  it('refuses a non-allowlisted apiKey variable and empty commands', () => {
     expect(() =>
       parseModelsJson(withProvider({ apiKey: '$AWS_SECRET_ACCESS_KEY' })),
     ).toThrow(/apiKey.*allowed key variable/);
@@ -196,10 +196,10 @@ describe('models.json schema (issue #223)', () => {
     );
   });
 
-  // Issue #224: ref-valued headers leave the static map and ride the
+  // Ref-valued headers leave the static map and ride the
   // request-time auth instead — a `$TOKEN` header must never reach the
-  // wire verbatim. Literals stay static (the #113 gateway contract).
-  it('splits header refs from static headers (issue #224)', () => {
+  // wire verbatim. Literals stay static (the gateway contract).
+  it('splits header refs from static headers', () => {
     const specs = parseModelsJson(
       withProvider({
         headers: {
@@ -223,7 +223,7 @@ describe('models.json schema (issue #223)', () => {
     ).toThrow(/headers.*allowed key variable/);
   });
 
-  // Issue #402 (pi-ai 1.0.2): the model-level sampling defaults Pi resolves
+  // The model-level sampling defaults Pi resolves
   // per effective thinking level. Forwarded as declared — Pi merges the
   // level's object over the model default at request time.
   it('carries samplingParams and samplingParamsByThinkingLevel onto the model', () => {

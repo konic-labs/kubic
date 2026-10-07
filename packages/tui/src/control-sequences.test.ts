@@ -1,11 +1,11 @@
 // Lane text must not carry terminal control sequences into the frame
-// (issue #88, reviewer finding 1). The loop is what FEEDS lane content
+// (reviewer finding 1). The loop is what FEEDS lane content
 // (assistant text, tool results) into the transcript for the first time, so
 // a model or a tool can otherwise drive the terminal directly: clearing the
 // screen ('\x1b[2J'), repainting colour, ringing the bell, or — on a
 // terminal that honours them — moving the cursor over the status bar.
 //
-// RED before the fix: entriesToCells passed text through verbatim and the
+// Before the fix, entriesToCells passed text through verbatim and the
 // assertion below failed with `has raw ESC: true` (verified by dumping the
 // rendered frame: 'HI\u001b[2J\u001b[31mRED\u001b[0m\u0007END').
 import { describe, expect, it } from 'vitest';
@@ -22,7 +22,6 @@ function frameWith(text: string): string {
   const app = createTuiApp({
     sessionId: 's',
     model: 'm',
-    mode: 'solo',
     approvalsSkipped: false,
   });
   app.applyLaneEntries([
@@ -36,13 +35,13 @@ function frameWith(text: string): string {
   return app.render(60).join('\n');
 }
 
-// Issue #333: the app renders replicated state, so a test builds the state a
+// The app renders replicated state, so a test builds the state a
 // projector would produce (the projector itself lives in host).
 function presentation(
   over: Partial<LaneSnapshot> = {},
 ): KubicPresentationState {
   return {
-    session: { sessionId: 's', mode: 'solo', approvalsSkipped: false },
+    session: { sessionId: 's', approvalsSkipped: false },
     agents: new Map(),
     lanes: new Map([
       [
@@ -58,14 +57,13 @@ function presentation(
         },
       ],
     ]),
-    workers: new Map(),
     approvals: [],
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     connection: { status: 'connected' },
   };
 }
 
-describe('terminal control sequences from lane content (issue #88)', () => {
+describe('terminal control sequences from lane content', () => {
   it('does not let assistant text emit raw escapes or the bell', () => {
     const frame = frameWith(`HI${ESC}[2J${ESC}[31mRED${ESC}[0m${BEL}END`);
     // The words survive (the operator still reads what the model said)...
@@ -83,7 +81,6 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'm',
-      mode: 'solo',
       approvalsSkipped: false,
     });
     app.applyLaneEntries([
@@ -101,7 +98,7 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     expect(frame).not.toContain(`${ESC}[2J`);
   });
 
-  it('renders coloured tool output as clean text, not parameter noise (#299)', () => {
+  it('renders coloured tool output as clean text, not parameter noise', () => {
     // FORCE_COLOR test runners, `git color.ui=always` and npm progress bars
     // emit real SGR sequences even without a TTY. Stripping only the ESC
     // byte left `[31m` visible in every output block; the whole sequence
@@ -109,7 +106,6 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'm',
-      mode: 'solo',
       approvalsSkipped: false,
     });
     app.applyLaneEntries([
@@ -142,7 +138,6 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'm',
-      mode: 'solo',
       approvalsSkipped: false,
     });
     app.applyLaneEntries([
@@ -169,7 +164,6 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'm',
-      mode: 'solo',
       approvalsSkipped: false,
     });
     app.applyPresentation(
@@ -184,7 +178,7 @@ describe('terminal control sequences from lane content (issue #88)', () => {
         ],
       }),
     );
-    // Issue #453: the solo tree row is opened on demand (Ctrl-T).
+    // The solo tree row is opened on demand (Ctrl-T).
     app.handleInput('\x14');
     const frame = app.render(100).join('\n');
     expect(frame).toContain('ZZ');
@@ -203,7 +197,6 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'm',
-      mode: 'solo',
       approvalsSkipped: false,
     });
     app.setEditorFooter(

@@ -1,7 +1,7 @@
-// The TUI mode indicator on the real boot (issue #307; §17, §18, §41.4):
+// The TUI mode indicator on the real boot:
 // the posture installSoloPolicy installed is the single source of truth, so
 // a full-access session can never render 'approvals on' (the header's
-// posture since issue #453).
+// posture).
 //
 // Real code end to end: the prod bootTuiLane (re-rooted onto temp state), a
 // recording fake Terminal under the real alt-screen, and the real policy.
@@ -23,7 +23,7 @@ import {
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { bootTuiLane, runTuiCommand, type TuiRunDeps } from './tui-run.js';
 
-const WARNING = '[SOLO] approvals OFF (full-access)';
+const WARNING = 'approvals OFF (full-access)';
 const made: string[] = [];
 
 function tmpRoot(): string {
@@ -88,7 +88,7 @@ async function firstFrame(
   return frame;
 }
 
-describe('the TUI indicator follows the installed posture (issue #307)', () => {
+describe('the TUI indicator follows the installed posture', () => {
   it('a full-access session renders the OFF warning in its first frame', async () => {
     const sessionsRoot = tmpRoot();
     const workspace = tmpRoot();
@@ -105,7 +105,7 @@ describe('the TUI indicator follows the installed posture (issue #307)', () => {
 
   it("a fresh session renders 'approvals on'", async () => {
     const frame = await firstFrame(tmpRoot(), tmpRoot());
-    expect(frame).toContain('[SOLO] approvals on');
+    expect(frame).toContain('approvals on');
     expect(frame).not.toContain(WARNING);
   });
 
@@ -118,7 +118,7 @@ describe('the TUI indicator follows the installed posture (issue #307)', () => {
       new FileApprovalStore(join(sessionsRoot, boot.sessionId)),
       'test',
     );
-    // Issue #325: the posture is decided at boot, so a mid-session write
+    // The posture is decided at boot, so a mid-session write
     // never flips the indicator — the ask consults the same boot posture.
     expect(boot.approvalsSkipped?.()).toBe(false);
     await boot.close?.();

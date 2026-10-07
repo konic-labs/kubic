@@ -1,10 +1,10 @@
-// Sync git-cleanliness probe for the composition root (issue #78).
+// Sync git-cleanliness probe for the composition root.
 // `kubic benchmark --workspace worktree` refuses on a dirty tree through
 // the eval runner's injected ensureCleanWorktree hook, which is sync — so
 // the probe shells `git status --porcelain` synchronously. Fail-closed: a
 // non-repo, a missing dir, or any git failure reads as NOT clean.
 //
-// Real git in sandboxed throwaway repos (issue #365): the repo setup runs
+// Real git in sandboxed throwaway repos: the repo setup runs
 // through the shared sandbox's scrubbed env, and the sandbox is activated
 // into process.env while the probe (which spawns git on the inherited
 // environment) runs.
@@ -61,7 +61,7 @@ function initRepo(): GitSandbox {
   return repo;
 }
 
-describe('isGitWorktreeClean (issue #78)', () => {
+describe('isGitWorktreeClean', () => {
   it('reads true on a clean repo', () => {
     const repo = initRepo();
     expect(isGitWorktreeClean(repo.path)).toBe(true);
@@ -85,7 +85,7 @@ describe('isGitWorktreeClean (issue #78)', () => {
   });
 });
 
-describe('withDetachedCheckout (issue #267): the verifier baseline', () => {
+describe('withDetachedCheckout: the verifier baseline', () => {
   function worktreeCount(repo: GitSandbox): number {
     return repo
       .git(['worktree', 'list', '--porcelain'])
@@ -146,7 +146,7 @@ describe('withDetachedCheckout (issue #267): the verifier baseline', () => {
   });
 });
 
-describe('gitHeadOf (issue #383): the §46 trajectory base revision', () => {
+describe('gitHeadOf: the trajectory base revision', () => {
   it('names the HEAD sha and the current branch', () => {
     const repo = initRepo();
     repo.git(['checkout', '-q', '-b', 'feature']);

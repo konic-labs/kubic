@@ -1,12 +1,12 @@
-// Prompt editor slot for the interactive loop (issue #88).
-// The layout's editor row was a bare `Text('')` (issue #75): no submit
+// Prompt editor slot for the interactive loop.
+// The layout's editor row was a bare `Text('')`: no submit
 // binding, no multi-line entry, no history — so the loop could never
 // accept a prompt. This wraps Pi's Editor (the component upstream uses,
-// §16 pi-tui architecture) behind the presentation seam so the controller
+// pi-tui architecture) behind the presentation seam so the controller
 // stays Pi-free: the composition root owns the TUI handle, the app owns
 // the routing, this slot owns the draft.
 //
-// Presentation only (§66): the editor holds a draft string and a submit
+// Presentation only: the editor holds a draft string and a submit
 // callback. It never knows what a lane is.
 
 import { RULE_MARK } from './editor-frame.js';
@@ -48,7 +48,7 @@ class TuiDelegate {
 
 export const EDITOR_FALLBACK_ROWS = 24;
 
-// Issue #340: how many prompts Up can recall — Pi's editor keeps the newest
+// How many prompts Up can recall — Pi's editor keeps the newest
 // 100 itself, so seeding more would only be dropped; the bound keeps a long
 // resumed session cheap to seed.
 export const PROMPT_HISTORY_MAX = 100;
@@ -57,7 +57,7 @@ export function editorTheme(): EditorTheme {
   // Read per call so a theme set after construction applies.
   const ui = () => tuiTheme().ui;
   return {
-    // Issue #454: the rules only carry the frame's marker; the frame
+    // The rules only carry the frame's marker; the frame
     // (editor-frame.ts) draws and colours the box around them.
     borderColor: (text: string): string => `${RULE_MARK}${text}`,
     selectList: {
@@ -78,7 +78,7 @@ export function editorTheme(): EditorTheme {
 export class PromptEditor implements Component, Focusable {
   readonly inner: Editor;
   onSubmit?: (text: string) => void;
-  // Issue #338 (review): an image-only prompt is a prompt. The app owns the
+  // An image-only prompt is a prompt. The app owns the
   // pending attachments, so it answers this before the wrapper drops a blank
   // draft — otherwise attach + Enter is a silent no-op while the footer says
   // "Enter sends it". Absent means the shipped behaviour (blank is a no-op).
@@ -111,7 +111,7 @@ export class PromptEditor implements Component, Focusable {
     this.inner.addToHistory(prompt);
   }
 
-  // Issue #340 (§16.5): seed the history from a resumed session's committed
+  // Seed the history from a resumed session's committed
   // prompts, oldest first (newest last), so Up recalls what the previous
   // process sent. Only the newest PROMPT_HISTORY_MAX are replayed, through
   // the same consecutive-dedup rule a live submit follows.
@@ -134,7 +134,7 @@ export class PromptEditor implements Component, Focusable {
     this.inner.focused = value;
   }
 
-  // While a turn is in flight the loop keeps the editor ENABLED (#334):
+  // While a turn is in flight the loop keeps the editor ENABLED:
   // Enter queues the draft as a follow-up in the conversation's inbox and
   // Alt+Enter steers, so there is nothing to disable. `disableSubmit` stays
   // available for embedders that own a stricter loop.
@@ -148,7 +148,7 @@ export class PromptEditor implements Component, Focusable {
     this.delegate.bind(tui);
   }
 
-  // Issue #305: the registry's `/`-command autocomplete, handed to Pi's
+  // The registry's `/`-command autocomplete, handed to Pi's
   // editor (it owns the popup, the debounce and the completion keys).
   setAutocomplete(provider: AutocompleteProvider): void {
     this.inner.setAutocompleteProvider(provider);
@@ -158,7 +158,7 @@ export class PromptEditor implements Component, Focusable {
     return this.inner.getText();
   }
 
-  // Issue #454: Esc closes the dropdown before it means anything else.
+  // Esc closes the dropdown before it means anything else.
   isShowingAutocomplete(): boolean {
     return this.inner.isShowingAutocomplete();
   }
@@ -167,7 +167,7 @@ export class PromptEditor implements Component, Focusable {
     this.inner.setText(text);
   }
 
-  // Issue #460: the palette's file rows insert `@path ` where the cursor is.
+  // The palette's file rows insert `@path ` where the cursor is.
   insertText(text: string): void {
     this.inner.insertTextAtCursor(text);
   }

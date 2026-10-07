@@ -71,7 +71,7 @@ function labelled(
   });
 }
 
-describe('regression and graded patch quality (issue #267)', () => {
+describe('regression and graded patch quality', () => {
   it('regressionFree is false when a gate that passed at base fails now', () => {
     const signals = computeSignals(
       labelled({ 'signal:tests': 'fail', 'signal:regression': 'fail' }),
@@ -153,7 +153,7 @@ describe('regression and graded patch quality (issue #267)', () => {
   });
 });
 
-describe('computeSignals (issue #53)', () => {
+describe('computeSignals', () => {
   it('derives tokens/cost/latency/tool/escalation counts from the trajectory', () => {
     const signals = computeSignals(
       trajectory({
@@ -232,7 +232,7 @@ describe('computeSignals (issue #53)', () => {
   });
 });
 
-describe('gatesPass exact veto (issue #70)', () => {
+describe('gatesPass exact veto', () => {
   it('passes when every gate is pass or unknown', () => {
     expect(
       gatesPass({
@@ -252,7 +252,7 @@ describe('gatesPass exact veto (issue #70)', () => {
     ).toBe(true);
   });
 
-  it('vetoes on exactly one red gate — each gate alone (issue #70)', () => {
+  it('vetoes on exactly one red gate — each gate alone', () => {
     const gates = ['tests', 'build', 'lint', 'typecheck'] as const;
     for (const red of gates) {
       const signals: Record<(typeof gates)[number], 'pass' | 'fail'> = {
@@ -266,7 +266,7 @@ describe('gatesPass exact veto (issue #70)', () => {
     }
   });
 
-  it('treats non pass/fail label values as unknown, never as pass (issue #70)', () => {
+  it('treats non pass/fail label values as unknown, never as pass', () => {
     const odd = computeSignals(
       trajectory({
         eval: {
@@ -288,7 +288,7 @@ describe('gatesPass exact veto (issue #70)', () => {
     ).toBe(true);
   });
 
-  it('derives exact counts from the trajectory (issue #70)', () => {
+  it('derives exact counts from the trajectory', () => {
     const signals = computeSignals(trajectory());
     expect(signals.tokens).toBe(150);
     expect(signals.costUsd).toBe(0.02);

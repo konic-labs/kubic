@@ -1,14 +1,13 @@
-// Enterprise policy engine (issue #57; §58 TOML surface, precedence).
-// Enterprise is the highest non-overridable layer: a lower layer can never
-// unset or narrow an enterprise denial, and anything not explicitly allowed
-// is denied (deny-by-default is the implicit 8th level below agent).
-// Read-only wrt agents/policy (#15), roles resolver (#43), ScopedToken
-// (#38), doctor (#29): no logic is duplicated from them and none is
-// modified here — this module owns only the enterprise overlay and its
-// evaluation. Faux-only, zero network; no node:fs (FileBridge owns I/O).
+// Enterprise policy engine (TOML surface, precedence). Enterprise is the
+// highest non-overridable layer: a lower layer can never unset or narrow an
+// enterprise denial, and anything not explicitly allowed is denied
+// (deny-by-default is the implicit 8th level below agent). Read-only wrt
+// agents/policy, roles resolver, ScopedToken, doctor: no logic is duplicated
+// from them and none is modified here — this module owns only the enterprise
+// overlay and its evaluation. Faux-only, zero network; no node:fs (FileBridge
+// owns I/O).
 
 import type { KubicConfig } from '../config/config.js';
-import { containsSecretShape } from './secret-shapes.js';
 
 export const POLICY_LAYERS = [
   'enterprise',
@@ -53,7 +52,7 @@ export interface ModelsPolicy {
   ids?: string[];
   thinking?: string;
   /**
-   * §58 `allowed_models` (issue #288): provider-qualified patterns
+   * `allowed_models`: provider-qualified patterns
    * (`provider/id`, `*` wildcard) or bare model ids. Kept beside the exact
    * `providers`/`ids` lists so both vocabularies meet in one policy.
    */
@@ -67,15 +66,10 @@ export interface FilesystemPolicy {
   roots?: string[];
 }
 
-export interface CredentialsPolicy {
-  requireCredentialBroker?: boolean;
-  denyLocalCredentials?: boolean;
-}
-
 export interface DataPolicy {
   retentionDays?: number;
   redactSecrets?: boolean;
-  /** §58 `data_policy` (issue #288): carried, reported, not enforced yet. */
+  /** `data_policy`: carried, reported, not enforced yet. */
   policy?: string;
 }
 
@@ -84,13 +78,8 @@ export type LoggingLevel = 'error' | 'warn' | 'info' | 'debug';
 export interface LoggingPolicy {
   level?: LoggingLevel;
   destinations?: string[];
-  /** §58 `logging_policy` (issue #288): carried, reported, not enforced yet. */
+  /** `logging_policy`: carried, reported, not enforced yet. */
   policy?: string;
-}
-
-export interface AgentPolicy {
-  maxWorkers?: number;
-  maxCostUsd?: number;
 }
 
 export type AuditSinkKind = 'syslog' | 'file' | 'memory';
@@ -109,10 +98,8 @@ export interface LayerPolicy {
   network?: NetworkPolicy;
   models?: ModelsPolicy;
   filesystem?: FilesystemPolicy;
-  credentials?: CredentialsPolicy;
   data?: DataPolicy;
   logging?: LoggingPolicy;
-  agent?: AgentPolicy;
   audit?: AuditPolicy;
 }
 
@@ -141,10 +128,6 @@ export interface EffectivePolicy {
     level: FilesystemLevel | undefined;
     roots: string[] | undefined;
   };
-  credentials: {
-    requireCredentialBroker: boolean;
-    denyLocalCredentials: boolean;
-  };
   data: {
     retentionDays: number | undefined;
     redactSecrets: boolean | undefined;
@@ -155,7 +138,6 @@ export interface EffectivePolicy {
     destinations: string[] | undefined;
     policy: string | undefined;
   };
-  agent: { maxWorkers: number | undefined; maxCostUsd: number | undefined };
   audit: { sinks: AuditSinkSpec[] };
 }
 
@@ -238,7 +220,7 @@ const LOGGING_LEVELS: readonly string[] = ['error', 'warn', 'info', 'debug'];
 
 const SINK_KINDS: readonly string[] = ['syslog', 'file', 'memory'];
 
-// §58 `allowed_models` patterns (issue #288): `provider/id`, `provider/*`,
+// `allowed_models` patterns: `provider/id`, `provider/*`,
 // a bare id, or `*` globs. Each segment is non-empty and there is at most
 // one slash, so a pattern can never be a typo that matches nothing while
 // looking like an allow.
@@ -472,32 +454,6 @@ function validateLayerPolicy(raw: unknown, layer: string): LayerPolicy {
       roots: stringArray(filesystem.roots, `${layer}.filesystem.roots`),
     };
   }
-  const credentials = raw.credentials;
-  if (credentials !== undefined) {
-    if (!isRecord(credentials)) {
-      throw new PolicyError(
-        `policy layer '${layer}': 'credentials' must be a table`,
-      );
-    }
-    checkNoUnknown(
-      credentials,
-      new Set(['requireCredentialBroker', 'denyLocalCredentials']),
-      'credentials',
-      layer,
-    );
-    out.credentials = {
-      requireCredentialBroker: optBooleanLeaf(
-        credentials,
-        'requireCredentialBroker',
-        `${layer}.credentials.requireCredentialBroker`,
-      ),
-      denyLocalCredentials: optBooleanLeaf(
-        credentials,
-        'denyLocalCredentials',
-        `${layer}.credentials.denyLocalCredentials`,
-      ),
-    };
-  }
   const data = raw.data;
   if (data !== undefined) {
     if (!isRecord(data)) {
@@ -572,30 +528,6 @@ function validateLayerPolicy(raw: unknown, layer: string): LayerPolicy {
       ...(loggingPolicy === undefined ? {} : { policy: loggingPolicy }),
     };
   }
-  const agent = raw.agent;
-  if (agent !== undefined) {
-    if (!isRecord(agent)) {
-      throw new PolicyError(`policy layer '${layer}': 'agent' must be a table`);
-    }
-    checkNoUnknown(
-      agent,
-      new Set(['maxWorkers', 'maxCostUsd']),
-      'agent',
-      layer,
-    );
-    out.agent = {
-      maxWorkers: optNumberLeaf(
-        agent,
-        'maxWorkers',
-        `${layer}.agent.maxWorkers`,
-      ),
-      maxCostUsd: optNumberLeaf(
-        agent,
-        'maxCostUsd',
-        `${layer}.agent.maxCostUsd`,
-      ),
-    };
-  }
   const audit = raw.audit;
   if (audit !== undefined) {
     if (!isRecord(audit)) {
@@ -635,16 +567,12 @@ export function resolveEffectivePolicy(
   let modelAllowed: string[] | undefined;
   let fsLevel: FilesystemLevel | undefined;
   let fsRoots: string[] | undefined;
-  let requireBroker: boolean | undefined;
-  let denyLocal: boolean | undefined;
   let retentionDays: number | undefined;
   let redactSecrets: boolean | undefined;
   let dataPolicy: string | undefined;
   let logLevel: LoggingLevel | undefined;
   let logDestinations: string[] | undefined;
   let loggingPolicy: string | undefined;
-  let maxWorkers: number | undefined;
-  let maxCostUsd: number | undefined;
   let sinks: AuditSinkSpec[] | undefined;
   const take = <T>(
     layer: string,
@@ -758,24 +686,6 @@ export function resolveEffectivePolicy(
     );
     take(
       input.layer,
-      'credentials.requireCredentialBroker',
-      parsed.credentials?.requireCredentialBroker,
-      () => requireBroker,
-      (v) => {
-        requireBroker = v;
-      },
-    );
-    take(
-      input.layer,
-      'credentials.denyLocalCredentials',
-      parsed.credentials?.denyLocalCredentials,
-      () => denyLocal,
-      (v) => {
-        denyLocal = v;
-      },
-    );
-    take(
-      input.layer,
       'data.retentionDays',
       parsed.data?.retentionDays,
       () => retentionDays,
@@ -830,24 +740,6 @@ export function resolveEffectivePolicy(
     );
     take(
       input.layer,
-      'agent.maxWorkers',
-      parsed.agent?.maxWorkers,
-      () => maxWorkers,
-      (v) => {
-        maxWorkers = v;
-      },
-    );
-    take(
-      input.layer,
-      'agent.maxCostUsd',
-      parsed.agent?.maxCostUsd,
-      () => maxCostUsd,
-      (v) => {
-        maxCostUsd = v;
-      },
-    );
-    take(
-      input.layer,
       'audit.sinks',
       parsed.audit?.sinks,
       () => sinks,
@@ -863,17 +755,12 @@ export function resolveEffectivePolicy(
     network: { mode, domains },
     models: { providers, ids: modelIds, thinking, allowed: modelAllowed },
     filesystem: { level: fsLevel, roots: fsRoots },
-    credentials: {
-      requireCredentialBroker: requireBroker ?? false,
-      denyLocalCredentials: denyLocal ?? false,
-    },
     data: { retentionDays, redactSecrets, policy: dataPolicy },
     logging: {
       level: logLevel,
       destinations: logDestinations,
       policy: loggingPolicy,
     },
-    agent: { maxWorkers, maxCostUsd },
     audit: { sinks: sinks ?? [] },
   };
   for (const input of ordered) {
@@ -890,7 +777,7 @@ export function resolveEffectivePolicy(
   return { policy: effective, overriddenAttempts };
 }
 
-// §58 → engine vocabulary (issue #288): the `[policy]` section's flat keys
+// → engine vocabulary: the `[policy]` section's flat keys
 // become the LayerPolicy leaves `resolveEffectivePolicy` merges. The two
 // spellings that differ are reconciled here, in one place:
 //   network_policy = "proxy"           → network.mode = 'allowlist'
@@ -960,31 +847,8 @@ export function layerPolicyFromConfig(config: KubicConfig): LayerPolicy {
     }
     out.filesystem = { level };
   }
-  if (
-    p.requireCredentialBroker !== undefined ||
-    p.denyLocalCredentials !== undefined
-  ) {
-    out.credentials = {
-      ...(p.requireCredentialBroker === undefined
-        ? {}
-        : { requireCredentialBroker: p.requireCredentialBroker }),
-      ...(p.denyLocalCredentials === undefined
-        ? {}
-        : { denyLocalCredentials: p.denyLocalCredentials }),
-    };
-  }
   if (p.dataPolicy !== undefined) out.data = { policy: p.dataPolicy };
   if (p.loggingPolicy !== undefined) out.logging = { policy: p.loggingPolicy };
-  if (p.agentPolicy !== undefined) {
-    out.agent = {
-      ...(p.agentPolicy.maxAgents === undefined
-        ? {}
-        : { maxWorkers: p.agentPolicy.maxAgents }),
-      ...(p.agentPolicy.maxCostUsd === undefined
-        ? {}
-        : { maxCostUsd: p.agentPolicy.maxCostUsd }),
-    };
-  }
   return out;
 }
 
@@ -1004,7 +868,7 @@ export function isToolAllowed(policy: EffectivePolicy, tool: string): boolean {
   );
 }
 
-// The LANE's enterprise gate (issue #288): the effective policy can only
+// The LANE's enterprise gate: the effective policy can only
 // narrow what the lane's classes/roles already allow. It denies a named
 // denied tool always, and — when the enterprise layer configured an allow
 // list — anything outside it; with NO allow list configured the enterprise
@@ -1029,7 +893,7 @@ export function isToolAllowedByEnterprise(
 
 // A denied tool is not re-enableable by project, role, or model: any grant
 // path funnels through this gate and the enterprise denial holds. The
-// predicate is the LANE's (`isToolAllowedByEnterprise`, issue #288): a deny
+// predicate is the LANE's: a deny
 // list narrows and an absent allow list says nothing about a tool — the
 // engine's deny-by-default reading (`isToolAllowed`) would refuse every role
 // under a deny-only policy while the lane gate still admits its tools.
@@ -1063,7 +927,7 @@ export function isNetworkAllowed(
   return policy.network.domains?.includes(host) ?? false;
 }
 
-// §58 `allowed_models` matching (issue #288): `*` globs inside an id segment
+// `allowed_models` matching: `*` globs inside an id segment
 // (or a whole segment), `provider/id`, or a bare id that matches across
 // providers. A pattern with a provider segment only matches that provider —
 // so `faux/*` can never widen to `other/*`.
@@ -1110,8 +974,8 @@ export function hasModelPolicy(policy: EffectivePolicy): boolean {
 }
 
 // Deny-by-default for models: an unlisted provider is never allowed; an
-// unlisted model id is allowed only when no id allowlist is set. §58
-// `allowed` patterns (issue #288) add provider-qualified matches; every
+// unlisted model id is allowed only when no id allowlist is set.
+// `allowed` patterns add provider-qualified matches; every
 // configured list applies (intersection), never widens.
 export function isProviderAllowed(
   policy: EffectivePolicy,
@@ -1153,134 +1017,11 @@ export interface BrokerSecret {
   value: string;
 }
 
-export interface BrokeredEnv {
-  env: Record<string, string>;
-  // Every listed secret replaced in a value is recorded, in order: two
-  // secrets sharing one value both appear here, never just the last one.
-  sentinels: Record<string, string[]>;
-}
-
-// The only policy input brokering reads. Kept structurally narrow (issue
-// #200) so a caller that resolved one worker's credentials can broker them
-// without constructing a whole EnterprisePolicy — an EffectivePolicy still
-// satisfies it exactly.
-export interface CredentialBrokerPolicy {
-  readonly credentials: { readonly requireCredentialBroker: boolean };
-}
-
-// Credential broker (§36): when require_credential_broker holds, live
-// secret values never reach worker env — every occurrence is replaced by a
-// `broker:<ref>` sentinel that names the ref without carrying material.
-// Without the broker flag the env passes through untouched. Shape backstop:
-// any unlisted secret-shaped value still present after replacement is
-// refused loudly — an empty secrets list never means passthrough.
-// Residual limit (by design): unlisted values with no secret shape pass
-// through untouched — every live secret must be listed in `secrets`.
-export function buildBrokeredWorkerEnv(
-  env: Record<string, string>,
-  secrets: BrokerSecret[],
-  policy: CredentialBrokerPolicy,
-): BrokeredEnv {
-  if (!policy.credentials.requireCredentialBroker) {
-    return { env: { ...env }, sentinels: {} };
-  }
-  const out: Record<string, string> = {};
-  const sentinels: Record<string, string[]> = {};
-  for (const [key, value] of Object.entries(env)) {
-    let replaced = value;
-    for (const secret of secrets) {
-      if (secret.value === '') continue;
-      if (replaced.includes(secret.value)) {
-        replaced = replaced.split(secret.value).join(`broker:${secret.ref}`);
-        const seen = sentinels[key] ?? [];
-        const marker = `broker:${secret.ref}`;
-        if (!seen.includes(marker)) seen.push(marker);
-        sentinels[key] = seen;
-      }
-    }
-    if (containsSecretShape(replaced)) {
-      throw new PolicyDeniedError(
-        'worker env contains unlisted secret-shaped material: broker violation',
-      );
-    }
-    out[key] = replaced;
-  }
-  return { env: out, sentinels };
-}
-
-// Loud verifier for brokered payloads: any live secret material present
-// throws, including unlisted secret-shaped material. The message never
-// echoes the secret itself.
-export function assertNoSecretMaterial(
-  value: unknown,
-  secrets: string[],
-): void {
-  const text = JSON.stringify(value);
-  for (const secret of secrets) {
-    if (secret === '') continue;
-    if (text.includes(secret)) {
-      throw new PolicyDeniedError(
-        'worker env/dump contains secret material: broker violation',
-      );
-    }
-  }
-  if (containsSecretShape(text)) {
-    throw new PolicyDeniedError(
-      'worker env/dump contains secret-shaped material: broker violation',
-    );
-  }
-}
-
-const LOCAL_CREDENTIAL_KEYS: readonly string[] = [
-  'AWS_ACCESS_KEY_ID',
-  'AWS_SECRET_ACCESS_KEY',
-  'GITHUB_TOKEN',
-  'GH_TOKEN',
-  'GITLAB_TOKEN',
-  'NPM_TOKEN',
-  'OPENAI_API_KEY',
-  'ANTHROPIC_API_KEY',
-];
-
-function isLocalCredentialKey(key: string): boolean {
-  if ((LOCAL_CREDENTIAL_KEYS as readonly string[]).includes(key)) return true;
-  return (
-    key.endsWith('_TOKEN') ||
-    key.endsWith('_SECRET') ||
-    key.endsWith('_PRIVATE_KEY')
-  );
-}
-
-// deny_local_credentials: local credential keys must not appear in worker
-// env at all (brokered refs travel via the broker, never as env values).
-// Values are scanned too: a secret-shaped value under an innocuous key is
-// refused alongside sensitive key names. Only the key name is reported,
-// never any value. Residual limit (by design): shape scanning is value-only
-// — unknown key names carrying non-shaped values are not inspected.
-export function assertNoLocalCredentials(
-  env: Record<string, string>,
-  policy: EffectivePolicy,
-): void {
-  if (!policy.credentials.denyLocalCredentials) return;
-  for (const [key, value] of Object.entries(env)) {
-    if (isLocalCredentialKey(key)) {
-      throw new PolicyDeniedError(
-        `local credential key '${key}' refused in worker env: deny_local_credentials holds`,
-      );
-    }
-    if (containsSecretShape(value)) {
-      throw new PolicyDeniedError(
-        `secret-shaped value for '${key}' refused in worker env: deny_local_credentials holds`,
-      );
-    }
-  }
-}
-
 export interface EnterpriseDoctorEnv {
   syslogAvailable: boolean;
 }
 
-// Unenforceable policy is never silent (§50): every check below is always
+// Unenforceable policy is never silent: every check below is always
 // emitted — enforceable leaves report pass, unenforceable ones report fail
 // with the reason. Check ids are enterprise-scoped so they never collide
 // with the host doctor or honest-limits checks (read-only, unmodified).

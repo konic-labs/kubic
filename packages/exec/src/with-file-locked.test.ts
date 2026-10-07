@@ -1,4 +1,4 @@
-// The lock primitive's failure path (issue #337 review fix 1).
+// The lock primitive's failure path.
 //
 // `withFileLocked` creates the lock with O_EXCL and then writes its pid. When
 // that write fails (ENOSPC/EIO on a full or failing disk) the fd was left open
@@ -6,9 +6,6 @@
 // run, and a lock nobody can take for the whole stale window. The write is
 // guarded now — fd closed, lock removed, error rethrown — and the next attempt
 // succeeds.
-//
-// RED: the pid write sits between the create and the try/finally, so a throw
-// leaves both the descriptor and the lock file.
 import {
   existsSync,
   mkdtempSync,
@@ -60,7 +57,7 @@ function lockPath(): string {
   return join(root, 'sub', 'lock.json');
 }
 
-describe('withFileLocked failure path (issue #337 review)', () => {
+describe('withFileLocked failure path', () => {
   it('closes the descriptor and removes the lock when the pid write fails', () => {
     const path = lockPath();
     hooks.failWrite = true;

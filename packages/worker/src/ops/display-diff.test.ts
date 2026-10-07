@@ -1,4 +1,4 @@
-// The display diff of a file change (EPIC N, issue #456): Pi's display form
+// The display diff of a file change: Pi's display form
 // with line numbers, context and gap rows, counted.
 import { describe, expect, it } from 'vitest';
 import {
@@ -10,7 +10,7 @@ import {
 const lines = (count: number, at = 1): string[] =>
   Array.from({ length: count }, (_, i) => `line ${i + at}`);
 
-describe('display diff (issue #456)', () => {
+describe('display diff', () => {
   it('shows one replaced line with three lines of context on each side', () => {
     const before = [...lines(9), '  existing.qty = qty;', ...lines(5, 11)].join(
       '\n',

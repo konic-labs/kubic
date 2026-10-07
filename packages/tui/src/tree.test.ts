@@ -1,4 +1,4 @@
-// Slice A: AgentTreeView one-node + ToolOutput collapsing (issue #24).
+// AgentTreeView one-node + ToolOutput collapsing.
 // Solo-only: root + tool children, glyphs ✓/●/◌, keyboard+click toggle,
 // truncation. Headless snapshots render directly (no VirtualTerminal in
 // Pi 0.85.1) like layout.test.ts.
@@ -8,12 +8,10 @@ import {
   applyTreeSnapshot,
   collapsedSummary,
   createTreeState,
-  renderAgentInspector,
   renderTreeLines,
   rootGlyph,
   type TreeLaneSnapshot,
   type TreeToolSnapshot,
-  type TreeWorker,
   toggleTree,
   toolGlyph,
 } from './tree.js';
@@ -21,7 +19,7 @@ import { visibleWidth } from './tui-boundary.js';
 
 const ESC = String.fromCharCode(27);
 
-// The production lane input (#333 §66): the host projector folds the events
+// The production lane input: the host projector folds the events
 // and hands the tree the lane's own state — these are the shapes it passes.
 function tool(
   id: string,
@@ -45,7 +43,7 @@ function lane(
   return { status, tools, ...(usage === undefined ? {} : { usage }) };
 }
 
-describe('tree glyphs (issue #24; §49.1)', () => {
+describe('tree glyphs', () => {
   it('maps root status to ◌/●/✓', () => {
     expect(rootGlyph('idle')).toBe('◌');
     expect(rootGlyph('running')).toBe('●');
@@ -57,13 +55,13 @@ describe('tree glyphs (issue #24; §49.1)', () => {
     expect(toolGlyph('done')).toBe('✓');
   });
 
-  it('maps an errored finish to ✗ (issue #345)', () => {
+  it('maps an errored finish to ✗', () => {
     expect(toolGlyph('done', true)).toBe('✗');
     expect(toolGlyph('running', true)).toBe('●');
   });
 });
 
-describe('tree lane feed (issue #24; §18)', () => {
+describe('tree lane feed', () => {
   it('shows ● root with live children on start/finish', () => {
     const state = createTreeState();
     expect(renderTreeLines(state, 100)[0]).toBe('◌ solo');
@@ -92,7 +90,7 @@ describe('tree lane feed (issue #24; §18)', () => {
   });
 });
 
-describe('tree collapse (issue #24; §80)', () => {
+describe('tree collapse', () => {
   it('collapses to a summary vs expanded per-call lines', () => {
     const state = createTreeState();
     applyTreeSnapshot(
@@ -118,7 +116,7 @@ describe('tree collapse (issue #24; §80)', () => {
   });
 });
 
-describe('tree toggle input (issue #24; §16.7)', () => {
+describe('tree toggle input', () => {
   it('toggles on key and returns focus to the editor', () => {
     const state = createTreeState();
     let editorFocus = 0;
@@ -175,7 +173,7 @@ describe('tree toggle input (issue #24; §16.7)', () => {
   });
 });
 
-describe('tree snapshots (issue #24; headless, no VirtualTerminal)', () => {
+describe('tree snapshots (headless, no VirtualTerminal)', () => {
   function populated(): AgentTreeView {
     const state = createTreeState();
     applyTreeSnapshot(
@@ -230,7 +228,7 @@ function toolResult(text: string, isError = false): Record<string, unknown> {
   };
 }
 
-describe('tree tool detail (issue #345; §18, §49.1)', () => {
+describe('tree tool detail', () => {
   it('renders a running bash call with its command, truncated to width', () => {
     const state = createTreeState();
     applyTreeSnapshot(
@@ -256,7 +254,7 @@ describe('tree tool detail (issue #345; §18, §49.1)', () => {
     );
     expect(renderTreeLines(state, 100)[1]).toBe('  ● read src/tree.ts');
     // A read result that happens to look like shell output must not become an
-    // outcome: `17 passed` inside a file is not a test report (review #345).
+    // outcome: `17 passed` inside a file is not a test report.
     applyTreeSnapshot(
       state,
       lane('running', [
@@ -322,7 +320,7 @@ describe('tree tool detail (issue #345; §18, §49.1)', () => {
   });
 
   it('shows $cost and in/out tokens on the root row after usage', () => {
-    // The tree renders the totals the state carries (#333 §66: the projector
+    // The tree renders the totals the state carries (the projector
     // sums the ledger and the usage rows; the tree never folds a raw row).
     const state = createTreeState();
     applyTreeSnapshot(state, lane('running', []));
@@ -425,7 +423,7 @@ describe('tree tool detail (issue #345; §18, §49.1)', () => {
     expect(rendered).not.toContain(`${ESC}[31m`);
     expect(rendered).not.toContain('[2J');
     expect(rendered).not.toContain('[31m');
-    // A carriage return is an OVERWRITE, not a separator (issue #299): the
+    // A carriage return is an OVERWRITE, not a separator: the
     // terminal shows what came after it, and so does the tree.
     applyTreeSnapshot(
       state,
@@ -445,7 +443,7 @@ describe('tree tool detail (issue #345; §18, §49.1)', () => {
   });
 });
 
-describe('tree mutation hardening (issue #68)', () => {
+describe('tree mutation hardening', () => {
   it('ignores non-toggle keys without toggling or refocusing', () => {
     const state = createTreeState();
     let editorFocus = 0;
@@ -487,89 +485,5 @@ describe('tree mutation hardening (issue #68)', () => {
     expect(
       new AgentTreeView(undefined, { label: 'lane-7' }).render(100),
     ).toEqual(['◌ lane-7']);
-  });
-});
-
-// Issue #342 (§18, §16.5): orchestrator mode adds per-agent state to the same
-// view — the manager is the root and every worker is a node with its role,
-// status, generation, worktree and spend. A solo state renders as before.
-describe('orchestrator agent tree (issue #342)', () => {
-  const twoWorkers = () => {
-    const state = createTreeState('orchestrator');
-    applyTreeSnapshot(state, {
-      status: 'running',
-      tools: [],
-      workers: [
-        {
-          workerId: 'alpha',
-          role: 'implementer',
-          status: 'running',
-          generation: 1,
-          worktree: '/repo/.kubic/wt/sess-o1/alpha',
-        },
-        {
-          workerId: 'beta',
-          role: 'reviewer',
-          status: 'completed',
-          generation: 2,
-          worktree: '/repo/.kubic/wt/sess-o1/beta',
-          model: 'faux/faux-1',
-          inputTokens: 1200,
-          outputTokens: 300,
-          costUsd: 0.0123,
-        },
-      ],
-    });
-    return state;
-  };
-
-  it('renders the manager and two workers with worktree and generation columns (headless snapshot)', () => {
-    expect(renderTreeLines(twoWorkers(), 100)).toMatchInlineSnapshot(`
-      [
-        "● orchestrator",
-        "  ● alpha  implementer  running  g1  wt:alpha",
-        "  ✓ beta  reviewer  completed  g2  wt:beta  $0.01 1.2k/0.3k",
-      ]
-    `);
-  });
-
-  it('a worker status change updates its node on the next render', () => {
-    const state = twoWorkers();
-    applyTreeSnapshot(state, {
-      status: 'running',
-      tools: [],
-      workers: [
-        {
-          workerId: 'alpha',
-          role: 'implementer',
-          status: 'failed',
-          generation: 1,
-        },
-      ],
-    });
-    const lines = renderTreeLines(state, 100);
-    expect(lines[1]).toBe('  ✗ alpha  implementer  failed  g1');
-    expect(lines).toHaveLength(2);
-  });
-
-  it('a solo state (no workers) renders exactly as before', () => {
-    const state = createTreeState();
-    applyTreeSnapshot(state, { status: 'idle', tools: [] });
-    expect(renderTreeLines(state, 80)).toEqual(['◌ solo']);
-  });
-
-  it('the AgentInspector shows role, worktree, model and cost (headless snapshot)', () => {
-    const [, beta] = twoWorkers().workers;
-    expect(renderAgentInspector(beta as TreeWorker)).toMatchInlineSnapshot(`
-      [
-        "agent beta",
-        "role: reviewer",
-        "status: completed (generation 2)",
-        "worktree: /repo/.kubic/wt/sess-o1/beta",
-        "model: faux/faux-1",
-        "tokens: 1200 in / 300 out",
-        "cost: $0.0123",
-      ]
-    `);
   });
 });

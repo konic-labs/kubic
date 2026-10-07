@@ -1,4 +1,4 @@
-// npm test scope guard (issue #376).
+// npm test scope guard.
 //
 // `docs/contributing.md` promises `npm test` runs every `scripts/*.test.mjs`
 // via `node --test`. The root `package.json` used to list the files by hand,
@@ -25,7 +25,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 // The exact pattern the `test` script passes to `node --test`: one `*`
 // never crosses `/`, and every gate file sits directly in `scripts/` — a
 // nested `scripts/sub/x.test.mjs` would run in NEITHER `npm test` nor CI,
-// so the disk scan below descends and the gate fails on it (issue #421).
+// so the disk scan below descends and the gate fails on it.
 const GATE_GLOB = 'scripts/*.test.mjs';
 const GATE_GLOB_RE = /^scripts\/[^/]+\.test\.mjs$/;
 
@@ -68,7 +68,7 @@ function scopeProblems(script, files) {
   return problems;
 }
 
-describe('npm test runs every gate (issue #376)', () => {
+describe('npm test runs every gate', () => {
   it('the glob owns the set: every gate on disk runs under npm test', () => {
     const files = gateTestsOnDisk();
     // The suite ships 10+ gates; an empty or collapsed scripts/ dir must
@@ -108,7 +108,7 @@ describe('npm test runs every gate (issue #376)', () => {
     );
   });
 
-  it('the disk scan descends into subdirectories (issue #421)', () => {
+  it('the disk scan descends into subdirectories', () => {
     const dir = mkdtempSync(join(tmpdir(), 'npm-test-scope-'));
     try {
       mkdirSync(join(dir, 'scripts', 'sub'), { recursive: true });

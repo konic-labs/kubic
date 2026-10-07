@@ -1,6 +1,6 @@
-// SFT exporter (issue #54; design §74).
+// SFT exporter.
 // One supervised record per trajectory: prompt + completion with the
-// embedded provenance, §52 category, and reference-verifier verdict.
+// embedded provenance, failure category, and reference-verifier verdict.
 // Fail-closed both ways: build throws on stripped input; validate
 // returns errors (never warnings) for stripped wire records.
 import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
@@ -75,7 +75,7 @@ export function validateSftRecord(input: unknown): SftValidation {
 
 export function checkProvenance(value: unknown): string[] {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return ['provenance is required: proc/gen/worktree/model/base (§74)'];
+    return ['provenance is required: proc/gen/worktree/model/base'];
   }
   const candidate = value as Record<string, unknown>;
   const errors: string[] = [];
@@ -101,19 +101,19 @@ export function checkFailureCategory(
   candidate: Record<string, unknown>,
 ): string[] {
   if (!('failureCategory' in candidate)) {
-    return ['failureCategory is required: embed the §52 category (§74)'];
+    return ['failureCategory is required: embed the failure category'];
   }
   const category = candidate.failureCategory;
   if (category === null) return [];
   if (typeof category !== 'string' || !isTrajectoryFailureCode(category)) {
-    return [`unknown §52 failure category ${JSON.stringify(category)}`];
+    return [`unknown failure category ${JSON.stringify(category)}`];
   }
   return [];
 }
 
 export function checkVerifier(value: unknown): string[] {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return ['verifier is required: wire the reference verifier (§74)'];
+    return ['verifier is required: wire the reference verifier'];
   }
   const candidate = value as Record<string, unknown>;
   if (candidate.verdict !== 'pass' && candidate.verdict !== 'fail') {

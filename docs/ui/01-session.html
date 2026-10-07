@@ -8,14 +8,14 @@
 </head>
 <body>
 <div class="page">
-  <nav class="nav"><a href="index.html">← system</a><a class="on" href="01-session.html">01 session</a><a href="02-approval.html">02 approval</a><a href="03-palette.html">03 palette</a><a href="04-orchestrator.html">04 orchestrator</a><a href="05-welcome.html">05 first launch</a><a href="06-cli.html">06 cli</a></nav>
+  <nav class="nav"><a href="index.html">← system</a><a class="on" href="01-session.html">01 session</a><a href="02-approval.html">02 approval</a><a href="03-palette.html">03 palette</a><a href="05-welcome.html">05 first launch</a><a href="06-cli.html">06 cli</a></nav>
   <h1><b>01</b> Solo session</h1>
   <p class="sub">A finished turn: run tests → read → think → edit → re-run. 120 × 40 terminal, dark theme. Second frame: the same screen mid-turn.</p>
 
   <div class="win"><div class="bar"><i></i><i></i><i></i><span>kubic — ~/Desktop/kubic-playground — 120×40</span></div>
   <div class="term fixed" style="--rows:40">
     <!-- A: header -->
-    <div class="l b1"><span class="acc bd"> ■ KUBIC </span><span class="f3"> │ </span><span class="f0">kubic-playground</span><span class="f2">  ⎇ </span><span class="f1">main</span><span class="warn"> ●1</span><span class="sp"></span><span class="f2">session </span><span class="f1">cart-fix</span><span class="f3"> │ </span><span class="inv-f bd"> SOLO </span><span class="f2"> approvals </span><span class="ok">on</span><span class="f3"> │ </span><span class="f2">14:02 </span></div>
+    <div class="l b1"><span class="acc bd"> ■ KUBIC </span><span class="f3"> │ </span><span class="f0">kubic-playground</span><span class="f2">  ⎇ </span><span class="f1">main</span><span class="warn"> ●1</span><span class="sp"></span><span class="f2">session </span><span class="f1">cart-fix</span><span class="f3"> │ </span><span class="f2">approvals </span><span class="ok">on</span><span class="f3"> │ </span><span class="f2">14:02 </span></div>
     <div class="l"> </div>
     <!-- B: user turn -->
     <div class="l b2"><span class="acc"> ▌ </span><span class="f0 sb">run npm test and fix the failing test</span><span class="sp"></span><span class="f2">you · 14:01:52 </span></div>
@@ -82,7 +82,7 @@
 
   <h2>Notes — refer to these as 01-A, 01-B …</h2>
   <ul class="notes">
-    <li><b>01-A</b>Header: identity, project, branch (with a dirty-files dot), session name, mode badge, approval state. The UUID moves to <code>/session</code>.</li>
+    <li><b>01-A</b>Header: identity, project, branch (with a dirty-files dot), session name, approval state. The UUID moves to <code>/session</code>.</li>
     <li><b>01-B</b>Your prompt is a raised surface with the red edge, so turns are easy to find when scrolling.</li>
     <li><b>01-C</b>Assistant prose gets a quiet ◆ marker and full-contrast text. No colour on prose.</li>
     <li><b>01-D</b>Tool card: state dot, tool, target, then exit + duration on the right. Body is the useful slice only (no <code>--- stdout ---</code>, no temp-file paths). Footer says how much is hidden and how to expand or copy.</li>

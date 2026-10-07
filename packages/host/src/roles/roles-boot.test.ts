@@ -1,4 +1,4 @@
-// Role documents resolve at the project root (issue #229; §35.1): a
+// Role documents resolve at the project root: a
 // `kubic run --role` from a subdirectory finds the same
 // `<root>/.kubic/roles/*.md` as one from the root. In-memory bridge only:
 // zero network, zero paid tokens.
@@ -62,7 +62,7 @@ function roleDoc(name: string): string {
   return `---\nrole: ${name}\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# ${name}\n\n## Prompt\n\nDo ${name} things.\n`;
 }
 
-describe('role documents resolve at the project root (issue #229)', () => {
+describe('role documents resolve at the project root', () => {
   it('finds a root role document from a subdirectory via projectRoot', () => {
     const bridge = memBridge({
       '/repo/.kubic/roles/scout.md': roleDoc('scout'),
@@ -113,7 +113,7 @@ describe('role documents resolve at the project root (issue #229)', () => {
   });
 });
 
-describe('project role documents are trust-gated (issue #430, §33)', () => {
+describe('project role documents are trust-gated', () => {
   const files = {
     '/repo/.kubic/roles/scout.md':
       '---\nrole: scout\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# scout\n\n## Prompt\n\nDo scout things.\n',
@@ -191,7 +191,7 @@ describe('project role documents are trust-gated (issue #430, §33)', () => {
     expect(held[0]?.detail).toContain('withheld: untrusted project root');
   });
 });
-describe('one malformed document never blocks the other roles (issue #236)', () => {
+describe('one malformed document never blocks the other roles', () => {
   const files = {
     '/repo/.kubic/roles/a.md': roleDoc('a'),
     // No closing fence: unparseable, but role `a` must still resolve.
@@ -249,7 +249,7 @@ describe('one malformed document never blocks the other roles (issue #236)', () 
   });
 });
 
-describe('doctor judges roles under the same config layers as the run (issue #235)', () => {
+describe('doctor judges roles under the same config layers as the run', () => {
   const docX =
     '---\nrole: x\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n## Prompt\n\nDo x things.\n';
   const base = {
@@ -312,7 +312,7 @@ describe('doctor judges roles under the same config layers as the run (issue #23
   });
 });
 
-describe('the prompt comes from the file that declared the role (issue #293)', () => {
+describe('the prompt comes from the file that declared the role', () => {
   // roleDocPath is gone: selectRole carries the listed file's own text as
   // `markdown`, so the prompt can never be re-read from `<name>.md`.
   const reviewMd = `---\nrole: reviewer\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n## Prompt\n\nReview from review.md.\n`;
@@ -350,7 +350,7 @@ describe('the prompt comes from the file that declared the role (issue #293)', (
   });
 });
 
-describe('duplicate role names are refused by name (issue #236)', () => {
+describe('duplicate role names are refused by name', () => {
   const files = {
     '/repo/.kubic/roles/first.md': roleDoc('x'),
     '/repo/.kubic/roles/second.md': roleDoc('x'),
@@ -395,7 +395,7 @@ describe('duplicate role names are refused by name (issue #236)', () => {
     expect(selectRole({ ...input, role: 'ok' }).doc.name).toBe('ok');
   });
 });
-describe('rolePromptFor refuses instruction-less roles by name (issue #211)', () => {
+describe('rolePromptFor refuses instruction-less roles by name', () => {
   const frontmatter =
     '---\nrole: promptless\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# promptless\n\n';
 
@@ -448,7 +448,7 @@ describe('rolePromptFor refuses instruction-less roles by name (issue #211)', ()
   });
 });
 
-describe('global ~/.kubic/roles layer (issue #241)', () => {
+describe('global ~/.kubic/roles layer', () => {
   const HOME = '/home';
   const globalDoc = (name: string): Record<string, string> => ({
     [`${HOME}/.kubic/roles/${name}.md`]: roleDoc(name),
@@ -552,7 +552,7 @@ describe('global ~/.kubic/roles layer (issue #241)', () => {
   });
 
   it('a malformed global document is recorded, never aborting the load', () => {
-    // Same per-document rules as the repo layer (issue #236): the parse
+    // Same per-document rules as the repo layer: the parse
     // failure is recorded with its stem and path, the healthy global
     // role still resolves, selecting the bad stem refuses.
     const bridge = memBridge({
@@ -617,7 +617,7 @@ describe('global ~/.kubic/roles layer (issue #241)', () => {
   });
 });
 
-describe('selectRole unknown roles (issue #211)', () => {
+describe('selectRole unknown roles', () => {
   it('lists the loaded names in the refusal', () => {
     const bridge = memBridge({
       '/repo/.kubic/roles/scout.md': roleDoc('scout'),

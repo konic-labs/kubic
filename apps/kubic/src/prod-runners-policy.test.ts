@@ -1,5 +1,5 @@
-// The §58 enterprise policy and the model-pin semantics on the PRODUCTION
-// runners (issues #288, #294, #295, #227). Every case builds its deps through
+// The enterprise policy and the model-pin semantics on the PRODUCTION
+// runners. Every case builds its deps through
 // `createProdRunners` / `prodRunDeps` — the functions the binary calls — over
 // a real `loadRuntimeConfig`, never a hand-spread dep: the audit found that
 // tests which spread the deps themselves stay green when the production
@@ -20,11 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import {
-  createGitSandbox,
-  disposeAllGitSandboxes,
-  type GitSandbox,
-} from '../../../packages/exec/src/test-support/git-sandbox.js';
+import { disposeAllGitSandboxes } from '../../../packages/exec/src/test-support/git-sandbox.js';
 import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
 import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
 import { buildTrajectoryExport } from '../../../packages/trajectory/src/export.js';
@@ -57,7 +53,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  driver = undefined;
   disposeAllGitSandboxes();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -68,18 +63,9 @@ afterEach(() => {
 
 const ENTERPRISE = '/etc/kubic-test/enterprise.toml';
 
-// The test's git driver (issue #420): one injected sandbox per test, so
-// the repo setup and the production git the run shells share the scrubbed
-// view. Workspaces keep their own dirs; only the env is shared.
-let driver: GitSandbox | undefined;
-
-function git(cwd: string, args: string[]): void {
-  driver ??= createGitSandbox({ injectProcessEnv: true });
-  driver.git(args, { cwd });
-}
 const PROJECT = '/nonexistent-cwd/.kubic/config.toml';
 
-// Issue #430: the tests below load workspace role documents, so they run
+// The tests below load workspace role documents, so they run
 // under the trusted report — the `KUBIC_TRUST_PROJECT=1` equivalent. Trust
 // behavior itself stays pinned by the trust-store and skills suites.
 const TRUSTED = {
@@ -93,7 +79,7 @@ function cliConfig(
   options: {
     env?: Record<string, string>;
     cliModel?: { provider: string; id: string };
-    // Issue #430: role documents resolve under project trust — tests that
+    // Role documents resolve under project trust — tests that
     // load workspace role docs opt into the trusted report.
     trust?: CliConfigResult['trust'];
   } = {},
@@ -154,7 +140,7 @@ function providers(
   return models;
 }
 
-describe('prodRunDeps hands the headless runner every config seam (issues #230, #288, #295)', () => {
+describe('prodRunDeps hands the headless runner every config seam', () => {
   it('forwards the enterprise policy, the model pin, the approvals and the run projections', () => {
     const cfg = cliConfig({
       [ENTERPRISE]:
@@ -194,7 +180,7 @@ describe('prodRunDeps hands the headless runner every config seam (issues #230, 
   });
 });
 
-describe('`kubic run` through the prod runner enforces the config (issues #230, #288)', () => {
+describe('`kubic run` through the prod runner enforces the config', () => {
   beforeEach(() => {
     vi.stubEnv('KUBIC_PROVIDER', 'faux');
   });
@@ -238,11 +224,11 @@ describe('`kubic run` through the prod runner enforces the config (issues #230, 
   });
 });
 
-// Issue #183 (§29.4): a disableModelInvocation skill is reachable only
+// A disableModelInvocation skill is reachable only
 // through explicit invocation — `--invoke-skill` expands the skill content
 // against the booted (gated-visible, hidden included) skills and runs it
 // as the turn prompt; an unknown name fails the run closed.
-describe('explicit skill invocation reaches hidden skills (issue #183)', () => {
+describe('explicit skill invocation reaches hidden skills', () => {
   beforeEach(() => {
     vi.stubEnv('KUBIC_PROVIDER', 'faux');
   });
@@ -250,7 +236,7 @@ describe('explicit skill invocation reaches hidden skills (issue #183)', () => {
   function hiddenSkillWorkspace(): { workspace: string; marker: string } {
     const workspace = tmpRoot('kubic-prod-183-');
     const marker = join(workspace, 'invoked');
-    // Project skills load inside a repository (issue #189: the walk stops
+    // Project skills load inside a repository (the walk stops
     // at the git top level), so mark the workspace root.
     mkdirSync(join(workspace, '.git'), { recursive: true });
     mkdirSync(join(workspace, '.agents', 'skills', 'secret'), {
@@ -303,12 +289,10 @@ describe('explicit skill invocation reaches hidden skills (issue #183)', () => {
     expect(existsSync(marker)).toBe(false);
   });
 });
-// Issue #196 (§40.2/§41.1): the lane installs the most restrictive merge
+// The lane installs the most restrictive merge
 // of the config classes and the role's, and the role's approval obligations
-// challenge on the installed triggers — for `kubic run`, and for worker
-// children through the task resources (covered in
-// orchestrate-agent-task-prod.test.ts).
-describe('role classes and approval requires reach the installed policy (issue #196)', () => {
+// challenge on the installed triggers.
+describe('role classes and approval requires reach the installed policy', () => {
   beforeEach(() => {
     vi.stubEnv('KUBIC_PROVIDER', 'faux');
   });
@@ -418,7 +402,7 @@ describe('role classes and approval requires reach the installed policy (issue #
   });
 });
 
-describe('a frozen enterprise model pin announces the flag or env pin it overrides (issue #295)', () => {
+describe('a frozen enterprise model pin announces the flag or env pin it overrides', () => {
   const FROZEN = '[model]\nprovider = "corp"\nid = "approved"\n';
   const NOTE_CLI =
     'note: --model evil/other ignored: model pinned by enterprise policy (corp/approved)';
@@ -517,23 +501,9 @@ describe('a frozen enterprise model pin announces the flag or env pin it overrid
     expect(code).toBe(6);
     expect(errs.filter((line) => line.startsWith('note:'))).toEqual([NOTE_CLI]);
   });
-
-  it('kubic orchestrate: the note lands at boot, before the run is validated', async () => {
-    const { r, errs } = runners(tmpRoot());
-    // An invalid --agents id refuses fast (exit 2) before anything spawns.
-    const code = await r.orchestrate(
-      { prompt: 'x', agents: ['bad id!'] },
-      cliConfig(
-        { [ENTERPRISE]: FROZEN },
-        { cliModel: { provider: 'evil', id: 'other' } },
-      ),
-    );
-    expect(code).toBe(2);
-    expect(errs.filter((line) => line.startsWith('note:'))).toEqual([NOTE_CLI]);
-  });
 });
 
-describe('a model refusal names the real source of the pin (issues #227, #295)', () => {
+describe('a model refusal names the real source of the pin', () => {
   // A catalog whose `anthropic` provider exists but lacks the pinned id, so
   // the refusal is the "unknown model" one — no network, no key.
   const catalog = (): MutableModels =>
@@ -634,7 +604,7 @@ describe('a model refusal names the real source of the pin (issues #227, #295)',
   });
 });
 
-describe('`kubic replay --tier live` re-executes under the enterprise policy (issue #288)', () => {
+describe('`kubic replay --tier live` re-executes under the enterprise policy', () => {
   function replayFixture(objective = 'say hi'): {
     trajectory: string;
     lockfile: string;
@@ -664,16 +634,16 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy (is
             agentId: 'agent-1',
             pid: null,
             generation: 1,
-            worktree: '/repo/.kubic/wt/agent-1',
+            worktree: '/repo',
             model: 'faux/echo',
           },
           environment: {
             capturedFrom: 'used',
-            cwd: '/repo/.kubic/wt/agent-1',
+            cwd: '/repo',
             env: {},
           },
           worktree: {
-            path: '/repo/.kubic/wt/agent-1',
+            path: '/repo',
             baseRevision: 'abc123',
             branch: null,
           },
@@ -735,7 +705,7 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy (is
     const { trajectory } = replayFixture();
     const roleConfig = join(tmpRoot('kubic-replay-role-'), 'role.json');
     writeFileSync(roleConfig, '{"role":"writer"}\n');
-    // Issue #272: the role config names the role; the document it pins
+    // The role config names the role; the document it pins
     // must exist in the re-execution's worktree (the mocked workspace).
     const workspace = tmpRoot();
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
@@ -759,7 +729,7 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy (is
     expect(code).toBe(6);
   });
 
-  it('applies the pinned role: a tool outside its allowlist is not registered (issue #272)', async () => {
+  it('applies the pinned role: a tool outside its allowlist is not registered', async () => {
     // The re-execution prompt asks for bash. Under a role whose tools are
     // [read] the bash tool is never registered, so the marker cannot be
     // created; under a role that allows bash it is. That is the difference
@@ -795,7 +765,7 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy (is
     }
   });
 
-  it('runs the re-execution in the pinned worktree (issue #272)', async () => {
+  it('runs the re-execution in the pinned worktree', async () => {
     // The lane's cwd is the pin: a bash write lands in the worktree the
     // request names, not in the process working directory. The role
     // document is loaded from that same tree.
@@ -838,7 +808,7 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy (is
   });
 });
 
-describe('`kubic tui` through the prod runner enforces the enterprise model gate (issue #288)', () => {
+describe('`kubic tui` through the prod runner enforces the enterprise model gate', () => {
   it('refuses a model outside allowed_models with the named refusal, before any terminal opens (exit 6)', async () => {
     // The audit's finding: the gate was inert on the interactive runner
     // because the policy never reached the boot. `r.tui` builds its deps with
@@ -859,11 +829,10 @@ describe('`kubic tui` through the prod runner enforces the enterprise model gate
   });
 });
 
-// §58 enterprise tool policy on role documents (issue #288): a role declaring
-// a denied tool is refused by `kubic run --role`, so doctor must not show it
-// green and the orchestrate manager must refuse the assignment before
-// anything spawns — both through the production runners.
-describe('role documents under the enterprise tool policy on the doctor and orchestrate runners (issue #288)', () => {
+// Enterprise tool policy on role documents: a role declaring a denied tool is
+// refused by `kubic run --role`, so doctor must not show it green — through
+// the production runners.
+describe('role documents under the enterprise tool policy on the doctor runner', () => {
   const DENY_BASH = '[policy]\ndenied_tools = ["bash"]\n';
 
   function workspaceWithRoles(): string {
@@ -892,7 +861,7 @@ describe('role documents under the enterprise tool policy on the doctor and orch
     };
     const roles = report.checks.filter((c) => /(^|:)role:/.test(c.id));
     // Every role declaring `bash` is refused by name — the repo's implementer
-    // override and the four embedded presets that run a shell (issue #203).
+    // override and the four embedded presets that run a shell.
     // The repo's own planner declares no bash, so it stays green.
     const failed = roles
       .filter((c) => c.status === 'fail')
@@ -923,48 +892,8 @@ describe('role documents under the enterprise tool policy on the doctor and orch
     ).toEqual([]);
   });
 
-  it('the doctor credential posture describes only the roles the run would assign', async () => {
-    const workspace = workspaceWithRoles();
-    writeFileSync(
-      join(workspace, 'models.json'),
-      JSON.stringify({
-        providers: [
-          {
-            id: 'gw',
-            baseUrl: 'https://models.invalid/v1',
-            api: 'openai-completions',
-            apiKeyEnv: 'GW_API_KEY',
-            models: [{ id: 'm1' }],
-          },
-        ],
-      }),
-    );
-    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
-    vi.stubEnv('KUBIC_MODEL', 'gw/m1');
-    vi.stubEnv('GW_API_KEY', 'sk-not-a-real-key');
-    const credentials = async (files: Record<string, string>) => {
-      const { r, lines } = runners(workspace);
-      await r.doctor(
-        { json: true },
-        cliConfig(files, { env: { KUBIC_MODEL: 'gw/m1' } }),
-      );
-      const report = JSON.parse(lines.join('\n')) as {
-        checks: { id: string; detail: string }[];
-      };
-      return report.checks.find((c) => c.id.endsWith('credentials:roles'))
-        ?.detail;
-    };
-    // Control: both default workers get a role, so it is named once.
-    expect(await credentials({})).toContain('implementer');
-    // Under the deny the manager would refuse the implementer — the only role
-    // the default set assigns (issue #178) — so the posture claims no grant.
-    const gated = await credentials({ [ENTERPRISE]: DENY_BASH });
-    expect(gated).toContain('no roles assigned');
-    expect(gated).not.toContain('implementer');
-  });
-
   // The config `[roles.<name>]` layers narrow a role exactly as `kubic run
-  // --role` applies them, so doctor and the manager judge the role AFTER them.
+  // --role` applies them, so doctor judges the role AFTER them.
   const NARROWED = {
     [ENTERPRISE]: DENY_BASH,
     [PROJECT]: '[roles.implementer]\ntools = ["read"]\n',
@@ -979,7 +908,7 @@ describe('role documents under the enterprise tool policy on the doctor and orch
     const roles = report.checks.filter((c) => /role:/.test(c.id));
     // The layer narrows the implementer below the deny, so that role is green
     // — while the roles the layer does NOT cover still declare bash and are
-    // still refused (the presets, issue #203).
+    // still refused.
     expect(roles.find((c) => c.id.endsWith('role:implementer'))?.status).toBe(
       'pass',
     );
@@ -989,7 +918,7 @@ describe('role documents under the enterprise tool policy on the doctor and orch
     expect(failed).toEqual(['role:debugger', 'role:reviewer', 'role:tester']);
   });
 
-  // Issue #235: the doctor runner judges roles AFTER the config
+  // The doctor runner judges roles AFTER the config
   // `[roles.<name>]` layers `kubic run --role` merges — a layer that
   // contradicts the document fails the role here with the run's refusal,
   // and with no `[roles]` section the document alone decides.
@@ -1016,141 +945,5 @@ describe('role documents under the enterprise tool policy on the doctor and orch
     expect(
       plainReport.checks.find((c) => c.id === 'role:planner')?.status,
     ).toBe('pass');
-  });
-
-  it('kubic orchestrate does not refuse a role a config layer narrowed below the deny', async () => {
-    const workspace = workspaceWithRoles();
-    git(workspace, ['init', '-q']);
-    const { r, lines, errs } = runners(workspace);
-    await r.orchestrate(
-      { prompt: 'do the thing', agents: ['alpha', 'beta'], json: true },
-      cliConfig(NARROWED),
-    );
-    // The run may stop later (a repository with no commit); it must not stop
-    // on the role gate the worker itself would pass.
-    expect([...lines, ...errs].join('\n')).not.toContain('role_refused');
-  });
-
-  it('kubic orchestrate refuses the run before anything spawns when an assigned role declares a denied tool', async () => {
-    const workspace = workspaceWithRoles();
-    // The manager needs a repository before it reaches the role plan; git
-    // init creates no worktree, commit or process beyond itself.
-    git(workspace, ['init', '-q']);
-    const { r, lines, errs } = runners(workspace);
-    const code = await r.orchestrate(
-      { prompt: 'do the thing', agents: ['alpha', 'beta'], json: true },
-      cliConfig({ [ENTERPRISE]: DENY_BASH }),
-    );
-    const text = [...lines, ...errs].join('\n');
-    expect(text).toContain('role_refused');
-    expect(text).toMatch(
-      /role 'implementer'.*'bash' denied.*enterprise denial holds/,
-    );
-    expect(code).toBe(1);
-  });
-});
-
-// §35.1 (issue #295): under a frozen enterprise `[model]` the workers run the
-// enterprise model whatever KUBIC_MODEL says, so the credential preflight (the
-// orchestrate run and doctor's `credentials:roles` line) must follow the
-// EFFECTIVE model, not the raw environment variable the freeze dropped.
-describe('the worker credential preflight follows a frozen enterprise model (issue #295)', () => {
-  const FROZEN = '[model]\nprovider = "gw"\nid = "m1"\n';
-
-  // The child contract as a real process (issue #179 fixture): announce
-  // readiness, report the §68 result shape, write one file so the branch
-  // has a hunk to merge, exit 0 — a REAL process, zero network.
-  const FIXTURE = `
-import { writeFileSync } from 'node:fs';
-const id = process.env.KUBIC_WORKER_ID ?? 'worker';
-process.stdout.write('KUBIC_WORKER_READY ' + id + '\\n');
-writeFileSync(id + '.txt', 'work by ' + id + '\\n');
-const a = process.argv;
-process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10));
-process.exit(0);
-`;
-  function fixtureEntry(): { cmd: string; args: string[] } {
-    const dir = tmpRoot('kubic-prod-policy-child-');
-    const fixture = join(dir, 'worker-child.mjs');
-    writeFileSync(fixture, FIXTURE);
-    return { cmd: process.execPath, args: [fixture] };
-  }
-
-  function workspaceWithProviders(): string {
-    const workspace = tmpRoot();
-    mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
-    writeFileSync(
-      join(workspace, '.kubic', 'roles', 'planner.md'),
-      '---\nrole: planner\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# planner\n\n## Prompt\n\nPlan it.\n',
-    );
-    // The default delegation set is two implementers (issue #178).
-    writeFileSync(
-      join(workspace, '.kubic', 'roles', 'implementer.md'),
-      '---\nrole: implementer\ntools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nBuild it.\n',
-    );
-    writeFileSync(
-      join(workspace, 'models.json'),
-      JSON.stringify({
-        providers: ['gw', 'other'].map((id) => ({
-          id,
-          baseUrl: 'https://models.invalid/v1',
-          api: 'openai-completions',
-          apiKeyEnv: `${id.toUpperCase()}_API_KEY`,
-          models: [{ id: 'm1' }],
-        })),
-      }),
-    );
-    // Only the enterprise model's provider has a key on this host; the
-    // operator's exported pin names the one that does not.
-    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
-    vi.stubEnv('GW_API_KEY', 'sk-not-a-real-key');
-    vi.stubEnv('KUBIC_MODEL', 'other/m1');
-    return workspace;
-  }
-
-  const frozenConfig = () =>
-    cliConfig({ [ENTERPRISE]: FROZEN }, { env: { KUBIC_MODEL: 'other/m1' } });
-
-  it('kubic doctor names the enterprise model provider, not the dropped env pin', async () => {
-    const { r, lines } = runners(workspaceWithProviders());
-    await r.doctor({ json: true }, frozenConfig());
-    const report = JSON.parse(lines.join('\n')) as {
-      checks: { id: string; status: string; detail: string }[];
-    };
-    const check = report.checks.find((c) => c.id.endsWith('credentials:roles'));
-    expect(check?.status).toBe('pass');
-    expect(check?.detail).toBe('implementer→gw');
-  });
-
-  it('kubic orchestrate does not refuse the run over the dropped env pin provider', async () => {
-    const workspace = workspaceWithProviders();
-    git(workspace, ['init', '-q']);
-    const { r, lines, errs } = runners(workspace);
-    // The worker child is a fixture process (issue #179): the providers
-    // above are unreachable by design, so a real child would burn the
-    // test's clock on network attempts — and the assertions below are
-    // about the manager's preflight, which runs before any spawn.
-    await r.orchestrate(
-      { prompt: 'do the thing', agents: ['alpha'], json: true },
-      frozenConfig(),
-      { workerEntry: fixtureEntry() },
-    );
-    const text = [...lines, ...errs].join('\n');
-    expect(text).not.toContain('credential_unavailable');
-    expect(text).not.toContain("provider 'other'");
-  });
-
-  it('without a freeze the operator pin still decides the provider (control)', async () => {
-    const { r, lines } = runners(workspaceWithProviders());
-    await r.doctor(
-      { json: true },
-      cliConfig({}, { env: { KUBIC_MODEL: 'other/m1' } }),
-    );
-    const report = JSON.parse(lines.join('\n')) as {
-      checks: { id: string; status: string; detail: string }[];
-    };
-    const check = report.checks.find((c) => c.id.endsWith('credentials:roles'));
-    expect(check?.status).toBe('fail');
-    expect(check?.detail).toContain("provider 'other'");
   });
 });

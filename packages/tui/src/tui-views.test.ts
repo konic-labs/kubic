@@ -1,4 +1,4 @@
-// The diff and journal panels (issue #96, acceptance criterion 3).
+// The diff and journal panels.
 //
 // Headless snapshots only (there is no VirtualTerminal in the pinned
 // pi-tui): every assertion below reads the pure render output of the app at
@@ -11,7 +11,7 @@
 // below NARROW_COLUMNS, so a "the sequence is absent" assertion at a narrow
 // width would be vacuous.
 import { describe, expect, it } from 'vitest';
-// One shared fake Terminal (issue #403): the panel's ScrollView is laid out
+// One shared fake Terminal: the panel's ScrollView is laid out
 // only by the live alt-screen, so its scrolling is asserted on real frames.
 import { fakeTerminal } from '../../../test/fake-terminal.js';
 import type {
@@ -23,13 +23,13 @@ import type { JournalChangeLike } from './tui-app.js';
 import { createTuiApp } from './tui-app.js';
 import { DiffPanel } from './view-panel.js';
 
-// Issue #333: the app renders replicated state, so a test builds the state a
+// The app renders replicated state, so a test builds the state a
 // projector would produce (the projector itself lives in host).
 function presentation(
   over: Partial<LaneSnapshot> = {},
 ): KubicPresentationState {
   return {
-    session: { sessionId: SESSION, mode: 'solo', approvalsSkipped: false },
+    session: { sessionId: SESSION, approvalsSkipped: false },
     agents: new Map(),
     lanes: new Map([
       [
@@ -45,7 +45,6 @@ function presentation(
         },
       ],
     ]),
-    workers: new Map(),
     approvals: [],
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     connection: { status: 'connected' },
@@ -58,7 +57,7 @@ const ESC = '\u001b';
 const BEL = '\u0007';
 
 // Sent in BOTH encodings: the legacy control byte and the Kitty CSI-u form a
-// protocol-negotiating terminal sends (issue #88's classification seam).
+// protocol-negotiating terminal sends (the classification seam).
 const OPEN_DIFF = '\u000f';
 const OPEN_DIFF_KITTY = '\u001b[111;5u';
 const OPEN_JOURNAL = '\u0012';
@@ -89,11 +88,10 @@ function appWithRun(
   const app = createTuiApp({
     sessionId: SESSION,
     model: MODEL,
-    mode: 'solo',
     approvalsSkipped: false,
   });
   // The lane is running with its edit call done: the state a projector would
-  // hold after run-start/tool-start/tool-end (#333).
+  // hold after run-start/tool-start/tool-end.
   app.applyPresentation(
     presentation({
       status: 'running',
@@ -111,7 +109,7 @@ function appWithRun(
   return app;
 }
 
-describe('diff panel (issue #96, criterion 3)', () => {
+describe('diff panel', () => {
   it('is not on screen before its key is pressed', () => {
     const app = appWithRun();
     const frame = app.render(100).join('\n');
@@ -177,7 +175,7 @@ describe('diff panel (issue #96, criterion 3)', () => {
     expect(app.render(100).join('\n')).toContain('no changes');
   });
 
-  // Issue #311: following the run, a call that wrote nothing (a read, a
+  // Following the run, a call that wrote nothing (a read, a
   // listing) must not blank the panel — it shows the most recent call that
   // has journal rows.
   it('follows the most recent call with journal rows when the run call wrote nothing', () => {
@@ -199,7 +197,7 @@ describe('diff panel (issue #96, criterion 3)', () => {
   });
 });
 
-describe('diff panel multi-file and scrolling (issue #301)', () => {
+describe('diff panel multi-file and scrolling', () => {
   const ALT_UP = '\u001bp';
   const ALT_DOWN = '\u001bn';
   const ALT_DOWN_KITTY = '\u001b[1;3B';
@@ -335,7 +333,7 @@ describe('diff panel multi-file and scrolling (issue #301)', () => {
     screen.stop();
   });
 
-  it('reopens the panel at its first file after a close (review #301)', () => {
+  it('reopens the panel at its first file after a close', () => {
     const app = appWithRun([longChange()]);
     app.handleInput(OPEN_DIFF);
     const screen = live(app);
@@ -354,7 +352,7 @@ describe('diff panel multi-file and scrolling (issue #301)', () => {
   });
 });
 
-describe('journal panel (issue #96, criterion 3)', () => {
+describe('journal panel', () => {
   it('renders the whole session journal on Ctrl-R (legacy byte)', () => {
     const app = appWithRun([
       change(),
@@ -419,7 +417,7 @@ describe('journal panel (issue #96, criterion 3)', () => {
   });
 });
 
-describe('panel content is untrusted (issue #96, criterion 3 sanitisation)', () => {
+describe('panel content is untrusted', () => {
   it('strips control sequences from paths, attribution and file bodies', () => {
     // Both the row AND the run's own tool-call id carry controls (the id
     // comes back through the same lane event the tree reads), so this also
@@ -453,18 +451,17 @@ describe('panel content is untrusted (issue #96, criterion 3 sanitisation)', () 
     app.handleInput(OPEN_DIFF);
     const frame = app.render(70).join('\n');
     expect(frame).toContain('--- a/src/app.ts');
-    // The tree itself is still hidden by the #22 rule (the status line's own
+    // The tree itself is still hidden by the rule (the status line's own
     // `●` mark is not a tree node).
     expect(frame).not.toMatch(/[✓●◌] solo/);
   });
 });
 
-describe('panel keys do not disturb the draft (issue #96, criterion 3)', () => {
+describe('panel keys do not disturb the draft', () => {
   it('leaves plain d/D/j/J to the editor', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     for (const ch of 'dD jJ') app.handleInput(ch);
@@ -474,7 +471,7 @@ describe('panel keys do not disturb the draft (issue #96, criterion 3)', () => {
   });
 });
 
-describe('diff panel follows the run (issue #320)', () => {
+describe('diff panel follows the run', () => {
   const tool = (toolCallId: string) => ({
     toolCallId,
     toolName: 'edit',

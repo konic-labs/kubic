@@ -1,6 +1,6 @@
-// Provenance + §52 failure-label policy tests (issue #54, RED first).
+// Provenance + failure-label policy tests.
 // Every RL record embeds provenance (proc/gen/worktree/model/base) and
-// the §52 failure category; stripped fields are validation errors.
+// the failure category; stripped fields are validation errors.
 import { describe, expect, it } from 'vitest';
 import { makeExport } from './fixtures.js';
 import {
@@ -10,7 +10,7 @@ import {
   requireFailureLabel,
 } from './types.js';
 
-describe('extractProvenance (issue #54)', () => {
+describe('extractProvenance', () => {
   it('embeds proc/gen/worktree/model/base from the trajectory export', () => {
     const provenance = extractProvenance(makeExport({}));
     expect(provenance).toEqual({
@@ -40,14 +40,14 @@ describe('extractProvenance (issue #54)', () => {
   });
 });
 
-describe('requireFailureLabel (issue #54, §52)', () => {
+describe('requireFailureLabel', () => {
   it('accepts a completed run with a null failure category', () => {
     expect(requireFailureLabel(makeExport({ status: 'completed' })).ok).toBe(
       true,
     );
   });
 
-  it('accepts a failed run carrying its §52 code', () => {
+  it('accepts a failed run carrying its failure code', () => {
     const checked = requireFailureLabel(
       makeExport({ status: 'failed', failureCategory: 'tool_failed' }),
     );
@@ -71,7 +71,7 @@ describe('requireFailureLabel (issue #54, §52)', () => {
   });
 });
 
-describe('isEnvFailure (issue #54)', () => {
+describe('isEnvFailure', () => {
   it('flags tool_failed and workspace_failed as env failures', () => {
     expect(ENV_FAILURE_CODES).toContain('tool_failed');
     expect(ENV_FAILURE_CODES).toContain('workspace_failed');

@@ -1,4 +1,4 @@
-// Alt-screen lifecycle (issue #22, slice B; §16.1).
+// Alt-screen lifecycle.
 // Thin over TuiAltScreen: boot sets the layout root, render draws one
 // frame, stop restores the main screen and THEN prints the final document
 // through the caller's printer (stdout in prod, capture in tests).
@@ -25,7 +25,7 @@ function stripCursor(line: string): string {
   );
 }
 
-// Issue #460: the live alt-screen with a filter over the base frame, run
+// The live alt-screen with a filter over the base frame, run
 // BEFORE the overlays are composited on it — the dimmed background behind
 // the palette and the pickers never touches the overlay itself.
 export class KubicAltScreen extends TuiAltScreen {
@@ -53,12 +53,12 @@ export interface Screen {
   // flicker on terminals without synchronized output.
   update: () => void;
   stop: (print: (line: string) => void) => void;
-  // Issue #313: the last-resort restore (a signal or an exception): leave
+  // The last-resort restore (a signal or an exception): leave
   // the alt screen and restore every terminal mode, printing nothing — the
   // layout may be what threw. Idempotent with stop: whichever runs first
   // restores, the other is a no-op, so the terminal is stopped exactly once.
   restore: () => void;
-  // The live alt-screen (issue #75): the composition root needs
+  // The live alt-screen: the composition root needs
   // setFocus/addInputListener to route keyboard input. Additive — the
   // boot/render/stop lifecycle above is unchanged.
   tui: KubicAltScreen;
@@ -88,7 +88,7 @@ export function bootScreen(terminal: Terminal, root: VStack): Screen {
     stop: (print: (line: string) => void) => {
       if (stopped) return;
       stopped = true;
-      // Issue #314 (§16.1): the document is rendered while the layout is
+      // The document is rendered while the layout is
       // still attached, but PRINTED only after the terminal left the
       // alternate buffer (and autowrap is back on) — printing first put it
       // in the buffer `?1049l` discards, so the main screen never showed it.

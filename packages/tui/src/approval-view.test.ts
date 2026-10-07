@@ -1,7 +1,7 @@
-// The approval contract (issue #26): §41 timeout→deny/memoOnce; §16.4 the
-// centered 70%/60% overlay the question and confirm dialogs use; §16.6/§16.9
-// the decision keys. The approval itself is the inline card (issue #459,
-// approval-card.test.ts). Faux-only: zero network, short real timers.
+// The approval contract: timeout→deny/memoOnce; the centered 70%/60% overlay
+// the question and confirm dialogs use; the decision keys. The approval itself
+// is the inline card (approval-card.test.ts). Faux-only: zero network, short
+// real timers.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   APPROVAL_MIN_WIDTH,
@@ -32,7 +32,7 @@ async function settledAt(
   expect(settled).toBe(true);
 }
 
-describe('approval overlay geometry (issue #26; §16.4)', () => {
+describe('approval overlay geometry', () => {
   it('is centered 70%/60% and capturing (focus)', () => {
     const options = approvalOverlayOptions();
     expect(options.width).toBe('70%');
@@ -54,7 +54,7 @@ describe('approval overlay geometry (issue #26; §16.4)', () => {
   });
 });
 
-describe('approval keybindings (issue #26; §16.6/§16.9)', () => {
+describe('approval keybindings', () => {
   it('resolves a/Ctrl-S/d via matchesKey with zero conflicts', () => {
     expect(resolveApprovalAction('a')).toBe('allow-once');
     expect(resolveApprovalAction('\x13')).toBe('allow-session');
@@ -87,7 +87,7 @@ describe('approval keybindings (issue #26; §16.6/§16.9)', () => {
   });
 });
 
-describe('approval timeout + memoOnce (issue #26; §41)', () => {
+describe('approval timeout + memoOnce', () => {
   it('denies with reason on maxPendingMs expiry and never hangs headless', async () => {
     vi.useFakeTimers();
     const memo = createApprovalMemo();
@@ -145,7 +145,7 @@ describe('approval timeout + memoOnce (issue #26; §41)', () => {
   });
 });
 
-describe('approval mutation hardening (issue #68)', () => {
+describe('approval mutation hardening', () => {
   it('floors fractional overlay geometry instead of returning floats', () => {
     expect(approvalOverlayBounds(99, 29)).toEqual({
       width: 69,

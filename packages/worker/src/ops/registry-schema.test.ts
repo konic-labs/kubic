@@ -1,8 +1,8 @@
-// Tool parameter schemas agree with the Kubic validators (issue #168;
-// §37.5, §40.3). The schema is what the model sees and what Pi validates
-// before a call runs; the validator is authoritative inside Kubic. The two
-// must accept the same keys: every validator-accepted fixture passes the
-// schema, a missing required key fails both, and an unknown key fails both.
+// Tool parameter schemas agree with the Kubic validators. The schema is what
+// the model sees and what Pi validates before a call runs; the validator is
+// authoritative inside Kubic. The two must accept the same keys: every
+// validator-accepted fixture passes the schema, a missing required key fails
+// both, and an unknown key fails both.
 import { describe, expect, it } from 'vitest';
 import { validateToolArguments } from '../pi-boundary.js';
 import {
@@ -82,7 +82,7 @@ function validatorAccepts(name: OperationName, args: unknown): boolean {
   }
 }
 
-describe('operation parameter schemas (issue #168)', () => {
+describe('operation parameter schemas', () => {
   it('covers every registered operation', () => {
     expect(Object.keys(OPERATION_PARAMETERS).sort()).toEqual([...NAMES].sort());
     expect(Object.keys(FIXTURES).sort()).toEqual([...NAMES].sort());

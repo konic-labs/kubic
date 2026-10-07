@@ -1,6 +1,6 @@
-// Tool-use + coding exporter tests (issue #54, RED first).
+// Tool-use + coding exporter tests.
 // Tool-use records carry the bounded action/observation refs; coding
-// records carry diff refs (paths only, #32) plus the reference-verifier
+// records carry diff refs (paths only) plus the reference-verifier
 // verdict. Both validate fail-closed.
 import { describe, expect, it } from 'vitest';
 import { buildCodingRecord, validateCodingRecord } from './coding.js';
@@ -8,7 +8,7 @@ import { makeExport } from './fixtures.js';
 import * as rl from './index.js';
 import { buildToolUseRecord, validateToolUseRecord } from './tooluse.js';
 
-describe('buildToolUseRecord (issue #54)', () => {
+describe('buildToolUseRecord', () => {
   it('generates a schema-valid tool-use record with provenance + label', () => {
     const exported = makeExport({});
     exported.actions = [
@@ -44,7 +44,7 @@ describe('buildToolUseRecord (issue #54)', () => {
   });
 });
 
-describe('buildCodingRecord (issue #54)', () => {
+describe('buildCodingRecord', () => {
   it('generates a schema-valid coding record with diff refs + verdict', () => {
     const exported = makeExport({ evalLabels: { 'signal:tests': 'pass' } });
     exported.diff = {
@@ -80,7 +80,7 @@ describe('buildCodingRecord (issue #54)', () => {
   });
 });
 
-describe('rl index (issue #54)', () => {
+describe('rl index', () => {
   it('round-trips an SFT record through the index export, fail-closed', () => {
     const built = rl.buildSftRecord(makeExport({}));
     expect(rl.validateSftRecord(built)).toEqual({ valid: true, record: built });

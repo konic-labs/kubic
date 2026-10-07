@@ -1,6 +1,6 @@
-// Session-journal reachability (issue #83): `kubic diff/undo` reach the
+// Session-journal reachability: `kubic diff/undo` reach the
 // headless-run session journal under <sessionsRoot>/<id>/journal via
-// --session or the printed `journal:<id>` ref. RED first.
+// --session or the printed `journal:<id>` ref.
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -47,7 +47,7 @@ function seedSessionJournal(
   void root;
 }
 
-describe('session journal reachability (issue #83)', () => {
+describe('session journal reachability', () => {
   it('diff --session <id> shows the session journal effects from the cwd', async () => {
     const sessionsRoot = tmpDir('sess-root-');
     const root = tmpDir('ws-');
@@ -69,7 +69,7 @@ describe('session journal reachability (issue #83)', () => {
     const sessionsRoot = tmpDir('sess-root-');
     const root = tmpDir('ws-');
     seedSessionJournal(sessionsRoot, 'sess-1', root);
-    // Issue #362: the session recorded `root` as its workspace — undo
+    // The session recorded `root` as its workspace — undo
     // plans against that, whatever the invocation cwd.
     const deps = {
       root,

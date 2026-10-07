@@ -18,7 +18,7 @@ function inv(id = 'inv-1'): ToolInvocation {
   );
 }
 
-describe('operation registry (issue #13, slice A)', () => {
+describe('operation registry', () => {
   it('routes read by name and threads invocation ids', async () => {
     const out = await callOperation('read', { path: 'a.txt' }, inv(), ctx());
     expect(out.ok).toBe(true);
@@ -44,8 +44,8 @@ describe('operation registry (issue #13, slice A)', () => {
   });
 });
 
-describe('read operation (issue #13, slice A)', () => {
-  it('reads through the ranged path when the seam offers readFileRange (issue #356)', async () => {
+describe('read operation', () => {
+  it('reads through the ranged path when the seam offers readFileRange', async () => {
     const c = ctx();
     const ranged = vi.spyOn(c.env.fs, 'readFileRange');
     const out = await callOperation('read', { path: 'a.txt' }, inv(), c);
@@ -104,7 +104,7 @@ describe('read operation (issue #13, slice A)', () => {
   });
 });
 
-describe('ls operation (issue #13, slice A)', () => {
+describe('ls operation', () => {
   it('lists entries with kinds', async () => {
     const out = await callOperation('ls', { path: '.' }, inv(), ctx());
     expect(out.ok).toBe(true);

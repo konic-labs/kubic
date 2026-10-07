@@ -1,7 +1,7 @@
-// Steering an approval on the real `kubic tui` composition path (issue #467;
-// docs/ui 02-A, 02-F) — adapted from tui-approval-prod.test.ts (issue #96). Before #96 `kubic tui` installed the approval policy
-// (issue #86) but attached no answer seat, so a challenged call was refused
-// with NO_ANSWER_SURFACE_REASON and the operator could never approve anything.
+// Steering an approval on the real `kubic tui` composition path — adapted from
+// tui-approval-prod.test.ts. Before `kubic tui` installed the approval policy
+// but attached no answer seat, so a challenged call was refused with
+// NO_ANSWER_SURFACE_REASON and the operator could never approve anything.
 //
 // Real code end to end: the prod boot (bootTuiLane) on a real faux lane, a
 // real ProcessTerminal-shaped fake Terminal driving the real alt-screen, and
@@ -71,10 +71,10 @@ function fauxModels(steps: FauxMessage[]): {
   return { models };
 }
 
-// The prod boot shape with the sessions root + models injected (same pattern
-// as tui-loop.test.ts). The seat arrives as bootLane's second argument
-// (issue #96) — the same way runTuiCommand hands the real one to the real
-// boot — and is forwarded to installSoloPolicy exactly like prod does.
+// The prod boot shape with the sessions root + models injected (same pattern as
+// tui-loop.test.ts). The seat arrives as bootLane's second argument — the same
+// way runTuiCommand hands the real one to the real boot — and is forwarded to
+// installSoloPolicy exactly like prod does.
 function fauxLaneBoot(
   root: string,
   models: MutableModels,
@@ -138,7 +138,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
   expect(condition()).toBe(true);
 }
 
-describe('steering an approval in the TUI (issue #467)', () => {
+describe('steering an approval in the TUI', () => {
   it('`e` runs the edited command instead of the proposed one', async () => {
     const root = tmpRoot();
     const fake = fakeTerminal(110);

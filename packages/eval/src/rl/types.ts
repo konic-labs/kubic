@@ -1,20 +1,20 @@
-// Shared RL dataset shapes (issue #54; design §74, §52, §46).
+// Shared RL dataset shapes.
 // Every exported record embeds provenance (proc/gen/worktree/model/base)
-// plus the §52 failure category. Validation is fail-closed: stripped
+// plus the failure category. Validation is fail-closed: stripped
 // provenance or labels are errors, never warnings. Env-vs-capability
 // policy: runs carrying an env failure code must never train capability
 // preference — pair builders exclude (and tag) them.
 // Read-only reuse: the trajectory shape is consumed structurally via the
 // stable TrajectoryExport contract (major 1); the transfer snapshot
 // {taskId, worktree, grantRef} mirrors the agents TransferLogRecord
-// without importing it; pair records carry refs only (#32/#49).
+// without importing it; pair records carry refs only.
 import {
   isTrajectoryFailureCode,
   type TrajectoryExport,
   type TrajectoryFailureCode,
 } from '../../../trajectory/src/schema.js';
 
-// §52 failure codes (worker-owned spelling, pinned in trajectory schema).
+// Failure codes (worker-owned spelling, pinned in trajectory schema).
 export type { TrajectoryFailureCode };
 export { isTrajectoryFailureCode };
 
@@ -55,12 +55,12 @@ export function extractProvenance(exported: TrajectoryExport): RlProvenance {
     !(provenance.generation >= 0)
   ) {
     throw new RlProvenanceError(
-      'provenance.gen is required: record which worker generation ran (§73)',
+      'provenance.gen is required: record which worker generation ran',
     );
   }
   if (!nonEmpty(provenance?.worktree)) {
     throw new RlProvenanceError(
-      'provenance.worktree is required: record how the run executed (§73)',
+      'provenance.worktree is required: record how the run executed',
     );
   }
   if (!nonEmpty(provenance?.model)) {
@@ -68,7 +68,7 @@ export function extractProvenance(exported: TrajectoryExport): RlProvenance {
   }
   if (!nonEmpty(exported.worktree?.baseRevision)) {
     throw new RlProvenanceError(
-      'provenance.base is required: record the base revision (§46)',
+      'provenance.base is required: record the base revision',
     );
   }
   return {
@@ -84,8 +84,8 @@ export type FailureLabelCheck =
   | { ok: true; category: TrajectoryFailureCode | null }
   | { ok: false; errors: string[] };
 
-// §52 category gate: completed runs carry null; every non-completed
-// result must carry its failure code (trajectory §46 contract). Unknown
+// Failure category gate: completed runs carry null; every non-completed
+// result must carry its failure code (trajectory contract). Unknown
 // codes and stripped labels are errors, never warnings.
 export function requireFailureLabel(
   exported: TrajectoryExport,
@@ -96,7 +96,7 @@ export function requireFailureLabel(
       return {
         ok: false,
         errors: [
-          `failureCategory is required on non-completed result ${JSON.stringify(exported.result?.status)} (§52)`,
+          `failureCategory is required on non-completed result ${JSON.stringify(exported.result?.status)} `,
         ],
       };
     }
@@ -105,7 +105,7 @@ export function requireFailureLabel(
   if (typeof category !== 'string' || !isTrajectoryFailureCode(category)) {
     return {
       ok: false,
-      errors: [`unknown §52 failure category ${JSON.stringify(category)}`],
+      errors: [`unknown failure category ${JSON.stringify(category)}`],
     };
   }
   return { ok: true, category };
@@ -115,7 +115,7 @@ export function requireFailureLabel(
 // workspace, spawn, or provider), so it carries no capability signal —
 // pair builders must exclude (and tag) runs carrying these instead of
 // teaching the model that env breakage is a capability difference.
-// Capability codes (model_*, context_*, budget_*, approval_*,
+// Capability codes (model_*, context_*, run_limit, approval_*,
 // tool_invalid_args) stay eligible.
 export const ENV_FAILURE_CODES = [
   'tool_failed',

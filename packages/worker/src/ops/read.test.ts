@@ -1,8 +1,8 @@
-// Model-facing read bounds (issue #176; §27.5).
-// READ_MAX_BYTES (#122) caps the SCAN; these tests pin the OUTPUT bounds:
+// Model-facing read bounds.
+// READ_MAX_BYTES caps the SCAN; these tests pin the OUTPUT bounds:
 // the byte cap on what reaches the model (a notice, never a silent slice),
 // the binary refusal (size + type, no U+FFFD), and the offset-past-EOF
-// notice. Existing windowed/error behavior (#122, #199) is pinned by
+// notice. Existing windowed/error behavior is pinned by
 // read-windowed.test.ts and read-errors.test.ts and must stay green.
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -38,7 +38,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('read output byte cap (issue #176)', () => {
+describe('read output byte cap', () => {
   it('clips a 3 MB single-line file at the cap with a notice, never a partial line', async () => {
     const line = 'x'.repeat(3 * MIB);
     writeFileSync(join(dir, 'min.js'), line);
@@ -143,7 +143,7 @@ describe('read output byte cap (issue #176)', () => {
   });
 });
 
-describe('binary refusal (issue #176)', () => {
+describe('binary refusal', () => {
   it('refuses a PNG from the first-chunk UTF-8 sniff with size and type, never U+FFFD content', async () => {
     // PNG signature + IHDR chunk: 0x89 leads with a UTF-8 continuation
     // byte, and the length field carries NULs.
@@ -189,7 +189,7 @@ describe('binary refusal (issue #176)', () => {
 
   it('refuses binary on a seam without ranged reads, where U+FFFD is the surviving signal', async () => {
     const env = new FakeExecutionEnv({});
-    // Seam without ranged reads (issue #356): the fallback path only
+    // Seam without ranged reads: the fallback path only
     // runs when the seam lacks readFileRange, so drop the fake's.
     env.fs.readFileRange = undefined;
     env.fs.writeFile('logo.png', '\uFFFDPNG\r\n\u001a\n');
@@ -205,7 +205,7 @@ describe('binary refusal (issue #176)', () => {
 
   it('refuses NUL-bearing content on a seam without ranged reads', async () => {
     const env = new FakeExecutionEnv({});
-    // Seam without ranged reads (issue #356): keep this on the fallback
+    // Seam without ranged reads: keep this on the fallback
     // path the test name promises.
     env.fs.readFileRange = undefined;
     env.fs.writeFile('utf16.txt', 'a\0b\0');
@@ -220,7 +220,7 @@ describe('binary refusal (issue #176)', () => {
 
   it('refuses binary without a size when the file cannot be statted after the read', async () => {
     const env = new FakeExecutionEnv({});
-    // Seam without ranged reads (issue #356): the U+FFFD signal only
+    // Seam without ranged reads: the U+FFFD signal only
     // survives on the fallback path.
     env.fs.readFileRange = undefined;
     env.fs.writeFile('logo.png', '\uFFFDPNG');
@@ -239,7 +239,7 @@ describe('binary refusal (issue #176)', () => {
   });
 });
 
-describe('offset past EOF (issue #176)', () => {
+describe('offset past EOF', () => {
   it('names the offset past the last line with the exact line count', async () => {
     writeFileSync(join(dir, 'three.txt'), 'a\nb\nc\n');
     const out = await readOperation.execute(

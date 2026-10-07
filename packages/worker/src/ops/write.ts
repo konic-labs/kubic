@@ -1,4 +1,4 @@
-// Write operation (issue #13, slice C; §9.1).
+// Write operation.
 // Atomic via tmp+rename over the seam: readers never see a partial file.
 // replay:"never" — writes are effects, never re-executed on replay.
 
@@ -69,7 +69,7 @@ export const writeOperation: Operation<WriteArgs, WriteResult> = {
       after: args.content,
       bytesDelta: result.bytesDelta,
     });
-    // Issue #456: a new file shows its size and first lines; an overwritten
+    // A new file shows its size and first lines; an overwritten
     // text file shows the diff (a binary pre-image cannot).
     if (ctx.display !== undefined) {
       const lf = (text: string): string => text.replace(/\r\n/g, '\n');

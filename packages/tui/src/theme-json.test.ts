@@ -1,5 +1,5 @@
-// JSON themes (issue #304; §16.9 "Themes are JSON with a schema"; v2 token
-// roles in EPIC N, issue #444). The schema, the named validation errors, the
+// JSON themes ("Themes are JSON with a schema"; v2 token
+// roles). The schema, the named validation errors, the
 // built-in palettes and the colour-level downgrade of a custom hex colour.
 // Pure: text in, palette/theme out — the file read is the composition root's.
 import { afterEach, describe, expect, it } from 'vitest';
@@ -39,7 +39,7 @@ afterEach(() => {
   setTuiTheme(createTuiTheme('none'));
 });
 
-describe('v1 theme files stay valid (issue #304)', () => {
+describe('v1 theme files stay valid', () => {
   it('maps the seven keys onto the dark palette', () => {
     expect(parseThemeJson(V1, 'solarized.json')).toEqual({
       ...DARK_PALETTE,
@@ -82,7 +82,7 @@ describe('v1 theme files stay valid (issue #304)', () => {
   });
 });
 
-describe('v2 theme files (issue #444)', () => {
+describe('v2 theme files', () => {
   it('overrides any subset of roles on top of dark by default', () => {
     const text = JSON.stringify({
       colors: { accent: '#00aaff', bg2: '#202030' },
@@ -192,13 +192,12 @@ describe('the colour-level downgrade', () => {
   });
 });
 
-describe('a light theme on the status bar (issue #304)', () => {
+describe('a light theme on the status bar', () => {
   it('changes the rendered SGR for the status bar', () => {
     const state = {
       model: 'faux/vision',
       thinking: '',
       rows: [],
-      mode: 'solo' as const,
       approvalsSkipped: false,
       sessionId: 's1',
     };
@@ -206,7 +205,7 @@ describe('a light theme on the status bar (issue #304)', () => {
     const before = new StatusBar(state).render(100).join('\n');
     setTuiTheme(createThemeFromPalette(LIGHT_PALETTE, 'truecolor'));
     const after = new StatusBar(state).render(100).join('\n');
-    // Issue #453: the line is painted on each palette's own bg1 surface.
+    // The line is painted on each palette's own bg1 surface.
     expect(before).toContain(
       createThemeFromPalette(DARK_PALETTE, 'truecolor').ui.open({ bg: 'bg1' }),
     );
@@ -217,19 +216,19 @@ describe('a light theme on the status bar (issue #304)', () => {
     expect(tuiTheme().level).toBe('truecolor');
   });
 
-  // The EPIC K re-baseline's scope edit: the custom palette must satisfy the
+  // The re-baseline's scope edit: the custom palette must satisfy the
   // pi-tui 1.0.2 per-component interfaces Kubic builds from it.
   it('reaches the pi-tui per-component theme interfaces', () => {
     const theme = createThemeFromPalette(LIGHT_PALETTE, 'truecolor');
     setTuiTheme(theme);
-    // Issue #458: headings fg0 bold, links info — on the light palette.
+    // Headings fg0 bold, links info — on the light palette.
     expect(markdownThemeFor(theme).heading('x')).toBe(
       '\u001b[1;38;2;24;24;27mx\u001b[22;39m',
     );
     expect(markdownThemeFor(theme).link('x')).toBe(
       '\u001b[38;2;29;78;216mx\u001b[39m',
     );
-    // Issue #454: the editor's autocomplete list takes the palette (its
+    // The editor's autocomplete list takes the palette (its
     // rules only carry the frame's marker).
     expect(editorTheme().selectList.selectedPrefix('x')).toBe(
       '\u001b[38;2;208;0;63mx\u001b[39m',
@@ -237,10 +236,10 @@ describe('a light theme on the status bar (issue #304)', () => {
   });
 });
 
-// Issue #304 review: V8's JSON.parse message quotes the input, so a theme
+// V8's JSON.parse message quotes the input, so a theme
 // path pointed at a non-theme file (a credentials file, say) must not print
 // that file's content into the boot error.
-describe('a parse failure never quotes the file (issue #304 review)', () => {
+describe('a parse failure never quotes the file', () => {
   it('reports the position, not the input window', () => {
     const secret = 'sk-live-abcdef1234567890';
     const broken = `{ "name": "${secret}", "colors": }`;

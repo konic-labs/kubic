@@ -1,6 +1,5 @@
 # CLI & operations
 
-> Owner: issue [#64](https://github.com/konic-labs/kubic/issues/64).
 > Behaviour operators see; package internals live on the
 > [packages pages](../packages/README.md).
 

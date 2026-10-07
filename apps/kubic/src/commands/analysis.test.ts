@@ -1,6 +1,6 @@
-// The analysis command group over commander (cost, perf, policy, audit,
-// eval, benchmark, replay, export): argv syntax, generated help, the §78
-// usage exit, option mapping, and the `--json` contract, driven through
+// The analysis command group over commander (cost, policy, audit, eval,
+// benchmark, replay, export): argv syntax, generated help, the usage exit,
+// option mapping, and the `--json` contract, driven through
 // the real program (createKubicProgram + runKubicProgram) with the real
 // handlers over faux deps — no network, no session store, no files beyond
 // the in-memory ones below.
@@ -15,10 +15,9 @@ import {
 import { runExportCommand } from '../../../../packages/eval/src/export-cli.js';
 import { makeExport } from '../../../../packages/eval/src/rl/fixtures.js';
 import { runCostCommand } from '../../../../packages/host/src/ops/cost/cost-cli.js';
-import { runPerfCommand } from '../../../../packages/host/src/ops/perf/perf-cli.js';
 import {
   AUDIT_FIELDS,
-  FLOW_AUDIT_FIXTURE,
+  EXAMPLE_AUDIT_RECORD,
 } from '../../../../packages/host/src/policy/audit.js';
 import { runAuditCommand } from '../../../../packages/host/src/policy/audit-cli.js';
 import { resolveEffectivePolicy } from '../../../../packages/host/src/policy/enterprise.js';
@@ -33,7 +32,6 @@ const CONFIG = {} as CliConfigResult;
 
 const ANALYSIS = [
   'cost',
-  'perf',
   'policy',
   'audit',
   'eval',
@@ -146,7 +144,6 @@ function realRunners(channels: {
   return {
     cost: (options) =>
       runCostCommand(options, { ...io, loadRows: () => COST_ROWS }),
-    perf: (options) => runPerfCommand(options, io),
     policy: (options) =>
       runPolicyCommand(options, {
         ...io,
@@ -158,13 +155,13 @@ function realRunners(channels: {
     audit: (options) =>
       runAuditCommand(options, {
         ...io,
-        loadRecords: () => [FLOW_AUDIT_FIXTURE],
+        loadRecords: () => [EXAMPLE_AUDIT_RECORD],
       }),
     eval: (options) =>
       runEvalCommand(options, {
         ...io,
         ...faux,
-        // §48 (issue #258): --trajectory takes a file path.
+        // --trajectory takes a file path.
         readFile: () => JSON.stringify(makeExport()),
       }),
     benchmark: (options) => runBenchmarkCommand(options, { ...io, ...faux }),
@@ -208,7 +205,6 @@ const PROVENANCE_ARGV = [
 // A minimal valid invocation per command (required options satisfied).
 const VALID: Readonly<Record<AnalysisName, readonly string[]>> = {
   cost: [],
-  perf: ['--budget', 'attach', '--samples', '5,10'],
   policy: ['--tool', 'shell'],
   audit: [],
   eval: ['--suite', 'swe-bench-mini', '--task', 'fix', ...PROVENANCE_ARGV],
@@ -237,14 +233,8 @@ describe('analysis commands: generated help', () => {
   it('help lists every declared option with its argument', async () => {
     const expected: Record<AnalysisName, readonly string[]> = {
       cost: ['--session <id>', '--json'],
-      perf: ['--budget <kind>', '--measure', '--samples <ms,ms,…>', '--json'],
       policy: ['--tool <name>', '--json'],
-      audit: [
-        '--mode <mode>',
-        '--posture <name>',
-        '--result <result>',
-        '--json',
-      ],
+      audit: ['--posture <name>', '--result <result>', '--json'],
       eval: [
         '--suite <id>',
         '--task <prompt>',
@@ -285,8 +275,8 @@ describe('analysis commands: generated help', () => {
     }
   });
 
-  it('shows the eval model default and the perf budget kinds', async () => {
-    // #256: eval's --model has no commander default (--trajectory reads the
+  it('shows the eval model default', async () => {
+    // Eval's --model has no commander default (--trajectory reads the
     // export); the --task default is documented in the help text instead.
     const evalHelp = (await kubic(['eval', '--help'])).out.join('\n');
     expect(evalHelp).toContain('--task default faux/echo');
@@ -294,13 +284,10 @@ describe('analysis commands: generated help', () => {
     expect((await kubic(['benchmark', '--help'])).out.join('\n')).toContain(
       '(default: "faux/echo")',
     );
-    expect((await kubic(['perf', '--help'])).out.join('\n')).toContain(
-      'worktree|spawn|attach|teardown',
-    );
   });
 });
 
-describe('analysis commands: usage errors exit 2 (§78)', () => {
+describe('analysis commands: usage errors exit 2', () => {
   for (const name of ANALYSIS) {
     it(`kubic ${name} --bogus: one stderr line, exit 2, runner never reached`, async () => {
       const run = await kubic([name, ...VALID[name], '--bogus']);
@@ -330,7 +317,6 @@ describe('analysis commands: usage errors exit 2 (§78)', () => {
 
   it('a missing required option exits 2 naming it', async () => {
     const cases: [readonly string[], string][] = [
-      [['perf', '--samples', '1'], '--budget <kind>'],
       [['policy'], '--tool <name>'],
       [['eval', '--task', 'x', '--generation', '1'], '--suite <id>'],
       [['benchmark'], '--generation <n>'],
@@ -345,7 +331,7 @@ describe('analysis commands: usage errors exit 2 (§78)', () => {
     }
   });
 
-  it('export and replay take --session <id> as the trajectory source (#383)', async () => {
+  it('export and replay take --session <id> as the trajectory source', async () => {
     const exported = await kubic([
       'export',
       '--session',
@@ -367,7 +353,7 @@ describe('analysis commands: usage errors exit 2 (§78)', () => {
     expect(neither.calls).toEqual([{ name: 'export', options: {} }]);
   });
 
-  it('eval --trajectory needs no provenance flags at the commander layer (#256)', async () => {
+  it('eval --trajectory needs no provenance flags at the commander layer', async () => {
     const run = await kubic([
       'eval',
       '--suite',
@@ -398,15 +384,11 @@ describe('analysis commands: parsed options reach the runners', () => {
   it('maps flags to camel-cased option values, --flag=value included', async () => {
     const cases: [readonly string[], unknown][] = [
       [['cost', '--session=s-1', '--json'], { session: 's-1', json: true }],
-      // Issue #250: the project scope and grouping flags.
+      // The project scope and grouping flags.
       [['cost', '--all', '--by=project'], { all: true, by: 'project' }],
       [
-        ['perf', '--budget', 'spawn', '--measure'],
-        { budget: 'spawn', measure: true },
-      ],
-      [
-        ['audit', '--mode', 'solo', '--posture', 'approvals', '--result', 'ok'],
-        { mode: 'solo', posture: 'approvals', result: 'ok' },
+        ['audit', '--posture', 'approvals', '--result', 'ok'],
+        { posture: 'approvals', result: 'ok' },
       ],
       [
         [
@@ -458,11 +440,8 @@ describe('analysis commands: parsed options reach the runners', () => {
   });
 
   it('a runner exit code is the process exit code', async () => {
-    const run = await kubic(
-      ['perf', '--budget', 'spawn', '--samples', '1,999'],
-      true,
-    );
-    expect(run.code).toBe(1);
+    const run = await kubic(['export', '--trajectory', 'missing.json'], true);
+    expect(run.code).toBe(2);
   });
 });
 
@@ -470,18 +449,12 @@ describe('analysis commands: happy paths over the real handlers', () => {
   it('cost prints a table and the task total', async () => {
     const run = await kubic(['cost'], true);
     expect(run.code).toBe(0);
-    // Issue #250 (§39): group + role + split counters at sub-cent precision.
+    // Group + role + split counters at sub-cent precision.
     expect(run.out[0]).toMatch(
       /^AGENT +ROLE +MODEL +IN +OUT +CACHE-R +CACHE-W +COST$/m,
     );
     expect(run.out[1]).toBe('task total $0.2000 (1 agents)');
     expect(run.err).toEqual([]);
-  });
-
-  it('perf prints the evaluation table', async () => {
-    const run = await kubic(['perf', ...VALID.perf], true);
-    expect(run.code).toBe(0);
-    expect(run.out.join('\n')).toMatch(/attach .* within/);
   });
 
   it('policy prints the decision', async () => {
@@ -492,7 +465,7 @@ describe('analysis commands: happy paths over the real handlers', () => {
   it('audit prints the record table', async () => {
     const run = await kubic(['audit'], true);
     expect(run.code).toBe(0);
-    expect(run.out[0]).toMatch(/^WHEN +MODE +POSTURE +RESULT/);
+    expect(run.out[0]).toMatch(/^WHEN +POSTURE +RESULT/);
   });
 
   it('eval prints the record line', async () => {
@@ -520,11 +493,11 @@ describe('analysis commands: happy paths over the real handlers', () => {
   });
 
   it('a semantic refusal is one stderr line and exit 2', async () => {
-    const run = await kubic(['audit', '--mode', 'turbo'], true);
+    const run = await kubic(['audit', '--result', 'turbo'], true);
     expect(run.code).toBe(2);
     expect(run.out).toEqual([]);
     expect(run.err).toEqual([
-      'error: unknown mode "turbo" (want solo|orchestrator)',
+      'error: unknown result "turbo" (want ok|deny|error)',
     ]);
   });
 });
@@ -532,7 +505,6 @@ describe('analysis commands: happy paths over the real handlers', () => {
 describe('analysis commands: --json prints exactly one JSON document', () => {
   const shapes: Record<AnalysisName, readonly string[]> = {
     cost: ['agents', 'taskTotal'],
-    perf: ['budgetMs', 'count', 'kind', 'p50', 'p95', 'regression', 'within'],
     policy: ['decision', 'source', 'tool'],
     audit: [],
     eval: ['exitCode', 'ok', 'record'],
@@ -579,10 +551,7 @@ describe('analysis commands: --json prints exactly one JSON document', () => {
       exitCode: 2,
       error: { code: 'trajectory-unreadable' },
     });
-    const usage = await kubic(
-      ['perf', '--budget', 'warp', '--samples', '1', '--json'],
-      true,
-    );
+    const usage = await kubic(['audit', '--result', 'warp', '--json'], true);
     expect(usage.code).toBe(2);
     expect(usage.out).toEqual([]);
     expect(usage.err).toHaveLength(1);

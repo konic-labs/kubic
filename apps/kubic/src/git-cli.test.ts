@@ -1,4 +1,4 @@
-// Slice D: push guard, git CLI, git-via-bash reconciliation (issue #19; §43).
+// Push guard, git CLI, git-via-bash reconciliation.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -86,7 +86,7 @@ function fakeGitCli(statusOut: string): {
   };
 }
 
-describe('git guard + CLI + reconciliation (issue #19, slice D)', () => {
+describe('git guard + CLI + reconciliation', () => {
   it('push has no tool and always raises the git-push approval trigger', () => {
     expect(gitPushHasNoTool()).toBe(true);
     const triggers = detectTriggers(
@@ -114,7 +114,7 @@ describe('git guard + CLI + reconciliation (issue #19, slice D)', () => {
     expect(lines).toContain('untracked: new.txt');
   });
 
-  it('kubic git status renders conflicts on their own line (issue #380)', async () => {
+  it('kubic git status renders conflicts on their own line', async () => {
     const { lines, deps } = fakeGitCli(
       [
         '# branch.oid abc1234\0',
@@ -155,7 +155,7 @@ describe('git guard + CLI + reconciliation (issue #19, slice D)', () => {
   });
 
   it('git-via-bash changes appear in reconciliation as unattributed', () => {
-    // L-D37: real git runs through the shared sandbox, never raw
+    // Real git runs through the shared sandbox, never raw
     // execFileSync — the bash op below inherits the sandbox env.
     const repo = createGitSandbox({
       prefix: 'git-cli-',
@@ -186,7 +186,7 @@ describe('git guard + CLI + reconciliation (issue #19, slice D)', () => {
   });
 
   it('git mutations through the bash op reconcile the same way', async () => {
-    // L-D37: shared sandbox (activated: the bash op inherits its env).
+    // Shared sandbox (activated: the bash op inherits its env).
     const repo = createGitSandbox({
       prefix: 'git-cli-',
       injectProcessEnv: true,
@@ -225,7 +225,7 @@ describe('kubic git over a real repo (typed requests)', () => {
     lines: string[];
     out: (l: string) => void;
   } {
-    // L-D37: shared sandbox. The log tests assert author `tester`, so
+    // Shared sandbox. The log tests assert author `tester`, so
     // the repo-local identity overrides the sandbox default.
     const sandbox = createGitSandbox({
       prefix: 'git-cli-',

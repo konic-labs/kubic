@@ -1,10 +1,9 @@
-// Approval dialogs show what will actually run (issue #316; §41.2, §16.4). A
-// model can pad a harmless prefix past any character cap and hide a
-// destructive tail: the request therefore carries the FULL command
-// (control characters neutralized, secrets redacted), the summary never
-// truncates silently, and orchestrator worker asks forward the full command
-// to the manager's seat. Hermetic: temp dirs only, cleaned in afterEach.
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+// Approval dialogs show what will actually run. A model can pad a harmless
+// prefix past any character cap and hide a destructive tail: the request
+// therefore carries the FULL command (control characters neutralized,
+// secrets redacted) and the summary never truncates silently. Hermetic:
+// temp dirs only, cleaned in afterEach.
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -23,19 +22,6 @@ import {
   type TriggerContext,
   validatePolicy,
 } from './approvals.js';
-import {
-  buildOrchestratorRequest,
-  type OrchestratorApprovalRequest,
-} from './orchestrator/approvals/request.js';
-import { createApprovalSigner } from './orchestrator/approvals/seal.js';
-import {
-  ASKS_DIR,
-  answerWorkerAsk,
-  createWorkerAskRouter,
-  createWorkerMailboxSeat,
-  formatWorkerAskQuestion,
-  readPendingWorkerAsks,
-} from './orchestrator/approvals/worker-asks.js';
 
 const made: string[] = [];
 
@@ -63,14 +49,7 @@ function triggerContext(): TriggerContext {
   };
 }
 
-async function waitFor(condition: () => boolean): Promise<void> {
-  for (let i = 0; i < 500 && !condition(); i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 2));
-  }
-  expect(condition()).toBe(true);
-}
-
-describe('summaries never truncate silently (issue #316)', () => {
+describe('summaries never truncate silently', () => {
   it('marks a truncated command summary with the hidden length', () => {
     const summary = summarizeRequest('bash', 'destructive-shell', {
       command: PADDED,
@@ -103,7 +82,7 @@ describe('summaries never truncate silently (issue #316)', () => {
   });
 });
 
-describe('the request carries the full command (issue #316)', () => {
+describe('the request carries the full command', () => {
   it('the approval key and the displayed command come from the same args', async () => {
     const seen: ApprovalRequest[] = [];
     const store = new FileApprovalStore(tmp());
@@ -125,97 +104,13 @@ describe('the request carries the full command (issue #316)', () => {
   });
 });
 
-describe('orchestrator worker asks forward the full command (issue #316)', () => {
-  it('derives a full command and a marked summary from the args', () => {
-    const request = buildOrchestratorRequest({
-      trigger: 'destructive-shell',
-      toolName: 'bash',
-      args: { command: PADDED },
-      justification: 'clean the build output before rebuilding',
-      sessionId: 's',
-      agentId: 'worker-1',
-      role: 'worker',
-      worktree: '/wt',
-      provenance: { parentSessionId: 'p' },
-    });
-    expect(request.command).toBe(PADDED);
-    expect(request.summary).toMatch(/… \(\+\d+ chars\)$/);
-    expect(formatWorkerAskQuestion(request)).toContain(PADDED);
-  });
-
-  it('a worker ask delivers the full command to the manager seat', async () => {
-    const dir = tmp();
-    mkdirSync(join(dir, ASKS_DIR), { recursive: true });
-    // The manager's sealing authority here; the child seat verifies with its
-    // public half (issue #149).
-    const signer = createApprovalSigner();
-    const childSeat = createWorkerMailboxSeat({
-      dir,
-      maxPendingMs: 5000,
-      pollMs: 2,
-      verifyKey: signer.verifyKey,
-    });
-    const verdict = childSeat({
-      key: 'k',
-      capability: 'destructive-shell',
-      toolName: 'bash',
-      summary: summarizeRequest('bash', 'destructive-shell', {
-        command: PADDED,
-      }),
-      command: PADDED,
-      justification: 'clean the build output before rebuilding',
-    });
-    await waitFor(
-      () =>
-        readPendingWorkerAsks(dir, { verifyKey: signer.verifyKey }).length ===
-        1,
-    );
-    const published = readPendingWorkerAsks(dir, {
-      verifyKey: signer.verifyKey,
-    })[0];
-    if (published === undefined) throw new Error('no ask published');
-    const shown: OrchestratorApprovalRequest[] = [];
-    const router = createWorkerAskRouter({
-      dir,
-      maxPendingMs: 5000,
-      seat: async (request) => {
-        shown.push(request);
-        return { approved: false, reason: 'not now' };
-      },
-    });
-    const { request, args } = published;
-    const outcome = await router.ask({
-      trigger: request.trigger,
-      toolName: request.toolName,
-      args,
-      justification: request.justification,
-      sessionId: request.sessionId,
-      agentId: request.agentId,
-      role: request.role,
-      worktree: request.worktree,
-      provenance: request.provenance,
-    });
-    answerWorkerAsk(
-      dir,
-      published,
-      {
-        approved: false,
-        reason: outcome.approved ? 'unexpected' : outcome.reason,
-      },
-      signer,
-    );
-    await verdict;
-    expect(shown[0]?.command).toBe(PADDED);
-  });
-});
-
-// Issue #316 (re-audit): the dialog exists so the operator sees what will
+// The dialog exists so the operator sees what will
 // run, so redaction may hide a secret VALUE but never a word that is only
 // named like one — `find / -name secret -delete` must keep `-delete`, and
 // `echo bearer rm -rf ~/work` must keep `rm` — and never anything the shell
 // would EXECUTE (a `$(...)`, backtick or `${...}` inside a value) or any
 // word on the other side of whitespace/newlines from a name.
-describe('the displayed command never hides a non-secret word (issue #316)', () => {
+describe('the displayed command never hides a non-secret word', () => {
   it.each([
     'find / -name secret -delete',
     'echo bearer rm -rf ~/work',
@@ -438,12 +333,12 @@ describe('the displayed command never hides a non-secret word (issue #316)', () 
   });
 });
 
-// Issue #316 (re-audit): what the summary line and the persisted/logged text
+// What the summary line and the persisted/logged text
 // show keeps the OLD broad redaction (`redactSecrets`, like block reasons —
 // approvals.ts says so): only the dialog's own `command` field uses the
 // narrower display redactor. Broad over-redaction is the safe direction for
 // text that leaves the screen.
-describe('summaries keep the broad redaction (issue #316)', () => {
+describe('summaries keep the broad redaction', () => {
   it.each([
     [
       'npm config set //registry.npmjs.org/:_authToken npm_abcdef1234567890',
@@ -482,8 +377,8 @@ describe('summaries keep the broad redaction (issue #316)', () => {
   });
 });
 
-// Issue #316 (re-audit): what the operator reads must be unambiguous.
-describe('the displayed command cannot be forged or hidden (issue #316)', () => {
+// What the operator reads must be unambiguous.
+describe('the displayed command cannot be forged or hidden', () => {
   it('a literal [REDACTED] in the command is shown escaped, never as a marker', () => {
     expect(approvalCommandText('curl -d @[REDACTED] x')).toBe(
       'curl -d @\\x5bREDACTED] x',

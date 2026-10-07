@@ -1,4 +1,4 @@
-# Example system prompt addition (issue #240; §63 `system_prompt_file`).
+# Example system prompt addition.
 # The `[agent] systemPromptFile` key in the sibling `example.toml` points
 # here: a relative path resolves against the declaring config file's
 # directory, so this file augments the lane prompt wherever the example is

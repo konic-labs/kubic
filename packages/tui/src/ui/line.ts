@@ -1,4 +1,4 @@
-// Line fitting for the TUI kit (EPIC N, issue #452). Cells, never string
+// Line fitting for the TUI kit. Cells, never string
 // length: widths come from Pi's grapheme-aware helpers through the boundary.
 
 import { openStyles } from '../../../core/src/ui/style.js';
@@ -53,7 +53,7 @@ export function leftRight(
   return `${fitted}${' '.repeat(Math.max(gap, spaces))}${right}`;
 }
 
-// Issue #468: the closing code of each attribute a line may leave open.
+// The closing code of each attribute a line may leave open.
 const CLOSE: Record<string, string> = {
   intensity: '\u001b[22m',
   italic: '\u001b[23m',
@@ -66,7 +66,7 @@ const CLOSE: Record<string, string> = {
 };
 
 /**
- * Issue #468: the line with every style (and hyperlink) it leaves open
+ * The line with every style (and hyperlink) it leaves open
  * closed at its end — attribute by attribute, so a surface's own background
  * keeps painting the cells after it. A line that closes what it opens is
  * returned unchanged.
@@ -78,7 +78,7 @@ export function closeOpenStyles(line: string): string {
 }
 
 /**
- * Issue #468: Pi's wrap carries a style onto the next row (re-opening it
+ * Pi's wrap carries a style onto the next row (re-opening it
  * there) but leaves it set at the row's end; every row here closes what it
  * leaves open, so no style bleeds past the row it was drawn on.
  */

@@ -1,4 +1,4 @@
-// (2) cache preservation check + prefix hit-rate (issue #56; §62 lever 2).
+// (2) cache preservation check + prefix hit-rate.
 // A prompt/prefix edit that breaks the cache prefix forces a full-price
 // re-read; this gate names what broke it. Prefix hit-rate is measurable
 // from usage rows (cacheRead > 0 counts as a prefix hit). The transparent

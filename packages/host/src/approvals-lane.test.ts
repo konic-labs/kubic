@@ -1,7 +1,7 @@
-// Slice D end to end: the host approval service gating a real solo lane
-// through the worker approve hook (issues #15/#16). The lane boots through
-// the shared faux harness factory (#401); its tool-end events come from the
-// durable watch (#398) exactly as `kubic run`/`tui` consume them.
+// End to end: the host approval service gating a real solo lane
+// through the worker approve hook. The lane boots through
+// the shared faux harness factory; its tool-end events come from the
+// durable watch exactly as `kubic run`/`tui` consume them.
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -58,7 +58,7 @@ function triggerContext(): TriggerContext {
   };
 }
 
-describe('approvals gate the lane (issue #16, slice D)', () => {
+describe('approvals gate the lane', () => {
   it('denies a destructive call headless, runs it under full-access', async () => {
     const dir = mkTmp('approvals-lane-');
     const store = new FileApprovalStore(dir);
@@ -98,7 +98,7 @@ describe('approvals gate the lane (issue #16, slice D)', () => {
     expect(JSON.stringify(denied[0])).toContain('not approved');
 
     enableFullAccess(store, 'test');
-    // Issue #325: the posture is read once at boot, so full access applies
+    // The posture is read once at boot, so full access applies
     // to the NEXT boot of the ask, never mid-session.
     ask = createApprovalAsk(service, triggerContext(), store);
     const allowed = await runOnce();
@@ -110,7 +110,7 @@ describe('approvals gate the lane (issue #16, slice D)', () => {
   });
 });
 
-describe('credential access is challenged and audited (issue #275)', () => {
+describe('credential access is challenged and audited', () => {
   it('denies a headless bash credential read and records trigger:credentials', async () => {
     const dir = mkTmp('approvals-cred-');
     const installed = installSoloPolicy({

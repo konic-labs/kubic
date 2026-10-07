@@ -20,7 +20,7 @@ function runCli(name, report, extra = []) {
 
 const report = (files) => ({ files });
 
-describe('mutation-check (issue #66)', () => {
+describe('mutation-check', () => {
   it('scores a file from killed vs survived mutants', () => {
     const scores = fileScores(
       report({
@@ -93,7 +93,7 @@ describe('mutation-check (issue #66)', () => {
   });
 });
 
-describe('mutation-check baseline ratchet (issue #72)', () => {
+describe('mutation-check baseline ratchet', () => {
   const at = (file, killed, survived) =>
     fileScores(
       report({

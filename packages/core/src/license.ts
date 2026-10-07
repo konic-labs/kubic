@@ -1,4 +1,4 @@
-// Kubic license identity (issue #59; §75.1): single source of truth for
+// Kubic license identity: single source of truth for
 // the MIT license id. `kubic --version` and the `license:kubic` doctor
 // check report these constants, so the CLI can never drift from what
 // LICENSE and the package.json license fields declare.

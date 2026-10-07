@@ -1,4 +1,4 @@
-// `kubic cost` CLI tests (issue #79; §62). RED first: cost-cli.ts lands
+// `kubic cost` CLI tests. Cost-cli.ts lands
 // after this file. Faux-only, zero network — rows are injected.
 import {
   appendFileSync,
@@ -49,7 +49,7 @@ import {
 
 const attached = vi.hoisted(() => ({
   calls: [] as Array<readonly unknown[]>,
-  // Issue #426: scripted `sessionLockIsLive` answers, consumed in order
+  // Scripted `sessionLockIsLive` answers, consumed in order
   // (a mid-read-liveness test scripts [undefined, live]). Empty means
   // passthrough to the real probe, so every other test is unaffected.
   lockScript: [] as Array<{ pid: number; startedAt?: number } | undefined>,
@@ -110,7 +110,7 @@ function capture() {
   };
 }
 
-describe('kubic cost text view (issue #79)', () => {
+describe('kubic cost text view', () => {
   it('prints one row per agent plus the task total', async () => {
     const cap = capture();
     const code = await runCostCommand(
@@ -123,7 +123,7 @@ describe('kubic cost text view (issue #79)', () => {
     );
     expect(code).toBe(0);
     // One plain (uncoloured, unboxed) table, then the task total.
-    // Issue #250 (§39): the group column, the worker's role, and the
+    // The group column, the worker's role, and the
     // separate in/out/cache counters at sub-cent precision.
     expect(cap.lines[0]).toBe(
       [
@@ -162,7 +162,7 @@ describe('kubic cost text view (issue #79)', () => {
   });
 });
 
-describe('kubic cost --json (issue #79)', () => {
+describe('kubic cost --json', () => {
   it('matches the in-code toCostJson shape field-for-field', async () => {
     const cap = capture();
     const code = await runCostCommand(
@@ -208,7 +208,7 @@ describe('kubic cost --json (issue #79)', () => {
   });
 });
 
-describe('kubic cost usage (issue #79, §78)', () => {
+describe('kubic cost usage', () => {
   // Argv syntax (unknown flags, a missing --session value, --help) is
   // commander's: apps/kubic/src/commands/analysis.test.ts pins it.
   it('exits 2 on an invalid session id before any store is touched', async () => {
@@ -271,7 +271,7 @@ describe('kubic cost usage (issue #79, §78)', () => {
   });
 });
 
-describe('kubic cost cache aggregation (issue #98, criterion 4)', () => {
+describe('kubic cost cache aggregation', () => {
   const CACHED_ROWS = [
     {
       agentId: 'sess-hit',
@@ -306,8 +306,8 @@ describe('kubic cost cache aggregation (issue #98, criterion 4)', () => {
     expect(code).toBe(0);
     const text = [...cap.lines, ...cap.errs].join('\n');
     // 1 of 2 sessions had a cache read > 0: a real measurement over the
-    // rows the loader returned, never an invented number. Issue #250:
-    // the unit follows the grouping level (per-agent by default).
+    // rows the loader returned, never an invented number. The unit follows
+    // the grouping level (per-agent by default).
     expect(text).toMatch(/cache: 1\/2 agents with prefix hits/);
     expect(text).toMatch(/50%/);
   });
@@ -338,7 +338,7 @@ describe('kubic cost cache aggregation (issue #98, criterion 4)', () => {
       agents: Array<Record<string, unknown>>;
       taskTotal: number;
     };
-    // Criterion 5: the documented top-level shape is untouched.
+    // The documented top-level shape is untouched.
     expect(Object.keys(parsed).sort()).toEqual(['agents', 'taskTotal']);
     // The new aggregation is additive: inside the existing per-agent rows.
     expect(parsed.agents[0]?.cacheRead).toBe(900);
@@ -356,7 +356,7 @@ describe('kubic cost cache aggregation (issue #98, criterion 4)', () => {
   });
 });
 
-describe('kubic cost secret backstop (issue #79 fix cycle 1)', () => {
+describe('kubic cost secret backstop', () => {
   // Passes SESSION_ID_PATTERN ([A-Za-z0-9_-]) yet matches the sk secret
   // shape: the unknown-session echo must not carry it.
   const SHAPED_SESSION = 'SK-FAUX-TEST-KEY-0001';
@@ -419,7 +419,7 @@ describe('kubic cost secret backstop (issue #79 fix cycle 1)', () => {
   });
 });
 
-describe('kubic cost durable usage (issue #400)', () => {
+describe('kubic cost durable usage', () => {
   // The faux provider's default model (not the host fixture's `echo`).
   const MODEL_REF = `${FAUX_PROVIDER_ID}/faux-1`;
   const made: string[] = [];
@@ -589,122 +589,11 @@ describe('kubic cost durable usage (issue #400)', () => {
     expect(rows[0]?.cacheRead).toBeGreaterThanOrEqual(0);
   });
 
-  it('rolls one orchestrate run up: --session <orch> sums the children (issue #164)', async () => {
-    const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    const parent = await createSession(
-      store,
-      { id: 'orch-1', cwd: '/repo' },
-      BACKGROUND_CONTEXT,
-    );
-    await parent.release(BACKGROUND_CONTEXT);
-    const childTotals: number[] = [];
-    for (const agent of ['aaa', 'bbb']) {
-      const worker = await createSession(
-        store,
-        {
-          id: `orch-1-${agent}`,
-          cwd: `/repo/.kubic/wt/${agent}`,
-          parentSessionId: 'orch-1',
-          role: 'implementer',
-          agentId: agent,
-        },
-        BACKGROUND_CONTEXT,
-      );
-      await fauxRun(worker.adopt());
-      await worker.release(BACKGROUND_CONTEXT);
-      const readable = await attachSession(
-        store,
-        `orch-1-${agent}`,
-        BACKGROUND_CONTEXT,
-      );
-      try {
-        childTotals.push(
-          totalSessionUsage(
-            await readSessionUsage(readable.storage, BACKGROUND_CONTEXT),
-          ).costUsd,
-        );
-      } finally {
-        await readable.release(BACKGROUND_CONTEXT);
-      }
-    }
-    const rows = await loadSessionCostRows(root, 'orch-1');
-    // Per-child rows, keyed by the worker session — never the parent id.
-    expect(rows.map((row) => row.agentId).sort()).toEqual([
-      'orch-1-aaa',
-      'orch-1-bbb',
-    ]);
-    const expected = (childTotals[0] ?? 0) + (childTotals[1] ?? 0);
-    expect(rows.reduce((sum, row) => sum + row.costUsd, 0)).toBeCloseTo(
-      expected,
-    );
-    expect(expected).toBeGreaterThanOrEqual(0);
-  });
-
-  it('a live-locked manager still reports its children (review #164)', async () => {
-    const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    // The manager stays attached: a live run holds the Kubic lock exactly
-    // like this, so the old contract would refuse the whole report.
-    const parent = await createSession(
-      store,
-      { id: 'orch-1', cwd: '/repo' },
-      BACKGROUND_CONTEXT,
-    );
-    try {
-      for (const agent of ['aaa', 'bbb']) {
-        const worker = await createSession(
-          store,
-          {
-            id: `orch-1-${agent}`,
-            cwd: `/repo/.kubic/wt/${agent}`,
-            parentSessionId: 'orch-1',
-            role: 'implementer',
-            agentId: agent,
-          },
-          BACKGROUND_CONTEXT,
-        );
-        await fauxRun(worker.adopt());
-        await worker.release(BACKGROUND_CONTEXT);
-      }
-      const rows = await loadSessionCostRows(root, 'orch-1');
-      expect(rows.map((row) => row.agentId).sort()).toEqual([
-        'orch-1-aaa',
-        'orch-1-bbb',
-      ]);
-    } finally {
-      await parent.release(BACKGROUND_CONTEXT);
-    }
-  });
-
   it('still refuses an unknown explicit --session (exit 1), never a marker row', async () => {
     const root = tmpRoot();
     await expect(loadSessionCostRows(root, 'missing')).rejects.toMatchObject({
       name: 'SessionAttachError',
     });
-  });
-
-  it('an unknown --session with orphaned children names the orphans (#419)', async () => {
-    const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    // Children naming a parent that was never recorded (pruned manager
-    // record, or a hand-made linkage): the loaders see them, the named
-    // attach does not.
-    for (const agent of ['aaa', 'bbb']) {
-      const worker = await createSession(
-        store,
-        {
-          id: `gone-${agent}`,
-          cwd: '/repo',
-          parentSessionId: 'gone',
-        },
-        BACKGROUND_CONTEXT,
-      );
-      await worker.release(BACKGROUND_CONTEXT);
-    }
-    await expect(loadSessionCostRows(root, 'gone')).rejects.toThrow(
-      /orphaned children: gone-aaa, gone-bbb/,
-    );
   });
 
   it('refuses an explicit --session held live, instead of a zero (locked) row', async () => {
@@ -774,7 +663,7 @@ describe('kubic cost durable usage (issue #400)', () => {
     );
     try {
       const rows = await loadSessionCostRows(root);
-      // Issue #250: marker rows carry the same locating identity as real
+      // Marker rows carry the same locating identity as real
       // rows (the session that could not be read, and its project).
       expect(rows).toEqual([
         {
@@ -811,7 +700,7 @@ describe('kubic cost durable usage (issue #400)', () => {
   });
 });
 
-describe('kubic cost lock-free reads (issue #251)', () => {
+describe('kubic cost lock-free reads', () => {
   const made: string[] = [];
   const open: Harness[] = [];
 
@@ -934,7 +823,7 @@ describe('kubic cost lock-free reads (issue #251)', () => {
     expect(cap.errs).toEqual([]);
   });
 
-  // Issue #426 (found reviewing #251): between the `sessionLockIsLive`
+  // Between the `sessionLockIsLive`
   // probe and the read, a session can go live — cost then reads a store
   // another process is appending to. The torn tail must not fail the
   // report, and a row that went live mid-read must say it may be
@@ -996,7 +885,7 @@ describe('kubic cost lock-free reads (issue #251)', () => {
   });
 });
 
-describe('kubic cost project scope and grouping (issue #250)', () => {
+describe('kubic cost project scope and grouping', () => {
   const made: string[] = [];
   const open: Harness[] = [];
   const MODEL_REF = `${FAUX_PROVIDER_ID}/faux-1`;
@@ -1050,7 +939,6 @@ describe('kubic cost project scope and grouping (issue #250)', () => {
       id: string;
       cwd: string;
       workspace?: string;
-      parentSessionId?: string;
       role?: string;
       agentId?: string;
     },
@@ -1132,36 +1020,19 @@ describe('kubic cost project scope and grouping (issue #250)', () => {
     ]);
   });
 
-  it("names each worker's role and model on an orchestrated run", async () => {
+  it("names a session's recorded role, agent and model", async () => {
     const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    const parent = await createSession(
-      store,
-      { id: 'orch-2', cwd: '/repo' },
-      BACKGROUND_CONTEXT,
-    );
-    await parent.release(BACKGROUND_CONTEXT);
-    for (const agent of ['ccc', 'ddd']) {
-      const worker = await createSession(
-        store,
-        {
-          id: `orch-2-${agent}`,
-          cwd: `/repo/.kubic/wt/${agent}`,
-          workspace: '/repo',
-          parentSessionId: 'orch-2',
-          role: 'implementer',
-          agentId: agent,
-        },
-        BACKGROUND_CONTEXT,
-      );
-      await fauxRun(worker.adopt());
-      await worker.release(BACKGROUND_CONTEXT);
-    }
-    const rows = await loadSessionCostRows(root, 'orch-2');
-    // Listing order is newest-first, so the assertion sorts like #164's.
-    expect(rows.map((row) => row.agent).sort()).toEqual(['ccc', 'ddd']);
-    expect(rows.map((row) => row.role)).toEqual(['implementer', 'implementer']);
-    expect(rows.map((row) => row.model)).toEqual([MODEL_REF, MODEL_REF]);
+    await storedRun(root, {
+      id: 's-role',
+      cwd: '/repo',
+      workspace: '/repo',
+      role: 'implementer',
+      agentId: 'ccc',
+    });
+    const rows = await loadSessionCostRows(root, 's-role');
+    expect(rows.map((row) => row.agent)).toEqual(['ccc']);
+    expect(rows.map((row) => row.role)).toEqual(['implementer']);
+    expect(rows.map((row) => row.model)).toEqual([MODEL_REF]);
   });
 
   it('aggregates to one row per session with --by session', async () => {

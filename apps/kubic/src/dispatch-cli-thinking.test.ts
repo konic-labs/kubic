@@ -1,4 +1,4 @@
-// The `--thinking` flag as an input to the ONE config load (issue #225).
+// The `--thinking` flag as an input to the ONE config load.
 // Dispatch loads the config before commander parses, so the session
 // override has to be read from the raw argv exactly once and handed to
 // `loadConfig` — the commands' own commander definitions then re-parse the
@@ -20,7 +20,7 @@ afterAll(() => {
   rmSync(fixture, { recursive: true, force: true });
 });
 
-describe('cliThinkingFromArgs (issue #225)', () => {
+describe('cliThinkingFromArgs', () => {
   it('reads both spellings for the commands that own the flag', () => {
     expect(cliThinkingFromArgs('run', ['--thinking', 'high', '-p', 'hi'])).toBe(
       'high',
@@ -61,7 +61,7 @@ describe('cliThinkingFromArgs (issue #225)', () => {
   });
 });
 
-describe('the --thinking flag feeds the one config load (issue #225)', () => {
+describe('the --thinking flag feeds the one config load', () => {
   it('kubic config --thinking shows the cli layer', async () => {
     const seen: string[] = [];
     const deps: DispatchDeps = {
@@ -89,7 +89,7 @@ describe('the --thinking flag feeds the one config load (issue #225)', () => {
     expect(seen).toContain('thinking=high');
   });
 
-  // Review cycle 2: the fail-closed env path ends here, not in the loader
+  // The fail-closed env path ends here, not in the loader
   // unit test — a banana `KUBIC_MODEL_THINKING` stops `kubic run` (exit 1)
   // with the variable named, before any runner is reached.
   it('a banana KUBIC_MODEL_THINKING fails kubic run naming the variable', async () => {

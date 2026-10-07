@@ -1,4 +1,4 @@
-// vitest setupFile (issue #377): every test file runs under a temp HOME,
+// vitest setupFile: every test file runs under a temp HOME,
 // with no ambient KUBIC_* variables and non-loopback TCP connects refused
 // (loopback is exempt, so a test-owned server is fine), so results never
 // depend on the developer's installed skills, trust opt-in, or network. The

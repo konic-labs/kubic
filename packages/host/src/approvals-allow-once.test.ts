@@ -1,7 +1,7 @@
-// 'allow once' is one call, 'allow for the session' is the session (issue
-// #231; §41.2). Before this issue ApprovalService.submit latched and
-// persisted EVERY verdict, so pressing 'a' on `rm -rf build/` silently
-// approved every later identical call — across restarts, via approvals.json.
+// 'allow once' is one call, 'allow for the session' is the session. Before this
+// issue ApprovalService.submit latched and persisted EVERY verdict, so pressing
+// 'a' on `rm -rf build/` silently approved every later identical call — across
+// restarts, via approvals.json.
 //
 // Hermetic: real service, real file store in a temp dir removed in afterEach.
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -49,7 +49,7 @@ function withSeat(verdict: ApprovalVerdict) {
   return { installed, sessionDir, workspace, asks: () => asks };
 }
 
-describe('allow-once is not latched (issue #231)', () => {
+describe('allow-once is not latched', () => {
   it('approves the call, and a second identical request asks the seat again', async () => {
     const seat = withSeat({ approved: true, by: 'allow-once' });
     expect(await seat.installed.ask(CALL)).toEqual({

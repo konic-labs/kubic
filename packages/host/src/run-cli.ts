@@ -1,6 +1,6 @@
-// Headless `kubic run -p` (issue #28; §78, §17, §19, §80, §84).
+// Headless `kubic run -p`.
 // Non-interactive equivalent of the solo run: no alt-screen, no prompt,
-// consumable output, exact §78 exit codes. Host owns presentation only —
+// consumable output, exact exit codes. Host owns presentation only —
 // the agent run itself is injected by the composition root (faux in tests,
 // the solo lane in prod). This module imports the worker settlement
 // kernel (pure outcome mapping) read-only — never the lane, the session
@@ -8,14 +8,13 @@
 // flows through the injected persist hook identically for text and
 // --json output.
 
-import { BUDGET_DIMENSIONS, type RunMode } from '../../agents/src/budget.js';
+import type { RunMode } from '../../agents/src/policy.js';
 import {
   EXIT_APPROVAL,
-  EXIT_BUDGET,
   EXIT_FAILED,
   EXIT_OK,
-  EXIT_PARTIAL,
   EXIT_PROVIDER,
+  EXIT_TURN_LIMIT,
   EXIT_USAGE,
   EXIT_WORKSPACE,
 } from '../../core/src/cli/exit-codes.js';
@@ -29,26 +28,22 @@ import {
   type LaneTerminalStatus,
   settleTerminalStatus,
 } from '../../worker/src/lane/settle.js';
+import { TIMEOUT_REASON_MARKER } from './approval-timeout.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
-import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
 
 export const RUN_EXIT_OK = EXIT_OK;
 export const RUN_EXIT_FAILED = EXIT_FAILED;
 export const RUN_EXIT_USAGE = EXIT_USAGE;
-export const RUN_EXIT_BUDGET = EXIT_BUDGET;
+export const RUN_EXIT_TURN_LIMIT = EXIT_TURN_LIMIT;
 export const RUN_EXIT_APPROVAL_DENIED = EXIT_APPROVAL;
 export const RUN_EXIT_WORKSPACE_UNAVAILABLE = EXIT_WORKSPACE;
 export const RUN_EXIT_PROVIDER_PROBE_FAILED = EXIT_PROVIDER;
-// The delegated-run partial terminus (issue #169): some workers failed while
-// the run continued, so the merge that did land is reported on exit 7 rather
-// than hidden behind a plain failure.
-export const RUN_EXIT_PARTIAL_FAILURE = EXIT_PARTIAL;
 
 export type RunTerminusKind =
   | 'completed'
   | 'failed'
   | 'usage'
-  | 'budget_exhausted'
+  | 'turn_limit'
   | 'timeout'
   | 'cancelled'
   | 'approval_denied'
@@ -58,18 +53,17 @@ export type RunTerminusKind =
   | 'provider_transient'
   | 'provider_auth';
 
-// POSIX 128+signo for the interrupts a headless run handles (issue #280),
-// the same convention `kubic tui` pins for a signalled quit (#313).
+// POSIX 128+signo for the interrupts a headless run handles,
+// the same convention `kubic tui` pins for a signalled quit.
 const INTERRUPT_SIGNAL_NUMBER: Readonly<Record<string, number>> = {
   SIGHUP: 1,
   SIGINT: 2,
   SIGTERM: 15,
 };
 
-// §78's table names six codes; a run's finer terminus rides on the `--json`
-// status. `timeout` is a plain task failure (1) — §78 has no timeout code,
-// and a wall-clock bound the user did not configure as a budget must not
-// claim `budget_exhausted` (§71, issue #280). `cancelled` keeps POSIX
+// 's table names six codes; a run's finer terminus rides on the `--json`
+// status. `timeout` is a plain task failure (1), and `turn_limit` (the
+// `--max-turns` guard) has its own code (3). `cancelled` keeps POSIX
 // 128+signo (SIGHUP 129, SIGINT 130, SIGTERM 143; SIGINT when no signal is
 // known) so a signalled run reads like a signalled process.
 const INTERRUPT_EXIT_DEFAULT = 128 + 2;
@@ -86,8 +80,8 @@ export function mapTerminusToExitCode(
       return RUN_EXIT_FAILED;
     case 'usage':
       return RUN_EXIT_USAGE;
-    case 'budget_exhausted':
-      return RUN_EXIT_BUDGET;
+    case 'turn_limit':
+      return RUN_EXIT_TURN_LIMIT;
     case 'cancelled': {
       const number =
         signal === undefined ? undefined : INTERRUPT_SIGNAL_NUMBER[signal];
@@ -100,18 +94,18 @@ export function mapTerminusToExitCode(
       return RUN_EXIT_WORKSPACE_UNAVAILABLE;
     case 'provider_probe_failed':
       return RUN_EXIT_PROVIDER_PROBE_FAILED;
-    // Issue #155: a provider error during the run is a failed task, not the
-    // pre-run probe — §78's 6 is reserved for the boot probe (no provider
-    // configured, an unknown stored model). The §52 code is the honest half.
+    // A provider error during the run is a failed task, not the pre-run probe —
+    // 6 is reserved for the boot probe (no provider configured, an unknown
+    // stored model). The failure code is the honest half.
     case 'provider_transient':
     case 'provider_auth':
       return RUN_EXIT_FAILED;
   }
 }
 
-// Lane outcome → §78 terminus + §52 failure (issue #155). The §52 code is
+// Lane outcome → terminus + failure. The failure code is
 // the precise half — what a retry chooser or an RL pairing reads — and the
-// terminus is the §78 class the exit code follows. A provider-classified
+// terminus is the class the exit code follows. A provider-classified
 // lane error is `provider_auth`/`provider_transient`, never the pre-run
 // probe terminus: `provider_probe_failed` is reserved for the boot probe.
 export interface LaneOutcomeTerminus {
@@ -127,11 +121,10 @@ export function mapLaneOutcomeToFailure(
   const settled = settleTerminalStatus(status, error).error;
   const kind = settled?.kind ?? 'process';
   const message = settled?.message ?? '';
-  // The approval terminus follows the shipped marker rule (issue #129,
-  // TIMEOUT_REASON_MARKER): the reason text decides refusal vs elapsed wait,
-  // never a classifier keyword — an elapse whose wording also says "denied"
-  // must stay `approval_timed_out`, and a refusal worded "refused" must
-  // stay `approval_denied` (review finding, issue #155).
+  // The approval terminus follows the shipped marker rule: the reason text
+  // decides refusal vs elapsed wait, never a classifier keyword — an elapse
+  // whose wording also says "denied" must stay `approval_timed_out`, and a
+  // refusal worded "refused" must stay `approval_denied`.
   if (kind === 'approval') {
     const code = message.includes(TIMEOUT_REASON_MARKER)
       ? 'approval_timed_out'
@@ -140,8 +133,6 @@ export function mapLaneOutcomeToFailure(
   }
   const failure = classifyFailure(kind, error?.code ?? '', message);
   switch (failure.code) {
-    case 'budget_exhausted':
-      return { terminus: 'budget_exhausted', failure };
     case 'workspace_failed':
       return { terminus: 'workspace_unavailable', failure };
     case 'provider_auth':
@@ -152,14 +143,11 @@ export function mapLaneOutcomeToFailure(
   }
 }
 
-// Lane outcome → §78 terminus (issue #28, E1). Read-only consumer of the
+// Lane outcome → terminus. Read-only consumer of the
 // worker settlement kernel: completed stays 0-bound, and a
 // failed/cancelled run keeps the harness error classification
-// (budget/approval/workspace/provider surface as 3/4/5/6-bound termini,
-// everything else as failed). No budget or approval gate is enforced in
-// the headless lane yet, so budget_exhausted/approval_denied fire only
-// when the lane itself yields a classified error — until then they are
-// covered by the contract tests, not by live runs.
+// (approval/workspace/provider surface as 4/5/6-bound termini, everything
+// else as failed).
 export function mapLaneOutcomeToTerminus(
   status: LaneTerminalStatus,
   error?: OperationErrorLike,
@@ -167,18 +155,18 @@ export function mapLaneOutcomeToTerminus(
   return mapLaneOutcomeToFailure(status, error).terminus;
 }
 
-// §52 classification of a terminus whose code is implied (issue #155): the
-// guard and gate termini each have exactly one §52 code, and the boot probe
+// Failure classification of a terminus whose code is implied: the
+// guard and gate termini each have exactly one failure code, and the boot probe
 // is the provider setup failure. The classification never reads the
 // summary — a failure's wording must not flip a fixed code (review finding).
 // `failed` reads its code from the result's own `failure`;
-// `timeout`/`cancelled` have no §52 code.
+// `timeout`/`cancelled` have no failure code.
 export function failureForTerminus(
   terminus: RunTerminusKind,
 ): ClassifiedFailure | undefined {
   switch (terminus) {
-    case 'budget_exhausted':
-      return classifyFailure('budget', 'budget_exhausted', '');
+    case 'turn_limit':
+      return classifyFailure('limit', 'run_limit', '');
     case 'approval_denied':
       return classifyFailure('approval', 'approval_denied', '');
     case 'approval_timed_out':
@@ -205,7 +193,7 @@ export function failureForTerminus(
   }
 }
 
-// Issue #209 review: the chooser's decision plus the executor's report —
+// The chooser's decision plus the executor's report —
 // whether the retry happened. Retried-then-failed carries retried: true;
 // decided-to-retry-but-compaction-refused and abandoned carry false.
 export interface RetryRecord extends RetryDecision {
@@ -220,36 +208,28 @@ export interface HeadlessRunResult {
   usageRef: string;
   trajectoryRef: string;
   error?: { kind: string; message: string };
-  // Issue #155: the §52 classification of a lane failure (code, remedy,
+  // The failure classification of a lane failure (code, remedy,
   // strategy) — the precise half the terminus cannot carry. Absent on
-  // termini with no §52 code (`timeout`, `cancelled`, `usage`).
+  // termini with no failure code (`timeout`, `cancelled`, `usage`).
   failure?: ClassifiedFailure;
-  // Issue #209: the retry decision when the lane made one (solo overflow
+  // The retry decision when the lane made one (solo overflow
   // recovery) — strategy, reason and notBefore, also on success.
   retry?: RetryRecord;
-  // Issue #280: the interrupt that ended the run, present exactly when the
+  // The interrupt that ended the run, present exactly when the
   // terminus is `cancelled`; the exit code is 128+signo from it.
   signal?: string;
-  // Issue #185 (§39, §68): the run's own usage rollup and the model that
+  // The run's own usage rollup and the model that
   // answered, read back from its session after the run. Absent when no
   // session was ever created (a usage refusal before attach).
   usage?: RunUsage;
   model?: string;
-  // The approval posture the lane ran under (issue #308): 'full-access'
+  // The approval posture the lane ran under: 'full-access'
   // when the session skips approvals. Absent when no lane was installed.
   posture?: 'approvals' | 'full-access';
-  // The run's §19 mode (issue #278): explicit `--autonomous` or off by
+  // The run's mode: explicit `--autonomous` or off by
   // default. Absent when no session was ever created (same bound as
   // posture — the mode is read from the session record).
   mode?: RunMode;
-  // The §71 budget breach that ended the run (issue #285): the
-  // worker-facet limit name (`tokens` | `cost` | `toolCalls` |
-  // `wallClock`), with the measured spend and the bound when the breach
-  // site knew them (a post-turn ledger breach does; a mid-turn gate trip
-  // names the limit only). Present exactly on `budget_exhausted` runs
-  // that tripped a configured solo budget or, since issue #440, a worker
-  // child's KUBIC_BUDGET.
-  budgetBreach?: { limit: string; used?: number; max?: number };
 }
 
 export interface RunUsage {
@@ -271,13 +251,13 @@ export interface RunEnvelope {
   usage: { ref: string } & Partial<RunUsage>;
   trajectory: { ref: string };
   model?: string;
-  // Issue #308: scripted callers detect a full-access session here.
+  // Scripted callers detect a full-access session here.
   approvals?: { posture: 'approvals' | 'full-access' };
-  // Issue #278 (§19): the §19 mode the run resolved; the status already
+  // The mode the run resolved; the status already
   // names the stop condition that ended it.
   mode?: RunMode;
   error?: { kind: string; message: string };
-  // Issue #155: the §52 failure code, remedy and retry strategy, additive.
+  // The failure code, remedy and retry strategy, additive.
   failure?: ClassifiedFailure;
 }
 
@@ -285,8 +265,8 @@ export function buildRunEnvelope(
   result: HeadlessRunResult,
   exitCode: number,
 ): RunEnvelope {
-  // Issue #155: the lane path carries its own classification; every other
-  // failure terminus has exactly one implied §52 code.
+  // The lane path carries its own classification; every other
+  // failure terminus has exactly one implied failure code.
   const failure = result.failure ?? failureForTerminus(result.terminus);
   return {
     ok: exitCode === RUN_EXIT_OK,
@@ -307,7 +287,7 @@ export function buildRunEnvelope(
   };
 }
 
-// Issue #447 (docs/ui/06-cli.html 06-B): live progress for a `kubic run` on
+// Live progress for a `kubic run` on
 // an interactive terminal. The composition root builds the sink (stderr,
 // spinner, kit rendering); the runner feeds it lane facts; the command
 // hands it the settled result for the receipt. Absent means today's plain
@@ -332,10 +312,6 @@ export interface RunProgressSink {
   receipt(result: HeadlessRunResult, exitCode: number): void;
 }
 
-// Issue #464: the tool half of a progress sink — what an orchestrator
-// worker reports to its manager as each tool call starts and ends.
-export type RunToolSink = Pick<RunProgressSink, 'toolStart' | 'toolEnd'>;
-
 export interface RunCommandDeps extends CliIo {
   run: (
     prompt: string,
@@ -343,47 +319,38 @@ export interface RunCommandDeps extends CliIo {
       sessionId?: string;
       timeoutMs?: number;
       maxTurns?: number;
-      // §29.3 skills surface (issue #99): the parsed flags travel to the
+      // Skills surface: the parsed flags travel to the
       // runner, which owns discovery. `--no-skills` is a boolean request
       // (never a value); `--skill` is repeatable and additive.
       noSkills?: boolean;
       skills?: string[];
-      // §12.1 role selection (issue #99): forwarded to the runner, which
+      // Role selection: forwarded to the runner, which
       // loads `.kubic/roles/<name>.md` and fails closed on a refusal.
       role?: string;
-      // Issue #183 (§29.4): the explicit skill to invoke — forwarded to
+      // The explicit skill to invoke — forwarded to
       // the runner, which expands it against the booted (gated-visible)
       // skills and fails the run on an unknown name.
       invokeSkill?: string;
-      // §50 debug channel (issue #98): a boolean request is forwarded to the
+      // Debug channel: a boolean request is forwarded to the
       // runner, which owns the sink (stderr in prod). Never gates the run.
       debug?: boolean;
-      // §41.4 (issue #308): forwarded to the runner's one enable path.
+      // Forwarded to the runner's one enable path.
       dangerouslySkipApprovals?: boolean;
-      // §19 (issue #278): explicit autonomous mode, recorded in session
-      // metadata and the §60 audit trail, driving RunMode.
+      // Explicit autonomous mode, recorded in session
+      // metadata and the audit trail, driving RunMode.
       autonomous?: boolean;
-      // §71 (issue #283): the opt-in solo budget, parsed by the
-      // registrar — forwarded to the runner, which builds the bundle
-      // with it. Absent means no limits, never defaults.
-      budget?: SoloBudgetLimits;
-      // §40.1 mechanism 1 (issue #273): the per-invocation tool selection.
+      // The per-invocation tool selection.
       tools?: readonly string[];
       noTools?: boolean;
-      // Issue #447: live progress on an interactive terminal.
+      // Live progress on an interactive terminal.
       progress?: RunProgressSink;
-      // Issue #464: an orchestrator worker's live tool facts.
-      toolFacts?: RunToolSink;
     },
   ) => Promise<HeadlessRunResult>;
   persist?: (result: HeadlessRunResult) => Promise<void> | void;
   onScreenMount?: () => void;
-  // Issue #447: the interactive-terminal progress sink. Present only when
+  // The interactive-terminal progress sink. Present only when
   // stdout AND stderr are a coloured TTY and the run is not `--json`.
   progress?: () => RunProgressSink;
-  // Issue #464: the tool-fact sink of a run that is an orchestrator worker
-  // (the manager follows them on the child's stdout, `--json` or not).
-  toolFacts?: () => RunToolSink;
 }
 
 // Session ids are path segments under the sessions root: accept only
@@ -391,8 +358,8 @@ export interface RunCommandDeps extends CliIo {
 // Checked here (exit 2) before any store attach is attempted.
 export const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
-// Default wall-clock bound for a headless run (issue #84): a model that
-// never stops thinking settles as `timeout` (issue #280) instead of
+// Default wall-clock bound for a headless run: a model that
+// never stops thinking settles as `timeout` instead of
 // hanging the process forever. Overridable per invocation with --timeout.
 export const DEFAULT_RUN_TIMEOUT_MS = 300_000;
 
@@ -414,17 +381,15 @@ export interface RunCommandOptions {
   readonly role?: string;
   readonly skills?: readonly string[];
   readonly noSkills?: boolean;
-  // Issue #183 (§29.4): invoke one explicit skill first (run only).
+  // Invoke one explicit skill first (run only).
   readonly invokeSkill?: string;
   readonly debug?: boolean;
   readonly json?: boolean;
-  // §41.4 (issue #308): session-scoped full access for this run's session.
+  // Session-scoped full access for this run's session.
   readonly dangerouslySkipApprovals?: boolean;
-  // §19 (issue #278): explicit autonomous mode (off by default).
+  // Explicit autonomous mode (off by default).
   readonly autonomous?: boolean;
-  // §71 (issue #283): the opt-in solo budget (never defaulted).
-  readonly budget?: SoloBudgetLimits;
-  // §40.1 mechanism 1 (issue #273): `--tools <a,b>` / `--no-tools`.
+  // `--tools <a,b>` / `--no-tools`.
   readonly tools?: readonly string[];
   readonly noTools?: boolean;
 }
@@ -457,69 +422,6 @@ export function parseRunTimeout(value: string): number {
 // `--max-turns <n>`: a positive integer.
 export function parseRunMaxTurns(value: string): number {
   return positiveInt(value);
-}
-
-// `--budget <dims>` (issue #283; §71): the opt-in solo budget, reusing
-// orchestrate's dimension grammar (`maxToolCalls=10,maxCostUsd=0.5`) but
-// WITHOUT agent scoping — a solo run has one lane, so an `agent:` clause
-// is a usage error naming the flag. No defaults: absence leaves the key
-// out upstream. Host never imports the extensions package (structural
-// boundary, like doctor's posture), so this returns the structural shape
-// and the composition root maps it onto the bundle's `BudgetLimits`.
-export interface SoloBudgetLimits {
-  maxTokens?: number;
-  maxCostUsd?: number;
-  maxRuntimeMs?: number;
-  maxToolCalls?: number;
-}
-
-export function parseSoloBudget(value: string): SoloBudgetLimits {
-  // Bare dims only — no `agent:` clauses, no `;` separators: a solo run
-  // has one lane, so anything agent-shaped is refused naming the flag.
-  // Same dimension/positivity/ceiling rules as orchestrate's grammar.
-  const dims: Record<string, number> = {};
-  for (const part of value.split(',')) {
-    const trimmed = part.trim();
-    if (trimmed.length === 0) {
-      throw new RunArgumentError(
-        `--budget ${JSON.stringify(value)}: need dims like maxToolCalls=10,maxCostUsd=0.5`,
-      );
-    }
-    const equals = trimmed.indexOf('=');
-    if (equals <= 0) {
-      throw new RunArgumentError(
-        `--budget ${JSON.stringify(value)}: need dims like maxToolCalls=10,maxCostUsd=0.5`,
-      );
-    }
-    const name = trimmed.slice(0, equals).trim();
-    const amount = Number(trimmed.slice(equals + 1));
-    if (
-      !BUDGET_DIMENSIONS.includes(name) ||
-      !Number.isFinite(amount) ||
-      !(amount > 0) ||
-      (name === 'maxRuntimeMs' && amount > MAX_RUN_TIMEOUT_MS)
-    ) {
-      throw new RunArgumentError(
-        `--budget ${JSON.stringify(value)}: need dims like maxToolCalls=10,maxCostUsd=0.5`,
-      );
-    }
-    dims[name] = amount;
-  }
-  if (Object.keys(dims).length === 0) {
-    throw new RunArgumentError(
-      `--budget ${JSON.stringify(value)}: need dims like maxToolCalls=10,maxCostUsd=0.5`,
-    );
-  }
-  return {
-    ...(dims.maxTokens === undefined ? {} : { maxTokens: dims.maxTokens }),
-    ...(dims.maxCostUsd === undefined ? {} : { maxCostUsd: dims.maxCostUsd }),
-    ...(dims.maxRuntimeMs === undefined
-      ? {}
-      : { maxRuntimeMs: dims.maxRuntimeMs }),
-    ...(dims.maxToolCalls === undefined
-      ? {}
-      : { maxToolCalls: dims.maxToolCalls }),
-  };
 }
 
 // `--session <id>` (and every other session-id argument): a path segment
@@ -557,7 +459,7 @@ export function checkPromptValue(value: string, attached: boolean): string {
 function isWorkspaceFailure(error: unknown): boolean {
   const record = error as { name?: unknown; code?: unknown };
   if (record.name === 'SessionAttachError') return true;
-  // A live second attachment (issue #118) is the same class of failure as a
+  // A live second attachment is the same class of failure as a
   // missing session: the workspace cannot host this run right now — the
   // named SessionLockError message carries the holder pid.
   if (record.name === 'SessionLockError') return true;
@@ -581,7 +483,7 @@ function isWorkspaceFailure(error: unknown): boolean {
   );
 }
 
-// Caught (non-lane) failures → §78 terminus, shared with the composition
+// Caught (non-lane) failures → terminus, shared with the composition
 // root so the prod path maps store/attach errors identically (E2).
 export function mapCaughtErrorToTerminus(error: unknown): RunTerminusKind {
   return isWorkspaceFailure(error) ? 'workspace_unavailable' : 'failed';
@@ -610,10 +512,10 @@ function runFailure(
   };
 }
 
-// A refused config stops the run before any lane exists (issue #244): the
+// A refused config stops the run before any lane exists: the
 // documented exit-1 failure, shaped as the standard run envelope so a
 // `--json` consumer still parses exactly one document (compact, the same
-// line shape every run envelope has — `kubic orchestrate` reads it).
+// line shape every run envelope has).
 export function refusedRunResult(message: string): HeadlessRunResult {
   return {
     terminus: 'failed',
@@ -657,7 +559,6 @@ export async function runRunCommand(
   void deps.onScreenMount;
   const skills = options.skills ?? [];
   const progress = options.json === true ? undefined : deps.progress?.();
-  const toolFacts = deps.toolFacts?.();
   let result: HeadlessRunResult;
   try {
     result = await deps.run(options.prompt, {
@@ -665,7 +566,7 @@ export async function runRunCommand(
       timeoutMs: options.timeoutMs,
       maxTurns: options.maxTurns,
       ...(options.role === undefined ? {} : { role: options.role }),
-      // Issue #183 (§29.4): the explicit skill invocation travels with
+      // The explicit skill invocation travels with
       // the run into the headless lane.
       ...(options.invokeSkill === undefined
         ? {}
@@ -676,13 +577,11 @@ export async function runRunCommand(
       ...(options.dangerouslySkipApprovals === true
         ? { dangerouslySkipApprovals: true }
         : {}),
-      ...(options.budget === undefined ? {} : { budget: options.budget }),
       ...(options.tools === undefined || options.tools.length === 0
         ? {}
         : { tools: [...options.tools] }),
       ...(options.noTools === true ? { noTools: true } : {}),
       ...(progress === undefined ? {} : { progress }),
-      ...(toolFacts === undefined ? {} : { toolFacts }),
     });
     await deps.persist?.(result);
   } catch (error) {
@@ -690,13 +589,13 @@ export async function runRunCommand(
   }
   const exitCode = mapTerminusToExitCode(result.terminus, result.signal);
   if (options.json === true) {
-    // One compact line, deliberately not pretty-printed: `kubic
-    // orchestrate` reads a worker's envelope as the LAST stdout line.
+    // One compact line, deliberately not pretty-printed: a script reads the
+    // envelope as the LAST stdout line.
     deps.out(JSON.stringify(buildRunEnvelope(result, exitCode)));
     return exitCode;
   }
   if (progress !== undefined) {
-    // Issue #447: the interactive rendering. The answer is the command's
+    // The interactive rendering. The answer is the command's
     // data (stdout); the receipt and next steps are presentation (stderr,
     // through the sink). The plain lines below stay for every other case.
     progress.settle();

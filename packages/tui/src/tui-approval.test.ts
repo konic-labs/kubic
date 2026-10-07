@@ -1,6 +1,6 @@
-// The approval inside the interactive loop (issue #96, criteria 1 and 2).
+// The approval inside the interactive loop.
 //
-// Issue #459: an approval is an inline card in the editor's slot at every
+// An approval is an inline card in the editor's slot at every
 // width — never an overlay — so the transcript above stays readable. The app
 // is rendered headless at a fixed width; this file pins the loop's
 // decisions.
@@ -48,13 +48,12 @@ function approvalHost() {
   };
 }
 
-describe('approval in the loop (issue #96, criterion 1)', () => {
+describe('approval in the loop', () => {
   it('shows the card for a gated call and resolves it on approve', async () => {
     const app = createTuiApp({
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     const fake = approvalHost();
@@ -85,7 +84,6 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     const fake = approvalHost();
@@ -101,12 +99,11 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
     });
   });
 
-  it('leaves Esc a harmless no-op when nothing is pending (issue #454)', () => {
+  it('leaves Esc a harmless no-op when nothing is pending', () => {
     const app = createTuiApp({
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     expect(app.handleInput('\u001b')).toEqual({
@@ -121,7 +118,6 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     const fake = approvalHost();
@@ -137,7 +133,6 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     const fake = approvalHost();
@@ -168,7 +163,6 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     const fake = approvalHost();
@@ -180,13 +174,12 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
   });
 });
 
-describe('the card at every width (issue #96 criterion 2; #459)', () => {
+describe('the card at every width', () => {
   it('renders the card on a narrow terminal, and the editor once settled', async () => {
     const app = createTuiApp({
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     const fake = approvalHost();
@@ -209,7 +202,6 @@ describe('the card at every width (issue #96 criterion 2; #459)', () => {
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     const fake = approvalHost();
@@ -230,7 +222,6 @@ describe('the card at every width (issue #96 criterion 2; #459)', () => {
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     const pending = app.requestApproval(request());

@@ -1,4 +1,4 @@
-// The §19 mode on the solo path (issue #278): `kubic run --autonomous`
+// The mode on the solo path: `kubic run --autonomous`
 // records `autonomous` on the run's session; without the flag the session
 // carries `interactive` (off by default, never assumed). Faux provider,
 // scratch sessions root — zero network, zero paid tokens.
@@ -36,7 +36,6 @@ function tmp(prefix: string): string {
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
-  vi.stubEnv('KUBIC_WORKER_ID', '');
 });
 
 afterEach(() => {
@@ -90,7 +89,7 @@ async function runModeOf(autonomous: boolean): Promise<{
   };
 }
 
-describe('kubic run --autonomous records the §19 mode (issue #278)', () => {
+describe('kubic run --autonomous records the mode', () => {
   it('records autonomous when the flag is passed', async () => {
     await expect(runModeOf(true).then((run) => run.mode)).resolves.toBe(
       'autonomous',
@@ -104,7 +103,7 @@ describe('kubic run --autonomous records the §19 mode (issue #278)', () => {
   }, 60_000);
 
   // Acceptance: the result and the --json envelope name the mode
-  // (the status already names the §19 stop condition).
+  // (the status already names the stop condition).
   it.each([true, false])(
     'the result and envelope name the mode (flag=%s)',
     async (autonomous) => {
@@ -116,7 +115,7 @@ describe('kubic run --autonomous records the §19 mode (issue #278)', () => {
     60_000,
   );
 
-  // Acceptance: the mode reaches the §60 ledger at run start.
+  // Acceptance: the mode reaches the ledger at run start.
   it.each([true, false])(
     'writes a run:start ledger row with the mode (flag=%s)',
     async (autonomous) => {
@@ -124,7 +123,6 @@ describe('kubic run --autonomous records the §19 mode (issue #278)', () => {
       const rows = readAuditLedger(auditLedgerDirFor(run.cwd));
       const start = rows.find((row) => row.what === 'run:start');
       expect(start).toMatchObject({
-        mode: 'solo',
         result: 'ok',
       });
       expect(start?.reason).toContain(
@@ -134,7 +132,7 @@ describe('kubic run --autonomous records the §19 mode (issue #278)', () => {
     60_000,
   );
 
-  // Review #278 (low): the solo row records the resolved worktree base —
+  // Review (low): the solo row records the resolved worktree base —
   // the scratch cwd is outside git, so the honest value is `none`, never
   // the hardcoded `unknown` the builder used to write unconditionally.
   it('writes the resolved run base on the solo run:start row', async () => {

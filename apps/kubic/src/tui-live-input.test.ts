@@ -1,9 +1,9 @@
 // Live-input contracts of the `kubic tui` loop on the real alt-screen.
 //
-// Issue #274: Kubic's input listener consumes every key, and pi-tui skips its
+// Kubic's input listener consumes every key, and pi-tui skips its
 // own post-input render for a consumed key — so while idle nothing repainted
 // and typing, Ctrl-O/R/T/X and an approval decision stayed invisible.
-// Issue #306: Kitty-class terminals send key-release events; the listener
+// Kitty-class terminals send key-release events; the listener
 // must see presses only, so a toggle does not cancel itself on key-up and a
 // Ctrl-C cancel / an Esc deny never becomes a quit.
 //
@@ -161,13 +161,13 @@ async function startTui(bootLane: TuiRunDeps['bootLane']) {
   return { fake, lines, exit };
 }
 
-describe('idle input repaints (issue #274)', () => {
+describe('idle input repaints', () => {
   it('a typed key while idle is on screen within one render tick', async () => {
     const { fake, exit } = await startTui(viewerBoot());
     const mark = fake.mark();
     fake.feed('a');
     await waitFor(() => fake.since(mark).includes('a'), RENDER_TICK_STEPS);
-    // Issue #302/#454: the draft is on screen, so the first Ctrl-C only
+    // The draft is on screen, so the first Ctrl-C only
     // clears it; the double press after it quits.
     fake.feed('\x03');
     fake.feed('\x03');
@@ -223,7 +223,7 @@ describe('idle input repaints (issue #274)', () => {
     // The turn settled: the spinner is gone, so only the key can paint.
     await new Promise((resolve) => setTimeout(resolve, 150));
     let mark = fake.mark();
-    // Issue #453: the solo tree row starts hidden; Ctrl-T opens it.
+    // The solo tree row starts hidden; Ctrl-T opens it.
     fake.feed('\x14');
     await waitFor(
       () => fake.since(mark).includes('✓ bash rows'),
@@ -262,7 +262,7 @@ describe('idle input repaints (issue #274)', () => {
   });
 });
 
-describe('Kitty key releases on the live loop (issue #306)', () => {
+describe('Kitty key releases on the live loop', () => {
   it('a Ctrl-C release after a cancel press never quits the session', async () => {
     const root = tmpRoot();
     let release: () => void = () => {};
@@ -286,7 +286,7 @@ describe('Kitty key releases on the live loop (issue #306)', () => {
     release();
     await waitFor(() => fake.since(0).includes('cancelled'));
     expect(fake.counts.stopped).toBe(0);
-    // Idle (issue #454): the press arms the quit, its release must not
+    // Idle: the press arms the quit, its release must not
     // complete it, and the second press quits.
     fake.feed('\x1b[99;5u');
     fake.feed('\x1b[99;5:3u');

@@ -1,16 +1,16 @@
-// Dispatch wiring suite (issue #135): the composition root's front door —
-// which command routes to which runner, the config-refusal matrix, the §78
-// exit codes, and the front-door special cases — over injected
+// Dispatch wiring suite: the composition root's front door — which command
+// routes to which runner, the config-refusal matrix, the exit codes, and
+// the front-door special cases — over injected
 // runners. Faux everything: no real lanes, no network, and no fs beyond the
 // one fixture dir this file creates.
 //
 // The `prod wiring deps shapes` block drives the REAL production runners
 // (./prod-runners.js) over hermetic argv and fixtures on purpose: it pins
-// the documented deps shapes the root wires (clean {env,out,err}, cost
-// {loadRows,out}, audit {loadRecords,loadSecrets,out}, export {readFile,out})
+// the documented deps shapes the root wires (cost {loadRows,out}, audit
+// {loadRecords,loadSecrets,out}, export {readFile,out})
 // and the eval runSuite refusal message, verbatim.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -29,7 +29,6 @@ import {
   type CliConfigResult,
   CONFIG_CONSUMING_COMMANDS,
   loadCliConfig,
-  runtimeExcludeEntriesFor,
 } from './config-runtime.js';
 import {
   type DispatchDeps,
@@ -42,7 +41,7 @@ import { createProdRunners } from './prod-runners.js';
 type RunnerKey = keyof DispatchRunners;
 
 // The runner roster: one entry per command seam the root wires inline
-// (27 command names, 21 runners — the four journal commands share one).
+// (23 command names, 17 runners — the four journal commands share one).
 const RUNNER_KEYS: readonly RunnerKey[] = [
   'sessions',
   'git',
@@ -52,15 +51,11 @@ const RUNNER_KEYS: readonly RunnerKey[] = [
   'tui',
   'doctor',
   'skills',
-  'orchestrate',
-  'clean',
   'cost',
-  'perf',
   'policy',
   'config',
   'trust',
   'audit',
-  'workers',
   'eval',
   'benchmark',
   'replay',
@@ -85,15 +80,11 @@ const ROUTES: readonly (readonly [string, readonly string[], RunnerKey])[] = [
   ['resume', ['abc'], 'tui'],
   ['doctor', [], 'doctor'],
   ['skills', ['--json'], 'skills'],
-  ['orchestrate', [], 'orchestrate'],
-  ['clean', ['--dry-run'], 'clean'],
   ['cost', ['--json'], 'cost'],
-  ['perf', ['--budget', 'spawn', '--samples', '1'], 'perf'],
   ['policy', ['--tool', 'shell'], 'policy'],
   ['config', ['--json'], 'config'],
   ['trust', [], 'trust'],
   ['audit', [], 'audit'],
-  ['workers', ['--json'], 'workers'],
   [
     'eval',
     ['--suite', 'swe-bench-mini', '--task', 'p', '--generation', '1'],
@@ -118,21 +109,15 @@ const PARSED: Readonly<Record<string, unknown>> = {
   skills: { json: true },
   config: { json: true },
   trust: {},
-  // `--skill` is repeatable: commander's collector yields [] when unused.
-  orchestrate: { skills: [] },
-  clean: { dryRun: true },
-  // Issue #167: the bare form routes as the list invocation.
-  workers: { command: 'list', json: true },
   git: { command: 'status' },
   diff: { command: 'diff', json: true },
   undo: { command: 'undo', step: true },
   log: { command: 'log' },
   status: { command: 'status' },
   cost: { json: true },
-  perf: { budget: 'spawn', samples: '1' },
   policy: { tool: 'shell' },
   audit: {},
-  // #256: no commander model default on eval — the handler applies it on
+  // No commander model default on eval — the handler applies it on
   // the --task path; --trajectory reads the model from the export.
   eval: {
     suite: 'swe-bench-mini',
@@ -161,7 +146,7 @@ interface Harness {
   readonly deps: DispatchDeps;
   readonly calls: RunnerCall[];
   readonly lines: string[];
-  // The options each `loadConfig` call received (issue #228: the accepted
+  // The options each `loadConfig` call received (the accepted
   // trust answer is threaded into the load as an explicit decision).
   readonly loadOptions: ReadonlyArray<{ projectTrusted?: boolean } | undefined>;
   readonly state: {
@@ -265,10 +250,10 @@ function loadedConfig(): CliConfigResult {
   return loadedOnce;
 }
 
-describe('dispatch routing (issue #135)', () => {
-  it('pins the roster: 27 commands, 21 runners, every runner exercised', () => {
-    expect(ROUTES).toHaveLength(27);
-    expect(RUNNER_KEYS).toHaveLength(21);
+describe('dispatch routing', () => {
+  it('pins the roster: 23 commands, 17 runners, every runner exercised', () => {
+    expect(ROUTES).toHaveLength(23);
+    expect(RUNNER_KEYS).toHaveLength(17);
     const routed = new Set(ROUTES.map(([, , key]) => key));
     expect([...routed].sort()).toEqual([...RUNNER_KEYS].sort());
   });
@@ -312,7 +297,7 @@ describe('dispatch routing (issue #135)', () => {
     expect(h.calls).toEqual([]);
   });
 
-  it('a bare multi-word prompt is `kubic run -p <prompt>` (issue #268, L-D7)', async () => {
+  it('a bare multi-word prompt is `kubic run -p <prompt>`', async () => {
     const h = harness();
     expect(
       await dispatchCommand('fix the authentication bug', [], h.deps),
@@ -333,7 +318,7 @@ describe('dispatch routing (issue #135)', () => {
     ]);
   });
 
-  it('a single-word unknown token stays an unknown command with the prompt hint (L-D7)', async () => {
+  it('a single-word unknown token stays an unknown command with the prompt hint', async () => {
     const h = harness();
     expect(await dispatchCommand('nosuch', [], h.deps)).toBe(2);
     expect(h.lines).toEqual([
@@ -357,7 +342,7 @@ describe('dispatch routing (issue #135)', () => {
   });
 });
 
-describe('front door (issue #128 behavior, moved)', () => {
+describe('front door', () => {
   it('--version prints the version line from the injected version', async () => {
     const h = harness({ version: '9.9.9' });
     expect(await dispatchCommand('--version', [], h.deps)).toBe(0);
@@ -387,7 +372,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(h.calls).toEqual([]);
   });
 
-  it('the bare invocation on an interactive terminal opens the TUI (§78/§80)', async () => {
+  it('the bare invocation on an interactive terminal opens the TUI', async () => {
     const h = harness();
     const deps = { ...h.deps, isInteractive: () => true };
     expect(await dispatchCommand(undefined, [], deps)).toBe(0);
@@ -397,7 +382,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(h.lines).toEqual([]);
   });
 
-  it('bare `kubic --dangerously-skip-approvals` on a TTY is `kubic tui --dangerously-skip-approvals` (issue #308)', async () => {
+  it('bare `kubic --dangerously-skip-approvals` on a TTY is `kubic tui --dangerously-skip-approvals`', async () => {
     const h = harness();
     const deps = { ...h.deps, isInteractive: () => true };
     expect(
@@ -409,7 +394,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(h.state.excludeCalls).toBe(1);
   });
 
-  it('bare `kubic --dangerously-skip-approvals` off a TTY keeps usage + exit 1 (issue #308)', async () => {
+  it('bare `kubic --dangerously-skip-approvals` off a TTY keeps usage + exit 1', async () => {
     const h = harness();
     const deps = { ...h.deps, isInteractive: () => false };
     expect(
@@ -419,30 +404,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(h.calls).toEqual([]);
   });
 
-  // Issue #327: bare `kubic --orchestrator` on a TTY IS `kubic tui
-  // --orchestrator` — the opt-in interactive orchestrator entry. Off a TTY
-  // it keeps the bare usage + exit 1 posture like the other bare flags.
-  it('bare `kubic --orchestrator` on a TTY is `kubic tui --orchestrator` (issue #327)', async () => {
-    const h = harness();
-    const deps = { ...h.deps, isInteractive: () => true };
-    expect(await dispatchCommand('--orchestrator', [], deps)).toBe(0);
-    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([
-      ['tui', { orchestrator: true }],
-    ]);
-    // Same boot as `kubic tui`: the runtime ignore rules ship first.
-    expect(h.state.excludeCalls).toBe(1);
-    expect(h.lines).toEqual([]);
-  });
-
-  it('bare `kubic --orchestrator` off a TTY keeps usage + exit 1 (issue #327)', async () => {
-    const h = harness();
-    const deps = { ...h.deps, isInteractive: () => false };
-    expect(await dispatchCommand('--orchestrator', [], deps)).toBe(1);
-    expect(h.lines).toEqual([ROOT_HELP]);
-    expect(h.calls).toEqual([]);
-  });
-
-  // Issue #295: bare `kubic --model p/id` on a TTY is `kubic tui --model`.
+  // Bare `kubic --model p/id` on a TTY is `kubic tui --model`.
   it('routes a bare --model on an interactive terminal to the TUI', async () => {
     const h = harness();
     const deps = { ...h.deps, isInteractive: () => true };
@@ -476,7 +438,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(h.calls).toEqual([]);
   });
 
-  it('throws from the gated crash probe (contract seam, issue #128)', async () => {
+  it('throws from the gated crash probe (contract seam)', async () => {
     process.env.__KUBIC_CONTRACT_CRASH_PROBE = '1';
     try {
       await expect(
@@ -508,7 +470,7 @@ describe('front door (issue #128 behavior, moved)', () => {
       ]);
       expect(h.calls, command).toEqual([]);
     }
-    // `help` and `version` point at the real flags (issue #450), never at
+    // `help` and `version` point at the real flags, never at
     // the prompt form; a typo names the closest command.
     const help = harness();
     expect(await dispatchCommand('help', [], help.deps)).toBe(2);
@@ -532,7 +494,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     ]);
   });
 
-  it('runs the first-run setup only for a bare interactive kubic (issue #451)', async () => {
+  it('runs the first-run setup only for a bare interactive kubic', async () => {
     let asked = 0;
     const firstRunSetup = async (): Promise<number | undefined> => {
       asked += 1;
@@ -551,7 +513,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(asked).toBe(1);
   });
 
-  it('renders a usage error as an error block on a colour terminal (issue #450)', async () => {
+  it('renders a usage error as an error block on a colour terminal', async () => {
     const h = harness();
     const theme = createCliTheme('truecolor');
     expect(
@@ -583,20 +545,18 @@ describe('front door (issue #128 behavior, moved)', () => {
   });
 });
 
-describe('config refusal (issue #90 policy, moved)', () => {
-  // Issue #242: clean and policy consume config projections (the
-  // orchestrator root, the installed posture a run enforces), so a
-  // refused config must stop them like the agent-executing modes.
+describe('config refusal', () => {
+  // policy consumes a config projection (the installed posture a run
+  // enforces), so a refused config must stop it like the agent-executing
+  // modes.
   // attach/resume boot the same TUI lane as tui, and eval/benchmark run
   // agent lanes under the same projections — all fail closed here.
   const CONSUMING = [
     'run',
-    'orchestrate',
     'tui',
     'attach',
     'resume',
     'replay',
-    'clean',
     'policy',
     'eval',
     'benchmark',
@@ -606,13 +566,12 @@ describe('config refusal (issue #90 policy, moved)', () => {
   it('pins gate membership: the gate is exactly the refused commands', () => {
     // A new command whose runner reads cliConfig.runtime must join the
     // gate here — or be a reporting command, or take the documented
-    // sessions/journal retention fallback. Audit (issue #242): run,
-    // orchestrate, tui (+attach/resume aliases), replay, clean
-    // (orchestrator.root), policy (installed posture) and eval/benchmark
-    // (lane projections) read runtime; config/doctor/skills/trust report it;
+    // sessions/journal retention fallback. run, tui (+attach/resume
+    // aliases), replay, policy (installed posture) and eval/benchmark (lane
+    // projections) read runtime; config/doctor/skills/trust report it;
     // sessions/journal read only sessionRetentionDays (undefined-safe
     // fallback); models reads only the trust report (present on refusal);
-    // git, cost, perf, audit, workers and export read no config at all.
+    // git, cost, audit and export read no config at all.
     expect([...CONFIG_CONSUMING_COMMANDS].sort()).toEqual(
       [...CONSUMING].sort(),
     );
@@ -640,31 +599,12 @@ describe('config refusal (issue #90 policy, moved)', () => {
     }
   });
 
-  it('refuses clean and policy with exit 1 and the named reason (issue #242)', async () => {
-    // `policy --tool shell` must not report the built-in `allow` posture
-    // when the operator configured `[permissions] shell = false` plus a
-    // typo; `clean --dry-run` must not scan the default root when the
-    // configured root is refused. Neither runner may run.
-    for (const [command, rest] of [
-      ['policy', ['--tool', 'shell']],
-      ['clean', ['--dry-run']],
-      ['clean', []],
-    ] as const) {
-      const h = harness({ config: refusedConfig('unknown key [nope]') });
-      expect(await dispatchCommand(command, [...rest], h.deps), command).toBe(
-        1,
-      );
-      expect(h.lines, command).toEqual(['error: unknown key [nope]']);
-      expect(h.calls, `${command} must not reach a runner`).toEqual([]);
-    }
-  });
-
   it('lets every other command proceed', async () => {
     const others = ROUTES.filter(
       ([command]) =>
         !CONSUMING.includes(command) && !REPORTING.includes(command),
     );
-    expect(others).toHaveLength(13);
+    expect(others).toHaveLength(11);
     // Each with its ROUTES argv: a bare `kubic git` is a usage error.
     for (const [command, rest] of others) {
       const h = harness({ config: refusedConfig() });
@@ -683,7 +623,7 @@ describe('config refusal (issue #90 policy, moved)', () => {
     expect(errs).toEqual(['error: unknown key [nope]']);
   });
 
-  it('prints the command’s failure envelope on stdout under --json (issue #244)', async () => {
+  it('prints the command’s failure envelope on stdout under --json', async () => {
     const cases: Array<{
       command: string;
       rest: string[];
@@ -699,20 +639,6 @@ describe('config refusal (issue #90 policy, moved)', () => {
           expect(envelope.error).toEqual({
             kind: 'failed',
             message: 'unknown key [nope]',
-          });
-        },
-      },
-      {
-        command: 'orchestrate',
-        rest: ['-p', 'hi', '--json'],
-        check: (envelope) => {
-          expect(envelope.status).toBe('failed');
-          expect(envelope.sessionId).toBe('unassigned');
-          expect(envelope.workers).toEqual([]);
-          expect(envelope.error).toEqual({
-            kind: 'failed',
-            message: 'unknown key [nope]',
-            code: 'config_refused',
           });
         },
       },
@@ -749,10 +675,8 @@ describe('config refusal (issue #90 policy, moved)', () => {
   it('a refusal without --json stays stdout-empty for every consuming command', async () => {
     const cases: Array<[string, string[]]> = [
       ['run', ['-p', 'hi']],
-      ['orchestrate', ['-p', 'hi']],
       ['replay', ['t.json']],
       ['tui', []],
-      ['clean', ['--dry-run']],
       ['policy', ['--tool', 'shell']],
     ];
     for (const [command, rest] of cases) {
@@ -778,7 +702,7 @@ describe('config refusal (issue #90 policy, moved)', () => {
   });
 });
 
-describe('interactive project trust (issue #228)', () => {
+describe('interactive project trust', () => {
   it('asks `kubic tui` on a TTY and loads with the accepted decision', async () => {
     const h = harness({ interactive: true, resolveTrust: async () => true });
     expect(await dispatchCommand('tui', [], h.deps)).toBe(0);
@@ -868,9 +792,9 @@ describe('interactive project trust (issue #228)', () => {
   });
 });
 
-describe('runtime exclude (issue #91, moved order)', () => {
+describe('runtime exclude (moved order)', () => {
   it('ships the exclude rules for the state-creating modes', async () => {
-    for (const command of ['run', 'orchestrate', 'tui']) {
+    for (const command of ['run', 'tui']) {
       const h = harness();
       await dispatchCommand(command, [], h.deps);
       expect(h.state.excludeCalls, command).toBe(1);
@@ -885,11 +809,11 @@ describe('runtime exclude (issue #91, moved order)', () => {
     }
   });
 
-  it('a --help argv skips the exclude step (issue #245)', async () => {
+  it('a --help argv skips the exclude step', async () => {
     // `kubic run --help` is the command's generated help, not the root's:
     // commander answers it before the action, so the runtime-exclude write
     // (a repo mutation) must not happen for a help request.
-    for (const command of ['run', 'tui', 'orchestrate']) {
+    for (const command of ['run', 'tui']) {
       for (const flag of ['--help', '-h']) {
         const h = harness();
         expect(
@@ -905,163 +829,10 @@ describe('runtime exclude (issue #91, moved order)', () => {
     }
   });
 
-  it('ships the configured worktree parent with the runtime prefixes (issue #133)', async () => {
-    // Under FIXTURE so the afterAll cleanup removes it too.
-    const dir = mkdtempSync(join(FIXTURE, 'root-'));
-    mkdirSync(join(dir, '.kubic'), { recursive: true });
-    writeFileSync(
-      join(dir, '.kubic', 'config.toml'),
-      '[orchestrator]\nroot = ".kubic-custom/wt"\n',
-    );
-    const config = loadCliConfig({
-      cwd: dir,
-      home: dir,
-      env: {},
-      projectTrusted: true,
-    });
-    expect(config.runtime?.orchestrator.root).toBe('.kubic-custom/wt');
-
-    const h = harness({ config });
-    expect(await dispatchCommand('orchestrate', [], h.deps)).toBe(0);
-    expect(h.state.excludeEntries).toEqual([
-      ...RUNTIME_EXCLUDE_ENTRIES,
-      '/.kubic-custom/wt/',
-    ]);
-
-    // The unconfigured load ships exactly the shipped prefixes — no
-    // invented entry, no dropped one.
-    const bare = harness();
-    await dispatchCommand('run', [], bare.deps);
-    expect(bare.state.excludeEntries).toEqual([...RUNTIME_EXCLUDE_ENTRIES]);
-  });
-
-  it('refuses a hostile root at the entry derivation, before any write (issue #133 review)', () => {
-    // Defense in depth: the config load refuses control characters by name;
-    // if one ever reached this seam, the derivation refuses to hand the
-    // entry to the writer — no hostile entry can be written.
-    expect(() => runtimeExcludeEntriesFor('x\n*.log')).toThrow(
-      /control characters/,
-    );
-    expect(() => runtimeExcludeEntriesFor('wt\u001b[31mX')).toThrow(
-      /control characters/,
-    );
-    // The safe path is unchanged: the shipped five, plus the configured root,
-    // anchored to the repo root (issue #133 fix-cycle-3).
-    expect(runtimeExcludeEntriesFor('.kubic-custom/wt')).toEqual([
-      ...RUNTIME_EXCLUDE_ENTRIES,
-      '/.kubic-custom/wt/',
-    ]);
-  });
-
-  it('refuses metacharacter roots and committed-half collisions at the derivation (issue #133 re-review)', () => {
-    // Defense in depth over the one derivation every consumer shares: a
-    // root whose `<root>/` entry would act as a gitignore pattern other
-    // than the literal path it names is refused here too — never repaired
-    // into a different rule.
-    for (const root of [
-      '*',
-      '**',
-      '.kubic*',
-      '.kubi[c]',
-      '.kubi?',
-      '#x',
-      'x\\',
-    ]) {
-      expect(() => runtimeExcludeEntriesFor(root), root).toThrow(
-        /gitignore metacharacters/,
-      );
-    }
-    // The committed-half collision is re-checked here as well: the config
-    // load refuses `.kubic` / `.kubic/roles` first, but the derivation must
-    // never hand the writer an entry that would ignore D35's committed
-    // files even when a programmatic caller bypassed the load.
-    for (const root of [
-      '.kubic',
-      '.kubic/roles',
-      '.kubic//roles',
-      '.kubic/./roles',
-    ]) {
-      expect(() => runtimeExcludeEntriesFor(root), root).toThrow(
-        /committed config half/,
-      );
-    }
-  });
-
-  it('anchors the derived entry to the repo root (issue #133 fix-cycle-3)', () => {
-    // A pattern whose only slash is trailing is NOT anchored: `worktrees/`
-    // matches a directory of that name at any depth, so `deep/worktrees/y.txt`
-    // and `src/worktrees/z.txt` would be hidden and skipped by `git add -A`.
-    // The derived entry carries the leading slash that anchors it; the
-    // shipped five already contain a middle slash, so they stay byte-identical.
-    const entries = runtimeExcludeEntriesFor('worktrees');
-    expect(entries.slice(0, -1)).toEqual([...RUNTIME_EXCLUDE_ENTRIES]);
-    expect(entries[entries.length - 1]).toBe('/worktrees/');
-    // Multi-segment roots are anchored the same way (a no-op for git, which
-    // anchors any pattern with a middle slash) — one entry shape, every root.
-    expect(runtimeExcludeEntriesFor('.kubic-custom/wt')).toEqual([
-      ...RUNTIME_EXCLUDE_ENTRIES,
-      '/.kubic-custom/wt/',
-    ]);
-    // The shipped default keeps the shipped list exactly: `.kubic/wt/` is
-    // already anchored by its middle slash, and the repo's own gate pins
-    // those five entries verbatim.
-    expect(runtimeExcludeEntriesFor('.kubic/wt')).toEqual([
-      ...RUNTIME_EXCLUDE_ENTRIES,
-    ]);
-    expect(runtimeExcludeEntriesFor(undefined)).toEqual([
-      ...RUNTIME_EXCLUDE_ENTRIES,
-    ]);
-  });
-
-  it('re-checks the path shape at the entry derivation (issue #133 fix-cycle-3)', () => {
-    // The config load refuses these first; the derivation re-checks for
-    // programmatic callers that never pass through the load, with the load's
-    // own message. An empty value, an absolute path, a `..` segment and a
-    // trailing '/' can never become a repo-root entry.
-    for (const root of ['', '   ', '/abs', '//', 'x/', 'a/..', '../x', '..']) {
-      expect(
-        () => runtimeExcludeEntriesFor(root),
-        JSON.stringify(root),
-      ).toThrow(/'orchestrator': 'root' must be a workspace-relative path/);
-    }
-  });
-
-  it('re-checks the committed half case-insensitively at the derivation (issue #133 fix-cycle-3)', () => {
-    // git case-folds ignore patterns on a case-insensitive filesystem, so a
-    // case variant of `.kubic` / `.kubic/roles` hides the committed half
-    // exactly like the exact spelling — refused here with the same name.
-    for (const root of ['.KUBIC', '.Kubic', '.KUBIC/roles', '.kubic/ROLES']) {
-      expect(() => runtimeExcludeEntriesFor(root), root).toThrow(
-        /committed config half/,
-      );
-    }
-  });
-
-  it('re-checks the no-op roots at the derivation (issue #133 fix-cycle-3)', () => {
-    // '.' / './…' / '…/.' names the directory it sits in: the derived entry
-    // would match nothing and the worktree set would stay unignored.
-    for (const root of ['.', './.', './worktrees', 'foo/.']) {
-      expect(() => runtimeExcludeEntriesFor(root), root).toThrow(
-        /must not name the workspace or carry a '\.' segment/,
-      );
-    }
-  });
-});
-
-describe('workers usage exit (issue #77, §78)', () => {
-  it('commander refuses an unknown flag with exit 2 before the runner', async () => {
+  it('ships exactly the runtime prefixes', async () => {
     const h = harness();
-    expect(await dispatchCommand('workers', ['--nope'], h.deps)).toBe(2);
-    expect(h.calls).toEqual([]);
-  });
-
-  it('passes every runner code through unchanged (no remap left)', async () => {
-    for (const code of [0, 1, 3, 6]) {
-      const h = harness({ runners: { workers: async () => code } });
-      expect(await dispatchCommand('workers', [], h.deps), `code ${code}`).toBe(
-        code,
-      );
-    }
+    await dispatchCommand('run', [], h.deps);
+    expect(h.state.excludeEntries).toEqual([...RUNTIME_EXCLUDE_ENTRIES]);
   });
 });
 
@@ -1092,7 +863,7 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
     };
   }
 
-  it('eval --task drives the live suite runner (issue #262)', async () => {
+  it('eval --task drives the live suite runner', async () => {
     // The built-in suite's fixture runs through the solo lane with the faux
     // provider, so --task produces a scored record instead of the old
     // "live suite execution is not available" refusal.
@@ -1123,22 +894,6 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
     }
   });
 
-  it('clean receives { env, out, err } (an unknown session fails by name on stderr)', async () => {
-    // Read-only: a dry run scoped to a session this checkout never ran
-    // resolves the repo, finds no retained set, and removes nothing.
-    const cap = capture();
-    const code = await createProdRunners(cap.io).clean(
-      { sessionId: 'no-such-session-dispatch-test', dryRun: true },
-      loadedConfig(),
-    );
-    expect(code).toBe(1);
-    expect(cap.lines).toEqual([]);
-    expect(cap.errs).toHaveLength(1);
-    expect(cap.errs[0]).toMatch(
-      /^error: no retained set for session 'no-such-session-dispatch-test'/,
-    );
-  });
-
   it('cost receives { loadRows, out } (an unknown session fails by name)', async () => {
     const cap = capture();
     const previousHome = process.env.HOME;
@@ -1159,8 +914,8 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
 
   it('audit receives { loadRecords, loadSecrets, out } (zero rows is a clean report)', async () => {
     const cap = capture();
-    // The ledger is the REPO's (`<repo>/.kubic/orchestrator/approvals/`),
-    // resolved from the cwd. Run from an empty scratch dir so the developer's
+    // The ledger is the REPO's (`<repo>/.kubic/audit/`), resolved from the
+    // cwd. Run from an empty scratch dir so the developer's
     // own ledger — or rows a mutation-run sandbox leaked into the enclosing
     // checkout — can never change the answer.
     const scratch = mkdtempSync(join(FIXTURE, 'audit-cwd-'));
@@ -1188,7 +943,3 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
     );
   });
 });
-
-// NOTE (issue #381): the workers-runner source-regex pins lived here —
-// removed; behavioural cover is prod-runners.test.ts 'kubic workers from
-// a subdirectory' (issue #281).

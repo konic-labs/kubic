@@ -1,7 +1,7 @@
-// GRPO exporter (issue #54; design §74).
+// GRPO exporter.
 // One group per prompt: candidate completions with reference-verifier
 // rewards (pass → 1, fail → 0). Candidates keep their own provenance +
-// §52 label + prompt copy so the group validates even shuffled; the
+// Label + prompt copy so the group validates even shuffled; the
 // group prompt must equal every candidate prompt.
 import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
 import {
@@ -67,7 +67,7 @@ function buildCandidate(exported: TrajectoryExport): GrpoCandidate {
   };
 }
 
-// A GRPO group compares several answers to ONE prompt (#269): a group of
+// A GRPO group compares several answers to ONE prompt: a group of
 // one has no relative signal, and a candidate answering another prompt or
 // task corrupts the group's baseline — both are refused, never emitted.
 export function buildGrpoGroup(exports: TrajectoryExport[]): GrpoGroup {

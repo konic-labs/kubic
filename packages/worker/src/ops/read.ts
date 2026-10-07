@@ -1,4 +1,4 @@
-// Read operation (issue #13, slice A; §9.1).
+// Read operation.
 // Thin over ExecutionEnv.fs: path confinement comes from the seam.
 // replay:"safe" — reading has no side effects.
 
@@ -9,7 +9,7 @@ import { OpError } from './types.js';
 
 export const READ_MAX_LINES = 2000;
 
-// Read bounds (issue #122): windowed reads pull the file through the seam
+// Read bounds: windowed reads pull the file through the seam
 // in READ_CHUNK_BYTES chunks and never more than READ_MAX_BYTES total —
 // the window costs the window, not the file. The seek phase is I/O
 // proportional to the offset (honest, bounded); a byte-offset index is
@@ -19,17 +19,17 @@ export const READ_MAX_LINES = 2000;
 export const READ_CHUNK_BYTES = 512 * 1024;
 export const READ_MAX_BYTES = 8 * 1024 * 1024;
 
-// Model-facing output cap (issue #176; §27.5): READ_MAX_BYTES above bounds
-// the SCAN; this bounds the RESULT — Pi's DEFAULT_MAX_BYTES (50 KiB), the
-// byte twin of READ_MAX_LINES. One minified line or a few-hundred-KB file
-// must cost the window, not the context. Whole lines only: a clipped line
-// could poison an exact-match edit, so a line that alone exceeds the cap is
-// left out and the notice names it with a bash continuation; otherwise the
-// last kept line sets the `more: offset=` hint. Fields are only ADDED
-// (#176) — nothing renamed, so existing consumers keep the same shape.
+// Model-facing output cap: READ_MAX_BYTES above bounds the SCAN; this bounds
+// the RESULT — Pi's DEFAULT_MAX_BYTES (50 KiB), the byte twin of
+// READ_MAX_LINES. One minified line or a few-hundred-KB file must cost the
+// window, not the context. Whole lines only: a clipped line could poison an
+// exact-match edit, so a line that alone exceeds the cap is left out and the
+// notice names it with a bash continuation; otherwise the last kept line sets
+// the `more: offset=` hint. Fields are only ADDED — nothing renamed, so
+// existing consumers keep the same shape.
 export const READ_RESULT_MAX_BYTES = 50 * 1024;
 
-// Why the first chunk sniffed as binary (issue #176): a NUL codepoint (the
+// Why the first chunk sniffed as binary: a NUL codepoint (the
 // file may still decode cleanly — UTF-16 text) or a UTF-8 validity failure
 // (the PNG signature's 0x89 lead).
 export type ReadBinaryReason = 'nul' | 'invalid_utf8';
@@ -59,12 +59,12 @@ export interface ReadResult {
   // before EOF (totalLines is then a lower bound) or the output window cut
   // lines from the requested region.
   truncated: boolean;
-  // Present when the window cannot be served plainly (issue #176): the
+  // Present when the window cannot be served plainly: the
   // output cap left a line out, a binary file was refused, or the offset
   // is past the last line. One model-facing line; renderReadText places
   // it after the path.
   notice?: string;
-  // The structured binary refusal behind a binary `notice` (issue #176):
+  // The structured binary refusal behind a binary `notice`:
   // why the sniff fired, and the file's size. Absent on text reads.
   binary?: ReadBinaryRefusal;
 }
@@ -82,8 +82,8 @@ export interface ReadWindow {
   // the scan stopped early — READ_MAX_BYTES budget, line cap, or
   // limit-stopped region collection — and totalLines is then a lower bound.
   sawEof: boolean;
-  // Set when the FIRST chunk sniffed as binary (issue #176). The sniff is
-  // a mark, never a scan cut: the window contract above (#122) is
+  // Set when the FIRST chunk sniffed as binary. The sniff is
+  // a mark, never a scan cut: the window contract above is
   // unchanged, and execute() turns the mark into the refusal.
   binary?: ReadBinaryReason;
 }
@@ -96,7 +96,7 @@ function utf8Bytes(text: string): number {
   return Buffer.byteLength(text, 'utf8');
 }
 
-// First-chunk binary sniff (issue #176). Strict UTF-8 with stream
+// First-chunk binary sniff. Strict UTF-8 with stream
 // semantics: a codepoint split at the chunk's end is buffered, not an
 // error, so a multi-byte character straddling the 512 KiB boundary never
 // reads as invalid. NUL is a VALID UTF-8 codepoint, so it needs its own
@@ -123,14 +123,14 @@ function sniffBinaryText(text: string): ReadBinaryReason | undefined {
   return undefined;
 }
 
-// Single-quote a shell argument (issue #176): the notice suggests a bash
+// Single-quote a shell argument: the notice suggests a bash
 // command, and a path is attacker-influenced content — a name with spaces
 // must not become two arguments, nor a `$(…)` name become a command.
 function shellQuote(text: string): string {
   return `'${text.split("'").join("'\\''")}'`;
 }
 
-// The output window under the byte cap (issue #176): whole lines only.
+// The output window under the byte cap: whole lines only.
 // `used` counts each kept line plus the '\n' that will follow it, so the
 // assembled content (trailing newline included) never exceeds
 // READ_RESULT_MAX_BYTES. The caller only calls this when the assembled
@@ -156,7 +156,7 @@ function clipOutputLines(
       notice: `output clipped at ${READ_RESULT_MAX_BYTES}B`,
     };
   }
-  // The path goes through stdin, never as a sed operand (issue #176 review):
+  // The path goes through stdin, never as a sed operand:
   // GNU sed permutes options, so an operand named `-e1e touch pwned` (or
   // r/-f/w variants) would run as sed script text when the suggestion is
   // pasted into a shell.
@@ -218,7 +218,7 @@ function countNewlines(text: string): number {
   return count;
 }
 
-// Bounded windowing (issue #122): chunked newline-counting seek to the
+// Bounded windowing: chunked newline-counting seek to the
 // `offset` line, then collect until `limit` lines are in hand — one
 // StringDecoder across chunks so multi-byte codepoints split at a chunk
 // boundary survive. Fallback: seams without readFileRange (test doubles,
@@ -231,7 +231,7 @@ export function readWindowed(
   limit: number,
 ): ReadWindow {
   // Called as a method, never extracted: the real NodeFileSystem reads
-  // `this.cwd` (issue #199).
+  // `this.cwd`.
   if (fs.readFileRange === undefined) {
     const text = fs.readFile(path);
     const binary = sniffBinaryText(text);
@@ -334,7 +334,7 @@ export function readWindowed(
   };
 }
 
-// Name the real failure (issue #199): only a missing path is `not_found`.
+// Name the real failure: only a missing path is `not_found`.
 // A directory or a permission refusal gets its own code, a cwd-confinement
 // escape is the caller's argument, and anything else propagates unchanged
 // so a regression surfaces as a fault instead of a phantom missing file.
@@ -377,7 +377,7 @@ export const readOperation: Operation<ReadArgs, ReadResult> = {
       throw readFailure(err, args.path);
     }
     if (view.binary !== undefined) {
-      // Structured refusal (issue #176): no bytes reach the content, and
+      // Structured refusal: no bytes reach the content, and
       // the size comes from stat — the sniff chunk is not the file.
       let bytes: number | undefined;
       try {
@@ -437,14 +437,14 @@ export const readOperation: Operation<ReadArgs, ReadResult> = {
       offset > view.totalLines
     ) {
       // The scan reached EOF, so totalLines is exact and the offset is
-      // provably past the last line (issue #176). When the budget stopped
+      // provably past the last line. When the budget stopped
       // the scan instead, the offset is only past the CONFIRMED lines and
       // the header's "no lines at offset K (file has at least N lines)"
       // stays honest — no notice.
       const total = view.totalLines === 1 ? 'line' : 'lines';
       notice = `offset ${offset} is past the last line (${view.totalLines} ${total} total)`;
     }
-    // truncated is honest (issue #122): true whenever the scan stopped
+    // truncated is honest: true whenever the scan stopped
     // before EOF — totalLines is then only a lower bound — or the output
     // window cut lines from the requested region. The totalLines
     // comparison only speaks when the scan reached EOF (the count is then

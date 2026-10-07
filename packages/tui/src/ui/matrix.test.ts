@@ -1,15 +1,10 @@
-// The render matrix (EPIC N, issue #468; docs/ui README): every surface of
-// the new TUI rendered for each palette (dark, light, terminal) × colour
+// The render matrix: every surface of the TUI rendered for each palette (dark, light, terminal) × colour
 // level (truecolor, 256, 16, none) × width (60, 80, 100, 140). Each line
 // must fit its width, carry no escape at depth none, close every style (and
 // hyperlink) it opens before it ends, and a surface that paints a background
 // must paint it edge to edge. Failures are collected, so one run names them
 // all.
 import { afterAll, describe, expect, it } from 'vitest';
-import type {
-  KubicPresentationState,
-  WorkerSummary,
-} from '../../../core/src/presentation.js';
 import type { ColorLevel } from '../../../core/src/ui/color.js';
 import {
   createUiTheme,
@@ -26,14 +21,6 @@ import { renderApprovalCard } from '../approval-card.js';
 import { APPROVAL_DEFAULT_KEYS } from '../approval-view.js';
 import { BlockViewer } from '../block-viewer.js';
 import { keyHintSet, renderHeader } from '../chrome.js';
-import { renderWorkerPreview, WorkerPreview } from '../dashboard/preview.js';
-import {
-  renderDashboardBody,
-  renderDashboardFooter,
-  renderDashboardHeader,
-  renderDispatchBox,
-} from '../dashboard/render.js';
-import { dashboardModel } from '../dashboard/state.js';
 import {
   EDITOR_FRAME_CELLS,
   frameEditorLines,
@@ -133,88 +120,12 @@ const CELLS: TranscriptEntry[] = [
   },
 ];
 
-const WORKERS: WorkerSummary[] = [
-  {
-    workerId: 'worker-1',
-    role: 'implementer',
-    task: LONG,
-    status: 'running',
-    startedAt: 0,
-    toolCount: 4,
-    workspace: '/repo/.kubic/wt/run/worker-1',
-    activity: {
-      id: 'c',
-      tool: 'edit',
-      target: 'src/cart.js',
-      state: 'running',
-      at: 1,
-    },
-    recentTools: [
-      { id: 'c1', tool: 'read', target: 'src/cart.js', state: 'done', at: 1 },
-      {
-        id: 'c2',
-        tool: 'edit',
-        target: 'src/cart.js',
-        state: 'done',
-        outcome: '+1 −0',
-        diff: { text: `+22 ${LONG}`, firstChangedLine: 22 },
-        at: 2,
-      },
-    ],
-    budget: { inputTokens: 1, outputTokens: 1, costUsd: 0.45, limitUsd: 0.5 },
-  },
-  {
-    workerId: 'worker-2',
-    task: 'format tests',
-    status: 'running',
-    startedAt: 0,
-    awaiting: { approvalKey: 'k', summary: LONG },
-  },
-  {
-    workerId: 'worker-3',
-    task: 'docs',
-    status: 'failed',
-    startedAt: 0,
-    endedAt: 5_000,
-    failure: LONG,
-    diffStat: { files: 2, added: 9, removed: 1 },
-  },
-  { workerId: 'worker-4', task: 'queued task', status: 'queued' },
-];
-
-const STATE: KubicPresentationState = {
-  session: {
-    sessionId: 's',
-    mode: 'orchestrator',
-    approvalsSkipped: false,
-    runPhases: [
-      { phase: 'plan', state: 'done', at: 1, startedAt: 0 },
-      { phase: 'implement', state: 'running', at: 1, startedAt: 1 },
-      { phase: 'review', state: 'skipped', at: 1 },
-    ],
-  },
-  agents: new Map(),
-  lanes: new Map(),
-  workers: new Map(WORKERS.map((worker) => [worker.workerId, worker])),
-  approvals: [],
-  usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
-  connection: { status: 'connected' },
-};
-
 interface Surface {
   readonly name: string;
   readonly render: (ui: UiTheme, width: number) => string[];
   /** Every line paints a background edge to edge (exactly the width). */
   readonly fullWidth?: boolean;
 }
-
-const model = () =>
-  dashboardModel(STATE, {
-    now: 222_000,
-    task: LONG,
-    branch: 'feature/a-long-branch-name',
-    limits: { maxTokens: 400_000, maxCostUsd: 2, maxRuntimeMs: 1_800_000 },
-  });
 
 const SURFACES: Surface[] = [
   {
@@ -224,7 +135,6 @@ const SURFACES: Surface[] = [
       renderHeader(
         ui,
         {
-          mode: 'solo',
           approvalsSkipped: false,
           project: 'kubic-playground',
           branch: 'feature/a-long-branch-name',
@@ -246,7 +156,6 @@ const SURFACES: Surface[] = [
           model: 'anthropic/claude-sonnet-5-5',
           thinking: 'high',
           rows: [],
-          mode: 'solo',
           approvalsSkipped: false,
           sessionId: 's',
           contextWindow: 200_000,
@@ -264,7 +173,7 @@ const SURFACES: Surface[] = [
   {
     name: 'key hints',
     render: (ui, width) => {
-      const set = keyHintSet('dashboard', DEFAULT_KEY_REGISTRY);
+      const set = keyHintSet('working', DEFAULT_KEY_REGISTRY);
       return [renderKeyHintRow(ui, set.hints, width, set.right)];
     },
   },
@@ -293,7 +202,6 @@ const SURFACES: Surface[] = [
           input: 9_200,
           output: 640,
           tools: 3,
-          queues: true,
         },
         width,
       ),
@@ -427,9 +335,8 @@ const SURFACES: Surface[] = [
             git: true,
           },
           trust: 'loaded',
-          mode: 'solo',
           isolation: LONG,
-          keys: { palette: '^P', mode: '^G', help: '?' },
+          keys: { palette: '^P', help: '?' },
           recent: [{ title: LONG, age: '2h ago', detail: '4 turns' }],
         },
         width,
@@ -447,58 +354,9 @@ const SURFACES: Surface[] = [
         ui: () => ui,
       }).render(width),
   },
-  {
-    name: 'dashboard header',
-    fullWidth: true,
-    render: (ui, width) => [renderDashboardHeader(ui, model(), width, '⠹')],
-  },
-  {
-    name: 'dashboard body',
-    render: (ui, width) =>
-      renderDashboardBody(ui, model(), {
-        selected: 'worker-1',
-        width,
-        maxRows: 30,
-        spinner: '⠹',
-      }),
-  },
-  {
-    name: 'dashboard footer and dispatch box',
-    render: (ui, width) => [
-      ...renderDashboardFooter(ui, model(), width),
-      ...renderDispatchBox(
-        ui,
-        { mode: 'new', text: LONG, focused: true, role: 'implementer' },
-        width,
-      ),
-    ],
-  },
-  {
-    name: 'preview pane',
-    render: (ui, width) => {
-      const preview = new WorkerPreview(() => 5_000);
-      const rows = model().workers;
-      return [
-        ...renderWorkerPreview(ui, rows[1], {
-          width: Math.max(20, width - 51),
-          maxRows: 20,
-          cards: (worker, w) => preview.cards(worker, w),
-        }),
-        ...renderWorkerPreview(
-          ui,
-          rows.find((row) => row.worker.workerId === 'worker-3'),
-          {
-            width: Math.max(20, width - 51),
-            maxRows: 12,
-            cards: (worker, w) => preview.cards(worker, w),
-          },
-        ),
-      ];
-    },
-  },
 ];
 
-describe('the render matrix (issue #468)', () => {
+describe('the render matrix', () => {
   it('every surface fits, closes its styles and paints its full width, in every palette, level and width', () => {
     const failures: string[] = [];
     for (const [paletteName, palette] of PALETTES) {
@@ -552,7 +410,7 @@ describe('the render matrix (issue #468)', () => {
   });
 });
 
-describe('16 colours (issue #468)', () => {
+describe('16 colours', () => {
   const ansi16 = createUiTheme(DARK_PALETTE, '16', 'dark');
   // biome-ignore lint/suspicious/noControlCharactersInRegex: SGR escapes are what this reads
   const SGR_ESCAPE = /\u001b\[([0-9;]*)m/g;
@@ -588,14 +446,17 @@ describe('16 colours (issue #468)', () => {
     // The warn surface is gone; the badge reads by inverse video instead.
     expect(backgrounds(card)).toEqual([]);
     expect(card).toContain('\u001b[1;7;');
-    const header = renderDashboardHeader(ansi16, model(), 100, '⠹');
+    const header = renderHeader(ansi16, { approvalsSkipped: false }, 100);
     expect(backgrounds(header)).toEqual([]);
-    const body = renderDashboardBody(ansi16, model(), {
-      selected: 'worker-1',
-      width: 100,
-      maxRows: 30,
-      spinner: '⠹',
-    }).join('\n');
-    expect(new Set(backgrounds(body))).toEqual(new Set(['100']));
+    const palette = renderPalette(
+      ansi16,
+      createPalette([
+        { group: 'commands', value: '/model', text: '/model' },
+        { group: 'commands', value: '/help', text: '/help' },
+      ]),
+      100,
+      { input: '', maxRows: 20, keyLabel: '^P' },
+    ).join('\n');
+    expect(new Set(backgrounds(palette))).toEqual(new Set(['100']));
   });
 });

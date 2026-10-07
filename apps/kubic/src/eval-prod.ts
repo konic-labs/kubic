@@ -1,9 +1,9 @@
-// Prod suite runner for `kubic eval --task` / `kubic benchmark` (issue
-// #262; design §48, §73). Each built-in suite carries a FIXTURE (prompt,
-// starting files, gate commands); this runner materializes it, drives the
-// real solo lane through runHeadlessPrompt, and scores the trajectory the
-// run wrote with the eval package's own signal derivation — the same
-// computeSignals/gatesPass the reference verifier reads, never a re-guess.
+// Prod suite runner for `kubic eval --task` / `kubic benchmark`. Each built-in
+// suite carries a FIXTURE (prompt, starting files, gate commands); this runner
+// materializes it, drives the real solo lane through runHeadlessPrompt, and
+// scores the trajectory the run wrote with the eval package's own signal
+// derivation — the same computeSignals/gatesPass the reference verifier reads,
+// never a re-guess.
 //
 // Workspaces:
 //   inline (default)  a fresh temp fixture directory, removed afterwards
@@ -11,7 +11,7 @@
 //                     its HEAD (`git worktree add --detach`), removed and
 //                     pruned afterwards, so the matrix proves the task in
 //                     a clean checkout
-// The lane's own verifier (issue #267) runs the suite's gate commands in
+// The lane's own verifier runs the suite's gate commands in
 // that workspace after the run settles, so the trajectory carries the
 // signal:* labels the score is built from.
 import { dirname, join } from 'node:path';
@@ -60,7 +60,7 @@ export type ProdRunSuite = (
 
 // Seed the fixture's starting files (relative paths; parents created)
 // through the exec FileBridge — the composition root never touches node:fs
-// directly (I/O confinement, §9).
+// directly (I/O confinement).
 function seedFixture(
   bridge: ReturnType<typeof createNodeFileBridge>,
   fixture: EvalSuite['fixture'],
@@ -137,7 +137,7 @@ async function runFixture(
   return {
     success: signals.completion && gatesPass(signals),
     signals,
-    // §39 reconciliation: one row carrying exactly what the trajectory
+    // Reconciliation: one row carrying exactly what the trajectory
     // recorded, so the record's tokens/cost/latency reconcile by
     // construction.
     usageRows: [

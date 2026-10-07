@@ -1,4 +1,4 @@
-// `kubic skills [--role <name>] [--json]` (issue #238): which skills the
+// `kubic skills [--role <name>] [--json]`: which skills the
 // agent was given, and why any were left out. Discovery plus role gating
 // run through the SAME boot the lane runs (`bootSkills`) and are
 // summarized, never reimplemented — the listing is a report on the boot,
@@ -23,7 +23,7 @@ export interface SkillsCommandOptions {
 }
 
 // What `--role <name>` resolved to for the gate: the lane-visible name,
-// the document's skill allowlist (both sides must admit, issue #181), and
+// the document's skill allowlist (both sides must admit), and
 // the document's capability grant for the most-restrictive merge.
 export interface SkillsRoleGate {
   name: string;
@@ -70,7 +70,7 @@ export function runSkillsCommand(
     }
     role = gate.name;
     roleSkills = gate.skills;
-    // Issue #196 (§40.2): the same most-restrictive merge the lane
+    // The same most-restrictive merge the lane
     // installs — a role declaring `network: none` withholds here exactly
     // as it would at boot.
     if (gate.classes !== undefined) {
@@ -85,7 +85,7 @@ export function runSkillsCommand(
     ...(classes === undefined ? {} : { classes }),
     ...(role === undefined ? {} : { role }),
     ...(roleSkills === undefined ? {} : { roleSkills }),
-    // Issue #177: an unresolvable explicit --skill warns on diagnostics —
+    // An unresolvable explicit --skill warns on diagnostics —
     // never only in the table — so a typo cannot read as a loaded skill.
     warn: (line) => log.warn(line),
   });

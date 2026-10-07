@@ -1,12 +1,12 @@
-// Recovery of the work a dead process left mid-flight (issue #147, EPIC K
-// #396; §21, §20.7). Pi 0.87's OpenOperations are gone: a reopened Harness
-// holds the unfinished tasks and submissions durably, `harness.inspect()`
-// reports them, `harness.resume()` starts the scheduler, and the lane
-// decides between resuming and aborting so the conversation is free for the
-// next prompt. These tests drive that decision against real JSONL storage
-// under a temp dir, with the faux provider and a tool that blocks until its
-// invocation is cancelled; the crash is simulated by abandoning the first
-// Harness mid-turn (never closing it) and reopening the same storage.
+// Recovery of the work a dead process left mid-flight. Pi 0.87's OpenOperations
+// are gone: a reopened Harness holds the unfinished tasks and submissions
+// durably, `harness.inspect()` reports them, `harness.resume()` starts the
+// scheduler, and the lane decides between resuming and aborting so the
+// conversation is free for the next prompt. These tests drive that decision
+// against real JSONL storage under a temp dir, with the faux provider and a
+// tool that blocks until its invocation is cancelled; the crash is simulated by
+// abandoning the first Harness mid-turn (never closing it) and reopening the
+// same storage.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -318,7 +318,7 @@ describe('settlePending', () => {
     const first = await openLane(fixture, dir);
     const submission = await blockTurn(first, work);
     const second = await openLane(fixture, dir);
-    // The kill a live process tracks for its bash group (D1: keyed by the
+    // The kill a live process tracks for its bash group (keyed by the
     // conversation id, which survives the crash).
     const kill = vi.fn();
     second.kills.track(String(second.conversation.id), kill);

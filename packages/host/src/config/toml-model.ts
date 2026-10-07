@@ -1,5 +1,5 @@
 // Write the `[model]` table of a config.toml without disturbing anything else
-// (issue #451, `kubic setup`). A TOML round trip would drop comments and
+// (`kubic setup`). A TOML round trip would drop comments and
 // reorder keys, so this is a line-based update: inside an existing `[model]`
 // table the `provider`, `id` and `thinking` lines are replaced in place (the
 // missing ones are added at the end of the table); without one, the table is

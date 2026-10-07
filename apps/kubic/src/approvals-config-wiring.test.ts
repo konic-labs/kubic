@@ -1,4 +1,4 @@
-// Config `[approvals]` reaches the solo lanes (issue #230; §41.2, §40.3).
+// Config `[approvals]` reaches the solo lanes.
 // Before this issue `kubic run` and `kubic tui` installed the solo policy with
 // the hardcoded defaults (route ask-user, maxPendingMs 60 000, no
 // autoApprove), while `kubic config` and doctor's `policy:approvals` printed
@@ -94,7 +94,7 @@ function destructiveThenDone(): MutableModels {
   ]);
 }
 
-describe('config route=deny reaches kubic run (issue #230)', () => {
+describe('config route=deny reaches kubic run', () => {
   it('denies a destructive call by policy route, exit 4', async () => {
     const loaded = loadedWith('route = "deny"');
     const result = await runHeadlessPrompt(
@@ -135,7 +135,7 @@ describe('config route=deny reaches kubic run (issue #230)', () => {
   });
 });
 
-describe('config route=deny reaches kubic tui (issue #230)', () => {
+describe('config route=deny reaches kubic tui', () => {
   it('never asks the seat', async () => {
     const loaded = loadedWith('route = "deny"');
     let asks = 0;
@@ -170,7 +170,7 @@ describe('config route=deny reaches kubic tui (issue #230)', () => {
   });
 });
 
-describe('config autoApprove reaches the headless path (issue #230)', () => {
+describe('config autoApprove reaches the headless path', () => {
   it("autoApprove=['install'] lets npm install through, audited by:'autoApprove'", async () => {
     const workspace = tmpRoot('ws-');
     const loaded = loadedWith('autoApprove = ["install"]');
@@ -220,7 +220,7 @@ describe('config autoApprove reaches the headless path (issue #230)', () => {
   });
 });
 
-describe('config maxPendingMs bounds the TUI seat (issue #230)', () => {
+describe('config maxPendingMs bounds the TUI seat', () => {
   it('a seat that never answers denies at about the configured 500 ms', async () => {
     vi.useFakeTimers();
     const loaded = loadedWith('maxPendingMs = 500');
@@ -250,7 +250,7 @@ describe('config maxPendingMs bounds the TUI seat (issue #230)', () => {
   });
 });
 
-describe('sessionScoped=false is refused by name (issue #230)', () => {
+describe('sessionScoped=false is refused by name', () => {
   it('the config load refuses it instead of silently running session-scoped', () => {
     const home = tmpRoot('home-');
     mkdirSync(join(home, '.kubic'), { recursive: true });
@@ -264,7 +264,7 @@ describe('sessionScoped=false is refused by name (issue #230)', () => {
   });
 });
 
-describe('doctor: one derivation for the config and the installed route (issue #230)', () => {
+describe('doctor: one derivation for the config and the installed route', () => {
   function doctorChecks(loaded: ReturnType<typeof loadCliConfig>) {
     return collectDoctorChecks(
       {

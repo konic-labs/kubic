@@ -1,4 +1,4 @@
-// The grouped picker list (EPIC N, issue #461; docs/ui 03-D, 03-E): group
+// The grouped picker list: group
 // headers with a key status, disabled groups and rows, folding, filtering
 // and a footer row — the bare /model, /resume, /theme and /thinking pickers.
 import { describe, expect, it } from 'vitest';
@@ -71,7 +71,7 @@ const render = (state: PickerState, width = 72, footer?: string[]): string[] =>
     ...(footer === undefined ? {} : { footer }),
   });
 
-describe('picker list (issue #461)', () => {
+describe('picker list', () => {
   it('starts on the current row and reads like the design', () => {
     const state = createPicker(GROUPS);
     expect(selectedPickerRow(state)?.value).toBe('anthropic/claude-sonnet-5-5');

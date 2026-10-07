@@ -1,4 +1,4 @@
-// Edit operation (issue #13, slice C; §9.1).
+// Edit operation.
 // Exact-match replacement with an explicit expected count: the default of 1
 // refuses ambiguous matches instead of guessing. Atomic via tmp+rename.
 // replay:"never" — edits are effects, never re-executed on replay.
@@ -84,14 +84,14 @@ function countOccurrences(text: string, needle: string): number {
   }
 }
 
-// Above this size the edit op refuses before allocating anything (issue
-// #122): split/join over a huge file is an unbounded allocation the model
-// can trigger with one tool call. 8 MiB matches the read bound.
+// Above this size the edit op refuses before allocating anything: split/join
+// over a huge file is an unbounded allocation the model can trigger with one
+// tool call. 8 MiB matches the read bound.
 export const EDIT_MAX_BYTES = 8 * 1024 * 1024;
 
 const BOM = '\uFEFF';
 
-// Line-ending and BOM normalization (issue #195; §9.1, Pi's edit-diff.ts).
+// Line-ending and BOM normalization (Pi's edit-diff.ts).
 // A Windows-authored file must edit where Pi succeeds: matching happens on
 // LF-normalized text with any leading BOM stripped, and the file's own
 // ending and BOM are restored on write. Without this a CRLF file with an LF
@@ -136,7 +136,7 @@ export const editOperation: Operation<EditArgs, EditResult> = {
   replay: 'never',
   validateArgs: validateEditArgs,
   execute: async (_inv: ToolInvocation, args: EditArgs, ctx: OpContext) => {
-    // Size guard first (issue #122): stat, refuse non-files as not_found
+    // Size guard first: stat, refuse non-files as not_found
     // (today's behavior), and refuse oversized files with a named
     // `file_too_large` OpError naming the size — BEFORE any content
     // allocation. The journal stays untouched on refusal.
@@ -166,7 +166,7 @@ export const editOperation: Operation<EditArgs, EditResult> = {
         `edit: ${args.path} is not valid utf-8 text (binary content) — refusing to rewrite it`,
       );
     }
-    // Issue #195: normalize the file, the needle and the replacement into
+    // Normalize the file, the needle and the replacement into
     // the same LF/BOM-free space, then restore the file's own ending and BOM
     // on write. Both sides are stripped, so an oldText that carries the BOM
     // still matches and a replacement can never introduce a second one.
@@ -216,7 +216,7 @@ export const editOperation: Operation<EditArgs, EditResult> = {
       after: updated,
       bytesDelta: result.bytesDelta,
     });
-    // Issue #456: the inline diff, in the LF space the edit matched in.
+    // The inline diff, in the LF space the edit matched in.
     if (ctx.display !== undefined) {
       const diff = displayDiff(current, replaced);
       if (diff !== undefined) ctx.display(diff);

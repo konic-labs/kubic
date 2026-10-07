@@ -1,10 +1,10 @@
-// Installed solo policy (issue #86, acceptance criterion 1): the classes and
+// Installed solo policy: the classes and
 // interceptor options the PRODUCTION path installs, and the composition order
 // they produce on a real lane — permission wrapper innermost (so a tool
 // outside the allowlist is refused at execute time, not merely absent from
 // the list), telemetry outermost (so a DENIED attempt is still recorded).
 // Faux provider only: zero network, zero paid tokens. The lane boots through
-// the shared faux harness factory (#401).
+// the shared faux harness factory.
 
 import { afterAll, describe, expect, it } from 'vitest';
 import { SOLO_DEFAULTS, toolsForClasses } from '../../agents/src/policy.js';
@@ -45,7 +45,7 @@ async function bootWith(installed: InstalledSoloPolicy) {
   return { lane, env };
 }
 
-describe('installed policy defaults (issue #86)', () => {
+describe('installed policy defaults', () => {
   it('installs the documented solo default classes when no config supplies any', () => {
     const installed = installSoloPolicy({ workspace: '/fake' });
     expect(installed.classes).toEqual({ ...SOLO_DEFAULTS });
@@ -86,7 +86,7 @@ describe('installed policy defaults (issue #86)', () => {
   });
 });
 
-describe('installed policy on a live lane (issue #86, criterion 1)', () => {
+describe('installed policy on a live lane', () => {
   it('narrows the active tools to the class-derived allowlist', async () => {
     const classes = {
       ...SOLO_DEFAULTS,

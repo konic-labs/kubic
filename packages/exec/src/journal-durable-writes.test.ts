@@ -1,13 +1,10 @@
-// Journal durable writes (issue #344): the index line is fsynced, so the
+// Journal durable writes: the index line is fsynced, so the
 // blobs it references must be on platter BEFORE it — otherwise a power loss
 // leaves a durable entry pointing at a zero-length or missing blob, undo
 // reports "no before-content", and the corrupt file is never healed because
 // putBlob trusts the name. The retention rewrite has the mirror problem: a
 // crash right after its rename can replace the journal's whole history with
 // an empty file, because nothing was flushed before the rename.
-//
-// RED: putBlob is tmp+rename with no fsync and an exists() short-circuit,
-// and enforceRetention rewrites with writeFile+rename and no fsync.
 import {
   mkdirSync,
   mkdtempSync,
@@ -145,7 +142,7 @@ function seedBlob(dir: string, hash: string, content: string): string {
   return hash;
 }
 
-describe('journal durable writes (issue #344)', () => {
+describe('journal durable writes', () => {
   it('fsyncs a blob and its directory before the index line is appended', () => {
     const dir = tmpRoot();
     const store = new FileJournalStore(dir);
@@ -256,8 +253,8 @@ describe('journal durable writes (issue #344)', () => {
   });
 });
 
-// Review finding 2 (issue #344): a refused flush is not a failed write.
-describe('journal durable writes: refused flushes (issue #344 review)', () => {
+// Review finding 2: a refused flush is not a failed write.
+describe('journal durable writes: refused flushes', () => {
   it('records the append when the filesystem refuses a directory flush', () => {
     const dir = tmpRoot();
     const store = new FileJournalStore(dir);
@@ -296,9 +293,9 @@ describe('journal durable writes: refused flushes (issue #344 review)', () => {
   });
 });
 
-// Review finding 3 (issue #344): healing crash residue must not cost a full
+// Review finding 3: healing crash residue must not cost a full
 // read + hash of every reused blob.
-describe('journal durable writes: blob reuse (issue #344 review)', () => {
+describe('journal durable writes: blob reuse', () => {
   it('trusts a blob it wrote itself, with no re-read on reuse', () => {
     const dir = tmpRoot();
     const store = new FileJournalStore(dir);

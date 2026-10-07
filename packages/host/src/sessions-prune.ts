@@ -1,4 +1,4 @@
-// Session-state retention core (issue #119; §21, §42.4): plan and execute
+// Session-state retention core: plan and execute
 // the prune of per-session state dirs under the sessions root.
 //
 // Scope: `<root>/<session-id>/` state dirs only — the journal store, spans,
@@ -22,7 +22,7 @@
 //   `[A-Za-z0-9_-]`, pi's `--<cwd>--` transcript dirs) are skipped;
 // - anything that cannot be inspected fails safe: skipped, reported.
 //
-// I/O goes through the exec FileBridge (I/O confinement, §9): this module
+// I/O goes through the exec FileBridge (I/O confinement): this module
 // never imports node:fs.
 
 import { join } from 'node:path';
@@ -56,7 +56,7 @@ export interface SessionPruneLocked {
 export interface SessionPruneKept {
   id: string;
   // `--keep-session` for an explicit name; `child of <id>` for a run
-  // member kept with its explicitly kept parent (issue #164).
+  // member kept with its explicitly kept parent.
   why: string;
 }
 
@@ -84,11 +84,6 @@ export interface SessionPrunePlanArgs {
   keepDays: number;
   keep: readonly string[];
   now?: number;
-  // Issue #164 (§23): the parent session of an id, if it has one. A run
-  // ages out as a unit (pass listSessions' linkage from the caller): the
-  // family's effective mtime is its newest member's, and an explicitly
-  // kept parent keeps its children. Absent means every session ages alone.
-  parentOf?: (id: string) => string | undefined;
 }
 
 function detail(error: unknown): string {
@@ -155,9 +150,7 @@ export function planSessionPrune(args: SessionPrunePlanArgs): SessionPrunePlan {
     throw new SessionsRootError(args.root, detail(error));
   }
   // First pass: locks and mtimes. Locked sessions are reported, never
-  // candidates — but a mid-run member still counts toward its family's
-  // age (review #164: an old parent with a live-locked child keeps the
-  // parent, since the run is as young as its youngest member).
+  // candidates.
   const mtimes = new Map<string, number>();
   const lockedIds = new Set<string>();
   for (const entry of entries) {
@@ -173,7 +166,7 @@ export function planSessionPrune(args: SessionPrunePlanArgs): SessionPrunePlan {
     try {
       info = args.bridge.fileInfo(entry.name);
     } catch {
-      // Issue #419: a locked session whose header cannot be statted is
+      // A locked session whose header cannot be statted is
       // already reported in exactly one bucket (locked) — the live lock
       // read succeeded, only the stat failed.
       if (!lockedIds.has(entry.name)) plan.unreadable.push(entry.name);
@@ -181,45 +174,11 @@ export function planSessionPrune(args: SessionPrunePlanArgs): SessionPrunePlan {
     }
     mtimes.set(entry.name, info.mtimeMs);
   }
-  // Issue #164 (§23): a run ages out as a unit. The family root is the
-  // topmost ancestor (cycles resolve to self — a linkage loop never hangs
-  // the planner); every member is evaluated at the family's newest mtime,
-  // so an old parent with a recent child is kept, and an old run becomes
-  // candidates in the same pass. An explicitly kept ancestor keeps the
-  // whole family below it.
-  const parentOf = args.parentOf;
-  const familyRoot = (id: string): string => {
-    if (parentOf === undefined) return id;
-    const seen = new Set<string>([id]);
-    let root = id;
-    for (;;) {
-      const parent = parentOf(root);
-      if (parent === undefined || seen.has(parent)) return root;
-      seen.add(parent);
-      root = parent;
-    }
-  };
-  const familyMtime = new Map<string, number>();
-  const familyKept = new Set<string>();
-  for (const [id, mtimeMs] of mtimes) {
-    const root = familyRoot(id);
-    const newest = familyMtime.get(root);
-    if (newest === undefined || mtimeMs > newest)
-      familyMtime.set(root, mtimeMs);
-    if (keep.has(id)) familyKept.add(root);
-  }
-  const keptFamily = (id: string): boolean => familyKept.has(familyRoot(id));
-  const effectiveMtime = (id: string): number =>
-    familyMtime.get(familyRoot(id)) ?? 0;
   for (const id of mtimes.keys()) {
     if (lockedIds.has(id)) continue; // locked: reported, never a candidate
-    if (effectiveMtime(id) > cutoff) continue; // recent: not a candidate
+    if ((mtimes.get(id) ?? 0) > cutoff) continue; // recent: not a candidate
     if (keep.has(id)) {
       plan.kept.push({ id, why: '--keep-session' });
-      continue;
-    }
-    if (keptFamily(id)) {
-      plan.kept.push({ id, why: `child of ${familyRoot(id)}` });
       continue;
     }
     const bytes = dirBytes(args.bridge, id);
@@ -240,7 +199,7 @@ export function planSessionPrune(args: SessionPrunePlanArgs): SessionPrunePlan {
   return plan;
 }
 
-// One candidate's fate in the delete pass (issue #119). `deleted` was
+// One candidate's fate in the delete pass. `deleted` was
 // removed and accounted; `locked` had a lock go live between planning and
 // this candidate's delete — skipped and reported exactly like a
 // planning-time lock, never removed, never counted as deleted; `failed`
@@ -261,7 +220,7 @@ export interface SessionPruneDeleteArgs {
   candidates: readonly SessionPruneCandidate[];
 }
 
-// Delete the planned candidates (issue #119). Planning and deletion are two
+// Delete the planned candidates. Planning and deletion are two
 // passes, so a lock acquired in between must still stop the delete: the
 // liveness re-check sits immediately before each remove by construction —
 // a candidate that went live is skipped, reported, and never counted as

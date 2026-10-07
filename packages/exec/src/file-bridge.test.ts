@@ -17,7 +17,7 @@ function tmpBridge() {
   return { cwd, bridge: createNodeFileBridge(cwd) };
 }
 
-describe('node file bridge (issue #14, slice A)', () => {
+describe('node file bridge', () => {
   it('writes, reads, appends, and lists', () => {
     const { bridge } = tmpBridge();
     bridge.writeFile('a.txt', 'one\n');
@@ -42,7 +42,7 @@ describe('node file bridge (issue #14, slice A)', () => {
   });
 });
 
-describe('node file bridge hardening (review #14)', () => {
+describe('node file bridge hardening', () => {
   it('does not follow symlinks in fileInfo', () => {
     const { bridge } = tmpBridge();
     bridge.writeFile('real.txt', 'data');

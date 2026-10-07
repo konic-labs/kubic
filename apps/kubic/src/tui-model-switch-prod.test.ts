@@ -1,5 +1,5 @@
 // `/model provider/id` on the real `kubic tui` loop, and the audit identity
-// of the model the lane runs (issue #227; §38.1, §60). The prod boot
+// of the model the lane runs. The prod boot
 // (bootTuiLane) is driven through the real alt-screen key path with two
 // faux providers, so the switch is proven by the NEXT request being answered
 // on the new provider — not only by a label. Zero network, zero paid tokens.
@@ -49,7 +49,7 @@ function twoProviders(
     provider: 'faux',
     models: [
       // `big` reasons; `small` does not — the ladder the `/thinking`
-      // re-clamp test needs (#328 review).
+      // re-clamp test needs.
       { id: 'big', contextWindow: 200000, reasoning: true },
       { id: 'small', contextWindow: 120000 },
     ],
@@ -73,7 +73,7 @@ function twoProviders(
 }
 
 // One provider whose faux factory records every request's options: the
-// thinking level travels there as `reasoning` (#328).
+// thinking level travels there as `reasoning`.
 function thinkingProviders(
   record: (options: { reasoning?: string } | undefined) => void,
 ): MutableModels {
@@ -117,7 +117,7 @@ function sessionDirs(root: string): string[] {
 }
 
 // The model a fresh attach resumes on: the committed `pi.agent` document,
-// read through the #148 'stored' rule (a boot with no pin keeps it).
+// read through the 'stored' rule (a boot with no pin keeps it).
 async function storedModel(
   sessionsRoot: string,
   id: string,
@@ -135,7 +135,7 @@ async function storedModel(
   }
 }
 
-describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
+describe('/model on the kubic tui path', () => {
   it('switches the live lane and the frame shows the new model', async () => {
     const workspace = tmpRoot('tui-227-switch-ws-');
     const sessionsRoot = tmpRoot('tui-227-switch-sessions-');
@@ -166,7 +166,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     type(fake, '/model alt/m1');
     await waitFor(() => fake.frame.includes('model: alt/m1'));
     // The status line moved too, not only the notice row: it reads
-    // `● <model> · <thinking>` (issue #453).
+    // `● <model> · <thinking>`.
     await waitFor(() => fake.frame.includes('● alt/m1 · '));
     // The switch is real: the next request is answered on the alt provider.
     type(fake, 'hello');
@@ -184,7 +184,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     });
   });
 
-  it('does not resurrect an accepted /model steer (#334 review round 2)', async () => {
+  it('does not resurrect an accepted /model steer', async () => {
     // Alt+Enter submits like Enter when idle. A `/model` steer the loop
     // ACCEPTED ran the command, so the draft must not come back as if it had
     // been refused (the pre-fix branch restored on anything but 'queued').
@@ -220,7 +220,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     expect(doc).not.toContain('/model alt/m1');
   });
 
-  it('switches the thinking level and sends it with the next request (#328)', async () => {
+  it('switches the thinking level and sends it with the next request', async () => {
     const workspace = tmpRoot('tui-328-thinking-ws-');
     const sessionsRoot = tmpRoot('tui-328-thinking-sessions-');
     const lines: string[] = [];
@@ -244,7 +244,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
       },
     );
     await waitFor(() => fake.counts.started === 1);
-    // Issue #461: a bare /thinking opens the picker on the boot level; esc
+    // A bare /thinking opens the picker on the boot level; esc
     // keeps it. An unknown level is refused by name with the vocabulary.
     type(fake, '/thinking');
     await waitFor(() => fake.frame.includes('┌─ Thinking'));
@@ -281,7 +281,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     expect(lines.join('\n')).toMatch(/● \S+ · off/);
   });
 
-  it('picks a model from the Alt+M overlay (#328)', async () => {
+  it('picks a model from the Alt+M overlay', async () => {
     const workspace = tmpRoot('tui-328-picker-ws-');
     const sessionsRoot = tmpRoot('tui-328-picker-sessions-');
     const lines: string[] = [];
@@ -307,7 +307,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     );
     await waitFor(() => fake.counts.started === 1);
     // Alt+M opens the picker: one group per provider, the live model
-    // marked (issue #461).
+    // marked.
     fake.feed('\u001bm');
     await waitFor(() => fake.frame.includes('● big  current'));
     expect(fake.frame).toContain('ALT');
@@ -327,7 +327,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     });
   });
 
-  it('switches the model from the ^P palette (#460)', async () => {
+  it('switches the model from the ^P palette', async () => {
     const workspace = tmpRoot('tui-460-palette-ws-');
     const sessionsRoot = tmpRoot('tui-460-palette-sessions-');
     const fake = fakeTerminal(120);
@@ -378,7 +378,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     });
   });
 
-  it('re-clamps the thinking level when /model moves to a shorter ladder (#328 review)', async () => {
+  it('re-clamps the thinking level when /model moves to a shorter ladder', async () => {
     const workspace = tmpRoot('tui-328-clamp-ws-');
     const sessionsRoot = tmpRoot('tui-328-clamp-sessions-');
     const lines: string[] = [];
@@ -417,7 +417,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     expect(await pending).toBe(0);
   });
 
-  it('cancels the picker with Esc, leaving the model alone (#328)', async () => {
+  it('cancels the picker with Esc, leaving the model alone', async () => {
     const workspace = tmpRoot('tui-328-cancel-ws-');
     const sessionsRoot = tmpRoot('tui-328-cancel-sessions-');
     const lines: string[] = [];
@@ -472,7 +472,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     );
     await waitFor(() => fake.counts.started === 1);
 
-    // Issue #461: a bare /model opens the picker; esc keeps the model.
+    // A bare /model opens the picker; esc keeps the model.
     type(fake, '/model');
     await waitFor(() => fake.frame.includes('┌─ Model'));
     fake.feed('\x1b');
@@ -497,11 +497,11 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
-    expect(lines.join('\n')).toContain('[SOLO] approvals on');
+    expect(lines.join('\n')).toContain('approvals on');
   });
 });
 
-describe('tui audit identity (issue #227, criterion 4)', () => {
+describe('tui audit identity', () => {
   it('an approval record carries the model provider/id the lane runs', async () => {
     const workspace = tmpRoot('tui-227-audit-ws-');
     const sessionsRoot = tmpRoot('tui-227-audit-sessions-');
@@ -519,7 +519,7 @@ describe('tui audit identity (issue #227, criterion 4)', () => {
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
-        // Issue #315's arming delay is pinned off so the deny keypress below
+        // 's arming delay is pinned off so the deny keypress below
         // registers the moment the card appears (as the HEAD approval
         // tests do).
         approvalArmingMs: 0,

@@ -1,4 +1,4 @@
-// The single automatic escalation trigger (issue #210; §38.4): N
+// The single automatic escalation trigger: N
 // consecutive tool-failure turns climb the lane one rung — once per run,
 // never back. A pure state machine plus the reporting mappers; the boots
 // own the climb itself (recordTurn on the TUI lane, where turns repeat —
@@ -11,10 +11,10 @@
 // ladder and maxEscalations as config, the trigger threshold is fixed.
 export const AUTO_ESCALATION_TOOL_FAILURES = 3;
 
-// The execution failures that count (issue #210): the tool ran (or was
+// The execution failures that count: the tool ran (or was
 // reached) and failed. tool_invalid_args is deliberately absent — bad
 // arguments are the model's own defect, retryable by correction, never a
-// reason to switch models. Everything else (model, provider, budget,
+// reason to switch models. Everything else (model, provider, run limits,
 // approval, context, aborts, completions) resets the streak.
 const TOOL_FAILURE_CODES: ReadonlySet<string> = new Set([
   'tool_failed',
@@ -81,7 +81,7 @@ export function formatEscalationRow(event: {
   return `escalation: ${event.from} → ${event.to} (${event.reason})`;
 }
 
-// The lane's ModelEscalationEvent onto the trajectory schema (§46): the
+// The lane's ModelEscalationEvent onto the trajectory schema: the
 // target model is required on write (the exporter refuses an unattributed
 // escalation), the thinking level is unknown at record time and stays
 // null — the trajectory's model.thinking already names the end state.

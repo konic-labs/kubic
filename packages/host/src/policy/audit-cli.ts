@@ -1,11 +1,9 @@
-// `kubic audit [--mode m] [--posture p] [--result r] [--json]`
-// (issue #79; §60). Query entry over org audit records: exact match on
-// each supplied dimension; a table of the scanned fields for humans, the
-// full 14-field records under --json. Records arrive
-// injected (faux in tests — no audit persistence is wired yet); every
-// printed record is redacted first, so query output never carries
-// secret-shaped values or listed-secret inventory values — credentials
-// stay sentinel-only.
+// `kubic audit [--posture p] [--result r] [--session id] [--json]`. Query entry
+// over org audit records: exact match on each supplied dimension; a table of
+// the scanned fields for humans, the full records under --json. Records arrive
+// injected (faux in tests — no audit persistence is wired yet); every printed
+// record is redacted first, so query output never carries secret-shaped values
+// or listed-secret inventory values — credentials stay sentinel-only.
 
 import {
   EXIT_FAILED,
@@ -16,23 +14,14 @@ import { createLineLogger } from '../../../core/src/cli/logger.js';
 import { formatJson } from '../../../core/src/cli/output.js';
 import { renderTable } from '../../../core/src/cli/table.js';
 import { type CliTheme, createCliTheme } from '../../../core/src/cli/theme.js';
-import {
-  type AuditMode,
-  type AuditResult,
-  type OrgAuditRecord,
-  queryAudits,
-} from './audit.js';
+import { type AuditResult, type OrgAuditRecord, queryAudits } from './audit.js';
 import { REDACTED_SECRET, redactSecretShapes } from './secret-shapes.js';
 
 // The parsed `kubic audit` options (commander's `opts()`).
 export interface AuditOptions {
-  readonly mode?: string;
   readonly posture?: string;
   readonly result?: string;
-  /**
-   * Filter on the orchestrator session (issue #159): the run's own rows and
-   * the worker asks it spawned.
-   */
+  /** Filter on one session's rows. */
   readonly session?: string;
   readonly json?: boolean;
 }
@@ -58,16 +47,12 @@ export interface AuditCommandDeps {
 
 const PLAIN = createCliTheme('none');
 
-// Prod listed-secret inventory (issue #79). Audit persistence is not wired
+// Prod listed-secret inventory. Audit persistence is not wired
 // yet, so this returns no values today; when persistence lands, return the
 // inventory here — runAuditCommand already consults loadSecrets, so the
 // prod path cannot forget it.
 export function loadProdAuditSecrets(): readonly string[] {
   return [];
-}
-
-function isAuditMode(value: string): value is AuditMode {
-  return value === 'solo' || value === 'orchestrator';
 }
 
 function isAuditResult(value: string): value is AuditResult {
@@ -77,7 +62,7 @@ function isAuditResult(value: string): value is AuditResult {
 // Fail-closed query redaction: secret-shaped substrings plus every
 // listed-secret inventory value become the fixed placeholder. Applied to
 // the wire form so nested fields are covered, then parsed back so --json
-// keeps the 14-field record shape.
+// keeps the record shape.
 export function redactAuditRecord(
   record: OrgAuditRecord,
   secrets: readonly string[] = [],
@@ -91,7 +76,7 @@ export function redactAuditRecord(
 }
 
 // The human view: one table row per (already redacted) record over the
-// fields an operator scans for; `--json` carries all 14 fields.
+// fields an operator scans for; `--json` carries every field.
 function auditTable(
   records: readonly OrgAuditRecord[],
   deps: AuditCommandDeps,
@@ -106,7 +91,6 @@ function auditTable(
   return renderTable(
     records.map((record) => [
       record.when,
-      record.mode,
       record.posture,
       resultCell(record.result),
       record.what,
@@ -116,7 +100,6 @@ function auditTable(
     ]),
     [
       { header: 'WHEN' },
-      { header: 'MODE' },
       { header: 'POSTURE' },
       { header: 'RESULT' },
       { header: 'WHAT' },
@@ -130,7 +113,7 @@ function auditTable(
 
 // `kubic audit` over parsed options: commander (apps/kubic/src/commands/
 // analysis.ts) owns argv syntax — unknown flags, missing filter values,
-// `--help`; this handler owns mode/result validation (with the fail-closed
+// `--help`; this handler owns result validation (with the fail-closed
 // secret-shaped echo) and the redacted query.
 export async function runAuditCommand(
   options: AuditOptions,
@@ -141,19 +124,7 @@ export async function runAuditCommand(
   const log = createLineLogger(deps.err, {
     theme: json ? PLAIN : (deps.errTheme ?? PLAIN),
   });
-  let mode: AuditMode | undefined;
   let result: AuditResult | undefined;
-  if (options.mode !== undefined) {
-    if (!isAuditMode(options.mode)) {
-      log.error(
-        redactSecretShapes(
-          `unknown mode ${JSON.stringify(options.mode)} (want solo|orchestrator)`,
-        ),
-      );
-      return EXIT_USAGE;
-    }
-    mode = options.mode;
-  }
   if (options.result !== undefined) {
     if (!isAuditResult(options.result)) {
       log.error(
@@ -167,17 +138,17 @@ export async function runAuditCommand(
   }
   // A session filter is an id, never an empty value: `--session ''` (or a
   // whitespace-only one) would silently read as "no filter" or match nothing,
-  // so it is refused like the other value-bearing filters (issue #159).
+  // so it is refused like the other value-bearing filters.
   const session = options.session;
   if (session !== undefined && session.trim() === '') {
     log.error(
       redactSecretShapes(
-        `unknown session ${JSON.stringify(options.session)} (want an orchestrator session id)`,
+        `unknown session ${JSON.stringify(options.session)} (want a session id)`,
       ),
     );
     return EXIT_USAGE;
   }
-  // An unreadable ledger (issue #279) is a failure naming the file, never
+  // An unreadable ledger is a failure naming the file, never
   // an empty trail: "no audit records" would be a false all-clear.
   let records: OrgAuditRecord[];
   try {
@@ -197,7 +168,6 @@ export async function runAuditCommand(
     ...((await deps.loadSecrets?.()) ?? []),
   ];
   const filtered = queryAudits(records, {
-    mode,
     posture: options.posture,
     result,
     ...(session === undefined ? {} : { session }),

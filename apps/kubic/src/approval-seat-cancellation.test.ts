@@ -1,8 +1,8 @@
-// The approval SEAT's cancellation on the composition path (issue #232;
-// §41.2 "maxPendingMs … then deny, not hang", §14.2). When the service's bound
-// expires the call is denied — and the question must go away with it: the TUI
-// surface used to keep showing the obsolete ask, blocking the next real ask
-// behind it, while a late approval was dropped without a word.
+// The approval SEAT's cancellation on the composition path ("maxPendingMs …
+// then deny, not hang"). When the service's bound expires the call is denied —
+// and the question must go away with it: the TUI surface used to keep showing
+// the obsolete ask, blocking the next real ask behind it, while a late approval
+// was dropped without a word.
 //
 // This file lives in the composition root because it is the only place that
 // may import BOTH sides: the host's ApprovalService and the TUI's
@@ -37,7 +37,7 @@ function serviceOver(surface: ReturnType<typeof createApprovalSurface>) {
   });
 }
 
-describe('a service timeout withdraws the seat (issue #232)', () => {
+describe('a service timeout withdraws the seat', () => {
   it('aborts the seat, clears the shown ask, and shows the next queued one', async () => {
     vi.useFakeTimers();
     const surface = createApprovalSurface({ armingMs: 0 });
@@ -82,7 +82,7 @@ describe('a service timeout withdraws the seat (issue #232)', () => {
     const verdict = await first;
     expect(verdict.approved).toBe(false);
     // The withdrawn ask is unanswerable, so the denial stands (a latched
-    // approval must not appear after the user never decided — §41.2).
+    // approval must not appear after the user never decided).
     expect(surface.decide('a')).toBe(false);
     expect(service.decided('k-1')).toBeUndefined();
   });

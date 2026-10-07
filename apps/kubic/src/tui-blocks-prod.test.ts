@@ -1,4 +1,4 @@
-// Block mode's copy on the real `kubic tui` path (issue #463): after a real
+// Block mode's copy on the real `kubic tui` path: after a real
 // faux turn, Esc then `y` writes the answer to the clipboard as OSC 52 on
 // the screen's terminal — through tmux's passthrough inside tmux — and a
 // terminal known to drop it gets the honest notice instead.
@@ -108,7 +108,7 @@ async function copyAnswer(): Promise<{ written: string; frame: string }> {
 
 const ANSWER = Buffer.from('all done', 'utf8').toString('base64');
 
-describe('block mode copies on kubic tui (issue #463)', () => {
+describe('block mode copies on kubic tui', () => {
   it('writes OSC 52 to the terminal', async () => {
     vi.stubEnv('TMUX', '');
     vi.stubEnv('TERM_PROGRAM', 'iTerm.app');

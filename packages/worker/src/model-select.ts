@@ -1,5 +1,4 @@
-// Model selection, one-way escalation, thinking clamp (issue #20,
-// slice B; §38).
+// Model selection, one-way escalation, thinking clamp.
 //
 // Selection chain: explicit CLI selection (--model provider/id) beats the
 // recorded config default, which beats first-available. Escalation climbs
@@ -7,8 +6,8 @@
 // the ladder), every step recorded with reason, total steps bounded.
 // Thinking levels clamp to what the model supports (Pi owns the map);
 // the level itself persists as durable agent state through `configure()`
-// + `pi.agent` (issue #225), never a sidecar — attach restores it from
-// the storage, so save/loadThinkingLevel were deleted (issue #216).
+// + `pi.agent`, never a sidecar — attach restores it from
+// the storage, so save/loadThinkingLevel were deleted.
 
 import { suggest } from '../../core/src/suggest.js';
 import { isThinkingLevel, THINKING_LEVELS } from './models-config.js';
@@ -27,9 +26,9 @@ export class ModelSelectError extends Error {
   }
 }
 
-// Issue #462: no model at all — no provider has a key and no explicit or
+// No model at all — no provider has a key and no explicit or
 // configured model was named. The TUI answers it with the first screen's
-// no-key block (docs/ui 05-F) instead of a bare error line.
+// no-key block instead of a bare error line.
 export class NoModelAvailableError extends ModelSelectError {
   constructor(message: string) {
     super(message);
@@ -48,7 +47,7 @@ export function selectModel(
   models: MutableModels,
   explicit?: ModelSelection,
   configDefault?: ModelSelection,
-  // Issue #221: the providers the implicit first-available pick may use,
+  // The providers the implicit first-available pick may use,
   // in preference order. The assembly lists models.json customs first and
   // leaves out every built-in whose auth is not configured, so a keyless
   // built-in is never selected silently. Omitted: every registered
@@ -58,7 +57,7 @@ export function selectModel(
   const pick = (sel: ModelSelection, origin: string): AnyModel => {
     const provider = models.getProvider(sel.provider);
     if (provider === undefined) {
-      // Issue #450: name the closest registered provider, if any.
+      // Name the closest registered provider, if any.
       const [close] = suggest(
         sel.provider,
         models.getProviders().map((candidate) => candidate.id),
@@ -94,7 +93,7 @@ export function selectModel(
   );
 }
 
-// The `--thinking <level>` value rule (issue #225): the level vocabulary is
+// The `--thinking <level>` value rule: the level vocabulary is
 // the shared one, so `--thinking banana` is refused by name with the levels
 // that exist — the same wording `/thinking` uses (tui-run.ts).
 export function parseThinkingFlag(flag: string): ModelThinkingLevel {
@@ -221,7 +220,7 @@ export interface ResolvedThinking {
   notice?: string;
 }
 
-// §38.3 (issue #225): pick the requested level by precedence
+// Pick the requested level by precedence
 // override > session > role > config, then clamp it to what the model
 // supports. Pi owns the support map; an unsupported request is never
 // silently rewritten — the notice says what happened.

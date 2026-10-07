@@ -1,4 +1,4 @@
-// The keybinding registry (issue #303; §16.6, §16.9): defaults, overrides
+// The keybinding registry: defaults, overrides
 // from ~/.kubic/keybindings.json, conflict reporting, canonical key ids.
 import { describe, expect, it } from 'vitest';
 import {
@@ -10,13 +10,12 @@ import {
   parseKeybindingsJson,
 } from './keybindings.js';
 
-describe('keybinding registry defaults (issue #303)', () => {
+describe('keybinding registry defaults', () => {
   it('binds every shipped global key to its action', () => {
     const keys = DEFAULT_KEY_REGISTRY;
     expect(keys.actionFor('global', 'ctrl+o')).toBe('panel.diff');
     expect(keys.actionFor('global', 'ctrl+r')).toBe('panel.journal');
-    expect(keys.actionFor('global', 'ctrl+g')).toBe('session.mode');
-    // Issue #454: Esc is the cancel key; quitting has no default key.
+    // Esc is the cancel key; quitting has no default key.
     expect(keys.actionFor('global', 'escape')).toBe('app.cancel');
     expect(keys.keysFor('app.exit')).toEqual([]);
     expect(keys.label('app.exit')).toBe('');
@@ -58,14 +57,14 @@ describe('keybinding registry defaults (issue #303)', () => {
   });
 });
 
-describe('keybinding overrides (issue #303)', () => {
+describe('keybinding overrides', () => {
   it('an override replaces the defaults and the old key falls through', () => {
     const keys = createKeyRegistry({
       'panel.diff': ['ctrl+g'],
-      'session.mode': ['alt+g'],
+      'panel.journal': ['alt+g'],
     });
     expect(keys.actionFor('global', 'ctrl+g')).toBe('panel.diff');
-    expect(keys.actionFor('global', 'alt+g')).toBe('session.mode');
+    expect(keys.actionFor('global', 'alt+g')).toBe('panel.journal');
     expect(keys.actionFor('global', 'ctrl+o')).toBeUndefined();
     expect(keys.isGlobalKey('ctrl+o')).toBe(false);
     expect(keys.label('panel.diff')).toBe('ctrl+g');
@@ -73,12 +72,12 @@ describe('keybinding overrides (issue #303)', () => {
   });
 
   it('an override that takes a default key reports the displaced action', () => {
-    const keys = createKeyRegistry({ 'panel.diff': ['ctrl+g'] });
-    expect(keys.actionFor('global', 'ctrl+g')).toBe('panel.diff');
-    expect(keys.keysFor('session.mode')).toEqual([]);
+    const keys = createKeyRegistry({ 'panel.diff': ['ctrl+r'] });
+    expect(keys.actionFor('global', 'ctrl+r')).toBe('panel.diff');
+    expect(keys.keysFor('panel.journal')).toEqual([]);
     expect(keys.notices).toEqual([
-      'keybinding: ctrl+g now runs panel.diff (override), so session.mode no longer has it',
-      'keybinding: session.mode is unbound',
+      'keybinding: ctrl+r now runs panel.diff (override), so panel.journal no longer has it',
+      'keybinding: panel.journal is unbound',
     ]);
   });
 
@@ -104,7 +103,7 @@ describe('keybinding overrides (issue #303)', () => {
     expect(keys.actionFor('global', 'escape')).toBe('app.cancel');
   });
 
-  it('still lets the operator bind a quit key (issue #454)', () => {
+  it('still lets the operator bind a quit key', () => {
     const keys = createKeyRegistry({ 'app.exit': ['ctrl+q'] });
     expect(keys.notices).toEqual([]);
     expect(keys.actionFor('global', 'ctrl+q')).toBe('app.exit');
@@ -112,7 +111,7 @@ describe('keybinding overrides (issue #303)', () => {
   });
 });
 
-describe('parseKeybindingsJson (issue #303)', () => {
+describe('parseKeybindingsJson', () => {
   it('accepts a key or a list per action, canonicalised', () => {
     expect(
       parseKeybindingsJson(

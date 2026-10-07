@@ -1,8 +1,7 @@
-// The `--thinking` / config default reaches the lane the run boots
-// (issue #225; §38.3): override > session > role > config, clamped to the
-// effective model, never silently — and the trajectory records the applied
-// level, not the request. Drives the real `runHeadlessPrompt` with faux
-// models: zero network, zero paid tokens.
+// The `--thinking` / config default reaches the lane the run boots: override >
+// session > role > config, clamped to the effective model, never silently — and
+// the trajectory records the applied level, not the request. Drives the real
+// `runHeadlessPrompt` with faux models: zero network, zero paid tokens.
 import {
   mkdirSync,
   mkdtempSync,
@@ -69,7 +68,7 @@ function writeRole(root: string, name: string): void {
   );
 }
 
-describe('run thinking level (issue #225)', () => {
+describe('run thinking level', () => {
   it('applies the per-run override and records it in the trajectory', async () => {
     const root = tmpRoot();
     const result = await runHeadlessPrompt(

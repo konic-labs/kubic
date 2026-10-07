@@ -1,18 +1,15 @@
-// Dep-direction lint for the Kubic monorepo (issue #2, design §64 + §3.1).
+// Dep-direction lint for the Kubic monorepo.
 //
 // One-way dependency rule: packages may only import "downward".
 // Forbidden edges (importer -> forbidden imported packages):
 //
-// Every non-root package forbids the `extensions` bundle facade and the
-// `kubic` composition root (issue #369): through the app root a package
-// reaches host/worker implementation transitively, which is exactly what
-// §64 forbids. Test scaffolding (`*.test.ts`) is exempt from those two
-// targets only — host/tui prod-path tests wire the real builders from
-// apps/kubic and packages/extensions, the mandated pattern — every other
-// forbidden edge still fires in tests, and extensions itself may never
-// reach the app root, tests included. A package missing from this table
-// forbids every listed target (the `??` fallback in checkTree), so a new
-// package is denied by default.
+// Every non-root package forbids the `kubic` composition root: through the
+// app root a package reaches host/worker implementation transitively. The
+// rule holds in tests too — a package test reaching the app root is a
+// dependency inversion (the composition root's behaviour tests live under
+// apps/kubic). A package missing from this table forbids every listed
+// target (the `??` fallback in checkTree), so a new package is denied by
+// default.
 const FORBIDDEN = {
   core: [
     'exec',
@@ -22,57 +19,15 @@ const FORBIDDEN = {
     'trajectory',
     'eval',
     'tui',
-    'extensions',
     'kubic',
   ],
-  exec: [
-    'worker',
-    'host',
-    'agents',
-    'trajectory',
-    'eval',
-    'tui',
-    'extensions',
-    'kubic',
-  ],
-  worker: ['host', 'tui', 'extensions', 'kubic'],
-  host: ['tui', 'extensions', 'kubic'],
-  agents: [
-    'host',
-    'worker',
-    'tui',
-    'trajectory',
-    'eval',
-    'extensions',
-    'kubic',
-  ],
-  trajectory: [
-    'exec',
-    'worker',
-    'host',
-    'agents',
-    'eval',
-    'tui',
-    'extensions',
-    'kubic',
-  ],
-  eval: ['exec', 'worker', 'host', 'tui', 'extensions', 'kubic'],
-  tui: [
-    'exec',
-    'worker',
-    'host',
-    'agents',
-    'trajectory',
-    'eval',
-    'extensions',
-    'kubic',
-  ],
-  // extensions sits above the library layers it dogfoods (core/exec/agents/
-  // trajectory/eval) but below the runtime implementations: a bundle facade
-  // must never reach into worker/host/tui implementation or the app root.
-  // Intra-package facet splits (tui never imports host, worker never pi-tui)
-  // are enforced in checkTree below (issue #37, §32).
-  extensions: ['worker', 'host', 'tui', 'kubic'],
+  exec: ['worker', 'host', 'agents', 'trajectory', 'eval', 'tui', 'kubic'],
+  worker: ['host', 'tui', 'kubic'],
+  host: ['tui', 'kubic'],
+  agents: ['host', 'worker', 'tui', 'trajectory', 'eval', 'kubic'],
+  trajectory: ['exec', 'worker', 'host', 'agents', 'eval', 'tui', 'kubic'],
+  eval: ['exec', 'worker', 'host', 'tui', 'kubic'],
+  tui: ['exec', 'worker', 'host', 'agents', 'trajectory', 'eval', 'kubic'],
   // apps/kubic is the composition root: may wire host + tui together.
   kubic: [],
 };
@@ -140,20 +95,6 @@ export function checkTree(root) {
     const forbidden = new Set(FORBIDDEN[owner] ?? Object.keys(FORBIDDEN));
     for (const file of tsFiles(srcDir)) {
       const content = readFileSync(file, 'utf8');
-      // Test-scaffolding exemption (issues #369, #387): prod-path tests
-      // wire the real builders, so `*.test.ts` may reach the `extensions`
-      // facade. The `kubic` root is NOT exempt: since #387 the composition
-      // root's behaviour tests live under apps/kubic, so a package test
-      // reaching the app root is a dependency inversion. extensions itself
-      // keeps its absolute bar on the app root — a bundle facade test must
-      // never boot the whole app.
-      const testExempt =
-        file.endsWith('.test.ts') &&
-        owner !== 'kubic' &&
-        owner !== 'extensions';
-      const forbiddenForFile = testExempt
-        ? new Set([...forbidden].filter((t) => t !== 'extensions'))
-        : forbidden;
       for (const m of content.matchAll(IMPORT_RE)) {
         const spec = m[1] ?? m[2];
         if (
@@ -166,7 +107,7 @@ export function checkTree(root) {
           owner !== 'exec' &&
           !file.endsWith('.test.ts')
         ) {
-          // I/O confinement (§9, issue #12): only packages/exec (the
+          // I/O confinement: only packages/exec (the
           // ExecutionEnv binding) touches node:fs/child_process. Tools go
           // through the seam. Test scaffolding is exempt.
           const line = content.slice(0, m.index).split('\n').length;
@@ -179,7 +120,7 @@ export function checkTree(root) {
           continue;
         }
         if (spec.startsWith('@earendil-works/')) {
-          // Pi seam rule (§65): only designated boundary files may touch Pi
+          // Pi seam rule: only designated boundary files may touch Pi
           // modules — exact path match, no suffix bypass. Worker owns the
           // agent/model seam; TUI owns the presentation seam (it cannot
           // import worker implementation, so it cannot reuse its boundary).
@@ -201,7 +142,7 @@ export function checkTree(root) {
           continue;
         }
         const target = resolveTarget(owner, file, spec, root);
-        if (target && forbiddenForFile.has(target)) {
+        if (target && forbidden.has(target)) {
           const line = content.slice(0, m.index).split('\n').length;
           violations.push({
             from: owner,
@@ -210,86 +151,10 @@ export function checkTree(root) {
             line,
           });
         }
-        if (owner === 'extensions') {
-          // Facet splits, issue #37 §32: a tui facet file (*/tui.ts or
-          // */tui/*) never imports host — including the same-package host
-          // facet, which the package-level rule above cannot see. A worker
-          // facet file never imports pi-tui.
-          const rel = relative(root, file);
-          const segs = rel.split(sep);
-          const base = segs[segs.length - 1] ?? '';
-          const isTuiFacet = segs.includes('tui') || base.startsWith('tui.');
-          const isWorkerFacet =
-            segs.includes('worker') || base.startsWith('worker.');
-          const mentionsHost =
-            spec === '@kubic/host' ||
-            spec.startsWith('@kubic/host/') ||
-            target === 'host' ||
-            /(^|\/)host(\/|$|\.)/.test(spec);
-          if (isTuiFacet && mentionsHost) {
-            const line = content.slice(0, m.index).split('\n').length;
-            violations.push({
-              from: owner,
-              to: 'host (tui facet)',
-              file: rel,
-              line,
-            });
-          }
-          if (isWorkerFacet && spec.includes('pi-tui')) {
-            const line = content.slice(0, m.index).split('\n').length;
-            violations.push({
-              from: owner,
-              to: `${spec} (worker facet)`,
-              file: rel,
-              line,
-            });
-          }
-        }
       }
     }
   }
   return violations;
-}
-
-// All internal package-to-package import edges (allowed ones included).
-// checkTree above reports only violations; this lists every edge so docs
-// can cross-check neighbour lists against the real tree (issue #63
-// review: diagram drift must fail CI, not just forbidden imports).
-export function listInternalEdges(root) {
-  const edges = [];
-  const packagesDir = join(root, 'packages');
-  let owners = [];
-  try {
-    owners = readdirSync(packagesDir).filter((e) =>
-      statSync(join(packagesDir, e)).isDirectory(),
-    );
-  } catch {
-    return edges;
-  }
-  owners.push('kubic');
-  for (const owner of owners) {
-    const srcDir =
-      owner === 'kubic'
-        ? join(root, 'apps', 'kubic')
-        : join(packagesDir, owner);
-    for (const file of tsFiles(srcDir)) {
-      const content = readFileSync(file, 'utf8');
-      for (const m of content.matchAll(IMPORT_RE)) {
-        const spec = m[1] ?? m[2];
-        const target = resolveTarget(owner, file, spec, root);
-        if (target) {
-          const line = content.slice(0, m.index).split('\n').length;
-          edges.push({
-            from: owner,
-            to: target,
-            file: relative(root, file),
-            line,
-          });
-        }
-      }
-    }
-  }
-  return edges;
 }
 
 const isMain = import.meta.main;

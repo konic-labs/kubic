@@ -1,4 +1,4 @@
-// The run verifier (issue #267; §48 gate signals, §74 Trajectory → Verifier
+// The run verifier (gate signals, Trajectory → Verifier
 // → Reward). Configured gate commands run through the exec seam in the
 // run's worktree: exit 0 is pass, anything else (a timeout included) is
 // fail, an unconfigured gate is absent (unknown). Real temp dirs and local
@@ -34,7 +34,7 @@ afterEach(() => {
   }
 });
 
-describe('runVerifier (issue #267)', () => {
+describe('runVerifier', () => {
   it('maps exit 0 to pass and a non-zero exit to fail, in the worktree', async () => {
     const dir = tmp();
     writeFileSync(join(dir, 'ok.txt'), 'yes\n');
@@ -77,7 +77,7 @@ describe('runVerifier (issue #267)', () => {
     expect(DEFAULT_VERIFY_TIMEOUT_MS).toBe(10 * 60 * 1000);
     const seen: { args: string[]; maxOutputBytes: unknown }[] = [];
     // The gate answer is exit 0 either way; only the requested argv is
-    // pinned, so opt out of strict mode explicitly (issue #356).
+    // pinned, so opt out of strict mode explicitly.
     const env = new FakeExecutionEnv({}, { allowUnscripted: true });
     const spy: ExecutionEnv = {
       cwd: env.cwd,
@@ -160,7 +160,7 @@ describe('runVerifier (issue #267)', () => {
   });
 });
 
-describe('verifierLabels (issue #267)', () => {
+describe('verifierLabels', () => {
   it('writes signal:<gate> for every verified gate', () => {
     expect(verifierLabels({ tests: 'pass', build: 'fail' })).toEqual({
       'signal:tests': 'pass',

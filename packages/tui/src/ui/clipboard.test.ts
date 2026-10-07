@@ -1,4 +1,4 @@
-// OSC 52 copies (EPIC N, issue #463): the payload a terminal turns into a
+// OSC 52 copies: the payload a terminal turns into a
 // clipboard write, its tmux passthrough, and the size cap.
 import { describe, expect, it } from 'vitest';
 import {
@@ -12,7 +12,7 @@ import {
 const ESC = '\u001b';
 const BEL = '\u0007';
 
-describe('osc52 (issue #463)', () => {
+describe('osc52', () => {
   it('base64-encodes the text into the clipboard sequence', () => {
     expect(osc52('hello')).toBe(`${ESC}]52;c;aGVsbG8=${BEL}`);
   });

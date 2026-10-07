@@ -1,5 +1,4 @@
-// Slice C: log timeline + status (issue #18; §42.2).
-// RED: renderLog/journalStatus do not exist yet.
+// Log timeline + status.
 import {
   appendFileSync,
   mkdirSync,
@@ -65,7 +64,7 @@ function seed(): FileJournalStore {
   return store;
 }
 
-describe('journal log + status (issue #18, slice C)', () => {
+describe('journal log + status', () => {
   it('renders the timeline with timestamp/agent/toolCall/op/path/bytes', () => {
     const lines = renderLog(seed());
     expect(lines).toHaveLength(2);
@@ -98,13 +97,13 @@ describe('journal log + status (issue #18, slice C)', () => {
   });
 });
 
-// Issue #126: inside a linked worktree `.git` is a FILE holding a
+// Inside a linked worktree `.git` is a FILE holding a
 // `gitdir: <path>` pointer, so reading `.git/HEAD` says nothing about the
 // branch — the real HEAD lives in the pointed-at git dir. Pure file reads
 // (no git invocation): a dangling or malformed pointer is named
 // `(unknown)`, never a throw, and a genuinely detached HEAD stays
 // `(detached)`.
-describe('worktree HEAD resolution (issue #126)', () => {
+describe('worktree HEAD resolution', () => {
   function linkedWorktree(head: string): { root: string; gitdir: string } {
     const gitdir = tmpRoot('gd-');
     writeFileSync(join(gitdir, 'HEAD'), head);
@@ -156,7 +155,7 @@ describe('worktree HEAD resolution (issue #126)', () => {
   });
 });
 
-describe('unattributed count (issue #87)', () => {
+describe('unattributed count', () => {
   it('counts reconciliation finds separately in status', () => {
     const status = journalStatus(seed(), tmpRoot('ws-'));
     expect(status.entries).toBe(2);
@@ -180,7 +179,7 @@ describe('unattributed count (issue #87)', () => {
       unattributed: 0,
       corrupt: 0,
       corruptLines: 0,
-      // Issue #378: no moves in an empty journal — the field is always
+      // No moves in an empty journal — the field is always
       // present so `--json` keeps a stable shape.
       headMoves: [],
       repo: null,
@@ -191,11 +190,11 @@ describe('unattributed count (issue #87)', () => {
   });
 });
 
-// Torn index lines (issue #343): a fragment left by a crash or a full disk
+// Torn index lines: a fragment left by a crash or a full disk
 // is dropped from the read — it must never poison the journal — but the
 // drop is named in the status instead of staying silent, so an operator can
 // tell an empty journal from an unreadable one.
-describe('corrupt index lines (issue #343)', () => {
+describe('corrupt index lines', () => {
   it('counts unparsable index lines and keeps the readable entries', () => {
     const dir = tmpRoot('j-');
     const store = new FileJournalStore(dir);
@@ -225,9 +224,9 @@ describe('corrupt index lines (issue #343)', () => {
   });
 });
 
-// Blob integrity (issue #111): status names lost content instead of
+// Blob integrity: status names lost content instead of
 // letting it hide behind reversibility counts.
-describe('corrupt count (issue #111)', () => {
+describe('corrupt count', () => {
   it('counts entries whose content is unexpectedly missing under a recorded hash', () => {
     const dir = tmpRoot('j-');
     const store = new FileJournalStore(dir);
@@ -255,7 +254,7 @@ describe('corrupt count (issue #111)', () => {
   });
 });
 
-describe('HEAD-move markers in log + status (issue #378)', () => {
+describe('HEAD-move markers in log + status', () => {
   const MOVE_A = { head: 'a'.repeat(40), branch: 'main', stash: 0 };
   const MOVE_B = { head: 'b'.repeat(40), branch: 'feature', stash: 0 };
 
@@ -301,9 +300,9 @@ describe('HEAD-move markers in log + status (issue #378)', () => {
   });
 });
 
-// Repo root, ahead/behind and conflicts on `kubic status` (issue #380).
-// RED first: RepoState is only branch and dirty.
-describe('status repo ahead/behind, root and conflicts (issue #380)', () => {
+// Repo root, ahead/behind and conflicts on `kubic status`.
+// RepoState is only branch and dirty.
+describe('status repo ahead/behind, root and conflicts', () => {
   function commitFile(
     repo: { path: string; git(args: readonly string[]): string },
     name: string,

@@ -1,9 +1,9 @@
-// Issue #143 (§40.3, §12.1): the model must be told the truth about its own
+// The model must be told the truth about its own
 // tool set. The prompt's `tools:` line and the conversation's offered set
 // are one intersection — base tools, narrowed by the permission classes when
 // declared and by the role allowlist when declared — in every combination,
 // including the classes-only one the pre-fix code advertised in full.
-// Ported to the durable harness in #394.
+// Ported to the durable harness.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -92,7 +92,7 @@ function handle(id = 'sess-1'): TestSession {
     dir: `/tmp/kubic-solo-tools-line/${id}`,
     storage,
     meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
-    // #395/D8.1: the boot adopts the storage, so the handle must expose it.
+    // The boot adopts the storage, so the handle must expose it.
     adopt: () => storage,
     release: vi.fn(async () => undefined),
   };
@@ -162,7 +162,7 @@ async function boot(extra: {
   return { advertised: toolsLine(prompt), offered };
 }
 
-describe('the prompt tools line is the same intersection the conversation offers (issue #143)', () => {
+describe('the prompt tools line is the same intersection the conversation offers', () => {
   it('neither classes nor allowlist: every base tool is advertised and offered', async () => {
     const all = Object.keys(
       (await import('../ops/registry.js')).OPERATIONS,
@@ -216,7 +216,7 @@ describe('the prompt tools line is the same intersection the conversation offers
     expect(offered).toEqual(all);
   });
 
-  it('a reopened session without narrowing offers exactly the prompt tools line (review #394 med 1)', async () => {
+  it('a reopened session without narrowing offers exactly the prompt tools line', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kubic-solo-tools-reopen-'));
     DIRS.push(dir);
     const all = Object.keys(
@@ -295,7 +295,7 @@ describe('the prompt tools line is the same intersection the conversation offers
   });
 });
 
-describe('the per-invocation tool selection (issue #273)', () => {
+describe('the per-invocation tool selection', () => {
   it('a --tools selection narrows the offered and advertised set', async () => {
     const { advertised, offered } = await boot({
       toolSelection: ['read', 'ls'],

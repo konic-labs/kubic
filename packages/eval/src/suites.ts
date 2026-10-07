@@ -1,7 +1,7 @@
-// Built-in benchmark suites (issue #53; design §48, §76.1).
-// One executable suite per category (issue #262): each carries a FIXTURE —
+// Built-in benchmark suites.
+// One executable suite per category: each carries a FIXTURE —
 // the prompt the lane runs, the files the fixture workspace starts with,
-// and the §48 gate command(s) that decide the verdict — so `kubic
+// and the gate command(s) that decide the verdict — so `kubic
 // benchmark` and `kubic eval --task` run real work through the solo lane
 // instead of refusing. Suites that need a capability the binary does not
 // ship (a live PTY) are marked stub: true and reported as skipped, never
@@ -9,7 +9,7 @@
 // COMMUNITY.md).
 import type { EvalCategory } from './categories.js';
 
-// The §48 gate commands the run verifier executes in the fixture workspace
+// The gate commands the run verifier executes in the fixture workspace
 // after the run settles (exit 0 = pass). Structurally the host verifier's
 // VerifyCommands; the eval package cannot import host (dep direction), so
 // the shape is restated here.
@@ -140,7 +140,7 @@ export const EVAL_SUITES: readonly EvalSuite[] = [
   },
 ];
 
-// §73's `--suite swe` selector (issue #262): a suite id, a category name,
+// 's `--suite swe` selector: a suite id, a category name,
 // or `all`/absent (every suite). Undefined means no suite and no category
 // matches — the caller refuses by name rather than inventing a fallback.
 export function resolveSuites(

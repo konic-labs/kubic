@@ -1,8 +1,7 @@
-// The live suite runner on the production path (issue #262; design §48,
-// §73): `kubic eval --task` and `kubic benchmark` run each built-in
-// suite's fixture through the real solo lane and score the trajectory it
-// writes. Faux provider only (scripted fixture prompts, real tool calls);
-// temp workspaces and a fixture git repo; zero network.
+// The live suite runner on the production path: `kubic eval --task` and `kubic
+// benchmark` run each built-in suite's fixture through the real solo lane and
+// score the trajectory it writes. Faux provider only (scripted fixture prompts,
+// real tool calls); temp workspaces and a fixture git repo; zero network.
 
 import {
   existsSync,
@@ -49,7 +48,7 @@ afterEach(() => {
   }
 });
 
-// The test's git driver (issue #420): one injected sandbox per test, so
+// The test's git driver: one injected sandbox per test, so
 // the fixture setup and the worktree git the benchmark path shells share
 // the scrubbed view. The fixture keeps its own tmp dir.
 let driver: GitSandbox | undefined;
@@ -113,8 +112,8 @@ function fixtureRepo(): string {
   return dir;
 }
 
-describe('the live suite runner runs the built-in suites (issue #262)', () => {
-  it('runs one suite end to end: a record, the §73 fields and a trajectory file', {
+describe('the live suite runner runs the built-in suites', () => {
+  it('runs one suite end to end: a record, the eval fields and a trajectory file', {
     timeout: 60_000,
   }, async () => {
     const workspace = tmp('kubic-eval-ws-');
@@ -159,7 +158,7 @@ describe('the live suite runner runs the built-in suites (issue #262)', () => {
     expect(envelope.record.worktree).toBe(workspace);
     expect(envelope.record.generation).toBe(1);
     expect(envelope.record.toolCalls).toBeGreaterThan(0);
-    // The run wrote its §46 trajectory under the sessions root (the score
+    // The run wrote its trajectory under the sessions root (the score
     // is derived from it).
     const sessionsRoot = join(homedir(), '.kubic', 'sessions');
     const trajectories: string[] = [];
@@ -206,7 +205,7 @@ describe('the live suite runner runs the built-in suites (issue #262)', () => {
     };
     expect(envelope.ok).toBe(true);
     const executed = envelope.results.filter((row) => !row.skipped);
-    // Every built-in suite but the live-PTY stub executes (issue #262).
+    // Every built-in suite but the live-PTY stub executes.
     expect(executed.map((row) => row.suite)).toEqual([
       'swe-bench-mini',
       'repo-mod-rename',
@@ -219,7 +218,7 @@ describe('the live suite runner runs the built-in suites (issue #262)', () => {
     for (const row of executed) {
       expect(row.success, row.suite).toBe(true);
       expect(row.determinism).toBe('live');
-      // §73 fields on every executed row.
+      // Eval fields on every executed row.
       expect(row.model, row.suite).toBe('faux/echo');
       expect(row.worktree, row.suite).toBe(workspace);
       expect(row.generation, row.suite).toBe(1);
@@ -230,7 +229,7 @@ describe('the live suite runner runs the built-in suites (issue #262)', () => {
     ).toEqual(['terminal-live']);
   });
 
-  it('scores a --trajectory FILE through the prod reader (issue #258)', {
+  it('scores a --trajectory FILE through the prod reader', {
     timeout: 60_000,
   }, async () => {
     const workspace = tmp('kubic-eval-ws-');
@@ -334,7 +333,7 @@ describe('the live suite runner runs the built-in suites (issue #262)', () => {
     expect(envelope.error.code).toBe('trajectory-unreadable');
   });
 
-  it('resolves the §73 category alias (--suite swe)', {
+  it('resolves the category alias (--suite swe)', {
     timeout: 60_000,
   }, async () => {
     const workspace = tmp('kubic-eval-ws-');
@@ -412,7 +411,7 @@ describe('the live suite runner runs the built-in suites (issue #262)', () => {
     };
     expect(envelope.ok).toBe(false);
     expect(envelope.error.code).toBe('dirty-worktree');
-    // Issue #266: the refusal envelope carries the (empty) result set
+    // The refusal envelope carries the (empty) result set
     // rather than dropping the key.
     expect(envelope.results).toEqual([]);
     expect(errs).toEqual([]);

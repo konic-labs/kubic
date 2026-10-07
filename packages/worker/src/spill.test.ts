@@ -1,11 +1,9 @@
-// Session-scoped spill files (issue #182): the sink writes inside the
+// Session-scoped spill files: the sink writes inside the
 // session directory, so `kubic sessions prune` — one recursive
 // `bridge.remove(<sessionDir>)` per candidate
 // (`deleteSessionPruneCandidates`, host/src/sessions-prune.ts) — takes the
 // spills with it. Nothing lands in the workspace (where the end-of-run sweep
 // would journal it) or in $TMPDIR (which nothing would clean).
-//
-// RED-first note: nothing produced a spill file before this issue.
 
 import {
   mkdtempSync,
@@ -33,7 +31,7 @@ function tmp(prefix: string): string {
   return dir;
 }
 
-describe('session spill sink (issue #182)', () => {
+describe('session spill sink', () => {
   it('writes the full stream inside the session directory, 0600, in order', () => {
     const sessionDir = tmp('spill-session-');
     const sink = createSessionSpillSink(sessionDir);

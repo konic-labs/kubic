@@ -1,6 +1,6 @@
-// Issue #112, prod path: a commit subject containing multi-byte UTF-8 must
+// Prod path: a commit subject containing multi-byte UTF-8 must
 // round-trip through git_log intact. Real git in a sandboxed throwaway repo
-// (issue #365: scrubbed env, never the inherited one and never this repo),
+// (scrubbed env, never the inherited one and never this repo),
 // real NodeExecutionEnv shell, no fakes: this is the git-op end of the
 // chunk-boundary decode seam.
 import { writeFileSync } from 'node:fs';
@@ -47,7 +47,7 @@ function ctx(cwd: string): OpContext {
   };
 }
 
-describe('git_log multi-byte UTF-8 round-trip (issue #112)', () => {
+describe('git_log multi-byte UTF-8 round-trip', () => {
   it('returns a commit subject containing multi-byte UTF-8 intact', async () => {
     const repo = scratchRepo();
     const subject = 'fix: café 😀 über';

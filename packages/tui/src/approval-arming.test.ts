@@ -1,8 +1,8 @@
-// Approval keys cannot be produced by type-ahead (issue #315; §14.2, §16.4,
-// §16.9). An ask arrives asynchronously while the operator may be typing the
-// next prompt: the overlay captures input, ignores decision keys for an
-// arming delay after it appears, and allow-session needs a key that cannot
-// occur in prose. Injected clock; headless renders only.
+// Approval keys cannot be produced by type-ahead. An ask arrives asynchronously
+// while the operator may be typing the next prompt: the overlay captures input,
+// ignores decision keys for an arming delay after it appears, and allow-session
+// needs a key that cannot occur in prose. Injected clock; headless renders
+// only.
 import { describe, expect, it } from 'vitest';
 import { createApprovalSurface } from './approval-surface.js';
 import {
@@ -38,7 +38,7 @@ function settledState(promise: Promise<unknown>): Promise<string> {
   ]);
 }
 
-describe('approval arming delay (issue #315)', () => {
+describe('approval arming delay', () => {
   it('ignores a decision key 50 ms after the request appears', async () => {
     const time = clock();
     const surface = createApprovalSurface({
@@ -126,7 +126,7 @@ describe('approval arming delay (issue #315)', () => {
   });
 });
 
-describe('allow-session needs a key prose cannot produce (issue #315)', () => {
+describe('allow-session needs a key prose cannot produce', () => {
   it('no bare printable character resolves allow-session, even armed', async () => {
     const surface = createApprovalSurface({ armingMs: 0 });
     const pending = surface.ask(REQUEST);
@@ -134,7 +134,7 @@ describe('allow-session needs a key prose cannot produce (issue #315)', () => {
       String.fromCharCode(32 + i),
     );
     for (const ch of printable) {
-      // allow-once / deny / the comment input (#467 — it answers nothing).
+      // allow-once / deny / the comment input (it answers nothing).
       if (ch === 'a' || ch === 'd' || ch === 'c') continue;
       expect(surface.decide(ch)).toBe(false);
     }
@@ -168,7 +168,7 @@ describe('allow-session needs a key prose cannot produce (issue #315)', () => {
   });
 });
 
-describe('the overlay captures input (issue #315)', () => {
+describe('the overlay captures input', () => {
   it('printable keys typed while the overlay shows never reach the draft', async () => {
     const time = clock();
     const surface = createApprovalSurface({
@@ -178,7 +178,6 @@ describe('the overlay captures input (issue #315)', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'm',
-      mode: 'solo',
       approvalsSkipped: false,
       approvalSurface: surface,
     });
@@ -196,7 +195,7 @@ describe('the overlay captures input (issue #315)', () => {
     expect(app.editor.getText()).toBe('add x');
   });
 
-  it('the card follows the surface arming state (issue #459)', () => {
+  it('the card follows the surface arming state', () => {
     const time = clock();
     const surface = createApprovalSurface({
       now: time.now,
@@ -205,7 +204,6 @@ describe('the overlay captures input (issue #315)', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'm',
-      mode: 'solo',
       approvalsSkipped: false,
       approvalSurface: surface,
     });
@@ -217,10 +215,10 @@ describe('the overlay captures input (issue #315)', () => {
   });
 });
 
-// Issue #315 (re-audit): the arming window measures QUIET time. Every key the
+// The arming window measures QUIET time. Every key the
 // modal swallows restarts it, so an operator who keeps typing prose after the
 // overlay appears cannot have a later bare `a` resolve the request.
-describe('the arming window restarts on every swallowed key (issue #315)', () => {
+describe('the arming window restarts on every swallowed key', () => {
   function timedSurface() {
     const time = clock();
     const timers: Array<{ ms: number; fire: () => void; cancelled: boolean }> =
@@ -391,7 +389,6 @@ describe('the arming window restarts on every swallowed key (issue #315)', () =>
       const app = createTuiApp({
         sessionId: 's',
         model: 'm',
-        mode: 'solo',
         approvalsSkipped: false,
         approvalSurface: surface,
       });
@@ -452,12 +449,12 @@ describe('the arming window restarts on every swallowed key (issue #315)', () =>
   });
 });
 
-// Issue #315 (re-audit): after ANY swallowed key the unlock needs a longer
+// After ANY swallowed key the unlock needs a longer
 // quiet period than the first arming delay (a normal thinking pause in prose
 // is ~0.5 s), and a decision key that arrives right after the same key is a
 // terminal auto-repeat, not a decision — legacy terminals (Terminal.app, VTE,
 // tmux) send a held `a` as plain repeated bytes, with no repeat flag.
-describe('arming after typing and against auto-repeat (issue #315)', () => {
+describe('arming after typing and against auto-repeat', () => {
   function surfaceAt(options: { quietMs?: number; repeatMs?: number } = {}) {
     const time = clock(0);
     const surface = createApprovalSurface({
@@ -597,7 +594,6 @@ describe('arming after typing and against auto-repeat (issue #315)', () => {
       const app = createTuiApp({
         sessionId: 's',
         model: 'm',
-        mode: 'solo',
         approvalsSkipped: false,
         approvalSurface: surface,
       });

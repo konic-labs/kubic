@@ -1,26 +1,25 @@
-// Versioned trajectory export schema (issue #51; design §46).
+// Versioned trajectory export schema.
 // The published stable contract: every autonomous run may emit one of
-// these records for replay/bench/SFT/RL/debug. Consumers (replay #52,
-// eval #53) read it with parseTrajectoryExport — no shim, no adapter.
+// these records for replay/bench/SFT/RL/debug. Consumers (replay,
+// eval) read it with parseTrajectoryExport — no shim, no adapter.
 //
 // Shape ownership (read-only — this package never modifies them):
 //   Provenance/ExecutionEnv in packages/exec/src/env.ts,
-//   AgentResult in packages/worker/src/result.ts,
-//   AgentTask/transfer in packages/agents/src/task.ts + transfer.ts,
+//   ResultStatus in packages/worker/src/lane/settle.ts,
 //   FileChange diffs in packages/exec/src/journal-diff.ts,
 //   ApprovalPolicy/verdicts in packages/host/src/approvals.ts,
 //   KubicUsageRow in packages/worker/src/usage.ts,
-//   §52 FAILURE_CODES in packages/worker/src/lane/failures.ts.
+//   FAILURE_CODES in packages/worker/src/lane/failures.ts.
 // This package imports none of them (dep-lint: trajectory sits below the
 // runtime implementations) — the structural interfaces below are
 // snapshots of those shapes, pinned by the golden fixture test.
 
-export const SCHEMA_VERSION = '1.2';
+export const SCHEMA_VERSION = '1.3';
 export const SCHEMA_MAJOR = 1;
-export const SCHEMA_MINOR = 2;
+export const SCHEMA_MINOR = 3;
 
 // Stability promise: `stable` means additive-only within a major —
-// replay (#52) and eval (#53) pinned to major 1 keep parsing.
+// replay and eval pinned to major 1 keep parsing.
 export const TRAJECTORY_STABILITY = 'stable' as const;
 export type TrajectoryStability = typeof TRAJECTORY_STABILITY;
 
@@ -32,10 +31,19 @@ export interface TrajectoryChangelogEntry {
 
 export const TRAJECTORY_CHANGELOG: readonly TrajectoryChangelogEntry[] = [
   {
+    version: '1.3',
+    date: '2026-10-07',
+    changes: [
+      'Run budgets were removed: the optional budget block is gone (an older record that carries one still parses; the block is ignored).',
+      'The --max-turns stop reports result.status turn_limit with failure category run_limit; a wall-clock timeout also carries run_limit.',
+      'Records that carry the retired budget_exhausted status or category, or the retired spawn_failed status, no longer parse.',
+    ],
+  },
+  {
     version: '1.2',
     date: '2026-10-05',
     changes: [
-      'Budget observability (§71, issue #285): optional top-level budget block — limits (the max* dims the run started with), usage (measured tokens/costUsd/toolCalls) and exhausted (the breaching limit with used/max when known).',
+      'Budget observability: optional top-level budget block — limits (the max* dims the run started with), usage (measured tokens/costUsd/toolCalls) and exhausted (the breaching limit with used/max when known).',
       '1.1 records still parse: the whole budget block is optional on read.',
     ],
   },
@@ -55,10 +63,10 @@ export const TRAJECTORY_CHANGELOG: readonly TrajectoryChangelogEntry[] = [
     version: '1.0',
     date: '2026-09-23',
     changes: [
-      'Initial stable export: all §46 fields with mandatory provenance + used-environment snapshot (fail-closed).',
-      '§52 failure categories required on every non-completed result.',
+      'Initial stable export: all trajectory fields with mandatory provenance + used-environment snapshot (fail-closed).',
+      'failure categories required on every non-completed result.',
       'Observations truncated at MAX_OBSERVATION_BYTES with byte counts kept.',
-      'Reserved eval slot for issue #53; replay pins readable with no shim.',
+      'Reserved eval slot; replay pins readable with no shim.',
     ],
   },
 ] as const;
@@ -71,7 +79,7 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-// §52 failure taxonomy — snapshot of FAILURE_CODES owned by
+// Failure taxonomy — snapshot of FAILURE_CODES owned by
 // packages/worker/src/lane/failures.ts. The worker owns the spelling;
 // this list is pinned equal by test so a drift breaks loudly here.
 export const TRAJECTORY_FAILURE_CODES = [
@@ -88,7 +96,7 @@ export const TRAJECTORY_FAILURE_CODES = [
   'workspace_failed',
   'context_overflow',
   'context_polluted',
-  'budget_exhausted',
+  'run_limit',
   'approval_denied',
   'approval_timed_out',
 ] as const;
@@ -106,13 +114,12 @@ export const RESULT_STATUSES = [
   'failed',
   'cancelled',
   'timeout',
-  'budget_exhausted',
-  'spawn_failed',
+  'turn_limit',
 ] as const;
 
 export type TrajectoryResultStatus = (typeof RESULT_STATUSES)[number];
 
-// §46 fields, in issue order.
+// Trajectory fields, in issue order.
 export interface TrajectoryTask {
   taskId: string;
   objective: string;
@@ -123,9 +130,9 @@ export interface TrajectoryIdentity {
   sessionId: string;
   agentId: string;
   workerId: string | null;
-  // 1.1 (issue #329, additive): the parent session for orchestrated
-  // runs and the agent's own role. `task.role` stays the task's record;
-  // `role` is the agent identity the design's §46 tree names.
+  // 1.1 (additive): the parent session (always null — a run is never a
+  // child of another run) and the agent's own role. `task.role` stays the
+  // task's record; `role` is the agent identity.
   parentSessionId?: string | null;
   role?: string;
 }
@@ -133,7 +140,7 @@ export interface TrajectoryIdentity {
 export interface TrajectoryEscalation {
   reason: string;
   at: string;
-  // 1.1 (issue #329): the escalation's endpoints and the thinking level
+  // 1.1: the escalation's endpoints and the thinking level
   // it moved to. `toModel` is required on write — the exporter refuses an
   // escalation that cannot be attributed to a target model.
   fromModel?: string;
@@ -181,7 +188,7 @@ export interface TrajectoryObservation {
 export interface TrajectoryDurableState {
   phase: string;
   snapshot: JsonValue;
-  // 1.1 (issue #329): the operation leaves traversed and memo refs.
+  // 1.1: the operation leaves traversed and memo refs.
   operations?: TrajectoryOperation[];
   memos?: string[];
 }
@@ -191,7 +198,7 @@ export interface TrajectoryOperation {
   kind: string;
 }
 
-// §46 provenance: pid/generation/worktree/model. pid is an explicit
+// Provenance: pid/generation/worktree/model. pid is an explicit
 // null when no OS process exists (faux runs) — never silently dropped.
 export interface TrajectoryProvenance {
   sessionId: string;
@@ -202,7 +209,7 @@ export interface TrajectoryProvenance {
   model: string;
 }
 
-// The ACTUAL ExecutionEnv the run executed with (§46r2, §3.8): the
+// The ACTUAL ExecutionEnv the run executed with: the
 // post-allowlist spawn env, never the intended/configured env.
 // capturedFrom is a literal discriminator — anything but 'used' is
 // refused at build time (see untrusted-environment).
@@ -233,7 +240,7 @@ export interface TrajectoryApproval {
   capability: string;
   verdict: 'approved' | 'denied' | 'timed-out';
   by: string | null;
-  // 1.1 (issue #329): the redacted request summary and the decider's
+  // 1.1: the redacted request summary and the decider's
   // justification. `null` means not recorded — never an invented value.
   requested?: string | null;
   justification?: string | null;
@@ -261,38 +268,6 @@ export interface TrajectoryUsage {
   byModel: Record<string, TrajectoryModelUsage>;
 }
 
-// 1.2 (§71 budgets, issue #285): the optional budget block. `limits` are
-// the max* dims the run started with (absent dims were unbounded);
-// `usage` is the measured spend in the same vocabulary; `exhausted` names
-// the breach that ended a budget_exhausted run, with used/max when the
-// producer knew them (post-turn ledger reads do; mid-turn gate trips may
-// not). The whole block is absent on unbounded runs — never an empty
-// object claiming a budget that was never configured.
-export interface TrajectoryBudgetLimits {
-  maxTokens?: number;
-  maxCostUsd?: number;
-  maxRuntimeMs?: number;
-  maxToolCalls?: number;
-}
-
-export interface TrajectoryBudgetUsage {
-  tokens?: number;
-  costUsd?: number;
-  toolCalls?: number;
-}
-
-export interface TrajectoryBudgetExhausted {
-  limit: string;
-  used?: number;
-  max?: number;
-}
-
-export interface TrajectoryBudget {
-  limits: TrajectoryBudgetLimits;
-  usage?: TrajectoryBudgetUsage;
-  exhausted?: TrajectoryBudgetExhausted;
-}
-
 export interface TrajectoryResultError {
   kind: string;
   message: string;
@@ -303,13 +278,13 @@ export interface TrajectoryResult {
   summary: string;
   failureCategory: TrajectoryFailureCode | null;
   error: TrajectoryResultError | null;
-  // 1.1 (issue #329): refs only — the test and artifact evidence the run
+  // 1.1: refs only — the test and artifact evidence the run
   // produced, never embedded contents.
   tests?: string[];
   artifacts?: string[];
 }
 
-// Eval slot owned by issue #53: stable reserved position, filled by the
+// Eval slot: stable reserved position, filled by the
 // eval harness. Exporters leave it null-labelled; eval reads it with no
 // shim via parseTrajectoryExport.
 export interface TrajectoryEvalSlot {
@@ -338,11 +313,9 @@ export interface TrajectoryExport {
   usage: TrajectoryUsage;
   result: TrajectoryResult;
   eval: TrajectoryEvalSlot;
-  // 1.2 (issue #285): the §71 budget block. Absent on unbounded runs.
-  budget?: TrajectoryBudget;
 }
 
-// Closed-world field coverage: adding or removing a §46 section breaks
+// Closed-world field coverage: adding or removing a trajectory section breaks
 // compilation here, so the contract cannot drift silently.
 export const TRAJECTORY_FIELDS = {
   schema_version: true,
@@ -364,7 +337,6 @@ export const TRAJECTORY_FIELDS = {
   usage: true,
   result: true,
   eval: true,
-  budget: true,
 } satisfies Record<keyof TrajectoryExport, true>;
 
 export type TrajectorySchemaErrorCode = 'unknown-major' | 'malformed';
@@ -400,7 +372,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-// §46 structural validation (issue #331): presence is not enough. A
+// Structural validation: presence is not enough. A
 // published contract read from community files must fail closed with a
 // named path BEFORE a consumer dereferences a section — an `actions:
 // null` used to reach replay and die as a raw TypeError (generic exit 1)
@@ -419,7 +391,7 @@ type FieldType =
   // `state.snapshot` is JsonValue: any JSON value, but the key must exist.
   | 'json';
 
-// The required nested keys of every §46 object section. `transfer` is
+// The required nested keys of every object section. `transfer` is
 // object|null and `actions`/`observations`/`approvals` are arrays, so
 // they are listed separately below.
 const SECTION_FIELDS: Readonly<
@@ -572,7 +544,7 @@ function checkTrajectoryShape(input: Record<string, unknown>): void {
   }
 }
 
-// 1.1 additions (issue #329) are additive: a 1.0 record omits them and
+// 1.1 additions are additive: a 1.0 record omits them and
 // still parses. When present they are type-checked, so the reader never
 // hands a consumer an unvalidated new field.
 const OPTIONAL_SECTION_FIELDS: Readonly<
@@ -620,84 +592,12 @@ function checkOptionalFields(
   }
 }
 
-// 1.2 (issue #285): the budget block is wholly optional; when present
-// its leaves are type-checked. Unknown numeric limit dims are tolerated
-// (a newer minor may add dims — additive-only within the major), but a
-// non-numeric leaf is malformed.
-function checkBudgetShape(input: Record<string, unknown>): void {
-  const budget = input.budget;
-  if (budget === undefined) return;
-  if (!isRecord(budget)) {
-    malformed('budget', `must be an object (got ${describeValue(budget)})`);
-  }
-  const limits = budget.limits;
-  if (!isRecord(limits)) {
-    malformed(
-      'budget.limits',
-      `must be an object (got ${describeValue(limits)})`,
-    );
-  }
-  for (const [dim, max] of Object.entries(limits)) {
-    if (typeof max !== 'number' || !Number.isFinite(max)) {
-      malformed(
-        `budget.limits.${dim}`,
-        `must be a finite number (got ${describeValue(max)})`,
-      );
-    }
-  }
-  const usage = budget.usage;
-  if (usage !== undefined) {
-    if (!isRecord(usage)) {
-      malformed(
-        'budget.usage',
-        `must be an object (got ${describeValue(usage)})`,
-      );
-    }
-    for (const [leaf, value] of Object.entries(usage)) {
-      if (typeof value !== 'number' || !Number.isFinite(value)) {
-        malformed(
-          `budget.usage.${leaf}`,
-          `must be a finite number (got ${describeValue(value)})`,
-        );
-      }
-    }
-  }
-  const exhausted = budget.exhausted;
-  if (exhausted !== undefined) {
-    if (!isRecord(exhausted)) {
-      malformed(
-        'budget.exhausted',
-        `must be an object (got ${describeValue(exhausted)})`,
-      );
-    }
-    if (typeof exhausted.limit !== 'string' || exhausted.limit === '') {
-      malformed(
-        'budget.exhausted.limit',
-        `must be a non-empty string (got ${describeValue(exhausted.limit)})`,
-      );
-    }
-    for (const leaf of ['used', 'max'] as const) {
-      const value = exhausted[leaf];
-      if (
-        value !== undefined &&
-        (typeof value !== 'number' || !Number.isFinite(value))
-      ) {
-        malformed(
-          `budget.exhausted.${leaf}`,
-          `must be a finite number (got ${describeValue(value)})`,
-        );
-      }
-    }
-  }
-}
-
 function checkOptionalShape(input: Record<string, unknown>): void {
   for (const [section, fields] of Object.entries(OPTIONAL_SECTION_FIELDS)) {
     const value = input[section];
     if (!isRecord(value)) continue; // the required pass already refused it
     checkOptionalFields(value, section, fields, false);
   }
-  checkBudgetShape(input);
   const model = input.model as Record<string, unknown>;
   const escalations = model.escalations;
   if (Array.isArray(escalations)) {
@@ -732,7 +632,7 @@ function checkOptionalShape(input: Record<string, unknown>): void {
   }
 }
 
-// Consumer entry for replay (#52) and eval (#53): strict major gate,
+// Consumer entry for replay and eval: strict major gate,
 // tolerant minor — same-major records parse with no shim; unknown fields
 // are preserved, unknown majors are refused loudly.
 export function parseTrajectoryExport(input: unknown): TrajectoryExport {
@@ -762,16 +662,13 @@ export function parseTrajectoryExport(input: unknown): TrajectoryExport {
       `unsupported trajectory major ${major} (this reader supports major ${SCHEMA_MAJOR}; schema_version ${JSON.stringify(version)})`,
     );
   }
-  // 1.2 (issue #285): the budget block is the first OPTIONAL top-level
-  // section — absent on unbounded runs — so the required-on-read set is
-  // TRAJECTORY_FIELDS minus budget. The closed-world map above still
-  // breaks compilation when a section is added or removed.
+  // The closed-world map above breaks compilation when a section is
+  // added or removed.
   for (const field of Object.keys(TRAJECTORY_FIELDS)) {
-    if (field === 'budget') continue;
     if (!(field in input)) {
       throw new TrajectorySchemaError(
         'malformed',
-        `trajectory is missing §46 field ${JSON.stringify(field)}`,
+        `trajectory is missing field ${JSON.stringify(field)}`,
       );
     }
   }

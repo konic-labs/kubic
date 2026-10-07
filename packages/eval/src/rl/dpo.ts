@@ -1,4 +1,4 @@
-// DPO exporter (issue #54; design §74).
+// DPO exporter.
 // Chat-format preference record over an eligible pair: the DPO builder
 // delegates eligibility to buildPreferencePair, so env failures and
 // cross-boundary runs can never reach a trainable DPO record —
@@ -34,7 +34,7 @@ export interface DpoRecord {
   };
   verifier: { chosen: VerifierVerdict; rejected: VerifierVerdict };
   grantRef: { chosen: string | null; rejected: string | null };
-  // The task each side answered (#269): validation refuses a record whose
+  // The task each side answered: validation refuses a record whose
   // sides answer different tasks.
   taskRef: { chosen: string; rejected: string };
   boundary: 'within';
@@ -96,7 +96,7 @@ export function buildDpoRecord(
 
 function checkGrantRef(value: unknown, prefix: string): string[] {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return [`${prefix} is required: carry both grant refs (§74)`];
+    return [`${prefix} is required: carry both grant refs`];
   }
   const candidate = value as Record<string, unknown>;
   const errors: string[] = [];
@@ -133,7 +133,7 @@ export function validateDpoRecord(input: unknown): DpoValidation {
   const verifier = candidate.verifier as Record<string, unknown> | undefined;
   const grantRef = candidate.grantRef as Record<string, unknown> | undefined;
   if (typeof provenance !== 'object' || provenance === null) {
-    errors.push('provenance is required: carry both sides (§74)');
+    errors.push('provenance is required: carry both sides');
   } else {
     for (const message of checkProvenance(provenance.chosen)) {
       errors.push(`provenance.chosen.${message}`);
@@ -143,7 +143,7 @@ export function validateDpoRecord(input: unknown): DpoValidation {
     }
   }
   if (typeof failureCategory !== 'object' || failureCategory === null) {
-    errors.push('failureCategory is required: carry both sides (§74)');
+    errors.push('failureCategory is required: carry both sides');
   } else {
     for (const message of checkFailureCategory({
       failureCategory: failureCategory.chosen,
@@ -157,7 +157,7 @@ export function validateDpoRecord(input: unknown): DpoValidation {
     }
   }
   if (typeof verifier !== 'object' || verifier === null) {
-    errors.push('verifier is required: carry both verdicts (§74)');
+    errors.push('verifier is required: carry both verdicts');
   } else {
     for (const message of checkVerifier(verifier.chosen)) {
       errors.push(`verifier.chosen.${message}`);
@@ -169,7 +169,7 @@ export function validateDpoRecord(input: unknown): DpoValidation {
   errors.push(...checkGrantRef(grantRef, 'grantRef'));
   const taskRef = candidate.taskRef as Record<string, unknown> | undefined;
   if (typeof taskRef !== 'object' || taskRef === null) {
-    errors.push('taskRef is required: carry both task refs (§74)');
+    errors.push('taskRef is required: carry both task refs');
   }
   // Direct semantic checks (mirroring the pair build policy) so
   // hand-crafted records fail even before the projected pair check.

@@ -1,4 +1,4 @@
-// Session-state retention: `kubic sessions prune` (issue #119; §21, §42.4).
+// Session-state retention: `kubic sessions prune`.
 //
 // The rails are the contract, so this file pins them behaviourally through
 // the CLI surface: dry-run is the DEFAULT (deletion needs --yes), a session
@@ -112,7 +112,7 @@ function prune(
   ).then((code) => ({ code, lines: o.lines }));
 }
 
-describe('sessions prune, dry-run default (issue #119)', () => {
+describe('sessions prune, dry-run default', () => {
   it('lists candidates and deletes nothing without --yes', async () => {
     const root = tmpRoot();
     sessionDir(root, 'aged-one', 31 * DAY_MS);
@@ -233,7 +233,7 @@ describe('sessions prune, interactive confirmation', () => {
   });
 });
 
-describe('sessions prune, age window (issue #119)', () => {
+describe('sessions prune, age window', () => {
   it('the boundary is exact: at the cutoff is eligible, past it is not', async () => {
     const root = tmpRoot();
     const now = Date.UTC(2026, 0, 15);
@@ -306,7 +306,7 @@ describe('sessions prune, age window (issue #119)', () => {
   });
 });
 
-describe('sessions prune, one bucket per session (issue #419)', () => {
+describe('sessions prune, one bucket per session', () => {
   it('a locked session whose header cannot be statted is locked, not unreadable', async () => {
     const root = tmpRoot();
     sessionDir(root, 'locked-dark', 90 * DAY_MS);
@@ -335,7 +335,7 @@ describe('sessions prune, one bucket per session (issue #419)', () => {
   });
 });
 
-describe('sessions prune, protection rails (issue #119)', () => {
+describe('sessions prune, protection rails', () => {
   it('a live lock protects an aged session and is reported', async () => {
     const root = tmpRoot();
     const dir = sessionDir(root, 'held-live', 90 * DAY_MS);
@@ -425,7 +425,7 @@ describe('sessions prune, protection rails (issue #119)', () => {
   });
 });
 
-describe('sessions prune, bash spill files (issue #182)', () => {
+describe('sessions prune, bash spill files', () => {
   // A clipped bash stream spills into <sessionDir>/spill/. The prune's whole
   // effect on a candidate is one recursive remove, so the spill goes with the
   // session — pinned here through the real CLI path (runSessionsCommand →
@@ -452,7 +452,7 @@ describe('sessions prune, bash spill files (issue #182)', () => {
   });
 });
 
-describe('sessions prune, the plan→delete window (issue #119)', () => {
+describe('sessions prune, the plan→delete window', () => {
   // Per-pid call counting drives the window deterministically: a holder
   // reads dead on the planning pass (its first liveness call) and live on
   // the delete re-check (its second). No timing, no real process.
@@ -509,7 +509,7 @@ describe('sessions prune, the plan→delete window (issue #119)', () => {
   });
 });
 
-describe('sessions prune, keep-window resolution (issue #119)', () => {
+describe('sessions prune, keep-window resolution', () => {
   it('refuses without a window: no flag, no config, no invented default', async () => {
     const root = tmpRoot();
     sessionDir(root, 'aged-a', 90 * DAY_MS);
@@ -587,7 +587,7 @@ describe('sessions prune, keep-window resolution (issue #119)', () => {
   });
 });
 
-describe('sessions prune, config flow (issue #119)', () => {
+describe('sessions prune, config flow', () => {
   // A real config load (global layer under a tmp home), the composition
   // root's seam, then the CLI — the same chain `kubic sessions prune` runs.
   function loadedHome(retention?: string): string {
@@ -665,7 +665,7 @@ describe('sessions prune, config flow (issue #119)', () => {
     expect(existsSync(join(root, 'aged-a'))).toBe(true);
   });
 
-  it('a refused config leaves no window either: prune refuses, deletes nothing (issue #242)', async () => {
+  it('a refused config leaves no window either: prune refuses, deletes nothing', async () => {
     // A typo refuses the whole load, so sessionRetentionDays is undefined
     // exactly like the unset case — prune still demands --keep-days.
     const home = tmpRoot('home-');
@@ -696,92 +696,6 @@ describe('sessions prune, config flow (issue #119)', () => {
     expect(code).toBe(1);
     expect(o.lines.join('\n')).toContain('--keep-days');
     expect(existsSync(join(root, 'aged-a'))).toBe(true);
-  });
-
-  describe('sessions prune treats a run as a unit (issue #164)', () => {
-    // A session-shaped dir WITH a listing header + storage marker, so the
-    // planner's parent map sees it exactly as listSessions would.
-    function runSession(
-      root: string,
-      id: string,
-      ageMs: number,
-      parent?: string,
-    ): void {
-      sessionDir(root, id, 0);
-      writeFileSync(
-        join(root, id, 'session.json'),
-        `${JSON.stringify({
-          v: 1,
-          kind: 'kubic.session',
-          id,
-          cwd: '/repo',
-          createdAt: new Date(Date.now() - ageMs).toISOString(),
-          ...(parent === undefined ? {} : { parentSessionId: parent }),
-        })}\n`,
-      );
-      writeFileSync(join(root, id, 'main.jsonl'), '');
-      const secs = (Date.now() - ageMs) / 1000;
-      utimesSync(join(root, id), secs, secs);
-    }
-
-    it('keeps a recent child while its parent is old (the run is as young as its youngest member)', async () => {
-      const root = tmpRoot();
-      runSession(root, 'orch-1', 40 * DAY_MS);
-      runSession(root, 'orch-1-aaa', 60 * 60 * 1000, 'orch-1');
-      const { code, lines } = await prune(root, { keepDays: 30 });
-      expect(code).toBe(0);
-      expect(lines.join('\n')).toContain('nothing to prune');
-      expect(existsSync(join(root, 'orch-1'))).toBe(true);
-      expect(existsSync(join(root, 'orch-1-aaa'))).toBe(true);
-    });
-
-    it('prunes an old run together: parent and children are candidates in the same run', async () => {
-      const root = tmpRoot();
-      runSession(root, 'orch-1', 40 * DAY_MS);
-      runSession(root, 'orch-1-aaa', 40 * DAY_MS, 'orch-1');
-      runSession(root, 'orch-1-bbb', 40 * DAY_MS, 'orch-1');
-      runSession(root, 'solo-9', 40 * DAY_MS);
-      const { code, lines } = await prune(root, { keepDays: 30 });
-      expect(code).toBe(0);
-      const text = lines.join('\n');
-      for (const id of ['orch-1', 'orch-1-aaa', 'orch-1-bbb', 'solo-9']) {
-        expect(text).toContain(`would prune ${id}`);
-      }
-    });
-
-    it('a live-locked child keeps its aged parent (review #164)', async () => {
-      const root = tmpRoot();
-      runSession(root, 'orch-1', 40 * DAY_MS);
-      runSession(root, 'orch-1-aaa', 60 * 60 * 1000, 'orch-1');
-      // The child is mid-run: its lock is live, so it is reported locked
-      // — but its mtime still counts toward the family's age.
-      lockFile(root, 'orch-1-aaa', FAKE_PID, 60 * 60 * 1000);
-      const kill = stubKill(true);
-      try {
-        const { code, lines } = await prune(root, { keepDays: 30 });
-        expect(code).toBe(0);
-        const text = lines.join('\n');
-        expect(text).toContain('locked: orch-1-aaa');
-        expect(text).not.toContain('would prune orch-1');
-        expect(existsSync(join(root, 'orch-1'))).toBe(true);
-      } finally {
-        kill.mockRestore();
-      }
-    });
-
-    it('keeps the children of an explicitly kept parent', async () => {
-      const root = tmpRoot();
-      runSession(root, 'orch-1', 40 * DAY_MS);
-      runSession(root, 'orch-1-aaa', 40 * DAY_MS, 'orch-1');
-      const { code } = await prune(root, {
-        keepDays: 30,
-        keepSession: ['orch-1'],
-        yes: true,
-      });
-      expect(code).toBe(0);
-      expect(existsSync(join(root, 'orch-1'))).toBe(true);
-      expect(existsSync(join(root, 'orch-1-aaa'))).toBe(true);
-    });
   });
 
   it('retentionDays = 0 flows through as retention off', async () => {

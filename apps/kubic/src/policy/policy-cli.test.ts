@@ -1,4 +1,4 @@
-// `kubic policy` CLI tests (issue #79; §58). RED first: policy-cli.ts
+// `kubic policy` CLI tests. Policy-cli.ts
 // lands after this file. The command is a routing offer only — it never
 // enforces, never mutates. Faux-only, zero network.
 import { describe, expect, it } from 'vitest';
@@ -40,7 +40,7 @@ function allowBash(): EffectivePolicy {
   ]).policy;
 }
 
-describe('kubic policy names unsupported levels (issue #166, §40.2)', () => {
+describe('kubic policy names unsupported levels', () => {
   const unsupported = [
     {
       class: 'network',
@@ -87,7 +87,7 @@ describe('kubic policy names unsupported levels (issue #166, §40.2)', () => {
   });
 });
 
-describe('kubic policy names the deciding layer (issue #288)', () => {
+describe('kubic policy names the deciding layer', () => {
   it('reports deny (enterprise) under an enterprise deny', async () => {
     const cap = capture();
     const code = await runPolicyCommand(
@@ -144,7 +144,7 @@ describe('kubic policy names the deciding layer (issue #288)', () => {
   });
 });
 
-describe('policyWithInstalledAllowlist (issue #288)', () => {
+describe('policyWithInstalledAllowlist', () => {
   it('intersects the installed allowlist with an enterprise allow, never widening', () => {
     const enterprise = resolveEffectivePolicy([
       {
@@ -176,7 +176,7 @@ describe('policyWithInstalledAllowlist (issue #288)', () => {
   });
 });
 
-describe('kubic policy tool query (issue #79)', () => {
+describe('kubic policy tool query', () => {
   it('denies by default with no enterprise allow', async () => {
     const cap = capture();
     const code = await runPolicyCommand(
@@ -238,7 +238,7 @@ describe('kubic policy tool query (issue #79)', () => {
   });
 });
 
-describe('kubic policy --json (issue #79)', () => {
+describe('kubic policy --json', () => {
   it('emits the tool decision as JSON', async () => {
     const cap = capture();
     const code = await runPolicyCommand(
@@ -260,7 +260,7 @@ describe('kubic policy --json (issue #79)', () => {
 
 // Argv syntax (unknown flags, a missing --tool value, --help) is
 // commander's: apps/kubic/src/commands/analysis.test.ts pins it.
-describe('kubic policy usage (issue #79, §78)', () => {
+describe('kubic policy usage', () => {
   it('exits 2 without --tool (direct callers; commander requires it)', async () => {
     const cap = capture();
     const code = await runPolicyCommand(
@@ -303,7 +303,7 @@ describe('kubic policy colour', () => {
   });
 });
 
-describe('kubic policy secret backstop (issue #79 fix cycle 1)', () => {
+describe('kubic policy secret backstop', () => {
   // Tool names are free-form argv: a secret-shaped tool echoes back in the
   // routing offer unless the echo is redacted.
   const SHAPED_TOOL = 'SK-FAUX-TEST-KEY-0001';

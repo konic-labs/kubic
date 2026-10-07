@@ -1,4 +1,4 @@
-// The inline diff block (EPIC N, issue #456; docs/ui 01-G): display-diff
+// The inline diff block: display-diff
 // rows, line numbers, add/del surfaces and the word-level highlight.
 import { describe, expect, it } from 'vitest';
 import { createUiTheme } from '../../../core/src/ui/style.js';
@@ -17,7 +17,7 @@ const CART = [
   ' 11   } else {',
 ].join('\n');
 
-describe('display diff rows (issue #456)', () => {
+describe('display diff rows', () => {
   it('parses context, removed, added and gap rows of every number width', () => {
     expect(parseDisplayDiff(CART)).toEqual([
       {
@@ -52,7 +52,7 @@ describe('display diff rows (issue #456)', () => {
   });
 });
 
-describe('diff block render (issue #456; 01-G)', () => {
+describe('diff block render', () => {
   it('reads like the design at depth none', () => {
     const lines = renderDiffRows(plain, parseDisplayDiff(CART), 80);
     expect(lines).toEqual([

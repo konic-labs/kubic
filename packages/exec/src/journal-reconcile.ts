@@ -1,7 +1,7 @@
-// Run-scoped reconciliation lifecycle (issue #87; §42.1 mechanism 2, §42.5).
+// Run-scoped reconciliation lifecycle.
 //
 // The mechanism itself lives in `journal.ts` (`captureBaseline` /
-// `saveBaseline` / `loadBaseline` / `reconcile`, issue #17). What was
+// `saveBaseline` / `loadBaseline` / `reconcile`). What was
 // missing is the production caller: every one of those was reachable only
 // from tests, so non-tool effects (`sed -i`, `npm install`, a formatter, a
 // build) were never journaled and `unattributed: true` entries could not
@@ -9,17 +9,17 @@
 //
 // This module is that caller's contract, one object per run:
 //
-//   beginReconciliation(...)  → capture the boot baseline (§42.5), persist
+//   beginReconciliation(...)  → capture the boot baseline, persist
 //                               it beside the session journal, hand back
 //   run.sweep()               → one end-of-run tree comparison, appending
 //                               an unattributed entry per moved path
 //
-// Before-content for reconciliation finds comes from the git object store
-// when the path was clean against the index at boot (issue #371:
-// `captureGitBaseline` records its blob OID, the sweep reads it back through
-// the existing before-blob mechanism) — otherwise the baseline holds hashes,
-// not copies, so those entries carry `beforeHash` and no blob: `kubic undo`
-// reports them non-reversible rather than guessing (§42.2/§42.3).
+// Before-content for reconciliation finds comes from the git object store when
+// the path was clean against the index at boot (`captureGitBaseline` records
+// its blob OID, the sweep reads it back through the existing before-blob
+// mechanism) — otherwise the baseline holds hashes, not copies, so those
+// entries carry `beforeHash` and no blob: `kubic undo` reports them
+// non-reversible rather than guessing.
 //
 // Fail-open by design: a caller may not let a baseline or a sweep failure
 // turn a finished run into a failed one. Both entry points throw their
@@ -57,10 +57,10 @@ export interface RunReconciliationOptions {
   runId: string;
   sessionId: string;
   agentId: string;
-  /** Caller-declared out-of-scope paths (§35), excluded from both walks. */
+  /** Caller-declared out-of-scope paths, excluded from both walks. */
   outOfScope?: string[];
   /**
-   * Walk notices the operator should see (issue #107): a very large file being
+   * Walk notices the operator should see: a very large file being
    * hashed at boot, or a bridge that cannot read ranges so the bound is off.
    * The headless runner routes this to its debug channel.
    */
@@ -73,14 +73,14 @@ export interface RunReconciliation {
   /** The boot baseline: relative path → sha256, no content. */
   readonly baseline: Baseline;
   /**
-   * Issue #371: boot-time index blob OIDs for stat-clean tracked files
+   * Boot-time index blob OIDs for stat-clean tracked files
    * (null outside git repos — the sweep then records today's hash-only
    * shape). Re-captured with every rebaseline, so a new turn's pre-images
    * are the workspace as it is now, never a stale index.
    */
   readonly gitBaseline: GitBaseline | null;
   /**
-   * Issue #378: HEAD state at boot (null outside git repos or when HEAD
+   * HEAD state at boot (null outside git repos or when HEAD
    * does not resolve — the sweep then emits no marker). Re-captured with
    * every rebaseline, so a new turn absorbs an operator's checkout instead
    * of attributing it to the agent.
@@ -91,7 +91,7 @@ export interface RunReconciliation {
   /** End-of-run sweep; returns the number of entries appended. */
   sweep(): number;
   /**
-   * Issue #374 (§42.1): start a new interactive turn. The workspace as it is
+   * Start a new interactive turn. The workspace as it is
    * NOW becomes the baseline and the journal position the run start, so the
    * next sweep journals only what changed during this turn — an edit the
    * operator made between prompts is absorbed here, never attributed to the
@@ -121,19 +121,19 @@ export function beginReconciliation(
   if (options.onNotice !== undefined) {
     baselineOptions.onNotice = options.onNotice;
   }
-  // Issue #341: the journal position at boot scopes the sweep's expected
+  // The journal position at boot scopes the sweep's expected
   // state to entries this run appended — a resumed session shares the
   // journal with every earlier run.
   let runStart = journalRunStart(options.store);
   let baseline = captureBaseline(options.root, baselineOptions);
   saveBaseline(dir, options.runId, baseline);
-  // Issue #371: index blob OIDs for the files clean at boot — the sweep's
+  // Index blob OIDs for the files clean at boot — the sweep's
   // pre-images for bash-made changes. Fail-open (null outside git repos),
   // and persisted beside the baseline so a later reader can see what the
   // sweep could restore.
   let gitBaseline = captureGitBaseline(options.root, baseline);
   if (gitBaseline !== null) saveGitBaseline(dir, options.runId, gitBaseline);
-  // Issue #378: HEAD at boot — the sweep's comparison point for the
+  // HEAD at boot — the sweep's comparison point for the
   // head-moved marker. Fail-open like the OID capture.
   let headBaseline = captureHeadState(options.root);
   if (headBaseline !== null) saveHeadState(dir, options.runId, headBaseline);

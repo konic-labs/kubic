@@ -1,6 +1,6 @@
-// Prod replay re-execution runner (issue #78): re-runs the recorded
+// Prod replay re-execution runner: re-runs the recorded
 // objective through the lane and maps the settled terminus into replay's
-// §78 subset. RED first.
+// Subset.
 import { describe, expect, it } from 'vitest';
 import { buildTrajectoryExport } from '../../../trajectory/src/export.js';
 import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
@@ -23,16 +23,16 @@ function fixtureTrajectory(objective = 'Fix the widget'): TrajectoryExport {
       agentId: 'agent-1',
       pid: null,
       generation: 1,
-      worktree: '/repo/.kubic/wt/agent-1',
+      worktree: '/repo',
       model: 'acme/m1',
     },
     environment: {
       capturedFrom: 'used',
-      cwd: '/repo/.kubic/wt/agent-1',
+      cwd: '/repo',
       env: {},
     },
     worktree: {
-      path: '/repo/.kubic/wt/agent-1',
+      path: '/repo',
       baseRevision: 'abc123',
       branch: null,
     },
@@ -64,14 +64,14 @@ function request(): ReplayRunRequest {
     tier: 'deterministic',
     trajectory: 't.json',
     model: 'acme/m1',
-    worktree: '/repo/.kubic/wt/agent-1',
+    worktree: '/repo',
     lockfile: 'pins.json',
     roleConfig: null,
     role: null,
   };
 }
 
-describe('prod replay runner (issue #78)', () => {
+describe('prod replay runner', () => {
   it('re-executes the recorded objective and hands the pins to the run seam', async () => {
     const seen: Array<{ prompt: string; model: string; request: unknown }> = [];
     const run = createProdReplayRun({
@@ -107,7 +107,7 @@ describe('prod replay runner (issue #78)', () => {
 
   it('coarsens non-subset lane termini to failed with the summary preserved', async () => {
     for (const terminus of [
-      'budget_exhausted',
+      'turn_limit',
       'approval_denied',
       'approval_timed_out',
       'usage',

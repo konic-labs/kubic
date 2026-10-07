@@ -1,11 +1,9 @@
-// Solo no-isolation notice on the real surfaces (issue #89).
-// #58 shipped the text and the module's own tests; the emission was never
+// Solo no-isolation notice on the real surfaces.
+// Shipped the text and the module's own tests; the emission was never
 // wired, so `kubic run` and `kubic tui` never told the operator the trust
 // model. This file proves the notice reaches the operator ON THE COMPOSITION
 // PATH (apps/kubic), not just inside the strings module: stderr for `run`
-// before the first turn, the welcome block for `tui` from the first render
-// (issue #453 retired the permanent footer: the header's SOLO badge stays on
-// every frame and `/safety` prints the full text).
+// before the first turn, the welcome block for `tui` from the first render.
 // Faux lane only — zero network, zero paid tokens.
 import {
   mkdtempSync,
@@ -24,7 +22,6 @@ import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import { FAUX_MODEL_REF } from '../../../packages/host/src/faux-provider.js';
 import {
   SOLO_NOTICE_OPT_OUT_ENV,
-  SOLO_NOTICE_WORKER_ENV,
   soloTuiLine,
   soloWarningLines,
 } from '../../../packages/host/src/limits/solo-warning.js';
@@ -100,10 +97,9 @@ function warningLines(writes: readonly CapturedWrite[]): string[] {
     .filter((line) => line.startsWith('warning:'));
 }
 
-// Every test starts from both inputs unset — independent of the developer's
+// Every test starts from the opt-out unset — independent of the developer's
 // own shell — and unstubAllEnvs restores whatever was there before.
 beforeEach(() => {
-  vi.stubEnv(SOLO_NOTICE_WORKER_ENV, undefined);
   vi.stubEnv(SOLO_NOTICE_OPT_OUT_ENV, undefined);
 });
 
@@ -113,7 +109,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('solo no-isolation notice on `kubic run` (issue #89)', () => {
+describe('solo no-isolation notice on `kubic run`', () => {
   it('emits the warning on stderr before the first turn', async () => {
     const root = tmpRoot('solo-notice-run-');
     const faux = fauxModels(['all done']);
@@ -184,7 +180,7 @@ describe('solo no-isolation notice on `kubic run` (issue #89)', () => {
   });
 });
 
-describe('solo no-isolation notice suppression (issue #89)', () => {
+describe('solo no-isolation notice suppression', () => {
   async function runOnce(label: string): Promise<CapturedWrite[]> {
     const root = tmpRoot(`solo-notice-${label}-`);
     const capture = captureStderr(() => 0);
@@ -204,34 +200,6 @@ describe('solo no-isolation notice suppression (issue #89)', () => {
     }
     return capture.writes;
   }
-
-  it('stays silent for an orchestrator worker session', async () => {
-    vi.stubEnv(SOLO_NOTICE_WORKER_ENV, 'worker-1');
-    // A worker announces readiness on stdout instead (issue #94): capture
-    // it so it neither leaks into the runner's output nor goes unchecked.
-    const stdout: string[] = [];
-    const spy = vi
-      .spyOn(process.stdout, 'write')
-      .mockImplementation((chunk: unknown): boolean => {
-        stdout.push(String(chunk));
-        return true;
-      });
-    let writes: CapturedWrite[];
-    try {
-      writes = await runOnce('worker');
-    } finally {
-      spy.mockRestore();
-    }
-    expect(warningLines(writes)).toEqual([]);
-    expect(stdout.join('')).toContain('KUBIC_WORKER_READY worker-1');
-  });
-
-  it('keeps warning when KUBIC_WORKER_ID is set but empty', async () => {
-    vi.stubEnv(SOLO_NOTICE_WORKER_ENV, '');
-    expect(warningLines(await runOnce('empty-worker'))).toEqual(
-      soloWarningLines(),
-    );
-  });
 
   it('KUBIC_NO_NOTICE=1 is the documented opt-out', async () => {
     vi.stubEnv(SOLO_NOTICE_OPT_OUT_ENV, '1');
@@ -333,7 +301,7 @@ async function waitFor(condition: () => boolean, ticks = 500): Promise<void> {
   expect(condition()).toBe(true);
 }
 
-describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
+describe('solo no-isolation notice on `kubic tui`', () => {
   it('shows the line at startup, before any turn or input', async () => {
     const lines: string[] = [];
     const fake = fakeTerminal(200);
@@ -375,7 +343,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     );
     await waitFor(() => fake.started() === 1);
     const frame = fake.writes.join('');
-    // Issue #462: the first screen's provider row says it.
+    // The first screen's provider row says it.
     expect(frame).toContain('faux/echo  testing provider, no model is called');
     expect(frame).toContain(soloTuiLine());
     fake.feed('\x03');
@@ -383,7 +351,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     expect(await pending).toBe(0);
   });
 
-  it('keeps the SOLO badge after a turn and prints the full notice on /safety', async () => {
+  it('prints the full notice on /safety after a turn', async () => {
     const root = tmpRoot('solo-notice-tui-');
     const lines: string[] = [];
     const fake = fakeTerminal(200);
@@ -400,7 +368,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     for (const ch of 'say done') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('all done, boss'));
-    // Issue #453: the notice is reachable AFTER the turn settled, not merely
+    // The notice is reachable AFTER the turn settled, not merely
     // left over from the startup frame — `/safety` prints the full text from
     // the limits module (read from what was written after the ask).
     const mark = fake.writes.length;
@@ -422,34 +390,9 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
-    // The final document keeps the badge; the first screen (and its
-    // isolation row) left with the first prompt (issue #462) — `/safety`
-    // above is how the line is reached after that.
-    expect(lines.join('\n')).toContain('[SOLO] approvals on');
-  });
-
-  it('stays silent for an orchestrator worker session', async () => {
-    vi.stubEnv(SOLO_NOTICE_WORKER_ENV, 'worker-1');
-    const lines: string[] = [];
-    const fake = fakeTerminal(200);
-    const pending = runTuiCommand(
-      {},
-      {
-        out: (line: string) => lines.push(line),
-        createTerminal: () => fake.terminal,
-        colorLevel: 'none',
-        bootLane: async (sessionId?: string) => ({
-          sessionId: sessionId ?? 's1',
-          model: 'faux/test',
-        }),
-      },
-    );
-    await waitFor(() => fake.started() === 1);
-    fake.feed('\x03');
-    fake.feed('\x03');
-    expect(await pending).toBe(0);
-    expect(fake.writes.join('')).not.toContain('no isolation');
-    expect(lines.join('\n')).not.toContain('no isolation');
+    // The first screen (and its isolation row) left with the first prompt —
+    // `/safety` above is how the line is reached after that.
+    expect(lines.join('\n')).toContain('approvals on');
   });
 
   it('KUBIC_NO_NOTICE=1 is the documented opt-out', async () => {
@@ -477,10 +420,9 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
   });
 });
 
-describe('the notice text has exactly one source (issue #89)', () => {
-  // A second copy of the text is how the two surfaces drift apart, and the
-  // honest-claims gate pins the wording — so the emission sites must call
-  // the module, never re-state it. Test files are excluded (they quote the
+describe('the notice text has exactly one source', () => {
+  // A second copy of the text is how the two surfaces drift apart, so the
+  // emission sites must call the module, never re-state it. Test files are excluded (they quote the
   // strings on purpose); this is about production sources.
   const MARKERS = [
     'this run executes in-process with your user authority',
@@ -516,58 +458,5 @@ describe('the notice text has exactly one source (issue #89)', () => {
       }
     }
     expect(hits).toEqual(['packages/host/src/limits/solo-warning.ts']);
-  });
-});
-
-describe('the notice is documented where the operator looks (issue #89)', () => {
-  // The drift gate for the docs half of the criterion: the pages must state
-  // when the warning appears (every process start), where it goes (stderr for
-  // run, editor footer for tui), what suppresses it, and the opt-out's exact
-  // spelling — read from the module, so renaming the env var without the docs
-  // fails here rather than in a user's terminal.
-  const commandsPage = readFileSync(
-    join(REPO_ROOT, 'docs', 'cli', 'commands.md'),
-    'utf8',
-  );
-  const soloPage = readFileSync(
-    join(REPO_ROOT, 'docs', 'architecture', 'solo.md'),
-    'utf8',
-  );
-
-  it('states the notice, its sink and the suppression rule', () => {
-    expect(commandsPage).toContain('no isolation');
-    expect(commandsPage).toContain('stderr');
-    expect(commandsPage).toContain('before the first turn');
-    expect(commandsPage).toContain('per process start');
-  });
-
-  it('names the shipped suppression env vars, exactly as the module does', () => {
-    expect(commandsPage).toContain(SOLO_NOTICE_WORKER_ENV);
-    // The opt-out is documented with the value it actually needs: a bare
-    // mention of the name would leave an operator guessing at `=1`.
-    expect(commandsPage).toContain(`${SOLO_NOTICE_OPT_OUT_ENV}=1`);
-  });
-
-  it('keeps the solo architecture page describing both surfaces as shipped', () => {
-    // solo.md asserted "every fresh start prints the warning, and the TUI
-    // carries the same one-line statement" while NOTHING emitted it (issue
-    // #89's premise) — a doc claim outrunning the code. The sentence now
-    // describes exactly what ships, and both surfaces it names are the ones
-    // the prod tests above exercise: run = the three-line stderr block, tui =
-    // the one-line welcome-block form, the header badge and `/safety`.
-    expect(soloPage).toContain('announced, not buried');
-    expect(soloPage).toMatch(
-      /`kubic run` prints the three-line warning block on\s+stderr before the first turn/,
-    );
-    expect(soloPage).toMatch(
-      /`kubic tui` shows the one-line form in the\s+welcome block from the first render/,
-    );
-    expect(soloPage).toContain('prints the full text on `/safety`');
-    expect(soloPage).toContain('per process start, not per\nsession');
-    expect(soloPage).toContain(SOLO_NOTICE_WORKER_ENV);
-    expect(soloPage).toContain(`${SOLO_NOTICE_OPT_OUT_ENV}=1`);
-    // The claim is anchored to the strings module so the page cannot name a
-    // different source than the code uses.
-    expect(soloPage).toContain('packages/host/src/limits/solo-warning.ts');
   });
 });

@@ -1,4 +1,4 @@
-// The §78 exit-code table (docs/cli/exit-codes.md) as named constants, plus
+// The exit-code table (docs/cli/exit-codes.md) as named constants, plus
 // the one mapping from a commander parse failure to a Kubic exit code.
 //
 // Lives in core so every command handler (host, eval, the app root) names
@@ -8,16 +8,10 @@
 export const EXIT_OK = 0;
 export const EXIT_FAILED = 1;
 export const EXIT_USAGE = 2;
-export const EXIT_BUDGET = 3;
+export const EXIT_TURN_LIMIT = 3;
 export const EXIT_APPROVAL = 4;
 export const EXIT_WORKSPACE = 5;
 export const EXIT_PROVIDER = 6;
-// 7 — a delegated run that continued past one or more failed workers
-// (issue #169, `kubic orchestrate --on-failure continue`): whatever succeeded
-// was merged, the failed workers are named with their own codes, and the run
-// is neither ok (0) nor wholly failed (1). `kubic run` never exits 7 — it has
-// one lane, so there is no partial outcome to report.
-export const EXIT_PARTIAL = 7;
 
 // A bad invocation a command detects itself (after commander parsed argv):
 // throw it from an action and the program prints `error: <message>` and
@@ -30,7 +24,7 @@ export class CliUsageError extends Error {
   }
 }
 
-// A command failure with a specific §78 code and a one-line message
+// A command failure with a specific exit code and a one-line message
 // (`error: <message>`, no stack unless KUBIC_DEBUG=1).
 export class CliExitError extends Error {
   readonly exitCode: number;
@@ -44,7 +38,7 @@ export class CliExitError extends Error {
 // commander's informational exits (help, version) are successes; every
 // other parse outcome that is not a help request is a usage error —
 // exit 2, never commander's default 1. An unknown command (top-level or
-// a subcommand of a registered group) is a usage error too: issue #372
+// a subcommand of a registered group) is a usage error too:
 // made it 2 so scripts can tell a bad invocation from a task failure.
 const SUCCESS_CODES = new Set(['commander.helpDisplayed', 'commander.version']);
 const PARSE_ERROR_CODES = new Set([

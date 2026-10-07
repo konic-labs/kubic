@@ -1,4 +1,4 @@
-// MCP refusal + ACP edge-only stance (issue #38) — RED first.
+// MCP refusal + ACP edge-only stance.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +13,7 @@ import {
   McpUnsupportedError,
 } from './stances.js';
 
-describe('MCP stance (issue #38)', () => {
+describe('MCP stance', () => {
   it('rejects an mcp entry with an unsupported error', () => {
     expect(() => assertNoMcpConfig({ mcp: { servers: [] } })).toThrow(
       McpUnsupportedError,
@@ -36,7 +36,7 @@ describe('MCP stance (issue #38)', () => {
     expect(() => assertNoMcpConfig({})).not.toThrow();
   });
 
-  it('records arrival requirements for Phase-4', () => {
+  it('records the requirements MCP support must meet', () => {
     expect(MCP_ARRIVAL_REQUIREMENTS.length).toBeGreaterThan(0);
     for (const req of MCP_ARRIVAL_REQUIREMENTS) {
       expect(typeof req).toBe('string');
@@ -45,11 +45,11 @@ describe('MCP stance (issue #38)', () => {
   });
 });
 
-describe('MCP arrival requirements (§33, issue #254)', () => {
-  it('records the three settled §33 requirements', () => {
+describe('MCP arrival requirements', () => {
+  it('records the three settled requirements', () => {
     expect(MCP_ARRIVAL_REQUIREMENTS).toHaveLength(3);
     expect(MCP_ARRIVAL_REQUIREMENTS[0]).toMatch(/tool policy/);
-    expect(MCP_ARRIVAL_REQUIREMENTS[1]).toMatch(/worker process/);
+    expect(MCP_ARRIVAL_REQUIREMENTS[1]).toMatch(/agent process/);
     expect(MCP_ARRIVAL_REQUIREMENTS[2]).toMatch(/policy conflict/);
   });
 
@@ -67,7 +67,7 @@ describe('MCP arrival requirements (§33, issue #254)', () => {
   });
 });
 
-describe('ACP edge-only (issue #38)', () => {
+describe('ACP edge-only', () => {
   it('defines ACP types at the host edge', () => {
     const envelope: AcpEdgeEnvelope = createAcpEdgeEnvelope(
       {
@@ -140,9 +140,9 @@ function tsFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-// Refusal-path hardening (issue #69): a surviving "refusal removed" mutant
+// Refusal-path hardening: a surviving "refusal removed" mutant
 // is a P0 test bug, so every refusal branch pins exact errors.
-describe('MCP refusal hardening (issue #69)', () => {
+describe('MCP refusal hardening', () => {
   it('passes through non-object configs without false positives', () => {
     expect(() => assertNoMcpConfig([])).not.toThrow();
     expect(() => assertNoMcpConfig('mcp')).not.toThrow();
@@ -153,7 +153,7 @@ describe('MCP refusal hardening (issue #69)', () => {
     ).not.toThrow();
   });
 
-  it('pins the McpUnsupportedError name and Phase-4 message', () => {
+  it('pins the McpUnsupportedError name and message', () => {
     try {
       assertNoMcpConfig({ mcp: {} });
       expect.unreachable();
@@ -161,7 +161,7 @@ describe('MCP refusal hardening (issue #69)', () => {
       expect(error).toBeInstanceOf(McpUnsupportedError);
       expect((error as Error).name).toBe('McpUnsupportedError');
       expect((error as Error).message).toMatch(/\[mcp\]/);
-      expect((error as Error).message).toMatch(/Phase-4/);
+      expect((error as Error).message).toMatch(/MCP support requires/);
     }
   });
 
@@ -174,7 +174,7 @@ describe('MCP refusal hardening (issue #69)', () => {
   });
 });
 
-describe('ACP edge hardening (issue #69)', () => {
+describe('ACP edge hardening', () => {
   it('copies the message list so later caller mutation cannot leak in', () => {
     const messages: AcpChordMessage[] = [
       { kind: 'lane-snapshot', payload: { session: 's1' } },

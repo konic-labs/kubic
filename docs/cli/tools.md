@@ -1,14 +1,12 @@
 # Tools the model calls
 
-> Owner: issue [#168](https://github.com/konic-labs/kubic/issues/168).
 > Source of truth: `OPERATION_PARAMETERS` in
 > `packages/worker/src/ops/registry.ts` (schemas) and each operation's
 > `validateArgs` (the authoritative check).
 
-Every solo lane (`kubic run`, `kubic tui`, every orchestrator worker)
-registers the same fifteen tools, narrowed only by permission classes and
-`--role`. Solo mode has no isolation: these tools act on the real
-workspace.
+Every lane (`kubic run`, `kubic tui`) registers the same fifteen tools,
+narrowed only by permission classes and `--role`. Solo mode has no
+isolation: these tools act on the real workspace.
 
 ## Argument contract
 
@@ -31,7 +29,7 @@ workspace.
 | Tool | Arguments (`?` = optional) | Notes |
 | --- | --- | --- |
 | `read` | `path`, `offset?` (≥ 1, default 1), `limit?` (≥ 1, default and cap 2000) | At most 8 MiB scanned; at most 51200 bytes returned. |
-| `ls` | `path?` (default `.`) | One directory, not recursive. Entries sorted by name, at most 500 (`truncated` + a `notice` naming the total when the cap stopped the listing, issue #187). |
+| `ls` | `path?` (default `.`) | One directory, not recursive. Entries sorted by name, at most 500 (`truncated` + a `notice` naming the total when the cap stopped the listing). |
 | `find` | `root?`, `nameContains?`, `type?` (`"file"` \| `"dir"`), `maxResults?` (default 100) | Recursive; see [Search walk](#search-walk-find-and-grep). |
 | `grep` | `pattern` (JavaScript regex), `root?`, `include?`, `maxMatches?` (default 100) | `include` is a path **substring**, not a glob; same [walk](#search-walk-find-and-grep) as `find`; matching lines are clipped at 500 chars and files that are binary or over 8 MiB are skipped and counted (see [Grep bounds](#grep-bounds)). |
 | `write` | `path`, `content` | Whole-file, atomic (tmp + rename); a symlinked `path` is written through to its target, so the link survives (see [Symlinked writes](#symlinked-writes)); an existing file above 8 MiB is journaled hash-only, so `undo` reports that step non-reversible. |
@@ -120,8 +118,7 @@ src/b.ts:3: // TODO remove
 
 ## Symlinked writes
 
-`write` and `edit` follow symlinks instead of replacing them (issue
-[#140](https://github.com/konic-labs/kubic/issues/140)): the atomic tmp is
+`write` and `edit` follow symlinks instead of replacing them: the atomic tmp is
 written beside the **resolved** file and renamed onto it, so writing to a
 link updates its target and the link stays a link — the workspace never
 gains a surprise regular file and the target never keeps the old content.
@@ -141,8 +138,7 @@ link itself.
 
 ## Search walk (`find` and `grep`)
 
-`find` and `grep` share one recursive walk (issue
-[#172](https://github.com/konic-labs/kubic/issues/172)), started at `root`
+`find` and `grep` share one recursive walk, started at `root`
 (default `.`):
 
 - **Skipped:** `.git` (always, whatever a `.gitignore` says), `node_modules`,
@@ -158,8 +154,7 @@ link itself.
 
 ## Line endings and BOM
 
-`edit` normalizes what it matches against, then restores what the file had
-(issue [#195](https://github.com/konic-labs/kubic/issues/195)):
+`edit` normalizes what it matches against, then restores what the file had:
 
 - **Line endings:** the file's dominant ending is detected, the file body,
   `oldText` and `newText` are normalized to LF for matching and replacement,
@@ -180,11 +175,9 @@ restores the CRLF/BOM file exactly as it was.
 
 ## Grep bounds
 
-`grep` bounds what it reads and what it returns (issue
-[#180](https://github.com/konic-labs/kubic/issues/180)):
+`grep` bounds what it reads and what it returns:
 
-- **Matching lines are clipped at 500 characters** (`GREP_MAX_LINE_LENGTH`,
-  §27.5 / Pi's own constant) and the result carries `linesTruncated: true`
+- **Matching lines are clipped at 500 characters** (`GREP_MAX_LINE_LENGTH`, / Pi's own constant) and the result carries `linesTruncated: true`
   — a minified bundle's 5 MB line can no longer flood the context. The line
   *number* stays exact; only the text is partial, and the header says
   `lines clipped at 500 chars`.
@@ -229,13 +222,10 @@ restores the CRLF/BOM file exactly as it was.
   stream says so instead.
 - **Scope of the overrides:** the three `KUBIC_BASH_*` variables are read by
   the bash tool from its own process environment, so they apply to
-  `kubic run` and `kubic tui`. They are **not yet forwarded to orchestrator
-  workers** (the worker environment allowlist does not carry them; issue
-  [#201](https://github.com/konic-labs/kubic/issues/201)), so a worker
-  always uses the 120 s / 600 s limits and kills its background jobs.
+  `kubic run` and `kubic tui`.
 - **Output:** each stream keeps its last **64 KiB** and its last **2000
   lines**, whichever is smaller — the tail is where a failure usually ends,
-  and the head is one command away (issue #182): a clipped stream is written
+  and the head is one command away: a clipped stream is written
   in full to a spill file inside the session directory and the header names
   it —
   `[kubic: N leading chars dropped — full output: <path>]` — with the same

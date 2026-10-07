@@ -1,7 +1,6 @@
-// Run-span emission (issue #98; §49.3, §50, §61): RED first — run-spans.ts
-// lands after this file. The recorder is the §29 SpanRecorder; this module
-// only maps live lane/tool events onto it and serializes the result.
-// Faux-only: injected clock, no I/O, no network.
+// Run-span emission: The recorder is the SpanRecorder; this module only maps
+// live lane/tool events onto it and serializes the result. Faux-only: injected
+// clock, no I/O, no network.
 import { describe, expect, it, vi } from 'vitest';
 import {
   BACKGROUND_CONTEXT,
@@ -30,7 +29,7 @@ function ticks(values: number[]): () => number {
   return () => queue.shift() ?? values[values.length - 1] ?? 0;
 }
 
-describe('RunSpans lane/tool trace (issue #98)', () => {
+describe('RunSpans lane/tool trace', () => {
   it('nests run → accept → drive → tool in the recorded order', () => {
     const spans = new RunSpans(ticks([0, 1, 2, 3, 4, 5, 6, 7]));
     const run = spans.startRun();
@@ -108,7 +107,7 @@ describe('RunSpans lane/tool trace (issue #98)', () => {
   });
 });
 
-describe('RunSpans §50 debug lines (issue #98)', () => {
+describe('RunSpans debug lines', () => {
   it('emits in/out lines with the tool name and duration only', () => {
     const spans = new RunSpans(ticks([0, 0, 7, 9]));
     const run = spans.startRun();
@@ -131,7 +130,7 @@ describe('RunSpans §50 debug lines (issue #98)', () => {
     );
   });
 
-  it('never emits a debug class outside the §50 nine', () => {
+  it('never emits a debug class outside the nine', () => {
     const spans = new RunSpans(ticks([0, 0, 1, 2, 3, 4, 5, 6]));
     const run = spans.startRun();
     const drive = spans.startLane('drive');
@@ -151,7 +150,7 @@ describe('RunSpans §50 debug lines (issue #98)', () => {
   });
 });
 
-describe('span artifact serialization (issue #98)', () => {
+describe('span artifact serialization', () => {
   it('writes one JSON object per span, tagged with the run id', () => {
     const spans = new RunSpans(ticks([0, 1, 2, 3, 4, 5]));
     const run = spans.startRun();
@@ -177,7 +176,7 @@ describe('span artifact serialization (issue #98)', () => {
   });
 });
 
-describe('runSpanHooks (issue #98, #397)', () => {
+describe('runSpanHooks', () => {
   it('records one before/after pair per tool call on a real harness', async () => {
     const spans = new RunSpans();
     const run = spans.startRun();
@@ -333,7 +332,7 @@ describe('runSpanHooks (issue #98, #397)', () => {
   });
 });
 
-describe('RunSpans per-span cost (issue #243)', () => {
+describe('RunSpans per-span cost', () => {
   it('opens and closes 1,000 tool spans without copying the trace', () => {
     const spans = new RunSpans(() => 0);
     const run = spans.startRun();
@@ -356,56 +355,7 @@ describe('RunSpans per-span cost (issue #243)', () => {
   });
 });
 
-describe('RunSpans worker start/startup (issue #290)', () => {
-  it('nests a startup span under the worker start, tagged by worker session', () => {
-    const spans = new RunSpans(() => 50);
-    const start = spans.startWorker('sess-w1');
-    spans.endWorkerStartup(start, 120);
-    spans.endWorker(start);
-    const flushed = spans.flushWorker(start);
-    expect(flushed.map((span) => span.name)).toEqual([
-      'kubic.worker.start',
-      'kubic.worker.startup',
-    ]);
-    expect(flushed[1]).toMatchObject({ parentId: start });
-    // The startup duration IS the registry's number, not a second
-    // wall-clock read: the span reports the measured value by construction.
-    expect((flushed[1]?.endMs ?? 0) - (flushed[1]?.startMs ?? 0)).toBe(120);
-    for (const span of flushed) expect(span.sessionId).toBe('sess-w1');
-  });
-
-  it('closes a never-ready startup with zero duration, failing the start', () => {
-    const spans = new RunSpans(() => 50);
-    const start = spans.startWorker('sess-w9');
-    spans.endWorkerStartup(start, null);
-    spans.endWorker(start, 'spawn_failed');
-    const flushed = spans.flushWorker(start);
-    expect((flushed[1]?.endMs ?? -1) - (flushed[1]?.startMs ?? -1)).toBe(0);
-    expect(flushed[0]?.error).toBe('spawn_failed');
-  });
-
-  it('serializes the worker session link on the artifact lines', () => {
-    const spans = new RunSpans(() => 0);
-    const start = spans.startWorker('sess-w2');
-    spans.endWorkerStartup(start, 5);
-    spans.endWorker(start);
-    const lines = serializeSpanArtifact(
-      spans.flushWorker(start),
-      start,
-      'sess-w2',
-    )
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as { run: string; sessionId: string });
-    expect(lines).toHaveLength(2);
-    for (const line of lines) {
-      expect(line.run).toBe(start);
-      expect(line.sessionId).toBe('sess-w2');
-    }
-  });
-});
-
-describe('TurnSpans per-turn attribution (issue #290)', () => {
+describe('TurnSpans per-turn attribution', () => {
   it('records one run span and one tool span per tool call of the turn', () => {
     const turns = new TurnSpans('sess-t1', () => 0);
     turns.startRun('u1');

@@ -1,4 +1,4 @@
-// RL dataset batch export (issue #270; design §74). A directory or glob of
+// RL dataset batch export. A directory or glob of
 // trajectory exports in, one JSONL of dataset records plus a manifest out.
 //
 // Pairing and grouping are automatic and policy-preserving: the existing
@@ -272,9 +272,9 @@ export function exportDataset(options: DatasetExportOptions): DatasetManifest {
   }
 
   if (!SINGLE_RECORD_TYPES.has(options.type)) {
-    // Group by task + prompt: a pair or group ranks answers to ONE prompt
-    // (#269), so different prompts never mix. Group keys are processed in
-    // sorted order, so the JSONL is deterministic.
+    // Group by task + prompt: a pair or group ranks answers to ONE prompt, so
+    // different prompts never mix. Group keys are processed in sorted order, so
+    // the JSONL is deterministic.
     const groups = new Map<string, typeof index>();
     for (const entry of index) {
       const key = `${entry.taskId}\u0000${entry.prompt}`;

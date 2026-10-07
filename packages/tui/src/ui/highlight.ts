@@ -1,4 +1,4 @@
-// Syntax highlighting for fenced code (EPIC N, issue #458; docs/ui 01-I).
+// Syntax highlighting for fenced code.
 //
 // lowlight (highlight.js grammars) parses; this module maps the scopes onto a
 // few calm token roles — keywords fg0 bold, strings add, numbers and literals

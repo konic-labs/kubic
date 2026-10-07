@@ -1,4 +1,4 @@
-// The shared lane-model projection (issue #227; §38.1, §133). Both boots
+// The shared lane-model projection. Both boots
 // (`kubic run`, `kubic tui`) resolve through these functions, so their
 // precedence and refusals are pinned here directly — the prod-path tests
 // prove the wiring, these prove the order.
@@ -39,7 +39,7 @@ function catalog() {
   return models;
 }
 
-describe('roleModelSelection (issue #227)', () => {
+describe('roleModelSelection', () => {
   it('splits provider/id and refuses every malformed ref by name', () => {
     expect(roleModelSelection(undefined)).toBeUndefined();
     expect(roleModelSelection('alt/m1')).toEqual({
@@ -55,7 +55,7 @@ describe('roleModelSelection (issue #227)', () => {
   });
 });
 
-describe('selection origin labels (issue #295)', () => {
+describe('selection origin labels', () => {
   it('rides beside the selection: the object stays a plain { provider, id }', () => {
     const plain = { provider: 'alt', id: 'm1' };
     expect(selectionOrigin(plain)).toBeUndefined();
@@ -79,7 +79,7 @@ describe('selection origin labels (issue #295)', () => {
   });
 });
 
-describe('selectLaneModel (issue #227)', () => {
+describe('selectLaneModel', () => {
   it('pins the faux provider over every other selection', () => {
     const picked = selectLaneModel({
       models: catalog(),
@@ -135,7 +135,7 @@ describe('selectLaneModel (issue #227)', () => {
   });
 });
 
-describe('hasExplicitModelSelection (issue #227)', () => {
+describe('hasExplicitModelSelection', () => {
   it('is true for each explicit source and false for the default pick', () => {
     expect(
       hasExplicitModelSelection({

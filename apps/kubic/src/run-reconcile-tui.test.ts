@@ -1,5 +1,5 @@
-// End-of-run reconciliation on the real TUI composition path (issue #87):
-// `bootTuiLane` captures the §42.5 baseline at lane boot and sweeps when the
+// End-of-run reconciliation on the real TUI composition path:
+// `bootTuiLane` captures the baseline at lane boot and sweeps when the
 // session closes (the TUI's run end), so a file mutated outside Kubic's ops
 // during an interactive session is journaled as unattributed too.
 //
@@ -48,7 +48,7 @@ function fauxModels(): MutableModels {
   return models;
 }
 
-describe('end-of-run reconciliation, tui path (issue #87)', () => {
+describe('end-of-run reconciliation, tui path', () => {
   it('captures at boot and sweeps a non-tool mutation when the lane closes', async () => {
     const sessionsRoot = tmpRoot('reconcile-tui-');
     const workspace = tmpRoot('ws-tui-');
@@ -132,8 +132,8 @@ describe('end-of-run reconciliation, tui path (issue #87)', () => {
     ).toEqual([]);
   });
 
-  it('excludes a configured out-of-scope directory from boot and sweep (issue #115)', async () => {
-    // §35/§42.5 on the interactive path: `[journal] outOfScope` reaches
+  it('excludes a configured out-of-scope directory from boot and sweep', async () => {
+    // On the interactive path: `[journal] outOfScope` reaches
     // bootTuiLane through the same runtimeRunDeps projection `kubic run`
     // uses, so a declared directory is never baselined and never swept here
     // either.

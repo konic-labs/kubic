@@ -1,4 +1,4 @@
-// Per-agent cost surface: TUI-row + --json shape, Σ(per-agent) == task (issue #56): RED first.
+// Per-agent cost surface: TUI-row + --json shape, Σ(per-agent) == task.
 import { describe, expect, it } from 'vitest';
 import {
   formatAgentCostRow,
@@ -26,7 +26,7 @@ const ROWS = [
   },
 ];
 
-describe('per-agent cost surface (issue #56)', () => {
+describe('per-agent cost surface', () => {
   it('sums per-agent costs to exactly the task total', () => {
     const summary = summarizePerAgentCost(ROWS);
     expect(summary.taskTotal).toBeCloseTo(0.5);
@@ -43,7 +43,7 @@ describe('per-agent cost surface (issue #56)', () => {
     if (first === undefined) throw new Error('missing fixture agent');
     const row = formatAgentCostRow(first);
     expect(row).toMatch(/worker-1/);
-    // Issue #250 (§39): sub-cent precision — $0.20 prints at 4 decimals.
+    // Sub-cent precision — $0.20 prints at 4 decimals.
     expect(row).toMatch(/0\.2000/);
   });
 
@@ -55,7 +55,7 @@ describe('per-agent cost surface (issue #56)', () => {
   });
 });
 
-describe('cost precision and grouping (issue #250)', () => {
+describe('cost precision and grouping', () => {
   it('prints sub-cent costs at 4 decimals so $0.0023 never reads $0.00', () => {
     expect(formatCostUsd(0.0023)).toBe('$0.0023');
     expect(formatCostUsd(0.041)).toBe('$0.0410');
@@ -67,7 +67,7 @@ describe('cost precision and grouping (issue #250)', () => {
     expect(formatCostUsd(1)).toBe('$1.00');
   });
 
-  it('accepts exactly the four §39 levels', () => {
+  it('accepts exactly the four levels', () => {
     expect(isCostGroupBy('request')).toBe(true);
     expect(isCostGroupBy('agent')).toBe(true);
     expect(isCostGroupBy('session')).toBe(true);

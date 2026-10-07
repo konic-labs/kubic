@@ -1,4 +1,4 @@
-// File references as links (EPIC N, issue #458; docs/ui 01-I).
+// File references as links.
 //
 // `src/cart.js:10` and `src/cart.js` in an answer — in prose or in inline
 // code — become markdown links to `file://<abs>` when the path is a file in

@@ -1,5 +1,5 @@
-// `kubic export` command surface (issue #78): trajectory-export
-// inspection plus RL dataset export (#51 + #54 libraries).
+// `kubic export` command surface: trajectory-export
+// inspection plus RL dataset export.
 // Presentation only: parsed options in (commander, apps/kubic/src/
 // commands/analysis.ts), exit code out. Trajectory files arrive
 // through the injected readFile (I/O confinement — this package never
@@ -55,7 +55,7 @@ export const EXPORT_EXIT_USAGE = EXIT_USAGE;
 
 export interface ExportCliDeps {
   readFile: (path: string) => string;
-  // Issue #270: the batch (--dataset) seam. Absent means single-trajectory
+  // The batch (--dataset) seam. Absent means single-trajectory
   // mode only; a --dataset invocation without them is refused by name.
   listDir?: (path: string) => DatasetDirEntry[];
   writeFile?: (path: string, content: string) => void;
@@ -78,7 +78,7 @@ export interface ExportCommandOptions {
   readonly trajectory?: string;
   readonly type?: string;
   readonly against?: string;
-  // Issue #270: batch mode — a directory/glob of trajectories and the
+  // Batch mode — a directory/glob of trajectories and the
   // JSONL artifact the dataset is streamed into.
   readonly dataset?: string;
   readonly out?: string;
@@ -120,7 +120,7 @@ function normalize(options: ExportCommandOptions): ExportOptions | string {
     }
     type = options.type;
   }
-  // Issue #270: batch mode — a directory/glob in, a JSONL + manifest out.
+  // Batch mode — a directory/glob in, a JSONL + manifest out.
   // The --trajectory/--against pairing belongs to single-file mode.
   if (options.dataset !== undefined) {
     if (options.trajectory !== undefined) {
@@ -262,7 +262,7 @@ export async function runExportCommand(
     }
     return exitCode;
   };
-  // Issue #270: batch export — every matching trajectory in, one JSONL
+  // Batch export — every matching trajectory in, one JSONL
   // plus a manifest out. Pairing/grouping is automatic and every exclusion
   // is counted by tag, never silently dropped.
   if (parsed.dataset !== undefined) {

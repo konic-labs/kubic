@@ -1,4 +1,4 @@
-// The `!command` runner (issue #224; §36.2): the production executor the
+// The `!command` runner: the production executor the
 // run boots inject into the ledger resolver. Real child processes (node
 // itself — hermetic, no network), temp dirs cleaned in afterEach (none
 // needed: no files).
@@ -7,7 +7,7 @@ import { createSecretCommandRunner } from './secret-runner.js';
 
 const NODE = process.execPath;
 
-describe('createSecretCommandRunner (issue #224)', () => {
+describe('createSecretCommandRunner', () => {
   it('runs argv verbatim with no shell', async () => {
     const run = createSecretCommandRunner();
     await expect(

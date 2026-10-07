@@ -1,7 +1,7 @@
-// The approval card on the real `kubic tui` composition path (issue #96,
-// criteria 1 and 6). Before #96 `kubic tui` installed the approval policy
-// (issue #86) but attached no answer seat, so a challenged call was refused
-// with NO_ANSWER_SURFACE_REASON and the operator could never approve anything.
+// The approval card on the real `kubic tui` composition path. Before `kubic
+// tui` installed the approval policy but attached no answer seat, so a
+// challenged call was refused with NO_ANSWER_SURFACE_REASON and the operator
+// could never approve anything.
 //
 // Real code end to end: the prod boot (bootTuiLane) on a real faux lane, a
 // real ProcessTerminal-shaped fake Terminal driving the real alt-screen, and
@@ -71,10 +71,10 @@ function fauxModels(steps: FauxMessage[]): {
   return { models };
 }
 
-// The prod boot shape with the sessions root + models injected (same pattern
-// as tui-loop.test.ts). The seat arrives as bootLane's second argument
-// (issue #96) — the same way runTuiCommand hands the real one to the real
-// boot — and is forwarded to installSoloPolicy exactly like prod does.
+// The prod boot shape with the sessions root + models injected (same pattern as
+// tui-loop.test.ts). The seat arrives as bootLane's second argument — the same
+// way runTuiCommand hands the real one to the real boot — and is forwarded to
+// installSoloPolicy exactly like prod does.
 function fauxLaneBoot(
   root: string,
   models: MutableModels,
@@ -137,7 +137,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
   expect(condition()).toBe(true);
 }
 
-describe('allow once is not a session approval (issue #231)', () => {
+describe('allow once is not a session approval', () => {
   it("two identical destructive calls answered with 'a' produce two asks", async () => {
     const root = tmpRoot();
     const lines: string[] = [];
@@ -159,7 +159,7 @@ describe('allow once is not a session approval (issue #231)', () => {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
         colorLevel: 'none',
-        // Issue #315's arming delay is pinned off for the #231 latch test.
+        // 's arming delay is pinned off for the latch test.
         approvalArmingMs: 0,
         bootLane: (sessionId, answer, flags) =>
           boot(
@@ -191,7 +191,7 @@ describe('allow once is not a session approval (issue #231)', () => {
   });
 });
 
-describe('approval card on the kubic tui path (issue #96, criterion 1)', () => {
+describe('approval card on the kubic tui path', () => {
   it('shows the card for a gated call and runs it when approved', async () => {
     const root = tmpRoot();
     const lines: string[] = [];
@@ -215,7 +215,7 @@ describe('approval card on the kubic tui path (issue #96, criterion 1)', () => {
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'clean up') fake.feed(ch);
     fake.feed('\r');
-    // The card is up (#459): it names the capability and the command.
+    // The card is up: it names the capability and the command.
     await waitFor(() => fake.frame.includes('APPROVAL'));
     expect(fake.frame).toContain('▲ destructive');
     expect(fake.frame).toContain('rm -rf /tmp/x');
@@ -225,9 +225,9 @@ describe('approval card on the kubic tui path (issue #96, criterion 1)', () => {
     // (The main-screen `lines` document is only printed at quit, so the
     // live frame is the only place the settled turn can show up yet.)
     await waitFor(() => fake.frame.includes('approved turn done'));
-    // Issue #453: the solo tree row opens on Ctrl-T.
+    // The solo tree row opens on Ctrl-T.
     fake.feed('\x14');
-    // Quit cleanly (criterion 6): restore + exit 0.
+    // Quit cleanly: restore + exit 0.
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
@@ -271,7 +271,7 @@ describe('approval card on the kubic tui path (issue #96, criterion 1)', () => {
     // screen (that document is only written at quit).
     expect(fake.counts.stopped).toBe(0);
     expect(lines).toEqual([]);
-    // Now a clean quit (criterion 6).
+    // Now a clean quit.
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
@@ -286,7 +286,7 @@ describe('approval card on the kubic tui path (issue #96, criterion 1)', () => {
     expect(doc).not.toMatch(/✓ bash /);
   });
 
-  it('quits cleanly with no approval ever asked (criterion 6)', async () => {
+  it('quits cleanly with no approval ever asked', async () => {
     const root = tmpRoot();
     const lines: string[] = [];
     const fake = fakeTerminal(100);
@@ -342,8 +342,8 @@ describe('approval card on the kubic tui path (issue #96, criterion 1)', () => {
     // own timeout and no frame is left showing a request nobody can answer.
     fake.feed('\x03');
     await waitFor(() => fake.frame.includes('cancelled'));
-    // Idle again: a double press is the quit (issue #454). Screen restores
-    // and the process exits 0 (criterion 6).
+    // Idle again: a double press is the quit. Screen restores
+    // and the process exits 0.
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
@@ -375,7 +375,7 @@ describe('approval card on the kubic tui path (issue #96, criterion 1)', () => {
     for (const ch of 'clean up') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() => fake.frame.includes('APPROVAL'));
-    // The card lives in the editor's slot (#459), so a narrow terminal shows
+    // The card lives in the editor's slot, so a narrow terminal shows
     // it too (no overlay width gate), and the request is answerable.
     expect(fake.frame).toContain('▲ destructive');
     fake.feed('a');
@@ -386,7 +386,7 @@ describe('approval card on the kubic tui path (issue #96, criterion 1)', () => {
     expect(fake.counts.stopped).toBe(1);
   });
 
-  // Issue #315: type-ahead cannot approve. With the shipped arming delay on
+  // Type-ahead cannot approve. With the shipped arming delay on
   // an injected clock, an `a` typed 50 ms after the card appeared neither
   // answers the ask nor reaches the draft; the same key once armed does.
   it('ignores a decision key typed inside the arming window', async () => {
@@ -433,7 +433,7 @@ describe('approval card on the kubic tui path (issue #96, criterion 1)', () => {
     expect(await pending).toBe(0);
   });
 
-  // Issue #316: a padded 400-char command reaches the card whole — the
+  // A padded 400-char command reaches the card whole — the
   // seat receives the full command derived from the same args the key
   // hashes, and the card shows it wrapped instead of a 120-char slice.
   it('delivers the full padded command to the card', async () => {

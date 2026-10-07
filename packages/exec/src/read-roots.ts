@@ -1,4 +1,4 @@
-// Read-only roots outside the cwd (issue #173; §29.2, §29.3).
+// Read-only roots outside the cwd.
 // Skills discovered under $HOME and trusted ancestor project roots are
 // advertised to the model with absolute `<filePath>`s. The cwd confinement
 // would refuse every one of them, so the advertised skills could never be
@@ -6,10 +6,10 @@
 // skill file itself) for the read-shaped calls — readFile, readFileRange,
 // stat, lstat — and nothing else: writes, renames, chmod and listings keep
 // the cwd confinement, and any path outside a root falls through to it.
-// Every optional method the base seam offers is forwarded (issue #172): the
+// Every optional method the base seam offers is forwarded: the
 // wrapper once dropped `lstat`, so a walk fell back to `stat` and followed
 // symlink loops for any user with a skill outside the workspace.
-// Lexical like the cwd guard (no symlink resolution, §3.7).
+// Lexical like the cwd guard (no symlink resolution).
 
 import { dirname, isAbsolute, resolve, sep } from 'node:path';
 import {
@@ -97,7 +97,7 @@ export function withReadRoots(
             );
           },
         }),
-    // Issue #140: writes go to base (confinement is cwd-only), so the tmp
+    // Writes go to base (confinement is cwd-only), so the tmp
     // cleanup does too. Without this forward the wrapper would drop the
     // method and every failed write in a run with read roots would leak its
     // tmp.

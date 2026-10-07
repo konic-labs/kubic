@@ -1,4 +1,4 @@
-// The lane boots at the resolved thinking level (issue #225; §38.3):
+// The lane boots at the resolved thinking level:
 // override > the session's stored level > role > config, clamped to the
 // effective model. Faux provider only: zero network, zero paid tokens.
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -41,7 +41,7 @@ async function agentThinking(lane: FauxLane): Promise<unknown> {
   return (await lane.solo.conversation.agent(BACKGROUND_CONTEXT)).thinkingLevel;
 }
 
-describe('lane thinking resolution (issue #225)', () => {
+describe('lane thinking resolution', () => {
   it('boots a reasoning model at the config default', async () => {
     const lane = await bootFauxLane({
       ...reasoning(),
@@ -108,7 +108,7 @@ describe('lane thinking resolution (issue #225)', () => {
     ).rejects.toThrow(/banana.*--thinking/);
   });
 
-  // Review cycle 2: the committed doc is not the claim — the next provider
+  // The committed doc is not the claim — the next provider
   // request must carry the booted level. The factory observes the exact
   // options the harness hands the provider (`reasoning`, pi-ai's
   // SimpleStreamOptions), so this pins the agent-doc → request path, not

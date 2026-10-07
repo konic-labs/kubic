@@ -1,4 +1,4 @@
-// Shared .gitignore-subset matcher (issues #116, #172).
+// Shared .gitignore-subset matcher.
 //
 // Extracted from the journal baseline walk so the worker's find/grep walk and
 // the journal walk cannot drift into two different notions of "ignored": a
@@ -9,9 +9,9 @@
 // (character classes beyond `?`, rooted mid-pattern `**`) are not covered —
 // anything missed only widens the set of walked paths, never narrows it.
 //
-// Matching is a linear DP over compiled tokens, never a backtracking regex
-// (#172 review): a hostile `*a*a*a*a*a*` line in a `.gitignore` must cost
-// O(pattern x path) per entry, not exponential time on every walked path.
+// Matching is a linear DP over compiled tokens, never a backtracking regex: a
+// hostile `*a*a*a*a*a*` line in a `.gitignore` must cost O(pattern x path) per
+// entry, not exponential time on every walked path.
 
 type GlobToken =
   | { kind: 'char'; value: string } // a literal character
@@ -124,7 +124,7 @@ export function parseIgnoreFile(content: string): IgnoreRule[] {
 // mid-pattern **) are not covered — documented, and anything missed only
 // widens the walked set, never narrows it.
 //
-// Nested files (issue #116) are appended to the parent's rules verbatim and
+// Nested files are appended to the parent's rules verbatim and
 // matched against the walk-root-relative path, exactly as root rules are —
 // they are NOT re-rooted at their own directory. The WALK is what scopes
 // them: a nested file's rules are in force only inside its own subtree, so a

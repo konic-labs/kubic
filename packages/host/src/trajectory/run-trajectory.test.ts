@@ -1,4 +1,4 @@
-// Run → §46 trajectory assembly (issue #383). Pure: session entries, journal
+// Run → trajectory assembly. Pure: session entries, journal
 // changes, ledger records and the settled outcome in; a TrajectoryExport
 // that parseTrajectoryExport accepts out. Entry shapes are the ones the
 // real solo lane stores (assistant toolCall parts, toolResult messages,
@@ -160,7 +160,6 @@ function ledger(overrides: Partial<OrgAuditRecord> = {}): OrgAuditRecord {
     permission: { permission: 'shell', approval: 'ask' },
     credential: { sentinel: '' },
     network: { host: '', port: 0, decision: 'allow', bytes: 0 },
-    mode: 'solo',
     posture: 'default',
     result: 'ok',
     reason: 'approved by user',
@@ -174,7 +173,6 @@ function input(
   return {
     sessionId: 'sess-1',
     agentId: 'root',
-    workerId: null,
     role: 'solo',
     prompt: 'read a.txt',
     entries: ENTRIES,
@@ -187,7 +185,7 @@ function input(
     env: { PATH: '/usr/bin' },
     changes: [change()],
     approvals: [ledger()],
-    skills: ['budget'],
+    skills: ['review'],
     startedAt: STARTED,
     endedAt: STARTED + 100,
     outcome: { terminus: 'completed', summary: 'faux: read returned 6 chars' },
@@ -195,18 +193,16 @@ function input(
   };
 }
 
-describe('assembleRunTrajectory (issue #383)', () => {
-  it('builds a §46 export that parseTrajectoryExport accepts', () => {
+describe('assembleRunTrajectory', () => {
+  it('builds a export that parseTrajectoryExport accepts', () => {
     const exported = assembleRunTrajectory(input());
     expect(() =>
       parseTrajectoryExport(JSON.parse(JSON.stringify(exported))),
     ).not.toThrow();
-    // Issue #285: the optional §71 budget block ships as schema v1.2
-    // (wholly optional on read — older records and readers unaffected).
-    expect(exported.schema_version).toBe('1.2');
+    expect(exported.schema_version).toBe('1.3');
   });
 
-  it('carries the lane escalation record into model.escalations (issue #210)', () => {
+  it('carries the lane escalation record into model.escalations', () => {
     const exported = assembleRunTrajectory(
       input({
         escalations: [
@@ -258,7 +254,7 @@ describe('assembleRunTrajectory (issue #383)', () => {
       sessionId: 'sess-1',
       agentId: 'root',
       workerId: null,
-      // 1.1 (issue #329): solo runs have no parent; the agent role
+      // 1.1: solo runs have no parent; the agent role
       // falls back to the task's own role.
       parentSessionId: null,
       role: 'solo',
@@ -369,7 +365,6 @@ describe('assembleRunTrajectory (issue #383)', () => {
       LANG: 'C',
       ANTHROPIC_API_KEY: 'sk-live',
       GITHUB_TOKEN: 'ghp_x',
-      KUBIC_ROLE_WRITER_TOKEN: 't',
     };
     const env = toolSpawnEnv(base);
     const exported = assembleRunTrajectory(input({ env }));
@@ -391,7 +386,7 @@ describe('assembleRunTrajectory (issue #383)', () => {
       worktree: '/ws',
       grantRef: 'role:solo',
     });
-    expect(a.resources).toEqual({ skills: ['budget'], promptTemplates: [] });
+    expect(a.resources).toEqual({ skills: ['review'], promptTemplates: [] });
     expect(a.prompt).toEqual({ text: 'read a.txt', constraints: [] });
   });
 
@@ -404,7 +399,7 @@ describe('assembleRunTrajectory (issue #383)', () => {
   });
 });
 
-describe('assembleRunTrajectory reads real entries defensively (issue #383)', () => {
+describe('assembleRunTrajectory reads real entries defensively', () => {
   const at = (offset: number) => STARTED + offset;
 
   it('skips foreign or malformed entries and keeps the run-start boundary inclusive', () => {
@@ -587,7 +582,7 @@ describe('assembleRunTrajectory reads real entries defensively (issue #383)', ()
     });
   });
 
-  it('records the thinking level the responses ran at when the caller named none (issue #282)', () => {
+  it('records the thinking level the responses ran at when the caller named none', () => {
     const exported = assembleRunTrajectory(
       input({
         model: { provider: 'faux', id: 'echo', thinking: null },
@@ -605,7 +600,7 @@ describe('assembleRunTrajectory reads real entries defensively (issue #383)', ()
     expect(exported.model.thinking).toBe('high');
   });
 
-  it('keeps the caller-named thinking level over the responses (issue #282)', () => {
+  it('keeps the caller-named thinking level over the responses', () => {
     const exported = assembleRunTrajectory(
       input({
         model: { provider: 'faux', id: 'echo', thinking: 'medium' },
@@ -678,21 +673,21 @@ describe('assembleRunTrajectory reads real entries defensively (issue #383)', ()
   });
 });
 
-describe('trajectoryResultFor (issue #383): §78 terminus → §46 status + §52 code', () => {
+describe('trajectoryResultFor: terminus → status + failure code', () => {
   it.each([
     [{ terminus: 'completed', summary: 'ok' }, 'completed', null],
     [
       {
-        terminus: 'budget_exhausted',
-        summary: 'turn budget exhausted after 3 turns',
+        terminus: 'turn_limit',
+        summary: 'turn limit reached after 3 turns',
       },
-      'budget_exhausted',
-      'budget_exhausted',
+      'turn_limit',
+      'run_limit',
     ],
     [
       { terminus: 'timeout', summary: 'run timed out after 5ms' },
       'timeout',
-      'budget_exhausted',
+      'run_limit',
     ],
     [
       { terminus: 'cancelled', summary: 'run interrupted by SIGINT' },
@@ -742,7 +737,7 @@ describe('trajectoryResultFor (issue #383): §78 terminus → §46 status + §52
       'process_crashed',
     ],
     [
-      { terminus: 'failed', summary: 'extension startup failed closed' },
+      { terminus: 'failed', summary: 'skill load failed' },
       'failed',
       'process_crashed',
     ],
@@ -759,7 +754,7 @@ describe('trajectoryResultFor (issue #383): §78 terminus → §46 status + §52
       });
   });
 
-  it('classifies a lane failure through the §52 taxonomy', () => {
+  it('classifies a lane failure through the taxonomy', () => {
     const result = trajectoryResultFor({
       terminus: 'failed',
       summary: 'tool_error: bash failed',
@@ -805,7 +800,7 @@ describe('trajectoryResultFor (issue #383): §78 terminus → §46 status + §52
   });
 });
 
-describe('assembleRunTrajectory over a real harness (issue #400)', () => {
+describe('assembleRunTrajectory over a real harness', () => {
   it('builds a schema-valid v1 trajectory from the entries a faux harness stored', async () => {
     // A real pi-durable Harness over MemoryStorage with the faux provider:
     // the entries the adapter reads are the ones the harness actually

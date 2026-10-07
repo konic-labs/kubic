@@ -1,4 +1,4 @@
-// Journal torn-tail repair (issue #343; §42.4).
+// Journal torn-tail repair.
 //
 // A crash mid-append — or ENOSPC, EIO — leaves the index without its
 // trailing newline. Appending blind glues the next entry onto that fragment,
@@ -6,9 +6,6 @@
 // happened, the record is unreadable, and undo/diff never see it. The append
 // now repairs the tail first (one pread of the last byte), and a failed
 // append truncates the partial write back so the repair is never half-done.
-//
-// RED: append() writes the line blind, and a failed appendDurably leaves
-// whatever the write loop managed to put on disk.
 import {
   appendFileSync,
   mkdtempSync,
@@ -112,7 +109,7 @@ function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
   };
 }
 
-describe('journal torn tail (issue #343)', () => {
+describe('journal torn tail', () => {
   it('closes a trailing fragment on its own line so the next entry is readable', () => {
     const dir = tmpRoot();
     const store = new FileJournalStore(dir);

@@ -18,7 +18,6 @@ import {
   parseRunMaxTurns,
   parseRunTimeout,
   parseSessionIdArg,
-  parseSoloBudget,
 } from '../../../../packages/host/src/run-cli.js';
 import {
   parseModelFlag,
@@ -26,13 +25,13 @@ import {
 } from '../../../../packages/worker/src/model-select.js';
 import type { CommandContext, CommandRegistrar } from '../cli/context.js';
 
-// The `--model` help (issue #227; §38.1): one sentence per behaviour the
+// The `--model` help: one sentence per behaviour the
 // flag actually has, no promise the cli layer does not keep.
 const MODEL_FLAG_HELP =
   'override the model for this invocation (provider/id; beats env and file, never a frozen enterprise key)';
 const MODEL_FLAG_HELP_REPORT =
   'report the config as if this model were passed (provider/id; the cli layer)';
-// The `--thinking` help (issue #225; §38.3): one sentence per behaviour the
+// The `--thinking` help: one sentence per behaviour the
 // flag actually has, no promise the cli layer does not keep.
 const THINKING_FLAG_HELP =
   'override the thinking level for this invocation (beats env and file, never a frozen enterprise key)';
@@ -68,10 +67,10 @@ function nonNegativeInt(what: string): (value: string) => number {
   });
 }
 
-// §40.1 mechanism 1 (issue #273): `--tools read,ls` — one comma-separated
+// `--tools read,ls` — one comma-separated
 // value, repeatable. An empty list is a usage error (use `--no-tools` for
 // the empty set); unknown names and class conflicts are refused by the
-// runner/boot with the §40.3 reason.
+// runner/boot with the reason.
 function toolList(value: string): string[] {
   const names = value
     .split(',')
@@ -160,11 +159,6 @@ function registerRun(program: Command, ctx: CommandContext): void {
       'turn bound (positive integer)',
       rule(parseRunMaxTurns),
     )
-    .option(
-      '--budget <dims>',
-      'opt-in §71 budget (e.g. maxToolCalls=10,maxCostUsd=0.5,maxRuntimeMs=60000); a breach ends the run budget_exhausted',
-      rule(parseSoloBudget),
-    )
     .option('--model <provider/id>', MODEL_FLAG_HELP, rule(parseModelFlag))
     .option('--thinking <level>', THINKING_FLAG_HELP, rule(parseThinkingFlag))
     .option('--role <name>', 'boot as the role in .kubic/roles/<name>.md')
@@ -175,7 +169,7 @@ function registerRun(program: Command, ctx: CommandContext): void {
       [] as string[],
     )
     .option('--no-skills', 'disable layered skill discovery')
-    // Issue #183 (§29.4): invoke one explicit skill — hidden skills
+    // Invoke one explicit skill — hidden skills
     // included — as the turn prompt (run only; the TUI uses /skill:).
     .option(
       '--invoke-skill <name>',
@@ -184,7 +178,7 @@ function registerRun(program: Command, ctx: CommandContext): void {
     .option('--debug', 'emit lane/tool span lines on stderr')
     .option(
       '--autonomous',
-      'run to completion without stopping for input (§19; recorded in the session and audit)',
+      'run to completion without stopping for input (recorded in the session and audit)',
     )
     .option('--json', 'print one JSON envelope line instead of text')
     .option(
@@ -241,7 +235,7 @@ function registerRun(program: Command, ctx: CommandContext): void {
           `${fromFlag ? 'invalid -p/--prompt' : 'invalid prompt'}: ${(error as Error).message}`,
         );
       }
-      // §40.1 mechanism 1 (issue #273): the two selection forms are
+      // The two selection forms are
       // mutually exclusive; both at once is a usage error naming both.
       const selection = toolSelectionOf(opts.tools, ctx.rest);
       ctx.setExitCode(
@@ -251,10 +245,9 @@ function registerRun(program: Command, ctx: CommandContext): void {
             ...(opts.session === undefined ? {} : { session: opts.session }),
             ...(opts.timeout === undefined ? {} : { timeoutMs: opts.timeout }),
             ...(opts.maxTurns === undefined ? {} : { maxTurns: opts.maxTurns }),
-            ...(opts.budget === undefined ? {} : { budget: opts.budget }),
             ...(opts.role === undefined ? {} : { role: opts.role }),
             ...(opts.skill.length === 0 ? {} : { skills: opts.skill }),
-            // Issue #183 (§29.4): the explicit skill invocation travels to
+            // The explicit skill invocation travels to
             // the runner, which expands it against the booted skills.
             ...(opts.invokeSkill === undefined
               ? {}
@@ -295,15 +288,6 @@ function registerTui(program: Command, ctx: CommandContext): void {
     )
     .option('--no-skills', 'disable layered skill discovery')
     .option(
-      '--budget <dims>',
-      'opt-in §71 budget (e.g. maxToolCalls=10,maxCostUsd=0.5,maxRuntimeMs=60000); a breach ends the run budget_exhausted',
-      rule(parseSoloBudget),
-    )
-    .option(
-      '--orchestrator',
-      'start in orchestrator mode (delegation is opt-in; needs a git repository)',
-    )
-    .option(
       '--dangerously-skip-approvals',
       'enable full access (no approval asks) for THIS session only — recorded in posture.json and the audit ledger, never in config',
     )
@@ -323,7 +307,7 @@ function registerTui(program: Command, ctx: CommandContext): void {
       ]),
     )
     .action(async (opts) => {
-      // §40.1 mechanism 1 (issue #273): both selection forms at once is a
+      // Both selection forms at once is a
       // usage error naming both (the boot re-validates names/agreement).
       const selection = toolSelectionOf(opts.tools, ctx.rest);
       ctx.setExitCode(
@@ -333,9 +317,7 @@ function registerTui(program: Command, ctx: CommandContext): void {
             ...(opts.role === undefined ? {} : { role: opts.role }),
             ...(opts.skill.length === 0 ? {} : { skills: opts.skill }),
             ...(opts.skills === false ? { noSkills: true } : {}),
-            ...(opts.budget === undefined ? {} : { budget: opts.budget }),
             ...(opts.model === undefined ? {} : { model: opts.model }),
-            ...(opts.orchestrator === true ? { orchestrator: true } : {}),
             ...(opts.dangerouslySkipApprovals === true
               ? { dangerouslySkipApprovals: true }
               : {}),
@@ -448,7 +430,7 @@ function registerModels(program: Command, ctx: CommandContext): void {
     });
 }
 
-// Issue #451 (06-E): `kubic setup` — provider, default model, thinking level
+// `kubic setup` — provider, default model, thinking level
 // and the project trust question, saved to ~/.kubic/config.toml.
 function registerSetup(program: Command, ctx: CommandContext): void {
   program
@@ -489,7 +471,7 @@ function registerConfig(program: Command, ctx: CommandContext): void {
     });
 }
 
-// `kubic trust` (issue #228): the durable project-trust grant. It is a
+// `kubic trust`: the durable project-trust grant. It is a
 // config-command sibling — it must run while the project layer is refused
 // (that is the case it repairs), so `configRefusalExit` lets it through.
 function registerTrust(program: Command, ctx: CommandContext): void {
@@ -544,8 +526,8 @@ function registerSessions(program: Command, ctx: CommandContext): void {
   ): Promise<void> => {
     ctx.setExitCode(await ctx.runners.sessions(invocation, ctx.config));
   };
-  // Issue #268: `kubic sessions --json` is the documented list form. The
-  // group action also keeps the two usage errors named (#372: exit 2): no
+  // `kubic sessions --json` is the documented list form. The
+  // group action also keeps the two usage errors named: no
   // subcommand, or an unknown one.
   sessions.action(async (opts, command) => {
     const name = command.args[0];
@@ -583,16 +565,10 @@ function registerSessions(program: Command, ctx: CommandContext): void {
     .command('list')
     .description('list the recorded sessions')
     .option('--json', 'print one JSON array')
-    .option(
-      '--parent <id>',
-      'show only the children of one orchestrate run',
-      rule(parseSessionIdArg),
-    )
     .action(async (opts) => {
       await run({
         command: 'list',
         ...(opts.json === true ? { json: true } : {}),
-        ...(opts.parent === undefined ? {} : { parent: opts.parent }),
       });
     });
   sessions
@@ -706,10 +682,10 @@ export const registerSoloCommands: CommandRegistrar = (program, ctx) => {
   registerSessions(program, ctx);
 };
 
-// Issue #268 (§17): the reattach aliases. `attach <id>` boots the
+// The reattach aliases. `attach <id>` boots the
 // interactive TUI on an existing session — a missing or live-locked session
 // is the TUI boot's own workspace refusal (exit 5) — and `resume <id>` is
-// the same boot, named the way §17 lists it. The full flag surface stays on
+// the same boot, named the way lists it. The full flag surface stays on
 // `kubic tui`; these are the documented shorthands.
 function registerReattach(program: Command, ctx: CommandContext): void {
   const reattach = (name: 'attach' | 'resume'): void => {

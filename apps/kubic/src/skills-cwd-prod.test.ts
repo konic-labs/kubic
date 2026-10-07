@@ -1,9 +1,8 @@
-// Explicit --skill paths anchor at the invoking cwd (issue #177,
-// §29.2/§29.3): `rel/SKILL.md` loads relative to the cwd on BOTH lanes —
-// `kubic run` (whose skill bridge is sessions-rooted) and `kubic tui` —
-// and an unresolvable value warns on stderr without --debug. Live lanes
-// with the faux provider (zero network, zero paid tokens) over real temp
-// dirs; temp dirs are removed in `afterEach`.
+// Explicit --skill paths anchor at the invoking cwd: `rel/SKILL.md` loads
+// relative to the cwd on BOTH lanes — `kubic run` (whose skill bridge is
+// sessions-rooted) and `kubic tui` — and an unresolvable value warns on stderr
+// without --debug. Live lanes with the faux provider (zero network, zero paid
+// tokens) over real temp dirs; temp dirs are removed in `afterEach`.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -91,7 +90,7 @@ afterEach(async () => {
   }
 });
 
-describe('explicit --skill paths anchor at the invoking cwd (issue #177)', () => {
+describe('explicit --skill paths anchor at the invoking cwd', () => {
   it('kubic run loads rel/SKILL.md from the cwd, not the sessions root', async () => {
     const home = tmpRoot('skills-cwd-home-');
     const cwd = tmpRoot('skills-cwd-work-');
@@ -187,7 +186,7 @@ describe('explicit --skill paths anchor at the invoking cwd (issue #177)', () =>
   });
 });
 
-describe('settings skills from config on the tui lane (issue #237, §29.2)', () => {
+describe('settings skills from config on the tui lane', () => {
   it('kubic tui loads a settings skill dir with source settings', async () => {
     const home = tmpRoot('skills-settings-tui-home-');
     const cwd = tmpRoot('skills-settings-tui-work-');
@@ -215,7 +214,7 @@ describe('settings skills from config on the tui lane (issue #237, §29.2)', () 
   });
 });
 
-describe('the role gate on the tui lane (issue #181, §29.4)', () => {
+describe('the role gate on the tui lane', () => {
   it('kubic tui withholds a skill outside the resolved role', async () => {
     const home = tmpRoot('skills-tui-gate-home-');
     const cwd = tmpRoot('skills-tui-gate-work-');

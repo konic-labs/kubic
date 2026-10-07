@@ -1,9 +1,9 @@
-// Config → live TUI path (issue #294): `kubic tui` spreads the SAME
+// Config → live TUI path: `kubic tui` spreads the SAME
 // runtimeLaneDeps projection `kubic run` consumes into tuiDepsWithDefaults,
 // which used to keep only the policy/journal keys — so `[agent].name` and
 // the `[roles.<name>]` layers never reached bootTuiLane. These drive the
 // production deps builder (tuiDepsWithDefaults) with the same fixtures as the
-// #133 run tests (runtime-run-path.test.ts).
+// Run tests (runtime-run-path.test.ts).
 //
 // Faux provider only: zero network, zero paid tokens.
 
@@ -51,8 +51,6 @@ function tmpRoot(prefix = 'kubic-294-tui-'): string {
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
-  vi.stubEnv('KUBIC_WORKER_ID', undefined);
-  vi.stubEnv('KUBIC_APPROVALS_DIR', undefined);
 });
 
 afterEach(() => {
@@ -138,7 +136,7 @@ function rerooted(
     });
 }
 
-describe('tuiDepsWithDefaults forwards the lane projection (issue #294)', () => {
+describe('tuiDepsWithDefaults forwards the lane projection', () => {
   it('forwards agentId and roles to the boot', async () => {
     const layers = [
       {
@@ -157,7 +155,7 @@ describe('tuiDepsWithDefaults forwards the lane projection (issue #294)', () => 
     );
     await deps.bootLane(undefined, undefined, { role: 'implementer' });
     expect(seen?.agentId).toBe('alice');
-    // Issue #430: the trust check travels on the same `roles` projection.
+    // The trust check travels on the same `roles` projection.
     expect(seen?.roles?.layers).toEqual(layers);
     expect(seen?.roles?.trustProject).toBe(trustProject);
     expect(seen?.role).toBe('implementer');
@@ -250,61 +248,6 @@ describe('tuiDepsWithDefaults forwards the lane projection (issue #294)', () => 
   });
 });
 
-describe('the TUI consumes [modes] orchestrator (issue #327)', () => {
-  it('forwards the config mode so a flagless session starts in orchestrator mode', async () => {
-    const workspace = tmpRoot();
-    const cliConfig = {
-      runtime: namedRuntime(workspace, '[modes]\norchestrator = true\n'),
-      error: undefined,
-      ignoreSplit: NO_SPLIT,
-    };
-    const fake = recordingTerminal();
-    const deps = {
-      ...tuiDepsWithDefaults(
-        {
-          out: () => {},
-          modes: cliConfig.runtime?.modes,
-        },
-        async () => ({ sessionId: 's', model: 'faux/m' }),
-      ),
-      createTerminal: () => fake.terminal,
-      colorLevel: 'none' as const,
-      // The entry's own non-git refusal is pinned in tui-orchestrator.test.ts;
-      // this test drives the config projection to the rendered mode.
-      isGitRepo: () => true,
-    };
-    const exit = runTuiCommand({}, deps);
-    await waitFor(() => fake.counts.started === 1);
-    expect(fake.writes.join('')).toContain('[ORCHESTRATOR] approvals on');
-    expect(fake.writes.join('')).toContain('faux/m · off');
-    fake.feed('\x04');
-    expect(await exit).toBe(0);
-  });
-
-  it('a config that leaves [modes] unset keeps the solo default', async () => {
-    const workspace = tmpRoot();
-    const cliConfig = {
-      runtime: namedRuntime(workspace, ''),
-      error: undefined,
-      ignoreSplit: NO_SPLIT,
-    };
-    const fake = recordingTerminal();
-    const deps = {
-      ...tuiDepsWithDefaults(
-        { out: () => {}, modes: cliConfig.runtime?.modes },
-        async () => ({ sessionId: 's', model: 'faux/m' }),
-      ),
-      createTerminal: () => fake.terminal,
-      colorLevel: 'none' as const,
-    };
-    const exit = runTuiCommand({}, deps);
-    await waitFor(() => fake.counts.started === 1);
-    expect(fake.writes.join('')).toContain('[SOLO] approvals on');
-    fake.feed('\x04');
-    expect(await exit).toBe(0);
-  });
-});
-
 // Two models on one provider: 'a' is the first-available pick, so a boot
 // that ignores the pin lands on fx/a and the assertions below catch it.
 function twoModels(): MutableModels {
@@ -329,7 +272,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
   expect(condition()).toBe(true);
 }
 
-describe('the TUI selects the pinned model (issue #295)', () => {
+describe('the TUI selects the pinned model', () => {
   beforeEach(() => {
     vi.stubEnv('KUBIC_PROVIDER', undefined);
   });
@@ -377,7 +320,7 @@ describe('the TUI selects the pinned model (issue #295)', () => {
     expect(await exit).toBe(0);
     const doc = lines.join('\n');
     // The first screen's provider row and the status line both name the
-    // pinned model (issue #453 moved it off the header; #462 the row).
+    // pinned model.
     expect(doc).toMatch(/provider {5}fx\/b/u);
     expect(doc).toMatch(/● fx\/b · /);
     expect(doc.match(/fx\/b/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
@@ -426,7 +369,7 @@ describe('the TUI selects the pinned model (issue #295)', () => {
 
     // The --model flag beats both — as the `cli` layer of the config load
     // (dispatch pre-scans it), never as a boot flag patched over the
-    // projected pin (issue #227; a frozen enterprise pin must hold).
+    // projected pin (a frozen enterprise pin must hold).
     const flagged = await tuiWith(
       workspace,
       `[model]\nprovider = "fx"\nid = "a"\n${roleToml}`,

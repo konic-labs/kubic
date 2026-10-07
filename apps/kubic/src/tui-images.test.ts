@@ -1,8 +1,7 @@
-// Prompt image attachments in `kubic tui` (issue #338; §16.5 Image, §16.8
-// Images): `/image <path>` and a terminal-pasted inline image reach the
-// lane's user-message content, and a model without image input refuses the
-// attachment by name instead of sending it. Faux provider only: zero
-// network, zero paid tokens.
+// Prompt image attachments in `kubic tui` (Image, Images): `/image <path>` and
+// a terminal-pasted inline image reach the lane's user-message content, and a
+// model without image input refuses the attachment by name instead of sending
+// it. Faux provider only: zero network, zero paid tokens.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -55,7 +54,7 @@ afterEach(() => {
 // chunks of one paste inside this window means no real time can pass between
 // them — a loaded machine can stall a task for longer than PASTE_IDLE_MS, and
 // the valve firing mid-paste is a test-timing failure that blames the
-// product (issue #338 review, cycle 4). `waitFor` needs real timers, so the
+// product. `waitFor` needs real timers, so the
 // window is always closed again before waiting.
 function withFrozenTime<T>(body: () => T): T {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -147,19 +146,16 @@ function startSession(
 // One `kubic tui` run over a stub lane: the routing decision (which lane a
 // submit reaches) is what these tests observe, so no provider is involved.
 function startStubSession(
-  mode: 'solo' | 'orchestrator',
   // `hold: true` keeps the first turn in flight until `release()` is called,
   // so a test can act while the lane is busy (the echo still holds its
   // images). The default settles immediately.
   options: { readonly hold?: boolean } = {},
 ): Session & {
   readonly admitted: Array<{ prompt: string; images: number }>;
-  readonly objectives: string[];
   readonly release: () => void;
 } {
   const fake = recordingTerminal();
   const admitted: Array<{ prompt: string; images: number }> = [];
-  const objectives: string[] = [];
   let releaseTurn: (() => void) | undefined;
   const held = new Promise<void>((resolve) => {
     releaseTurn = resolve;
@@ -179,25 +175,17 @@ function startStubSession(
     kills: { track: () => {}, drain: () => [] },
     context: { signal: new AbortController().signal },
   };
-  const drive = {
-    run: async (objective: string) => {
-      objectives.push(objective);
-      return { status: 'completed' as const };
-    },
-  };
   const exit = runTuiCommand(
-    mode === 'orchestrator' ? { orchestrator: true } : {},
+    {},
     {
       out: () => {},
       createTerminal: () => fake.terminal,
       colorLevel: 'none',
-      isGitRepo: () => true,
       bootLane: async (sessionId?: string) =>
         ({
           sessionId: sessionId ?? 's1',
           model: 'faux/test',
           loop,
-          orchestrator: drive,
         }) as unknown as TuiLaneBoot,
     },
   );
@@ -206,12 +194,11 @@ function startStubSession(
     exit,
     boots: [],
     admitted,
-    objectives,
     release: () => releaseTurn?.(),
   };
 }
 
-describe('kubic tui /image (issue #338)', () => {
+describe('kubic tui /image', () => {
   it('carries the attached image into the prompt the lane sends', async () => {
     const root = tmpRoot();
     const shot = join(root, 'screenshot.png');
@@ -280,7 +267,7 @@ describe('kubic tui /image (issue #338)', () => {
     const capture = captureUserMessage();
     const { fake, exit } = startSession(
       root,
-      // Text-only modalities, as `models.json` defaults them (§37.2).
+      // Text-only modalities, as `models.json` defaults them.
       fauxModels([{ id: 'plain', input: ['text'] }], capture.respond),
       'plain',
     );
@@ -327,7 +314,7 @@ describe('kubic tui /image (issue #338)', () => {
     expect(await exit).toBe(0);
   });
 
-  // Issue #338 review: the editor dropped a blank draft before onSubmit, so
+  // The editor dropped a blank draft before onSubmit, so
   // attach + Enter was a silent no-op while the footer said "Enter sends it".
   it('sends an image-only prompt (Enter on an empty draft)', async () => {
     const root = tmpRoot();
@@ -359,7 +346,7 @@ describe('kubic tui /image (issue #338)', () => {
     expect(await exit).toBe(0);
   });
 
-  // Issue #338 review, cycle 2: `allowEmptySubmit` must read the UNSUBMITTED
+  // `allowEmptySubmit` must read the UNSUBMITTED
   // attachments. The echo keeps the sent images until the lane's own prompt
   // cell lands, so a blank Enter while the turn runs (a double-tap, or habit)
   // must stay a no-op instead of queueing a prompt with no images.
@@ -367,7 +354,7 @@ describe('kubic tui /image (issue #338)', () => {
     const root = tmpRoot();
     const shot = join(root, 'shot.png');
     writeFileSync(shot, PNG);
-    const { fake, exit, admitted, release } = startStubSession('solo', {
+    const { fake, exit, admitted, release } = startStubSession({
       hold: true,
     });
     await waitFor(() => fake.counts.started === 1);
@@ -396,8 +383,6 @@ describe('kubic tui /image (issue #338)', () => {
     expect(await exit).toBe(0);
   });
 
-  // Issue #338 review: the /model drop and the orchestrator refusal were
-  // claimed by the report and the docs but pinned by no test.
   it('drops pending attachments when /model switches to a text-only model', async () => {
     const root = tmpRoot();
     const shot = join(root, 'shot.png');
@@ -442,44 +427,7 @@ describe('kubic tui /image (issue #338)', () => {
     expect(await exit).toBe(0);
   });
 
-  it('keeps pending attachments when the orchestrator lane refuses them', async () => {
-    const root = tmpRoot();
-    const shot = join(root, 'shot.png');
-    writeFileSync(shot, PNG);
-    const { fake, exit, admitted, objectives } =
-      startStubSession('orchestrator');
-    await waitFor(() => fake.counts.started === 1);
-
-    for (const ch of `/image ${shot}`) fake.feed(ch);
-    fake.feed('\r');
-    await waitFor(() => fake.writes.join('').includes('image attached'));
-
-    for (const ch of 'do it') fake.feed(ch);
-    fake.feed('\r');
-    await waitFor(() =>
-      fake.writes
-        .join('')
-        .includes(
-          'image attachments need the solo lane — switch back with ctrl+g',
-        ),
-    );
-    expect(objectives).toEqual([]);
-    expect(admitted).toEqual([]);
-
-    // Ctrl-G back to solo, then Enter: the draft the refusal handed back
-    // rides with the KEPT attachment — the refusal was "not here", not
-    // "dropped".
-    fake.feed('\x07');
-    fake.feed('\r');
-    await waitFor(() => admitted.length === 1);
-    expect(admitted).toEqual([{ prompt: 'do it', images: 1 }]);
-
-    fake.feed('\x03');
-    fake.feed('\x03');
-    expect(await exit).toBe(0);
-  });
-
-  // Issue #338 review: `readFileRange` → `openSync` blocks the event loop
+  // `readFileRange` → `openSync` blocks the event loop
   // forever on a FIFO with no writer (and on device nodes), so the
   // regular-file check must come first — no Ctrl-C could ever run.
   it('refuses a non-regular file without opening it', () => {
@@ -504,10 +452,10 @@ describe('kubic tui /image (issue #338)', () => {
     });
   });
 
-  // Issue #338 review: the payload used to be decoded before the size check,
+  // The payload used to be decoded before the size check,
   // so an oversize paste allocated a second, larger buffer first.
   it('refuses an oversize inline paste without decoding it', async () => {
-    const { fake, exit } = startStubSession('solo');
+    const { fake, exit } = startStubSession();
     await waitFor(() => fake.counts.started === 1);
 
     fake.feed(
@@ -519,7 +467,7 @@ describe('kubic tui /image (issue #338)', () => {
     // The garbage never reached the draft.
     expect(fake.writes.join('')).not.toContain('AAAAAAAA');
 
-    // The typed draft takes the first Ctrl-C; the double press quits (#454).
+    // The typed draft takes the first Ctrl-C; the double press quits.
     fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
@@ -529,13 +477,13 @@ describe('kubic tui /image (issue #338)', () => {
   // An unterminated sequence past the reassembly cap is dropped by the
   // scanner — no payload is ever held — and the operator is still told why.
   it('drops an unterminated oversize paste instead of buffering it', async () => {
-    const { fake, exit } = startStubSession('solo');
+    const { fake, exit } = startStubSession();
     await waitFor(() => fake.counts.started === 1);
 
     // Three calls, like a real pty. The second pushes the held sequence past
     // the reassembly cap, and the third is pure payload: the discard state
     // must consume it up to the terminator rather than type megabytes of
-    // base64 into the draft (issue #338 review, cycle 2).
+    // base64 into the draft.
     // All three chunks back to back, with no await between them: the second
     // feed sets the footer synchronously, so nothing here depends on the
     // idle valve not firing first (a >PASTE_IDLE_MS stall between feeds on a
@@ -558,17 +506,17 @@ describe('kubic tui /image (issue #338)', () => {
     await waitFor(() => fake.writes.join('').includes('after'));
     expect(fake.writes.join('')).not.toContain('AAAAAAAA');
 
-    // The typed draft takes the first Ctrl-C; the double press quits (#454).
+    // The typed draft takes the first Ctrl-C; the double press quits.
     fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
   });
 
-  // Issue #338 review, cycle 2: an unterminated sequence that never completes
+  // An unterminated sequence that never completes
   // must not swallow the operator's typing for the rest of the session.
   it('drops an unterminated sequence after a short idle window', async () => {
-    const { fake, exit } = startStubSession('solo');
+    const { fake, exit } = startStubSession();
     await waitFor(() => fake.counts.started === 1);
 
     fake.feed('\x1b]1337;File=name=x;inline=1:AAAA');
@@ -579,19 +527,19 @@ describe('kubic tui /image (issue #338)', () => {
     await waitFor(() => fake.writes.join('').includes('typed'));
     expect(fake.writes.join('')).not.toContain('AAAA');
 
-    // The typed draft takes the first Ctrl-C; the double press quits (#454).
+    // The typed draft takes the first Ctrl-C; the double press quits.
     fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
   });
 
-  // Issue #338 review, cycle 3: the discard state needs the same valve as the
+  // The discard state needs the same valve as the
   // pending one — a paste whose terminator never arrives (the pty truncation
   // that gets you into this state) would otherwise swallow every later
   // keystroke, Ctrl-C included, until stdin closed.
   it('gives input back when an oversize paste never terminates', async () => {
-    const { fake, exit } = startStubSession('solo');
+    const { fake, exit } = startStubSession();
     await waitFor(() => fake.counts.started === 1);
 
     // One call: the sequence is already past the cap when it arrives, so no
@@ -610,14 +558,14 @@ describe('kubic tui /image (issue #338)', () => {
     await waitFor(() => fake.writes.join('').includes('typed'));
     expect(fake.writes.join('')).not.toContain('AAAAAAAA');
 
-    // The typed draft takes the first Ctrl-C; the double press quits (#454).
+    // The typed draft takes the first Ctrl-C; the double press quits.
     fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
   });
 
-  // Issue #338 review: a >4 KB paste arrives in chunks (the pty splits it and
+  // A >4 KB paste arrives in chunks (the pty splits it and
   // pi-tui's StdinBuffer flushes a partial OSC after 50 ms), so the sequence
   // is reassembled across listener calls instead of typed into the draft.
   it('reassembles an inline paste split across two input calls', async () => {

@@ -1,4 +1,4 @@
-// `kubic trust` (issue #228; §35.1, §78): the operator-facing half of the
+// `kubic trust`: the operator-facing half of the
 // persistent project-trust store. Presentation only — the decision itself
 // lives in `packages/host/src/config/trust-store.ts`, and the config load
 // reads the same file, so this command can never record something the

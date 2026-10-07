@@ -18,7 +18,7 @@ function inv(id = 'inv-1'): ToolInvocation {
   );
 }
 
-describe('write operation (issue #13, slice C)', () => {
+describe('write operation', () => {
   it('creates a file with afterHash and bytesDelta', async () => {
     const out = await callOperation(
       'write',
@@ -98,7 +98,7 @@ describe('write operation (issue #13, slice C)', () => {
   });
 });
 
-describe('edit operation (issue #13, slice C)', () => {
+describe('edit operation', () => {
   it('replaces exactly once with hashes', async () => {
     const c = ctx();
     const out = await callOperation(

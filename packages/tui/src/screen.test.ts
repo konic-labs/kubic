@@ -1,12 +1,12 @@
-// Slice B: alt-screen boot/stop lifecycle (issue #22; §16.1).
+// Alt-screen boot/stop lifecycle.
 import { describe, expect, it } from 'vitest';
-// One shared fake Terminal (issue #403; #321 owns the full consolidation).
+// The one shared fake Terminal.
 import { fakeTerminal } from '../../../test/fake-terminal.js';
 import { buildLayoutRoot } from './layout.js';
 import { bootScreen } from './screen.js';
 import { CURSOR_MARKER, Text, visibleWidth } from './tui-boundary.js';
 
-describe('screen lifecycle (issue #22, slice B)', () => {
+describe('screen lifecycle', () => {
   it('boots the layout root and stops with restore', () => {
     const terminal = fakeTerminal(100);
     const root = buildLayoutRoot({
@@ -25,7 +25,7 @@ describe('screen lifecycle (issue #22, slice B)', () => {
     const firstFrame = terminal.output().length;
     screen.render();
     // A forced render is synchronous, so no sleep is needed to read the frame
-    // back off the alt screen (issue #403): assert it structurally instead of
+    // back off the alt screen: assert it structurally instead of
     // with a byte threshold — the buffer between the CSI 2026 markers carries
     // every content row getScreenLines() reports, one line per terminal row.
     const redraw = terminal.output().slice(firstFrame);
@@ -41,7 +41,7 @@ describe('screen lifecycle (issue #22, slice B)', () => {
     for (const line of contentRows) expect(drawn).toContain(line);
     const output = terminal.output();
     expect(output).toContain('body');
-    // CSI 2026 atomic frame per render (§16.1).
+    // CSI 2026 atomic frame per render.
     expect(output).toContain('?2026h');
     expect(output).toContain('?2026l');
     const printed: string[] = [];
@@ -61,7 +61,7 @@ describe('screen lifecycle (issue #22, slice B)', () => {
     expect(terminal.started).toBe(1);
   });
 
-  // Issue #313: the last-resort path (a signal or an exception) restores the
+  // The last-resort path (a signal or an exception) restores the
   // terminal without printing anything, and every stop is idempotent — a
   // crash that lands during a quit must never stop the terminal twice.
   it('restore leaves the alt screen without printing, and stop after restore is a no-op', () => {
@@ -88,7 +88,7 @@ describe('screen lifecycle (issue #22, slice B)', () => {
     expect(terminal.output().split('?1049l').length - 1).toBe(1);
   });
 
-  // Issue #314 (§16.1): the final document lands on the MAIN screen. The
+  // The final document lands on the MAIN screen. The
   // printer and the terminal share one ordered log: every document line is
   // printed after the alt screen is left (`?1049l`) and after autowrap is
   // back on (`?7h`) — never into the alternate buffer that `?1049l` discards.
@@ -129,7 +129,7 @@ describe('screen lifecycle (issue #22, slice B)', () => {
     ).toContain('the last answer');
   });
 
-  // Issue #314 (re-audit): the document printed on quit is the layout's own
+  // The document printed on quit is the layout's own
   // render, which still carries the focused editor's hardware-cursor marker
   // and the inverse-video cell that stands in for the cursor. Pi's stop path
   // strips the marker before it prints; this path prints on the caller's
@@ -202,10 +202,10 @@ describe('screen lifecycle (issue #22, slice B)', () => {
   });
 });
 
-// Issue #460: the base frame goes through a filter BEFORE the overlays are
+// The base frame goes through a filter BEFORE the overlays are
 // composited on it, so the palette's dimmed background never dims the
 // palette itself.
-describe('screen base filter (issue #460)', () => {
+describe('screen base filter', () => {
   it('filters the base frame, never an overlay on top of it', () => {
     const terminal = fakeTerminal(60);
     const root = buildLayoutRoot({

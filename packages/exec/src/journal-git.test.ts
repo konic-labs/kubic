@@ -1,10 +1,10 @@
-// Git pre-images for the reconcile sweep (issue #371).
+// Git pre-images for the reconcile sweep.
 //
-// The baseline walk holds sha256 hashes, not content, so a bash `rm` or
-// `sed -i` on a tracked file could never be undone even though its pre-image
-// sits in the git object store. This module is the git plumbing: which calls
-// the baseline makes, how their output parses, and how a pre-image blob is
-// read back. RED: the module does not exist yet.
+// The baseline walk holds sha256 hashes, not content, so a bash `rm` or `sed
+// -i` on a tracked file could never be undone even though its pre-image sits in
+// the git object store. This module is the git plumbing: which calls the
+// baseline makes, how their output parses, and how a pre-image blob is read
+// back.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -80,7 +80,7 @@ const LS = [
   `100644 ${OID_A} 1\tconflicted.ts`,
 ].join('\0');
 
-describe('captureGitBaseline (issue #371)', () => {
+describe('captureGitBaseline', () => {
   it('records index OIDs for stat-clean tracked files in the baseline', () => {
     const { run } = fakeGit({ lsFiles: `${LS}\0`, status: ' M dirty.ts\0' });
     const out = captureGitBaseline(
@@ -130,7 +130,7 @@ describe('captureGitBaseline (issue #371)', () => {
     expect(captureGitBaseline(tmpRoot(), { 'a.ts': 'h' })).toBe(null);
   });
 
-  // Issue #427: a status output git did not shape (a record without the
+  // A status output git did not shape (a record without the
   // `XY <path>` form) fails the whole capture to null — fail closed —
   // instead of reading "no dirty paths" and blessing possibly-dirty
   // OIDs on the strength of the downstream hash verify alone.
@@ -139,7 +139,7 @@ describe('captureGitBaseline (issue #371)', () => {
     expect(captureGitBaseline('/repo', { 'tracked.ts': 'h1' }, run)).toBe(null);
   });
 
-  // Issue #427: symlinks (mode 120000) are skipped explicitly, like
+  // Symlinks (mode 120000) are skipped explicitly, like
   // submodules — the baseline walk excludes them too, but the capture
   // must not depend on that: a link's blob names its target, not content
   // a restore could use.
@@ -166,7 +166,7 @@ describe('captureGitBaseline (issue #371)', () => {
   });
 });
 
-describe('readGitBlob (issue #371)', () => {
+describe('readGitBlob', () => {
   it('reads the blob after a size pre-check', () => {
     const content = Buffer.from('pre-image\n', 'utf8');
     const { run, calls } = fakeGit({
@@ -217,7 +217,7 @@ describe('readGitBlob (issue #371)', () => {
   });
 });
 
-describe('git baseline persistence (issue #371)', () => {
+describe('git baseline persistence', () => {
   it('round-trips beside the baseline file and loads null when absent', () => {
     const dir = tmpRoot();
     expect(loadGitBaseline(dir, 'run-1')).toBe(null);
@@ -231,7 +231,7 @@ describe('git baseline persistence (issue #371)', () => {
   });
 });
 
-describe('captureHeadState (issue #378)', () => {
+describe('captureHeadState', () => {
   function fakeHead(outputs: {
     revParse: string;
     symbolicRef?: { status: number; stdout: string };

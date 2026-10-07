@@ -1,4 +1,4 @@
-// Prompt images on the durable lane (issue #338; §16.8 Images).
+// Prompt images on the durable lane.
 // `runTurn` maps the attachment parts onto the user message content
 // unchanged, and the committed entry stores them, so a resumed session
 // replays exactly what was sent — Pi's own user-message content parts are
@@ -22,7 +22,7 @@ afterEach(async () => {
   for (const lane of lanes.splice(0)) await lane.cleanup();
 });
 
-describe('runTurn prompt images (issue #338)', () => {
+describe('runTurn prompt images', () => {
   it('sends text plus image content parts to the model', async () => {
     const seen: Array<{ role?: unknown; content?: unknown }> = [];
     const lane = await bootFauxLane({

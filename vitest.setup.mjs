@@ -1,4 +1,4 @@
-// Hermetic provider configuration for every vitest file (issues #221, #322).
+// Hermetic provider configuration for every vitest file.
 // Pi's built-in providers resolve auth from the process env (API keys,
 // AWS profiles, Google ADC settings), and the assembled catalog reads the
 // user-global ~/.kubic/models/models.json. A test must never find the

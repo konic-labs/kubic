@@ -1,9 +1,9 @@
-// Exact-pin check for every dependency (issue #4; Pi 1.0: 1.0.2).
+// Exact-pin check for every dependency.
 //
 // `scripts/check-pinned-deps.mjs` (`npm run check:pi`) rejects every
 // `^`/`~`/range spec on `@earendil-works/*` and the CLI stack: the runtime
 // tree must not move under a release. Moved out of
-// `scripts/pi-boundary.test.mjs` (issue #376) so every gate has a
+// `scripts/pi-boundary.test.mjs` so every gate has a
 // same-named test.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -36,7 +36,7 @@ function fixturePackageJson(deps) {
   return dir;
 }
 
-describe('check-pinned-deps (issue #4)', () => {
+describe('check-pinned-deps', () => {
   it('pinned check passes on the clean tree', () => {
     assert.deepEqual(checkPinned(ROOT), []);
   });

@@ -1,4 +1,4 @@
-// The grouped root help and styled subcommand help (issue #446; 06-A).
+// The grouped root help and styled subcommand help.
 
 import { describe, expect, it } from 'vitest';
 import { createCliTheme } from '../../../../packages/core/src/cli/theme.js';
@@ -17,7 +17,7 @@ import { COMMAND_GROUPS, ROOT_HELP, renderRootHelp } from './root-help.js';
 
 const ESC = '\u001b';
 
-describe('the root help (issue #446)', () => {
+describe('the root help', () => {
   it('lists every command in exactly one group', () => {
     const listed = COMMAND_GROUPS.flatMap((group) => group.commands);
     expect(new Set(listed).size).toBe(listed.length);
@@ -37,13 +37,12 @@ describe('the root help (issue #446)', () => {
       '',
       'SESSION    run · tui · resume · attach · sessions              work with the agent',
       'CHANGES    diff · undo · log · status · commit · git           review and revert what it did',
-      'DELEGATE   orchestrate · workers · clean                       manager + workers in worktrees',
       'SETUP      setup · models · config · trust · doctor · skills   providers, project, health',
-      'ANALYSIS   cost · eval · benchmark · replay · export · perf · policy · audit',
+      'ANALYSIS   cost · eval · benchmark · replay · export · policy · audit',
       '',
       'EXAMPLES   kubic "fix the failing test"',
       '           kubic run -p "add tests for titleCase" --json',
-      '           kubic orchestrate -p "split cart.js into modules"',
+      '           kubic diff && kubic undo',
       '',
       'kubic <command> --help for options · docs/cli/README.md',
     ]);
@@ -98,7 +97,7 @@ async function subcommandHelp(level: 'none' | 'truecolor'): Promise<string> {
   return out.join('\n');
 }
 
-describe('subcommand help styling (issue #446)', () => {
+describe('subcommand help styling', () => {
   it('stays plain commander text without a coloured theme', async () => {
     const plain = await subcommandHelp('none');
     expect(plain).toContain('Usage: kubic doctor');
@@ -119,7 +118,7 @@ describe('subcommand help styling (issue #446)', () => {
   });
 });
 
-describe('usage errors on a colour terminal (issue #450)', () => {
+describe('usage errors on a colour terminal', () => {
   it('are an error block on a coloured stderr, plain otherwise', async () => {
     const run = async (level: 'none' | 'truecolor') => {
       const err: string[] = [];
@@ -153,9 +152,9 @@ describe('usage errors on a colour terminal (issue #450)', () => {
   });
 });
 
-// Issue #468: the root help in every palette and colour level — no escape
+// The root help in every palette and colour level — no escape
 // at depth none, and no line leaves a style open.
-describe('root help render matrix (issue #468)', () => {
+describe('root help render matrix', () => {
   it('closes every style it opens, in every palette and level', () => {
     const failures: string[] = [];
     for (const [name, palette] of [

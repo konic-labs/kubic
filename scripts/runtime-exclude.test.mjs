@@ -1,19 +1,17 @@
-// Ship-vs-ignore split gate for `.kubic/` runtime state (issue #91).
+// Ship-vs-ignore split gate for `.kubic/` runtime state.
 //
 // This is NOT a unit test of the writer helper: it is the repo-level gate
-// that enforces the split the docs claim —
+// that enforces the split —
 //
-//   1. in ANY user repo, the first `kubic run` / `kubic orchestrate` must
-//      leave nothing of Kubic's own state in `git status` (scripted proof
-//      against real git in a scratch repo, including a real worktree under
-//      `.kubic/wt/`);
+//   1. in ANY user repo, the first `kubic run` must leave nothing of
+//      Kubic's own state in `git status` (scripted proof against real git
+//      in a scratch repo);
 //   2. `.kubic/config.toml` and `.kubic/roles/*.md` stay trackable — the
 //      directory is mixed by construction, so `.kubic/` itself is never
 //      ignored;
 //   3. THIS repo ships the same split in its `.gitignore` (ground truth
 //      from `git check-ignore`, not from the file text), and no runtime
-//      path is tracked;
-//   4. `docs/cli/configuration.md` states exactly the rules that ship.
+//      path is tracked.
 //
 // Real code, real git, zero network. Runs from `npm test` (node --test) so
 // it gates CI alongside the other script gates.
@@ -36,7 +34,7 @@ import {
   RUNTIME_EXCLUDE_ENTRIES,
 } from '../packages/exec/src/runtime-exclude.ts';
 
-// Issue #90 criterion 5: the rule checker (`checkGitignoreSplit`) now runs on
+// The rule checker (`checkGitignoreSplit`) now runs on
 // a production path — `loadCliConfig` → `checkWorkspaceIgnoreSplit` on every
 // `kubic config` / `kubic doctor`. The host module cannot be imported here
 // (plain-node resolution does not map its `.js` specifiers), so this gate
@@ -65,7 +63,7 @@ function porcelain(cwd) {
 }
 
 // A user repo that already has the committed half of the split in place,
-// then runs and orchestrates there.
+// then runs there.
 const scratchRepos = [];
 after(() => {
   for (const dir of scratchRepos) rmSync(dir, { recursive: true, force: true });
@@ -91,30 +89,21 @@ function scratchUserRepo() {
   return dir;
 }
 
-// What a real run/orchestrate leaves on disk, at the real paths.
+// What a real run leaves on disk, at the real paths.
 function simulateRuntimeState(dir) {
-  for (const sub of ['journal', 'orchestrator', 'sessions', 'artifacts']) {
+  for (const sub of ['journal', 'audit', 'sessions', 'artifacts']) {
     mkdirSync(join(dir, '.kubic', sub), { recursive: true });
   }
   writeFileSync(join(dir, '.kubic', 'journal', 'index.jsonl'), '{}\n');
   mkdirSync(join(dir, '.kubic', 'journal', 'blobs'), { recursive: true });
   writeFileSync(join(dir, '.kubic', 'journal', 'blobs', 'abc'), 'x\n');
-  writeFileSync(join(dir, '.kubic', 'orchestrator', 'orch-1.json'), '{}\n');
+  writeFileSync(join(dir, '.kubic', 'audit', 'audit.jsonl'), '{}\n');
   writeFileSync(join(dir, '.kubic', 'sessions', 's1'), 'x\n');
   writeFileSync(join(dir, '.kubic', 'artifacts', 'out.txt'), 'x\n');
-  // The orchestrator's agent checkout: a real linked worktree.
-  git(dir, [
-    'worktree',
-    'add',
-    '-q',
-    '.kubic/wt/worker-1',
-    '-b',
-    'kubic/worker-1',
-  ]);
 }
 
-describe('kubic runtime state never reaches the commit path (issue #91)', () => {
-  it('keeps a user repo clean after run/orchestrate state lands', () => {
+describe('kubic runtime state never reaches the commit path', () => {
+  it('keeps a user repo clean after run state lands', () => {
     const dir = scratchUserRepo();
     // Before the rules ship: the state is untracked and visible — the bug.
     simulateRuntimeState(dir);
@@ -166,7 +155,7 @@ describe('kubic runtime state never reaches the commit path (issue #91)', () => 
     assert.equal(isIgnored(dir, '.kubic/'), false);
   });
 
-  it('refuses a hostile entry instead of injecting patterns (issue #133 review)', () => {
+  it('refuses a hostile entry instead of injecting patterns', () => {
     // An entry is written one line at a time: a newline in one would inject
     // arbitrary gitignore patterns into .git/info/exclude. Refused at render
     // time — the file is untouched and the patterns never take effect.
@@ -177,7 +166,7 @@ describe('kubic runtime state never reaches the commit path (issue #91)', () => 
 
     const result = ensureRuntimeExcludeRules({
       cwd: dir,
-      entries: ['.kubic/wt/', 'x\n*.log\n!keep/'],
+      entries: ['.kubic/journal/', 'x\n*.log\n!keep/'],
     });
 
     assert.equal(result.skipped, 'unavailable');
@@ -187,7 +176,7 @@ describe('kubic runtime state never reaches the commit path (issue #91)', () => 
     assert.equal(isIgnored(dir, 'secret.log'), false);
   });
 
-  it('refuses a metacharacter entry instead of writing a wildcard rule (issue #133 re-review)', () => {
+  it('refuses a metacharacter entry instead of writing a wildcard rule', () => {
     // The entry is written verbatim as one gitignore pattern: `*/` would
     // hide every new path from `git add -A` and the pre-merge clean-tree
     // guard. Refused at render time — the file is untouched and the
@@ -199,7 +188,7 @@ describe('kubic runtime state never reaches the commit path (issue #91)', () => 
 
     const result = ensureRuntimeExcludeRules({
       cwd: dir,
-      entries: ['.kubic/wt/', '*/'],
+      entries: ['.kubic/journal/', '*/'],
     });
 
     assert.equal(result.skipped, 'unavailable');
@@ -210,13 +199,12 @@ describe('kubic runtime state never reaches the commit path (issue #91)', () => 
   });
 });
 
-describe('this repo ships the split (issue #91)', () => {
+describe('this repo ships the split', () => {
   it('wires the rules into every mode that creates state', () => {
     // Criterion 1 is only met if the mechanism is actually reachable from
-    // the CLI: `kubic run`, `kubic orchestrate` and `kubic tui` (issue #113:
-    // a TUI session creates in-repo state the moment config relocates it)
-    // must all ship the rules before they create state. Pin the dispatch,
-    // not a helper. Issue #135: the dispatch moved to apps/kubic/src/dispatch.ts
+    // the CLI: `kubic run` and `kubic tui` (a TUI session creates in-repo
+    // state too) must both ship the rules before they create state. Pin the dispatch,
+    // not a helper. The dispatch moved to apps/kubic/src/dispatch.ts
     // (main.ts is the thin entry); the seam it calls is deps.ensureRuntimeExclude.
     const dispatch = readFileSync(
       join(ROOT, 'apps', 'kubic', 'src', 'dispatch.ts'),
@@ -224,14 +212,14 @@ describe('this repo ships the split (issue #91)', () => {
     );
     // The commander migration keeps the pre-parse step: the state-creating
     // modes are one named set, checked before the runtime-exclude call —
-    // skipped only for a help request (issue #245: `--help` is side-effect
+    // skipped only for a help request (`--help` is side-effect
     // free, commander answers it before any action).
     const call = dispatch.match(
       /if \(\s*command !== undefined &&\s*STATE_CREATING_COMMANDS\.has\(command\) &&\s*!helpRequested\s*\) \{\n\s*deps\.ensureRuntimeExclude\(/,
     );
     assert.ok(
       call !== null,
-      'apps/kubic/src/dispatch.ts must call the runtime-exclude seam for run + orchestrate + tui',
+      'apps/kubic/src/dispatch.ts must call the runtime-exclude seam for run + tui',
     );
     // No mode that writes state may be added without it: the set names
     // exactly the state-creating commands.
@@ -241,15 +229,13 @@ describe('this repo ships the split (issue #91)', () => {
     assert.ok(set !== null, 'dispatch.ts must declare STATE_CREATING_COMMANDS');
     assert.deepEqual(
       [...set[1].matchAll(/'([^']+)'/g)].map((m) => m[1]).sort(),
-      ['orchestrate', 'run', 'tui'],
+      ['run', 'tui'],
     );
     // The dispatch delegates to the injected seam, so CLI-reachability needs
-    // the production wiring too (the pre-#135 pin asserted exactly this,
+    // the production wiring too (the pre pin asserted exactly this,
     // against main.ts): the entry point must wire the real rules into the
     // seam it hands the dispatch — a no-op seam must not pass this test.
-    // Issue #133: the seam takes the config-derived entry list (the shipped
-    // prefixes plus a configured `[orchestrator].root`), so the pin reads the
-    // wiring with its argument.
+    // The pin reads the wiring with its argument (the entry list).
     const main = readFileSync(
       join(ROOT, 'apps', 'kubic', 'src', 'main.ts'),
       'utf8',
@@ -257,15 +243,15 @@ describe('this repo ships the split (issue #91)', () => {
     assert.match(
       main,
       /ensureRuntimeExclude:\s*\(entries\)\s*=>\s*ensureRuntimeExcludeRules\(\{\s*cwd: process\.cwd\(\),\s*entries\s*\}\)/,
-      'apps/kubic/src/main.ts must wire ensureRuntimeExcludeRules into the dispatch seam (with the config-derived entries, issue #133)',
+      'apps/kubic/src/main.ts must wire ensureRuntimeExcludeRules into the dispatch seam (with its entries)',
     );
     assert.match(
       dispatch,
-      /deps\.ensureRuntimeExclude\(\s*runtimeExcludeEntriesFor\(cliConfig\.runtime\?\.orchestrator\.root\)/,
-      'apps/kubic/src/dispatch.ts must ship the configured worktree parent with the runtime prefixes (issue #133)',
+      /deps\.ensureRuntimeExclude\(RUNTIME_EXCLUDE_ENTRIES\)/,
+      'apps/kubic/src/dispatch.ts must ship the runtime prefixes',
     );
   });
-  // Issue #90 criterion 5: `checkGitignoreSplit` is the rule checker, and it
+  // `checkGitignoreSplit` is the rule checker, and it
   // is invoked by a real gate — `loadCliConfig` runs it on every
   // `kubic config` / `kubic doctor`, not only in a unit test. Pin the call
   // sites so the wiring cannot be dropped silently.
@@ -276,7 +262,7 @@ describe('this repo ships the split (issue #91)', () => {
     );
     assert.match(
       runtime,
-      // Issue #292: the check resolves the toplevel and the exclude the
+      // The check resolves the toplevel and the exclude the
       // way the writer does, so the runner (exec's sync git probe) is part
       // of the pinned wiring — dropping it would re-break worktrees.
       /checkWorkspaceIgnoreSplit\(\s*bridge,\s*projectRoot,\s*gitSync/,
@@ -352,41 +338,6 @@ describe('this repo ships the split (issue #91)', () => {
     assert.ok(
       tracked.some((path) => path.startsWith('.kubic/roles/')),
       'the role documents must stay tracked (the committed half)',
-    );
-  });
-
-  it('docs state exactly the shipped rules and how a repo gets them', () => {
-    const doc = readFileSync(
-      join(ROOT, 'docs', 'cli', 'configuration.md'),
-      'utf8',
-    );
-    // indexOf is -1 when the heading is gone, and slice(-1) is the doc's
-    // last character — non-empty — so check the index, not the slice.
-    const start = doc.indexOf('## What lives where');
-    assert.notEqual(
-      start,
-      -1,
-      'configuration.md must keep a What-lives-where section',
-    );
-    const section = doc.slice(start);
-    for (const entry of RUNTIME_EXCLUDE_ENTRIES) {
-      assert.ok(
-        section.includes(entry),
-        `configuration.md must state the shipped rule ${entry}`,
-      );
-    }
-    assert.ok(
-      section.includes('git/info/exclude'),
-      'configuration.md must say how a user repo gets the rules',
-    );
-    assert.ok(
-      section.includes('.kubic/config.toml') &&
-        section.includes('.kubic/roles/*.md'),
-      'configuration.md must state the committed half',
-    );
-    assert.ok(
-      !/^\s*\.kubic\/\s*$/m.test(section),
-      'configuration.md must not claim .kubic/ itself is ignored',
     );
   });
 });

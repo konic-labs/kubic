@@ -1,4 +1,4 @@
-// Persistent project-trust store (issue #228; design §35.1).
+// Persistent project-trust store.
 //
 // Trust for a project-local layer is a user decision, not a per-invocation
 // env export: this module is the durable half — one JSON file under
@@ -58,9 +58,9 @@ export interface ProjectTrustReport {
   // The effective gate: a recorded true or the env opt-in.
   readonly trusted: boolean;
   readonly storePath: string;
-  // Present when the store file exists but could not be read or parsed
-  // (issue #228 review): reads stay fail-closed (no decision), and the
-  // report names the file instead of implying the user never decided.
+  // Present when the store file exists but could not be read or parsed: reads
+  // stay fail-closed (no decision), and the report names the file instead of
+  // implying the user never decided.
   readonly storeError?: string;
 }
 
@@ -93,11 +93,11 @@ export function projectTrustStorePath(home: string): string {
   return join(requireHome(home), '.kubic', 'trust.json');
 }
 
-// The trust store lives under the user's home and nowhere else (issue #228
-// review): an empty or relative home would resolve against the process cwd
-// and put the store inside the project it is meant to gate — a repository
-// could then ship its own decision. Refused by name; `loadCliConfig` turns
-// the refusal into a named config error.
+// The trust store lives under the user's home and nowhere else: an empty or
+// relative home would resolve against the process cwd and put the store inside
+// the project it is meant to gate — a repository could then ship its own
+// decision. Refused by name; `loadCliConfig` turns the refusal into a named
+// config error.
 function requireHome(home: string): string {
   if (home === '' || !isAbsolute(home)) {
     throw new TrustStoreError(
@@ -184,9 +184,9 @@ export class ProjectTrustStore {
     return read.kind === 'entries' ? decisionOf(read.entries, cwd) : null;
   }
 
-  // As `get`, plus the reason when the store exists but could not be used
-  // (issue #228 review): the report and doctor then say "unreadable" or
-  // "corrupt" instead of implying the user simply never decided.
+  // As `get`, plus the reason when the store exists but could not be used: the
+  // report and doctor then say "unreadable" or "corrupt" instead of implying
+  // the user simply never decided.
   inspect(cwd: string): { decision: ProjectTrustDecision; error?: string } {
     const read = this.readStore();
     if (read.kind === 'unreadable' || read.kind === 'corrupt') {
@@ -214,8 +214,7 @@ export class ProjectTrustStore {
   // Every recorded boolean decision, sorted by path. Throws on a corrupt
   // store: the operator asked to see the records, so silence would lie. An
   // UNREADABLE store (EACCES/ELOOP) is not a corrupt one — it reads as
-  // nothing recorded, never a throw (issue #228 review: `kubic trust` stays
-  // the repair path even when the store cannot be read).
+  // nothing recorded, never a throw.
   entries(): ProjectTrustEntry[] {
     const read = this.readStore();
     if (read.kind === 'corrupt') throw new TrustStoreError(read.error);
@@ -273,7 +272,7 @@ function envFlag(raw: string | undefined): boolean {
 
 // A per-path trust check for consumers that resolve the file they load by
 // walking ancestors — the project `models.json` root and each skills
-// ancestor (issue #228 review). The decision belongs to the tree the file
+// ancestor. The decision belongs to the tree the file
 // lives in: a grant for /repo covers /repo's committed files when a run
 // starts in /repo/pkg, while a grant for /repo/pkg never reaches /repo.
 // `KUBIC_TRUST_PROJECT=1/true` is a global opt-in above the store.

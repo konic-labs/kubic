@@ -1,8 +1,7 @@
-// models.json lookup (issue #222; §35 global tree, §37.2): the global
-// ~/.kubic/models/models.json, then the PROJECT file at the project root
-// (git top level / nearest .kubic), so which providers exist no longer
-// depends on the directory kubic was launched from. A worker child is
-// pointed at the manager's root through KUBIC_MODELS_ROOT.
+// models.json lookup: the global ~/.kubic/models/models.json, then the
+// PROJECT file at the project root (git top level / nearest .kubic), so
+// which providers exist never depends on the directory kubic was launched
+// from.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -66,7 +65,7 @@ function repo(): { root: string; sub: string } {
 
 const TRUST = { KUBIC_TRUST_PROJECT: '1' };
 
-describe('models.json lookup (issue #222)', () => {
+describe('models.json lookup', () => {
   it('lists a provider declared only in the global file from any cwd', async () => {
     const home = tmpDir();
     globalFile(home, provider('mine'));
@@ -132,23 +131,6 @@ describe('models.json lookup (issue #222)', () => {
     );
   });
 
-  it('resolves the project root from KUBIC_MODELS_ROOT (a worker in its worktree)', async () => {
-    const home = tmpDir();
-    const { root } = repo();
-    writeJson(join(root, 'models.json'), provider('managers'));
-    // The worker's worktree: its own git checkout, without the untracked file.
-    const worktree = tmpDir();
-    writeFileSync(join(worktree, '.git'), 'gitdir: /elsewhere\n');
-    const alone = await assembleModels(worktree, TRUST, { home });
-    expect(alone.models.getProvider('managers')).toBe(undefined);
-    const pointed = await assembleModels(
-      worktree,
-      { ...TRUST, KUBIC_MODELS_ROOT: root },
-      { home },
-    );
-    expect(pointed.models.getProvider('managers')?.id).toBe('managers');
-  });
-
   it('never treats the home directory (global .kubic) as a project root', () => {
     const home = tmpDir();
     mkdirSync(join(home, '.kubic', 'models'), { recursive: true });
@@ -163,7 +145,7 @@ describe('models.json lookup (issue #222)', () => {
   // global models.json is resolved through os.homedir(). A worker thread's
   // process.env copy never reaches the C environment os.homedir() reads, so
   // the file written under the stubbed HOME is never found and the run
-  // reports 'no models available' (issues #377, #385). The contract is
+  // reports 'no models available'. The contract is
   // proven by `npm run test:unit` (forks); the explicit-home tests above
   // keep covering the lookup itself in every pool.
   it.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(
@@ -200,7 +182,7 @@ describe('models.json lookup (issue #222)', () => {
   );
 });
 
-it('scopes a store grant to the tree the models.json lives in (issue #228 review)', async () => {
+it('scopes a store grant to the tree the models.json lives in', async () => {
   const home = tmpDir();
   const { root, sub } = repo();
   const path = writeJson(join(root, 'models.json'), provider('mine'));
@@ -229,7 +211,7 @@ it('scopes a store grant to the tree the models.json lives in (issue #228 review
   );
 });
 
-it('never lets a subdirectory grant reach the ancestor models.json (issue #228 review)', async () => {
+it('never lets a subdirectory grant reach the ancestor models.json', async () => {
   const home = tmpDir();
   const { root, sub } = repo();
   const path = writeJson(join(root, 'models.json'), provider('mine'));

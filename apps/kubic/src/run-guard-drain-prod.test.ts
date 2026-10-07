@@ -1,4 +1,4 @@
-// Issue #109, prod path: when the wall-clock guard fires, the headless run
+// Prod path: when the wall-clock guard fires, the headless run
 // must not abandon in-flight tools — it aborts the operation and drains
 // the kill registry BEFORE the reconcile sweep and before returning, so a
 // detached bash child cannot outlive the run and land writes after the
@@ -95,10 +95,10 @@ async function pollUntil(
   return probe();
 }
 
-describe('guard drain, prod path (issue #109)', () => {
+describe('guard drain, prod path', () => {
   it('kills the detached bash child on wall-clock exhaustion before returning', {
     // The run itself takes timeoutMs plus drain time; the budget here is
-    // a liveness bound, not a latency assertion (issue #385).
+    // a liveness bound, not a latency assertion.
     timeout: 30_000,
   }, async () => {
     const sessionsRoot = tmpRoot();
@@ -106,7 +106,7 @@ describe('guard drain, prod path (issue #109)', () => {
     const pidFile = join(workspace, 'pidmarker.txt');
     const result = await runHeadlessPrompt(
       'hang a bash child',
-      // Generous on purpose (issue #385): the guard must fire strictly
+      // Generous on purpose: the guard must fire strictly
       // AFTER the faux turn reaches the bash call and the child publishes
       // its pid — under scheduler contention a tight budget fires first
       // and the pidfile assertion below flakes. Nothing here asserts how

@@ -1,4 +1,4 @@
-// Issue #209 review: the overflow notice must tell the truth — it fires
+// The overflow notice must tell the truth — it fires
 // only when a retry actually follows, and the envelope record carries
 // whether the retry happened.
 import { describe, expect, it } from 'vitest';

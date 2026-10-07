@@ -1,4 +1,4 @@
-// `kubic git <status|log|stage|commit>` commands (issue #19, slice D; §43.1).
+// `kubic git <status|log|stage|commit>` commands.
 // Thin over the worker git ops; presentation only. commander (the
 // composition root, apps/kubic/src/commands/journal.ts) owns argv, help and
 // parse errors and hands a typed `GitRequest` here.
@@ -110,7 +110,7 @@ export async function runGitCommand(
       }
       for (const p of s.untracked)
         deps.out(`${theme.muted('untracked:')} ${p}`);
-      // Issue #380: conflicted paths render on their own line — they are
+      // Conflicted paths render on their own line — they are
       // resolver work, not staged or modified work.
       for (const p of s.conflicts)
         deps.out(`${theme.error('conflicts:')} ${p}`);

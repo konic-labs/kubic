@@ -1,7 +1,6 @@
-// `kubic replay` at a declared determinism tier (issue #52; §47,
-// §47.1 tiers, §72 pins, §78 exit codes).
+// `kubic replay` at a declared determinism tier (tiers, pins, exit codes).
 //
-// The four invocations (the mapping below follows issue #52's flags
+// The four invocations (the mapping below follows the flags
 // --model, --workspace/--worktree, --diff-against and the
 // exact/different-model/different-worktree/compare/regression list):
 //   exact               `kubic replay traj.json` (Recorded, log-only —
@@ -16,16 +15,16 @@
 //   compare/regression  `... --diff-against other.json` (Recorded, log-only;
 //                       exit 1 names the changed vars = regression signal)
 //
-// Tiers (§47.1 honesty rule — tier inflation is a bug, never a fallback):
+// Tiers (honesty rule — tier inflation is a bug, never a fallback):
 //   recorded      trajectory alone; log-only, never calls the runner
 //                 (no network, no model)
 //   deterministic re-executes via the injected runner; requires a pinned
-//                 --model plus a --lockfile (§72 pin artifact)
+//                 --model plus a --lockfile (pin artifact)
 //   live          re-executes via the injected runner; requires a pinned
 //                 --role-config (pins come from the role, so --model and
 //                 --lockfile are refused under live)
-// The published tier (§72) is printed and present in --json for every
-// result, including refusals and parse errors. Exit codes are the §78
+// The published tier is printed and present in --json for every
+// result, including refusals and parse errors. Exit codes are the
 // subset 0/1/2/5/6: runner termini pass through a local allowlist that
 // fail-closes to exit 2 (run-cli's exit-code constants are reused, not
 // its wider terminus mapping).
@@ -83,7 +82,7 @@ export interface ReplayRunRequest {
   worktree: string;
   lockfile: string | null;
   roleConfig: string | null;
-  // Issue #272: the role name the live tier's --role-config resolves to
+  // The role name the live tier's --role-config resolves to
   // (`{"role": "<name>"}`); the re-execution loads
   // `.kubic/roles/<name>.md` from the pinned worktree, so the role's tools
   // and prompt are applied instead of being a checked-then-ignored pin.
@@ -96,9 +95,9 @@ export interface ReplayRunResult {
   summary: string;
 }
 
-// Runtime config projections (issue #114): the SAME surface `kubic run`
+// Runtime config projections: the SAME surface `kubic run`
 // threads into its lane (runtimeRunDeps) — the permission classes plus
-// their source record (issue #86) and the journal retention bound (§42.4).
+// their source record and the journal retention bound.
 // Absent fields mean the documented defaults, exactly as on the run path;
 // the composition root passes the effective config's projections so a
 // replay re-execution is governed by the config, not by the binary's
@@ -107,35 +106,35 @@ export interface ReplayRuntimeDeps {
   policyClasses?: PermissionClasses;
   policySource: 'config' | 'default';
   journalRetention?: JournalRetention;
-  // Issue #230: the config `[approvals]` policy, as `kubic run` installs it.
+  // The config `[approvals]` policy, as `kubic run` installs it.
   approvals?: SoloApprovalConfig;
-  // §58 enterprise policy (issue #288): the same resolved EffectivePolicy
+  // Enterprise policy: the same resolved EffectivePolicy
   // `kubic run` gates with — the model/provider gate, the role-grant check and
   // the lane tool intersection all derive from it inside the headless runner
   // the re-execution drives, so a live replay is not an ungated lane.
   modelPolicy?: EffectivePolicy;
-  // Issue #228 (§35.1): the per-path trust check (store resolved-root +
+  // The per-path trust check (store resolved-root +
   // env), from the same config load the re-execution tier runs under — it
   // gates the project models.json of the assembled catalog. Absent falls
   // back to the env opt-in inside assembleModels.
   trustProject?: (path: string) => boolean;
-  // Issue #272 (§72): the shared solo-lane projections `kubic run` threads
+  // The shared solo-lane projections `kubic run` threads
   // — the configured agent id, the config-sourced role layers the pinned
   // role merges under its document, and the declared out-of-scope paths.
   // Absent means the documented run defaults ('root', no layers, the
   // mechanism's own skips).
   agentId?: string;
-  // Issue #430 (§33, L-D27): the per-path trust check `kubic run`
+  // The per-path trust check `kubic run`
   // threads on the same projection — the pinned worktree's role document
   // loads only for a trusted root. Absent means untrusted.
   roles?: { layers: RoleLayerInput[]; trustProject?: (dir: string) => boolean };
   reconcileOutOfScope?: string[];
-  // §27.1 (issue #239): the `[session]` compaction policy, from the same
+  // The `[session]` compaction policy, from the same
   // projection `kubic run` threads — the live re-execution tiers compact
   // under the configured policy, not the lane defaults. Absent means the
-  // lane defaults. (Review: previously rode an untyped spread here.)
+  // lane defaults.
   compaction?: SoloCompactionOptions;
-  // [agent] systemPromptFile contents (issue #240), from the same
+  // [agent] systemPromptFile contents, from the same
   // projection `kubic run` threads — the re-executed tiers assemble the
   // same prompt. Absent means the lane assembles its prompt unchanged.
   systemPromptSection?: string;
@@ -213,7 +212,7 @@ function parseTier(raw: string): ReplayTier | null {
   return null;
 }
 
-// Every result publishes a tier (§72): the declared --tier when one was
+// Every result publishes a tier: the declared --tier when one was
 // given (unknown when it names no known tier), else the recorded default.
 function resolveTier(raw: string | undefined): ReplayTier | 'unknown' {
   if (raw === undefined) return 'recorded';
@@ -222,7 +221,7 @@ function resolveTier(raw: string | undefined): ReplayTier | 'unknown' {
 
 const PLAIN = createCliTheme('none');
 
-// The refused-config envelope (issue #244): the same failure shape the tiered
+// The refused-config envelope: the same failure shape the tiered
 // envelope uses, with no invocation to report, so a `--json` consumer still
 // parses exactly one document. The reason is the config refusal's own.
 export function refusedReplayEnvelope(message: string): ReplayEnvelope {
@@ -288,7 +287,7 @@ function loadTrajectory(
       error instanceof TrajectorySchemaError &&
       error.code === 'unknown-major'
     ) {
-      // Replay's §78 subset (0/1/2/5/6) has no schema slot (exit 3 stays
+      // Replay's subset (0/1/2/5/6) has no schema slot (exit 3 stays
       // inside the trajectory package): an unsupported major is a caller
       // usage error here, with the code preserved machine-readably.
       return {
@@ -314,10 +313,10 @@ function isModelPin(value: string): boolean {
   return slash > 0 && slash < value.length - 1;
 }
 
-// §72 pin artifact for the Deterministic tier: a JSON file pinning the
+// Pin artifact for the Deterministic tier: a JSON file pinning the
 // exact model the re-execution may use, plus optional prompt/tool digests.
 // Fail-closed: the requested --model must be pinned, and a pinned digest
-// must match what is about to be re-executed (issue #272) — the pins were
+// must match what is about to be re-executed — the pins were
 // required and then ignored before this.
 //
 // Format:
@@ -457,7 +456,7 @@ function checkWorktreeOverride(
   return { ok: true };
 }
 
-// Replay's §78 subset (0/1/2/5/6) as a runtime allowlist over the
+// Replay's subset (0/1/2/5/6) as a runtime allowlist over the
 // injected runner's terminus: a contract-violating runner (a run-cli
 // terminus outside replay's subset, or garbage) fail-closes to exit 2 —
 // never 3/4/undefined.
@@ -563,7 +562,7 @@ function resolveWorktreeOverride(
   };
 }
 
-// The live tier's pin artifact (issue #272): a JSON file naming the role
+// The live tier's pin artifact: a JSON file naming the role
 // the re-execution boots as — `{"role": "<name>"}`. The name is resolved
 // from `.kubic/roles/<name>.md` in the pinned worktree, so the role's
 // tools and prompt actually apply. Fail-closed: a role config that names
@@ -610,7 +609,7 @@ function diffFingerprint(trajectory: TrajectoryExport): string {
   return [...trajectory.diff.filesChanged].sort().join('\n');
 }
 
-// Compare invocation (§47 compare/regression): log-only diff of two
+// Compare invocation (compare/regression): log-only diff of two
 // versioned trajectories at the Recorded tier. The envelope names every
 // changed var (model, worktree, diff); any difference exits 1 as the
 // regression signal, identity exits 0.
@@ -679,7 +678,7 @@ function describeRecorded(trajectory: TrajectoryExport): string[] {
 export async function runReplayCommand(
   parsed: ReplayCommandOptions,
   deps: ReplayCommandDeps,
-  // The effective config's projections (issue #114): handed straight to
+  // The effective config's projections: handed straight to
   // the run seam so re-execution consumes the config like `kubic run`.
   // Absent means the documented defaults (runtimeRunDeps' own empty
   // answer) — never an invented policy.
@@ -724,7 +723,7 @@ export async function runReplayCommand(
     );
   }
 
-  // §47.1 honesty gates: a tier that needs pins refuses without them
+  // Honesty gates: a tier that needs pins refuses without them
   // (exit 2) — it never silently falls back to a lower tier.
   if (options.tier === 'recorded') {
     const extras: string[] = [];
@@ -924,7 +923,7 @@ export async function runReplayCommand(
   }
 
   // Later slices: none — every tier is implemented. Compare closes the
-  // four §47 invocations.
+  // four invocations.
   const other = loadOtherTrajectory(options.diffAgainst as string);
   if ('exit' in other) {
     return fail(

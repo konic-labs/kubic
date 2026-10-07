@@ -1,7 +1,6 @@
-// The framed editor and the working line (EPIC N, issue #454; docs/ui 01-K
-// and the mid-turn frame). Pure renders at depth none read like the design;
-// the real PromptEditor proves the rule markers, scroll indicators and the
-// cursor marker survive the frame.
+// The framed editor and the working line (and the mid-turn frame). Pure renders
+// at depth none read like the design; the real PromptEditor proves the rule
+// markers, scroll indicators and the cursor marker survive the frame.
 import { describe, expect, it } from 'vitest';
 import { createUiTheme } from '../../core/src/ui/style.js';
 import { DARK_PALETTE } from '../../core/src/ui/tokens.js';
@@ -32,7 +31,7 @@ function piLines(width: number, content: string[], below: string[] = []) {
 
 const idle = { busy: false, empty: false, hint: '@ file  / cmd' } as const;
 
-describe('editor frame (issue #454; 01-K)', () => {
+describe('editor frame', () => {
   it('closes the box with the caret and the hint on the first line', () => {
     const width = 40;
     const inner = width - EDITOR_FRAME_CELLS;
@@ -144,13 +143,12 @@ describe('editor frame (issue #454; 01-K)', () => {
   });
 });
 
-describe('working line (issue #454; mid-turn frame)', () => {
+describe('working line (mid-turn frame)', () => {
   it('names the clock, tokens, tools and the keys that act', () => {
     const line = renderWorkingLine(
       plain,
       {
         elapsedMs: 12_000,
-        queues: true,
         input: 9200,
         output: 640,
         tools: 3,
@@ -167,21 +165,15 @@ describe('working line (issue #454; mid-turn frame)', () => {
     expect(visibleWidth(line)).toBe(120);
   });
 
-  it('leaves tokens out until usage is known and queueing out on the orchestrator lane', () => {
-    const line = renderWorkingLine(
-      plain,
-      { elapsedMs: 3000, queues: false, tools: 0 },
-      80,
-    );
+  it('leaves tokens out until usage is known', () => {
+    const line = renderWorkingLine(plain, { elapsedMs: 3000, tools: 0 }, 80);
     expect(line).toContain('Working · 0:03');
     expect(line).not.toContain('tok');
     expect(line).not.toContain('tools');
-    expect(line).not.toContain('queue');
-    expect(line.endsWith('esc interrupt ')).toBe(true);
   });
 
   it('drops the keys before the facts when narrow', () => {
-    const info = { elapsedMs: 72_000, queues: true, tools: 1 } as const;
+    const info = { elapsedMs: 72_000, tools: 1 } as const;
     expect(renderWorkingLine(plain, info, 60)).toContain('esc interrupt');
     expect(renderWorkingLine(plain, info, 60)).not.toContain('queue');
     const narrow = renderWorkingLine(plain, info, 30);

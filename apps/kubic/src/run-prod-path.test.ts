@@ -1,4 +1,4 @@
-// Prod `kubic run -p` path (issue #28): drives the composition-root
+// Prod `kubic run -p` path: drives the composition-root
 // adapter (apps/kubic) against a real lane with faux models. This file
 // lives in host because vitest only includes packages/* — it reaches
 // across to the adapter purely as a black-box caller, never into lane
@@ -89,7 +89,7 @@ function entryTexts(entries: unknown): string[] {
 }
 
 // The user-message texts of a session's active transcript, in order: the
-// unit #247's "exactly one user entry per prompt" counts.
+// unit the "exactly one user entry per prompt" counts.
 function userTexts(entries: unknown): string[] {
   if (!Array.isArray(entries)) return [];
   const out: string[] = [];
@@ -100,7 +100,7 @@ function userTexts(entries: unknown): string[] {
   return out;
 }
 
-// Read a session's active transcript the way a CLI reader does (#400): the
+// Read a session's active transcript the way a CLI reader does: the
 // storage directly, no harness boot, and the handle gives the lock back.
 async function readTranscript(
   root: string,
@@ -115,7 +115,7 @@ async function readTranscript(
   }
 }
 
-describe('prod run path, live lane (issue #28, E1)', () => {
+describe('prod run path, live lane', () => {
   it('drives a faux lane to completed with the assistant summary', async () => {
     const root = tmpRoot();
     const result = await runHeadlessPrompt(
@@ -150,8 +150,8 @@ describe('prod run path, live lane (issue #28, E1)', () => {
   });
 });
 
-describe('prod run path, resume chain (issue #28, E4)', () => {
-  it('resumes the same session and keeps one user entry per prompt (#247)', async () => {
+describe('prod run path, resume chain', () => {
+  it('resumes the same session and keeps one user entry per prompt', async () => {
     const root = tmpRoot();
     const env = new FakeExecutionEnv({});
     const first = await runHeadlessPrompt(
@@ -181,7 +181,7 @@ describe('prod run path, resume chain (issue #28, E4)', () => {
   });
 });
 
-describe('prod run path, durable retry (issue #395, §20.6)', () => {
+describe('prod run path, durable retry', () => {
   it('settles completed after a transient provider error, with both attempts counted', {
     timeout: 20_000,
   }, async () => {
@@ -212,7 +212,7 @@ describe('prod run path, durable retry (issue #395, §20.6)', () => {
     expect(result.usage?.input).toBeGreaterThan(0);
     const entries = await readTranscript(root, result.sessionId);
     const items = entriesToTranscript(entries);
-    // #247 stands on the retry path too: the prompt appears exactly once.
+    // Stands on the retry path too: the prompt appears exactly once.
     expect(items.filter((item) => item.kind === 'user')).toHaveLength(1);
     // Both attempts are committed responses: the retryable error, then the
     // answer. That the ANSWER is the summary proves the harness retried
@@ -224,7 +224,7 @@ describe('prod run path, durable retry (issue #395, §20.6)', () => {
   });
 });
 
-describe('exactly one user entry per kubic run prompt (issue #247)', () => {
+describe('exactly one user entry per kubic run prompt', () => {
   it('writes ONE user entry for a turn that calls a tool', async () => {
     const root = tmpRoot();
     const env = new FakeExecutionEnv({});
@@ -245,7 +245,7 @@ describe('exactly one user entry per kubic run prompt (issue #247)', () => {
     );
     expect(result.terminus).toBe('completed');
     const entries = await readTranscript(root, result.sessionId);
-    // #247: the raw pre-boot prompt write duplicated submit's own pi.user
+    // The raw pre-boot prompt write duplicated submit's own pi.user
     // entry on every run; the prompt must appear exactly once.
     expect(userTexts(entries)).toEqual(['read the file']);
     expect(entryTexts(entries).join('\n')).toMatch(/one entry reads this/);
@@ -286,7 +286,7 @@ describe('exactly one user entry per kubic run prompt (issue #247)', () => {
   });
 });
 
-describe('prod run path, empty summary honesty (issue #129)', () => {
+describe('prod run path, empty summary honesty', () => {
   const NON_ANSWER = '(no assistant text — the run settled without output)';
   const PROMPT_FIXTURE = 'PROMPT-FIXTURE-never-echoed-8f2c';
 
@@ -385,7 +385,7 @@ describe('prod run path, empty summary honesty (issue #129)', () => {
   });
 });
 
-describe('enterprise policy gate on model selection (issue #288)', () => {
+describe('enterprise policy gate on model selection', () => {
   it('refuses a model outside allowed_models before any provider call', async () => {
     const root = tmpRoot();
     const allowed = fauxProvider();
@@ -512,7 +512,7 @@ describe('enterprise policy gate on model selection (issue #288)', () => {
   });
 });
 
-describe('prod run path, result refs (issue #68; mutation hardening)', () => {
+describe('prod run path, result refs (mutation hardening)', () => {
   it('points journal/usage/trajectory refs at the live session', async () => {
     const root = tmpRoot();
     const result = await runHeadlessPrompt(
@@ -528,7 +528,7 @@ describe('prod run path, result refs (issue #68; mutation hardening)', () => {
     const id = result.sessionId;
     expect(result.journalRef).toBe(`journal:${id}`);
     expect(result.usageRef).toBe(`usage:${id}`);
-    // Issue #383: the ref resolves — it names the written §46 file.
+    // The ref resolves — it names the written trajectory file.
     expect(result.trajectoryRef).toBe(join(root, id, 'trajectory.json'));
     expect(existsSync(result.trajectoryRef)).toBe(true);
     expect(result.error).toBeUndefined();
@@ -588,10 +588,10 @@ describe('prod run path, result refs (issue #68; mutation hardening)', () => {
   });
 });
 
-// Issue #155: the §52 failure taxonomy reaches the --json envelope. The
+// The failure taxonomy reaches the --json envelope. The
 // durable `model_error` reason is generic; the detail carries the domain,
 // and the envelope's `failure` field reports the classified code.
-describe('prod run path, §52 failure code in the envelope (issue #155)', () => {
+describe('prod run path, failure code in the envelope', () => {
   function out(): { lines: string[]; write: (line: string) => void } {
     const lines: string[] = [];
     return { lines, write: (line: string) => lines.push(line) };
@@ -621,7 +621,7 @@ describe('prod run path, §52 failure code in the envelope (issue #155)', () => 
     const o = out();
     // 'provider capacity exhausted' is pi-ai's own non-retryable capacity
     // shape (the rate-limit family): the harness settles immediately instead
-    // of sleeping through three backoffs, and the §52 code is still the
+    // of sleeping through three backoffs, and the failure code is still the
     // provider one.
     const exit = await runRunCommand(
       { prompt: 'rate limited', json: true },

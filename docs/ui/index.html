@@ -8,7 +8,7 @@
 </head>
 <body>
 <div class="page">
-  <nav class="nav"><a class="on" href="index.html">system</a><a href="01-session.html">01 session</a><a href="02-approval.html">02 approval</a><a href="03-palette.html">03 palette</a><a href="04-orchestrator.html">04 orchestrator</a><a href="05-welcome.html">05 first launch</a><a href="06-cli.html">06 cli</a></nav>
+  <nav class="nav"><a class="on" href="index.html">system</a><a href="01-session.html">01 session</a><a href="02-approval.html">02 approval</a><a href="03-palette.html">03 palette</a><a href="05-welcome.html">05 first launch</a><a href="06-cli.html">06 cli</a></nav>
   <h1><b>■</b> Kubic — terminal design, v0.1</h1>
   <p class="sub">Draft for review. Every screen is drawn on a real character grid (one row = one terminal line, colours per cell), so what you approve here can be built 1:1 on pi-tui. Comment by note id, e.g. "01-D: …".</p>
 
@@ -17,7 +17,7 @@
     <div><b>One hot colour</b>Konic red means identity and focus only: the logo, the caret, the selected row, your prompt edge. Status uses its own colours.</div>
     <div><b>Surfaces, not lines</b>Hierarchy comes from three background levels and three text levels. Rules are faint; boxes are rare.</div>
     <div><b>Every block earns its row</b>No permanent banners. Headers, status and key hints are one row each; tool output shows the useful slice.</div>
-    <div><b>Say the state</b>Waiting, working, failed, done each have one glyph and one colour, used the same way in the TUI, the dashboard and the CLI.</div>
+    <div><b>Say the state</b>Waiting, working, failed, done each have one glyph and one colour, used the same way in the TUI and the CLI.</div>
     <div><b>Keys follow focus</b>The hint row shows only what works right now. Esc backs out; it never quits.</div>
     <div><b>Plain when piped</b>Colour, spinners and boxes are a TTY layer. --json, pipes and NO_COLOR get the stable text the contract pins.</div>
   </div>
@@ -43,7 +43,7 @@
   <div class="open"><b>Open:</b> error (#ff6b5e, coral) sits close to Konic red. I kept it warmer and always paired with ✕ so the two never get confused. Alternative: make the accent the only red and show errors in amber-red with a filled badge.</div>
 
   <h2>Colour tokens (light)</h2>
-  <p class="sub">The same roles on a light terminal (issue #468): dark text on near-white surfaces, Konic red deepened to keep its contrast. Every new surface is rendered in dark, light and terminal palettes at truecolor, 256, 16 and no colour by the render matrix.</p>
+  <p class="sub">The same roles on a light terminal: dark text on near-white surfaces, Konic red deepened to keep its contrast. Every new surface is rendered in dark, light and terminal palettes at truecolor, 256, 16 and no colour by the render matrix.</p>
   <div class="swatches">
     <div class="sw"><div style="background:#ffffff"></div><p><b>bg0 canvas</b>#ffffff</p></div>
     <div class="sw"><div style="background:#f3f3f6"></div><p><b>bg1 bars</b>#f3f3f6</p></div>
@@ -58,7 +58,7 @@
   </div>
   <div class="win theme-light"><div class="bar"><i></i><i></i><i></i><span>kubic — light theme — 120×12</span></div>
   <div class="term">
-    <div class="l b1"><span class="acc bd"> ■ KUBIC </span><span class="f3"> │ </span><span class="f0">kubic-playground</span><span class="f2">  ⎇ </span><span class="f1">main</span><span class="warn"> ●1</span><span class="sp"></span><span class="f2">session </span><span class="f1">cart-fix</span><span class="f3"> │ </span><span class="inv-f bd"> SOLO </span><span class="f2"> approvals </span><span class="ok">on </span></div>
+    <div class="l b1"><span class="acc bd"> ■ KUBIC </span><span class="f3"> │ </span><span class="f0">kubic-playground</span><span class="f2">  ⎇ </span><span class="f1">main</span><span class="warn"> ●1</span><span class="sp"></span><span class="f2">session </span><span class="f1">cart-fix</span><span class="f3"> │ </span><span class="f2">approvals </span><span class="ok">on </span></div>
     <div class="l"> </div>
     <div class="l b2"><span class="acc"> ▌ </span><span class="f0 sb">run npm test and fix the failing test</span><span class="sp"></span><span class="f2">you · 14:01:52 </span></div>
     <div class="l"> </div>
@@ -93,7 +93,6 @@
     <a class="card" href="01-session.html"><b>01 · Solo session</b><small>Transcript as blocks: prompts, tool cards, inline diffs, thinking, receipt; editor, status line, key hints. Idle and mid-turn.</small></a>
     <a class="card" href="02-approval.html"><b>02 · Approval cards</b><small>Inline blocking cards for a risky shell command and a file edit with diff preview.</small></a>
     <a class="card" href="03-palette.html"><b>03 · Palette &amp; pickers</b><small>^P fuzzy palette over commands, models, sessions, files; the bare /model picker.</small></a>
-    <a class="card" href="04-orchestrator.html"><b>04 · Orchestrator</b><small>Run timeline, workers grouped by state, live peek, budget gauges, dispatch.</small></a>
     <a class="card" href="05-welcome.html"><b>05 · First launch</b><small>Wordmark + preflight checks, inline trust question, recent sessions; the no-key state.</small></a>
     <a class="card" href="06-cli.html"><b>06 · CLI</b><small>Grouped help, streaming run, doctor summary, models table, first-run setup, errors.</small></a>
   </div>

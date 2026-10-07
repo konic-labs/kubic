@@ -1,4 +1,4 @@
-// What an approval dialog shows of a command (issue #316; §41.2, §16.4).
+// What an approval dialog shows of a command.
 //
 // The user decides on the request, so the display is built from the SAME
 // args the approval key hashes — never from the model's description and
@@ -17,7 +17,7 @@
 import { redactSecrets } from '../../worker/src/lane/interceptors.js';
 
 // The summary's command budget: summaries are one-line labels (trajectory,
-// audit detail, the orchestrator's blocked indicator). The full command
+// audit detail). The full command
 // travels separately in the request's `command` field.
 export const SUMMARY_COMMAND_LIMIT = 120;
 
@@ -95,13 +95,13 @@ const BARE_BEARER = /\bbearer[ \t]+/gi;
 // A user flag whose operand has the `user:password` shape (curl's `-u` /
 // `--user`, its proxy twin `-U` / `--proxy-user`). The colon is required, so
 // an ordinary `-u` (`cp -u a b`, `sort -u names`) stays readable; the short
-// forms may be attached (`-uadmin:hunter2`, review of #192).
+// forms may be attached (`-uadmin:hunter2`, review of).
 const USER_FLAG =
   /(?:^|[\s"'])(?:-u|-U)(?:[=\s]\s*)?|(?:^|[\s"'])(?:--user|--proxy-user)[=\s]\s*"?/gi;
 
 // URL userinfo that carries a password (`https://user:pw@host`), redacted by
 // a plain replace so the host stays visible; user-only userinfo
-// (`ssh://git@host`) is not a secret and stays readable (review of #192).
+// (`ssh://git@host`) is not a secret and stays readable.
 // The scheme length is BOUNDED: an unbounded `[a-z0-9+.-]*` before the
 // required `://` backtracks over a long letter-run at every start position
 // (quadratic — the linearity test caught it), and no real scheme is 20
@@ -207,7 +207,7 @@ const VALUE_RULES: ReadonlyArray<ValueRule> = [
   { prefix: BARE_BEARER, only: (word) => CREDENTIAL.test(word) },
 ];
 
-// Issue #316: what the approval dialog redacts. The shared `redactSecrets`
+// What the approval dialog redacts. The shared `redactSecrets`
 // (worker interceptors) swallows the WORD after `secret`/`token`/`bearer`,
 // which is right for a persisted reason but wrong here: the dialog exists so
 // the operator sees what will run, and the swallowed word can be the

@@ -1,6 +1,5 @@
-// Slice A: structured git status/diff ops (issue #19; §43.1; issue #193
-// switched the status parser to porcelain v2 -z).
-// RED: git ops do not exist yet.
+// Structured git status/diff ops (switched the status parser to porcelain v2
+// -z).
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -30,7 +29,7 @@ function ctx(
   return { env, sessionId: 's1', agentId: 'root' };
 }
 
-// Human form of the recorded argv, for exact-argv pins (issue #356).
+// Human form of the recorded argv, for exact-argv pins.
 function argvOf(env: FakeExecutionEnv): string[] {
   return env.calls.map((c) => `${c.cmd} ${c.args.join(' ')}`);
 }
@@ -68,8 +67,8 @@ const STATUS_OUT = [
   '? new.txt\0',
 ].join('');
 
-describe('git conflict routing (issue #380)', () => {
-  // RED first: unmerged XY codes land in staged+unstaged with no
+describe('git conflict routing', () => {
+  // Unmerged XY codes land in staged+unstaged with no
   // conflicts field at all.
   it.each([['UU'], ['AA'], ['DD'], ['AU'], ['UA'], ['DU'], ['UD']])(
     'routes %s to conflicts only',
@@ -102,7 +101,7 @@ describe('git conflict routing (issue #380)', () => {
   );
 });
 
-describe('git status root and submodules (issue #380)', () => {
+describe('git status root and submodules', () => {
   it('carries the repo root and submodule summary', async () => {
     const out = await callOperation(
       'git_status',
@@ -171,8 +170,8 @@ describe('git status root and submodules (issue #380)', () => {
   });
 });
 
-describe('git wait rejection cleanup (issue #432)', () => {
-  // RED first: untrack and clearTimeout sit after the await, so a
+describe('git wait rejection cleanup', () => {
+  // Untrack and clearTimeout sit after the await, so a
   // rejecting wait() leaks both the timer and the registry entry.
   it('clears the timer and untracks the handle when wait() rejects', async () => {
     let kills = 0;
@@ -240,8 +239,8 @@ describe('git wait rejection cleanup (issue #432)', () => {
   });
 });
 
-describe('git clipped results carry a stat summary (issue #432)', () => {
-  // RED first: a clipped result names truncated + spill but says nothing
+describe('git clipped results carry a stat summary', () => {
+  // A clipped result names truncated + spill but says nothing
   // about what was cut.
   function strictCtx(
     scripts: Record<
@@ -396,7 +395,7 @@ describe('git clipped results carry a stat summary (issue #432)', () => {
   });
 });
 
-describe('git ops (issue #19, slice A)', () => {
+describe('git ops', () => {
   it('git_status returns structured state', async () => {
     const out = await callOperation(
       'git_status',
@@ -421,7 +420,7 @@ describe('git ops (issue #19, slice A)', () => {
         'renamed.txt',
       ]);
       expect(out.result.unstaged).toEqual(['unstaged.txt', 'both.txt']);
-      // Issue #380: a conflicted path lives in conflicts only — it is
+      // A conflicted path lives in conflicts only — it is
       // neither staged nor unstaged work.
       expect(out.result.conflicts).toEqual(['conflict.txt']);
       expect(out.result.untracked).toEqual(['new.txt']);
@@ -521,8 +520,8 @@ describe('git ops (issue #19, slice A)', () => {
   });
 });
 
-describe('git output bounds (issue #190)', () => {
-  // RED first: written before git_diff/git_show/git_log clipped anything —
+describe('git output bounds', () => {
+  // Written before git_diff/git_show/git_log clipped anything —
   // each result carried the full megabyte with no truncated flag.
   it('git_diff over a 1 MB change returns <= cap with truncated true', async () => {
     const big = `diff --git a/big.bin b/big.bin\n${'x'.repeat(1024 * 1024)}\n`;
@@ -532,7 +531,7 @@ describe('git output bounds (issue #190)', () => {
       inv(),
       ctx({
         'git diff': { exitCode: 0, stdout: big, stderr: '' },
-        // Issue #432: a clipped result also queries its --stat twin.
+        // A clipped result also queries its --stat twin.
         'git diff --stat': {
           exitCode: 0,
           stdout: ' big.bin | 1 +\n 1 file changed, 1 insertion(+)\n',
@@ -561,7 +560,7 @@ describe('git output bounds (issue #190)', () => {
           stdout: big,
           stderr: '',
         },
-        // Issue #432: a clipped result also queries its --stat twin.
+        // A clipped result also queries its --stat twin.
         'git show --format= --stat HEAD': {
           exitCode: 0,
           stdout: ' big.bin | 1 +\n 1 file changed, 1 insertion(+)\n',

@@ -1,6 +1,6 @@
-// Org audit trail tests (issue #57; §60 14 fields, §83 engine, §85 flow).
-// RED first: imports fail until audit.ts lands. Faux-only, zero network.
-// Secret-shaped fixtures below are faux (contain 'faux'), never real.
+// Org audit trail tests: the record fields, sinks, redaction and queries.
+// Faux-only, zero network. Secret-shaped fixtures below are faux (contain
+// 'faux'), never real.
 import { describe, expect, it } from 'vitest';
 import {
   AUDIT_FIELDS,
@@ -10,15 +10,14 @@ import {
   createMemorySink,
   createSyslogSink,
   defaultSyslogSocketPath,
+  EXAMPLE_AUDIT_RECORD,
   emitAudit,
-  FLOW_AUDIT_FIXTURE,
   type OrgAuditRecord,
   parseSyslogTarget,
   queryAudits,
   type SyslogTransport,
   sortAuditSinksSyslogFirst,
   toCredentialSentinel,
-  WORKED_EXAMPLE_JSON,
 } from './audit.js';
 
 // Secret-shaped but faux: shaped like real material so the sentinel and
@@ -30,14 +29,13 @@ function baseInput(): Omit<OrgAuditRecord, 'when'> {
   return {
     who: 'ege@example.com',
     what: 'tool.call',
-    agent: { session: 'sess-1', role: 'implementer', parent: 'sess-0' },
+    agent: { session: 'sess-1', role: 'implementer' },
     model: { provider: 'local', id: 'llama3', thinking: 'medium' },
     worker: { pid: 1234, generation: 2, role: 'implementer' },
     workspace: { path: '/repo/wt/57', base: '/repo' },
     permission: { permission: 'write', approval: 'approved:tester' },
     credential: { sentinel: toCredentialSentinel('$API_KEY') },
     network: { host: 'example.com', port: 443, decision: 'allow', bytes: 512 },
-    mode: 'orchestrator',
     posture: 'restricted',
     result: 'ok',
     reason: 'policy allow',
@@ -45,15 +43,14 @@ function baseInput(): Omit<OrgAuditRecord, 'when'> {
 }
 
 describe('org audit record', () => {
-  it('carries all 14 section-60 fields on every record', () => {
+  it('carries all 13 fields on every record', () => {
     const sink = createMemorySink();
     const record = emitAudit([sink], baseInput(), {
       now: () => 1_700_000_000_000,
     });
-    expect(Object.keys(record)).toHaveLength(14);
+    expect(Object.keys(record)).toHaveLength(13);
     expect([...Object.keys(record)].sort()).toEqual([...AUDIT_FIELDS].sort());
     expect(record.when).toBe('2023-11-14T22:13:20.000Z');
-    expect(record.mode).toBe('orchestrator');
     expect(record.posture).toBe('restricted');
   });
 
@@ -106,7 +103,7 @@ describe('org audit record', () => {
     ).toThrow(AuditSinkError);
   });
 
-  it('rejects unknown top-level keys instead of keeping them (exactly 14)', () => {
+  it('rejects unknown top-level keys instead of keeping them (exactly 13)', () => {
     const sink = createMemorySink();
     const smuggled = {
       ...baseInput(),
@@ -139,71 +136,38 @@ describe('org audit record', () => {
   });
 });
 
-describe('section-85 flow fixture', () => {
-  it('matches the section-60 worked example verbatim', () => {
-    expect(JSON.stringify(FLOW_AUDIT_FIXTURE)).toBe(WORKED_EXAMPLE_JSON);
-    const parsed = JSON.parse(WORKED_EXAMPLE_JSON) as OrgAuditRecord;
-    expect(Object.keys(parsed)).toHaveLength(14);
-  });
-});
-
-describe('mode, posture, and query', () => {
+describe('posture and query', () => {
   it('full-access records are queryable by posture', () => {
     const sink = createMemorySink();
     const full = emitAudit(
       [sink],
-      { ...baseInput(), posture: 'full-access', mode: 'solo' },
+      { ...baseInput(), posture: 'full-access' },
       { now: () => 1_700_000_000_001 },
     );
     emitAudit([sink], baseInput(), { now: () => 1_700_000_000_002 });
-    expect(full.mode).toBe('solo');
     expect(queryAudits(sink.records, { posture: 'full-access' })).toEqual([
       full,
     ]);
-    expect(queryAudits(sink.records, { mode: 'orchestrator' })).toHaveLength(1);
   });
 
-  // Issue #159: an orchestration's ledger holds the manager's own rows
-  // (agent.session is the run) and each worker's rows (agent.session is the
-  // worker's `<orch>-<agent>`, agent.parent is the run). Filtering by the
-  // orchestrator session must return both halves of that run, and nothing
-  // from another run.
-  it('filters on the orchestrator session across manager and worker rows (issue #159)', () => {
+  it("filters on one session's rows", () => {
     const sink = createMemorySink('memory');
-    emitAudit(
-      [sink],
-      { ...baseInput(), agent: { session: 'orch-9', role: 'manager' } },
-      { now: () => 1_700_000_000_001 },
-    );
-    emitAudit(
-      [sink],
-      {
-        ...baseInput(),
-        agent: {
-          session: 'orch-9-worker-1',
-          role: 'implementer',
-          parent: 'orch-9',
-        },
-      },
-      { now: () => 1_700_000_000_002 },
-    );
-    emitAudit(
-      [sink],
-      {
-        ...baseInput(),
-        agent: {
-          session: 'orch-8-worker-1',
-          role: 'implementer',
-          parent: 'orch-8',
-        },
-      },
-      { now: () => 1_700_000_000_003 },
-    );
+    for (const [session, at] of [
+      ['s-1', 1],
+      ['s-2', 2],
+      ['s-1', 3],
+    ] as const) {
+      emitAudit(
+        [sink],
+        { ...baseInput(), agent: { session, role: 'root' } },
+        { now: () => 1_700_000_000_000 + at },
+      );
+    }
     expect(
-      queryAudits(sink.records, { session: 'orch-9' }).map(
-        (record) => record.agent.session,
+      queryAudits(sink.records, { session: 's-1' }).map(
+        (record) => record.when,
       ),
-    ).toEqual(['orch-9', 'orch-9-worker-1']);
+    ).toEqual(['2023-11-14T22:13:20.001Z', '2023-11-14T22:13:20.003Z']);
     expect(queryAudits(sink.records, { session: 'nobody' })).toEqual([]);
   });
 });
@@ -217,10 +181,10 @@ describe('sink failure', () => {
         throw new Error('syslog unreachable');
       },
     };
-    expect(() => appendAudit([failing], FLOW_AUDIT_FIXTURE)).toThrow(
+    expect(() => appendAudit([failing], EXAMPLE_AUDIT_RECORD)).toThrow(
       AuditSinkError,
     );
-    expect(() => appendAudit([], FLOW_AUDIT_FIXTURE)).toThrow(AuditSinkError);
+    expect(() => appendAudit([], EXAMPLE_AUDIT_RECORD)).toThrow(AuditSinkError);
   });
 
   it('syslog sinks order first', () => {
@@ -242,7 +206,7 @@ describe('sink failure', () => {
       kind: 'syslog' as const,
       write: (): unknown => Promise.resolve(),
     };
-    expect(() => appendAudit([asyncSink], FLOW_AUDIT_FIXTURE)).toThrow(
+    expect(() => appendAudit([asyncSink], EXAMPLE_AUDIT_RECORD)).toThrow(
       AuditSinkError,
     );
   });
@@ -257,7 +221,7 @@ describe('sink failure', () => {
       },
     };
     try {
-      appendAudit([leaking], FLOW_AUDIT_FIXTURE);
+      appendAudit([leaking], EXAMPLE_AUDIT_RECORD);
       expect.unreachable('leaky sink failure must throw');
     } catch (error) {
       expect(error).toBeInstanceOf(AuditSinkError);
@@ -268,7 +232,7 @@ describe('sink failure', () => {
   });
 });
 
-describe('case-transform bypass (fix cycle 2)', () => {
+describe('case-transform bypass', () => {
   it('refuses uppercase SK- material in the wire form', () => {
     const sink = createMemorySink();
     expect(() =>
@@ -306,7 +270,7 @@ describe('case-transform bypass (fix cycle 2)', () => {
         },
       };
       try {
-        appendAudit([leaking], FLOW_AUDIT_FIXTURE);
+        appendAudit([leaking], EXAMPLE_AUDIT_RECORD);
         expect.unreachable('leaky sink failure must throw');
       } catch (error) {
         expect(error).toBeInstanceOf(AuditSinkError);
@@ -328,7 +292,7 @@ describe('case-transform bypass (fix cycle 2)', () => {
       },
     };
     try {
-      appendAudit([leaking], FLOW_AUDIT_FIXTURE);
+      appendAudit([leaking], EXAMPLE_AUDIT_RECORD);
       expect.unreachable('leaky sink failure must throw');
     } catch (error) {
       expect(error).toBeInstanceOf(AuditSinkError);
@@ -348,7 +312,7 @@ describe('case-transform bypass (fix cycle 2)', () => {
       },
     };
     try {
-      appendAudit([leaking], FLOW_AUDIT_FIXTURE, [listed]);
+      appendAudit([leaking], EXAMPLE_AUDIT_RECORD, [listed]);
       expect.unreachable('leaky sink failure must throw');
     } catch (error) {
       expect(error).toBeInstanceOf(AuditSinkError);
@@ -386,8 +350,8 @@ describe('case-transform bypass (fix cycle 2)', () => {
   });
 });
 
-describe('nested unknown keys (fix cycle 2)', () => {
-  it('rejects agent.extra (exactly-14 holds below the top level)', () => {
+describe('nested unknown keys', () => {
+  it('rejects agent.extra (exactly-13 holds below the top level)', () => {
     const sink = createMemorySink();
     const input = baseInput();
     const smuggled = {
@@ -432,10 +396,10 @@ describe('nested unknown keys (fix cycle 2)', () => {
   });
 });
 
-// Syslog sink (issue #286; §58): one record → one RFC 5424 line over an
+// Syslog sink: one record → one RFC 5424 line over an
 // injectable transport. Faux-only: the fake transport captures lines, no
 // socket is ever opened.
-describe('syslog sink (issue #286)', () => {
+describe('syslog sink', () => {
   function fakeTransport(): SyslogTransport & { lines: string[] } {
     const lines: string[] = [];
     return {

@@ -7,8 +7,8 @@
 //   one-line shape the root catch-all prints (docs/cli/exit-codes.md);
 // - `debug` is silent unless KUBIC_DEBUG=1 (or a command's own
 //   `--debug`, where it declares one: run, workers);
-// - on a colour terminal the level prefix is a status mark (✕ ▲ ℹ ✓,
-//   issue #450); otherwise (a pipe, NO_COLOR, `--json`) it is the plain
+// - on a colour terminal the level prefix is a status mark (✕ ▲ ℹ ✓); otherwise
+//   (a pipe, NO_COLOR, `--json`) it is the plain
 //   `<level>:` word.
 
 import { formatWithOptions } from 'node:util';
@@ -54,7 +54,7 @@ function lineReporter(
   write: (chunk: string) => void,
   theme: CliTheme,
 ): ConsolaReporter {
-  // Issue #450: on a colour terminal the level is a status mark (the 06
+  // On a colour terminal the level is a status mark (the 06
   // glyphs); plain output keeps the `<level>:` words scripts grep for.
   const ui = theme.ui;
   const prefix = (type: LogObject['type']): string => {

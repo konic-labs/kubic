@@ -1,10 +1,10 @@
-// Solo root-lane boot on the pi-durable 1.0 harness (issue #394; §5.1,
-// §20.7). The lane opens `Harness` over the session handle's `Storage` and
-// runs the session's ROOT conversation; the Kubic extension (tools +
-// prompt section) lives in a per-process registry that is never stored.
+// Solo root-lane boot on the pi-durable 1.0 harness. The lane opens `Harness`
+// over the session handle's `Storage` and runs the session's ROOT conversation;
+// the Kubic extension (tools + prompt section) lives in a per-process registry
+// that is never stored.
 //
-// The other halves of EPIC K land in parallel: #392 owns `SessionHandle`,
-// #393 `kubicToolsToPiTools`, #397 `policyInterceptorHooks`, #399
+// The other halves of land in parallel: owns `SessionHandle`,
+// `kubicToolsToPiTools` `policyInterceptorHooks`
 // `soloCompactionSettings`. Until they merge, this file mocks those three
 // runtime seams (types are erased) and builds pi-durable objects directly,
 // exactly as the module contract prescribes.
@@ -60,7 +60,7 @@ vi.mock('../compaction.js', async (importOriginal) => {
   };
 });
 
-// A faux stand-in for #393's adapter: the same 15 registered names, and the
+// A faux stand-in adapter: the same 15 registered names, and the
 // two tools this file exercises (read sources the Kubic exec env; write
 // journals under the harness's own call id) prove the boot threaded the
 // Kubic tool context through.
@@ -129,7 +129,7 @@ vi.mock('./tools-adapter.js', async () => {
   };
 });
 
-// Model-id splitting (issue #218): the lane only boots 'provider/id' —
+// Model-id splitting: the lane only boots 'provider/id' —
 // the table pins what splits and what throws PromptCacheError, so a
 // misrouted id fails at parse time, never inside a run.
 describe('splitSoloModelId', () => {
@@ -165,7 +165,7 @@ afterEach(async () => {
   }
 });
 
-// The #392 handle, built directly (its type does not exist yet): storage,
+// The handle, built directly (its type does not exist yet): storage,
 // metadata and an idempotent release. The boot must treat release as the
 // caller's job and only close the harness.
 type TestSession = {
@@ -182,7 +182,7 @@ function handle(storage: Storage, id = 'sess-1'): TestSession {
     dir: `/tmp/kubic-solo-test/${id}`,
     storage,
     meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
-    // #395/D8.1: the boot adopts the storage, so the handle must expose it.
+    // The boot adopts the storage, so the handle must expose it.
     adopt: () => storage,
     release: vi.fn(async () => undefined),
   };
@@ -265,7 +265,7 @@ async function driveOneTurn(solo: SoloLane, content = 'say hi'): Promise<void> {
   expect(settled.status).toBe('done');
 }
 
-describe('solo boot on the durable harness (issue #394)', () => {
+describe('solo boot on the durable harness', () => {
   it('opens the harness over the session storage and the root conversation', async () => {
     const session = handle(new MemoryStorage());
     const { faux, models, big } = catalog();
@@ -320,7 +320,7 @@ describe('solo boot on the durable harness (issue #394)', () => {
     expect(prompts[0]).toContain('cwd: /fake');
   });
 
-  it('sends no new pi.system entry on a second turn (prompt cache prefix #33/#82)', async () => {
+  it('sends no new pi.system entry on a second turn (prompt cache prefix)', async () => {
     const solo = await boot();
     await driveOneTurn(solo, 'one');
     const afterFirst = await committedPrompts(solo);
@@ -427,7 +427,7 @@ describe('solo boot on the durable harness (issue #394)', () => {
     expect(session.release).not.toHaveBeenCalled();
   });
 
-  it('persists configure({ thinkingLevel }) across close and reopen (#225)', async () => {
+  it('persists configure({ thinkingLevel }) across close and reopen', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kubic-solo-thinking-'));
     DIRS.push(dir);
     const env = new FakeExecutionEnv({});
@@ -450,7 +450,7 @@ describe('solo boot on the durable harness (issue #394)', () => {
     );
     await first.close(BACKGROUND_CONTEXT);
 
-    // Issue #225 (§38.3) supersedes store-verbatim: the lane resolves the
+    // Supersedes store-verbatim: the lane resolves the
     // stored level against the effective model at boot, so a level the
     // model does not support is clamped with a named notice — never kept
     // silently, never dropped silently.

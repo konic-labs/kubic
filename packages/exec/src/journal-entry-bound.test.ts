@@ -1,4 +1,4 @@
-// Journal entry bound (issue #348; §42.4 "retention is bounded by size").
+// Journal entry bound ("retention is bounded by size").
 //
 // enforceRetention dropped oldest-first until the referenced bytes fit the
 // bound — including the newest entry, and therefore the entry `append` had
@@ -8,9 +8,6 @@
 // half of the hole is an entry whose own content cannot fit any journal: it
 // must be refused up front, with the target file untouched, instead of
 // landing a record that the same append's retention pass then deletes.
-//
-// RED: the drop loop is `kept.length > 0` and `append` never checks the
-// entry's own size.
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -51,7 +48,7 @@ function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
   };
 }
 
-describe('journal entry bound (issue #348)', () => {
+describe('journal entry bound', () => {
   it('refuses an entry whose own blobs exceed the bound, writing nothing', () => {
     const dir = tmpRoot();
     const store = new FileJournalStore(dir, { maxBytes: 1000 });
@@ -123,7 +120,7 @@ describe('journal entry bound (issue #348)', () => {
     const kept = store.entries();
     expect(kept.map((e) => e.path)).toEqual(['b.txt']);
     expect(pruned.entries).toBe(1);
-    // The bound is the whole store (issue #350): the kept line plus its blob
+    // The bound is the whole store: the kept line plus its blob
     // bytes, against a 10-byte bound.
     const keptEntry = kept[0] as JournalEntry;
     const keptBytes =

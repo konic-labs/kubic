@@ -1,6 +1,6 @@
-// Coarse lane-entry cells for the transcript (issue #88).
-// §15.2 replicated lane snapshots: the TUI renders committed entries as
-// coarse cells — no token deltas (Pi keeps those; §15 routes no message
+// Coarse lane-entry cells for the transcript.
+// Replicated lane snapshots: the TUI renders committed entries as
+// coarse cells — no token deltas (Pi keeps those; routes no message
 // events, so the transcript is built from the lane's own entries). Pure:
 // entries in, cells out, no I/O.
 //
@@ -27,7 +27,7 @@ export interface LaneEntryLike {
   readonly seq?: unknown;
   readonly type?: unknown;
   readonly message?: unknown;
-  // Issue #317: a `compaction` cell carries why it happened (auto / manual /
+  // A `compaction` cell carries why it happened (auto / manual /
   // overflow), rendered beside the marker.
   readonly reason?: unknown;
 }
@@ -55,7 +55,7 @@ function textOf(part: unknown): string | undefined {
   return typeof part.text === 'string' ? part.text : undefined;
 }
 
-// Issue #457: a reasoning part (Pi ThinkingContent). A redacted one carries
+// A reasoning part (Pi ThinkingContent). A redacted one carries
 // only an opaque signature, so it has nothing to show.
 function thinkingOf(part: unknown): string | undefined {
   if (!isRecord(part) || part.type !== 'thinking') return undefined;
@@ -111,13 +111,13 @@ export function summarizeToolArguments(args: unknown): string {
   return `${oneLine.slice(0, TOOL_DETAIL_MAX_CHARS - 1)}…`;
 }
 
-// The one-line OUTCOME of a finished tool call (issue #345; §18): the test
-// summary the operator reads first (`17 passed`), else a non-zero shell exit
-// code. Only the shell tool has either — a `read` of a file whose text
-// happens to contain `17 passed` must not turn into a test report (review
-// finding, #345) — so the caller names the tool and anything else yields no
-// outcome. Both fields come from untrusted tool output, so the returned text
-// is sanitized and newline-collapsed before it reaches the tree.
+// The one-line OUTCOME of a finished tool call: the test summary the operator
+// reads first (`17 passed`), else a non-zero shell exit code. Only the shell
+// tool has either — a `read` of a file whose text happens to contain `17
+// passed` must not turn into a test report — so the caller names the tool and
+// anything else yields no outcome. Both fields come from untrusted tool output,
+// so the returned text is sanitized and newline-collapsed before it reaches the
+// tree.
 export const TOOL_OUTCOME_MAX_CHARS = 60;
 
 // The one shell tool Kubic registers (`packages/worker/src/ops/bash.ts`);
@@ -234,14 +234,14 @@ function truncate(text: string): string {
   return `${bounded.slice(0, TOOL_RESULT_MAX_CHARS - 1)}…`;
 }
 
-// Lane text is untrusted terminal input (issue #88, reviewer finding 1):
+// Lane text is untrusted terminal input (reviewer finding 1):
 // assistant text and tool output can contain ESC-prefixed control sequences
 // ('\x1b[2J' clears the screen, '\x1b[31m' repaints colour, '\x1b[<n>A'
 // moves the cursor over the status bar) and C0 controls like BEL. Passing
 // them through verbatim lets a model or a tool drive the operator's
 // terminal.
 //
-// Issue #299: the complete ECMA-48 sequences are stripped, not just the ESC
+// The complete ECMA-48 sequences are stripped, not just the ESC
 // byte. A tool that colours its output without a TTY (FORCE_COLOR test
 // runners, git color.ui=always, npm progress bars) emits real escapes, and
 // deleting only the ESC left the parameter bytes behind as visible noise
@@ -294,7 +294,7 @@ function stripControlSequences(text: string): string {
 
 // Tabs are expanded to 8-column stops so width math and truncation count
 // the columns a terminal would actually draw. The stop is measured with
-// `visibleWidth` (issue #299): a CJK glyph occupies two columns, so
+// `visibleWidth`: a CJK glyph occupies two columns, so
 // counting UTF-16 units misaligned every line after it.
 export const TAB_STOP = 8;
 
@@ -304,7 +304,7 @@ function expandTabs(text: string): string {
     .split('\n')
     .map((line) => {
       let out = '';
-      // Review #299: measure only the run since the LAST tab. A grapheme
+      // Measure only the run since the LAST tab. A grapheme
       // cannot span a tab, so the running column stays exact while the pass
       // is O(line) — calling `visibleWidth` on the whole accumulated line
       // per tab made a tab-heavy line (a generated table, a `printf` run)
@@ -341,7 +341,7 @@ function compactionSummaryOf(text: string): string {
     .trim();
 }
 
-// Issue #456: the display record a file change put in the result's details.
+// The display record a file change put in the result's details.
 // Its text is file content — untrusted like every other lane string — so
 // each row is sanitized after its `+12 ` / `-12 ` / ` 12 ` prefix (tabs then
 // expand from the content's own first column).
@@ -396,7 +396,7 @@ function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
   const id = typeof entry.id === 'string' ? entry.id : '';
   if (id === '') return [];
   if (entry.type === 'compaction' || entry.type === 'reset') {
-    // Issue #317: a compaction summary (and a reset handoff) is part of the
+    // A compaction summary (and a reset handoff) is part of the
     // session's story — the transcript shows it instead of dropping it. The
     // text is untrusted like any other lane text, so it is sanitized here.
     if (!isRecord(entry.message)) return [];
@@ -443,14 +443,14 @@ function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
     if (markdown === '') return;
     cells.push({ id: `${id}:${key}`, kind, markdown, ...extra });
   };
-  // Issue #455: Pi stamps every message; the prompt block shows the time.
+  // Pi stamps every message; the prompt block shows the time.
   const stamp =
     typeof entry.message.timestamp === 'number' &&
     Number.isFinite(entry.message.timestamp)
       ? { timestamp: entry.message.timestamp }
       : {};
   if (role === ROLE_USER) {
-    // Issue #338: an attached image is part of the prompt, not text. A
+    // An attached image is part of the prompt, not text. A
     // prompt cell with images and no text (an image-only submit) still
     // renders, so the attachment is never invisible.
     const images = parts
@@ -543,7 +543,7 @@ function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
   return cells;
 }
 
-// Issue #340: the committed user prompts of a lane's entries, newest last —
+// The committed user prompts of a lane's entries, newest last —
 // the text a resumed session's editor history is seeded with. A compaction
 // summary (role user inside a `compaction` entry) and an image-only prompt
 // are not prompts to recall.
@@ -563,7 +563,7 @@ export function userPromptsOf(entries: ReadonlyArray<LaneEntryLike>): string[] {
   return prompts;
 }
 
-// Issue #332: one fork point of the `/tree` picker — an earlier prompt
+// One fork point of the `/tree` picker — an earlier prompt
 // (`entryId`) and the entry just before it (`at`), which is where the fork
 // cuts so the operator can retry that prompt.
 export interface ForkPoint {

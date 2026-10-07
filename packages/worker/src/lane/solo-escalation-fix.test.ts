@@ -1,8 +1,7 @@
-// RED-first regression tests for issue #82 review fix cycle 1, ported to
-// the durable harness in #394: (a) escalate ordering, (b) same-model no-op.
-// The escalation now applies through
-// `conversation.configure({ model })`; the reserved re-clamp moved to the
-// live CompactionPolicy getter (#399).
+// Escalation regression tests on the durable harness: (a) escalate ordering,
+// (b) same-model no-op. The escalation applies through
+// `conversation.configure({ model })`; the reserve re-clamp lives in the live
+// CompactionPolicy getter.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import type { EscalationLadder } from '../model-select.js';
@@ -82,7 +81,7 @@ function handle(id = 'sess-1'): TestSession {
     dir: `/tmp/kubic-solo-escalation/${id}`,
     storage,
     meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
-    // #395/D8.1: the boot adopts the storage, so the handle must expose it.
+    // The boot adopts the storage, so the handle must expose it.
     adopt: () => storage,
     release: vi.fn(async () => undefined),
   };
@@ -123,7 +122,7 @@ function liveModelId(solo: SoloLane): Promise<string | undefined> {
     );
 }
 
-describe('escalateSoloModel validates before recording (issue #82 fix a)', () => {
+describe('escalateSoloModel validates before recording', () => {
   it('failing configure leaves ladder budget, affinity, and sink untouched', async () => {
     const { booted, ladder } = await bootPinned();
     const sink = vi.fn();
@@ -165,7 +164,7 @@ describe('escalateSoloModel validates before recording (issue #82 fix a)', () =>
   });
 });
 
-describe('escalateSoloModel rejects same-model no-ops (issue #82 fix b)', () => {
+describe('escalateSoloModel rejects same-model no-ops', () => {
   it('from==to is refused without recording or emitting', async () => {
     const { booted, ladder } = await bootPinned();
     const sink = vi.fn();
@@ -185,7 +184,7 @@ describe('escalateSoloModel rejects same-model no-ops (issue #82 fix b)', () => 
   });
 });
 
-describe('escalateSoloModel switches the live conversation (issue #82 rule 6)', () => {
+describe('escalateSoloModel switches the live conversation', () => {
   it('fires exactly once: event recorded, model switched, second attempt refused', async () => {
     const { booted, ladder } = await bootPinned();
     const sink = vi.fn();

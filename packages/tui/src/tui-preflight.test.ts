@@ -1,6 +1,6 @@
-// The first screen in the app (EPIC N, issue #462; docs/ui 05-A … E): the
-// preflight at the top of an empty transcript, gone after the first prompt,
-// never on a session with history, and `?` listing every key.
+// The first screen in the app: the preflight at the top of an empty
+// transcript, gone after the first prompt, never on a session with history,
+// and `?` listing every key.
 import { describe, expect, it } from 'vitest';
 import { createApprovalSurface } from './approval-surface.js';
 import type { ApprovalOverlayTui } from './approval-view.js';
@@ -12,7 +12,6 @@ function setup(extra: Partial<TuiAppSeed> = {}, rows = 40) {
   const app = createTuiApp({
     sessionId: 'sess-462',
     model: 'anthropic/sonnet',
-    mode: 'solo',
     approvalsSkipped: false,
     approvalSurface: createApprovalSurface({ armingMs: 0 }),
     cwdLabel: '~/proj',
@@ -21,10 +20,8 @@ function setup(extra: Partial<TuiAppSeed> = {}, rows = 40) {
       keySource: (provider) =>
         provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : undefined,
       trust: 'loaded',
-      isolation: (mode) =>
-        mode === 'solo'
-          ? "runs with your user's authority; approvals are the control"
-          : 'each worker runs in its own git worktree',
+      isolation: () =>
+        "runs with your user's authority; approvals are the control",
     },
     ...extra,
   });
@@ -54,7 +51,7 @@ function setup(extra: Partial<TuiAppSeed> = {}, rows = 40) {
 const doc = (app: ReturnType<typeof setup>['app']): string =>
   app.render(120).join('\n');
 
-describe('the first screen (issue #462)', () => {
+describe('the first screen', () => {
   it('opens on the preflight', () => {
     const { app } = setup();
     const frame = doc(app);
@@ -113,7 +110,7 @@ describe('the first screen (issue #462)', () => {
       {
         keys: createKeyRegistry({
           'panel.diff': ['ctrl+g'],
-          'session.mode': [],
+          'panel.journal': [],
         }),
       },
       80,

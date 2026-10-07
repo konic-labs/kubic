@@ -1,5 +1,5 @@
-// Settlement mapping (issue #11 slice C; ported to pi-durable in #395):
-// submitted settlements → Kubic §52 codes and #7 result vocabulary.
+// Settlement mapping:
+// submitted settlements → Kubic failure codes and result vocabulary.
 import { describe, expect, it } from 'vitest';
 import type { SettledSubmissionRecord } from '../pi-boundary.js';
 import {
@@ -25,7 +25,7 @@ function settled(
   } as unknown as SettledSubmissionRecord;
 }
 
-describe('settlement mapping (issue #11, slice C)', () => {
+describe('settlement mapping', () => {
   it('maps completed to a completed result without error', () => {
     expect(settleTerminalStatus('completed')).toEqual({ status: 'completed' });
   });
@@ -50,9 +50,6 @@ describe('settlement mapping (issue #11, slice C)', () => {
   });
 
   it('classifies harness error codes by keyword', () => {
-    expect(classifyHarnessError('budget_exhausted', 'no money').kind).toBe(
-      'budget',
-    );
     expect(classifyHarnessError('model_unavailable', 'gone').kind).toBe(
       'model',
     );
@@ -72,7 +69,7 @@ describe('settlement mapping (issue #11, slice C)', () => {
   });
 });
 
-describe('settled pi-durable submissions (#395)', () => {
+describe('settled pi-durable submissions', () => {
   it('maps a done submission to completed', () => {
     expect(settleSubmission(settled({ status: 'done' }))).toEqual({
       status: 'completed',
@@ -81,7 +78,7 @@ describe('settled pi-durable submissions (#395)', () => {
     expect(laneErrorOf(settled({ status: 'done' }))).toBeUndefined();
   });
 
-  it('maps model_error to the §52 model code with the harness detail as message', () => {
+  it('maps model_error to the model code with the harness detail as message', () => {
     const record = settled({
       status: 'unanswered',
       reason: 'model_error',
@@ -120,20 +117,20 @@ describe('settled pi-durable submissions (#395)', () => {
     expect(failure.message).toBe('lane settled no_model');
   });
 
-  it('maps an aborted settlement to cancelled with no error (D6.1)', () => {
+  it('maps an aborted settlement to cancelled with no error', () => {
     const record = settled({ status: 'unanswered', reason: 'aborted' });
     expect(settleSubmission(record)).toEqual({ status: 'cancelled' });
     expect(laneStatusOf(record)).toBe('aborted');
     expect(laneErrorOf(record)).toBeUndefined();
   });
 
-  it('maps a faulted settlement to the §52 process code', () => {
+  it('maps a faulted settlement to the process code', () => {
     const failure = classifySubmissionFailure('faulted', 'task bug');
     expect(failure.code).toBe('process_crashed');
     expect(failure.error.kind).toBe('process');
   });
 
-  it('classifies a thrown provider error as its §52 code', () => {
+  it('classifies a thrown provider error as its failure code', () => {
     const failure = classifyThrownError(
       Object.assign(new Error('fetch failed'), { name: 'FetchError' }),
     );

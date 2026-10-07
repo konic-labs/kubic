@@ -24,7 +24,7 @@ vi.mock('@clack/prompts', () => {
   };
 });
 
-describe('exit codes (§78, docs/cli/exit-codes.md)', () => {
+describe('exit codes (docs/cli/exit-codes.md)', () => {
   it('maps help and version to success', () => {
     expect(exitCodeForParseError('commander.helpDisplayed', 0)).toBe(EXIT_OK);
     expect(exitCodeForParseError('commander.version', 0)).toBe(EXIT_OK);
@@ -150,7 +150,7 @@ describe('logger', () => {
     expect(on.chunks).toEqual(['debug: shown\n']);
   });
 
-  it('uses status marks with a coloured theme (issue #450)', () => {
+  it('uses status marks with a coloured theme', () => {
     const chunks: string[] = [];
     const theme = createCliTheme('truecolor');
     const logger = createLogger({
@@ -238,7 +238,7 @@ describe('table', () => {
     ).toBe('  N\n  1\n100');
   });
 
-  it('renders the borderless kit table when fancy (issue #445)', () => {
+  it('renders the borderless kit table when fancy', () => {
     const out = renderTable(rows, columns, {
       fancy: true,
       theme: createCliTheme('none'),

@@ -1,7 +1,7 @@
-// Credential-path detector (issue #275; §41.1, §40 `credentials` class).
+// Credential-path detector (`credentials` class).
 //
-// The §40 permission classes include `credentials`, whose installed default
-// is `none`, and §41.1 lists "credential access beyond what the role
+// The permission classes include `credentials`, whose installed default
+// is `none`, and lists "credential access beyond what the role
 // declares" as an approval trigger. Until this module there was no detector,
 // so the class was informational: `cat ~/.aws/credentials` and a read of a
 // committed `.env` ran with no approval. The home paths in a bash command
@@ -9,7 +9,7 @@
 // workspace (CONFINED_TOOLS, worker/src/lane/interceptors.ts) — and
 // in-workspace credential files are exposed to both the shell and the tools.
 //
-// Scope and honesty (§59.1): this is a LEXICAL DETECTOR, not enforcement.
+// Scope and honesty: this is a LEXICAL DETECTOR, not enforcement.
 // It pattern-matches the listed locations in a bash command and in the
 // read-family tool paths; a raised capability takes the normal ask path
 // (denied headless, answered by the user in the TUI) and lands in the audit
@@ -34,7 +34,7 @@ const HOME_PREFIX = String.raw`(?:~|\$HOME|\$\{HOME(?::?-[^}]*)?\}|\/Users\/[^\/
 // original is the same secret). `~/.ssh` is key material by default: every
 // child matches except the known-public files (`known_hosts*`,
 // `authorized_keys*`, `*.pub`) — a common key name like `~/.ssh/github` and
-// the `~/.ssh/*` glob used to be silent misses (issue #275 review). `config`
+// the `~/.ssh/*` glob used to be silent misses. `config`
 // stays in, as the issue's pattern list names it; an over-trigger is an ask,
 // never a grant.
 const HOME_CREDENTIAL_PATHS = [
@@ -53,9 +53,9 @@ const HOME_CREDENTIAL_PATHS = [
 
 // Token start: the prefix must not be glued to a longer word. The `i` flag
 // folds case, because the default macOS/Windows volumes open `.ENV` and
-// `~/.AWS/credentials` exactly like their lower-case spellings (issue #275
-// review) — case-sensitive matching on a case-insensitive filesystem would
-// be a silent miss, not a conservative one.
+// `~/.AWS/credentials` exactly like their lower-case spellings — case-sensitive
+// matching on a case-insensitive filesystem would be a silent miss, not a
+// conservative one.
 const HOME_CREDENTIAL = new RegExp(
   String.raw`(?:^|[\s"'=(])` +
     HOME_PREFIX +

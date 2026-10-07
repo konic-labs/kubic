@@ -1,4 +1,4 @@
-// models.json custom/local providers (issue #20, slice A; §37, §38.5).
+// models.json custom/local providers.
 // Kubic parses + validates models.json; Pi's createProvider builds the
 // provider (streaming, auth, cost stay in Pi's model layer — the registry
 // is generated, never hand-edited). Only OpenAI-compatible APIs are
@@ -32,13 +32,13 @@ export interface CustomModelSpec {
   outputCost?: number;
   cacheReadCost?: number;
   cacheWriteCost?: number;
-  /** Input modalities (§37.2); default text only. */
+  /** Input modalities; default text only. */
   input?: ('text' | 'image')[];
   reasoning?: boolean;
   /** Request-body sampling defaults Pi applies to every request. */
   samplingParams?: SamplingParams;
   /**
-   * Sampling overrides per thinking level (pi-ai 1.0.2; issue #402), merged
+   * Sampling overrides per thinking level (pi-ai 1.0.2), merged
    * over `samplingParams` for the effective level at request time.
    */
   samplingParamsByThinkingLevel?: SamplingParamsByThinkingLevel;
@@ -61,19 +61,19 @@ export interface CustomProviderSpec {
   apiKeyEnv?: string;
   /**
    * The key: a literal (`"not-needed"`), an allowlisted `$VAR`, or a
-   * `!command` (issue #224) — parsed at load, resolved per request.
+   * `!command` — parsed at load, resolved per request.
    * Escaped `\$` / `\!` stay literal.
    */
   apiKey?: string;
   /**
-   * Per-provider headers. Literal values ride statically; `$VAR`
-   * (allowlisted) and `!command` values are parsed into `headerRefs`
-   * (issue #224) and resolve per request instead.
+   * Per-provider headers. Literal values ride statically; `$VAR` (allowlisted)
+   * and `!command` values are parsed into `headerRefs` and resolve per request
+   * instead.
    */
   headers?: Record<string, string>;
-  /** Parsed `apiKey` ref (issue #224); absent for apiKeyEnv providers. */
+  /** Parsed `apiKey` ref; absent for apiKeyEnv providers. */
   apiKeyRef?: SecretRef;
-  /** Parsed header refs by name (issue #224); literals stay in `headers`. */
+  /** Parsed header refs by name; literals stay in `headers`. */
   headerRefs?: Record<string, SecretRef>;
   api: CustomApi;
   models: CustomModelSpec[];
@@ -88,7 +88,7 @@ export class ModelsJsonError extends Error {
 
 const PROVIDER_ID = /^[a-z0-9][a-z0-9-]*$/;
 
-// Issue #322: the variables a models.json may name as its key. The file
+// The variables a models.json may name as its key. The file
 // decides which env value is sent as a bearer token, so it may only name a
 // KUBIC_-namespaced variable or an `*_API_KEY` one — never an arbitrary
 // secret such as AWS_SECRET_ACCESS_KEY or GITHUB_TOKEN.
@@ -166,7 +166,7 @@ const MODALITIES = ['text', 'image'] as const;
 type Modality = (typeof MODALITIES)[number];
 
 // Costs (USD per 1M tokens): the flat `inputCost`/`outputCost` keys or the
-// §37.2 `cost` object `{input, output, cacheRead, cacheWrite}` — one place
+// `cost` object `{input, output, cacheRead, cacheWrite}` — one place
 // per field, never both.
 function parseCosts(
   raw: Record<string, unknown>,
@@ -234,7 +234,7 @@ function parseInput(
   return value as Modality[];
 }
 
-// Per-thinking-level sampling overrides (issue #402; pi-ai 1.0.2): a plain
+// Per-thinking-level sampling overrides (pi-ai 1.0.2): a plain
 // object for `samplingParams`, an object keyed by thinking level for
 // `samplingParamsByThinkingLevel`. Values are provider request fields Pi
 // assigns into the body verbatim (nested values are legitimate), so only the
@@ -279,7 +279,7 @@ function parseModel(raw: unknown, providerId: string): CustomModelSpec {
   const what = `model '${id}'`;
   const contextWindow = optPositiveInt(raw, 'contextWindow', what);
   const maxTokens = optPositiveInt(raw, 'maxTokens', what);
-  // §27.1: the output budget must leave room for input inside the window —
+  // The output budget must leave room for input inside the window —
   // judged on the effective values, so a small declared window with the
   // default maxTokens is refused too (never max_tokens >= the window).
   const window = contextWindow ?? DEFAULT_CONTEXT_WINDOW;
@@ -358,7 +358,7 @@ function parseProvider(raw: unknown): CustomProviderSpec {
       `provider '${id}': apiKeyEnv '${apiKeyEnv}' is not an allowed key variable (use a KUBIC_* name or a *_API_KEY name)`,
     );
   }
-  // The key (issue #224): a literal (`"not-needed"`), an allowlisted
+  // The key: a literal (`"not-needed"`), an allowlisted
   // `$VAR`, or a `!command` — parsed at load through the shared table,
   // resolved per request. Escaped `\$` / `\!` stay literal and never
   // reach the resolver.
@@ -394,7 +394,7 @@ function parseProvider(raw: unknown): CustomProviderSpec {
   // request). Keys and values must both be non-empty strings — a malformed
   // map is a named refusal, never a silent drop. Literal values ride
   // statically; `$VAR` (allowlisted) and `!command` values are parsed into
-  // headerRefs and resolve per request (issue #224) — never verbatim.
+  // headerRefs and resolve per request — never verbatim.
   let headers: Record<string, string> | undefined;
   let headerRefs: Record<string, SecretRef> | undefined;
   if (raw.headers !== undefined) {
@@ -450,7 +450,7 @@ function parseProvider(raw: unknown): CustomProviderSpec {
   };
 }
 
-// `providers` is the §38.5 object keyed by provider id, or (alias) an array
+// `providers` is the object keyed by provider id, or (alias) an array
 // of entries carrying their own `id`. In the object form an entry's own
 // `id`, when present, must equal its key.
 function providerEntries(providers: unknown): unknown[] {
@@ -499,7 +499,7 @@ export function parseModelsJson(raw: unknown): CustomProviderSpec[] {
   return specs;
 }
 
-// An array-form local example (the verbatim §38.5 object form is pinned in
+// An array-form local example (the verbatim object form is pinned in
 // models-config-schema.test.ts). Local-first,
 // zero paid tokens — the CI-safe provider.
 export const LOCAL_MODELS_EXAMPLE = {
@@ -523,11 +523,11 @@ export const LOCAL_MODELS_EXAMPLE = {
   ],
 } as const;
 
-// One request-time use of a models.json provider key (issue #359, §36.1):
+// One request-time use of a models.json provider key:
 // the host's resolver reads the named env var through `readEnv` (Pi's auth
 // context) and returns the key, auditing the use. It never sees a stored
 // credential — those resolve through Pi as before.
-// Request-time key material for one custom provider (issue #224): either
+// Request-time key material for one custom provider: either
 // the legacy named env var or a parsed secret ref. The host's resolver
 // reads the named env var through `readEnv` (Pi's auth context) and
 // returns the key, auditing the use; a ref use runs the host's secret
@@ -549,7 +549,7 @@ export interface RegisterCustomProvidersOptions {
   resolveApiKey?: (use: ApiKeyUse) => Promise<string | undefined>;
 }
 
-// Issue #221/#322: a custom provider may not take a built-in provider's id.
+// A custom provider may not take a built-in provider's id.
 // `setProvider` would silently replace the built-in (its baseUrl and auth),
 // so the collision is refused by name instead — trusted file or not.
 export function refuseBuiltinCollisions(
@@ -565,7 +565,7 @@ export function refuseBuiltinCollisions(
   }
 }
 
-// A models.json literal key (§38.5): always configured, same shape as Pi's
+// A models.json literal key: always configured, same shape as Pi's
 // env-key auth so the provider's stream receives it as the api key.
 function literalApiKeyAuth(
   name: string,
@@ -580,7 +580,7 @@ function literalApiKeyAuth(
   };
 }
 
-// One provider's key material at registration (issue #224): a literal
+// One provider's key material at registration: a literal
 // value, a legacy env-var name, or a parsed secret ref. A literal never
 // reaches the host resolver — it is already in the catalog.
 type KeyPart =
@@ -628,7 +628,7 @@ async function headersAvailable(
   return true;
 }
 
-// The no-hook resolver (issue #224): env refs read env-direct through
+// The no-hook resolver: env refs read env-direct through
 // Pi's auth context, literals serve direct, and a `!command` refuses by
 // name — the resolve path has no runner of its own, so executing one here
 // would be a silent drop of the audit + sandboxing the host runner owns.
@@ -744,7 +744,7 @@ export function registerCustomProviders(
   const names: string[] = [];
   for (const spec of specs) {
     const key = spec.apiKeyEnv ?? 'KUBIC_API_KEY';
-    // Api-key precedence (issue #224): a literal models.json key with no
+    // Api-key precedence: a literal models.json key with no
     // header refs wins outright; otherwise the provider goes through the
     // request-time auth — the host's resolver when given, env-direct with
     // named command refusals when not — and a legacy apiKeyEnv pair keeps
@@ -786,7 +786,7 @@ export function registerCustomProviders(
         baseUrl: spec.baseUrl,
         reasoning: m.reasoning ?? false,
         input: m.input ?? (['text'] as ('text' | 'image')[]),
-        // Issue #402: the model-level sampling defaults and their
+        // The model-level sampling defaults and their
         // per-thinking-level overrides reach Pi's request builder, which
         // merges the effective level over the defaults.
         ...(m.samplingParams === undefined
@@ -801,7 +801,7 @@ export function registerCustomProviders(
         // path merges model.headers into every request (gateway routing
         // headers like opencode-go's x-opencode-session must reach the wire).
         ...(spec.headers === undefined ? {} : { headers: spec.headers }),
-        // §39: cache reads and writes are priced separately (issue #223).
+        // Cache reads and writes are priced separately.
         cost: {
           input: m.inputCost ?? 0,
           output: m.outputCost ?? 0,

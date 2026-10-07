@@ -35,16 +35,16 @@ function completeInput(
       agentId: 'agent-1',
       pid: 4242,
       generation: 3,
-      worktree: '/repo/.kubic/wt/agent-1',
+      worktree: '/repo',
       model: 'acme/m1',
     },
     environment: {
       capturedFrom: 'used',
-      cwd: '/repo/.kubic/wt/agent-1',
+      cwd: '/repo',
       env: {},
     },
     worktree: {
-      path: '/repo/.kubic/wt/agent-1',
+      path: '/repo',
       baseRevision: 'abc123',
       branch: 'kubic/agent-1',
     },
@@ -72,7 +72,7 @@ function completeInput(
   };
 }
 
-describe('trajectory export fail-closed (issue #51)', () => {
+describe('trajectory export fail-closed', () => {
   it('blocks export when provenance is missing (non-zero, machine-readable)', () => {
     const input = completeInput();
     const { provenance: _dropped, ...rest } = input;
@@ -129,13 +129,13 @@ describe('trajectory export fail-closed (issue #51)', () => {
   });
 });
 
-describe('trajectory golden fixture (issue #51, §46)', () => {
-  it('emits every §46 field with the recorded values', () => {
+describe('trajectory golden fixture', () => {
+  it('emits every trajectory field with the recorded values', () => {
     const exported = buildTrajectoryExport(
       completeInput({
         transfer: {
           taskId: 'task-1',
-          worktree: '/repo/.kubic/wt/agent-1',
+          worktree: '/repo',
           grantRef: 'worktree:bash,read',
         },
         actions: [
@@ -155,13 +155,6 @@ describe('trajectory golden fixture (issue #51, §46)', () => {
           filesChanged: ['src/a.ts'],
           files: [{ path: 'src/a.ts', hunks: ['@@ -1 +1 @@\n-a\n+b'] }],
         },
-        // 1.2 (issue #285): the golden run was budgeted — the block
-        // rides the export with its limits, measured usage and breach.
-        budget: {
-          limits: { maxToolCalls: 10, maxCostUsd: 0.5 },
-          usage: { toolCalls: 11, costUsd: 0.51 },
-          exhausted: { limit: 'toolCalls', used: 11, max: 10 },
-        },
       }),
     );
     expect(Object.keys(exported).sort()).toEqual(
@@ -176,7 +169,7 @@ describe('trajectory golden fixture (issue #51, §46)', () => {
       parentSessionId: null,
       role: 'writer',
     });
-    // 1.1 (issue #329): every new field is present on a write, with
+    // 1.1: every new field is present on a write, with
     // explicit null/[] meaning "not recorded" — never an invented value.
     expect(exported.state.operations).toEqual([]);
     expect(exported.state.memos).toEqual([]);
@@ -189,13 +182,6 @@ describe('trajectory golden fixture (issue #51, §46)', () => {
       by: 'user',
       requested: null,
       justification: null,
-    });
-    // 1.2 (issue #285): the golden run's budget block, limits +
-    // measured usage + the breach that ended it.
-    expect(exported.budget).toEqual({
-      limits: { maxToolCalls: 10, maxCostUsd: 0.5 },
-      usage: { toolCalls: 11, costUsd: 0.51 },
-      exhausted: { limit: 'toolCalls', used: 11, max: 10 },
     });
     expect(exported.model.provider).toBe('acme');
     expect(exported.model.escalations).toEqual([]);
@@ -222,7 +208,7 @@ describe('trajectory golden fixture (issue #51, §46)', () => {
     expect(exported.result.status).toBe('completed');
     expect(exported.eval).toEqual({ suite: null, caseId: null, labels: {} });
     // Golden output re-parses with no shim — this is the record
-    // replay --diff-against (#52) and eval (#53) consume directly.
+    // replay --diff-against and eval consume directly.
     const revived = parseTrajectoryExport(
       JSON.parse(JSON.stringify(exported)) as unknown,
     );
@@ -233,8 +219,8 @@ describe('trajectory golden fixture (issue #51, §46)', () => {
   });
 });
 
-describe('trajectory schema 1.1 (issue #329)', () => {
-  it('carries the additive §46 fields and round-trips through the parser', () => {
+describe('trajectory schema 1.1', () => {
+  it('carries the additive trajectory fields and round-trips through the parser', () => {
     const exported = buildTrajectoryExport(
       completeInput({
         identity: {
@@ -333,7 +319,7 @@ describe('trajectory schema 1.1 (issue #329)', () => {
   });
 });
 
-describe('trajectory observations + failures + eval slot (issue #51)', () => {
+describe('trajectory observations + failures + eval slot', () => {
   it('truncates long observations but keeps the byte count', () => {
     const big = 'x'.repeat(MAX_OBSERVATION_BYTES + 100);
     const exported = buildTrajectoryExport(
@@ -352,12 +338,11 @@ describe('trajectory observations + failures + eval slot (issue #51)', () => {
     expect(observation?.output).toBe(big.slice(0, MAX_OBSERVATION_BYTES));
   });
 
-  it('keeps the §52 failure taxonomy in sync with the worker owner', () => {
+  it('keeps the failure taxonomy in sync with the worker owner', () => {
     expect([...TRAJECTORY_FAILURE_CODES].sort()).toEqual(
       [
         'approval_denied',
         'approval_timed_out',
-        'budget_exhausted',
         'context_overflow',
         'context_polluted',
         'model_failed',
@@ -366,6 +351,7 @@ describe('trajectory observations + failures + eval slot (issue #51)', () => {
         'process_spawn_failed',
         'provider_auth',
         'provider_transient',
+        'run_limit',
         'tool_failed',
         'tool_invalid_args',
         'tool_timeout',
@@ -375,7 +361,7 @@ describe('trajectory observations + failures + eval slot (issue #51)', () => {
     );
   });
 
-  it('requires a §52 category on every non-completed result', () => {
+  it('requires a failure category on every non-completed result', () => {
     try {
       buildTrajectoryExport(
         completeInput({
@@ -398,18 +384,18 @@ describe('trajectory observations + failures + eval slot (issue #51)', () => {
     );
   });
 
-  it('records the §52 category on failures for replay/debug', () => {
+  it('records the failure category on failures for replay/debug', () => {
     const exported = buildTrajectoryExport(
       completeInput({
         result: {
-          status: 'budget_exhausted',
-          summary: 'out of tokens',
-          failureCategory: 'budget_exhausted',
-          error: { kind: 'budget', message: 'out of tokens' },
+          status: 'turn_limit',
+          summary: 'turn limit reached after 3 turns',
+          failureCategory: 'run_limit',
+          error: { kind: 'limit', message: 'turn limit reached after 3 turns' },
         },
       }),
     );
-    expect(exported.result.failureCategory).toBe('budget_exhausted');
+    expect(exported.result.failureCategory).toBe('run_limit');
   });
 
   it('rejects a completed result carrying an error', () => {
@@ -431,7 +417,7 @@ describe('trajectory observations + failures + eval slot (issue #51)', () => {
     throw new Error('contradictory result exported — expected block');
   });
 
-  it('carries the eval slot through for issue #53 with no shim', () => {
+  it('carries the eval slot through with no shim', () => {
     const exported = buildTrajectoryExport(
       completeInput({
         eval: { suite: 'bench-1', caseId: 'case-7', labels: { lang: 'ts' } },
@@ -448,7 +434,7 @@ describe('trajectory observations + failures + eval slot (issue #51)', () => {
   });
 });
 
-describe('trajectory review fixes (round 2)', () => {
+describe('trajectory export regressions', () => {
   it('truncates multi-byte output on a character boundary — byte cap holds exactly, no U+FFFD', () => {
     const cjk = 'あ'.repeat(5000);
     expect(Buffer.byteLength(cjk, 'utf8')).toBe(15_000);
@@ -541,7 +527,7 @@ describe('trajectory review fixes (round 2)', () => {
     });
   });
 
-  it('defaults usage.byModel to an empty record when the caller omits it (issue #331)', () => {
+  it('defaults usage.byModel to an empty record when the caller omits it', () => {
     const exported = buildTrajectoryExport(
       completeInput({
         // A runtime caller that never built the per-model rollup: the
@@ -564,17 +550,15 @@ describe('trajectory review fixes (round 2)', () => {
     expect(revived.usage.byModel).toEqual({});
   });
 
-  // Issue #359 replaces the old "records the used env VERBATIM" premise: the
-  // spawn env DOES carry role grants (KUBIC_ROLE_*), so the exporter redacts
-  // every secret-classified key with the classifier the spawn path uses. The
-  // key stays (the run saw it); its value never leaves the process.
+  // The exporter redacts every secret-classified key with the classifier the
+  // spawn path uses. The key stays (the run saw it); its value never leaves
+  // the process.
   it('redacts secret-classified env keys, keeping every key', () => {
     const env = {
       PATH: '/usr/bin',
       HOME: '/home/agent',
       SECRET_TOKEN: 's3cret-that-must-not-leak',
-      KUBIC_ROLE_IMPLEMENTER_SESSION: 'grant-value',
-      // Issue #402: the Anthropic federation block (pi-ai 0.99.2) is secret
+      // The Anthropic federation block (pi-ai 0.99.2) is secret
       // even though its names match no suffix rule.
       ANTHROPIC_FEDERATION_RULE_ID: 'fdrl_123',
       ANTHROPIC_IDENTITY_TOKEN_FILE: '/run/secrets/identity-token',
@@ -588,12 +572,10 @@ describe('trajectory review fixes (round 2)', () => {
       PATH: '/usr/bin',
       HOME: '/home/agent',
       SECRET_TOKEN: '<redacted>',
-      KUBIC_ROLE_IMPLEMENTER_SESSION: '<redacted>',
       ANTHROPIC_FEDERATION_RULE_ID: '<redacted>',
       ANTHROPIC_IDENTITY_TOKEN_FILE: '<redacted>',
     });
     expect(JSON.stringify(exported)).not.toContain('s3cret-that-must-not-leak');
-    expect(JSON.stringify(exported)).not.toContain('grant-value');
     expect(JSON.stringify(exported)).not.toContain('identity-token');
   });
 });

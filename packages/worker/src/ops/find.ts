@@ -1,4 +1,4 @@
-// Find operation (issue #13, slice B; §9.1).
+// Find operation.
 // Recursive walk over the seam with substring/type filters and a result
 // cap. replay:"safe" — searching has no side effects.
 
@@ -80,7 +80,7 @@ export function validateFindArgs(raw: unknown): FindArgs {
 
 export const findOperation: Operation<FindArgs, FindResult> = {
   name: 'find',
-  // Walk rules and caps (issue #172), stated so a skipped or cut listing is
+  // Walk rules and caps, stated so a skipped or cut listing is
   // never mistaken for "nothing there".
   description: `Find files and directories recursively under root (default "."), filtered by nameContains (substring) and type ("file" or "dir"). Returns at most maxResults entries (default 100) and says when the list was cut. The walk skips .git, node_modules and paths a .gitignore excludes, and never follows or lists symlinks; it visits at most ${WALK_MAX_ENTRIES} entries and ${WALK_MAX_DEPTH} directory levels, and the result's notice names the cap that stopped it.`,
   replay: 'safe',

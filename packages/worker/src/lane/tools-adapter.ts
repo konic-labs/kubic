@@ -1,11 +1,10 @@
-// Kubic operations as pi-durable tools (issue #11, slice A; issue #168;
-// issue #393/EPIC K).
+// Kubic operations as pi-durable tools.
 // One ToolRegistration per OPERATIONS entry: name/description/replay map
-// straight across (§20.2 alignment is structural, not coincidental) — the
+// straight across (alignment is structural, not coincidental) — the
 // Kubic `never`/`safe` vocabulary becomes pi-durable's `unsafe`/`safe`, so
 // an interrupted `never` call is never rerun and reaches the model as an
 // `interrupted` error result carrying the output it had already committed.
-// Issue #168 (§37.5, §40.3): every tool carries its real parameter schema
+// Every tool carries its real parameter schema
 // from ops/registry.ts (OPERATION_PARAMETERS — the single source) and
 // declares json_schema constrained sampling with strict 'prefer', so capable
 // providers enforce valid arguments; pi-durable validates against the same
@@ -16,7 +15,7 @@
 // with the 0.87 harness); only unexpected throws propagate to the harness,
 // which turns them into its own error result.
 //
-// Pi 1.0 surface (EPIC K #393): the durable execute signature is
+// Pi 1.0 surface: the durable execute signature is
 // `execute(args, api, context)` — the 0.87 positional `toolCallId`/`onUpdate`
 // arguments and the harness `toolContext` are gone, so the Kubic context
 // (env, sessionId, agentId, journal, kills) is captured in this closure:
@@ -38,7 +37,7 @@
 //   cost one extra durable write (and a second copy) per effect.
 // - running output: `api.output(chunk)` feeds the live view. Kubic's own
 //   caps stay authoritative for the model-visible result (see
-//   OUTPUT_BACKSTOP and BASH_OUTPUT_LIMITS), so #121/#182 semantics do not
+//   OUTPUT_BACKSTOP and BASH_OUTPUT_LIMITS), so semantics do not
 //   move into the harness.
 import type {
   CheckpointStore,
@@ -74,15 +73,15 @@ export interface KubicToolContext {
   agentId: string;
   kills: OperationKillRegistry;
   checkpointStore?: CheckpointStore;
-  // Session journal for interception (issue #17): when set, write/edit
-  // record every mutation. Wired by the lane in slice D; absent in tests
+  // Session journal for interception: when set, write/edit
+  // record every mutation. Wired by the lane in; absent in tests
   // and journal-free contexts.
   journal?: FileJournalStore;
-  // Interactive turn supplier (issue #436): the lane installs its boot
+  // Interactive turn supplier: the lane installs its boot
   // option here; the adapter samples it per call into `OpContext.turn`.
   // A supplier returning `undefined` writes no field (unwired cell).
   currentTurn?: () => number | undefined;
-  // Session-scoped spill sink (issue #182): when set, a bash stream clipped
+  // Session-scoped spill sink: when set, a bash stream clipped
   // for the model's context window is written here in full and the result
   // names the path. Wired by the lane from its session directory; absent in
   // tests, where the clip notice names no path.
@@ -103,7 +102,7 @@ type KubicToolDetails =
       readonly ok: true;
       readonly toolCallId: string;
       readonly invocationId: string;
-      // Issue #456: the change's display record (edit/write) — the TUI's
+      // The change's display record (edit/write) — the TUI's
       // inline diff. The model never sees details.
       readonly display: DisplayRecord;
     }
@@ -142,12 +141,12 @@ function displayRecord(display: ToolDisplay): DisplayRecord {
 
 // The durable harness bounds whatever a tool reports (2000 lines / 50 KiB by
 // default) and appends its own `truncated` diagnostic — which would edit
-// model-visible text Kubic already bounded itself (#121: bash 64 KiB per
-// stream; #176: read 51200B, exactly the harness default). These limits sit
+// model-visible text Kubic already bounded itself (bash 64 KiB per
+// stream; read 51200B, exactly the harness default). These limits sit
 // an order of magnitude above every Kubic cap, so the harness's trimming can
 // never be the binding bound and the model sees exactly what the op
 // rendered; they exist only as a memory backstop for the running-output
-// buffer and for today's deliberately unbounded results (#190: git_diff,
+// buffer and for today's deliberately unbounded results (git_diff,
 // git_show). Pinned by test so lowering them is a deliberate, visible act.
 const OUTPUT_BACKSTOP = {
   maxBytes: 8 * 1024 * 1024,
@@ -157,7 +156,7 @@ const OUTPUT_BACKSTOP = {
 
 // bash is the one op that STREAMS (api.output), and on the interrupted path
 // pi-durable hands the model the retained live output as the result content —
-// `renderBashText` never runs, so its #121 cap cannot apply there. Retaining
+// `renderBashText` never runs, so its cap cannot apply there. Retaining
 // the tail within four times the per-stream cap keeps that content the same
 // order of magnitude as a normal bash result (two capped streams plus their
 // markers stay well inside the window, so the head/tail choice never edits a
@@ -203,7 +202,7 @@ function appended(previous: string, next: string): string {
   return next.startsWith(previous) ? next.slice(previous.length) : next;
 }
 
-// Running output for the live view (§27.5): pi-durable exposes one
+// Running output for the live view: pi-durable exposes one
 // append-only output stream per call, while a Kubic ProcessSnapshot is two
 // cumulative streams. Only what was appended is pushed (the old harness got
 // a full JSON snapshot per update), each stream announced once so the live
@@ -244,7 +243,7 @@ function withNewline(text: string): string {
 // `[read <path>: lines a-b of N]` + the raw lines. `of at least N` when the
 // read was cut (totalLines is then a lower bound); `more: offset=K` whenever
 // lines remain past the window, so the model knows how to continue. A
-// refusal or cut notice (issue #176) rides the same header — or replaces
+// refusal or cut notice rides the same header — or replaces
 // the empty-window text, since "no lines at offset K" would misname a line
 // that exists but exceeds the output cap.
 export function renderReadText(result: ReadResult): string {
@@ -270,10 +269,10 @@ export function renderReadText(result: ReadResult): string {
 // `[grep /<pattern>/: N matches]` + one `path:line: text` per match.
 export function renderGrepText(result: GrepResult): string {
   const count = result.matches.length;
-  // A cut result names WHICH cap stopped it (issue #172): the walk's entry
+  // A cut result names WHICH cap stopped it: the walk's entry
   // cap with the directory it exhausted, the depth cap with where it pruned,
   // or maxMatches — the model narrows differently for each. The flags a
-  // model must not miss ride along (issue #180): clipped match text (a
+  // model must not miss ride along: clipped match text (a
   // partial line read as a whole one is a wrong answer) and the files grep
   // did not search.
   const flags: string[] = [];
@@ -352,12 +351,11 @@ export function kubicToolsToPiTools(
           sessionId: context.sessionId,
           agentId: context.agentId,
           checkpointStore: context.checkpointStore,
-          // The pi-durable call id is the journal's attribution key
-          // (issue #17): without it, intercepted entries could not name
-          // their call.
+          // The pi-durable call id is the journal's attribution key: without
+          // it, intercepted entries could not name their call.
           toolCallId: api.callId,
           journal: context.journal,
-          // Issue #436: sampled per call, so the entry shares the
+          // Sampled per call, so the entry shares the
           // numbering of the turn in flight — never a boot-time snapshot.
           turn: context.currentTurn?.(),
           spill: context.spill,

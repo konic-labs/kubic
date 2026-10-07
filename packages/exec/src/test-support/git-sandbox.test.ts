@@ -4,7 +4,14 @@
 // ambient git state (developer `~/.gitconfig`, `GIT_DIR` leaked from a git
 // hook, a hostile `GIT_CONFIG_GLOBAL`) so the suite gives the same result
 // on every machine and can never touch the Kubic repo itself.
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -58,8 +65,7 @@ describe('createGitSandbox', () => {
   });
 
   it('ignores a hostile global config and ambient GIT_* variables', () => {
-    const hostileDir = join(tmpdir(), `kubic-hostile-${process.pid}`);
-    mkdirSync(hostileDir, { recursive: true });
+    const hostileDir = mkdtempSync(join(tmpdir(), 'kubic-hostile-'));
     const { config } = writeHostileGlobalConfig(hostileDir);
     // What a developer machine (or a git hook running the suite) may hold.
     const polluted: Record<string, string> = {
@@ -94,6 +100,7 @@ describe('createGitSandbox', () => {
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
       }
+      rmSync(hostileDir, { recursive: true, force: true });
     }
   });
 

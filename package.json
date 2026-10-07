@@ -39,7 +39,7 @@
     "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "26.6.2",
     "typescript": "7.0.2",
-    "vitest": "5.0.1"
+    "vitest": "5.0.3"
   },
   "dependencies": {
     "@clack/prompts": "1.8.1",

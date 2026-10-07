@@ -196,42 +196,26 @@ describe('kubic sessions fork: the store (issue #265)', () => {
     }
   });
 
-  it('a forked worker session stays in its run tree (issue #164)', async () => {
+  it("a fork keeps the source's role and agent", async () => {
     const root = tmpRoot();
     const store = openSessionStore(root, createNodeFileBridge(root));
-    const parent = await createSession(
+    const source = await createSession(
       store,
-      { id: 'orch-1', cwd: '/repo' },
+      { id: 'src-1', cwd: '/repo', role: 'implementer', agentId: 'aaa' },
       BACKGROUND_CONTEXT,
     );
-    await parent.release(BACKGROUND_CONTEXT);
-    const worker = await createSession(
-      store,
-      {
-        id: 'orch-1-aaa',
-        cwd: '/repo/.kubic/wt/aaa',
-        parentSessionId: 'orch-1',
-        role: 'implementer',
-        agentId: 'aaa',
-      },
-      BACKGROUND_CONTEXT,
-    );
-    await worker.release(BACKGROUND_CONTEXT);
+    await source.release(BACKGROUND_CONTEXT);
     const forked = await forkSession(
       store,
-      'orch-1-aaa',
-      { id: 'orch-1-aaa-fork', tree: true },
+      'src-1',
+      { id: 'src-1-fork', tree: true },
       BACKGROUND_CONTEXT,
     );
-    expect(forked.id).toBe('orch-1-aaa-fork');
+    expect(forked.id).toBe('src-1-fork');
     // The listing header agrees with the copied document before any attach.
     const listed = await listSessions(store, BACKGROUND_CONTEXT);
     expect(
-      listed.find((entry) => entry.id === 'orch-1-aaa-fork')?.meta,
-    ).toMatchObject({
-      parentSessionId: 'orch-1',
-      role: 'implementer',
-      agentId: 'aaa',
-    });
+      listed.find((entry) => entry.id === 'src-1-fork')?.meta,
+    ).toMatchObject({ role: 'implementer', agentId: 'aaa' });
   });
 });

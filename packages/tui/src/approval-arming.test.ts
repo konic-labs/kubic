@@ -178,7 +178,6 @@ describe('the overlay captures input (issue #315)', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'm',
-      mode: 'solo',
       approvalsSkipped: false,
       approvalSurface: surface,
     });
@@ -205,7 +204,6 @@ describe('the overlay captures input (issue #315)', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'm',
-      mode: 'solo',
       approvalsSkipped: false,
       approvalSurface: surface,
     });
@@ -391,7 +389,6 @@ describe('the arming window restarts on every swallowed key (issue #315)', () =>
       const app = createTuiApp({
         sessionId: 's',
         model: 'm',
-        mode: 'solo',
         approvalsSkipped: false,
         approvalSurface: surface,
       });
@@ -597,7 +594,6 @@ describe('arming after typing and against auto-repeat (issue #315)', () => {
       const app = createTuiApp({
         sessionId: 's',
         model: 'm',
-        mode: 'solo',
         approvalsSkipped: false,
         approvalSurface: surface,
       });

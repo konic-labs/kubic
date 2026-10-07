@@ -110,8 +110,8 @@ export interface ShellResult {
   exitCode: number;
   /**
    * The signal the leader died from, when it was signalled (issue #151):
-   * `exitCode` already carries 128+signal, but the NAME is what a worker row
-   * records so `kubic workers` can say SIGKILL rather than 137.
+   * `exitCode` already carries 128+signal; the name is kept so a report can
+   * say SIGKILL rather than 137.
    */
   signal?: string | null;
   /**
@@ -331,7 +331,7 @@ function encodeSnapshot(snapshot: ProcessSnapshot): string {
 //
 // Honest limit (issue #97): this store is the seam, not a wired product
 // path — no production caller supplies one to SpawnOptions today, so a
-// `kubic run`/`kubic orchestrate` invocation persists no checkpoint and
+// `kubic run` invocation persists no checkpoint and
 // nothing resumes from one. The in-memory store is what the exec/lane
 // tests drive; crash recovery for a tool call is the harness's own
 // pending-progress snapshot (§20.4).
@@ -388,10 +388,9 @@ export const KILL_GRACE_MS = 2000;
 // §3.8 "never inherit ambient authority": every child the exec seam spawns
 // (the bash tool, host git calls) starts from this allowlist, never from
 // kubic's whole environment — a provider API key in the parent must not be
-// one `echo $X` away from the model. Aligned with the worker launch
-// allowlist (packages/worker/src/lifecycle/env.ts), plus the POSIX session
-// basics a shell tool needs. No SSH_AUTH_SOCK / credential helpers: those
-// are authority, not environment.
+// one `echo $X` away from the model. It carries the POSIX session basics a
+// shell tool needs. No SSH_AUTH_SOCK / credential helpers: those are
+// authority, not environment.
 export const TOOL_ENV_ALLOWLIST: readonly string[] = [
   'PATH',
   'HOME',

@@ -62,7 +62,6 @@ function app() {
   return createTuiApp({
     sessionId: 's',
     model: 'faux/faux-1',
-    mode: 'solo',
     approvalsSkipped: false,
   });
 }
@@ -178,13 +177,10 @@ describe('TUI boot debug lines (issue #246)', () => {
       debug: (line: string) => debugLines.push(line),
     });
     try {
-      // The fresh session has no parent; the stock boot runs as solo.
-      expect(
-        debugLines.some(
-          (line) =>
-            line.startsWith('[session] id=') && line.includes('parent=none'),
-        ),
-      ).toBe(true);
+      // The stock boot names its session and runs as solo.
+      expect(debugLines.some((line) => line.startsWith('[session] id='))).toBe(
+        true,
+      );
       expect(debugLines).toContain('[policy] role=solo (default)');
       // The runner is threaded the same sink for its fault/token lines.
       expect(boot.debug).toBeDefined();

@@ -271,13 +271,6 @@ describe('approval service (issue #16, slice A)', () => {
       detectTriggers(
         'read',
         { path: 'notes.txt' },
-        triggerContext({ budgetOverrun: true }),
-      ),
-    ).toEqual(['budget-overrun']);
-    expect(
-      detectTriggers(
-        'read',
-        { path: 'notes.txt' },
         triggerContext({ requires: ['read'] }),
       ),
     ).toEqual(['requires:read']);

@@ -283,3 +283,8 @@ export class PolicyValidationError extends Error {
     this.name = 'PolicyValidationError';
   }
 }
+
+// A run's mode: `autonomous` only when the user asked for it explicitly
+// (`--autonomous`), `interactive` otherwise. Recorded on the session and in
+// the audit trail.
+export type RunMode = 'autonomous' | 'interactive';

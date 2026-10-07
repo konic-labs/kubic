@@ -10,7 +10,7 @@
 // - pi-durable Harness over a Storage (conversations, durable tasks, resume)
 // - Kubic operations as pi-durable ToolRegistration, composed with wrapTool
 // - ToolTask beforeTool/afterTool, GenerationTask and CompactionTask hooks
-//   (policy, budget, approval and perf interception points)
+//   (policy, approval and perf interception points)
 // - chord Context (cancellation every durable call is threaded with)
 // - pi-durable FileSystem / ExecutionEnv (the exec-backed session bridge)
 // - pi-ai model layer (createModels, providers, thinking clamp, Type)
@@ -39,7 +39,7 @@ export type { Context, JsonValue } from '@earendil-works/chord';
 // JUSTIFICATION:
 //   seam: @earendil-works/chord/context#BACKGROUND_CONTEXT
 //   used by: packages/worker/src/lane/* (harness calls), apps/kubic/src/
-//     {prod-runners,headless-run,tui-run,orchestrate-run}.ts and
+//     {prod-runners,headless-run,tui-run}.ts and
 //     packages/host/src/{sessions-cli,journal-cli,ops/cost/cost-cli}.ts
 //   why Pi has no alternative: Pi 1.0 removed the pi-agent-core re-export;
 //     chord owns Context now, and every durable call (Harness.open, submit,
@@ -242,7 +242,7 @@ export type {
 //   seam: @earendil-works/pi-durable#section (prompt sections) and #hook,
 //     #ToolTask, #GenerationTask, #CompactionTask (hook targets)
 //   used by: packages/worker/src/lane/solo.ts (ordered prompt sections) and
-//     lane/interceptors.ts (beforeTool/afterTool policy, budget, approval);
+//     lane/interceptors.ts (beforeTool/afterTool policy and approval);
 //     lane/solo.ts compaction (CompactionTask.beforeCompact)
 //   why Pi has no alternative: these are the built-in tasks whose hooks are
 //     the 1.0 replacement for the removed harness before_tool/after_tool

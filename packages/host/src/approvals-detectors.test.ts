@@ -42,7 +42,6 @@ import {
   validatePolicy,
 } from './approvals.js';
 import { parseTomlConfig } from './config/config.js';
-import { ORCHESTRATOR_TRIGGERS } from './orchestrator/approvals/request.js';
 
 const made: string[] = [];
 
@@ -443,20 +442,9 @@ describe('privilege escalation + indirection (issue #131, slice 2)', () => {
   });
 });
 
-describe('capability/trigger vocabulary parity (issue #131)', () => {
-  it('keeps CAPABILITIES and ORCHESTRATOR_TRIGGERS in sorted parity', () => {
-    // The two lists are one vocabulary: a capability detectTriggers can
-    // raise must be an orchestrator trigger the envelope accepts, or a
-    // worker ask dies as 'unknown approval trigger' before any surface can
-    // render it. A single-list addition must fail HERE (loudly, in the
-    // suite) instead of being refused only at runtime by the envelope.
-    expect([...CAPABILITIES].sort()).toEqual([...ORCHESTRATOR_TRIGGERS].sort());
-    // Sorted equality alone tolerates the SAME duplicate added to both
-    // lists — pin uniqueness per list so a repeated entry fails here too.
+describe('capability vocabulary', () => {
+  it('lists every capability once', () => {
     expect(new Set(CAPABILITIES).size).toBe(CAPABILITIES.length);
-    expect(new Set(ORCHESTRATOR_TRIGGERS).size).toBe(
-      ORCHESTRATOR_TRIGGERS.length,
-    );
   });
 });
 

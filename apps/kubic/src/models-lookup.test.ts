@@ -1,8 +1,7 @@
-// models.json lookup (issue #222; §35 global tree, §37.2): the global
-// ~/.kubic/models/models.json, then the PROJECT file at the project root
-// (git top level / nearest .kubic), so which providers exist no longer
-// depends on the directory kubic was launched from. A worker child is
-// pointed at the manager's root through KUBIC_MODELS_ROOT.
+// models.json lookup: the global ~/.kubic/models/models.json, then the
+// PROJECT file at the project root (git top level / nearest .kubic), so
+// which providers exist never depends on the directory kubic was launched
+// from.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -130,23 +129,6 @@ describe('models.json lookup (issue #222)', () => {
     expect(assembled.models.getModel('shared', 'm1')?.baseUrl).toBe(
       'http://127.0.0.1:1/global',
     );
-  });
-
-  it('resolves the project root from KUBIC_MODELS_ROOT (a worker in its worktree)', async () => {
-    const home = tmpDir();
-    const { root } = repo();
-    writeJson(join(root, 'models.json'), provider('managers'));
-    // The worker's worktree: its own git checkout, without the untracked file.
-    const worktree = tmpDir();
-    writeFileSync(join(worktree, '.git'), 'gitdir: /elsewhere\n');
-    const alone = await assembleModels(worktree, TRUST, { home });
-    expect(alone.models.getProvider('managers')).toBe(undefined);
-    const pointed = await assembleModels(
-      worktree,
-      { ...TRUST, KUBIC_MODELS_ROOT: root },
-      { home },
-    );
-    expect(pointed.models.getProvider('managers')?.id).toBe('managers');
   });
 
   it('never treats the home directory (global .kubic) as a project root', () => {

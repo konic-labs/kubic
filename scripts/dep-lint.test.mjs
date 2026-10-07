@@ -30,15 +30,9 @@ const REQUIRED_PATHS = [
   'packages/worker/src/tools.ts',
   'packages/worker/src/approval-client.ts',
   'packages/host/src/index.ts',
-  'packages/host/src/dispatch.ts',
-  'packages/host/src/worker-manager.ts',
   'packages/host/src/credentials.ts',
   'packages/host/src/root-agent.ts',
   'packages/agents/src/index.ts',
-  'packages/agents/src/roles.ts',
-  'packages/agents/src/lifecycle.ts',
-  'packages/agents/src/graph.ts',
-  'packages/agents/src/budget.ts',
   'packages/trajectory/src/index.ts',
   'packages/eval/src/index.ts',
   'packages/tui/src/index.ts',
@@ -225,7 +219,6 @@ describe('dep-lint (issue #2)', () => {
       trajectory: ['exec', 'worker', 'host', 'agents', 'eval', 'tui'],
       eval: ['exec', 'worker', 'host', 'tui'],
       tui: ['exec', 'worker', 'host', 'agents', 'trajectory', 'eval'],
-      extensions: ['worker', 'host', 'tui', 'kubic'],
     };
     for (const [owner, targets] of Object.entries(rows)) {
       const files = {};
@@ -279,17 +272,6 @@ describe('dep-lint (issue #2)', () => {
       'packages/tui/dist/bundle.ts': `import { d } from '@kubic/host';\n`,
     });
     assert.deepEqual(checkTree(dir), []);
-  });
-
-  it('flags an extensions file reaching the app root relatively', () => {
-    const dir = fixtureTree({
-      'packages/extensions/src/facets.ts': `import { m } from '../../../apps/kubic/src/main.js';\n`,
-    });
-    const violations = checkTree(dir);
-    assert.ok(
-      violations.some((v) => v.from === 'extensions' && v.to === 'kubic'),
-      `expected extensions->kubic violation, got ${JSON.stringify(violations)}`,
-    );
   });
 
   it('allows a relative import within the same package', () => {
@@ -351,81 +333,6 @@ describe('dep-lint (issue #2)', () => {
     );
   });
 
-  it('fires both package and facet violations for a tui facet importing host', () => {
-    const dir = fixtureTree({
-      'packages/extensions/src/tui/panel.ts': `import { d } from '@kubic/host';\n`,
-    });
-    const violations = checkTree(dir);
-    assert.deepEqual(violations.map((v) => `${v.from}->${v.to}`).sort(), [
-      'extensions->host',
-      'extensions->host (tui facet)',
-    ]);
-  });
-
-  it('fires only the package violation outside a tui facet', () => {
-    const dir = fixtureTree({
-      'packages/extensions/src/facets.ts': `import { d } from '@kubic/host';\n`,
-    });
-    const violations = checkTree(dir);
-    assert.deepEqual(
-      violations.map((v) => `${v.from}->${v.to}`),
-      ['extensions->host'],
-    );
-  });
-
-  it('fires the facet rule on host-like relative specs, not on lookalikes', () => {
-    const dir = fixtureTree({
-      'packages/extensions/src/tui/a.ts': `import { h } from './host/util.js';\n`,
-      'packages/extensions/src/tui/b.ts': `import { h } from './hostile/util.js';\n`,
-    });
-    const violations = checkTree(dir);
-    assert.deepEqual(
-      violations.map((v) => `${v.from}->${v.to}`),
-      ['extensions->host (tui facet)'],
-    );
-  });
-
-  it('matches tui facets by filename prefix, not by substring', () => {
-    const prefixed = fixtureTree({
-      'packages/extensions/src/tui.panel.ts': `import { d } from '@kubic/host';\n`,
-    });
-    assert.deepEqual(
-      checkTree(prefixed)
-        .map((v) => `${v.from}->${v.to}`)
-        .sort(),
-      ['extensions->host', 'extensions->host (tui facet)'],
-    );
-    const substring = fixtureTree({
-      'packages/extensions/src/mytui.ts': `import { d } from '@kubic/host';\n`,
-    });
-    assert.deepEqual(
-      checkTree(substring).map((v) => `${v.from}->${v.to}`),
-      ['extensions->host'],
-    );
-  });
-
-  it('reports only the package violation for a Pi import (seam rule short-circuits)', () => {
-    const dir = fixtureTree({
-      'packages/extensions/src/worker/agent.ts': `import { V } from '@earendil-works/pi-tui';\n`,
-    });
-    const violations = checkTree(dir);
-    assert.deepEqual(
-      violations.map((v) => `${v.from}->${v.to}`),
-      ['extensions->@earendil-works/pi-tui'],
-    );
-  });
-
-  it('fires the worker facet rule on a relative pi-tui spec', () => {
-    const dir = fixtureTree({
-      'packages/extensions/src/worker/agent.ts': `import { V } from '../pi-tui/panel.js';\n`,
-    });
-    const violations = checkTree(dir);
-    assert.deepEqual(
-      violations.map((v) => `${v.from}->${v.to}`),
-      ['extensions->../pi-tui/panel.js (worker facet)'],
-    );
-  });
-
   it('scans .mts and .js sources but ignores non-sources', () => {
     const dir = fixtureTree({
       'packages/tui/src/a.mts': `import { d } from '@kubic/host';\n`,
@@ -470,8 +377,8 @@ describe('dep-lint (issue #2)', () => {
 
   it('ignores same-package relative imports for every owner', () => {
     const dir = fixtureTree({
-      'packages/extensions/src/a.ts': `import { b } from './b.js';\n`,
-      'packages/extensions/src/b.ts': `export const b = 1;\n`,
+      'packages/tui/src/a.ts': `import { b } from './b.js';\n`,
+      'packages/tui/src/b.ts': `export const b = 1;\n`,
     });
     assert.deepEqual(checkTree(dir), []);
   });
@@ -492,11 +399,10 @@ describe('dep-lint (issue #2)', () => {
     assert.deepEqual(checkTree(dir), []);
   });
 
-  it('reports exact lines for fs, Pi-seam, and facet violations', () => {
+  it('reports exact lines for fs and Pi-seam violations', () => {
     const dir = fixtureTree({
       'packages/worker/src/a.ts': `import { a } from '@kubic/worker';\nimport { b } from '@kubic/worker';\nimport { fs } from 'node:fs';\n`,
       'packages/tui/src/b.ts': `import { a } from '@kubic/tui';\nimport { V } from '@earendil-works/pi-tui';\n`,
-      'packages/extensions/src/tui/c.ts': `import { d } from '@kubic/host';\n`,
     });
     const byFile = {};
     for (const v of checkTree(dir)) byFile[v.file] = v;
@@ -506,10 +412,6 @@ describe('dep-lint (issue #2)', () => {
       'node:fs',
     );
     assert.equal(byFile[join('packages', 'tui', 'src', 'b.ts')].line, 2);
-    assert.equal(
-      byFile[join('packages', 'extensions', 'src', 'tui', 'c.ts')].line,
-      1,
-    );
   });
 
   it('flags export-from and side-effect imports', () => {
@@ -535,17 +437,6 @@ describe('dep-lint (issue #2)', () => {
     );
   });
 
-  it('flags tui importing the extensions package (issue #369)', () => {
-    const dir = fixtureTree({
-      'packages/tui/src/views.ts': `import { b } from '@kubic/extensions';\n`,
-    });
-    const violations = checkTree(dir);
-    assert.ok(
-      violations.some((v) => v.from === 'tui' && v.to === 'extensions'),
-      `expected tui->extensions violation, got ${JSON.stringify(violations)}`,
-    );
-  });
-
   it('flags tui reaching the app root relatively (issue #369)', () => {
     const dir = fixtureTree({
       'packages/tui/src/views.ts': `import { m } from '../../../apps/kubic/src/main.js';\n`,
@@ -554,17 +445,6 @@ describe('dep-lint (issue #2)', () => {
     assert.ok(
       violations.some((v) => v.from === 'tui' && v.to === 'kubic'),
       `expected tui->kubic violation, got ${JSON.stringify(violations)}`,
-    );
-  });
-
-  it('flags core importing the extensions package (issue #369)', () => {
-    const dir = fixtureTree({
-      'packages/core/src/session.ts': `import { b } from '@kubic/extensions';\n`,
-    });
-    const violations = checkTree(dir);
-    assert.ok(
-      violations.some((v) => v.from === 'core' && v.to === 'extensions'),
-      `expected core->extensions violation, got ${JSON.stringify(violations)}`,
     );
   });
 
@@ -579,19 +459,6 @@ describe('dep-lint (issue #2)', () => {
     );
   });
 
-  it('still lets prod-path tests reach extensions but not the app root (issues #369, #387)', () => {
-    // Test scaffolding is exempt for the extensions facade only: host/tui
-    // prod-path tests wire the real builders from packages/extensions.
-    // Since #387 the composition root's behaviour tests live under
-    // apps/kubic, so a package test reaching the app root is a
-    // dependency inversion and fails the gate.
-    const dir = fixtureTree({
-      'packages/host/src/run-prod-path.test.ts': `import { b } from '@kubic/extensions';\n`,
-      'packages/tui/src/tui-command.test.ts': `import { b } from '@kubic/extensions';\n`,
-    });
-    assert.deepEqual(checkTree(dir), []);
-  });
-
   it('flags a package test reaching the app root (issue #387)', () => {
     const dir = fixtureTree({
       'packages/host/src/run-prod-path.test.ts': `import { d } from '../../../apps/kubic/src/prod-runners.js';\n`,
@@ -600,17 +467,6 @@ describe('dep-lint (issue #2)', () => {
     assert.ok(
       violations.some((v) => v.from === 'host' && v.to === 'kubic'),
       `expected host->kubic violation, got ${JSON.stringify(violations)}`,
-    );
-  });
-
-  it('still flags an extensions test reaching the app root (issue #369)', () => {
-    const dir = fixtureTree({
-      'packages/extensions/src/e.test.ts': `import { m } from '../../../apps/kubic/src/main.js';\n`,
-    });
-    const violations = checkTree(dir);
-    assert.ok(
-      violations.some((v) => v.from === 'extensions' && v.to === 'kubic'),
-      `expected extensions->kubic violation, got ${JSON.stringify(violations)}`,
     );
   });
 

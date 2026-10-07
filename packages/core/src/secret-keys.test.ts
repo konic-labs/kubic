@@ -17,7 +17,6 @@ describe('isSecretEnvKey', () => {
     'GCP_CREDENTIALS',
     'TOKEN',
     'KEY',
-    'KUBIC_ROLE_IMPLEMENTER_SESSION',
     // Anthropic workload identity federation (issue #402; pi-ai 0.99.2):
     // the identity config reads none of the suffix rules — the token FILE
     // ends in _FILE, the ids end in _ID — so each is named explicitly.

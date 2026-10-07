@@ -47,7 +47,6 @@ import {
   type MutableModels,
 } from '../../../packages/worker/src/pi-boundary.js';
 import {
-  approvalSnapshotFrom,
   configRefusalExit,
   doctorConfigProbe,
   doctorPolicyLoader,
@@ -568,7 +567,7 @@ describe('runtimeModelPin + requireRuntimeConfig + configRefusalExit (issue #384
     const clean = loadCliConfig({ cwd, home, env: {} });
     expect(configRefusalExit(clean, 'run')).toBeUndefined();
     const refused = refusedGlobal();
-    for (const command of ['run', 'orchestrate', 'tui', 'replay']) {
+    for (const command of ['run', 'tui', 'replay']) {
       expect(configRefusalExit(refused, command)).toBe(1);
     }
     for (const command of ['config', 'doctor', 'skills', 'trust', undefined]) {
@@ -596,31 +595,6 @@ describe('kubicConfigLoader + doctorPolicyLoader fail closed (issue #384)', () =
     expect(() => doctorPolicyLoader(refused)()).toThrow(
       refused.error ?? 'refused',
     );
-  });
-});
-
-describe('approvalSnapshotFrom copies the policy (issue #384)', () => {
-  it('carries route/autoApprove/maxPendingMs by value, never by reference', () => {
-    const { home, cwd } = globalHome(
-      '[approvals]\nroute = "deny"\nmaxPendingMs = 4321\nautoApprove = ["read", "write"]\n',
-    );
-    const runtime = requireRuntimeConfig(loadCliConfig({ cwd, home, env: {} }));
-    const snapshot = approvalSnapshotFrom(runtime);
-    expect(snapshot).toEqual({
-      route: 'deny',
-      autoApprove: ['read', 'write'],
-      maxPendingMs: 4321,
-    });
-    // The frozen-snapshot guarantee: not the live array.
-    expect(snapshot.autoApprove).not.toBe(runtime.approvals.policy.autoApprove);
-    // Mutating the snapshot leaves the runtime (and the next snapshot) unchanged.
-    // (cast: the snapshot type is readonly, the runtime value is a live array.)
-    (snapshot.autoApprove as string[]).push('network');
-    expect(runtime.approvals.policy.autoApprove).toEqual(['read', 'write']);
-    expect(approvalSnapshotFrom(runtime).autoApprove).toEqual([
-      'read',
-      'write',
-    ]);
   });
 });
 
@@ -668,10 +642,7 @@ describe('session compaction projection (issue #239)', () => {
     expect(runtimeCompactionDeps(result)).toBeUndefined();
   });
 
-  it('prodRunDeps carries it: run and worker children boot the same options', () => {
-    // Orchestrator workers are `kubic run` children in their worktree:
-    // they load the committed config themselves, so the run projection
-    // IS the worker inheritance (no extra env travels).
+  it('prodRunDeps carries it', () => {
     const { home, cwd } = globalHome('[session]\nreserveTokens = 4000\n');
     const result = loadCliConfig({ cwd, home, env: {} });
     expect(result.error).toBeUndefined();
@@ -682,30 +653,6 @@ describe('session compaction projection (issue #239)', () => {
       env: {},
     });
     expect(prodRunDeps(bare).compaction).toBeUndefined();
-  });
-
-  it('a worker-shaped cwd loads the same committed config (issue #239 review)', () => {
-    // Orchestrator workers are `kubic run` children in their worktree:
-    // they load the committed project config themselves. A second
-    // worktree-shaped cwd under the same project root must project the
-    // identical compaction options — that load IS the inheritance.
-    const { home, project } = trustedProject(
-      '[session]\nreserveTokens = 4000\nautoCompact = false\n',
-    );
-    const workerCwd = join(project, '.kubic', 'wt', 'agent-1');
-    mkdirSync(workerCwd, { recursive: true });
-    const env = { KUBIC_TRUST_PROJECT: '1' };
-    const fromProject = loadCliConfig({ cwd: project, home, env });
-    const fromWorktree = loadCliConfig({ cwd: workerCwd, home, env });
-    expect(fromProject.error).toBeUndefined();
-    expect(fromWorktree.error).toBeUndefined();
-    expect(runtimeCompactionDeps(fromWorktree)).toEqual(
-      runtimeCompactionDeps(fromProject),
-    );
-    expect(runtimeCompactionDeps(fromWorktree)).toEqual({
-      enabled: false,
-      reserveTokens: 4000,
-    });
   });
 
   it('doctor reports the effective reserve (issue #239)', () => {
@@ -869,7 +816,7 @@ describe('system prompt file section (issue #240)', () => {
     expect(runtimeSystemPromptSection(result)).toBeUndefined();
   });
 
-  it('prodRunDeps carries it: run and worker children assemble the same prompt', () => {
+  it('prodRunDeps carries it into the run prompt', () => {
     const { home, cwd } = globalHome(
       '[agent]\nsystemPromptFile = "~/.kubic/SYSTEM.md"\n',
     );

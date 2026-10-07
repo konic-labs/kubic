@@ -204,9 +204,9 @@ describe('control-plane detector: redirect forms (issue #324)', () => {
     expect(refusal('echo x >& .kubic/journal/index.jsonl')).toContain(
       'control-plane state',
     );
-    expect(
-      refusal('echo x &>> .kubic/orchestrator/approvals/audit.jsonl'),
-    ).toContain('control-plane state');
+    expect(refusal('echo x &>> .kubic/audit/audit.jsonl')).toContain(
+      'control-plane state',
+    );
   });
 
   it('fd duplications are not file targets', () => {
@@ -246,7 +246,7 @@ describe('control-plane detector: quote-split and escaped segments (issue #324)'
 
   it('a quote-split journal path is refused', () => {
     expect(refusal('echo x > ".kubic"/journal/index.jsonl')).toBe(
-      'refused: .kubic/journal/index.jsonl is Kubic control-plane state (.kubic/journal, .kubic/orchestrator, .kubic/sessions) — agents may not write it',
+      'refused: .kubic/journal/index.jsonl is Kubic control-plane state (.kubic/journal, .kubic/audit, .kubic/sessions) — agents may not write it',
     );
     expect(refusal("echo x > .kub'ic'/sessions/s.jsonl")).toContain(
       'control-plane state',
@@ -270,7 +270,7 @@ describe('control-plane detector: rm and mv operands (issue #324)', () => {
       'mv .kubic/journal /tmp/j',
       'mv -f .kubic/journal/index.jsonl /tmp/j.jsonl',
       'cd .kubic && rm journal/index.jsonl',
-      'echo a && rm .kubic/orchestrator/approvals/audit.jsonl',
+      'echo a && rm .kubic/audit/audit.jsonl',
       'rm ".kubic"/journal/index.jsonl',
     ]) {
       expect(refusal(command), command).toContain('control-plane state');

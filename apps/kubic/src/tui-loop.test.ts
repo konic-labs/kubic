@@ -860,8 +860,8 @@ describe('kubic tui prompt loop (issue #88)', () => {
 
   it('keeps the draft when a submit is refused (#334 review)', async () => {
     // A refused prompt must never eat the text: the editor is live during a
-    // turn (#334), so `/model` while busy (and any orchestrator-busy submit)
-    // hands the draft back instead of clearing it.
+    // turn (#334), so `/model` while busy hands the draft back instead of
+    // clearing it.
     const root = tmpRoot();
     const lines: string[] = [];
     const fake = fakeTerminal(100);
@@ -1014,20 +1014,6 @@ describe('kubic tui prompt loop (issue #88)', () => {
     await waitFor(() => fake.writes.join('').includes('error:'));
     expect(calls()).toBe(1);
     expect(fake.writes.join('')).toContain('queued: second prompt');
-    // The latch really released: Ctrl-G is refused only while the app is
-    // busy, so the toggle must flip the session mode (and back).
-    const mark = fake.writes.length;
-    // Ctrl-G (0x07): the app refuses the toggle only while it is busy.
-    fake.feed('\x07');
-    await waitFor(() =>
-      fake.writes.slice(mark).join('').includes('[ORCHESTRATOR]'),
-    );
-    expect(fake.writes.slice(mark).join('')).not.toContain(
-      'mode: finish the current turn',
-    );
-    const back = fake.writes.length;
-    fake.feed('\x07');
-    await waitFor(() => fake.writes.slice(back).join('').includes('[SOLO]'));
     // The next submit places the queue: the waiting follow-up runs first,
     // and the new prompt follows it (oldest first, one per boundary).
     for (const ch of 'third prompt') fake.feed(ch);
@@ -1136,50 +1122,6 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(await pending).toBe(0);
   });
 
-  it('refuses /compact on the orchestrator lane and keeps the draft (#330 review)', async () => {
-    // The session's own transcript belongs to the solo lane; while the
-    // operator watches the orchestrator report, compacting that conversation
-    // silently would act on the wrong lane.
-    const root = tmpRoot();
-    const lines: string[] = [];
-    const fake = fakeTerminal(100);
-    const { models } = fauxModels(['first answer']);
-    const pending = runTuiCommand(
-      {},
-      {
-        out: (line: string) => lines.push(line),
-        createTerminal: () => fake.terminal,
-        colorLevel: 'none',
-        bootLane: fauxLaneBoot(root, models),
-      },
-    );
-    await waitFor(() => fake.counts.started === 1);
-    // Ctrl-G (0x07) switches the session mode to orchestrator.
-    fake.feed('\x07');
-    await waitFor(() => fake.writes.join('').includes('[ORCHESTRATOR]'));
-    for (const ch of '/compact') fake.feed(ch);
-    fake.feed('\r');
-    await waitFor(() =>
-      fake.writes
-        .join('')
-        .includes('the orchestrator lane has no session transcript to compact'),
-    );
-    // Issue #302: with a draft in the editor the first Ctrl-C only clears it
-    // (the footer says so — that message exists only for a non-empty draft),
-    // so quitting needs a double press after it (#454).
-    fake.feed('\x03');
-    await waitFor(() => fake.writes.join('').includes('^C: draft cleared'));
-    expect(fake.counts.stopped).toBe(0);
-    fake.feed('\x03');
-    fake.feed('\x03');
-    expect(await pending).toBe(0);
-    // Refused, so the draft came back (finding 1 of the #334 review). The
-    // restore is not itself re-rendered until the next frame, so the
-    // evidence is the state it leaves behind (issue #302): the first Ctrl-C
-    // found a non-empty editor — its footer says the draft was cleared and
-    // the process stayed alive — and only the second one quit.
-  });
-
   it('refuses /thinking and the cycle key while a turn runs (#328)', async () => {
     const root = tmpRoot();
     const lines: string[] = [];
@@ -1270,7 +1212,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     );
     expect(calls()).toBe(0);
     run('/help');
-    await waitFor(() => fake.writes.join('').includes('help: 20 commands'));
+    await waitFor(() => fake.writes.join('').includes('help: 19 commands'));
     // The list itself landed in the transcript, generated from the registry.
     expect(fake.writes.join('')).toContain('/quit — leave the TUI');
     run('/help resume');
@@ -1335,7 +1277,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     run('/session');
     await waitFor(() => fake.writes.join('').includes('in 0 out 0 (cached 0)'));
     run('/help');
-    await waitFor(() => fake.writes.join('').includes('help: 20 commands'));
+    await waitFor(() => fake.writes.join('').includes('help: 19 commands'));
     release();
     await waitFor(() => fake.writes.join('').includes('first answer'));
     fake.feed('\x03');
@@ -1366,7 +1308,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(fake.writes.join('')).toContain('/session');
     // Enter takes the first row: /help runs exactly as if it were typed.
     fake.feed('\r');
-    await waitFor(() => fake.writes.join('').includes('help: 20 commands'));
+    await waitFor(() => fake.writes.join('').includes('help: 19 commands'));
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
@@ -1405,7 +1347,6 @@ describe('kubic tui prompt loop (issue #88)', () => {
         presentationSeed: () => ({
           sessionId: 'sess-1',
           model: 'faux/faux-1',
-          mode: 'solo' as const,
           approvalsSkipped: false,
         }),
       } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
@@ -1611,7 +1552,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
       for (const press of key) fake.feed(press);
       expect(await pending).toBe(0);
       expect(fake.counts.stopped).toBe(1);
-      expect(lines.join('\n')).toContain('[SOLO] approvals on');
+      expect(lines.join('\n')).toContain('approvals on');
     }
   });
 
@@ -1638,12 +1579,9 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
     // Issue #453: the header above the transcript, the status line below.
-    const order = [
-      '[SOLO] approvals on',
-      '▌ a question',
-      'answered',
-      ' ready ',
-    ].map((marker) => doc.indexOf(marker));
+    const order = ['approvals on', '▌ a question', 'answered', ' ready '].map(
+      (marker) => doc.indexOf(marker),
+    );
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     // Issue #455: the committed prompt carries its time through the whole

@@ -223,18 +223,6 @@ function toolCallsOf(items: ReturnType<typeof entriesToTranscript>): number {
   return count;
 }
 
-// Issue #440 (§71): the tool calls a session already committed, read from
-// its own open storage. A resumed run seeds its `maxToolCalls` gate and
-// meter from this, so the allowance spans the session, not one boot.
-export async function readSessionToolCalls(
-  storage: Storage,
-  context: Context,
-): Promise<number> {
-  return toolCallsOf(
-    entriesToTranscript(await readSessionEntries(storage, context)),
-  );
-}
-
 // The session's totals over every bucket it holds.
 export function totalSessionUsage(
   rows: readonly SessionUsageRow[],
@@ -277,64 +265,40 @@ export async function loadSessionCostRows(
     createNodeFileBridge(sessionsRoot),
   );
   const all = await listSessions(store, BACKGROUND_CONTEXT);
-  // Issue #164 (§23): a NAMED orchestrate session rolls its run up — the
-  // manager record plus every session whose metadata names it as parent,
-  // so `kubic cost --session <orch>` is the run's total with per-child
-  // rows. The named parent keeps its contract (unknown/locked/legacy
-  // escape, never a marker row); a child that cannot be opened reports a
-  // zero marker row like the listing sweep, so a still-running worker
-  // (live lock) reads as `(locked)` instead of failing the report.
-  // A named session is explicit and ignores the project scope.
+  // A named session is explicit and ignores the project scope; it keeps
+  // its contract (unknown/locked/legacy escape, never a marker row).
   const named =
     sessionId === undefined
       ? undefined
       : all.find((entry) => entry.id === sessionId);
   if (sessionId !== undefined && named === undefined) {
-    // Issue #419: an unknown named parent with recorded children names
-    // the orphans instead of exiting bare — the operator's next step is
-    // a child id, and the bare `unknown session` hid that it exists.
-    // (The id passed the SESSION_ID_PATTERN gate in runCostCommand, but
-    // this loader is exported — redact on principle, like cost does.)
-    const orphans = all
-      .filter((entry) => entry.meta?.parentSessionId === sessionId)
-      .map((entry) => entry.id)
-      .sort();
-    if (orphans.length > 0) {
-      throw new Error(
-        `unknown session ${redactSecretShapes(sessionId)} (orphaned children: ${orphans.join(', ')})`,
-      );
-    }
     throw new SessionAttachError(sessionId);
   }
   if (named?.format === 'legacy') {
     throw new SessionFormatError(named.id);
   }
-  const children =
-    named === undefined
-      ? []
-      : all.filter(
-          (entry) =>
-            entry.id !== named.id && entry.meta?.parentSessionId === named.id,
-        );
   // Issue #250: the default scope is the invoking project — sessions
   // touching its workspace — with `--all` for the machine-global total the
   // command used to print.
   const workspace = query?.workspace;
   const scoped =
-    named !== undefined || query?.all === true || workspace === undefined
-      ? named === undefined
+    named !== undefined
+      ? [named]
+      : query?.all === true || workspace === undefined
         ? all
-        : [named, ...children]
-      : all.filter((entry) =>
-          touchesWorkspace(entry.meta?.workspace ?? entry.meta?.cwd, workspace),
-        );
+        : all.filter((entry) =>
+            touchesWorkspace(
+              entry.meta?.workspace ?? entry.meta?.cwd,
+              workspace,
+            ),
+          );
   const rows: AgentCostInput[] = [];
   for (const entry of scoped) {
     const isNamed = named !== undefined && entry.id === named.id;
     const project = entry.meta?.workspace ?? entry.meta?.cwd;
-    // Base identity every row below carries (issue #250): the session id
-    // stays `agentId` (the stable contract), while `agent`/`role` name the
-    // #164 worker and `session`/`project` locate the fact.
+    // Base identity every row below carries: the session id stays `agentId`
+    // (the stable contract), `agent`/`role` name what the session recorded
+    // about itself, and `session`/`project` locate the fact.
     const identity = {
       agentId: entry.id,
       session: entry.id,
@@ -345,8 +309,8 @@ export async function loadSessionCostRows(
       ...(entry.meta?.role === undefined ? {} : { role: entry.meta.role }),
     } as const;
     if (entry.format === 'legacy') {
-      // A named legacy id escaped above; a legacy child of a named run
-      // reports like any other unreadable listing entry.
+      // A named legacy id escaped above; a legacy listing entry reports as
+      // unreadable.
       rows.push({
         ...identity,
         model: '(unreadable)',
@@ -359,17 +323,8 @@ export async function loadSessionCostRows(
     const live = sessionLockIsLive(join(sessionsRoot, entry.id));
     if (live !== undefined) {
       // A session the operator NAMED is never silently skipped: a live
-      // lock escapes so `runCostCommand` prints the refusal and exits 1,
-      // as it did before the durable store. Marker rows are for the
-      // listing sweep — and for the NAMED run's children — only.
-      // Review #164: a live run's manager record is lock-held by the run
-      // itself — refusing the whole report would leave a running run with
-      // no cost view. With children recorded, the parent row is skipped
-      // and the report covers the children; without children the named
-      // contract below still escapes.
-      if (isNamed && children.length > 0) {
-        continue;
-      }
+      // lock escapes so `runCostCommand` prints the refusal and exits 1.
+      // Marker rows are for the listing sweep only.
       if (isNamed) {
         throw new SessionLockError(entry.id, {
           pid: live.pid,
@@ -480,11 +435,10 @@ export async function loadSessionCostRows(
   return groupCostRows(rows, by);
 }
 
-// One run's usage as its `--json` report carries it (issue #185; §39,
-// §68): the session's own usage rollup (the numbers `kubic cost` reads), the
-// tool calls it executed, and the `provider/id` of the model that answered
-// last. The orchestrator builds each worker's §68 metrics and provenance
-// from this — never invented zeros.
+// One run's usage as its `--json` report carries it: the session's own
+// usage rollup (the numbers `kubic cost` reads), the tool calls it executed,
+// and the `provider/id` of the model that answered last — never invented
+// zeros.
 export async function readSessionRunUsage(
   sessionsRoot: string,
   sessionId: string,
@@ -544,7 +498,7 @@ export async function readSessionRunUsage(
 }
 
 // Presentation over the grouped rows (issue #250; §39): the group column
-// names the `--by` level, then the worker's role, the model, and the
+// names the `--by` level, then the session's role, the model, and the
 // separate in/out/cacheRead/cacheWrite counters the old combined-tokens
 // column hid. The kit table only on a coloured terminal, plain aligned text
 // otherwise. Role/agent/model values are operator- or model-authored, so

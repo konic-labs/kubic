@@ -188,9 +188,9 @@ export interface GitStatus {
 // from a branch name — never guessed from one — while an unborn branch is
 // just a name next to `# branch.oid (initial)`.
 /**
- * Shared with the host worktree reader (issue #388): it parses the same
- * `git status --porcelain=v2 -z -b` output `git_status` classifies, so the
- * orchestrator never grows a second status parser.
+ * Shared with the TUI workspace reader: it parses the same
+ * `git status --porcelain=v2 -z -b` output `git_status` classifies, so no
+ * caller grows a second status parser.
  */
 export function parsePorcelainStatus(out: string): GitStatus {
   const staged: string[] = [];
@@ -277,8 +277,8 @@ export function parsePorcelainStatus(out: string): GitStatus {
     untracked,
     conflicts,
     // The parser sees no repo root and no submodules (issue #380): the
-    // status op fills them from its own queries; other consumers
-    // (orchestrator worktree status) keep the empty defaults.
+    // status op fills them from its own queries; other consumers keep the
+    // empty defaults.
     repoRoot: '',
     submodules: [],
     renames,

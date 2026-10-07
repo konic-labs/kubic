@@ -154,8 +154,7 @@ bound is the whole store (issue #350): the index's own lines count alongside
 the blob bytes, because content addressing dedupes blobs and a file
 toggling between two contents grows only the lines. The pass reports the
 excess instead — `enforceRetention` returns
-`{ entries, bytes, overBound }`, and `kubic clean --journal` prints
-`over bound by N byte(s) (newest entry kept)`. An entry that could never fit
+`{ entries, bytes, overBound }`. An entry that could never fit
 the store is refused before a single blob is written:
 `JournalEntryTooLargeError` (a named error carrying `entryBytes` and
 `maxBytes`) is thrown from `append`, so the tool layer aborts the write as
@@ -186,7 +185,7 @@ lock), leaving the interleaved line in place and dropping its caches so the
 next pass re-derives truth. The blob sweep skips `*.tmp` names and blobs newer
 than the pass started. `liveLockHolder(lockPath)` is the read-only view: the
 pid when that process is alive, undefined for missing/torn/stale residue —
-what `kubic clean --journal` and the read-time self-heal use to step aside.
+what the read-time self-heal uses to step aside.
 
 Retention fast path (issues #124, #349, #350): both bounds are proven from
 cache on every append — the tracked byte total (index + blobs) must be at or
@@ -346,7 +345,7 @@ What actually ships in Kubic:
 - **`MemoryCheckpointStore`** (`env.ts`) is the `CheckpointStore` seam
   behind `SpawnOptions.checkpointKey`/`checkpointStore`, exercised by the
   exec and lane tests. No production caller supplies one, so **a
-  `kubic run`/`kubic orchestrate` invocation persists no checkpoint**.
+  `kubic run` invocation persists no checkpoint**.
 
 `kubic replay --tier deterministic|live` **re-executes** the recorded
 objective through the solo lane at the pinned model/role config. It does
@@ -361,8 +360,6 @@ Only `--tier recorded` is log-only, and it never touches a lane.
 - Imported by: [@kubic/worker](worker.md) (lane bridges), [@kubic/host](host.md)
   (journal CLI), [@kubic/agents](agents-pkg.md) (`FileBridge` for
   memory/skills).
-- Note: importable by the extensions dogfood facet but unreferenced
-  in-tree (allowed by `scripts/dep-lint.mjs`, no edge yet).
 - Sole owner of `node:fs` / `node:child_process` (§9, issue #12).
 
 ```text

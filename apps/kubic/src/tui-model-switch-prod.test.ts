@@ -497,7 +497,7 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     fake.feed('\x03');
     fake.feed('\x03');
     expect(await pending).toBe(0);
-    expect(lines.join('\n')).toContain('[SOLO] approvals on');
+    expect(lines.join('\n')).toContain('approvals on');
   });
 });
 

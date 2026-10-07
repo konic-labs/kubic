@@ -183,13 +183,11 @@ async function committedPrompt(solo: SoloLane): Promise<string> {
 }
 
 describe('solo boot installs the extension stack in hook order (issues #208, #98)', () => {
-  it('budget → policy → spans → kubic, and nothing else', async () => {
-    const budget = hook(ToolTask, { beforeTool: () => undefined });
+  it('policy → spans → kubic, and nothing else', async () => {
     const span = hook(ToolTask, { beforeTool: () => undefined });
     const solo = await boot({
       policy: {
         interceptors: { workspace: '/ws', readRoots: ['/skills-a'] },
-        beforePolicyHooks: () => [budget],
         spanHooks: () => [span],
       },
       skillReadRoots: ['/skills-b'],
@@ -199,10 +197,7 @@ describe('solo boot installs the extension stack in hook order (issues #208, #98
         .snapshot()
         .installed()
         .map((extension) => extension.name),
-    ).toEqual(['kubic.budget', 'kubic.policy', 'kubic.spans', 'kubic']);
-    expect(
-      solo.registry.snapshot().extension('kubic.budget')?.hooks,
-    ).toHaveLength(1);
+    ).toEqual(['kubic.policy', 'kubic.spans', 'kubic']);
     expect(
       solo.registry.snapshot().extension('kubic.policy')?.hooks,
     ).toHaveLength(1);

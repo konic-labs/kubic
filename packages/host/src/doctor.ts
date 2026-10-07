@@ -33,13 +33,11 @@ import { renderDoctorGrouped } from './doctor-render.js';
 // Issue #58 honest limits (§59.1, §78): registration import only — no
 // existing check builder in this file was modified for #58. Exit codes
 // route through the limits mapper so provider-down exits 6.
-import type { ResourceEnforcementProbe } from './limits/doctor-limits.js';
 import {
   depsLimitCheck,
   limitsDoctorExit,
   policyEnforceabilityCheck,
   providerAvailabilityCheck,
-  resourceEnforcementCheck,
   staticLimitChecks,
 } from './limits/doctor-limits.js';
 
@@ -59,7 +57,6 @@ export type DoctorReason =
   | 'provider-down'
   | 'policy-mismatch'
   | 'deps-missing'
-  | 'extension-posture'
   | 'full-access'
   | 'unsupported-level'
   | 'detection-only'
@@ -111,15 +108,6 @@ export interface DoctorDeps extends CliIo {
   // not enforce. Absent (legacy callers/tests): no installed-policy check,
   // the existing matrix is unchanged.
   installedPolicy?: () => InstalledPolicyPosture;
-  // §82 per-agent resource enforcement (issue #163): which limits this build
-  // can enforce on this platform. Absent (legacy callers/tests) means no
-  // resources line, the existing matrix unchanged.
-  resourceEnforcement?: () => ResourceEnforcementProbe;
-  // First-party extension posture (issue #80): structural input so host
-  // never imports the extensions package — the composition root maps the
-  // real startup probe onto this shape. Absent (tests, unwired callers):
-  // no extension check, the legacy matrix is unchanged.
-  probeExtensions?: () => ExtensionPostureInput;
   // Role documents (issue #99; §41.4, §40.3): the loaded `.kubic/roles/*.md`
   // set projected onto DoctorChecks — a contradictory role reports
   // fail/policy-mismatch with the resolver's named reason, and a refused
@@ -320,16 +308,6 @@ function detectionOnlyCheck(
     reason: 'detection-only',
     detail: `detection only (not enforcement): ${lexical.join('; ')}`,
   };
-}
-
-// Structural posture from the extensions startup probe
-// (packages/extensions/src/startup.ts): loaded bundle names plus the
-// refused-attempt count, both produced by the same trust checks.
-export interface ExtensionPostureInput {
-  ok: boolean;
-  loaded: string[];
-  refusedCount: number;
-  detail: string;
 }
 
 // Repo-level session overlap input (issue #118; §42.5): the workspace and
@@ -533,48 +511,6 @@ function probeMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-// First-party extension posture (issue #80): the composition root feeds
-// the live startup probe here, so doctor reports the same loaded/refused
-// counts the trust checks produce. A degraded posture fails with reason
-// extension-posture (exit 1 via limitsDoctorExit); warn never applies —
-// a half-loaded bundle is a failure, not a disclosure. Defense in depth:
-// the ok path must carry proof both live tripwires fired (≥1 loaded
-// bundle, ≥2 refused attempts) — a structural {ok:true} with no refusals
-// fails, so a probe that skips its checks cannot report green.
-const EXTENSION_TRIPWIRES = 2;
-function extensionCheck(posture: ExtensionPostureInput): DoctorCheck {
-  const base = {
-    id: 'extension:bundle',
-    label: 'extension bundle',
-  };
-  if (
-    posture.ok &&
-    posture.loaded.length >= 1 &&
-    posture.refusedCount >= EXTENSION_TRIPWIRES
-  ) {
-    return {
-      ...base,
-      status: 'pass',
-      reason: 'ok',
-      detail: posture.detail,
-    };
-  }
-  if (posture.ok) {
-    return {
-      ...base,
-      status: 'fail',
-      reason: 'extension-posture',
-      detail: `extension posture degraded: ok reported with loaded=[${posture.loaded.join(', ')}] refused=${posture.refusedCount} (need >=1 loaded bundle and ${EXTENSION_TRIPWIRES} refused tripwires) — failing closed`,
-    };
-  }
-  return {
-    ...base,
-    status: 'fail',
-    reason: 'extension-posture',
-    detail: posture.detail,
-  };
-}
-
 // License identity (issue #59; §75.1): Kubic is MIT-licensed. The check
 // always passes — it surfaces the license at runtime and can never flip
 // the doctor exit code. The static correspondence (LICENSE text and the
@@ -629,21 +565,6 @@ export function collectDoctorChecks(
       detail: probeMessage(error),
     });
   }
-  // §82 resource enforcement posture (issue #163): opt-in via the injected
-  // probe, so legacy matrices are unchanged.
-  if (deps.resourceEnforcement !== undefined) {
-    try {
-      checks.push(resourceEnforcementCheck(deps.resourceEnforcement()));
-    } catch (error) {
-      checks.push({
-        id: 'limit:resources',
-        label: 'limit resources',
-        status: 'warn',
-        reason: 'ok',
-        detail: `per-agent limits — could not be probed: ${probeMessage(error)}`,
-      });
-    }
-  }
   let configured: ConfiguredApprovals | undefined;
   let rawPolicy: unknown;
   let policyLoaded = false;
@@ -681,22 +602,6 @@ export function collectDoctorChecks(
         label: 'policy installed',
         status: 'fail',
         reason: 'policy-mismatch',
-        detail: probeMessage(error),
-      });
-    }
-  }
-  // First-party extension posture (issue #80): opt-in via the injected
-  // probe — absent means no check (legacy matrices are unchanged). A
-  // throwing probe becomes a failing check, never a crash.
-  if (deps.probeExtensions !== undefined) {
-    try {
-      checks.push(extensionCheck(deps.probeExtensions()));
-    } catch (error) {
-      checks.push({
-        id: 'extension:bundle',
-        label: 'extension bundle',
-        status: 'fail',
-        reason: 'extension-posture',
         detail: probeMessage(error),
       });
     }

@@ -51,10 +51,7 @@ beforeEach(() => {
   // The solo no-isolation notice goes straight to process.stderr (its text
   // and gating are pinned in limits/solo-warning.test.ts and
   // solo-notice-prod.test.ts); the documented opt-out keeps these runs quiet.
-  // Orchestrator-child inputs are cleared so the host shell cannot leak in.
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
-  vi.stubEnv('KUBIC_WORKER_ID', undefined);
-  vi.stubEnv('KUBIC_APPROVALS_DIR', undefined);
 });
 
 afterEach(() => {

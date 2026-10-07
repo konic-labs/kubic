@@ -133,10 +133,6 @@ export interface ApprovalSurface {
   // key it leaves alone (a global key). `decide` takes no key meanwhile.
   inputMode(): ApprovalInput | undefined;
   typeInto(data: string): 'settled' | 'consumed' | undefined;
-  // Issue #465: the shown request just came on screen (the dashboard's `a`
-  // opened its card): it arms from now, like a fresh ask — a key pressed
-  // with the one that opened it cannot answer it. A no-op when nothing shows.
-  reveal(): void;
   // Issue #316: the page of a long command the dialog shows, and the
   // `v` key that advances it (wrapping back to the first page).
   commandPage(): number;
@@ -539,13 +535,6 @@ export function createApprovalSurface(
     isArmed,
     isAllowable,
     noteDroppedKey: restartArming,
-    reveal: (): void => {
-      const current = shown;
-      if (current === undefined) return;
-      const wasArmed = isArmed();
-      startArming(current, armingMs);
-      if (wasArmed && armingMs > 0) notify();
-    },
     commandPage: (): number => page,
     nextCommandPage: (): boolean => {
       if (shown === undefined) return false;

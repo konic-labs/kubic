@@ -106,10 +106,10 @@ describe('real-git tests use the shared helper (issues #365, #420)', () => {
   });
 
   it('the scan covers the worker+exec+host+apps test tree', () => {
-    // The four trees ship 300+ test files; a collapsed walk must fail
+    // The four trees ship 250+ test files; a collapsed walk must fail
     // loudly instead of certifying an empty scan.
     assert.ok(
-      SCOPED_TESTS.length >= 300,
+      SCOPED_TESTS.length >= 250,
       `expected the sandbox-gate scan to cover the tree, saw ${SCOPED_TESTS.length} files`,
     );
   });

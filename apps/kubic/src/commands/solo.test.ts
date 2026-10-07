@@ -124,7 +124,6 @@ describe('solo commands: generated help', () => {
       '--session <id>',
       '--timeout <ms>',
       '--max-turns <n>',
-      '--budget <dims>',
       '--role <name>',
       '--skill <path>',
       '--invoke-skill <name>',
@@ -258,46 +257,6 @@ describe('kubic run', () => {
   it('passes only the prompt when nothing else is given', async () => {
     const result = await kubic(['run', '--prompt', 'hi']);
     expect(result.calls).toEqual([{ key: 'run', input: { prompt: 'hi' } }]);
-  });
-
-  // Issue #283 (§71): the opt-in budget reaches the runner as parsed
-  // limits; absence leaves the key out (never defaulted). Agent-scoped
-  // clauses belong to `kubic orchestrate --budget`.
-  it('parses --budget dims into the runner options', async () => {
-    expect(
-      (
-        await kubic([
-          'run',
-          '-p',
-          'hi',
-          '--budget',
-          'maxToolCalls=1,maxCostUsd=0.5',
-        ])
-      ).calls,
-    ).toEqual([
-      {
-        key: 'run',
-        input: {
-          prompt: 'hi',
-          budget: { maxToolCalls: 1, maxCostUsd: 0.5 },
-        },
-      },
-    ]);
-    expect((await kubic(['run', '-p', 'hi'])).calls).toEqual([
-      { key: 'run', input: { prompt: 'hi' } },
-    ]);
-  });
-
-  it('refuses a malformed --budget naming the flag', async () => {
-    expect(
-      await usageError(['run', '-p', 'hi', '--budget', 'bogus']),
-    ).toContain('--budget');
-  });
-
-  it('refuses agent-scoped --budget clauses on a solo run', async () => {
-    expect(
-      await usageError(['run', '-p', 'hi', '--budget', 'worker-1:toolCalls=1']),
-    ).toContain('--budget');
   });
 
   // Issue #278 (§19): autonomous mode is explicit — the flag reaches
@@ -541,17 +500,6 @@ describe('kubic tui', () => {
     expect((await kubic(['tui'])).calls).toEqual([{ key: 'tui', input: {} }]);
   });
 
-  // Issue #283 (§71): same opt-in budget grammar as `run` — parsed
-  // limits reach the runner, absence leaves the key out.
-  it('parses --budget dims into the runner options', async () => {
-    expect((await kubic(['tui', '--budget', 'maxCostUsd=0.5'])).calls).toEqual([
-      { key: 'tui', input: { budget: { maxCostUsd: 0.5 } } },
-    ]);
-    expect(await usageError(['tui', '--budget', 'bogus'])).toContain(
-      '--budget',
-    );
-  });
-
   // Issue #295: the explicit model pin, same `provider/id` rule as replay.
   it('parses --model <provider/id> and refuses a malformed ref', async () => {
     expect((await kubic(['tui', '--model', 'faux/b'])).calls).toEqual([
@@ -581,19 +529,6 @@ describe('kubic tui', () => {
     expect(await usageError(['tui', '--session', 'a/b'])).toContain(
       'use [A-Za-z0-9_-]',
     );
-  });
-
-  // Issue #327: the explicit interactive orchestrator entry — delegation
-  // stays opt-in, and the flag parses into the runner's own option.
-  it('parses --orchestrator and documents it in the generated help', async () => {
-    const result = await kubic(['tui', '--orchestrator']);
-    expect(result.calls).toEqual([
-      { key: 'tui', input: { orchestrator: true } },
-    ]);
-    const help = await kubic(['tui', '--help']);
-    const text = help.out.join('\n');
-    expect(text).toContain('--orchestrator');
-    expect(text).toMatch(/orchestrator mode/i);
   });
 
   // Issue #36: skills never fetch — no fetch/install flag exists on the

@@ -1,24 +1,18 @@
-// Request-time secrets, audit, ScopedToken, per-role env (issue #38) — RED first.
+// Request-time secrets, redaction and the secret-use audit.
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import {
-  assertNoPlaintextSecrets,
-  containsPlaintextSecret,
-  issueScopedToken,
   MIN_MATCHABLE_SECRET_LENGTH,
   parseSecretRef,
   redactBridgeWrites,
   redactingSink,
   redactSecretValues,
   resolveSecretRef,
-  revokeAllTokens,
   type SecretAuditEvent,
   type SecretResolverDeps,
-  substituteTokenHost,
-  useScopedToken,
   withoutIdentity,
 } from './secrets.js';
 
@@ -127,21 +121,6 @@ describe('redaction + audit (issue #38)', () => {
     });
   });
 
-  it('detects plaintext secrets in log lines', () => {
-    expect(
-      containsPlaintextSecret(`using ${FIXTURE_KEY_A}`, [FIXTURE_KEY_A]),
-    ).toBe(true);
-    expect(containsPlaintextSecret('using [REDACTED]', [FIXTURE_KEY_A])).toBe(
-      false,
-    );
-    expect(() =>
-      assertNoPlaintextSecrets([`leak ${FIXTURE_KEY_A}`], [FIXTURE_KEY_A]),
-    ).toThrow(/plaintext/i);
-    expect(() =>
-      assertNoPlaintextSecrets(['clean [REDACTED] line'], [FIXTURE_KEY_A]),
-    ).not.toThrow();
-  });
-
   it('audits every secret use', async () => {
     const { deps: d, audit } = deps();
     const ref = parseSecretRef('$KUBIC_TEST_KEY');
@@ -149,118 +128,6 @@ describe('redaction + audit (issue #38)', () => {
     await resolveSecretRef(ref, d, { role: 'r1', purpose: 'p2' });
     expect(audit).toHaveLength(2);
     expect(audit[1]).toMatchObject({ role: 'r1', purpose: 'p2' });
-  });
-});
-
-describe('ScopedToken (issue #38)', () => {
-  it('authorizes use on a bound host within budget', () => {
-    const token = issueScopedToken(FIXTURE_KEY_A, {
-      ttlMs: 60_000,
-      hosts: ['registry.example.com'],
-      maxUses: 2,
-      now: 1_000,
-    });
-    expect(token.expiresAt).toBe(61_000);
-    expect(token.revoked).toBe(false);
-    expect(useScopedToken(token, 'registry.example.com', 2_000)).toBe(
-      FIXTURE_KEY_A,
-    );
-    expect(token.remainingUses).toBe(1);
-  });
-
-  it('refuses hosts outside the binding (host-substitution is host-restricted)', () => {
-    const token = issueScopedToken(FIXTURE_KEY_A, {
-      ttlMs: 60_000,
-      hosts: ['registry.example.com'],
-      maxUses: 2,
-      now: 1_000,
-    });
-    expect(() => useScopedToken(token, 'evil.example.com', 2_000)).toThrow(
-      /host/i,
-    );
-    expect(() =>
-      substituteTokenHost(
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: ${CRED} is the placeholder syntax under test
-        'https://${CRED}@x/',
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: ${CRED} is the placeholder syntax under test
-        '${CRED}',
-        token,
-        'evil.example.com',
-        2_000,
-      ),
-    ).toThrow(/host/i);
-  });
-
-  it('substitutes tokens only on bound hosts', () => {
-    const token = issueScopedToken(FIXTURE_KEY_A, {
-      ttlMs: 60_000,
-      hosts: ['registry.example.com'],
-      maxUses: 2,
-      now: 1_000,
-    });
-    const out = substituteTokenHost(
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: ${CRED} is the placeholder syntax under test
-      'https://${CRED}@registry.example.com/v1',
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: ${CRED} is the placeholder syntax under test
-      '${CRED}',
-      token,
-      'registry.example.com',
-      2_000,
-    );
-    expect(out).toContain(FIXTURE_KEY_A);
-  });
-
-  it('expires tokens and exhausts budgets', () => {
-    const token = issueScopedToken(FIXTURE_KEY_A, {
-      ttlMs: 1_000,
-      hosts: ['h'],
-      maxUses: 1,
-      now: 1_000,
-    });
-    expect(() => useScopedToken(token, 'h', 3_000)).toThrow(/expir/i);
-    const fresh = issueScopedToken(FIXTURE_KEY_A, {
-      ttlMs: 60_000,
-      hosts: ['h'],
-      maxUses: 1,
-      now: 1_000,
-    });
-    expect(useScopedToken(fresh, 'h', 2_000)).toBe(FIXTURE_KEY_A);
-    expect(() => useScopedToken(fresh, 'h', 2_000)).toThrow(/budget|uses/i);
-  });
-
-  it('revokes tokens at settle/exit', () => {
-    const a = issueScopedToken(FIXTURE_KEY_A, {
-      ttlMs: 60_000,
-      hosts: ['h'],
-      maxUses: 5,
-      now: 1_000,
-    });
-    const b = issueScopedToken(FIXTURE_KEY_B, {
-      ttlMs: 60_000,
-      hosts: ['h'],
-      maxUses: 5,
-      now: 1_000,
-    });
-    revokeAllTokens([a, b]);
-    expect(a.revoked).toBe(true);
-    expect(b.revoked).toBe(true);
-    expect(() => useScopedToken(a, 'h', 2_000)).toThrow(/revok/i);
-  });
-
-  it('never exposes the live secret on the token object', () => {
-    const token = issueScopedToken(FIXTURE_KEY_A, {
-      ttlMs: 60_000,
-      hosts: ['h'],
-      maxUses: 2,
-      now: 1_000,
-    });
-    const exposed = token as unknown as Record<string, unknown>;
-    expect(exposed.value).toBeUndefined();
-    expect('value' in token).toBe(false);
-    expect(JSON.stringify(token)).not.toContain(FIXTURE_KEY_A);
-    expect({ ...token }).not.toHaveProperty('value');
-    // The gated path still resolves after the checks pass.
-    expect(useScopedToken(token, 'h', 2_000)).toBe(FIXTURE_KEY_A);
   });
 });
 
@@ -353,96 +220,6 @@ describe('redaction hardening (issue #69)', () => {
     ]);
     expect(out).toEqual({ deep: [['pre-[REDACTED]-post']] });
   });
-
-  it('ignores empty secret entries in plaintext detection', () => {
-    expect(containsPlaintextSecret('anything', [])).toBe(false);
-    expect(containsPlaintextSecret('anything', [''])).toBe(false);
-    expect(containsPlaintextSecret('', [FIXTURE_KEY_A])).toBe(false);
-  });
-
-  it('pins the violating entry index in the refusal', () => {
-    try {
-      assertNoPlaintextSecrets(
-        ['clean', `leak ${FIXTURE_KEY_A}`],
-        [FIXTURE_KEY_A],
-      );
-      expect.unreachable();
-    } catch (error) {
-      expect((error as Error).name).toBe('SecretError');
-      expect((error as Error).message).toMatch(/entry 1/);
-    }
-  });
-});
-
-describe('ScopedToken hardening (issue #69)', () => {
-  it('requires hosts and a positive integer budget at issue', () => {
-    expect(() =>
-      issueScopedToken(FIXTURE_KEY_A, {
-        ttlMs: 60_000,
-        hosts: [],
-        maxUses: 2,
-      }),
-    ).toThrow(/at least one host/);
-    for (const maxUses of [0, -1, 1.5, Number.NaN]) {
-      expect(() =>
-        issueScopedToken(FIXTURE_KEY_A, {
-          ttlMs: 60_000,
-          hosts: ['h'],
-          maxUses,
-        }),
-      ).toThrow(/positive integer/);
-    }
-  });
-
-  it('expires at the exact boundary (now === expiresAt)', () => {
-    const token = issueScopedToken(FIXTURE_KEY_A, {
-      ttlMs: 1_000,
-      hosts: ['h'],
-      maxUses: 5,
-      now: 1_000,
-    });
-    expect(() => useScopedToken(token, 'h', 2_000)).toThrow(/expired/);
-    expect(token.remainingUses).toBe(5);
-  });
-
-  it('refuses forged tokens missing from the secret store', () => {
-    const real = issueScopedToken(FIXTURE_KEY_A, {
-      ttlMs: 60_000,
-      hosts: ['h'],
-      maxUses: 5,
-      now: 1_000,
-    });
-    const forged = { ...real };
-    expect(() => useScopedToken(forged, 'h', 2_000)).toThrow(/revoked/);
-  });
-
-  it('substitution requires the placeholder and consumes budget', () => {
-    const token = issueScopedToken(FIXTURE_KEY_A, {
-      ttlMs: 60_000,
-      hosts: ['h'],
-      maxUses: 2,
-      now: 1_000,
-    });
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: ${CRED} is the placeholder syntax under test
-    const CRED = '${CRED}';
-    expect(() =>
-      substituteTokenHost('https://h/v1', CRED, token, 'h', 2_000),
-    ).toThrow(/placeholder not found/);
-    expect(token.remainingUses).toBe(2);
-    const out = substituteTokenHost(
-      `x-${CRED}-${CRED}`,
-      CRED,
-      token,
-      'h',
-      2_000,
-    );
-    expect(out).toBe(`x-${FIXTURE_KEY_A}-${FIXTURE_KEY_A}`);
-    expect(token.remainingUses).toBe(1);
-  });
-
-  it('revokes zero tokens without throwing', () => {
-    expect(() => revokeAllTokens([])).not.toThrow();
-  });
 });
 
 // A live value is matched as a SUBSTRING by the debug/persistence redaction
@@ -488,11 +265,6 @@ describe('short live values are not substring-matched (issue #359)', () => {
     expect(redactSecretValues(`a ${AT_MIN} b gw`, ['gw', AT_MIN])).toBe(
       'a [REDACTED] b gw',
     );
-  });
-
-  it('containsPlaintextSecret follows the same minimum', () => {
-    expect(containsPlaintextSecret(`x ${AT_MIN}`, [AT_MIN])).toBe(true);
-    expect(containsPlaintextSecret(`x ${BELOW_MIN}`, [BELOW_MIN])).toBe(false);
   });
 });
 

@@ -1,7 +1,6 @@
-// `kubic run --json` carries the run's real usage (issue #185; §39, §68):
-// the orchestrator builds each worker's §68 metrics from the child's own
-// report, so the report must carry the numbers — the SAME ones `kubic cost`
-// reads from the session — never zeros and never a bare ref.
+// `kubic run --json` carries the run's real usage: the report must carry
+// the numbers — the SAME ones `kubic cost` reads from the session — never
+// zeros and never a bare ref.
 //
 // Faux provider only: the faux model's usage is deterministic, zero
 // network, zero paid tokens.

@@ -64,17 +64,15 @@ describe('parseRoleDocument', () => {
     expect(parseRoleDocument(`\uFEFF${lf}`)).toEqual(parseRoleDocument(lf));
   });
 
-  // Issue #198 (§12): the Pi-agent keys — `name` aliases `role`,
-  // `description` is shown by doctor, `model` is a validated provider/id
-  // pin, `budget` carries the --budget dims.
-  it('parses name/description/model/budget from a Pi-agent-shaped doc', () => {
+  // The Pi-agent keys: `name` aliases `role`, `description` is shown by
+  // doctor, and `model` is a validated provider/id pin.
+  it('parses name/description/model from a Pi-agent-shaped doc', () => {
     const doc = parseRoleDocument(
-      `---\nname: reviewer\ndescription: Reviews diffs\ntools: [read]\nmodel: acme/reviewer-1\nbudget = { maxToolCalls = 5 }\n---\n# Reviewer\n`,
+      `---\nname: reviewer\ndescription: Reviews diffs\ntools: [read]\nmodel: acme/reviewer-1\n---\n# Reviewer\n`,
     );
     expect(doc.name).toBe('reviewer');
     expect(doc.description).toBe('Reviews diffs');
     expect(doc.model).toBe('acme/reviewer-1');
-    expect(doc.budget).toEqual({ maxToolCalls: 5 });
   });
 
   it("refuses disagreeing 'role' and 'name' by name", () => {
@@ -89,17 +87,10 @@ describe('parseRoleDocument', () => {
     ).toThrow(/model.*provider\/id/);
   });
 
-  it('refuses an unknown budget dimension and a non-positive value', () => {
+  it('refuses an unknown frontmatter key by name', () => {
     expect(() =>
-      parseRoleDocument(
-        `---\nrole: reviewer\nbudget = { maxUnicorns = 5 }\n---\n# R\n`,
-      ),
-    ).toThrow(/unknown budget dimension/);
-    expect(() =>
-      parseRoleDocument(
-        `---\nrole: reviewer\nbudget = { maxToolCalls = 0 }\n---\n# R\n`,
-      ),
-    ).toThrow(/maxToolCalls.*positive/);
+      parseRoleDocument(`---\nrole: reviewer\npriority: high\n---\n# R\n`),
+    ).toThrow(/unknown frontmatter key 'priority'/);
   });
 });
 
@@ -294,16 +285,6 @@ describe('resolveRole', () => {
         { layer: 'project', roles: { reviewer: { model: 'acme/cfg-1' } } },
       ]).model,
     ).toBe('acme/cfg-1');
-  });
-
-  it('a document budget passes through, and absent means unbounded', () => {
-    const doc = parseRoleDocument(
-      `---\nrole: reviewer\nbudget = { maxToolCalls = 5 }\n---\n# R\n`,
-    );
-    expect(resolveRole(doc, []).budget).toEqual({ maxToolCalls: 5 });
-    expect(
-      resolveRole(parseRoleDocument(PLANNER_MD), []).budget,
-    ).toBeUndefined();
   });
 });
 

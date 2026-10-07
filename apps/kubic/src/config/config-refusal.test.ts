@@ -1,9 +1,7 @@
-// Fail-closed on the config-consuming commands (issue #90, criterion 3;
-// issue #242): a refused config must stop `kubic run` / `orchestrate` /
-// `tui` / `replay` / `clean` / `policy` / `eval` / `benchmark`, not fall
-// back to defaults. Proceeding on defaults while the user believes their
-// `.kubic/config.toml` is in force is silently ignoring the config — the
-// defect this issue exists to fix.
+// Fail-closed on the config-consuming commands: a refused config must stop
+// `kubic run` / `tui` / `replay` / `policy` / `eval` / `benchmark`, not
+// fall back to defaults. Proceeding on defaults while the user believes
+// their `.kubic/config.toml` is in force is silently ignoring the config.
 //
 // Commands that do not consume config projections stay unaffected, and the
 // commands whose job is to REPORT a refusal (`config`, `doctor`, `trust`)
@@ -32,18 +30,8 @@ function loaded(): CliConfigResult {
 }
 
 describe('a refused config fails closed on the agent-executing modes', () => {
-  it.each([
-    'run',
-    'orchestrate',
-    'tui',
-    'attach',
-    'resume',
-    'clean',
-    'policy',
-    'eval',
-    'benchmark',
-  ])(
-    'stops `kubic %s` (issue #242: clean/policy consume config too)',
+  it.each(['run', 'tui', 'attach', 'resume', 'policy', 'eval', 'benchmark'])(
+    'stops `kubic %s`',
     (command) => {
       const exit = configRefusalExit(
         refused("layer 'project': unknown section '[bogus]'"),

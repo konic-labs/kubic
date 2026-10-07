@@ -60,7 +60,7 @@ export interface BootSkillOptions {
   // Issue #181 (§29.4): the resolved role name for role-scoped skills.
   // Absent means the lane booted with no role — role scoping is skipped
   // and the capability check alone decides. The caller passes the name
-  // the lane resolved (a worker child's task role, else `--role`).
+  // the lane resolved (`--role`).
   role?: string;
   // Issue #181 (§29.4): the resolved role document's `skills` list, by
   // skill name. Absent means the document declares none — no restriction.

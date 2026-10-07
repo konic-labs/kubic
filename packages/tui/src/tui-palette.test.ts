@@ -27,7 +27,6 @@ function setup(listFiles?: () => readonly string[]) {
   const app = createTuiApp({
     sessionId: 'sess-460',
     model: 'faux/m',
-    mode: 'solo',
     approvalsSkipped: false,
     approvalSurface: surface,
     ...(listFiles === undefined ? {} : { listFiles }),
@@ -122,10 +121,10 @@ describe('the ^P palette (issue #460)', () => {
   it('leaves a command that needs its argument in the editor', () => {
     const { app, sources, type, ran } = setup();
     app.openPalette(sources);
-    type('inspect');
+    type('image');
     app.handleInput('\r');
     expect(ran).toEqual([]);
-    expect(app.editor.getText()).toBe('/inspect ');
+    expect(app.editor.getText()).toBe('/image ');
   });
 
   it('switches the model and resumes a session through the loop', async () => {

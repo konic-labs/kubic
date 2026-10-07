@@ -2,7 +2,7 @@
 // 06-C): a summary line, the checks grouped by area with ✓ / ▲ / ✕ / ○, and
 // the full per-check report behind `--verbose`. Passing checks pack onto one
 // line per group; every warning, skip and failure gets its own row, and a
-// failure is always shown in full so the fix is on screen. The six "honest
+// failure is always shown in full so the fix is on screen. The five "honest
 // limit" warnings (never fixable, always present) fold into one row; the
 // verbose report keeps each of them.
 
@@ -39,13 +39,12 @@ const GROUP_ORDER = [
 type Group = (typeof GROUP_ORDER)[number];
 
 export function doctorGroup(id: string): Group {
-  if (id === 'dep:credentials:roles' || id.startsWith('role:')) return 'roles';
+  if (id.startsWith('role:')) return 'roles';
   if (id.startsWith('provider:') || id === 'limit:provider-availability') {
     return 'providers';
   }
   if (
     id.startsWith('dep:') ||
-    id.startsWith('extension:') ||
     id.startsWith('license:') ||
     id.startsWith('state:') ||
     id === 'limit:deps-present'
@@ -97,15 +96,6 @@ export function doctorShort(check: DoctorCheck): string {
       return 'config';
     case 'dep:models-json':
       return 'models.json';
-    case 'dep:credentials:roles':
-      return 'role credentials';
-    case 'extension:bundle': {
-      const loaded = match(detail, /loaded (\d+)/u);
-      const refused = match(detail, /refused (\d+)/u);
-      return loaded === undefined
-        ? 'extensions'
-        : `extensions ${loaded} loaded${refused === undefined ? '' : `, ${refused} refused`}`;
-    }
     case 'license:kubic':
       return `license ${firstClause(detail)}`;
     case 'state:permissions':
@@ -132,8 +122,6 @@ export function doctorShort(check: DoctorCheck): string {
       return 'routing policy';
     case 'policy:detection-only':
       return 'guards are detection-only (lexical), not a sandbox';
-    case 'limit:resources':
-      return 'memory and disk caps are not enforced; wall clock is';
     case 'skills': {
       const loaded = match(detail, /^(\d+) loaded/u);
       return loaded === undefined ? 'skills' : `skills ${loaded} loaded`;

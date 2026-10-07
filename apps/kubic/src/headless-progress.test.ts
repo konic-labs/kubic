@@ -28,7 +28,6 @@ describe('headless run progress (issue #447)', () => {
 
   beforeEach(() => {
     vi.stubEnv('KUBIC_NO_NOTICE', '');
-    vi.stubEnv('KUBIC_WORKER_ID', '');
   });
 
   afterEach(() => {

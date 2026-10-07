@@ -20,7 +20,7 @@ import { formatJson } from '../../../packages/core/src/cli/output.js';
 import type { CliTheme } from '../../../packages/core/src/cli/theme.js';
 import { formatVersionLine } from '../../../packages/core/src/license.js';
 import { suggest } from '../../../packages/core/src/suggest.js';
-import { refusedOrchestrateEnvelope } from '../../../packages/host/src/orchestrate-cli.js';
+import { RUNTIME_EXCLUDE_ENTRIES } from '../../../packages/exec/src/runtime-exclude.js';
 import {
   buildConfiguredSinks,
   setAuditSinks,
@@ -45,13 +45,8 @@ import { createKubicProgram, runKubicProgram } from './cli/program.js';
 import { COMMAND_GROUPS, ROOT_HELP, renderRootHelp } from './cli/root-help.js';
 import { registerAnalysisCommands } from './commands/analysis.js';
 import { registerJournalCommands } from './commands/journal.js';
-import { registerOrchestratorCommands } from './commands/orchestrator.js';
 import { registerSoloCommands } from './commands/solo.js';
-import {
-  type CliConfigResult,
-  configRefusalExit,
-  runtimeExcludeEntriesFor,
-} from './config-runtime.js';
+import { type CliConfigResult, configRefusalExit } from './config-runtime.js';
 
 // The root help (issues #128, #446): one text, printed by `--help`/`-h`
 // (exit 0 — a help request is a successful invocation), by the bare
@@ -69,11 +64,7 @@ export const COMMAND_NAMES: ReadonlySet<string> = new Set(
 );
 
 // The modes that create `.kubic/` runtime state (issue #91).
-const STATE_CREATING_COMMANDS: ReadonlySet<string> = new Set([
-  'run',
-  'orchestrate',
-  'tui',
-]);
+const STATE_CREATING_COMMANDS: ReadonlySet<string> = new Set(['run', 'tui']);
 
 // The interactive lane whose boot asks the project-trust question (issue
 // #228): the explicit `tui` command and the bare invocation it becomes.
@@ -118,15 +109,13 @@ const CLI_THINKING_COMMANDS: ReadonlySet<string> = new Set([
 ]);
 
 // The refused-config envelopes (issue #244), keyed by command: the same
-// `--json` shape the command itself prints — `run`'s compact one-liner (the
-// orchestrator reads a worker's last stdout line), orchestrate's and
-// replay's pretty-printed documents. `tui` has no --json and is absent.
+// `--json` shape the command itself prints — `run`'s compact one-liner and
+// replay's pretty-printed document. `tui` has no --json and is absent.
 const REFUSAL_ENVELOPES: Readonly<
   Record<string, (message: string, exitCode: number) => string>
 > = {
   run: (message, exitCode) =>
     JSON.stringify(buildRunEnvelope(refusedRunResult(message), exitCode)),
-  orchestrate: (message) => formatJson(refusedOrchestrateEnvelope(message)),
   replay: (message) => formatJson(refusedReplayEnvelope(message)),
 };
 
@@ -217,7 +206,6 @@ export function cliModelFromArgs(
 // command migrations never edit the same file.
 const REGISTRARS: readonly CommandRegistrar[] = [
   registerSoloCommands,
-  registerOrchestratorCommands,
   registerJournalCommands,
   registerAnalysisCommands,
 ];
@@ -244,10 +232,7 @@ export interface DispatchDeps {
   // reads this app's manifest through the exec FileBridge.
   readonly version: () => string;
   // `.kubic/` runtime ignore rules (issue #91), shipped before the modes
-  // that create runtime state; injected because it touches the repo. The
-  // entries are derived from the loaded config (issue #133): a configured
-  // `[orchestrator].root` joins the shipped prefixes, so the worktree parent
-  // never dirties the tree the run merges into.
+  // that create runtime state; injected because it touches the repo.
   readonly ensureRuntimeExclude: (entries: readonly string[]) => void;
   readonly runners: DispatchRunners;
   // The stdout theme for the help (issue #446): coloured on a TTY, the
@@ -272,10 +257,6 @@ export interface DispatchDeps {
 }
 
 const BARE_SKIP_FLAG = '--dangerously-skip-approvals';
-// Issue #327: `kubic --orchestrator` is the bare invocation's explicit
-// orchestrator entry — on a TTY it is `kubic tui --orchestrator`; off a TTY
-// it keeps the bare usage + exit 1 posture like the other bare flags.
-const BARE_ORCHESTRATOR_FLAG = '--orchestrator';
 // Issue #295: the bare model pin, `--model <provider/id>` /
 // `--model=<provider/id>`.
 const BARE_MODEL_FLAG = '--model';
@@ -364,10 +345,9 @@ export async function dispatchCommand(
       requested.startsWith(`${BARE_MODEL_FLAG}=`)) &&
     interactive;
   const bareSkip = requested === BARE_SKIP_FLAG && interactive;
-  const bareOrchestrator = requested === BARE_ORCHESTRATOR_FLAG && interactive;
   // One bare-flag form of the TUI: every bare flag is `kubic tui <flag>` on
   // a terminal (and keeps the usage + exit 1 posture off one).
-  const bareFlag = bareSkip || bareModel || bareOrchestrator;
+  const bareFlag = bareSkip || bareModel;
   const command = barePrompt
     ? 'run'
     : (requested === undefined && interactive) || bareFlag
@@ -407,8 +387,7 @@ export async function dispatchCommand(
       : undefined;
   // Issue #90 (design §35.1): one config load for the whole process — paths
   // per §35.1, the project layer behind the trust gate, documented env
-  // overrides, fail-closed on unknown/unsupported keys, budget keys and
-  // secret refs. Commands below consume it through the injected runners;
+  // overrides, fail-closed on unknown/unsupported keys and secret refs. Commands below consume it through the injected runners;
   // nothing here re-derives a default by hand. The `--model` override is
   // read from the raw argv (issue #227) and becomes the `cli` layer of this
   // same load; the interactive trust answer (issue #228) is an explicit gate
@@ -463,16 +442,14 @@ export async function dispatchCommand(
   // reach a user repo's commit path. Before either mode that creates it,
   // ship the runtime ignore rules into the repo-local exclude file
   // (idempotent, fail-open, never dirties a committed .gitignore) — so the
-  // first run/orchestrate leaves `git status` clean while `.kubic/roles`
+  // first run leaves `git status` clean while `.kubic/roles`
   // and `config.toml` stay trackable. Skipped outside a git repo.
   if (
     command !== undefined &&
     STATE_CREATING_COMMANDS.has(command) &&
     !helpRequested
   ) {
-    deps.ensureRuntimeExclude(
-      runtimeExcludeEntriesFor(cliConfig.runtime?.orchestrator.root),
-    );
+    deps.ensureRuntimeExclude(RUNTIME_EXCLUDE_ENTRIES);
   }
   // The bare invocation and a bare TUI flag off a TTY keep the POSIX
   // usage-on-no-args posture (exit 1, issues #128/#308/#327): they are not
@@ -494,7 +471,6 @@ export async function dispatchCommand(
     const bareOffTty =
       command === undefined ||
       command === BARE_SKIP_FLAG ||
-      command === BARE_ORCHESTRATOR_FLAG ||
       command === BARE_MODEL_FLAG ||
       command.startsWith(`${BARE_MODEL_FLAG}=`);
     if (bareOffTty) {

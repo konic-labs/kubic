@@ -160,8 +160,6 @@ interface BootOptions {
     Array<{ name: string; args: Record<string, JsonValue>; id?: string }>
   >;
   policy?: PolicyInterceptorOptions;
-  // A hook in the `kubic.budget` extension, installed BEFORE kubic.policy.
-  budgetHooks?: HookRegistration[];
   // Hooks appended after the policy hooks, inside kubic.policy.
   extraHooks?: HookRegistration[];
 }
@@ -196,12 +194,6 @@ async function boot(options: BootOptions): Promise<Booted> {
   ]);
   const world: World = { calls: [] };
   const registry = createRegistry();
-  registry.install(
-    defineExtension({
-      name: 'kubic.budget',
-      hooks: options.budgetHooks ?? [],
-    }),
-  );
   registry.install(
     defineExtension({
       name: 'kubic.policy',
@@ -503,113 +495,21 @@ describe('policyInterceptorHooks on a real harness (issue #397)', () => {
   });
 });
 
-describe('hook ordering (issue #208)', () => {
-  it('a budget hook installed before the policy guards counts a blocked attempt', async () => {
-    const attempts: string[] = [];
-    const booted = await boot({
-      calls: [
-        { name: 'bash', args: { command: 'rm -rf /tmp/x' } },
-        { name: 'ls', args: { path: '.' } },
-      ],
-      budgetHooks: [
-        hook(ToolTask, {
-          beforeTool: (call) => {
-            attempts.push(call.name);
-            return undefined;
-          },
-        }),
-      ],
-      policy: { workspace: '/work' },
-    });
-    await drive(booted);
-    // The first attempt was counted even though a later guard blocked it.
-    expect(attempts).toEqual(['bash', 'ls']);
-    const results = await toolResults(booted.root);
-    expect(results[0]?.text).toContain('destructive command blocked');
-    expect(booted.world.calls.map((call) => call.name)).toEqual(['ls']);
-  });
-
-  it('stops at the first block: a budget block skips the later policy hooks', async () => {
-    const booted = await boot({
-      calls: [{ name: 'bash', args: { command: 'rm -rf /tmp/x' } }],
-      budgetHooks: [
-        hook(ToolTask, {
-          beforeTool: (call) =>
-            call.name === 'bash' ? { block: 'budget stop' } : undefined,
-        }),
-      ],
-      policy: { workspace: '/work' },
-    });
-    await drive(booted);
-    const results = await toolResults(booted.root);
-    expect(results[0]?.text).toContain('budget stop');
-    expect(results[0]?.text).not.toContain('destructive command blocked');
-    expect(booted.world.calls).toHaveLength(0);
-  });
-
-  it('counts blocked attempts against maxToolCalls and triggers once', async () => {
-    const triggers: Array<{ kind: string; toolName: string; count: number }> =
-      [];
-    const booted = await boot({
-      calls: [
-        { name: 'bash', args: { command: 'rm -rf /tmp/x' } },
-        { name: 'ls', args: { path: '.' } },
-      ],
-      policy: {
-        workspace: '/work',
-        maxToolCalls: 1,
-        onTrigger: (trigger) => {
-          triggers.push(trigger);
-        },
-      },
-    });
-    await drive(booted);
-    const results = await toolResults(booted.root);
-    expect(results[0]?.text).toContain('destructive command blocked');
-    expect(results[1]?.text).toContain('maxToolCalls (1) exceeded');
-    expect(triggers).toEqual([
-      { kind: 'max_tool_calls', toolName: 'ls', count: 2 },
-    ]);
-    expect(booted.world.calls).toHaveLength(0);
-  });
-});
-
 describe('policy interceptor state lifetime (issue #397)', () => {
-  it('gives every factory call its own counters and stand-down set', async () => {
+  it('gives every factory call its own stand-down set', () => {
     // The same options object is reusable: the state lives in the factory
     // invocation, never in the options or in module scope. One invocation =
     // one boot's chain (solo.ts builds its kubic.policy extension per boot).
-    const policy: PolicyInterceptorOptions = {
-      workspace: '/work',
-      maxToolCalls: 2,
-    };
+    const policy: PolicyInterceptorOptions = { workspace: '/work' };
     expect(policyInterceptorHooks(policy)[0]).not.toBe(
       policyInterceptorHooks(policy)[0],
     );
-    const calls = [
-      { name: 'ls', args: { path: '.' } },
-      { name: 'ls', args: { path: '.' } },
-    ];
-
-    const first = await boot({ calls, policy });
-    await drive(first);
-    expect(first.world.calls).toHaveLength(2);
-
-    // A second boot starts at attempt one again. Shared counters would make
-    // this boot's first call attempt three and block it before it ran.
-    const second = await boot({ calls, policy });
-    await drive(second);
-    expect(second.world.calls).toHaveLength(2);
-    expect(
-      (await toolResults(second.root)).every((result) => !result.isError),
-    ).toBe(true);
   });
 });
 
 describe('secret redaction (issue #192)', () => {
-  // §36.1 rule 2: these strings reach the trajectory, the §60 ledger, the
-  // TUI and the orchestrator's mailbox ask JSON, so every probe must come
-  // back with no secret material. Probes are faux material only.
+  // §36.1 rule 2: these strings reach the trajectory, the audit ledger and
+  // the TUI, so every probe must come back with no secret material. Probes are faux material only.
   const PROBES: ReadonlyArray<readonly [string, readonly string[]]> = [
     ['Authorization: Bearer sk-live-123', ['sk-live-123']],
     ['Authorization hunter2', ['hunter2']],

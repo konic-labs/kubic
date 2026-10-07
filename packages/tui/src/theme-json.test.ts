@@ -198,7 +198,6 @@ describe('a light theme on the status bar (issue #304)', () => {
       model: 'faux/vision',
       thinking: '',
       rows: [],
-      mode: 'solo' as const,
       approvalsSkipped: false,
       sessionId: 's1',
     };

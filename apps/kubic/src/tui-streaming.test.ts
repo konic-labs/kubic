@@ -55,7 +55,6 @@ function app() {
   return createTuiApp({
     sessionId: 's',
     model: 'faux/faux-1',
-    mode: 'solo',
     approvalsSkipped: false,
   });
 }

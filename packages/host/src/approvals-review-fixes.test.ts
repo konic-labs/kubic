@@ -417,7 +417,7 @@ describe('the cheap remaining bypasses of the new surface (MAJOR 5)', () => {
       'rm .kubic/conf*',
       'rm .kubic/rol*/r.md',
       'rm .kubic/sess*/x',
-      'rm .kubic/orch*',
+      'rm .kubic/aud*',
       'rm ~/.kubic/sess*/x',
       'rm $HOME/.kubic/*',
       'cd .kubic && rm jour*/*',
@@ -436,7 +436,7 @@ describe('the cheap remaining bypasses of the new surface (MAJOR 5)', () => {
       'rm src/*.ts',
       'rm -rf build/*',
       'echo x > out-?.txt',
-      'rm .kubic/wt*/x',
+      'rm .kubic/cache*/x',
       'rm .kubic/[a]bc',
       'rm .kubic/{one,two}/x',
       'rm ./*.log',
@@ -444,7 +444,7 @@ describe('the cheap remaining bypasses of the new surface (MAJOR 5)', () => {
       expect(refusal(command), command).toBeUndefined();
     }
     // Under .kubic but not a protected sub: still an ask, as the literal is.
-    expect(triggers('rm .kubic/wt*/x')).toContain(KUBIC_STATE_WRITE);
+    expect(triggers('rm .kubic/cache*/x')).toContain(KUBIC_STATE_WRITE);
     expect(triggers('rm src/*.ts')).not.toContain(KUBIC_STATE_WRITE);
   });
 

@@ -11,7 +11,6 @@ import { promptKey } from '../../../packages/core/src/cli/prompt.js';
 import { themeFor } from '../../../packages/core/src/cli/theme.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
-import { ExtensionStartupError } from '../../../packages/extensions/src/startup.js';
 import {
   loadCliConfig,
   resolveInteractiveProjectTrust,
@@ -114,19 +113,14 @@ try {
   });
   exitProcessAfterFlush(code);
 } catch (error) {
-  // Extension startup failures are named one-liners, not stack traces
-  // (issue #93); every other unexpected failure gets the same shape — one
-  // `error: <message>` line, exit 1 — with the full stack behind the
-  // KUBIC_DEBUG=1 opt-in (issue #128). Both modes are pinned end to end by
-  // scripts/binary-contract.mjs (the `__crash-probe` seam in ./dispatch.js).
-  if (error instanceof ExtensionStartupError) {
-    console.error(`error: ${error.message}`);
-  } else {
-    const message = error instanceof Error ? error.message : String(error);
-    if (process.env.KUBIC_DEBUG === '1') {
-      console.error(error);
-    }
-    console.error(`error: ${message}`);
+  // An unexpected failure is one `error: <message>` line, exit 1, with the
+  // full stack behind the KUBIC_DEBUG=1 opt-in (issue #128). Pinned end to
+  // end by scripts/binary-contract.mjs (the `__crash-probe` seam in
+  // ./dispatch.js).
+  const message = error instanceof Error ? error.message : String(error);
+  if (process.env.KUBIC_DEBUG === '1') {
+    console.error(error);
   }
+  console.error(`error: ${message}`);
   exitProcessAfterFlush(1);
 }

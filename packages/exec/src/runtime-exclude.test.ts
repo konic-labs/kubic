@@ -1,7 +1,7 @@
 // Runtime-state exclude rules (issue #91; design §35, D34/D35).
 //
 // The split: `.kubic/config.toml` + `.kubic/roles/*.md` are committed;
-// `.kubic/{sessions,journal,artifacts,wt,orchestrator}/` is runtime state
+// `.kubic/{sessions,journal,artifacts,audit}/` is runtime state
 // and must never reach the commit path. The mechanism writes the runtime
 // half into the repository's LOCAL, uncommitted exclude file
 // (`.git/info/exclude`) so a user's committed `.gitignore` is never
@@ -83,26 +83,17 @@ function roleScratchRepo(): GitSandbox {
   return repo;
 }
 
-// What the first `kubic run` / `kubic orchestrate` leaves behind: journal
-// entries, orchestrator session state, agent worktrees, session scratch,
-// artifacts — at the exact paths the runtime uses.
+// What the first `kubic run` leaves behind: journal entries, the audit
+// ledger, session scratch, artifacts — at the exact paths the runtime uses.
 function createRuntimeState(repo: GitSandbox): void {
   const dir = repo.path;
-  for (const sub of ['journal', 'orchestrator', 'sessions', 'artifacts']) {
+  for (const sub of ['journal', 'audit', 'sessions', 'artifacts']) {
     mkdirSync(join(dir, '.kubic', sub), { recursive: true });
   }
   writeFileSync(join(dir, '.kubic', 'journal', 'index.jsonl'), '{}\n');
-  writeFileSync(join(dir, '.kubic', 'orchestrator', 'orch-1.json'), '{}\n');
+  writeFileSync(join(dir, '.kubic', 'audit', 'audit.jsonl'), '{}\n');
   writeFileSync(join(dir, '.kubic', 'sessions', 's1'), 'x\n');
   writeFileSync(join(dir, '.kubic', 'artifacts', 'out.txt'), 'x\n');
-  repo.git([
-    'worktree',
-    'add',
-    '-q',
-    '.kubic/wt/worker-1',
-    '-b',
-    'kubic/worker-1',
-  ]);
 }
 
 function status(repo: GitSandbox): string[] {
@@ -235,18 +226,10 @@ describe('ensureRuntimeExcludeRules (issue #91)', () => {
 
   it('writes the one shared file from a linked worktree', () => {
     const repo = roleScratchRepo();
-    // The orchestrator's own layout: the agent worktree lives under
-    // .kubic/wt/ so no run-time path can ever surface.
-    repo.git([
-      'worktree',
-      'add',
-      '-q',
-      '.kubic/wt/worker-1',
-      '-b',
-      'kubic/worker-1',
-    ]);
-    mkdirSync(join(repo.path, '.kubic', 'wt'), { recursive: true });
-    const worktree = join(repo.path, '.kubic', 'wt', 'worker-1');
+    // A linked worktree of the repository, checked out elsewhere: its
+    // `.git` is a file pointing at the common dir.
+    const worktree = join(scratchDir('kubic-linked-'), 'linked');
+    repo.git(['worktree', 'add', '-q', worktree, '-b', 'linked']);
 
     const result = ensureRuntimeExcludeRules({ cwd: worktree });
 
@@ -255,8 +238,8 @@ describe('ensureRuntimeExcludeRules (issue #91)', () => {
       realpathSync(join(repo.path, '.git', 'info', 'exclude')),
     );
     // One file per repository: the main checkout sees the rules too.
-    mkdirSync(join(repo.path, '.kubic', 'orchestrator'), { recursive: true });
-    writeFileSync(join(repo.path, '.kubic', 'orchestrator', 'x.json'), '{}\n');
+    mkdirSync(join(repo.path, '.kubic', 'audit'), { recursive: true });
+    writeFileSync(join(repo.path, '.kubic', 'audit', 'audit.jsonl'), '{}\n');
     expect(status(repo)).toEqual([]);
   });
 });
@@ -268,7 +251,7 @@ describe('refusing hostile exclude entries (issue #133 review)', () => {
     // file. Refused, never stripped — a hostile entry must not be silently
     // repaired into a different rule.
     expect(() =>
-      applyRuntimeExcludeBlock('', ['.kubic/wt/', 'x\n*.log\n!keep/']),
+      applyRuntimeExcludeBlock('', ['.kubic/journal/', 'x\n*.log\n!keep/']),
     ).toThrow(RuntimeExcludeError);
     expect(() => applyRuntimeExcludeBlock('', ['wt\u001b[31mX/'])).toThrow(
       RuntimeExcludeError,
@@ -302,7 +285,7 @@ describe('refusing hostile exclude entries (issue #133 review)', () => {
       'a\\b/',
     ]) {
       expect(
-        () => applyRuntimeExcludeBlock('', ['.kubic/wt/', entry]),
+        () => applyRuntimeExcludeBlock('', ['.kubic/journal/', entry]),
         entry,
       ).toThrow(RuntimeExcludeError);
     }
@@ -326,7 +309,7 @@ describe('refusing hostile exclude entries (issue #133 review)', () => {
     // Second run with a wildcard entry: refused, nothing written.
     const result = ensureRuntimeExcludeRules({
       cwd: repo.path,
-      entries: ['.kubic/wt/', '*/'],
+      entries: ['.kubic/journal/', '*/'],
     });
     expect(result.skipped).toBe('unavailable');
     expect(result.changed).toBe(false);
@@ -349,7 +332,7 @@ describe('refusing hostile exclude entries (issue #133 review)', () => {
     // Second run with a hostile entry: refused, nothing written.
     const result = ensureRuntimeExcludeRules({
       cwd: repo.path,
-      entries: ['.kubic/wt/', 'x\n*.log\n!keep/'],
+      entries: ['.kubic/journal/', 'x\n*.log\n!keep/'],
     });
     expect(result.skipped).toBe('unavailable');
     expect(result.changed).toBe(false);

@@ -51,8 +51,6 @@ function tmpRoot(prefix = 'kubic-294-tui-'): string {
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
-  vi.stubEnv('KUBIC_WORKER_ID', undefined);
-  vi.stubEnv('KUBIC_APPROVALS_DIR', undefined);
 });
 
 afterEach(() => {
@@ -247,61 +245,6 @@ describe('tuiDepsWithDefaults forwards the lane projection (issue #294)', () => 
     expect(toolsLine).toContain('read');
     expect(toolsLine).not.toContain('write');
     expect(toolsLine).not.toContain('bash');
-  });
-});
-
-describe('the TUI consumes [modes] orchestrator (issue #327)', () => {
-  it('forwards the config mode so a flagless session starts in orchestrator mode', async () => {
-    const workspace = tmpRoot();
-    const cliConfig = {
-      runtime: namedRuntime(workspace, '[modes]\norchestrator = true\n'),
-      error: undefined,
-      ignoreSplit: NO_SPLIT,
-    };
-    const fake = recordingTerminal();
-    const deps = {
-      ...tuiDepsWithDefaults(
-        {
-          out: () => {},
-          modes: cliConfig.runtime?.modes,
-        },
-        async () => ({ sessionId: 's', model: 'faux/m' }),
-      ),
-      createTerminal: () => fake.terminal,
-      colorLevel: 'none' as const,
-      // The entry's own non-git refusal is pinned in tui-orchestrator.test.ts;
-      // this test drives the config projection to the rendered mode.
-      isGitRepo: () => true,
-    };
-    const exit = runTuiCommand({}, deps);
-    await waitFor(() => fake.counts.started === 1);
-    expect(fake.writes.join('')).toContain('[ORCHESTRATOR] approvals on');
-    expect(fake.writes.join('')).toContain('faux/m · off');
-    fake.feed('\x04');
-    expect(await exit).toBe(0);
-  });
-
-  it('a config that leaves [modes] unset keeps the solo default', async () => {
-    const workspace = tmpRoot();
-    const cliConfig = {
-      runtime: namedRuntime(workspace, ''),
-      error: undefined,
-      ignoreSplit: NO_SPLIT,
-    };
-    const fake = recordingTerminal();
-    const deps = {
-      ...tuiDepsWithDefaults(
-        { out: () => {}, modes: cliConfig.runtime?.modes },
-        async () => ({ sessionId: 's', model: 'faux/m' }),
-      ),
-      createTerminal: () => fake.terminal,
-      colorLevel: 'none' as const,
-    };
-    const exit = runTuiCommand({}, deps);
-    await waitFor(() => fake.counts.started === 1);
-    expect(fake.writes.join('')).toContain('[SOLO] approvals on');
-    fake.feed('\x04');
-    expect(await exit).toBe(0);
   });
 });
 

@@ -1,8 +1,7 @@
 // Cost/Model status line (issue #27; one row since EPIC N issue #453).
 // §39 usage rows aggregated with the cache split; §18 model + thinking,
-// context gauge, cost; §71 budget burn-down; the turn state word. The mode
-// and the approvals posture moved to the header (chrome.ts), which reads
-// them from this bar's state.
+// context gauge, cost; the turn state word. The approvals posture moved to
+// the header (chrome.ts), which reads it from this bar's state.
 //
 // Structural usage mirror: the fields below repeat the shape read in
 // packages/worker/src/usage.ts (KubicUsageRow) WITHOUT importing it —
@@ -109,27 +108,6 @@ export function formatStatusCost(total: number): string {
   return `$${total.toFixed(2)}`;
 }
 
-export type StatusMode = 'solo' | 'orchestrator';
-
-// Issue #285 (§71): the opt-in solo budget the boot started with — a
-// structural mirror of the max* dims (dep-lint forbids tui → extensions,
-// the same reason StatusUsageRow mirrors KubicUsageRow). `toolCalls` is
-// the attempt count the boot feeds in (the gate's own counter — usage
-// rows undercount tools that report no usage); tokens/cost burn-down
-// reads from the usage summary the bar already holds. Absent (or an
-// empty `limits`) means the run is unbounded and the bar stays silent.
-export interface StatusBudgetLimits {
-  readonly maxTokens?: number;
-  readonly maxCostUsd?: number;
-  readonly maxToolCalls?: number;
-  readonly maxRuntimeMs?: number;
-}
-
-export interface StatusBudget {
-  readonly limits: StatusBudgetLimits;
-  readonly toolCalls: number;
-}
-
 // Issue #453: the word at the right end of the status line.
 export type StatusTurnState =
   | 'ready'
@@ -143,12 +121,10 @@ export interface StatusBarState {
   readonly thinking: string;
   readonly rows: ReadonlyArray<StatusUsageRow>;
   // The session facts the header shows (issue #453 moved them off this
-  // line); the bar stays their one holder so posture and mode have a
-  // single source the app and the loop read.
-  readonly mode: StatusMode;
+  // line); the bar stays their one holder so the posture has a single
+  // source the app and the loop read.
   readonly approvalsSkipped: boolean;
   readonly sessionId: string;
-  readonly budget?: StatusBudget;
   // Issue #347 (§18): the model's context window and the token level at
   // which the solo lane compacts (window − reserve, #399's policy; #239 will
   // make the reserve configurable). Both absent means the gauge stays off —
@@ -201,7 +177,6 @@ interface StatusSegments {
   readonly ctxWindow: string;
   readonly cost: string;
   readonly journal: string;
-  readonly budget: string;
 }
 
 // Issue #347: the context gauge. Unknown (no window, or no committed
@@ -230,51 +205,9 @@ function contextParts(
   };
 }
 
-// The §71 budget segment: one burn-down per set dimension (`tools 3/10`,
-// `$0.12/$0.50`, `tokens 1200/4096`) plus the wall-clock bound as static
-// limit text (the bar holds no elapsed source — `wall≤60s`). Empty when no
-// dimension is set: an unbounded run shows nothing budget-shaped. A breached
-// dimension takes the warning colour: the next tool call may not run.
-function budgetPart(
-  ui: UiTheme,
-  budget: StatusBudget | undefined,
-  summary: StatusSummary,
-): string {
-  if (budget === undefined) return '';
-  const { limits, toolCalls } = budget;
-  const segs: string[] = [];
-  let breached = false;
-  if (limits.maxToolCalls !== undefined) {
-    segs.push(`tools ${toolCalls}/${limits.maxToolCalls}`);
-    breached = breached || toolCalls > limits.maxToolCalls;
-  }
-  if (limits.maxCostUsd !== undefined) {
-    segs.push(
-      `${formatStatusCost(summary.costTotal)}/$${limits.maxCostUsd.toFixed(2)}`,
-    );
-    breached = breached || summary.costTotal > limits.maxCostUsd;
-  }
-  if (limits.maxTokens !== undefined) {
-    const tokens = summary.input + summary.output;
-    segs.push(`tokens ${tokens}/${limits.maxTokens}`);
-    breached = breached || tokens > limits.maxTokens;
-  }
-  if (limits.maxRuntimeMs !== undefined) {
-    const ms = limits.maxRuntimeMs;
-    segs.push(
-      `wall≤${ms >= 1000 && ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`}`,
-    );
-  }
-  if (segs.length === 0) return '';
-  const text = `budget ${segs.join(' · ')}`;
-  return breached
-    ? ui.style({ fg: 'warn', bold: true })(text)
-    : ui.fg('fg1')(text);
-}
-
 // What drops first as the line narrows, one rung at a time: the window
 // size, the journal count, the gauge cells, the thinking level, the context
-// segment, the budget; then the model name is cut. The cost and the state
+// segment; then the model name is cut. The cost and the state
 // word never drop.
 const RUNGS: ReadonlyArray<ReadonlyArray<keyof StatusSegments>> = [
   [],
@@ -283,7 +216,6 @@ const RUNGS: ReadonlyArray<ReadonlyArray<keyof StatusSegments>> = [
   ['ctxWindow', 'journal', 'ctxGauge'],
   ['ctxWindow', 'journal', 'ctxGauge', 'thinking'],
   ['ctxWindow', 'journal', 'ctxGauge', 'thinking', 'ctxPercent'],
-  ['ctxWindow', 'journal', 'ctxGauge', 'thinking', 'ctxPercent', 'budget'],
 ];
 
 function assemble(
@@ -304,14 +236,13 @@ function assemble(
   }
   parts.push(segments.cost);
   if (has('journal')) parts.push(segments.journal);
-  if (has('budget')) parts.push(segments.budget);
   return parts.join(sep);
 }
 
 /**
  * The one-row status line (EPIC N, issue #453; docs/ui 01-L):
- * `● model · thinking │ ctx ━━━ 31% of 200k │ $0.031 │ journal 2 changes │
- * budget …` and the turn state word on the right, painted on bg1. A
+ * `● model · thinking │ ctx ━━━ 31% of 200k │ $0.031 │ journal 2 changes`
+ * and the turn state word on the right, painted on bg1. A
  * running turn turns the mark into the spinner.
  */
 export function renderStatusLine(
@@ -346,7 +277,6 @@ export function renderStatusLine(
       changes > 0
         ? `${ui.fg('fg2')('journal ')}${ui.fg('fg1')(`${changes} change${changes === 1 ? '' : 's'}`)}`
         : '',
-    budget: budgetPart(ui, state.budget, summary),
   };
   const fill = (text: string): string => fillLine(ui, text, w, 'bg1');
   for (const drop of RUNGS) {
@@ -398,14 +328,6 @@ export class StatusBar implements Component {
   // safe (approvalsSkipped: false) and callers re-pass the flag.
   setApprovalsSkipped(skipped: boolean): void {
     this.setState({ ...this.barState, approvalsSkipped: skipped });
-  }
-
-  // Issue #327: the session mode toggle lands on the always-visible
-  // indicator within one frame (the same synchronous path the skip flag
-  // takes). Session-scoped by construction: fresh instances start from the
-  // seed's mode and callers re-pass every change.
-  setMode(mode: StatusMode): void {
-    this.setState({ ...this.barState, mode });
   }
 
   setRows(rows: ReadonlyArray<StatusUsageRow>): void {

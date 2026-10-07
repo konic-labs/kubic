@@ -153,7 +153,7 @@ describe('tui entry regression (issue #75)', () => {
       ['completed', 0],
       ['failed', 1],
       ['usage', 2],
-      ['budget_exhausted', 3],
+      ['turn_limit', 3],
       ['approval_timed_out', 4],
       ['workspace_unavailable', 5],
       ['provider_probe_failed', 6],

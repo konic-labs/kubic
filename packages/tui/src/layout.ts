@@ -49,27 +49,13 @@ export interface LayoutSlots {
   // not reserve blank rows. NOT width-gated: an operator on a narrow
   // terminal still gets the panels (only the tree collapses there).
   panel?: { component: Component; isOpen: () => boolean };
-  // Issue #465: the orchestrator dashboard. While `isShown()`, its body
-  // takes the transcript's place (grow 1) with its footer pinned under it,
-  // and the tree, the transcript and the status line step aside.
-  dashboard?: {
-    body: Component;
-    footer: Component;
-    isShown: () => boolean;
-  };
-  // Issue #465: whether the editor slot shows (the dashboard hides it unless
-  // the approval card is open there). Absent keeps it on.
-  editorVisible?: () => boolean;
 }
 
 export function buildLayoutRoot(slots: LayoutSlots): VStack {
   // The tree hides below 80 columns; Pi's Stack consults `visible` per
   // viewport at render time (proven by the narrow snapshot test).
-  const dashboardShown = (): boolean => slots.dashboard?.isShown() === true;
   const treeVisible = (viewport: Viewport): boolean =>
-    viewport.width >= NARROW_COLUMNS &&
-    (slots.treeVisible?.() ?? true) &&
-    !dashboardShown();
+    viewport.width >= NARROW_COLUMNS && (slots.treeVisible?.() ?? true);
   // Structural StackEntry (Pi's StackChild): field-for-field compatible with
   // the seam's VStack children without widening tui-boundary.ts (#96 keeps
   // the #22 boundary frozen).
@@ -99,26 +85,8 @@ export function buildLayoutRoot(slots: LayoutSlots): VStack {
       grow: 1,
       shrink: 1,
       minSize: 3,
-      visible: () => !dashboardShown(),
     },
   );
-  if (slots.dashboard !== undefined) {
-    rows.push(
-      {
-        component: slots.dashboard.body,
-        grow: 1,
-        shrink: 1,
-        minSize: 3,
-        visible: dashboardShown,
-      },
-      {
-        component: slots.dashboard.footer,
-        basis: 'auto',
-        shrink: 0,
-        visible: dashboardShown,
-      },
-    );
-  }
   if (slots.panel !== undefined) {
     // Read through the slot, not a captured boolean: the callback runs per
     // render, so a toggle takes effect on the next frame.
@@ -134,22 +102,9 @@ export function buildLayoutRoot(slots: LayoutSlots): VStack {
   if (slots.notice !== undefined) {
     rows.push({ component: slots.notice, basis: 'auto', shrink: 0 });
   }
-  const editorVisible = slots.editorVisible;
   rows.push(
-    {
-      component: slots.editor,
-      basis: 'auto',
-      shrink: 0,
-      ...(editorVisible === undefined
-        ? {}
-        : { visible: (): boolean => editorVisible() }),
-    },
-    {
-      component: slots.status,
-      basis: 'auto',
-      shrink: 0,
-      visible: () => !dashboardShown(),
-    },
+    { component: slots.editor, basis: 'auto', shrink: 0 },
+    { component: slots.status, basis: 'auto', shrink: 0 },
   );
   if (slots.hints !== undefined) {
     rows.push({ component: slots.hints, basis: 'auto', shrink: 0 });

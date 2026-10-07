@@ -35,16 +35,16 @@ function validInput(): BuildTrajectoryInput {
       agentId: 'agent-1',
       pid: null,
       generation: 3,
-      worktree: '/repo/.kubic/wt/agent-1',
+      worktree: '/repo',
       model: 'acme/m1',
     },
     environment: {
       capturedFrom: 'used',
-      cwd: '/repo/.kubic/wt/agent-1',
+      cwd: '/repo',
       env: {},
     },
     worktree: {
-      path: '/repo/.kubic/wt/agent-1',
+      path: '/repo',
       baseRevision: 'abc123',
       branch: null,
     },
@@ -87,8 +87,8 @@ function parseError(input: unknown): TrajectorySchemaError {
 }
 
 describe('trajectory schema version (issue #51)', () => {
-  it('publishes schema_version 1.2', () => {
-    expect(SCHEMA_VERSION).toBe('1.2');
+  it('publishes schema_version 1.3', () => {
+    expect(SCHEMA_VERSION).toBe('1.3');
     expect(SCHEMA_MAJOR).toBe(1);
   });
 
@@ -106,32 +106,15 @@ describe('trajectory schema version (issue #51)', () => {
     expect(TRAJECTORY_CHANGELOG[0]?.version).toBe(SCHEMA_VERSION);
   });
 
-  // Issue #285 (§71): the optional budget block — limits, measured
-  // usage, and the breach that ended a budget_exhausted run. Absent on
-  // older records (still parses: every budget leaf is optional on read).
-  it('round-trips the budget block when the run was budgeted', () => {
-    const exported = buildTrajectoryExport({
-      ...validInput(),
-      budget: {
-        limits: { maxToolCalls: 1, maxCostUsd: 0.5 },
-        usage: { toolCalls: 2, costUsd: 0.6 },
-        exhausted: { limit: 'toolCalls', used: 2, max: 1 },
-      },
-    });
-    expect(exported.budget).toEqual({
-      limits: { maxToolCalls: 1, maxCostUsd: 0.5 },
-      usage: { toolCalls: 2, costUsd: 0.6 },
-      exhausted: { limit: 'toolCalls', used: 2, max: 1 },
-    });
-    const parsed = parseTrajectoryExport(JSON.parse(JSON.stringify(exported)));
-    expect(parsed.budget?.exhausted?.limit).toBe('toolCalls');
-  });
-
-  it('omits the budget block when the run was unbounded', () => {
-    const exported = buildTrajectoryExport(validInput());
-    expect(exported.budget).toBeUndefined();
+  // Run budgets were retired in 1.3: an older record that still carries the
+  // budget block parses, and the block is ignored (unknown keys survive).
+  it('parses an older record that carries the retired budget block', () => {
+    const record = {
+      ...validExport(),
+      budget: { limits: { maxToolCalls: 1 }, usage: { toolCalls: 2 } },
+    };
     expect(() =>
-      parseTrajectoryExport(JSON.parse(JSON.stringify(exported))),
+      parseTrajectoryExport(JSON.parse(JSON.stringify(record))),
     ).not.toThrow();
   });
 
@@ -218,7 +201,7 @@ describe('trajectory structural validation (issue #331)', () => {
     const cases: Array<[Record<string, unknown>, RegExp]> = [
       [
         { result: { ...(record.result as object), status: 'weird' } },
-        /trajectory\.result\.status must be one of completed\|failed\|cancelled\|timeout\|budget_exhausted\|spawn_failed \(got "weird"\)/,
+        /trajectory\.result\.status must be one of completed\|failed\|cancelled\|timeout\|turn_limit \(got "weird"\)/,
       ],
       [
         { result: { ...(record.result as object), status: undefined } },
@@ -290,7 +273,8 @@ describe('trajectory structural validation (issue #331)', () => {
 
   it('recognizes the §52 failure codes and nothing else', () => {
     expect(isTrajectoryFailureCode('tool_timeout')).toBe(true);
-    expect(isTrajectoryFailureCode('budget_exhausted')).toBe(true);
+    expect(isTrajectoryFailureCode('run_limit')).toBe(true);
+    expect(isTrajectoryFailureCode('budget_exhausted')).toBe(false);
     expect(isTrajectoryFailureCode('completed')).toBe(false);
     expect(isTrajectoryFailureCode('')).toBe(false);
   });

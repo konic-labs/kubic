@@ -55,10 +55,10 @@ describe('LICENSE (issue #59)', () => {
       [],
       'every manifest must declare "license": "MIT"',
     );
-    // Root + 9 packages + apps/kubic: fail loudly if discovery collapses
+    // Root + 8 packages + apps/kubic: fail loudly if discovery collapses
     // instead of certifying an empty scan.
     const checked = manifests().length;
-    assert.ok(checked >= 11, `expected at least 11 manifests, saw ${checked}`);
+    assert.ok(checked >= 10, `expected at least 10 manifests, saw ${checked}`);
   });
 
   it('the manifest check flags a missing or non-MIT license field', () => {

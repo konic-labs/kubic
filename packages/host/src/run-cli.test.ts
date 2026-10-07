@@ -81,7 +81,7 @@ describe('run -p exit-code contract (§78)', () => {
     expect(mapTerminusToExitCode('completed')).toBe(0);
     expect(mapTerminusToExitCode('failed')).toBe(1);
     expect(mapTerminusToExitCode('usage')).toBe(2);
-    expect(mapTerminusToExitCode('budget_exhausted')).toBe(3);
+    expect(mapTerminusToExitCode('turn_limit')).toBe(3);
     expect(mapTerminusToExitCode('approval_denied')).toBe(4);
     expect(mapTerminusToExitCode('approval_timed_out')).toBe(4);
     expect(mapTerminusToExitCode('workspace_unavailable')).toBe(5);
@@ -96,9 +96,9 @@ describe('run -p exit-code contract (§78)', () => {
     expect(mapTerminusToExitCode('provider_auth')).toBe(1);
   });
 
-  it('a timeout is a task failure, never budget_exhausted (issue #280)', () => {
-    // §78 has no timeout code; the --json status is the honest half, and a
-    // bound the user did not configure as a budget must not claim one.
+  it('a timeout is a task failure, never a turn limit (issue #280)', () => {
+    // There is no timeout exit code; the --json status is the honest half,
+    // and a wall-clock bound must not claim the turn-limit code.
     expect(mapTerminusToExitCode('timeout')).toBe(1);
   });
 
@@ -122,7 +122,7 @@ describe('run -p exit-code contract (§78)', () => {
       { terminus: 'timeout', code: 1 },
       { terminus: 'cancelled', code: 130, signal: 'SIGINT' },
       { terminus: 'cancelled', code: 143, signal: 'SIGTERM' },
-      { terminus: 'budget_exhausted', code: 3 },
+      { terminus: 'turn_limit', code: 3 },
       { terminus: 'approval_denied', code: 4 },
       { terminus: 'approval_timed_out', code: 4 },
       { terminus: 'workspace_unavailable', code: 5 },
@@ -230,13 +230,7 @@ describe('mapLaneOutcomeToTerminus (issue #28, E1)', () => {
     expect(mapLaneOutcomeToTerminus('aborted')).toBe('failed');
   });
 
-  it('keeps classified budget/approval/workspace/provider errors as 3/4/5/6-bound termini', () => {
-    expect(
-      mapLaneOutcomeToTerminus('failed', {
-        code: 'budget_exhausted',
-        message: 'token budget spent',
-      }),
-    ).toBe('budget_exhausted');
+  it('keeps classified approval/workspace/provider errors as 4/5/6-bound termini', () => {
     expect(
       mapLaneOutcomeToTerminus('failed', {
         code: 'approval_denied',
@@ -321,8 +315,8 @@ describe('mapLaneOutcomeToFailure (issue #155)', () => {
 
 describe('failureForTerminus (issue #155)', () => {
   it('gives every fixed-code terminus its §52 classification', () => {
-    expect(failureForTerminus('budget_exhausted')).toMatchObject({
-      code: 'budget_exhausted',
+    expect(failureForTerminus('turn_limit')).toMatchObject({
+      code: 'run_limit',
       strategy: 'abandon',
     });
     expect(failureForTerminus('approval_denied')).toMatchObject({
@@ -473,7 +467,7 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
     expect(
       mapCaughtErrorToTerminus(
         new Error(
-          'extension startup failed closed: skills/budget bundle missing at /home/dev/.claude/worktrees/wf-1/packages/extensions/dist',
+          'skill load failed: bundle missing at /home/dev/.claude/worktrees/wf-1/packages/skills/dist',
         ),
       ),
     ).toBe('failed');
@@ -501,7 +495,7 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
     expect(
       mapCaughtErrorToTerminus(
         new Error(
-          'extension startup failed closed: bundle missing at /Users/dev/My workspace/kubic/packages/extensions/dist',
+          'skill load failed: bundle missing at /Users/dev/My workspace/kubic/packages/skills/dist',
         ),
       ),
     ).toBe('failed');
@@ -528,11 +522,11 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
 
   it('never classifies by a word inside a path the message quotes', () => {
     // A checkout under `…/.claude/worktrees/…` or `~/workspace/…` must not
-    // turn an unrelated failure (a refused extension bundle) into exit 5.
+    // turn an unrelated failure (a missing skill bundle) into exit 5.
     const refused = new Error(
-      'extension startup failed closed: skills/budget missing at /Users/me/repo/.claude/worktrees/wf-1/packages/extensions/bundles',
+      'skill load failed: review missing at /Users/me/repo/.claude/worktrees/wf-1/packages/skills/bundles',
     );
-    refused.name = 'ExtensionStartupError';
+    refused.name = 'SkillLoadError';
     expect(mapCaughtErrorToTerminus(refused)).toBe('failed');
     expect(
       mapCaughtErrorToTerminus(
@@ -552,7 +546,7 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
     expect(
       mapCaughtErrorToTerminus(
         new Error(
-          'extension startup failed closed: skills/budget missing at /home/u/workspace/repo/.claude/worktrees/wf-1/ext',
+          'skill load failed: review missing at /home/u/workspace/repo/.claude/worktrees/wf-1/ext',
         ),
       ),
     ).toBe('failed');
@@ -571,7 +565,7 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
     expect(
       mapCaughtErrorToTerminus(
         new Error(
-          'extension startup failed closed: /repo/.claude/worktrees/wf-1/skills/budget missing',
+          'skill load failed: /repo/.claude/worktrees/wf-1/skills/review missing',
         ),
       ),
     ).toBe('failed');
@@ -782,25 +776,6 @@ describe('run -p headless behavior (§17, §80)', () => {
   });
 });
 
-// Issue #283 (§71): the parsed solo budget travels to the runner;
-// absence leaves the key out.
-it('forwards --budget limits to the runner options', async () => {
-  const o = out();
-  const seen: { budget?: unknown } = {};
-  const exit = await runRunCommand(
-    { prompt: 'hi', budget: { maxToolCalls: 1 } },
-    {
-      out: o.write,
-      run: (async (_prompt: string, options: { budget?: unknown }) => {
-        seen.budget = options.budget;
-        return completedResult({ summary: 'ok' });
-      }) as never,
-    },
-  );
-  expect(exit).toBe(0);
-  expect(seen.budget).toEqual({ maxToolCalls: 1 });
-});
-
 describe('run -p argument handling (issue #68; mutation hardening)', () => {
   it('accepts the --prompt long form like -p', async () => {
     const o = out();
@@ -975,9 +950,9 @@ describe('run -p argument handling (issue #68; mutation hardening)', () => {
         out: o.write,
         run: stubRun(
           completedResult({
-            terminus: 'budget_exhausted',
-            summary: 'turn budget exhausted after 3 turns',
-            error: { kind: 'budget_exhausted', message: 'turn budget' },
+            terminus: 'turn_limit',
+            summary: 'turn limit reached after 3 turns',
+            error: { kind: 'turn_limit', message: 'turn limit' },
           }),
         ),
       },
@@ -986,7 +961,7 @@ describe('run -p argument handling (issue #68; mutation hardening)', () => {
     const envelope = JSON.parse(o.lines[0] as string) as {
       failure?: { code: string; strategy: string };
     };
-    expect(envelope.failure?.code).toBe('budget_exhausted');
+    expect(envelope.failure?.code).toBe('run_limit');
     expect(envelope.failure?.strategy).toBe('abandon');
   });
 

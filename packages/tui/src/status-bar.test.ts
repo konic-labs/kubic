@@ -115,7 +115,6 @@ function state(over: Partial<StatusBarState>): StatusBarState {
     model: 'test/model-long-name',
     thinking: 'medium',
     rows: [],
-    mode: 'solo',
     approvalsSkipped: false,
     sessionId: 'sess-abc123',
     ...over,
@@ -225,28 +224,25 @@ describe('status line (issue #453; 01-L)', () => {
     expect(line({ journalChanges: 0 }, 100)).not.toContain('journal');
   });
 
-  it('drops the window, journal, gauge, thinking, ctx, budget in that order', () => {
+  it('drops the window, journal, gauge, thinking and ctx in that order', () => {
     const busy: Partial<StatusBarState> = {
       rows: [requestRow(300, 120)],
       contextWindow: 1000,
       journalChanges: 3,
-      budget: { limits: { maxToolCalls: 10 }, toolCalls: 2 },
     };
     const at = (width: number): string => line(busy, width);
-    expect(at(130)).toContain('ctx ━━━━────── 42% of 1k');
-    expect(at(130)).toContain('journal 3 changes');
-    expect(at(120)).not.toContain('of 1k');
-    expect(at(120)).toContain('journal 3 changes');
-    expect(at(100)).not.toContain('journal');
-    expect(at(100)).toContain('ctx ━━━━────── 42%');
-    expect(at(90)).toContain('ctx 42%');
-    expect(at(90)).toContain('· medium');
-    expect(at(80)).not.toContain('· medium');
-    expect(at(80)).toContain('ctx 42%');
-    expect(at(70)).not.toContain('ctx');
-    expect(at(70)).toContain('budget tools 2/10');
-    expect(at(50)).not.toContain('budget');
-    expect(at(50)).toContain('test/model-long-name');
+    expect(at(110)).toContain('ctx ━━━━────── 42% of 1k');
+    expect(at(110)).toContain('journal 3 changes');
+    expect(at(100)).not.toContain('of 1k');
+    expect(at(100)).toContain('journal 3 changes');
+    expect(at(90)).not.toContain('journal');
+    expect(at(90)).toContain('ctx ━━━━────── 42%');
+    expect(at(70)).toContain('ctx 42%');
+    expect(at(70)).toContain('· medium');
+    expect(at(60)).not.toContain('· medium');
+    expect(at(60)).toContain('ctx 42%');
+    expect(at(50)).not.toContain('ctx');
+    expect(at(45)).toContain('test/model-long-name');
   });
 
   it('cuts the model last and keeps the cost and the state word', () => {
@@ -293,12 +289,10 @@ describe('status line (issue #453; 01-L)', () => {
     expect(text).not.toContain('tool ');
   });
 
-  it('keeps the posture and mode in its state for the header', () => {
+  it('keeps the posture in its state for the header', () => {
     const bar = new StatusBar(state({}));
     bar.setApprovalsSkipped(true);
-    bar.setMode('orchestrator');
     expect(bar.getState().approvalsSkipped).toBe(true);
-    expect(bar.getState().mode).toBe('orchestrator');
     bar.setApprovalsSkipped(false);
     expect(bar.getState().approvalsSkipped).toBe(false);
   });
@@ -317,48 +311,6 @@ describe('status line (issue #453; 01-L)', () => {
     expect(compactCount(1048576)).toBe('1M');
     expect(compactCount(1500000)).toBe('1.5M');
     expect(compactCount(512)).toBe('512');
-  });
-});
-
-describe('budget burn-down (issue #285; §71)', () => {
-  // The line names the §71 limits with live burn-down — tools from the
-  // attempt count the boot feeds in, tokens/cost from the usage rows —
-  // and stays silent when no limit is set.
-  it("renders 'budget tools 3/10' when a limit is set", () => {
-    const text = line(
-      {
-        rows: [
-          priced({
-            usage: {
-              ...priced().usage,
-              cost: { ...priced().usage.cost, total: 0.12 },
-            },
-          }),
-        ],
-        budget: { limits: { maxToolCalls: 10, maxCostUsd: 0.5 }, toolCalls: 3 },
-      },
-      120,
-    );
-    expect(text).toContain('budget tools 3/10 · $0.12/$0.50');
-  });
-
-  it('renders nothing budget-shaped when no limit is set', () => {
-    expect(line({ rows: [priced()] }, 120)).not.toContain('budget');
-  });
-
-  it('renders the limit text when only wall-clock is bounded', () => {
-    expect(
-      line({ budget: { limits: { maxRuntimeMs: 60000 }, toolCalls: 0 } }, 120),
-    ).toContain('budget wall≤60s');
-  });
-
-  it('warns once a dimension is breached', () => {
-    const over = state({
-      budget: { limits: { maxToolCalls: 2 }, toolCalls: 3 },
-    });
-    expect(renderStatusLine(over, 120, rich, NOW)).toContain(
-      rich.style({ fg: 'warn', bold: true })('budget tools 3/2'),
-    );
   });
 });
 

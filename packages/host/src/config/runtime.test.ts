@@ -4,7 +4,8 @@
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
@@ -31,11 +32,7 @@ import {
   isToolAllowed,
   isToolAllowedByEnterprise,
 } from '../policy/enterprise.js';
-import {
-  BudgetKeyError,
-  ConfigError,
-  ProjectUntrustedError,
-} from './config.js';
+import { ConfigError, ProjectUntrustedError } from './config.js';
 import {
   checkWorkspaceIgnoreSplit,
   effectiveConfigView,
@@ -526,18 +523,6 @@ describe('runtime config load (issue #90)', () => {
     }
   });
 
-  it('fails closed on budget keys instead of inventing a limit (§71)', () => {
-    expect(() =>
-      load(
-        { [GLOBAL]: '[budgets]\nmaxCostUsd = 1\n' },
-        { projectTrusted: true },
-      ),
-    ).toThrow(BudgetKeyError);
-    const runtime = load({}, { projectTrusted: true });
-    expect(runtime.budgets.configured).toBe(false);
-    expect(runtime.budgets.detail).toMatch(/no budgets are defaulted/i);
-  });
-
   it('refuses secret refs in config (§36: secrets live in models.json)', () => {
     expect(() =>
       load(
@@ -553,34 +538,6 @@ describe('runtime config load (issue #90)', () => {
         { projectTrusted: true },
       ),
     ).toThrow(/secrets never appear in config/);
-  });
-
-  it('refuses contradictory modes, never silently picking one', () => {
-    expect(() =>
-      load(
-        { [GLOBAL]: '[modes]\nsolo = true\norchestrator = true\n' },
-        {
-          projectTrusted: true,
-        },
-      ),
-    ).toThrow(/modes: at most one/);
-    const runtime = load(
-      { [GLOBAL]: '[modes]\norchestrator = true\n' },
-      {
-        projectTrusted: true,
-      },
-    );
-    expect(runtime.modes).toMatchObject({
-      solo: false,
-      orchestrator: true,
-      source: 'global',
-    });
-    // Absent modes: the documented defaults, sourced as defaults.
-    expect(load({}, { projectTrusted: true }).modes).toEqual({
-      solo: true,
-      orchestrator: false,
-      source: 'defaults',
-    });
   });
 
   it('applies documented env overrides, refusing malformed values', () => {
@@ -833,7 +790,6 @@ describe('effective config view (issue #90)', () => {
         },
       ]),
     );
-    expect(view.budgets.configured).toBe(false);
     expect(view.projectTrusted).toBe(true);
     // Every documented key with an observable effect is listed for the docs
     // test — the view and the docs share one list, never two.
@@ -1062,7 +1018,6 @@ describe('effective config view (issue #90)', () => {
     expect(
       lines.some((line) => line.includes('model.provider = "local" (global,')),
     ).toBe(true);
-    expect(lines.some((line) => line.includes('budgets'))).toBe(true);
   });
 
   it('distinguishes consumed, kept and pending keys (issue #133)', () => {
@@ -1227,7 +1182,7 @@ describe('enterprise [policy] on the live path (issue #288)', () => {
   const PRODUCT = '/etc/kubic/product.toml';
   const GLOBAL = `${HOME}/.kubic/config.toml`;
 
-  const S58_EXAMPLE = `[policy]
+  const POLICY_EXAMPLE = `[policy]
 allowed_models = ["claude-sonnet-4-6", "local/*"]
 allowed_providers = ["anthropic", "local"]
 allowed_tools = ["read", "grep", "find", "ls", "bash", "edit", "write", "git_diff"]
@@ -1237,20 +1192,17 @@ network_policy = "proxy"
 allowed_domains = ["registry.npmjs.org", "github.com"]
 
 filesystem_policy = "workspace-only"
-require_credential_broker = true
-deny_local_credentials = true
 
 data_policy = "no-external-training"
 logging_policy = "full-audit"
-agent_policy = { max_agents = 2, max_cost_usd = 5.0 }
 
 [[audit]]
 sink = "syslog"
 level = "privileged"
 `;
 
-  it('loads the §58 example as the enterprise layer and resolves it', () => {
-    const runtime = load({ [ENTERPRISE]: S58_EXAMPLE });
+  it('loads the documented example as the enterprise layer and resolves it', () => {
+    const runtime = load({ [ENTERPRISE]: POLICY_EXAMPLE });
     expect(runtime.policy.tools.deny).toEqual(['network_fetch']);
     expect(runtime.policy.tools.allow).toContain('bash');
     expect(runtime.policy.models.allowed).toEqual([
@@ -1262,8 +1214,6 @@ level = "privileged"
     // workspace-write.
     expect(runtime.policy.network.mode).toBe('allowlist');
     expect(runtime.policy.filesystem.level).toBe('workspace-write');
-    expect(runtime.policy.credentials.requireCredentialBroker).toBe(true);
-    expect(runtime.policy.agent).toEqual({ maxWorkers: 2, maxCostUsd: 5 });
     // Every policy key has an effect row: the effective view never reports
     // the documented surface as decoration.
     const view = effectiveConfigView(runtime);
@@ -1365,199 +1315,6 @@ level = "privileged"
   });
 });
 
-describe('orchestrator config projections (issue #133)', () => {
-  it('projects [orchestrator] root + maxWorkers, refusing escapes by name', () => {
-    const runtime = load(
-      {
-        [PROJECT]:
-          '[orchestrator]\nroot = ".kubic-custom/wt"\nmaxWorkers = 7\n',
-      },
-      { projectTrusted: true },
-    );
-    expect(runtime.orchestrator).toEqual({
-      root: '.kubic-custom/wt',
-      maxWorkers: 7,
-    });
-    expect(runtime.sources['orchestrator.root']).toBe('project');
-    expect(runtime.sources['orchestrator.maxWorkers']).toBe('project');
-
-    // Unset stays unset — no root and no cap are invented (§35 opt-in).
-    const bare = load(
-      { [PROJECT]: '[approvals]\nroute = "ask-user"\n' },
-      { projectTrusted: true },
-    );
-    expect(bare.orchestrator).toEqual({});
-
-    // Issue #431 (L-D34): the delegation driver projects through, default
-    // template (absent, never invented).
-    const lane = load(
-      { [PROJECT]: '[orchestrator]\nmanager = "lane"\n' },
-      { projectTrusted: true },
-    );
-    expect(lane.orchestrator).toEqual({ manager: 'lane' });
-    expect(lane.sources['orchestrator.manager']).toBe('project');
-
-    // An absolute root or a `..` segment is refused at load, by name: the
-    // value is a workspace-relative parent, never a path that escapes.
-    expect(() =>
-      load(
-        { [PROJECT]: '[orchestrator]\nroot = "../escape"\n' },
-        { projectTrusted: true },
-      ),
-    ).toThrow(/'orchestrator': 'root' must be a workspace-relative path/);
-    expect(() =>
-      load(
-        { [PROJECT]: '[orchestrator]\nroot = "/abs/wt"\n' },
-        { projectTrusted: true },
-      ),
-    ).toThrow(/'orchestrator': 'root' must be a workspace-relative path/);
-    // Programmatic session/agent layers bypass the TOML parser: the
-    // projection re-checks the same rule, fail-closed.
-    expect(() =>
-      loadRuntimeConfig({
-        bridge: fakeBridge({}),
-        home: HOME,
-        cwd: CWD,
-        projectTrusted: true,
-        session: { orchestrator: { root: 'a/../b' } },
-      }),
-    ).toThrow(/'orchestrator': 'root' must be a workspace-relative path/);
-
-    // §45: the cap is a positive integer. A value that could never admit a
-    // worker is refused at load, by name — never clamped into one silently.
-    expect(() =>
-      load(
-        { [PROJECT]: '[orchestrator]\nmaxWorkers = 0\n' },
-        { projectTrusted: true },
-      ),
-    ).toThrow(/'orchestrator': 'maxWorkers' must be a positive integer/);
-    expect(() =>
-      load(
-        { [PROJECT]: '[orchestrator]\nmaxWorkers = 1.5\n' },
-        { projectTrusted: true },
-      ),
-    ).toThrow(/'orchestrator': 'maxWorkers' must be a positive integer/);
-  });
-
-  it('refuses control characters and committed-half roots at load, by name (issue #133 review)', () => {
-    // The root becomes a git exclude entry verbatim: a newline would inject
-    // arbitrary patterns, so it is refused before the value can travel.
-    expect(() =>
-      load(
-        { [PROJECT]: '[orchestrator]\nroot = "x\\n*.log\\n!keep"\n' },
-        { projectTrusted: true },
-      ),
-    ).toThrow(/control characters are refused/);
-    // Programmatic session/agent layers bypass the TOML parser: the
-    // projection re-checks the same rule, fail-closed.
-    expect(() =>
-      loadRuntimeConfig({
-        bridge: fakeBridge({}),
-        home: HOME,
-        cwd: CWD,
-        projectTrusted: true,
-        session: { orchestrator: { root: 'wt\u001b[31m' } },
-      }),
-    ).toThrow(/control characters are refused/);
-    // D35: a root whose exclude entry would ignore `.kubic/config.toml` /
-    // `.kubic/roles/*.md` is refused, by name — including via the
-    // programmatic layers.
-    expect(() =>
-      load(
-        { [PROJECT]: '[orchestrator]\nroot = ".kubic"\n' },
-        { projectTrusted: true },
-      ),
-    ).toThrow(/committed config half/);
-    expect(() =>
-      loadRuntimeConfig({
-        bridge: fakeBridge({}),
-        home: HOME,
-        cwd: CWD,
-        projectTrusted: true,
-        session: { orchestrator: { root: '.kubic/roles' } },
-      }),
-    ).toThrow(/committed config half/);
-    // Case variants of the committed half (issue #133 fix-cycle-3): git
-    // folds ignore patterns on a case-insensitive filesystem, so `.KUBIC/`
-    // hides exactly the same files — refused through the programmatic
-    // layers too, by the same name.
-    for (const root of ['.KUBIC', '.Kubic', '.KUBIC/roles', '.kubic/ROLES']) {
-      expect(
-        () =>
-          loadRuntimeConfig({
-            bridge: fakeBridge({}),
-            home: HOME,
-            cwd: CWD,
-            projectTrusted: true,
-            session: { orchestrator: { root } },
-          }),
-        root,
-      ).toThrow(/committed config half/);
-    }
-    // No-op roots (issue #133 fix-cycle-3): a '.' segment means the derived
-    // entry would match nothing and the worktree set would stay unignored —
-    // refused through the programmatic layers too.
-    for (const root of ['.', './wt', 'foo/.']) {
-      expect(
-        () =>
-          loadRuntimeConfig({
-            bridge: fakeBridge({}),
-            home: HOME,
-            cwd: CWD,
-            projectTrusted: true,
-            session: { orchestrator: { root } },
-          }),
-        root,
-      ).toThrow(/must not name the workspace/);
-    }
-  });
-
-  it('refuses gitignore metacharacter roots at load, by name (issue #133 re-review)', () => {
-    // Same rule as the control characters: the value is shipped verbatim to
-    // git's exclude file, where `*`/`?`/`[`/`]` would match paths other
-    // than the named directory (hiding them from `git add -A` and the
-    // clean-tree guard), a leading `#` would comment the line out, and a
-    // backslash would escape the next character.
-    for (const root of [
-      '*',
-      '**',
-      '.kubic*',
-      '.kubi[c]',
-      '.kubi?',
-      '#x',
-      'x\\',
-    ]) {
-      expect(
-        () =>
-          load(
-            { [PROJECT]: `[orchestrator]\nroot = ${JSON.stringify(root)}\n` },
-            { projectTrusted: true },
-          ),
-        root,
-      ).toThrow(/gitignore metacharacters are refused/);
-    }
-    // Programmatic session/agent layers bypass the TOML parser: the
-    // projection re-checks the same rule, fail-closed.
-    expect(() =>
-      loadRuntimeConfig({
-        bridge: fakeBridge({}),
-        home: HOME,
-        cwd: CWD,
-        projectTrusted: true,
-        session: { orchestrator: { root: '.kubic*' } },
-      }),
-    ).toThrow(/gitignore metacharacters are refused/);
-    // §36 keeps its own refusal — and its own message — for a `!`-leading
-    // root: that shape is a models.json secret ref, not a gitignore pattern.
-    expect(() =>
-      load(
-        { [PROJECT]: '[orchestrator]\nroot = "!x"\n' },
-        { projectTrusted: true },
-      ),
-    ).toThrow(/secrets never appear in config/);
-  });
-});
-
 describe('checkWorkspaceIgnoreSplit in linked worktrees (issue #292)', () => {
   // Real git fixtures: a linked worktree's `.git` is a file, so only
   // `git rev-parse --git-path info/exclude` (what the writer uses) finds
@@ -1648,5 +1405,53 @@ describe('checkWorkspaceIgnoreSplit in linked worktrees (issue #292)', () => {
     );
     expect(split.applicable).toBe(false);
     expect(split.missing).toEqual([]);
+  });
+});
+
+describe("this repository's own configuration", () => {
+  const REPO_ROOT = join(
+    dirname(fileURLToPath(import.meta.url)),
+    '..',
+    '..',
+    '..',
+    '..',
+  );
+
+  it('keeps every key-effect entry meaningful', () => {
+    for (const [key, entry] of Object.entries(RUNTIME_KEY_EFFECTS)) {
+      expect(key.length).toBeGreaterThan(0);
+      // Every disposition carries words: an effect, a kept decision, or a
+      // named pending follow-up.
+      expect(runtimeKeyEffectText(entry).length).toBeGreaterThan(10);
+      expect(runtimeKeyDisposition(entry)).not.toBe('unknown');
+    }
+  });
+
+  it('loads .kubic/config.toml and maps every key', () => {
+    // The repository dogfoods the feature: its own project layer must parse,
+    // load, and reach each projection — no decoration.
+    const runtime = loadRuntimeConfig({
+      bridge: createNodeFileBridge(REPO_ROOT),
+      home: '/home/u',
+      cwd: REPO_ROOT,
+      enterprisePath: '/nonexistent/config.toml',
+      projectTrusted: true,
+    });
+    expect(runtime.model).toEqual({
+      provider: 'local',
+      id: 'llama3',
+      thinking: 'medium',
+    });
+    expect(runtime.modelSource).toBe('project');
+    expect(runtime.approvals.source).toBe('project');
+    expect(runtime.permissions.classes.network).toBe('none');
+    expect(runtime.journal.retentionDays).toBe(30);
+    expect(runtime.projectTrusted).toBe(true);
+    const view = effectiveConfigView(runtime);
+    expect(view.values.length).toBeGreaterThan(0);
+    expect(view.values.every((entry) => entry.layer === 'project')).toBe(true);
+    expect(view.values.every((entry) => entry.disposition !== 'unknown')).toBe(
+      true,
+    );
   });
 });

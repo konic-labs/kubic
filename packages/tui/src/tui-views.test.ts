@@ -29,7 +29,7 @@ function presentation(
   over: Partial<LaneSnapshot> = {},
 ): KubicPresentationState {
   return {
-    session: { sessionId: SESSION, mode: 'solo', approvalsSkipped: false },
+    session: { sessionId: SESSION, approvalsSkipped: false },
     agents: new Map(),
     lanes: new Map([
       [
@@ -45,7 +45,6 @@ function presentation(
         },
       ],
     ]),
-    workers: new Map(),
     approvals: [],
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     connection: { status: 'connected' },
@@ -89,7 +88,6 @@ function appWithRun(
   const app = createTuiApp({
     sessionId: SESSION,
     model: MODEL,
-    mode: 'solo',
     approvalsSkipped: false,
   });
   // The lane is running with its edit call done: the state a projector would
@@ -464,7 +462,6 @@ describe('panel keys do not disturb the draft (issue #96, criterion 3)', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     for (const ch of 'dD jJ') app.handleInput(ch);

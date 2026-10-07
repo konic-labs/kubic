@@ -1,7 +1,6 @@
-// Shared secret-shape backstop (issue #57 fix cycle 1; §36 broker, §60 audit).
-// Lives in @kubic/core since issue #192 so the WORKER redactor (approval
-// summaries, block reasons, the mailbox ask JSON) composes the same table the
-// HOST backstop (audit, policy, ledger) uses — the dependency direction is
+// Shared secret-shape backstop. Lives in @kubic/core so the lane redactor
+// (approval summaries, block reasons) composes the same table the host
+// backstop (audit, policy, ledger) uses — the dependency direction is
 // core ← host/worker, so this is the only place both may share it.
 // Fail-closed detection for live secret material that was never listed in a
 // caller-supplied secrets inventory: sk-style keys, AWS access keys, GitHub

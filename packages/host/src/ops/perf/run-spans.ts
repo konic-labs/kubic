@@ -27,8 +27,6 @@ export const RUN_SPAN_NAMES = {
   accept: 'kubic.lane.accept',
   drive: 'kubic.lane.drive',
   tool: 'pi.tool.execute',
-  workerStart: 'kubic.worker.start',
-  workerStartup: 'kubic.worker.startup',
 } as const;
 
 export type RunSpanName = (typeof RUN_SPAN_NAMES)[keyof typeof RUN_SPAN_NAMES];
@@ -36,9 +34,6 @@ export type RunSpanName = (typeof RUN_SPAN_NAMES)[keyof typeof RUN_SPAN_NAMES];
 export interface RunSpanRecord extends SpanRecord {
   // Present on pi.tool.execute spans only: which tool the call ran.
   toolName?: string;
-  // Present on manager-side worker spans only (issue #290): the worker
-  // session the span belongs to, so manager and worker traces join on it.
-  sessionId?: string;
 }
 
 export class RunSpans {
@@ -46,9 +41,6 @@ export class RunSpans {
   private readonly debug: DebugLog;
   private readonly lines: string[] = [];
   private readonly toolNames = new Map<string, string>();
-  private readonly spanSessions = new Map<string, string>();
-  // Manager-side worker spans (issue #290): start id → nested startup id.
-  private readonly workerStartups = new Map<string, string>();
   private readonly openCalls = new Map<string, string>();
   private readonly endMs = new Map<string, number | null>();
   private readonly startMs = new Map<string, number>();
@@ -125,62 +117,15 @@ export class RunSpans {
   trace(): RunSpanRecord[] {
     return this.recorder.trace().map((span) => {
       const toolName = this.toolNames.get(span.id);
-      const sessionId = this.spanSessions.get(span.id);
       return {
         ...span,
         ...(toolName === undefined ? {} : { toolName }),
-        ...(sessionId === undefined ? {} : { sessionId }),
       };
     });
   }
 
   debugLines(): string[] {
     return [...this.lines];
-  }
-
-  // Manager-side worker launch (issue #290): opens the worker.start span
-  // with its nested worker.startup span, both tagged with the worker
-  // session id. The startup span opens at launch — startup begins when
-  // the child is spawned — and endWorkerStartup pins its duration to the
-  // registry's startupMs (never a second wall-clock read).
-  startWorker(workerSessionId: string): string {
-    const start = this.recorder.start(RUN_SPAN_NAMES.workerStart);
-    const startup = this.recorder.start(RUN_SPAN_NAMES.workerStartup, start);
-    this.remember(start);
-    this.remember(startup);
-    this.spanSessions.set(start, workerSessionId);
-    this.spanSessions.set(startup, workerSessionId);
-    this.workerStartups.set(start, startup);
-    this.debug.agent(`worker start session=${workerSessionId}`);
-    return start;
-  }
-
-  // Pins the nested startup span's duration to the registry's number
-  // (issue #290): the artifact duration equals startupMs exactly. A null
-  // startupMs — the launch never became ready — closes the startup with
-  // zero duration; the failure itself lands on the worker.start span via
-  // endWorker. Repeat closes are no-ops.
-  endWorkerStartup(startId: string, startupMs: number | null): void {
-    const startup = this.workerStartups.get(startId);
-    if (startup === undefined || this.endMs.get(startup) !== null) return;
-    const started = this.recorder.get(startup)?.startMs ?? 0;
-    const ended = startupMs === null ? started : started + startupMs;
-    this.recorder.endAt(startup, ended);
-    this.endMs.set(startup, ended);
-  }
-
-  endWorker(startId: string, error?: string): void {
-    if (!this.workerStartups.has(startId)) return;
-    const elapsed = this.close(startId, error);
-    this.debug.agent(`worker end ms=${String(elapsed)}${this.suffix(error)}`);
-  }
-
-  // The two spans of one worker launch, for the per-worker artifact.
-  // Unknown ids flush nothing.
-  flushWorker(startId: string): RunSpanRecord[] {
-    const startup = this.workerStartups.get(startId);
-    const ids = new Set([startId, ...(startup === undefined ? [] : [startup])]);
-    return this.trace().filter((span) => ids.has(span.id));
   }
 
   private remember(id: string): void {
@@ -292,7 +237,6 @@ export function serializeSpanArtifact(
         endMs: span.endMs,
         ...(span.error === undefined ? {} : { error: span.error }),
         ...(span.toolName === undefined ? {} : { toolName: span.toolName }),
-        ...(span.sessionId === undefined ? {} : { sessionId: span.sessionId }),
       }),
     )
     .join('\n')}\n`;
@@ -303,7 +247,7 @@ export function serializeSpanArtifact(
 // Handlers never block a call; afterTool returns the result unchanged.
 //
 // ORDERING: install this extension AFTER the blocking policy extension
-// (`kubic.budget` → `kubic.policy` → `kubic.spans` → `kubic`). The harness
+// (`kubic.policy` → `kubic.spans` → `kubic`). The harness
 // skips later hooks once a block is returned, so a blocked call then never
 // opens a span — the same shape the removed pi-agent-core attachToolSpans
 // had. Installed before a blocking hook, a blocked call would open a span

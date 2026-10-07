@@ -22,13 +22,9 @@ This is announced, not buried: every process start announces it from one
 source (`packages/host/src/limits/solo-warning.ts`), so the two surfaces
 cannot drift apart. `kubic run` prints the three-line warning block on
 stderr before the first turn; `kubic tui` shows the one-line form in the
-welcome block from the first render, keeps the `SOLO` badge in its header on
-every frame, and prints the full text on `/safety`. Suppressed for
-orchestrator-managed worker children (`KUBIC_WORKER_ID` set — `kubic doctor`
-reports that mode's own worktree limit) and by the opt-out
-`KUBIC_NO_NOTICE=1`; a `--session` resume still announces, because the rule
-is per process start, not per
-session.
+welcome block from the first render and prints the full text on `/safety`. The opt-out
+`KUBIC_NO_NOTICE=1` suppresses it; a `--session` resume still announces,
+because the rule is per process start, not per session.
 
 ## The controls that exist instead
 
@@ -55,13 +51,11 @@ no second process.
   `submission.wait(...)`; durable retry, provider-deferred responses and
   crash-safe task checkpoints belong to the harness.
 - **Per-process extension registry.** The Kubic tools, the prompt section
-  and the budget/policy/span hooks are installed as extensions in a
-  registry the process owns and never stores; conversations store
-  extension *names*, so every boot re-installs them. Install order is hook
-  order: `kubic.budget` (the run-budget meter, which must observe every
-  attempt before a guard can block it), `kubic.policy` (the permission
-  interceptors), `kubic.spans` (perf) and finally `kubic` (the operation
-  tools plus the prompt).
+  and the policy/span hooks are installed as Pi extensions in a registry
+  the process owns and never stores; conversations store extension
+  *names*, so every boot re-installs them. Install order is hook order:
+  `kubic.policy` (the permission interceptors), `kubic.spans` (timing) and
+  finally `kubic` (the operation tools plus the prompt).
 - **One prompt section, byte-stable.** The assembled prompt (role, `cwd:`,
   `tools:`, `meta:`, then the appended skill/role context blocks) is
   installed as a single untagged `kubic` section. The harness stores
@@ -113,19 +107,8 @@ it before accepting a prompt (`packages/worker/src/lane/pending.ts`):
 The decision is durable: an abort a dead process already requested stays an
 abort, and the next prompt is never a re-run of what already happened.
 
-## When solo is not the mode
-
-Delegation needs [orchestrator](orchestrator.md): an opt-in,
-session-scoped mode where the `kubic orchestrate` command is the manager —
-it registers the §40 manager toolset, plans one step per worker, fans one
-worker process plus one git worktree per subagent out and merges what they
-produce; each worker runs its own plan step. Orchestrator requires a
-git repository and falls back to solo without one. The trust story
-does not change there — approvals and the journal stay the controls.
-
 Implementation detail lives on the [worker package page](../packages/worker.md);
 command behaviour on the [CLI pages](../cli/README.md).
 
 Back to the [docs index](../README.md). See also
-[orchestrator](orchestrator.md) and
 [journal and safety](journal-and-safety.md).

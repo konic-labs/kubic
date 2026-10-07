@@ -20,7 +20,6 @@ export interface LedgerModelKeyResolverOptions {
   workspace: string;
   role: string;
   sessionId: () => string;
-  mode?: 'solo' | 'orchestrator';
   onError?: (message: string) => void;
   /** The run's provider/model ids: a key that is one of them is identity. */
   identity?: () => readonly string[];
@@ -52,7 +51,6 @@ export function createLedgerModelKeyResolver(
           purpose: event.purpose,
           workspace: options.workspace,
           when: event.at,
-          ...(options.mode === undefined ? {} : { mode: options.mode }),
         }),
         options.onError,
         // The row names its provider: a dummy key equal to that name (LM

@@ -26,10 +26,7 @@
 // Key map (the shipped loop; docs/cli/commands.md mirrors it):
 //   Enter            submit the draft
 //   Ctrl-J, Shift+Enter, `\`+Enter   newline (multi-line entry)
-//   Ctrl-T           show / hide the tree (solo starts with it hidden;
-//                    the orchestrator collapses it to one line)
-//   Ctrl-G           switch the session mode (solo ↔ orchestrator;
-//                    refused while a turn runs)
+//   Ctrl-T           show / hide the tree (it starts hidden)
 //   Ctrl-O           toggle the diff panel (this run's changes)
 //   Ctrl-R           toggle the journal panel (the whole session)
 //   Ctrl-X           expand / collapse every tool output block
@@ -42,7 +39,7 @@
 //   Ctrl-D           quit on an empty draft (delete-forward while typing)
 //
 // Issue #453 (EPIC N; docs/ui 01-A/L/M) cut the chrome to three one-row
-// surfaces: the header (project, branch, session, mode, posture, clock), the
+// surfaces: the header (project, branch, session, posture, clock), the
 // status line (model, context, cost, journal, state word) and the
 // context-aware key-hint row. Command replies, turn outcomes and the working
 // line sit on a transient notice row above the editor.
@@ -51,7 +48,6 @@ import type {
   KubicPresentationState,
   LaneImagePart,
 } from '../../core/src/presentation.js';
-import { spinnerFrame } from '../../core/src/ui/glyphs.js';
 import {
   type ApprovalCardOptions,
   renderApprovalCard,
@@ -77,18 +73,6 @@ import {
   sessionTitle,
   shortSessionId,
 } from './chrome.js';
-import { renderWorkerPreview, WorkerPreview } from './dashboard/preview.js';
-import {
-  renderDashboardBody,
-  renderDashboardFooter,
-  renderDashboardHeader,
-  renderDispatchBox,
-  renderWorkerDiff,
-  workerInspectorLines,
-  workerViewLines,
-} from './dashboard/render.js';
-import { type DashboardModel, resolveSelection } from './dashboard/state.js';
-import { type DashboardIntent, DashboardView } from './dashboard/view.js';
 import {
   EDITOR_FRAME_CELLS,
   frameEditorLines,
@@ -117,7 +101,6 @@ import { buildLayoutRoot, type Viewport } from './layout.js';
 import { PaletteView } from './palette-view.js';
 import { PickerView } from './picker-view.js';
 import { type PreflightInfo, renderPreflight } from './preflight.js';
-import { QuestionView, type WorkerQuestionLike } from './question-view.js';
 import {
   findSlashCommand,
   parseSlashCommand,
@@ -130,8 +113,6 @@ import {
   formatStatusCost,
   StatusBar,
   type StatusBarState,
-  type StatusBudgetLimits,
-  type StatusMode,
   type StatusTurnState,
   type StatusUsageRow,
   summarizeStatusRows,
@@ -144,12 +125,7 @@ import {
   type TranscriptView,
   type TurnReceipt,
 } from './transcript.js';
-import {
-  AgentTreeView,
-  applyTreeSnapshot,
-  renderAgentInspector,
-  type TreeWorker,
-} from './tree.js';
+import { AgentTreeView, applyTreeSnapshot } from './tree.js';
 import type {
   AutocompleteProvider,
   Component,
@@ -189,10 +165,8 @@ export const QUIT_ARM_MS = 2000;
 // the header, status and hint rows and three rows of transcript.
 export const CARD_CHROME_ROWS = 6;
 
-// Issue #454: the queue box's prompt mid-turn (solo lane), and the
-// orchestrator lane's no-queue variant.
+// Issue #454: the queue box's prompt mid-turn.
 export const QUEUE_PLACEHOLDER = 'type to queue — sent when this turn ends';
-export const RUN_PLACEHOLDER = 'the run is working — wait for it to finish';
 
 // Issue #457: a thinking cell's generation time is measured only for entries
 // this app saw arrive live, and only when the gap is plausible (a resumed
@@ -255,7 +229,7 @@ export interface TuiWorkspace {
 }
 
 // Issue #462: the facts only the composition root has for the preflight
-// (docs/ui 05-B); the app supplies the model, workspace, mode and keys.
+// (docs/ui 05-B); the app supplies the model, workspace and keys.
 export interface TuiPreflightSeed {
   readonly version?: string;
   /** Where a provider's key comes from (`ANTHROPIC_API_KEY`). */
@@ -264,8 +238,8 @@ export interface TuiPreflightSeed {
   readonly testingModel?: string;
   /** The project layer's trust state; absent when the project has none. */
   readonly trust?: 'loaded' | 'untrusted';
-  /** The isolation sentence per mode. */
-  readonly isolation?: (mode: StatusMode) => string;
+  /** The isolation sentence. */
+  readonly isolation?: () => string;
 }
 
 // Issue #462: one recent session on the first screen.
@@ -287,22 +261,15 @@ export interface TuiAppSeed {
   // one — the viewer shell (`kubic tui` with an injected boot) still renders
   // an ask inline instead of hanging.
   readonly approvalSurface?: ApprovalSurface;
-  // Issue #307 (§17, §18): the always-visible mode indicator. Both fields
-  // are REQUIRED — seeded from the posture the composition root actually
-  // installed — so no call site can silently default a full-access session
-  // to 'approvals:on'.
-  readonly mode: StatusMode;
+  // Issue #307 (§17, §18): the always-visible posture indicator. REQUIRED —
+  // seeded from the posture the composition root actually installed — so no
+  // call site can silently default a full-access session to 'approvals:on'.
   readonly approvalsSkipped: boolean;
   // Issue #347 (§18): the boot model's context window and the token level at
   // which the solo lane compacts. Absent when the catalog does not know the
   // window — the context gauge then stays off.
   readonly contextWindow?: number;
   readonly compactionThreshold?: number;
-  // Issue #285 (§71): the opt-in solo budget limits the boot started
-  // with. Static for the boot — the burn-down arrives via setBudgetSpend —
-  // so the limits (never the spend) are on the bar from the first frame.
-  // Absent means the run is unbounded and the bar stays silent.
-  readonly budgetLimits?: StatusBudgetLimits;
   // Issue #303 (§16.6/§16.9): the keybinding registry — defaults plus the
   // user's ~/.kubic/keybindings.json overrides, resolved by the composition
   // root. Every key the app claims ahead of the editor is looked up here.
@@ -314,32 +281,19 @@ export interface TuiAppSeed {
   // names — the composition root threads them so `/skill:<prefix>`
   // completes to `/skill:<name>`. Absent means no per-skill rows.
   readonly skillNames?: readonly string[];
-  // Issue #276: told of every real session-mode change (Ctrl-G, /tree…), so
-  // the composition root persists it with the session.
-  readonly onModeChange?: (mode: StatusMode) => void;
   // Issue #453: the header's project / branch / dirty count (setWorkspace
   // refreshes it after a settled turn).
   readonly workspace?: TuiWorkspace;
   // Issue #453: the header clock (`HH:MM`); absent leaves it off.
   readonly clock?: () => string;
-  // Issue #453: the honest lane notice for a mode, shown in the welcome
-  // block ('' when suppressed). The composition root owns the text.
-  readonly laneNotice?: (mode: StatusMode) => string;
+  // Issue #453: the honest lane notice, shown in the welcome block ('' when
+  // suppressed). The composition root owns the text.
+  readonly laneNotice?: () => string;
   // Issue #462: what the first screen's preflight needs from the boot.
   readonly preflight?: TuiPreflightSeed;
   // Issue #463: copy text to the system clipboard (OSC 52, written by the
   // composition root). False when this terminal does not take it.
   readonly clipboard?: (text: string) => boolean;
-  // Issue #465: the change a worker has made in its worktree (`^O` on the
-  // orchestrator dashboard), as unified diff text; undefined when it cannot
-  // be read.
-  readonly workerDiff?: (worker: {
-    readonly workerId: string;
-    readonly workspace: string;
-  }) => Promise<string | undefined>;
-  // Issue #466: the roles the dashboard's `^N` offers a new worker (`tab`
-  // cycles them), the first being the default.
-  readonly dispatchRoles?: readonly string[];
   // Issue #467: whether an `allow all edits this turn` answer applies now
   // (the solo policy's own state), for the status line.
   readonly editsApprovedThisTurn?: () => boolean;
@@ -356,12 +310,11 @@ export interface TuiAppSeed {
 export function seedFromPresentation(
   state: KubicPresentationState,
   model: string,
-  posture: { readonly mode: StatusMode; readonly approvalsSkipped: boolean },
+  posture: { readonly approvalsSkipped: boolean },
 ): TuiAppSeed {
   return {
     sessionId: state.session.sessionId,
     model,
-    mode: posture.mode,
     approvalsSkipped: posture.approvalsSkipped,
   };
 }
@@ -397,9 +350,8 @@ export interface TuiInputResult {
 // Issue #334: what the loop did with a submitted prompt. `queued` means the
 // follow-up went into the conversation's inbox (pi-durable `whenBusy:
 // 'followUp'`) — the app must NOT echo it as a pending turn; the queued row
-// does that. `refused` means no lane could take it at all (an orchestrator
-// run is busy, or the session has no lane); the loop has put the reason on
-// the footer. Issue #338 adds `command`: the draft was a TUI command
+// does that. `refused` means no lane could take it at all (the session has
+// no lane); the loop has put the reason on the footer. Issue #338 adds `command`: the draft was a TUI command
 // (`/image`), which ran — nothing is echoed and nothing is restored.
 export type TuiSubmitOutcome = 'accepted' | 'queued' | 'refused' | 'command';
 
@@ -421,23 +373,6 @@ function keyIdOf(data: string): string | undefined {
     // editor (parseKey throws on sequences it does not recognise).
     return undefined;
   }
-}
-
-// Issue #465/#466: what the orchestrator dashboard asks the loop to do —
-// stop or retry a worker, message one, or dispatch a new one — and the
-// loop's answer: the footer's word on it, and whether it went out.
-export type TuiWorkerAction =
-  | { readonly kind: 'stop' | 'retry'; readonly workerId: string }
-  | {
-      readonly kind: 'message';
-      readonly workerId: string;
-      readonly text: string;
-    }
-  | { readonly kind: 'dispatch'; readonly text: string; readonly role: string };
-
-export interface TuiWorkerActionResult {
-  readonly footer: string;
-  readonly sent?: boolean;
 }
 
 // The keys handleInput claims before the editor live in the keybinding
@@ -613,7 +548,6 @@ export interface TuiApp {
   presentationSeed(): {
     sessionId: string;
     model: string;
-    mode: StatusMode;
     approvalsSkipped: boolean;
   };
   applyLaneEntries(entries: ReadonlyArray<LaneEntryLike>): void;
@@ -630,15 +564,6 @@ export interface TuiApp {
     contextWindow?: number;
     compactionThreshold?: number;
   }): void;
-  // Issue #285 (§71): the attempt count the boot feeds in — the §71
-  // gate's own counter, which a tool-start names even when the gate
-  // refuses the call. A no-op without seeded limits: an unbounded run
-  // never grows a budget segment.
-  setBudgetSpend(toolCalls: number): void;
-  // Issue #327: orchestrator report lines (the manager-lane run's own
-  // output) rendered as transcript text. Presentation only: the report
-  // never drives state, and a solo lane snapshot replaces it.
-  appendReport(lines: ReadonlyArray<string>): void;
   onSubmit(handler: (prompt: string) => TuiSubmitOutcome | undefined): void;
   setBusy(busy: boolean): void;
   isBusy(): boolean;
@@ -683,7 +608,7 @@ export interface TuiApp {
   openKeysOverlay(): boolean;
   // Issue #305: a command's own output (the `/help` list, `/session`,
   // `/undo`'s verdict) as transcript text. A later lane snapshot replaces
-  // it, exactly like the orchestrator report.
+  // it.
   appendNotice(lines: ReadonlyArray<string>): void;
   // Issue #305: `/session` — id, workspace, model, thinking level, tokens and
   // cost from the rows the status bar already carries (one source of truth).
@@ -711,9 +636,8 @@ export interface TuiApp {
   // the echo's copy and outlives the submit; this one is cleared by the
   // submit itself.
   setPendingAttachments(count: number): void;
-  // Issue #334 (review): put a refused draft back in the editor, so a busy
-  // orchestrator run (or a `/model` typed mid-turn) never eats the text the
-  // operator typed.
+  // Issue #334 (review): put a refused draft back in the editor, so a
+  // `/model` typed mid-turn never eats the text the operator typed.
   restoreDraft(prompt: string): void;
   // Ms since the in-flight turn started (undefined when idle); the root's
   // spinner timer re-renders while this is defined.
@@ -723,11 +647,6 @@ export interface TuiApp {
   // Issue #307: a posture change (the policy's own predicate) reaches the
   // indicator on the very next frame.
   setApprovalsSkipped(skipped: boolean): void;
-  // Issue #327: the session mode state — the footer toggle and the runner's
-  // submit routing read and write the same value, and the header/status
-  // indicator render it.
-  mode(): StatusMode;
-  setMode(mode: StatusMode): void;
   // Issue #96: the §17 inspectable pair.
   // Issue #296: the streamed draft of the in-flight assistant message; the
   // committed entry replaces it (undefined clears it).
@@ -738,26 +657,6 @@ export interface TuiApp {
   panelMode(): PanelMode;
   // Issue #340: seed the editor's Up history (prompts oldest first).
   seedPromptHistory(prompts: readonly string[]): void;
-  // Issue #342 (§16.5 AgentInspector): open the capturing inspector for one
-  // worker node; false when there is no such worker or no room for it.
-  inspectWorker(workerId: string): boolean;
-  // Issue #465/#466: the orchestrator dashboard's stop / retry / message /
-  // dispatch, carried out by the loop.
-  setWorkerActionHandler(
-    handler:
-      | ((action: TuiWorkerAction) => TuiWorkerActionResult | undefined)
-      | undefined,
-  ): void;
-  // Issue #465: what orchestrator mode shows (the dashboard, or the manager
-  // transcript `tab` toggles to).
-  orchestratorView(): 'dashboard' | 'manager';
-  // Issue #154 (§14.2): a worker's free-text question as a capturing dialog;
-  // resolves with the typed answer, or undefined (declined, withdrawn, or no
-  // live screen to show it on). One question shows at a time; later ones wait.
-  askQuestion(
-    question: WorkerQuestionLike,
-    signal?: AbortSignal,
-  ): Promise<string | undefined>;
   openPanel(mode: PanelMode): void;
   // Issue #301: the panel's own scroll surface. The panel row is a
   // ScrollView (the wheel and alt+up / alt+down move it), and these expose
@@ -804,8 +703,7 @@ export function laneActivityLine(lane: {
 // explicit footer (a turn outcome, a command's reply, an error), the working
 // line while a turn runs — else nothing, and the row takes no space.
 class NoticeRow implements Component {
-  // Issue #454: the working line's facts — the keys that act (which differ
-  // by lane: the orchestrator lane queues nothing, #334), this turn's
+  // Issue #454: the working line's facts — the keys that act, this turn's
   // tokens and tool calls.
   private readonly working: () => Omit<WorkingInfo, 'elapsedMs'>;
   private footer = '';
@@ -876,30 +774,6 @@ function lineComponent(render: (width: number) => string): Component {
   };
 }
 
-// Issue #342: the presentation state's workers as tree nodes (the state
-// carries values, the tree its own node shape).
-function treeWorkersOf(
-  workers: KubicPresentationState['workers'],
-): TreeWorker[] {
-  return [...workers.values()].map((worker) => ({
-    workerId: worker.workerId,
-    status: worker.status ?? 'running',
-    ...(worker.role === undefined ? {} : { role: worker.role }),
-    ...(worker.generation === undefined
-      ? {}
-      : { generation: worker.generation }),
-    ...(worker.workspace === undefined ? {} : { worktree: worker.workspace }),
-    ...(worker.model === undefined ? {} : { model: worker.model }),
-    ...(worker.inputTokens === undefined
-      ? {}
-      : { inputTokens: worker.inputTokens }),
-    ...(worker.outputTokens === undefined
-      ? {}
-      : { outputTokens: worker.outputTokens }),
-    ...(worker.costUsd === undefined ? {} : { costUsd: worker.costUsd }),
-  }));
-}
-
 export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const keys = seed.keys ?? DEFAULT_KEY_REGISTRY;
   // Issue #458: project paths that exist get a `file://` link. The lister
@@ -923,11 +797,10 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
             return known.has(clean) ? fileUrl(fileRoot, clean) : undefined;
           };
         })();
-  // Issue #453: solo starts with the tree row hidden (collapsed); Ctrl-T
-  // opens it. The orchestrator shows it (collapsed, it is one summary line).
+  // Issue #453: the tree row starts hidden (collapsed); Ctrl-T opens it.
   const tree = new AgentTreeView(undefined, {
     label: seed.label ?? 'solo',
-    collapsed: seed.mode === 'solo',
+    collapsed: true,
   });
   // The transcript row must stay the ScrollView itself so the layout engine
   // sizes it (follow-end only works when the ScrollView is the row).
@@ -947,20 +820,14 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // shows, so the id every lane apply, report cell and the welcome block are
   // keyed by is state (declared before the first welcome render).
   let sessionId = seed.sessionId;
-  // Issue #327: the session mode is live state, not a boot-time literal:
-  // the header and the status bar both read this cell, and Ctrl-G writes it
-  // (refused while a turn runs). The seed is only the starting value.
-  const sessionMode: { current: StatusMode } = { current: seed.mode };
   // Issue #462: the first screen is the preflight (05-A … E), drawn from
   // live state each frame — the model, the workspace the header reads, the
-  // mode, the keys and the recent sessions — and gone after the first
-  // prompt (a resumed session with history never shows it). The honest
-  // isolation sentence is the composition root's, per mode; `/safety`
-  // prints the limits in full.
+  // keys and the recent sessions — and gone after the first prompt (a
+  // resumed session with history never shows it). The honest isolation
+  // sentence is the composition root's; `/safety` prints the limits in full.
   let welcomeVisible = true;
   let recentSessions: readonly TuiRecentSession[] = [];
   const preflightInfo = (): PreflightInfo => {
-    const mode = sessionMode.current;
     const provider = modelLabel.split('/')[0] ?? modelLabel;
     const keySource = seed.preflight?.keySource?.(provider);
     const known = workspace !== undefined;
@@ -993,12 +860,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       ...(seed.preflight?.trust === undefined
         ? {}
         : { trust: seed.preflight.trust }),
-      mode,
-      isolation:
-        seed.preflight?.isolation?.(mode) ?? seed.laneNotice?.(mode) ?? '',
+      isolation: seed.preflight?.isolation?.() ?? seed.laneNotice?.() ?? '',
       keys: {
         palette: keyCap(keys.label('app.palette')),
-        mode: keyCap(keys.label('session.mode')),
         help: keyCap(keys.label('help.keys')),
       },
       recent: recentSessions,
@@ -1022,7 +886,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     model: modelLabel,
     thinking: thinkingLabel,
     rows: [],
-    mode: sessionMode.current,
     approvalsSkipped: seed.approvalsSkipped,
     sessionId: seed.sessionId,
     ...(seed.contextWindow === undefined
@@ -1031,11 +894,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     ...(seed.compactionThreshold === undefined
       ? {}
       : { compactionThreshold: seed.compactionThreshold }),
-    // Issue #285 (§71): limits on the bar from the first frame; the
-    // spend half starts at zero and setBudgetSpend moves it.
-    ...(seed.budgetLimits === undefined
-      ? {}
-      : { budget: { limits: seed.budgetLimits, toolCalls: 0 } }),
   };
   // Issue #453: the state word reads the app's live turn facts per frame.
   const status = new StatusBar(barState, {
@@ -1057,20 +915,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       thinking: thinkingLabel,
     });
     refreshWelcome();
-  };
-  const setMode = (next: StatusMode): void => {
-    if (next === sessionMode.current) return;
-    sessionMode.current = next;
-    // Issue #465: back in orchestrator mode, a session that ran something
-    // returns to its dashboard.
-    if (next === 'orchestrator' && dashboard.hasRun)
-      dashboard.view = 'dashboard';
-    status.setMode(next);
-    // Issue #453: each mode starts from its own tree default (solo hidden,
-    // orchestrator shown) and its own welcome notice.
-    if (tree.isCollapsed() !== (next === 'solo')) tree.toggle();
-    refreshWelcome();
-    seed.onModeChange?.(next);
   };
   const editor = new PromptEditor();
   // Issue #305: the editor completes the registry's `/`-commands as they are
@@ -1107,7 +951,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       output += row.usage.output;
     }
     return {
-      queues: sessionMode.current === 'solo',
       ...(rows.length === 0 ? {} : { input, output }),
       tools: toolCells - turnToolsBase,
       interruptKey: keyCap(keys.label('app.cancel')),
@@ -1154,10 +997,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
           busy,
           empty: editor.getText() === '',
           hint: seed.listFiles === undefined ? '/ cmd' : '@ file  / cmd',
-          placeholder:
-            sessionMode.current === 'solo'
-              ? QUEUE_PLACEHOLDER
-              : RUN_PLACEHOLDER,
+          placeholder: QUEUE_PLACEHOLDER,
         },
       );
     },
@@ -1233,129 +1073,36 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
           ...(next.dirty === undefined ? {} : { dirty: next.dirty }),
         };
   let workspace = cleanWorkspace(seed.workspace);
-  // ── Issue #465: the orchestrator dashboard ────────────────────────────────
-  // Its view state (which view orchestrator mode shows, the selection, the
-  // filter, an answer in progress), the last presentation state the loop
-  // applied, and the loop's stop / retry handler.
-  const dashboard = new DashboardView();
-  let presentation: KubicPresentationState | undefined;
-  let workerActionHandler:
-    | ((action: TuiWorkerAction) => TuiWorkerActionResult | undefined)
-    | undefined;
-  // Issue #466: the roles a new worker can take, and the selected worker's
-  // live preview (its cards drawn by a private transcript).
-  if (seed.dispatchRoles !== undefined && seed.dispatchRoles.length > 0) {
-    dashboard.roles = seed.dispatchRoles;
-  }
-  const preview = new WorkerPreview();
-  const dashboardShown = (): boolean =>
-    sessionMode.current === 'orchestrator' && dashboard.view === 'dashboard';
-  const dashboardModelNow = (): DashboardModel =>
-    dashboard.model(presentation, {
-      now: Date.now(),
-      ...(workspace?.branch === undefined ? {} : { branch: workspace.branch }),
-    });
-  // The approval card shows wherever it is not deferred: on the dashboard a
-  // worker's ask waits in the AWAITING group until `a` opens it.
-  const cardVisible = (): boolean =>
-    approvalSurface.isShowing() && (!dashboardShown() || dashboard.answering);
-  // The rows the dashboard body may take: the terminal less the rows that
-  // stay on screen with it (header, footer, hints, notice, an open card).
-  const dashboardRows = (width: number): number => {
-    const rows = overlayHost?.terminal?.rows ?? 40;
-    const card = cardVisible() ? editorSlot.render(width).length : 0;
-    // The header, the footer's rule and budget, the dispatch box (3) and
-    // the hint row stay on screen with it.
-    return Math.max(4, rows - 7 - noticeRow.render(width).length - card);
-  };
+  // The approval card shows whenever an ask is pending.
+  const cardVisible = (): boolean => approvalSurface.isShowing();
   const root = buildLayoutRoot({
     header: lineComponent((width) =>
-      dashboardShown()
-        ? renderDashboardHeader(
-            tuiTheme().ui,
-            dashboardModelNow(),
-            width,
-            spinnerFrame(Date.now()),
-          )
-        : renderHeader(
-            tuiTheme().ui,
-            {
-              mode: sessionMode.current,
-              approvalsSkipped: status.getState().approvalsSkipped,
-              ...workspace,
-              session: title ?? shortSessionId(sessionId),
-              waiting: approvalSurface.isShowing()
-                ? 1 + approvalSurface.queued().length
-                : 0,
-              ...(seed.clock === undefined ? {} : { clock: seed.clock() }),
-            },
-            width,
-          ),
+      renderHeader(
+        tuiTheme().ui,
+        {
+          approvalsSkipped: status.getState().approvalsSkipped,
+          ...workspace,
+          session: title ?? shortSessionId(sessionId),
+          waiting: approvalSurface.isShowing()
+            ? 1 + approvalSurface.queued().length
+            : 0,
+          ...(seed.clock === undefined ? {} : { clock: seed.clock() }),
+        },
+        width,
+      ),
     ),
     tree,
-    treeVisible: () =>
-      sessionMode.current === 'orchestrator' || !tree.isCollapsed(),
+    treeVisible: () => !tree.isCollapsed(),
     transcript: transcript.component,
     panel: { component: panelScroll, isOpen: () => mode !== 'closed' },
     notice: noticeRow,
     editor: editorSlot,
-    editorVisible: () => !dashboardShown() || cardVisible(),
     status,
-    dashboard: {
-      body: {
-        render: (width: number): string[] => {
-          const model = dashboardModelNow();
-          const selected = resolveSelection(model, dashboard.selected);
-          const ui = tuiTheme().ui;
-          return renderDashboardBody(ui, model, {
-            ...(selected === undefined ? {} : { selected }),
-            width,
-            maxRows: dashboardRows(width),
-            spinner: spinnerFrame(Date.now()),
-            // Issue #466: the selected worker's live preview.
-            side: (row, sideWidth, rows) =>
-              renderWorkerPreview(ui, row, {
-                width: sideWidth,
-                maxRows: rows,
-                cards: (worker, cardWidth) => preview.cards(worker, cardWidth),
-              }),
-          });
-        },
-        invalidate: (): void => {},
-      },
-      footer: {
-        render: (width: number): string[] => {
-          const ui = tuiTheme().ui;
-          const model = dashboardModelNow();
-          const target = resolveSelection(model, dashboard.selected);
-          return [
-            ...renderDashboardFooter(ui, model, width),
-            // Issue #466 (04-F): the dispatch box.
-            ...renderDispatchBox(
-              ui,
-              {
-                mode: dashboard.dispatchMode,
-                text: dashboard.dispatchText,
-                focused: dashboard.dispatchFocused,
-                role: dashboard.role,
-                ...(target === undefined ? {} : { target }),
-              },
-              width,
-            ),
-          ];
-        },
-        invalidate: (): void => {},
-      },
-      isShown: dashboardShown,
-    },
     hints: lineComponent((width) => {
       const set = keyHintSet(hintContext(), keys, {
-        queues: sessionMode.current === 'solo',
         files: seed.listFiles !== undefined,
         // Shift+Enter is a newline only where the terminal reports it.
         newline: isKittyProtocolActive() ? '⇧⏎' : '^J',
-        // Issue #465: the manager view names the way back to the dashboard.
-        dashboard: sessionMode.current === 'orchestrator' && dashboard.hasRun,
       });
       return renderKeyHintRow(tuiTheme().ui, set.hints, width, set.right);
     }),
@@ -1366,14 +1113,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   let cancelling = false;
   let failed = false;
   let revision = 0;
-  // Issue #327: the orchestrator report's own cells. The solo lane's
-  // entries own the transcript while that lane drives; applying a lane
-  // snapshot clears the report (a report is not a session transcript).
-  let reportRevision = 0;
-  let reportCells: TranscriptEntry[] = [];
   // Issue #305: a command's own output (`/help`, `/session`, `/undo`) lands
   // as transcript text through its own lane/revision pair, so a later lane
-  // snapshot replaces it exactly like the orchestrator report.
+  // snapshot replaces it.
   let noticeRevision = 0;
   let noticeCells: TranscriptEntry[] = [];
   let submitHandler:
@@ -1427,15 +1169,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       return;
     }
     if (outcome === 'accepted') echoPendingPrompt(prompt);
-    // Issue #465: an objective handed to the manager starts a run, and the
-    // dashboard shows it.
-    if (
-      outcome === 'accepted' &&
-      sessionMode.current === 'orchestrator' &&
-      parseSlashCommand(prompt) === undefined
-    ) {
-      dashboard.startRun(prompt);
-    }
     transcript.rePin();
   };
   // The prompt echo before the lane commits it (issue #88), also reused for
@@ -1750,49 +1483,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     });
     return showPicker(view, 'list', undefined);
   };
-  // Issue #154: the open worker question, and the ones waiting behind it.
-  let questionOpen: { readonly view: QuestionView } | undefined;
-  const questionQueue: Array<() => void> = [];
-  const nextQuestion = (): void => {
-    questionQueue.shift()?.();
-  };
-  const askQuestion = (
-    question: WorkerQuestionLike,
-    signal?: AbortSignal,
-  ): Promise<string | undefined> =>
-    new Promise((resolve) => {
-      const start = (): void => {
-        const host = overlayHost;
-        if (host === undefined || signal?.aborted === true) {
-          resolve(undefined);
-          nextQuestion();
-          return;
-        }
-        const view = new QuestionView(question);
-        const handle = host.showOverlay(view, approvalOverlayOptions());
-        const close = (answer: string | undefined): void => {
-          if (questionOpen?.view !== view) return;
-          questionOpen = undefined;
-          try {
-            handle.unfocus({ target: editor });
-            handle.hide();
-          } catch {
-            // A torn-down overlay is already gone.
-          }
-          resolve(answer);
-          host.requestRender?.();
-          nextQuestion();
-        };
-        view.onSettle = close;
-        questionOpen = { view };
-        signal?.addEventListener('abort', () => close(undefined), {
-          once: true,
-        });
-        host.requestRender?.();
-      };
-      if (questionOpen === undefined && questionQueue.length === 0) start();
-      else questionQueue.push(start);
-    });
   const closeModelPicker = (notifyCancel = false): void => {
     const open = modelPicker;
     modelPicker = undefined;
@@ -1898,7 +1588,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       case 'commands': {
         const spec = findSlashCommand(item.value.slice(1));
         // A command that needs its argument goes to the editor to finish
-        // (`/inspect `); the rest run as if typed.
+        // (`/image `); the rest run as if typed.
         if (spec !== undefined && /<[^>]+>/u.test(spec.usage)) {
           const head = (spec.usage.split(' ')[0] ?? item.value).replace(
             /<[^>]+>$/u,
@@ -2071,8 +1761,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       () => copyBlock(false),
     );
   };
-  // One whole text in the framed viewer: a transcript block (#463) or a
-  // worker's diff (#465).
+  // One whole text in the framed viewer: a transcript block (#463).
   const openViewer = (
     viewTitle: string,
     lines: (width: number) => string[],
@@ -2107,151 +1796,10 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     if (cardVisible() && palette !== undefined) {
       closePalette(true);
     }
-    if (!approvalSurface.isShowing()) dashboard.answering = false;
-    noteDeferredAsk();
     overlayHost?.requestRender?.();
   };
   const settleApproval = (): void => {
-    // Issue #465: one answer at a time from the dashboard — the next ask
-    // waits for its own `a`.
-    dashboard.answering = false;
     syncOverlay();
-  };
-  // Issue #465: an ask that arrives while the dashboard shows waits in its
-  // AWAITING group; the footer says so once.
-  let deferredAsk: unknown;
-  const noteDeferredAsk = (): void => {
-    const request = approvalSurface.pending();
-    if (request === undefined || !dashboardShown() || dashboard.answering) {
-      deferredAsk = undefined;
-      return;
-    }
-    if (request === deferredAsk) return;
-    deferredAsk = request;
-    const waiting = dashboardModelNow().workers.find(
-      (row) => row.group === 'awaiting',
-    );
-    noticeRow.setFooter(
-      `◆ ${waiting === undefined ? 'an approval is' : `${sanitizeLaneText(waiting.worker.workerId)} is`} waiting on you · a answer`,
-    );
-  };
-  // Issue #465: what a dashboard key asked for.
-  const runDashboardIntent = (
-    intent: DashboardIntent,
-    model: DashboardModel,
-  ): void => {
-    switch (intent.kind) {
-      case 'hint':
-        noticeRow.setFooter(intent.text);
-        break;
-      case 'open': {
-        // Issue #466: the full worker view — its facts and every recent
-        // call as a card.
-        const row = model.workers.find(
-          (entry) => entry.worker.workerId === intent.workerId,
-        );
-        if (row !== undefined) {
-          openViewer(
-            sanitizeLaneText(intent.workerId),
-            (width) =>
-              workerViewLines(
-                row,
-                (cardWidth) => preview.cards(row.worker, cardWidth),
-                width,
-              ).map(sanitizeLaneText),
-            () => copyText(workerInspectorLines(row).join('\n')),
-          );
-        }
-        break;
-      }
-      case 'answer': {
-        if (!approvalSurface.isShowing()) {
-          noticeRow.setFooter('nothing is waiting on you');
-          break;
-        }
-        dashboard.answering = true;
-        // The card's arming window starts when it appears, not when the ask
-        // arrived: a key pressed with the `a` cannot answer it.
-        approvalSurface.reveal();
-        const waiting = model.workers.find((row) => row.group === 'awaiting');
-        if (waiting !== undefined) dashboard.selected = waiting.worker.workerId;
-        noticeRow.setFooter('');
-        break;
-      }
-      case 'stop':
-      case 'retry':
-        noticeRow.setFooter(
-          workerActionHandler?.({
-            kind: intent.kind,
-            workerId: intent.workerId,
-          })?.footer ?? `${intent.kind}: not available in this session`,
-        );
-        break;
-      // Issue #466: the dispatch box.
-      case 'message': {
-        const answer = workerActionHandler?.(intent);
-        if (answer?.sent === true) dashboard.dispatchSent();
-        noticeRow.setFooter(
-          answer?.footer ?? 'message: not available in this session',
-        );
-        break;
-      }
-      case 'dispatch': {
-        if (busy) {
-          noticeRow.setFooter(
-            'dispatch: a new worker starts once this run settles',
-          );
-          break;
-        }
-        const answer = workerActionHandler?.(intent);
-        if (answer?.sent === true) {
-          dashboard.dispatchSent();
-          dashboard.startRun(intent.text);
-        }
-        noticeRow.setFooter(
-          answer?.footer ?? 'dispatch: not available in this session',
-        );
-        break;
-      }
-      case 'diff':
-        openWorkerDiff(intent.workerId, model);
-        break;
-      default:
-        break;
-    }
-    overlayHost?.requestRender?.();
-  };
-  const openWorkerDiff = (workerId: string, model: DashboardModel): void => {
-    const workspace = model.workers.find(
-      (row) => row.worker.workerId === workerId,
-    )?.worker.workspace;
-    const read = seed.workerDiff;
-    if (workspace === undefined || read === undefined) {
-      noticeRow.setFooter(`diff: ${workerId} has no worktree to read`);
-      return;
-    }
-    noticeRow.setFooter(`diff: reading ${workerId}…`);
-    void read({ workerId, workspace }).then(
-      (text) => {
-        if (text === undefined) {
-          noticeRow.setFooter(`diff: could not read ${workerId}'s worktree`);
-        } else if (text.trim() === '') {
-          noticeRow.setFooter(`diff: ${workerId} has no changes`);
-        } else {
-          noticeRow.setFooter('');
-          openViewer(
-            `diff ${workerId}`,
-            (width) => renderWorkerDiff(tuiTheme().ui, text, width),
-            () => copyText(text),
-          );
-        }
-        overlayHost?.requestRender?.();
-      },
-      () => {
-        noticeRow.setFooter(`diff: could not read ${workerId}'s worktree`);
-        overlayHost?.requestRender?.();
-      },
-    );
   };
   // Issue #455: what the presentation state says about each call — when the
   // app first saw it, whether it still runs, and its duration once done.
@@ -2366,19 +1914,8 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     if (blockViewer !== undefined) return 'overlay';
     if (blockMode !== undefined) return 'blocks';
     if (modelPicker?.kind === 'model') return 'model';
-    if (
-      modelPicker !== undefined ||
-      confirmOverlay !== undefined ||
-      questionOpen !== undefined
-    ) {
+    if (modelPicker !== undefined || confirmOverlay !== undefined) {
       return 'overlay';
-    }
-    // Issue #465: the dashboard names its own keys.
-    if (dashboardShown()) {
-      if (dashboard.dispatchFocused) {
-        return dashboard.dispatchMode === 'new' ? 'dispatchNew' : 'dispatch';
-      }
-      return dashboard.filtering ? 'filter' : 'dashboard';
     }
     return busy ? 'working' : 'idle';
   };
@@ -2429,8 +1966,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
           return { quit: false, consumed: true, cancel: false };
         }
       }
-      // Issue #465: an ask the dashboard defers is not on screen, so it
-      // takes no keys until `a` opens it.
       if (cardVisible() && approvalSurface.decide(data)) {
         settleApproval();
         return { quit: false, consumed: true, cancel: false };
@@ -2462,12 +1997,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // diff panel's files (and page the journal panel); neither key is
       // claimed by pi-tui's editor or alt-screen bindings, so the draft keeps
       // its own keys. A closed panel does not claim them at all.
-      // Issue #154: an open worker question owns the keys (the approval
-      // above outranks it): Enter answers, Esc declines.
-      if (questionOpen !== undefined) {
-        questionOpen.view.handleInput(data);
-        return { quit: false, consumed: true, cancel: false };
-      }
       // Issue #303: every action below is looked up in the registry, so a
       // rebound key acts and the old key falls through to the editor.
       const action = keys.actionFor('global', keyId);
@@ -2584,45 +2113,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         overlayHost?.requestRender?.();
         return { quit: false, consumed: true, cancel: false };
       }
-      // Issue #465: the orchestrator dashboard owns its keys (the editor is
-      // not on screen there); a global key it does not take acts as usual.
-      // From the manager view, Tab on an empty editor goes back to it.
-      if (dashboardShown() && !cardVisible()) {
-        const model = dashboardModelNow();
-        const before = `${dashboard.filtering}:${dashboard.filter}`;
-        const intent = dashboard.handleKey(
-          {
-            data,
-            ...(keyId === undefined ? {} : { keyId }),
-            ...(action === undefined ? {} : { action }),
-          },
-          model,
-        );
-        if (intent.kind !== 'pass') {
-          runDashboardIntent(intent, model);
-          if (`${dashboard.filtering}:${dashboard.filter}` !== before) {
-            noticeRow.setFooter(
-              dashboard.filtering
-                ? `/${dashboard.filter}▏ · ⏎ keep · esc clear`
-                : dashboard.filter === ''
-                  ? ''
-                  : `filter: ${dashboard.filter} · esc clears`,
-            );
-          }
-          return { quit: false, consumed: true, cancel: false };
-        }
-      } else if (
-        sessionMode.current === 'orchestrator' &&
-        dashboard.hasRun &&
-        keyId === 'tab' &&
-        editor.getText() === '' &&
-        !editor.isShowingAutocomplete()
-      ) {
-        dashboard.view = 'dashboard';
-        noteDeferredAsk();
-        overlayHost?.requestRender?.();
-        return { quit: false, consumed: true, cancel: false };
-      }
       const consumed: TuiInputResult = {
         quit: false,
         consumed: true,
@@ -2701,17 +2191,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         tree.handleInput('t');
         return { quit: false, consumed: true, cancel: false };
       }
-      // Issue #327 (§17, §81): Ctrl-G switches the session between solo and
-      // orchestrator. A turn owns the lane while it runs, so the key is
-      // refused there — with the reason on the footer, never a silent no-op.
-      if (action === 'session.mode') {
-        if (busy) {
-          noticeRow.setFooter('mode: finish the current turn before switching');
-          return { quit: false, consumed: true, cancel: false };
-        }
-        setMode(sessionMode.current === 'solo' ? 'orchestrator' : 'solo');
-        return { quit: false, consumed: true, cancel: false };
-      }
       // Issue #96: Ctrl-O / Ctrl-R toggle the §17 inspectable pair. Both are
       // free of pi-tui's own bindings (probed: editor bindings claim
       // a/b/c/d/e/f/g/j/k/u/w/y, the alt-screen claims the arrows, home/end,
@@ -2787,30 +2266,17 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     presentationSeed: () => ({
       sessionId: seed.sessionId,
       model: modelLabel,
-      mode: sessionMode.current,
       approvalsSkipped: status.getState().approvalsSkipped,
     }),
     applyPresentation: (state: KubicPresentationState): void => {
-      presentation = state;
       const lane = state.lanes.get(seed.sessionId);
       noticeRow.setActivity(
         lane === undefined ? undefined : laneActivityLine(lane),
       );
-      // Issue #342 (§18): the orchestrator's workers become nodes under the
-      // manager root — every apply replaces the list (the state is the truth).
-      const workers = treeWorkersOf(state.workers);
-      if (lane === undefined && workers.length > 0) {
-        applyTreeSnapshot(tree.getState(), {
-          status: 'idle',
-          tools: [],
-          workers,
-        });
-      }
       if (lane !== undefined) {
         applyTreeSnapshot(tree.getState(), {
           status: lane.status,
           tools: lane.tools,
-          workers,
           usage: {
             costTotal: state.usage.costUsd,
             inputTokens: state.usage.inputTokens,
@@ -2880,11 +2346,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         withReceipts(cells),
         revision,
       );
-      // Issue #327: a solo lane snapshot is the session's own transcript, so
-      // the orchestrator report stops being it — and the command notices
-      // with it (review fix: a stale notice list must never be re-applied by
-      // the next `/help`).
-      reportCells = [];
+      // A lane snapshot is the session's own transcript, so the command
+      // notices stop being it (review fix: a stale notice list must never be
+      // re-applied by the next `/help`).
       noticeCells = [];
       // The echoed prompt is dropped once the lane has committed a NEW
       // prompt cell (counted, not matched by text: an identical resubmit
@@ -2926,34 +2390,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         compactionThreshold: limits.compactionThreshold,
       });
     },
-    setBudgetSpend: (toolCalls: number): void => {
-      const current = status.getState();
-      if (current.budget === undefined) return;
-      status.setState({
-        ...current,
-        budget: { ...current.budget, toolCalls },
-      });
-    },
-    appendReport: (lines: ReadonlyArray<string>): void => {
-      const clean = lines
-        .map((line) => sanitizeLaneText(line))
-        .filter((line) => line !== '');
-      if (clean.length === 0) return;
-      reportRevision += 1;
-      reportCells = [
-        ...reportCells,
-        {
-          id: `${sessionId}:report:${reportRevision}`,
-          kind: 'text',
-          markdown: clean.join('\n'),
-        },
-      ];
-      transcript.applyLaneSnapshot(
-        { laneId: `${sessionId}:orchestrator` },
-        reportCells,
-        reportRevision,
-      );
-    },
     onSubmit: (
       handler: (prompt: string) => TuiSubmitOutcome | undefined,
     ): void => {
@@ -2992,8 +2428,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     setApprovalsSkipped: (skipped: boolean): void => {
       status.setApprovalsSkipped(skipped);
     },
-    mode: (): StatusMode => sessionMode.current,
-    setMode,
     isBusy: (): boolean => busy,
     setEditorFooter: (text: string): void => {
       noticeRow.setFooter(text);
@@ -3004,8 +2438,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     setTurnOutcome: (outcome, info = {}): void => {
       failed = outcome === 'failed';
       cancelling = false;
-      // Issue #457 (01-J): a solo turn ends with its receipt.
-      if (sessionMode.current !== 'solo') return;
+      // Issue #457 (01-J): a turn ends with its receipt.
       const now = Date.now();
       const start = Math.max(info.startedAt ?? receiptBase.at, receiptBase.at);
       const rows = status.getState().rows;
@@ -3118,14 +2551,13 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       sessionId = options.sessionId;
       revision += 1;
       transcript.applyLaneSnapshot({ laneId: sessionId }, [], revision);
-      reportCells = [];
       noticeCells = [];
       pendingPrompt = undefined;
       promptCells = 0;
       promptCellsAtSubmit = 0;
       transcript.setPendingPrompt(undefined);
       transcript.setQueuedPrompts([]);
-      tree.reset(undefined, sessionMode.current === 'solo');
+      tree.reset(undefined, true);
       title = undefined;
       toolTimes.clear();
       thinkingTimes.clear();
@@ -3155,9 +2587,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // Issue #463: the old session's blocks are gone.
       closeBlockViewer();
       exitBlockMode();
-      // Issue #465: and so is its run.
-      dashboard.reset();
-      presentation = undefined;
       // Issue #462: a fresh session starts on the first screen again (a
       // resumed one with history hides it when its entries apply).
       welcomeVisible = true;
@@ -3201,25 +2630,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     seedPromptHistory: (prompts: readonly string[]): void => {
       editor.seedHistory(prompts);
     },
-    askQuestion,
-    inspectWorker: (workerId: string): boolean => {
-      const worker = tree
-        .getState()
-        .workers.find((node) => node.workerId === workerId);
-      if (worker === undefined) return false;
-      // A read-only capturing list: Enter or Esc closes it.
-      return openPickerOverlay({
-        rows: renderAgentInspector(worker).map((line, index) => ({
-          value: String(index),
-          label: line,
-        })),
-        onSelect: () => {},
-      });
-    },
-    setWorkerActionHandler: (handler): void => {
-      workerActionHandler = handler;
-    },
-    orchestratorView: (): 'dashboard' | 'manager' => dashboard.view,
     openPanel: setPanel,
     panelScrollBy: (lines: number): void => {
       panelScroll.scrollBy(Math.trunc(lines));

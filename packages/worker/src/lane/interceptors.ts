@@ -49,16 +49,8 @@ import { readRootFor } from '../../../exec/src/read-roots.js';
 import type { HookRegistration, JsonValue } from '../pi-boundary.js';
 import { hook, ToolTask } from '../pi-boundary.js';
 
-export interface PolicyTrigger {
-  kind: 'max_tool_calls';
-  toolName: string;
-  count: number;
-}
-
 export interface PolicyInterceptorOptions {
   workspace: string;
-  maxToolCalls?: number;
-  onTrigger?: (trigger: PolicyTrigger) => void;
   shell?: ShellLevel;
   network?: NetworkLevel;
   // Read-only confinement exception (issue #173; §29.3): the directories
@@ -68,7 +60,7 @@ export interface PolicyInterceptorOptions {
   readRoots?: readonly string[];
   isDestructive?: (command: string, workspace: string) => boolean;
   // Approval decider (issue #16, owned by the host). Consulted for every
-  // call after the budget gate: denials block; approvals let the call
+  // call first: denials block; approvals let the call
   // through. Only challenged approvals (a real capability was raised and
   // granted) stand down the destructive/network/confine guards for that
   // exact toolCallId — an unchallenged fast-path keeps every guard up.
@@ -450,8 +442,7 @@ export function redactReason(value: string): string {
 }
 
 // §36.1 rule 2 (issue #192): approval summaries, block reasons, the
-// trajectory, the §60 ledger and the orchestrator's mailbox ask JSON all
-// pass through this redactor, so it composes the shared @kubic/core shape
+// trajectory and the audit ledger all pass through this redactor, so it composes the shared @kubic/core shape
 // table on top of the inline rules. It is deliberately at least as strong as
 // the host's display redactor (approval-display.ts): the display one keeps
 // prose readable because the operator must see what will run, this one may
@@ -595,15 +586,13 @@ function confineArgs(
 }
 
 // The lane's policy interception as ordered `ToolTask` hooks (issue #397).
-// Order is correctness (issue #208): the maxToolCalls meter reports first,
-// then the approval seat, then the destructive/network guard, then the
-// confine rewrite last — and the harness skips every later hook once a
-// block is returned, so a blocked attempt is still counted by the meters
-// before the guard that blocks it. Each registration is one handler, so the
-// order of this array IS the chain order.
+// Order is correctness: the approval seat first, then the
+// destructive/network guard, then the confine rewrite last — and the
+// harness skips every later hook once a block is returned. Each
+// registration is one handler, so the order of this array IS the chain
+// order.
 //
-// State lifetime: the attempt counter, the trigger latch and the approved
-// call ids live in THIS invocation's closure — call the factory once per
+// State lifetime: the approved call ids live in THIS invocation's closure — call the factory once per
 // lane boot (solo.ts builds its `kubic.policy` extension fresh on every
 // boot). Installing one returned array into two boots would share them, so
 // the factory deliberately never keeps state across calls: two invocations,
@@ -662,36 +651,7 @@ export function policyInterceptorHooks(
   // result says what ran, so neither the model nor the transcript takes the
   // proposed command's output for its own. Capped like the stand-downs.
   const editedCalls = new Map<string, { from: string; to: string }>();
-  // Budget first: every attempt counts, even one a later handler blocks.
-  let calls = 0;
-  let triggered = false;
   const registrations: HookRegistration[] = [];
-
-  if (options.maxToolCalls !== undefined) {
-    const max = options.maxToolCalls;
-    registrations.push(
-      hook(ToolTask, {
-        beforeTool: (call) =>
-          failClosed(() => {
-            calls += 1;
-            if (calls <= max) return undefined;
-            if (!triggered) {
-              triggered = true;
-              try {
-                options.onTrigger?.({
-                  kind: 'max_tool_calls',
-                  toolName: call.name,
-                  count: calls,
-                });
-              } catch {
-                // A throwing trigger callback must not mask the block.
-              }
-            }
-            return block(`maxToolCalls (${max}) exceeded`);
-          }),
-      }),
-    );
-  }
 
   registrations.push(
     hook(ToolTask, {

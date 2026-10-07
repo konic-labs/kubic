@@ -1,19 +1,43 @@
 // Settlement mapping: a settled pi-durable submission → Kubic's result
-// contract (issue #11, slice C; ported to the durable harness in #395).
-// Pure functions: the lane reports HOW the run ended, and this module
-// translates that into the #7 ResultStatus + ResultError vocabulary and the
-// §52 failure codes (lane/failures.ts). Full AgentResult/Task/Handoff
-// transitions belong to the lifecycle owners (#42 worker lifecycle, #52–#53
-// replay); this is the status/error kernel they build on.
+// vocabulary. Pure functions: the lane reports HOW the run ended, and this
+// module translates that into a ResultStatus + ResultError and the failure
+// codes of lane/failures.ts.
 
 import type { SettledSubmissionRecord } from '../pi-boundary.js';
-import type {
-  JsonValue,
-  ResultError,
-  ResultErrorKind,
-  ResultStatus,
-} from '../result.js';
 import { classifyFailure, type FailureCode } from './failures.js';
+
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+// How a run ended.
+export type ResultStatus =
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'timeout'
+  | 'turn_limit';
+
+// The domain a failure belongs to.
+export type ResultErrorKind =
+  | 'model'
+  | 'provider'
+  | 'tool'
+  | 'process'
+  | 'workspace'
+  | 'context'
+  | 'limit'
+  | 'approval';
+
+export interface ResultError {
+  kind: ResultErrorKind;
+  message: string;
+  details?: JsonValue;
+}
 
 export interface OperationErrorLike {
   code: string;
@@ -41,7 +65,6 @@ export interface SubmissionFailure {
 }
 
 const KIND_BY_KEYWORD: Array<{ pattern: RegExp; kind: ResultErrorKind }> = [
-  { pattern: /budget/i, kind: 'budget' },
   { pattern: /context|overflow|too many tokens|token limit/i, kind: 'context' },
   { pattern: /approv/i, kind: 'approval' },
   { pattern: /model/i, kind: 'model' },

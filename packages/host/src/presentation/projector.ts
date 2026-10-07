@@ -3,95 +3,30 @@
 // of folding raw events (§15.2: "The presentation does not fold raw events").
 //
 // Pure: no I/O, no authority, no harness access. The lane source is the
-// `subscribeLaneEvents` stream (#398, itself pi-durable's `watchEvents`); the
-// worker and approval sources are narrow typed events the host feeds in
-// (`applyWorker` / `applyApproval`), because those lifecycles own their own
-// vocabularies and the projector must not depend on them.
+// `subscribeLaneEvents` stream (#398, itself pi-durable's `watchEvents`);
+// approvals are narrow typed events the host feeds in (`applyApproval`).
 //
-// The root lane's id IS the session id: the solo TUI has exactly one lane
-// (D2), and a worker lane appears in `workers`, not as a second lane.
+// The root lane's id IS the session id: the TUI has exactly one lane.
 
 import type {
   AgentSummary,
   ApprovalRequest,
-  BudgetSummary,
   KubicPresentationState,
   LaneSnapshot,
   LaneToolSnapshot,
-  RunPhase,
-  RunPhaseState,
   UsageTotals,
-  WorkerDiffStat,
-  WorkerSummary,
-  WorkerToolActivity,
 } from '../../../core/src/presentation.js';
-import {
-  PRESENTATION_STATE_FIELDS,
-  RUN_PHASES,
-} from '../../../core/src/presentation.js';
+import { PRESENTATION_STATE_FIELDS } from '../../../core/src/presentation.js';
 import type { KubicLaneEvent } from '../../../worker/src/lane/events.js';
 
 export interface PresentationSeed {
   readonly sessionId: string;
   readonly model?: string;
   readonly thinking?: string;
-  readonly mode: 'solo' | 'orchestrator';
   readonly approvalsSkipped: boolean;
   /** The agent's workspace (the repo root for a solo lane). */
   readonly workspace?: string;
 }
-
-// One worker lifecycle fact (issue #333). Structural: the lifecycle layer's
-// own event types feed this without the projector importing them.
-export interface WorkerProjectionEvent {
-  readonly type: 'worker-start' | 'worker-update' | 'worker-end';
-  readonly workerId: string;
-  readonly role?: string;
-  readonly status?: string;
-  readonly workspace?: string;
-  readonly budget?: BudgetSummary;
-  readonly generation?: number;
-  readonly model?: string;
-  readonly inputTokens?: number;
-  readonly outputTokens?: number;
-  readonly costUsd?: number;
-  // Issue #464: the worker's task, the tool facts its process reported since
-  // the last event (one batch, oldest first — folded into its activity, count
-  // and recent ring), its change summary, and the approval it waits on
-  // (`null` clears it).
-  readonly task?: string;
-  readonly facts?: readonly WorkerToolActivity[];
-  // Issue #465: a start's time (a new generation restarts the clock) and a
-  // settle's.
-  readonly startedAt?: number;
-  readonly endedAt?: number;
-  // Issue #466: the settle's summary line and failure reason.
-  readonly summary?: string;
-  readonly failure?: string;
-  readonly diffStat?: WorkerDiffStat;
-  readonly awaiting?: {
-    readonly approvalKey: string;
-    readonly summary: string;
-  } | null;
-}
-
-// Issue #464: an orchestrator run phase changed.
-export interface RunPhaseProjectionEvent {
-  readonly type: 'run-phase';
-  readonly phase: RunPhase;
-  readonly state: RunPhaseState['state'];
-  readonly at: number;
-}
-
-// Issue #464: what an orchestrator run reports to the view — worker facts
-// and its phase transitions.
-export type OrchestratorProjectionEvent =
-  | WorkerProjectionEvent
-  | RunPhaseProjectionEvent;
-
-/** The recent tool calls a worker keeps, and the diff text each may hold. */
-export const WORKER_RECENT_TOOLS = 8;
-export const WORKER_DIFF_MAX_CHARS = 20 * 1024;
 
 // One approval fact. `ask` adds the pending request, `settled` removes it.
 export interface ApprovalProjectionEvent {
@@ -121,8 +56,6 @@ function laneOf(
 }
 
 export class PresentationProjector {
-  // Issue #464: the tool calls each worker has reported (its count).
-  private readonly seenTools = new Map<string, Set<string>>();
   private readonly rootLaneId: string;
   private readonly now: () => number;
   // Tool-call start times, so the state carries the duration the tree shows.
@@ -146,7 +79,6 @@ export class PresentationProjector {
     this.current = {
       session: {
         sessionId: seed.sessionId,
-        mode: seed.mode,
         approvalsSkipped: seed.approvalsSkipped,
         ...(seed.model === undefined ? {} : { model: seed.model }),
         ...(seed.thinking === undefined ? {} : { thinking: seed.thinking }),
@@ -177,7 +109,6 @@ export class PresentationProjector {
           },
         ],
       ]),
-      workers: new Map(),
       approvals: [],
       usage: emptyUsage(),
       connection: { status: 'connected' },
@@ -359,129 +290,6 @@ export class PresentationProjector {
     }
   }
 
-  applyWorker(event: WorkerProjectionEvent): void {
-    const workers = new Map(this.current.workers);
-    if (event.type === 'worker-end') {
-      workers.delete(event.workerId);
-      this.seenTools.delete(event.workerId);
-    } else {
-      const previous = workers.get(event.workerId);
-      const next: WorkerSummary = {
-        workerId: event.workerId,
-        role: event.role ?? previous?.role,
-        status: event.status ?? previous?.status ?? 'running',
-        workspace: event.workspace ?? previous?.workspace,
-        budget: event.budget ?? previous?.budget,
-        generation: event.generation ?? previous?.generation,
-        model: event.model ?? previous?.model,
-        inputTokens: event.inputTokens ?? previous?.inputTokens,
-        outputTokens: event.outputTokens ?? previous?.outputTokens,
-        costUsd: event.costUsd ?? previous?.costUsd,
-        task: event.task ?? previous?.task,
-        activity: previous?.activity,
-        toolCount: previous?.toolCount,
-        recentTools: previous?.recentTools,
-        diffStat: event.diffStat ?? previous?.diffStat,
-        awaiting:
-          event.awaiting === null
-            ? undefined
-            : (event.awaiting ?? previous?.awaiting),
-        startedAt: event.startedAt ?? previous?.startedAt,
-        // A new generation starts unsettled: no end, summary or failure.
-        endedAt:
-          event.type === 'worker-start'
-            ? event.endedAt
-            : (event.endedAt ?? previous?.endedAt),
-        summary:
-          event.type === 'worker-start'
-            ? event.summary
-            : (event.summary ?? previous?.summary),
-        failure:
-          event.type === 'worker-start'
-            ? event.failure
-            : (event.failure ?? previous?.failure),
-      };
-      for (const fact of event.facts ?? []) this.foldTool(next, fact);
-      workers.set(event.workerId, next);
-    }
-    this.current = { ...this.current, workers };
-    this.fold += 1;
-  }
-
-  // Issue #464: one tool fact — the latest activity, the distinct-call
-  // count, and the ring of the last WORKER_RECENT_TOOLS calls (a call's
-  // later state replaces its earlier one in place).
-  private foldTool(worker: WorkerSummary, fact: WorkerToolActivity): void {
-    const bounded: WorkerToolActivity =
-      fact.diff !== undefined && fact.diff.text.length > WORKER_DIFF_MAX_CHARS
-        ? {
-            ...fact,
-            diff: {
-              ...fact.diff,
-              text: fact.diff.text.slice(0, WORKER_DIFF_MAX_CHARS),
-            },
-          }
-        : fact;
-    const seen = this.seenTools.get(worker.workerId) ?? new Set<string>();
-    if (!seen.has(fact.id)) {
-      seen.add(fact.id);
-      this.seenTools.set(worker.workerId, seen);
-    }
-    const ring = [...(worker.recentTools ?? [])];
-    const at = ring.findIndex((tool) => tool.id === fact.id);
-    if (at === -1) ring.push(bounded);
-    else ring[at] = bounded;
-    worker.activity = bounded;
-    worker.toolCount = seen.size;
-    worker.recentTools = ring.slice(-WORKER_RECENT_TOOLS);
-  }
-
-  /** Issue #464: one orchestrator fact, whichever kind it is. */
-  applyOrchestrator(event: OrchestratorProjectionEvent): void {
-    if (event.type === 'run-phase') this.applyRunPhase(event);
-    else this.applyWorker(event);
-  }
-
-  /**
-   * Issue #464: a run phase changed. The phases stay in run order whatever
-   * order they were reported in, and a plan starting again is a new run.
-   */
-  applyRunPhase(event: RunPhaseProjectionEvent): void {
-    const previous = this.current.session.runPhases ?? [];
-    const fresh =
-      event.phase === 'plan' &&
-      event.state === 'running' &&
-      previous.some(
-        (phase) => phase.phase !== 'plan' || phase.state !== 'running',
-      );
-    const earlier = fresh
-      ? undefined
-      : previous.find((phase) => phase.phase === event.phase);
-    const phases = (fresh ? [] : previous).filter(
-      (phase) => phase.phase !== event.phase,
-    );
-    // Issue #466: a new run's workers replace the last run's.
-    if (fresh) {
-      this.seenTools.clear();
-      this.current = { ...this.current, workers: new Map() };
-    }
-    const startedAt = event.state === 'running' ? event.at : earlier?.startedAt;
-    phases.push({
-      phase: event.phase,
-      state: event.state,
-      at: event.at,
-      ...(startedAt === undefined ? {} : { startedAt }),
-    });
-    phases.sort(
-      (a, b) => RUN_PHASES.indexOf(a.phase) - RUN_PHASES.indexOf(b.phase),
-    );
-    this.current = {
-      ...this.current,
-      session: { ...this.current.session, runPhases: phases },
-    };
-    this.fold += 1;
-  }
-
   applyApproval(event: ApprovalProjectionEvent): void {
     const approvals = this.current.approvals.filter(
       (request) => request.requestId !== event.requestId,
@@ -579,4 +387,4 @@ function usageTotalsOf(usage: {
   return totals;
 }
 
-export type { AgentSummary, ApprovalRequest, WorkerSummary };
+export type { AgentSummary, ApprovalRequest };

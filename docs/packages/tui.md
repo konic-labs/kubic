@@ -20,7 +20,7 @@ TUI-side analogue of the worker Pi boundary.
 | `tui-boundary.ts` | Sole presentation seam: re-exports `Component`, `Focusable`, `MouseRegionHandler`, `StackEntryOptions`, `Terminal`, `TUI` (types) and `CURSOR_MARKER`, `Editor`, `Markdown`, `MouseRegion`, `matchesKey`, `ScrollView`, `Text`, `TuiAltScreen`, `VStack` (values) from `@earendil-works/pi-tui`, each with a JUSTIFICATION block |
 | `layout.ts` | `Viewport`, `LayoutSlots`, `NARROW_COLUMNS`, `buildLayoutRoot`, `renderLayout` |
 | `screen.ts` | `Screen`, `bootScreen`, `KubicAltScreen` (Pi's alt-screen with a `baseFilter` run over the base frame before the overlays are composited — the dimmed background, issue #460) |
-| `status-bar.ts` | `StatusUsageCost`, `StatusUsage`, `StatusUsageRow`, `StatusSummary`, `summarizeStatusRows`, `formatStatusCost`, `StatusMode`, `StatusBarState`, `StatusBarTheme`, `DEFAULT_STATUS_THEME`, `statusVisibleWidth`, `renderStatusLines`, `StatusBarOptions`, `StatusBar` |
+| `status-bar.ts` | `StatusUsageCost`, `StatusUsage`, `StatusUsageRow`, `StatusSummary`, `summarizeStatusRows`, `formatStatusCost`, `StatusBarState`, `StatusBarTheme`, `DEFAULT_STATUS_THEME`, `statusVisibleWidth`, `renderStatusLines`, `StatusBarOptions`, `StatusBar` |
 | `transcript.ts` | `TranscriptEntryKind`, `TranscriptEntry`, `TranscriptDelta`, `LaneIdentity`, `TranscriptSnapshotOp`, `TranscriptDeltaOp`, `TranscriptOp`, `TranscriptView`, `createTranscriptView`, `replayTranscript`, `TranscriptBlockKind`, `TranscriptBlock` (block mode: `blocks`, `select`, `toggleBlock`, `blockLines`, `reveal` on the view; issue #463) |
 | `tree.ts` | `RunStatus`, `ToolCallState`, `rootGlyph`, `toolGlyph`, `TreeToolCall`, `TreeUsage`, `TreeTurnSummary`, `AgentTreeState`, `createTreeState`, `toggleTree`, `TreeToolSnapshot`, `TreeLaneSnapshot`, `applyTreeSnapshot`, `collapsedSummary`, `formatTreeTokens`, `renderTreeLines`, `TreeMouseEvent`, `TreeMouseResult`, `TreeViewOptions`, `AgentTreeView` |
 | `editor-view.ts` | `EDITOR_FALLBACK_ROWS`, `editorTheme`, `PromptEditor` (Pi `Editor` behind the seam: Enter submit, multi-line entry, history, focus forwarding, `insertText` at the cursor) |
@@ -49,7 +49,7 @@ depth `none`, so snapshots stay readable.
 | `ui/line.ts` | `fitLine` (cut with `…`, plain text stays escape-free), `padTo`, `exactWidth`, `leftRight` (right part keeps its room) |
 | `ui/surface.ts` | `fillLine` / `surfaceLines`: a background role edge to edge, kept through nested styles |
 | `ui/frame.ts` | `frameLines` (`┌─┐` box, heavy `┏┃┗` card or bare rules; title and right label in the top rule), `frameInnerWidth` |
-| `ui/marks.ts` | `badge` (inverse mode/accent/waiting/ok/error cells, `[TEXT]` without colour; `key` caps), `gauge` (warn at 80%, err at 100%), `sectionLabel`, `rule` |
+| `ui/marks.ts` | `badge` (inverse accent/waiting/ok/error cells, `[TEXT]` without colour; `key` caps), `gauge` (warn at 80%, err at 100%), `sectionLabel`, `rule` |
 | `ui/key-hints.ts` | `renderKeyHintRow`: keys fg1, labels fg2, whole hints dropped from the end when narrow, a right-aligned hint |
 | `ui/match.ts` | `fuzzyPositions` (contiguous run, else word starts) and `highlightPositions` (matched runs styled, the rest optionally too) |
 | `ui/palette.ts` | the ^P palette (issue #460): `PaletteItem`/`PaletteState`, grouping and ranking with Pi's `fuzzyMatch` (`paletteGroups`, `paletteRows`, `paletteResultCount`), navigation (`movePalette`, `cyclePaletteGroup`, `togglePaletteDetails`, `setPaletteQuery`, `setPaletteItems`), `renderPalette`, and the row helpers `paletteModelMeta`, `formatContextWindow`, `formatAge` |
@@ -70,13 +70,11 @@ VStack root, rows in order (issue #453 order; optional slots in italics):
 | --- | --- | --- |
 | *one-row header* (`chrome.ts`) | `header` | basis 1 |
 | `AgentTreeView` | `tree` | auto, at most `TREE_MAX_ROWS`; hidden below 80 columns and while `treeVisible()` is false |
-| ScrollView transcript | `transcript` | grow 1, follow-end; hidden while the dashboard shows |
-| *dashboard body* (issue #465) | `dashboard.body` | grow 1, only while `dashboard.isShown()` |
-| *dashboard footer* (rule + run budget) | `dashboard.footer` | auto, pinned under the body |
+| ScrollView transcript | `transcript` | grow 1, follow-end |
 | *diff / journal panel* | `panel` | basis 12 while open |
 | *notice row* | `notice` | auto — no row when empty |
-| editor | `editor` | auto; hidden while `editorVisible()` is false |
-| one-row status line | `status` | auto; hidden while the dashboard shows |
+| editor | `editor` | auto |
+| one-row status line | `status` | auto |
 | *key-hint row* | `hints` | auto |
 
 `Viewport` is `{ width: number, height: number }` (matches Pi's
@@ -114,8 +112,8 @@ a turn runs (`⠹ Working · 0:12 · ↑ 9.2k ↓ 640 tok · 3 tools … esc int
 ### Chrome (`chrome.ts`, issue #453)
 
 `renderHeader(ui, info, width)` is the one-row header
-(`■ KUBIC │ <project> ⎇ <branch> ●<dirty> … session <title> │ SOLO approvals
-on │ HH:MM`, on bg1) with its drop ladder (clock, session, approvals when on,
+(`■ KUBIC │ <project> ⎇ <branch> ●<dirty> … session <title> │ approvals on
+│ HH:MM`, on bg1) with its drop ladder (clock, session, approvals when on,
 branch; the project name is cut last; `approvals OFF` never drops).
 `keyHintSet(context, keys, options)` returns the hint row for `idle`,
 `working`, `approval` or `overlay`, built from the key registry
@@ -129,15 +127,15 @@ notice from its seed (`workspace`, `clock`, `laneNotice`) and
 ### Views
 
 - **Status line** (`status-bar.ts`): one row since issue #453.
-  `StatusMode` is `solo|orchestrator`; usage/cost rollups (`StatusUsage`,
+  Usage/cost rollups (`StatusUsage`,
   `StatusUsageRow`, `StatusUsageCost`, `StatusSummary`,
   `summarizeStatusRows`, `formatStatusCost`) feed `StatusBarState`, rendered
   by `renderStatusLine(state, width, ui, now)`: `● model · thinking │ ctx
-  gauge NN% of <window> │ cost │ journal N changes │ budget …` and the
+  gauge NN% of <window> │ cost │ journal N changes` and the
   `StatusTurnState` word (`ready`, `working`, `needs approval`,
   `cancelling…`, `error`) on the right; the `StatusBar` component reads the
-  live turn facts through its `live` option. The state also holds the mode
-  and the approvals posture, which the header renders. The TTFT and tool-ms
+  live turn facts through its `live` option. The state also holds the
+  approvals posture, which the header renders. The TTFT and tool-ms
   segments were deleted in #346 (Pi 1.0 routes no timing Kubic could read),
   and `kubic tui --session` seeds the rows from the session's `pi.usage`
   ledger before the first frame. Issue #347's context gauge shows when
@@ -236,42 +234,6 @@ notice from its seed (`workspace`, `clock`, `laneNotice`) and
   turn runs, clear a draft, else arm: a second press within 2 s quits),
   Ctrl-D (quit on an empty draft). Plain
   characters — including `t`/`T` — belong to the editor.
-
-### Orchestrator dashboard (`dashboard/`, issue #465; docs/ui 04)
-
-- `state.ts` — `dashboardModel(state, { now, task, branch, filter, limits })`
-  derives the frame's facts from the presentation state: workers grouped
-  awaiting → working → done → queued (`DASHBOARD_GROUPS`), the counts, each
-  generation's elapsed time, the run's elapsed time (from the plan's start to
-  now, or to its last report once every phase settled), the spend, and the
-  filtered rows; `defaultSelection` / `resolveSelection` / `moveSelection`
-  keep the selection on a worker (never a group label).
-- `render.ts` — pure rows at a width: `renderDashboardHeader` (04-A),
-  `renderTimeline` (04-B), `renderWorkerList` (04-C, windowed around the
-  selection), `renderWorkerMeta` (the side column), `renderDashboardBody`
-  (timeline, rule, then the list and side column zipped with a faint `│`;
-  the list alone under `DASHBOARD_NARROW_COLUMNS`), `renderDashboardFooter`
-  (04-E gauges), `workerInspectorLines` (`⏎`) and `renderWorkerDiff` (`^O`,
-  sanitized rows).
-- `view.ts` — `DashboardView`: which view orchestrator mode shows
-  (`dashboard` / `manager`), the selection, the `/` filter, the dispatch box
-  (mode, draft, focus, the role `tab` cycles) and whether the approval card
-  is open over the dashboard; `handleKey` turns a key into an intent
-  (`open`, `answer`, `stop`, `retry`, `diff`, `message`, `dispatch`, a footer
-  hint, or `pass` for a global key) that the app carries out.
-- `preview.ts` (issue #466) — `previewCells` turns a worker's recent calls
-  into transcript cells; `WorkerPreview` renders them with a private
-  `TranscriptView` (the solo transcript's own cards and diff blocks);
-  `renderWorkerPreview` lays out the side column: meta rows, the newest cards
-  that fit, the settle line and the worker budget. `render.ts` adds
-  `renderDispatchBox` and `workerViewLines` (the full worker view).
-
-The app shows the dashboard from the first objective handed to the manager;
-an ask that arrives meanwhile waits (the card is not on screen and takes no
-keys) until `a`, which re-arms the card (#315) before it takes a key. Stop,
-retry, message, dispatch and the worktree diff come from the composition
-root (`setWorkerActionHandler` with a `TuiWorkerAction`, the `workerDiff` and
-`dispatchRoles` seeds).
 
 ### Presentation state
 

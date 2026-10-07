@@ -1,8 +1,7 @@
-// Issue #245: `--help` is side-effect free, driven through the real
-// dispatch seam with the production runners in a scratch git repository. A
-// help request must print usage and exit 0 without writing the runtime
-// exclude rules, building lane deps (the `extensions:` receipt) or touching
-// the repo — the missing-bundle boot failure cannot be reached by help.
+// `--help` is side-effect free, driven through the real dispatch seam with
+// the production runners in a scratch git repository. A help request must
+// print usage and exit 0 without writing the runtime exclude rules,
+// building lane deps or touching the repo.
 import {
   existsSync,
   mkdtempSync,
@@ -92,8 +91,8 @@ async function kubic(
 }
 
 describe('--help is side-effect free (issue #245)', () => {
-  for (const command of ['run', 'tui', 'orchestrate']) {
-    it(`kubic ${command} --help prints usage, writes no exclude rules and loads no extensions`, async () => {
+  for (const command of ['run', 'tui']) {
+    it(`kubic ${command} --help prints usage and writes no exclude rules`, async () => {
       const cwd = repo();
       const exclude = join(cwd, '.git', 'info', 'exclude');
       const before = existsSync(exclude) ? readFileSync(exclude, 'utf8') : null;
@@ -102,27 +101,13 @@ describe('--help is side-effect free (issue #245)', () => {
 
       expect(code).toBe(0);
       expect(lines.join('\n')).toContain(`Usage: kubic ${command}`);
-      // No lane boot: the extension receipt is a run-only diagnostic.
-      expect([...lines, ...errs].join('\n')).not.toContain('extensions:');
+      expect(errs).toEqual([]);
       const after = existsSync(exclude) ? readFileSync(exclude, 'utf8') : null;
       expect(after).toBe(before);
       // The repo is untouched otherwise: nothing was staged or created.
       expect(existsSync(join(cwd, '.kubic'))).toBe(false);
     });
   }
-
-  it('kubic orchestrate --help works where the bundle boot would fail closed', async () => {
-    // The help path never builds the manager deps, so the missing-bundle
-    // failure the boot raises (`fails closed at manager startup when the
-    // bundle dir is gone`, extensions-startup-prod.test.ts) is unreachable
-    // by a help request: usage prints, nothing is killed or written.
-    const cwd = repo();
-    const { code, lines, errs } = await kubic('orchestrate', ['-h'], cwd);
-    expect(code).toBe(0);
-    expect(lines.join('\n')).toMatch(/^Usage: kubic orchestrate/);
-    expect(errs).toEqual([]);
-    expect(existsSync(join(cwd, '.kubic'))).toBe(false);
-  });
 
   it('a non-help invocation still ships the runtime exclude rules', async () => {
     // The counterpart pin: the help skip must not disable the write for
@@ -135,6 +120,6 @@ describe('--help is side-effect free (issue #245)', () => {
     expect(code).toBe(2);
     const after = readFileSync(exclude, 'utf8');
     expect(after).not.toBe(before);
-    expect(after).toContain('.kubic/orchestrator/');
+    expect(after).toContain('.kubic/audit/');
   });
 });

@@ -1,14 +1,13 @@
 # `@kubic/worker`
 
-> Worker runtime; Pi boundary (CODEOWNERS-gated
+> The agent lane runtime; Pi boundary (CODEOWNERS-gated
 > `src/pi-boundary.ts`).
 > Owner: issue
 > [#63](https://github.com/konic-labs/kubic/issues/63).
 > Source: `packages/worker/src` (read-only — this page quotes it, never moves it).
 
-`@kubic/worker` is the agent runtime: solo lane, tool adaptation, Pi
-harness wiring, budgets, compaction, and the worker → host result
-payload. All Pi imports flow through the worker Pi seam
+`@kubic/worker` is the agent runtime: the solo lane, tool adaptation,
+Pi harness wiring, sessions, compaction and the failure taxonomy. All Pi imports flow through the worker Pi seam
 `src/pi-boundary.ts` (§65) — `scripts/dep-lint.mjs` rejects
 `@earendil-works/*` imports everywhere else in the worker (the TUI owns
 the other seam, `packages/tui/src/tui-boundary.ts`), and CODEOWNERS flags
@@ -18,28 +17,23 @@ every diff touching the boundary for maintainer review.
 
 | Module | Exports |
 | --- | --- |
-| `result.ts` | `AgentResult`, `RESULT_FIELDS`, `ResultStatus`, `RESULT_STATUSES`, `ResultError`, `ResultErrorKind`, `ERROR_KINDS`, `TestResult`, `ArtifactRef`, `WorkspaceDiffRef`, `WorkerProvenance`, `ApprovalRecord`, `EscalationRecord`, `ResultMetrics`, `ResultValidation`, `validateAgentResult`, `JsonValue` |
 | `pi-boundary.ts` | Worker Pi seam (§65, [#197](https://github.com/konic-labs/kubic/issues/197); #391 moved it to the Pi 1.0 surface). pi-durable harness: values `Harness`, `createRegistry`, `defineExtension`, `defineTool`, `wrapTool`, `hook`, `section`, `ToolTask`, `GenerationTask`, `CompactionTask`, `AgentDoc`, `LiveDoc`, `UsageDoc`, `configure`, `defineDoc`, the entry-kind tokens (`UserEntry`, `AssistantEntry`, `ToolResultEntry`, `SystemEntry`, `CompactionEntry`), `MemoryStorage`, `watchEvents`, `ConversationBusy`; types `Conversation`, `Submission`, `SettledSubmissionRecord`, `Extension`, `ToolRegistration`, `ToolExecutionApi`, `ToolHooks`, `HookRegistration`, `HarnessSettings`, `CompactionPolicy`, `AgentEvent`, `EntryRecord`, `Storage`; storage `openNodeJsonlStorage`. `@earendil-works/chord`: `Context`, `BACKGROUND_CONTEXT`, `JsonValue`. `@earendil-works/pi-durable/env`: `FileSystem`, `ExecutionEnv`, `Result`, `ok`, `err`, `FileError`, `FileErrorCode`, `FileInfo`, `FileKind`. Model layer (`Model`, `MutableModels`, `Usage`, `DeferredHandle`, `ModelThinkingLevel`, thinking clamp, providers, `Type`, the lazy `api/*.lazy` subpaths, `builtinProviders`) — each re-export carries a JUSTIFICATION block naming seam, user, why-Pi, and review, and the pi-boundary gate fails an export without one |
-| `lane/solo.ts` | `SOLO_LANE_NAME` (`'main'`), `SOLO_PROMPT_SECTION`, `SOLO_ROLE`, `assembleSoloPrompt`, `SoloPromptInput`, `defaultSoloModelId`, `SoloPolicyOptions` (`beforePolicyHooks`/`spanHooks`/`contributions`/`classes`/`interceptors`; enterprise `toolAllowed`/`modelAllowed`), `SoloCompactionOptions`, `SoloBootOptions` (`session` is the #392 handle, handed to the harness through `session.adopt()` so a `release()` cannot close a storage a live harness owns; `settings` excludes `compaction`/`extensions`, which the lane owns; the pre-1.0 `memos` option is gone — tool memos are pi-durable `api.memo`; `modelPolicy`/`onModelNotice`: a resumed lane keeps its stored model unless the selection is an explicit pin, which switches it; an unregistered stored model fails closed with `ModelSelectError` — #148), `SoloLane` (`harness`/`conversation`/`registry`/`kills`/`model`; `close()` closes the harness and leaves `session.release()` to the caller), `bootSoloLane` (installs the per-process registry `kubic.budget` → `kubic.policy` → `kubic.spans` → `kubic` — install order is hook order, #397/#394), `splitSoloModelId`, `escalateSoloModel`. One turn is `conversation.submit(...)` → `submission.wait(...)`; the pre-1.0 `driveToSettled`/`DriveOutcome` loop was deleted with #395, and `lane/turn.ts` owns the glue |
+| `lane/solo.ts` | `SOLO_LANE_NAME` (`'main'`), `SOLO_PROMPT_SECTION`, `SOLO_ROLE`, `assembleSoloPrompt`, `SoloPromptInput`, `defaultSoloModelId`, `SoloPolicyOptions` (`spanHooks`/`contributions`/`classes`/`interceptors`; enterprise `toolAllowed`/`modelAllowed`), `SoloCompactionOptions`, `SoloBootOptions` (`session` is the #392 handle, handed to the harness through `session.adopt()` so a `release()` cannot close a storage a live harness owns; `settings` excludes `compaction`/`extensions`, which the lane owns; the pre-1.0 `memos` option is gone — tool memos are pi-durable `api.memo`; `modelPolicy`/`onModelNotice`: a resumed lane keeps its stored model unless the selection is an explicit pin, which switches it; an unregistered stored model fails closed with `ModelSelectError` — #148), `SoloLane` (`harness`/`conversation`/`registry`/`kills`/`model`; `close()` closes the harness and leaves `session.release()` to the caller), `bootSoloLane` (installs the per-process registry `kubic.policy` → `kubic.spans` → `kubic` — install order is hook order), `splitSoloModelId`, `escalateSoloModel`. One turn is `conversation.submit(...)` → `submission.wait(...)`; the pre-1.0 `driveToSettled`/`DriveOutcome` loop was deleted with #395, and `lane/turn.ts` owns the glue |
 | `lane/events.ts` | `KubicLaneEvent`, `LaneEventSink`, `KubicLaneTool`, `KubicLaneCompaction`, `toKubicLaneEvent`, `subscribeLaneEvents` |
 | `lane/failures.ts` | `FailureCode`, `FAILURE_CODES`, `RetryStrategy`, `RETRY_STRATEGIES`, `RetryDecisionKind`, `ClassifiedFailure`, `classifyFailure`, `RetryHints`, `RetryDecision`, `RetryBudget`, `chooseRetry` |
 | `lane/tools-adapter.ts` | `KubicToolContext`, `kubicToolsToPiTools` (registry schemas + json_schema/`prefer` constrained sampling — #168), `renderToolText`, `renderReadText`, `renderGrepText`, `renderBashText` (plain-text results with a header; [tools](../cli/tools.md)). A successful `edit` or `write` also puts its display record in the result `details` (issue #456) — never in the model's text |
 | `ops/display-diff.ts` | `displayDiff(before, after)` (Pi's display form: `+n` / `-n` / ` n` rows, 3 lines of context, `...` gaps, bounded LCS, 400 rows) and `writeDisplay(content)`; the ops report them through `OpContext.display` (issue #456) |
-| `lane/interceptors.ts` | `PolicyTrigger`, `PolicyInterceptorOptions`, `ApprovalCall`, `ApprovalAskVerdict`, `defaultIsDestructive`, `isNetworkCommand`, `confinePath`, `redactReason`, `redactSecrets` (broad redactor for summaries/block reasons: inline credential rules + the shared `@kubic/core` shape table, #192), `policyInterceptorHooks` (ordered pi-durable `ToolTask.beforeTool` registrations, #397; one call per boot — the attempt counter and the exact-call stand-down set (call id + args hash, spent after the call, #194) live in that call, never across boots; first block wins, a throw blocks) |
+| `lane/interceptors.ts` | `PolicyInterceptorOptions`, `ApprovalCall`, `ApprovalAskVerdict`, `defaultIsDestructive`, `isNetworkCommand`, `confinePath`, `redactReason`, `redactSecrets` (broad redactor for summaries/block reasons: inline credential rules + the shared `@kubic/core` shape table, #192), `policyInterceptorHooks` (ordered pi-durable `ToolTask.beforeTool` registrations, #397; one call per boot — the attempt counter and the exact-call stand-down set (call id + args hash, spent after the call, #194) live in that call, never across boots; first block wins, a throw blocks) |
 | `lane/policy.ts` | `PermissionClasses` (re-export), `PolicyRefusedError` |
 | `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `KubicSessionMeta`, `KubicSessionDoc`, `SessionHandle`, `SessionListEntry`, `createSession`, `attachSession`, `listSessions`, `readSessionMetadata`, `forkSession` / `ForkSessionOptions` / `ForkSessionResult` / `SessionForkError` (issue #265: a new session forked from an existing one), `laneConversationIdOf` (the conversation a session's lane runs — a fork's recorded `KubicSessionMeta.conversation`, else the reserved root; every transcript reader resolves it), `SessionAttachError`, `SessionFormatError`, `SessionIdError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionLockIsLive`, `sessionsTouchingWorkspace` — session storage on pi-durable ([session storage](#session-storage-issue-392)) |
 | `lane/session-fs.ts` | `bridgeToPiFileSystem` — the 1.0 `FileSystem` (19 members, `id`/`truncateFile`/`flushFile` included) over the exec file bridge |
 | `lane/turn.ts` | `TurnOutcome`, `RunTurnOptions`, `runTurn`, `awaitTurn`, `turnAbort`, `turnAbortReasonOf`, `TurnAbort`, `turnLaneRecord`, `TURN_BUSY_REASON`, `SoloOverflowRecovery`, `OverflowRecoveryOptions`, `recoverSoloOverflowTurn`, `runTurnWithOverflowRecovery` — one turn is `conversation.submit({ type: 'input', … })` → `submission.wait(context)`; no Kubic-side loop, no sleep (§20.5–§20.7, #395). The recovery wrapper retries exactly one failure — context overflow, compacted first (#399) and retried once (#209) |
-| `lane/settle.ts` | `OperationErrorLike`, `SettledResult`, `LaneTerminalStatus`, `SubmissionFailure`, `classifyHarnessError`, `classifySubmissionFailure`, `classifyThrownError`, `laneStatusOf`, `laneErrorOf`, `settleTerminalStatus`, `settleSubmission` — a settled pi-durable submission → Kubic's `ResultStatus`/`ResultError` and the §52 codes (#395) |
+| `lane/settle.ts` | `JsonValue`, `ResultStatus`, `ResultErrorKind`, `ResultError`, `OperationErrorLike`, `SettledResult`, `LaneTerminalStatus`, `SubmissionFailure`, `classifyHarnessError`, `classifySubmissionFailure`, `classifyThrownError`, `laneStatusOf`, `laneErrorOf`, `settleTerminalStatus`, `settleSubmission` — a settled pi-durable submission → Kubic's `ResultStatus`/`ResultError` and the §52 codes (#395) |
 | `lane/pending.ts` | `PendingPolicy`, `PendingReport`, `PendingSettlementResult`, `SettlePendingOptions`, `PendingLane`, `inspectPending`, `settlePending`, `describePendingSettlement`, `pendingInputText`, `inspectStoredWork` — settle a turn a crashed process left open (#147; #396: `harness.inspect()` decides, `resume` waits under the caller's guard, `abort` is durable) |
 | `lane/abort.ts` | `KillFn`, `OperationKillRegistry`, `AbortableLane`, `LaneAbortResult`, `LaneDriveError`, `abortLane`, `forgetLaneKills` — `conversation.abort(context)` plus the conversation-keyed kill drain (every kill attempted, failures aggregated, #395 D6.2); `track()` returns the unregister fn its owner calls when the handle settles (#142) |
 | `lane/transcript.ts` | `TranscriptItem`, `entriesToTranscript`, `readConversationEntries`, `readSessionEntries` — the one pi-durable → Kubic transcript adapter (#400) |
 | `lane/test-harness.ts` | `bootFauxLane`, `runPrompt`, `laneEntries`, `laneToolResults`, `laneSystemPrompt`, `laneActiveTools`, `fauxToolUse`, … — the test-only faux SoloLane factory (#401) |
 | `lane/wrap.ts` | `ExecuteFn`, `ToolContribution`, `composeTools`, `compositionOrder`, `PolicyDeniedError`, `withPermissionCheck`, `TelemetryRecord`, `withTelemetry` |
-| `lifecycle/registry.ts` | `WorkerRegistration`, `WorkerRow`, `WorkerRegistry` |
-| `lifecycle/env.ts` | `ENV_ALLOWLIST`, `filterSpawnEnv`, `roleCredentialEnv`, `roleGrantEnv`, `withRoleGrant`, `buildSpawnEnv`, `redactEnvForLog` |
-| `lifecycle/reap.ts` | `RawExit`, `ExitReport`, `reportExit`, `ReapTarget`, `ReapDeps`, `DetachedReap`, `TEARDOWN_BUDGET_MS`, `reapDetached` |
-| `lifecycle/budgets.ts` | `LIFECYCLE_BUDGETS_MS`, `PerfSample`, `PerfGateResult`, `checkPerfGate` |
 | `usage.ts` | `KubicUsageRow`, `formatCost`, `usageRowFromEntry` |
 | `model-select.ts` | `ModelSelectError`, `ModelSelection`, `AnyModel`, `selectModel`, `parseModelFlag`, `EscalationRecord`, `EscalationLadder`, `EscalationError`, `escalateModel`, `supportedThinking`, `clampThinking` |
 | `models-config.ts` | `CustomApi`, `CUSTOM_APIS`, `CustomModelSpec`, `CustomProviderSpec`, `ModelsJsonError`, `THINKING_LEVELS`, `isThinkingLevel`, `parseModelsJson`, `LOCAL_MODELS_EXAMPLE`, `registerCustomProviders` |
@@ -55,8 +49,7 @@ Child output is capped at two independent layers, both keeping the **tail**
 
 - **Seam (memory):** `NodeShell` accumulates at most `MAX_CHILD_OUTPUT_BYTES`
   (10 MiB) per stream — `env.ts`, overridable per spawn via
-  `SpawnOptions.maxOutputBytes` so the orchestrator can size worker-child
-  capture independently. A chatty child (`yes`, a verbose build) can no
+  `SpawnOptions.maxOutputBytes`. A chatty child (`yes`, a verbose build) can no
   longer OOM the run; the settled stream gains a
   `[kubic: output truncated — dropped N leading bytes, kept the last M]`
   header. Both numbers are **bytes of the decoded stream** (issue #354) —
@@ -550,49 +543,6 @@ adapter adds only `ResetEntry` and `ROOT_CONVERSATION_ID` there.
 
 ## Contracts
 
-### `AgentResult` (`result.ts`, §68)
-
-The only worker → host payload. Provenance is required on EVERY result,
-including failures; results never carry transcripts (§69).
-
-| Field | Type | Required |
-| --- | --- | --- |
-| `status` | `ResultStatus` (see below) | yes |
-| `summary` | `string` (non-empty) | yes |
-| `filesChanged` | `string[]` | yes |
-| `tests` | `TestResult[]` | no |
-| `findings` | `string[]` | no |
-| `artifacts` | `ArtifactRef[]` | no |
-| `diff` | `WorkspaceDiffRef` | no |
-| `provenance` | `WorkerProvenance` | yes |
-| `approvals` | `ApprovalRecord[]` | no |
-| `escalations` | `EscalationRecord[]` | no |
-| `metrics` | `ResultMetrics` | yes |
-| `error` | `ResultError` | on `failed` |
-
-`RESULT_FIELDS` pins all 12 keys via
-`satisfies Record<keyof AgentResult, true>`. `RESULT_STATUSES` is
-`['completed', 'failed', 'cancelled', 'timeout', 'budget_exhausted',
-'spawn_failed']` (`'budget_exhausted'` is spelled the same as
-`BudgetTermination` in [@kubic/agents](agents-pkg.md) by pinned test, each
-contract owning its literal). `ERROR_KINDS` is `['model', 'provider',
-'tool', 'process', 'workspace', 'context', 'budget', 'approval']`.
-
-| Interface | Fields |
-| --- | --- |
-| `ResultMetrics` | `inputTokens`, `outputTokens`, `cachedTokens`, `toolCalls`, `latencyMs`, `wallMs` (finite numbers), `costUsd?: number` |
-| `ResultError` | `kind: ResultErrorKind`, `message: string` (non-empty), `details?: JsonValue` |
-| `TestResult` | `name: string`, `passed: boolean`, `output?: string` |
-| `ArtifactRef` | `artifactId: string` |
-| `WorkspaceDiffRef` | `diffId: string` |
-| `WorkerProvenance` | `workerId: string` |
-| `ApprovalRecord` | `approvalId: string` |
-| `EscalationRecord` | `reason: string` |
-
-Stub types refined by their owners: `TestResult`/`ArtifactRef`/
-`WorkspaceDiffRef` in #52–#53, `WorkerProvenance` in #42,
-`ApprovalRecord` in #48, `EscalationRecord` in #8.
-
 ### Lane events + failures (`lane/events.ts`, `lane/failures.ts`)
 
 Exactly one `subscribeLaneEvents` per conversation relays pi-durable's
@@ -617,25 +567,24 @@ carrying the committed `entries`, live tools, retry, compactions and
 `provider_transient`, `provider_auth`, `tool_failed`,
 `tool_invalid_args`, `tool_timeout`, `tool_unavailable`,
 `process_crashed`, `process_spawn_failed`, `workspace_failed`,
-`context_overflow`, `context_polluted`, `budget_exhausted`,
+`context_overflow`, `context_polluted`, `run_limit`,
 `approval_denied`, `approval_timed_out` — pinned equal with the
 [trajectory](trajectory.md) snapshot by test. `RETRY_STRATEGIES` (§53, 6):
 `retry_same`, `retry_with_new_context`, `retry_with_new_agent`,
 `retry_with_stronger_model`, `retry_with_different_tool`,
 `retry_with_wider_capability`; decisions add `escalate`/`abandon`, and
-retry spend lands on `RetryBudget`, never the task budget.
+retries are bounded by `RetryBudget`.
 Emitted by `classifyFailure` (#209): `retry_same` (executed by the
 harness's durable generation retry, #395 — Kubic never relaunches it),
 `retry_with_different_tool`, and `retry_with_new_context` (solo
 compact-then-retry). Pollution escalates (the operator picks the fresh
-agent); `budget_exhausted`/`approval_denied` abandon and spend nothing.
-`retry_with_stronger_model` / `retry_with_new_agent` are decided by
-`chooseRetry` but executed by their owners (#210 escalates, #184
-relaunches); `retry_with_wider_capability` only ever arises through an
-explicit approval, never from the chooser. `RetryBudget(maxAttempts,
-maxCostUsd)` binds both arms (attempts AND reported retry spend; task
-spend never counts) and is constructed straight from the orchestrator's
-`RetryBudgetConfig` — same field names, no import. Solo overflow
+agent); `run_limit`/`approval_denied` abandon and spend nothing.
+`retry_with_stronger_model` / `retry_with_new_agent` are part of the
+vocabulary but never chosen automatically — the operator switches the
+model or starts a fresh session; `retry_with_wider_capability` only ever
+arises through an explicit approval, never from the chooser. `RetryBudget(maxAttempts,
+maxCostUsd)` binds both arms (attempts AND reported retry spend; the
+turn's own spend never counts). Solo overflow
 recovery (`recoverSoloOverflowTurn` / `runTurnWithOverflowRecovery` in
 `lane/turn.ts`, live on the headless path): compact via
 `runManualCompaction`, then one retry with a fresh request id; a
@@ -654,73 +603,6 @@ the boot model — #287). Issue #346 deleted the never-written
 `ttftMs`/`latencyMs` fields with the status bar's TTFT/tool-ms segments:
 Pi 1.0 reports no timing Kubic can read.
 
-### Worker lifecycle (`lifecycle/`)
-
-`WorkerRegistration` (`workerId`, `sessionId`, `generation`, `owner`,
-`resources?`, `pid?`, `status?`); `WorkerRow` adds `startedAtMs`,
-`ageMs` (+ `startupMs?`). Spawn env is allowlist-filtered
-(`ENV_ALLOWLIST`, `filterSpawnEnv`, `roleCredentialEnv`,
-`buildSpawnEnv`, `redactEnvForLog`); detached exits are reaped with a
-1s teardown budget (`TEARDOWN_BUDGET_MS`).
-
-A worker child reads its own provider credential back with
-`roleGrantEnv`/`withRoleGrant` (issue #200): the `KUBIC_ROLE_<ROLE>_*`
-grant is exposed under the plain provider-key names the models assembly
-asks for, only for the role the child was told it runs as — a sibling
-prefix never matches. The plain names exist only in the env view handed
-to the models assembly for that read, never in the child's process env.
-
-### Live spawn path (issue #94: `launch.ts`, `shell.ts`, `rows.ts`)
-
-`kubic orchestrate` starts every worker through `launchWorker`, so the
-lifecycle is enforced on the path that actually spawns: the
-stale-generation guard refuses before any side effect, the row is
-registered before the child runs (`created → spawning → ready → running`
-via `assertTransition`), the readiness marker is awaited under a timeout,
-and `launched.perf()` reports the §61 sample against
-`LIFECYCLE_BUDGETS_MS`
-(worktree 300 / spawn 200 / attach 50 / teardown 1000 ms). The §3.8
-allowlist reaches the OS through `allowlistedShell` (`env -i …`, since
-the exec Shell seam carries no env field); `KUBIC_WORKER_ID` is on the
-allowlist so a worker announces itself, and an ordinary `kubic run`
-prints no marker. `KUBIC_WORKER_GENERATION` (the generation the row was
-registered under) rides next to it, so the child's §46 trajectory records
-the same generation `kubic workers` shows (issue #383). Registry rows persist to
-`<repo>/.kubic/orchestrator/workers.json` (§35 keeps that out of git) and
-`kubic workers` reads them back — one shared record, never a fresh empty
-registry.
-
-### Live tool facts (issue #464: `facts.ts`)
-
-A worker reports its tool calls on the same stdout as the readiness marker
-and the final `--json` report: one `KUBIC_WORKER_FACT <json>` line per tool
-start and end (`apps/kubic/src/worker-facts.ts` writes them when
-`KUBIC_WORKER_ID` is set; an ordinary `kubic run` prints none). A fact
-carries the call id, the tool, the one-line argument summary the progress
-lines print, the state (`running`, `done`, `error`), an outcome (`+3 −1`,
-`exit 1`, `new file, 2 lines`) and, for an edit or write, the display diff
-(at most 20 KB) — every text through the worker's secret redactor
-(`redactSecrets`, the one approval summaries use), never the raw arguments.
-
-`spawnWorker`'s `onFact` follows the stream for the whole run: only complete
-lines past the last one read, located through the snapshot's `dropped`
-count, so output past the 10 MiB stream cap is followed without missing or
-repeating a line. Each line parses closed world (an unknown key, a wrong type
-or an over-bound field refuses the line), and the stdout the run reads its
-report and diagnostics from has the fact lines taken out. `batchFacts`
-bounds the rate: the first fact after a quiet interval goes out at once, the
-rest leave together at most once per 100 ms per worker, and the batch is
-flushed when the worker ends.
-
-Failure taxonomy on that path: a worker that never becomes ready is
-terminal `SPAWN_FAILED` and the run reports the §78 code `spawn_failed`
-(the §52 code `process_spawn_failed`); a worker that ran and failed keeps
-`worker_failed`, with its §52 code named inline (a provider-less child
-exits 6 → `provider_transient`, as
-[exit-codes](../cli/exit-codes.md) documents). Both map to exit 1; a
-worker whose launch never becomes ready also records no `startupMs` — an
-unfinished launch never claims a budget pass it did not measure.
-
 ## Dep-direction neighbours
 
 - May import: [@kubic/core](core.md), [@kubic/exec](exec.md),
@@ -728,8 +610,7 @@ unfinished launch never claims a budget pass it did not measure.
   snapshots where pinned) — never host/tui.
 - Imported by: [@kubic/host](host.md) (runtime wiring).
 - Never imported by [@kubic/trajectory](trajectory.md): trajectory imports
-  nothing from any package (dep-lint FORBIDDEN) — it records only string
-  stump fields plus a structural result snapshot pinned by the golden
+  nothing but core — it records structural snapshots pinned by the golden
   fixture test, never a live import.
 - Pi seam: `pi-boundary.ts` only (§65).
 

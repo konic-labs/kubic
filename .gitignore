@@ -89,21 +89,19 @@ reports/
 .stryker-tmp/
 
 # ---------------------------------------------------------------------------
-# Kubic runtime state (issue #91).
+# Kubic runtime state.
 #
 # `.kubic/` is a MIXED directory: config.toml + roles/*.md are committed
 # (see `git ls-files .kubic`), everything below is per-run state. Only the
 # runtime subpaths are ignored — never `.kubic/` itself, or the committed
-# half would stop being trackable. The same rules ship into a user repo's
-# local exclude file by `kubic run` / `kubic orchestrate`; the split is
-# gated by scripts/runtime-exclude.test.mjs and stated in
-# docs/cli/configuration.md.
+# half would stop being trackable. `kubic run` writes the same rules into a
+# user repo's local exclude file; scripts/runtime-exclude.test.mjs keeps
+# the two lists in step.
 # ---------------------------------------------------------------------------
 .kubic/sessions/
 .kubic/journal/
 .kubic/artifacts/
-.kubic/wt/
-.kubic/orchestrator/
+.kubic/audit/
 
 # ---------------------------------------------------------------------------
 # Private agent instructions: the development process of the AI agents that

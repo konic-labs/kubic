@@ -81,8 +81,8 @@ describe('kubic tui (issue #75)', () => {
     expect(terminal.stopped).toBe(1);
     const doc = lines.join('\n');
     // Issue #453: header, transcript, status line, key hints.
-    const order = ['[SOLO] approvals on', 'PREFLIGHT', ' ready ', '⏎ send'].map(
-      (m) => doc.indexOf(m),
+    const order = ['approvals on', 'PREFLIGHT', ' ready ', '⏎ send'].map((m) =>
+      doc.indexOf(m),
     );
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
@@ -126,7 +126,7 @@ describe('kubic tui (issue #75)', () => {
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
     expect(doc).not.toMatch(/[✓●◌] solo/);
-    expect(doc).toContain('[SOLO] approvals on');
+    expect(doc).toContain('approvals on');
     expect(doc).toContain(' ready ');
   });
 
@@ -241,7 +241,7 @@ describe('kubic tui colour isolation (issue #319)', () => {
     input('\x03');
     input('\x03');
     expect(await pending).toBe(0);
-    expect(lines.join('\n')).toContain('[SOLO] approvals on');
+    expect(lines.join('\n')).toContain('approvals on');
     // No Konic palette colour reached the document (truecolor SGR 38;2).
     expect(lines.join('\n')).not.toContain('38;2;');
   });

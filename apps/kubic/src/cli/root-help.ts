@@ -28,11 +28,6 @@ export const COMMAND_GROUPS: readonly CommandGroup[] = [
     summary: 'review and revert what it did',
   },
   {
-    label: 'delegate',
-    commands: ['orchestrate', 'workers', 'clean'],
-    summary: 'manager + workers in worktrees',
-  },
-  {
     label: 'setup',
     commands: ['setup', 'models', 'config', 'trust', 'doctor', 'skills'],
     summary: 'providers, project, health',
@@ -45,7 +40,6 @@ export const COMMAND_GROUPS: readonly CommandGroup[] = [
       'benchmark',
       'replay',
       'export',
-      'perf',
       'policy',
       'audit',
     ],
@@ -64,7 +58,7 @@ const USAGE: readonly (readonly [form: string, meaning: string])[] = [
 const EXAMPLES: readonly string[] = [
   'kubic "fix the failing test"',
   'kubic run -p "add tests for titleCase" --json',
-  'kubic orchestrate -p "split cart.js into modules"',
+  'kubic diff && kubic undo',
 ];
 
 /** The root help for a theme; `createCliTheme('none')` gives the plain text. */

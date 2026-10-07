@@ -27,7 +27,6 @@ import type {
   ApprovalAskVerdict,
   ApprovalCall,
   PolicyInterceptorOptions,
-  PolicyTrigger,
 } from '../../worker/src/lane/interceptors.js';
 import {
   confinePath,
@@ -40,13 +39,13 @@ import { withTelemetry } from '../../worker/src/lane/wrap.js';
 import type { ToolDisplay } from '../../worker/src/ops/display-diff.js';
 import { approvalCommandText, summarizeCommand } from './approval-display.js';
 import { approvalPreview } from './approval-preview.js';
+import { TIMEOUT_REASON_MARKER } from './approval-timeout.js';
 import {
   credentialAccessInCommand,
   credentialAccessInNameFilter,
   credentialAccessInPath,
 } from './approvals-credentials.js';
-import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
-import { isGitDirTarget } from './orchestrator/worktree/git-guard.js';
+import { isGitDirTarget } from './git-dir-target.js';
 import {
   appendToLedger,
   auditLedgerDirFor,
@@ -56,9 +55,8 @@ import {
   soloDecisionAudit,
 } from './policy/audit-ledger.js';
 // Approval triggers, policy, and durable decider service (issue #16; §41).
-// The decider is the user — never a manager, never the model. There is no
-// manager-approval path in solo: this module exposes no role/manager
-// override, structurally, not by flag.
+// The decider is the user — never the model. This module exposes no
+// role override, structurally, not by flag.
 // Outcomes deny on timeout and never hang headless: every ask is bounded
 // by maxPendingMs. First answer wins (first-wins latch, the memoOnce
 // semantic — the harness primitive itself is not involved). Same-process
@@ -80,8 +78,6 @@ export const CAPABILITIES = [
   'install',
   'deploy',
   'outside-write',
-  'budget-overrun',
-  'spawn-agents',
   'privilege-escalation',
   'kubic-state-write',
 ] as const;
@@ -103,11 +99,10 @@ export function alwaysAskAutoApprove(autoApprove: readonly string[]): string[] {
 }
 
 // Subtrees of `.kubic/` an agent may never write at all (a tool error, not an
-// ask): the change journal, the orchestrator's state (approvals, audit ledger,
-// decisions, mailbox) and session state.
+// ask): the change journal, the audit ledger and session state.
 const REFUSED_STATE_DIRS: ReadonlySet<string> = new Set([
   'journal',
-  'orchestrator',
+  'audit',
   'sessions',
 ]);
 
@@ -261,12 +256,6 @@ export class MemoryApprovalStore implements ApprovalStore {
 //     credential files (.env*, *.pem, *.key, id_rsa*/id_ed25519*). Gated on
 //     the effective `credentials` class, which §40.2 enforces as `none`
 //     (issue #166: `allowlist` carries no list), so a credential path asks.
-//   spawn-agents — no detector: fires only via an explicit `requires`
-//     entry, or via its owner (the orchestrator).
-//   budget/concurrency overrun — the `budgetOverrun` flag; no live
-//     producer yet (orchestrator opt-in budgets #48, worker perf budgets
-//     #55). Until one wires up, the flag is test-only: documented, silent
-//     nowhere.
 //   network under full — fires nothing by design (issue #15: no network
 //     tool exists to remove). A domain-less `allowlist` is enforced as
 //     `none` (issue #166, §40.2): it fires like `none`, never silently
@@ -302,7 +291,6 @@ export interface TriggerContext {
   // whatever the workspace is — even a workspace AT home (issue #355).
   home?: string;
   requires?: string[];
-  budgetOverrun?: boolean;
   /** Kubic state roots beyond the workspace (issue #324); see ControlPlaneRoots. */
   controlPlane?: ControlPlaneRoots;
 }
@@ -803,9 +791,7 @@ function segmentsBelow(root: string, target: string): string[] | undefined {
 // for the refused state subtrees, `ask` for anything else under a Kubic state
 // directory, undefined elsewhere. The state directories are the workspace's
 // own `.kubic/`, and — for a target OUTSIDE the workspace — the `.kubic/` of
-// every ancestor (an orchestrator worker's workspace is its worktree at
-// `<repo>/.kubic/wt/<agent>`, so the manager's journal and orchestrator state
-// sit above it; a solo run from a subdirectory has the project's `.kubic/`
+// every ancestor (a run from a subdirectory has the project's `.kubic/`
 // above it) and `~/.kubic` (global config.toml, the session root). An
 // overridden session root is refused wholesale. A leading `~/`, `$HOME/` or
 // `${HOME}/` is the home directory, as the shell expands it (issue #324: the
@@ -881,13 +867,7 @@ function literalControlPlaneClass(
 // (`shopt -s dotglob` exists), and an enumeration that overflows is refused
 // whenever the path names `.kubic`.
 const GLOB_CHARS = /[*?[{]/;
-const PROTECTED_SUBS = [
-  'journal',
-  'orchestrator',
-  'sessions',
-  'config.toml',
-  'roles',
-];
+const PROTECTED_SUBS = ['journal', 'audit', 'sessions', 'config.toml', 'roles'];
 const BRACE_LIMIT = 32;
 
 function globReachesState(
@@ -1197,7 +1177,7 @@ export function controlPlaneRefusal(
   const home = roots.home ?? homedir();
   for (const target of writeTargets(toolName, args, workspace, home)) {
     if (controlPlaneClass(workspace, target, roots) === 'refuse') {
-      return `refused: ${stripQuotes(target)} is Kubic control-plane state (.kubic/journal, .kubic/orchestrator, .kubic/sessions) — agents may not write it`;
+      return `refused: ${stripQuotes(target)} is Kubic control-plane state (.kubic/journal, .kubic/audit, .kubic/sessions) — agents may not write it`;
     }
   }
   return undefined;
@@ -1400,9 +1380,6 @@ export function detectTriggers(
   const found: Capability[] = [];
   if (ctx.requires?.includes(toolName) === true) {
     found.push(`requires:${toolName}`);
-  }
-  if (ctx.budgetOverrun === true) {
-    found.push('budget-overrun');
   }
   if (toolName === 'bash' && typeof args.command === 'string') {
     const command = args.command;
@@ -1809,17 +1786,15 @@ export const FULL_ACCESS_FLAG = '--dangerously-skip-approvals';
 
 export interface SessionFullAccessOptions {
   /**
-   * The session dir whose posture.json records the grant. Absent for a
-   * posture kept elsewhere (orchestrate's own skip record): only the audit
-   * row and the warning are produced then.
+   * The session dir whose posture.json records the grant. Absent: only the
+   * audit row and the warning are produced.
    */
   sessionDir?: string;
   sessionId: string;
-  /** The command after `kubic`: 'run', 'tui', 'sessions create', 'orchestrate'. */
+  /** The command after `kubic`: 'run', 'tui', 'sessions create'. */
   command: string;
   /** Resolves the repo ledger (resolveRepoRuntimeRoot). */
   workspace: string;
-  mode?: 'solo' | 'orchestrator';
   clock?: () => number;
   onAuditError?: (message: string) => void;
 }
@@ -1836,7 +1811,6 @@ interface FullAccessChange {
   by: string;
   sessionId: string;
   workspace: string;
-  mode?: 'solo' | 'orchestrator';
   /** The posture store to write; absent falls back to `sessionDir`. */
   store?: FileApprovalStore;
   sessionDir?: string;
@@ -1877,13 +1851,11 @@ function recordFullAccessChange(change: FullAccessChange): AccessPosture {
           sessionId: change.sessionId,
           command: change.by,
           workspace: change.workspace,
-          mode: change.mode ?? 'solo',
         })
       : fullAccessDisabledAudit({
           sessionId: change.sessionId,
           command: change.by,
           workspace: change.workspace,
-          mode: change.mode ?? 'solo',
         }),
     change.onAuditError,
   );
@@ -1891,8 +1863,8 @@ function recordFullAccessChange(change: FullAccessChange): AccessPosture {
 }
 
 // The ONE enable path for session-scoped full access (issue #308): `kubic`,
-// `kubic tui`, `kubic run`, `kubic sessions create` and `kubic orchestrate`
-// all come through here. It records the posture in the session dir (never in
+// `kubic tui`, `kubic run` and `kubic sessions create` all come through
+// here. It records the posture in the session dir (never in
 // config), appends one §60 row naming the session and the originating
 // command, and returns the warning the caller prints on stderr.
 export function enableSessionFullAccess(
@@ -1904,7 +1876,6 @@ export function enableSessionFullAccess(
     by: commandLine,
     sessionId: options.sessionId,
     workspace: options.workspace,
-    mode: options.mode,
     ...(options.sessionDir === undefined
       ? {}
       : { sessionDir: options.sessionDir }),
@@ -1931,7 +1902,6 @@ export function disableSessionFullAccess(
     by: commandLine,
     sessionId: options.sessionId,
     workspace: options.workspace,
-    mode: options.mode,
     ...(options.sessionDir === undefined
       ? {}
       : { sessionDir: options.sessionDir }),
@@ -2028,8 +1998,6 @@ export interface SoloPolicyInput {
     request: ApprovalRequest,
     signal?: AbortSignal,
   ) => Promise<ApprovalVerdict | undefined>;
-  /** Trigger sink (debug/trajectory), never consulted for the decision. */
-  onTrigger?: (trigger: PolicyTrigger) => void;
   clock?: () => number;
   /** §60 audit identity: the session (absent: sessionDir's basename). */
   sessionId?: string;
@@ -2055,28 +2023,6 @@ export interface SoloPolicyInput {
   base?: string;
   /** A failed ledger append lands here; it never reaches the approval. */
   onAuditError?: (message: string) => void;
-  /**
-   * Set when this lane is an orchestrator-managed worker child (issue #279;
-   * the composition root reads KUBIC_WORKER_ID / KUBIC_ORCHESTRATOR_SESSION).
-   * Decisions answered through the manager seat are recorded by the manager
-   * (worker-asks), so the child appends nothing for them; decisions the child
-   * makes locally (a latched answer, the route, autoApprove, full access, a
-   * refusal) are recorded ONCE, as mode 'orchestrator' for this worker, in
-   * the main repo ledger — never inside the worktree.
-   */
-  orchestratedWorker?: { workerId: string; orchestratorSession: string };
-}
-
-// The orchestrated-worker identity from a child's environment (issue #279):
-// both variables are set by `kubic orchestrate` on each worker child; either
-// missing means a plain solo lane.
-export function orchestratedWorkerFromEnv(
-  env: Record<string, string | undefined>,
-): { workerId: string; orchestratorSession: string } | undefined {
-  const workerId = env.KUBIC_WORKER_ID?.trim() ?? '';
-  const orchestratorSession = env.KUBIC_ORCHESTRATOR_SESSION?.trim() ?? '';
-  if (workerId === '' || orchestratorSession === '') return undefined;
-  return { workerId, orchestratorSession };
 }
 
 // The config `[approvals]` half of the install (issue #230): the one shape
@@ -2249,13 +2195,12 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     ...(input.clock === undefined ? {} : { clock: input.clock }),
   });
   // §60 audit ledger: every resolved ask appends one record to the REPO
-  // ledger (issue #279): <main checkout>/.kubic/orchestrator/approvals,
+  // ledger (issue #279): <main checkout>/.kubic/audit,
   // resolved once here with the same resolver `kubic audit` reads through,
   // so a run from a subdirectory or a linked worktree writes where the
   // reader looks. Best-effort by contract — a failed write (or a malformed
   // record) goes to onAuditError, never into the approval decision.
   const ledgerDir = auditLedgerDirFor(input.workspace);
-  const worker = input.orchestratedWorker;
   const auditSessionId =
     input.sessionId ??
     (input.sessionDir === undefined ? '' : basename(input.sessionDir));
@@ -2297,14 +2242,6 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
             : { reason: decision.reason }),
           ...(note === undefined ? {} : { note }),
           posture: fullAccess ? 'full-access' : 'approvals',
-          ...(worker === undefined
-            ? {}
-            : {
-                worker: {
-                  id: worker.workerId,
-                  orchestratorSession: worker.orchestratorSession,
-                },
-              }),
         }),
         onError,
       );
@@ -2333,16 +2270,6 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     audit(toolName, capability, { approved: false, reason }, false);
     return { approved: false, reason };
   };
-  // A refusal recorded by someone else (the manager, for a worker child's
-  // seat-answered ask): still a denial the run must end on, never a record.
-  const refuseUnaudited = (
-    capability: string,
-    toolName: string,
-    reason: string,
-  ): { approved: false; reason: string } => {
-    denials.push({ capability, toolName, reason });
-    return { approved: false, reason };
-  };
   // Issue #307: true exactly when the ask auto-approves every challenged
   // call as full access — the SAME live posture the ask consults (#325,
   // #309), so the status bar's OFF indicator cannot drift from the policy.
@@ -2363,7 +2290,6 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       by,
       sessionId: auditSessionId,
       workspace: input.workspace,
-      mode: 'solo',
       ...(store === undefined ? {} : { store }),
       ...(input.clock === undefined ? {} : { clock: input.clock }),
       ...(input.onAuditError === undefined
@@ -2562,23 +2488,16 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       // The wait is bounded by maxPendingMs inside the service — a seat that
       // never answers denies on timeout rather than hanging the turn.
       if (input.answer !== undefined) {
-        // Issue #459: a solo ask carries the file change it would make (a
-        // worker child's ask goes to the manager's mailbox without one).
-        const preview =
-          worker === undefined
-            ? approvalPreview(
-                createNodeFileBridge(input.workspace),
-                call.toolName,
-                call.args,
-              )
-            : undefined;
+        // Issue #459: an ask carries the file change it would make.
+        const preview = approvalPreview(
+          createNodeFileBridge(input.workspace),
+          call.toolName,
+          call.args,
+        );
         // Issue #467: the answers a solo ask can take beyond allow/deny.
         const editable =
-          worker === undefined &&
-          call.toolName === 'bash' &&
-          typeof call.args.command === 'string';
-        const batchable =
-          worker === undefined && turnEditable(call.toolName, capability);
+          call.toolName === 'bash' && typeof call.args.command === 'string';
+        const batchable = turnEditable(call.toolName, capability);
         const verdict = await service.request({
           key,
           capability,
@@ -2588,15 +2507,11 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
           ...(editable ? { editable: true } : {}),
           ...(batchable ? { batchable: true } : {}),
         });
-        // A worker child's seat IS the manager (issue #279): the manager's
-        // worker-asks record is the one §60 record for this decision.
         if (!verdict.approved) {
           // A denial's reason reaches the model (a user's comment rides it,
           // issue #467): bounded like every other summary.
           const reason = boundedNote(verdict.reason);
-          return worker === undefined
-            ? deny(capability, call.toolName, reason)
-            : refuseUnaudited(capability, call.toolName, reason);
+          return deny(capability, call.toolName, reason);
         }
         // Issue #467: the operator rewrote the command. The rewrite is a new
         // call: judged again from the start (a destructive edit asks again),
@@ -2635,14 +2550,12 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
             : next;
         }
         if (verdict.by === ALLOW_TURN_EDITS && batchable) turnEdits = true;
-        if (worker === undefined) {
-          audit(
-            call.toolName,
-            capability,
-            { approved: true, by: verdict.by },
-            false,
-          );
-        }
+        audit(
+          call.toolName,
+          capability,
+          { approved: true, by: verdict.by },
+          false,
+        );
         continue;
       }
       // NO ANSWER SURFACE IS INSTALLED — `kubic run` has no TTY, and a `kubic
@@ -2673,7 +2586,6 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       shell: posture.classes.shell,
       network: posture.classes.network,
       approve: ask,
-      ...(input.onTrigger === undefined ? {} : { onTrigger: input.onTrigger }),
     },
     contributions,
     posture,
@@ -2746,8 +2658,7 @@ export interface ApprovalServiceOptions {
   //
   // Issue #232: the service hands the seat an AbortSignal and aborts it when
   // its own bound expires. A surface that honours it withdraws the obsolete
-  // question instead of leaving a modal nobody can answer (and a worker's
-  // mailbox seat stops polling and cleans up after itself); a seat that
+  // question instead of leaving a modal nobody can answer; a seat that
   // ignores the signal still works — the race below is what decides.
   awaitAnswer?: (
     request: ApprovalRequest,
@@ -2889,7 +2800,7 @@ export class ApprovalService {
     // Issue #232: the bound that denies the call is the bound that withdraws
     // the QUESTION. Without this the surface kept showing an ask the service
     // had already given up on: the TUI dialog stayed up (and blocked the next
-    // one), and a worker child's mailbox seat kept polling a turn that ended.
+    // one).
     const controller = new AbortController();
     const answer = this.awaitAnswer?.(request, controller.signal);
     let timer: ReturnType<typeof setTimeout> | undefined;

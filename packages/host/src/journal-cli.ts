@@ -33,7 +33,6 @@ import {
   clipChangeContent,
   DEFAULT_MAX_CONTENT_BYTES,
   diffEntries,
-  diffEntriesMany,
   renderDiff,
   renderDiffStat,
 } from '../../exec/src/journal-diff.js';
@@ -41,7 +40,6 @@ import {
   formatHeadMove,
   journalStatus,
   reconciliationSummary,
-  reconciliationSummaryFor,
 } from '../../exec/src/journal-status.js';
 import { applyUndo, planUndo } from '../../exec/src/journal-undo.js';
 import {
@@ -88,12 +86,6 @@ export interface JournalCommandDeps {
   // pid-based). Injected by tests so a live holder is expressible without a
   // second process.
   sessionLockHolder?: (sessionDir: string) => { pid: number } | undefined;
-  // Issue #364: the worker session ids linked to an orchestration, for
-  // `diff`/`log --session <orch>` aggregation. Default: the deterministic
-  // `<orch>-<agent>` naming discovered from the sessions root (only ids
-  // whose session actually holds a journal aggregate). Tests inject the
-  // list to stay hermetic (no walk of the real sessions root).
-  linkedSessions?: (sessionsRoot: string, orchId: string) => string[];
 }
 
 // The store selector every journal command shares.
@@ -151,9 +143,7 @@ function hasJournalIndex(dir: string): boolean {
 // Issue #362: the session store's recorded cwd per session id. An
 // unlistable store (no sessions root yet, a torn transcript) is "nothing
 // recorded" — never a throw, never a guess.
-// Exported for `kubic clean --journal` (issue #367): the same workspace
-// association decides which session journals a clean prunes.
-export async function defaultSessionWorkspaces(
+async function defaultSessionWorkspaces(
   sessionsRoot: string,
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
@@ -183,8 +173,7 @@ export async function defaultSessionWorkspaces(
 // Canonical form for the workspace comparison (symlinks resolved, e.g.
 // macOS /var → /private/var). A path that no longer exists keeps its
 // lexical form — it can then only match itself.
-// Exported for `kubic clean --journal` (issue #367).
-export function canonical(path: string): string {
+function canonical(path: string): string {
   try {
     return createNodeFileBridge('/').realPath?.(path) ?? path;
   } catch {
@@ -194,9 +183,7 @@ export function canonical(path: string): string {
 
 // True when `root` is the recorded workspace or inside it: `kubic diff`
 // from a project's subdirectory still belongs to that project.
-// Exported for `kubic clean --journal` (issue #367): a session created in
-// a subdirectory associates with its repo the same way.
-export function workspaceContains(recorded: string, root: string): boolean {
+function workspaceContains(recorded: string, root: string): boolean {
   const r = canonical(recorded);
   const c = canonical(root);
   return c === r || c.startsWith(r.endsWith(sep) ? r : `${r}${sep}`);
@@ -326,73 +313,11 @@ interface JournalRun {
   readonly ref: { session: string | null; root: string | null };
   readonly resolved: ResolvedStore;
   readonly store: FileJournalStore;
-  // Issue #364: the orchestration's linked worker journals (empty for
-  // workspace stores and unlinked sessions). `diff`/`log` aggregate these;
-  // `status`/`undo` keep the single-store contract.
-  readonly linked: LinkedJournal[];
   readonly theme: CliTheme;
   readonly log: CliLogger;
 }
 
 const PLAIN = createCliTheme('none');
-
-// One linked worker journal: its session id, its journal dir, and a store
-// over it (issue #364). Read-only by contract — `diff`/`log` aggregate
-// these, `undo` never touches them (undo across worktrees is out of scope).
-interface LinkedJournal {
-  sessionId: string;
-  dir: string;
-  store: FileJournalStore;
-}
-
-// Issue #364: the default linked-session discovery — the deterministic
-// `<orch>-<agent>` naming applied as a prefix scan over the sessions root.
-// Only session dirs that actually hold a journal index aggregate, so a
-// planned-but-never-spawned worker contributes nothing, and names come
-// from the directory listing (SESSION_ID_PATTERN-checked before any join
-// — contained by construction, the same rule as --session). Sorted, so
-// aggregation order is deterministic.
-function defaultLinkedSessions(sessionsRoot: string, orchId: string): string[] {
-  const bridge = createNodeFileBridge(sessionsRoot);
-  const prefix = `${orchId}-`;
-  const out: string[] = [];
-  try {
-    for (const info of bridge.listDir('.')) {
-      if (!info.isDirectory || !info.name.startsWith(prefix)) continue;
-      if (!SESSION_ID_PATTERN.test(info.name)) continue;
-      const idx = join(info.name, 'journal', 'index.jsonl');
-      try {
-        bridge.fileInfo(idx);
-      } catch {
-        continue;
-      }
-      out.push(info.name);
-    }
-  } catch {
-    // No sessions root yet — nothing linked.
-  }
-  out.sort();
-  return out;
-}
-
-// Issue #364: resolve the linked worker journals for a session store.
-// Empty for workspace stores (no orchestration id to key on) and when
-// nothing linked holds a journal — both read exactly as before.
-function linkedJournals(
-  deps: JournalCommandDeps,
-  sessionsRoot: string,
-  orchId: string,
-): LinkedJournal[] {
-  const list = deps.linkedSessions ?? defaultLinkedSessions;
-  const out: LinkedJournal[] = [];
-  for (const id of list(sessionsRoot, orchId)) {
-    if (id === orchId || !SESSION_ID_PATTERN.test(id)) continue;
-    const dir = join(sessionsRoot, id, 'journal');
-    if (!hasJournalIndex(dir)) continue;
-    out.push({ sessionId: id, dir, store: new FileJournalStore(dir) });
-  }
-  return out;
-}
 
 // Issue #337: the live holder of the store's session lock, when the resolved
 // store is a session journal. `resolved.dir` is `<sessionsRoot>/<id>/journal`,
@@ -458,26 +383,6 @@ export async function runJournalCommand(
       return EXIT_USAGE;
     }
   }
-  // Issue #364: worker-journal aggregation is keyed on the resolved
-  // session id (explicit --session or the latest-session fallback) — a
-  // workspace store has no orchestration to aggregate. Review follow-up:
-  // discovery runs for `diff`/`log` only — `status`/`undo` keep the
-  // single-store contract, so even naming linked journals there would
-  // imply worker coverage the restore does not do.
-  const linked =
-    resolved.sessionId === undefined ||
-    (request.command !== 'diff' && request.command !== 'log')
-      ? []
-      : linkedJournals(
-          deps,
-          deps.sessionsRoot ?? defaultSessionsRoot(),
-          resolved.sessionId,
-        );
-  if (linked.length > 0 && !json) {
-    log.info(
-      `linked worker journals: ${linked.map((l) => l.sessionId).join(', ')}`,
-    );
-  }
   const run: JournalRun = {
     deps,
     root: resolved.workspace ?? root,
@@ -487,7 +392,6 @@ export async function runJournalCommand(
     },
     resolved,
     store: new FileJournalStore(resolved.dir),
-    linked,
     theme: json ? PLAIN : (deps.theme ?? PLAIN),
     log,
   };
@@ -531,25 +435,12 @@ export function colorizeDiffLine(line: string, theme: CliTheme): string {
 }
 
 function journalDiff(run: JournalRun, request: JournalDiffOptions): number {
-  const { deps, store, linked } = run;
+  const { deps, store } = run;
   const filter = {
     ...(request.path === undefined ? {} : { path: request.path }),
     ...(request.agent === undefined ? {} : { agent: request.agent }),
   };
-  // Issue #364: one store reads exactly as before (`diffEntries`); linked
-  // worker journals merge per session+path with blobs from their home
-  // store (`diffEntriesMany`), so `diff --session <orch>` covers the run
-  // and `--agent` selects one worker's changes.
-  const changes =
-    linked.length === 0
-      ? diffEntries(store, filter)
-      : diffEntriesMany([store, ...linked.map((l) => l.store)], filter);
-  // The aggregation names itself for scripts; absent when unlinked so the
-  // single-store document shape is byte-identical.
-  const linkedSessions =
-    linked.length === 0
-      ? {}
-      : { linkedSessions: linked.map((l) => l.sessionId) };
+  const changes = diffEntries(store, filter);
   if (request.json === true) {
     // One change's before/after can be a whole file: the envelope clips
     // each side at 64 KiB by default (marker line + `contentTruncated`),
@@ -560,7 +451,6 @@ function journalDiff(run: JournalRun, request: JournalDiffOptions): number {
     deps.out(
       formatJson({
         ...run.ref,
-        ...linkedSessions,
         changes: changes.map((c) => clipChangeContent(c, maxBytes)),
       }),
     );
@@ -751,7 +641,7 @@ const LOG_COLUMNS = [
 ] as const;
 
 function journalLog(run: JournalRun, request: JournalSelection): number {
-  const { deps, store, resolved, linked } = run;
+  const { deps, store, resolved } = run;
   // Issue #119 (read-time self-heal): with `session.retentionDays` set, a
   // SESSION journal drops entries older than the window as it is read —
   // the same age bound `kubic sessions prune` applies to whole session
@@ -778,29 +668,9 @@ function journalLog(run: JournalRun, request: JournalSelection): number {
       store.enforceRetention({ maxAgeMs: retentionDays * MS_PER_DAY });
     }
   }
-  // Issue #364: each linked worker journal gets the same read-time
-  // self-heal under its own lock — a live worker's store is skipped and
-  // named, exactly like the primary above.
-  if (retentionDays > 0) {
-    const probe = deps.sessionLockHolder ?? sessionLockIsLive;
-    for (const l of linked) {
-      const holder = probe(dirname(l.dir));
-      if (holder !== undefined) {
-        run.log.warn(
-          `journal retention skipped: session '${l.sessionId}' is attached by pid ${holder.pid} — pruning under a live run can drop entries it just appended`,
-        );
-      } else {
-        l.store.enforceRetention({ maxAgeMs: retentionDays * MS_PER_DAY });
-      }
-    }
-  }
-  // Issue #364: `log --session <orch>` interleaves the orchestration's
-  // worker journals with its own by timestamp (session id, then path,
-  // break ties deterministically). Unlinked reads exactly as before.
-  const entries = [
-    ...store.entries(),
-    ...linked.flatMap((l) => l.store.entries()),
-  ].sort((a, b) =>
+  // Ordered by timestamp (session id, then path, break ties
+  // deterministically).
+  const entries = [...store.entries()].sort((a, b) =>
     a.timestamp !== b.timestamp
       ? a.timestamp - b.timestamp
       : a.sessionId !== b.sessionId
@@ -811,14 +681,10 @@ function journalLog(run: JournalRun, request: JournalSelection): number {
           ? -1
           : 1,
   );
-  const linkedSessions =
-    linked.length === 0
-      ? {}
-      : { linkedSessions: linked.map((l) => l.sessionId) };
   // `--json` stays the raw entries array (the count is derivable from the
   // `unattributed` flags there); the human path gains the summary line.
   if (request.json === true) {
-    deps.out(formatJson({ ...run.ref, ...linkedSessions, entries }));
+    deps.out(formatJson({ ...run.ref, entries }));
     return EXIT_OK;
   }
   if (entries.length === 0) {
@@ -848,14 +714,8 @@ function journalLog(run: JournalRun, request: JournalSelection): number {
   // Issue #87: the reconciliation count is part of `log`'s contract — it
   // is the only surface that answers "did anything bypass the tools?"
   // without the operator grepping for the `reconciled` marker. Printed
-  // for an empty journal too, so scripts see a stable shape. With linked
-  // workers (issue #364) it counts the merged timeline, not the primary
-  // store alone.
-  deps.out(
-    linked.length === 0
-      ? reconciliationSummary(store)
-      : reconciliationSummaryFor(entries),
-  );
+  // for an empty journal too, so scripts see a stable shape.
+  deps.out(reconciliationSummary(store));
   return EXIT_OK;
 }
 

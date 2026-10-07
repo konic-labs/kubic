@@ -34,8 +34,6 @@ function tmp(prefix: string): string {
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
   vi.stubEnv('KUBIC_PROVIDER', 'faux');
-  vi.stubEnv('KUBIC_WORKER_ID', '');
-  vi.stubEnv('KUBIC_WORKER_GENERATION', '');
 });
 
 afterEach(() => {
@@ -147,20 +145,6 @@ describe('kubic run writes a §46 trajectory (issue #383)', () => {
     expect(exported.result.status).toBe('failed');
     expect(exported.result.failureCategory).toBe('process_crashed');
     expect(exported.provenance.model).toBe('none/none');
-  });
-
-  it('an orchestrator worker child records its worker id and generation', async () => {
-    vi.stubEnv('KUBIC_WORKER_ID', 'agent-7');
-    vi.stubEnv('KUBIC_WORKER_GENERATION', '3');
-    // The child prints its readiness marker on stdout; keep it off the
-    // test runner's output.
-    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const { ws, result: pending } = run('hello');
-    const result = await pending;
-    const exported = readTrajectory(result.trajectoryRef);
-    expect(exported.identity.workerId).toBe('agent-7');
-    expect(exported.provenance.generation).toBe(3);
-    expect(exported.provenance.worktree).toBe(ws);
   });
 
   it('`kubic run --json`: the envelope trajectory ref names the written file', async () => {

@@ -25,13 +25,13 @@ export function assertNoMcpConfig(raw: unknown): void {
   }
 }
 
-// Phase-4 MCP arrival requirements: the three §33 bullets, verbatim in
-// spirit — tool-policy mapping, in-worker execution, network conflict
+// MCP arrival requirements: tool-policy mapping, in-process execution,
+// network conflict
 // surfaced as policy or approval. Recorded as data so the boundary is
 // explicit, and both [mcp] refusals are built from it.
 export const MCP_ARRIVAL_REQUIREMENTS = [
   'map MCP tools into the agent tool policy (allow / deny / approve), not bolted on (§33)',
-  'execute MCP tools inside the worker process in orchestrator mode, sharing its lifetime and trajectory (§33)',
+  'execute MCP tools inside the agent process, sharing its lifetime and trajectory (§33)',
   'treat an MCP network need the role disallows as a policy conflict — resolved at role resolution or surfaced as an approval, never silently granted (§33)',
 ] as const;
 

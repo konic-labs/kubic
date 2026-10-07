@@ -1,104 +1,88 @@
 # `@kubic/host`
 
-> Host runtime wiring worker + agents.
-> Owner: issue
-> [#63](https://github.com/konic-labs/kubic/issues/63).
-> Source: `packages/host/src` (read-only — this page quotes it, never moves it).
+> The host runtime: approvals, config, roles, doctor and the command
+> implementations.
+> Source: `packages/host/src`.
 
-`@kubic/host` is the host runtime: handoff assembly, the approval
-safety model, layered config, worker lifecycle wiring, the orchestrator,
-and the headless/CLI command surfaces. Solo mode has no isolation —
-docs and code must never imply otherwise (design §59.1).
+`@kubic/host` is everything around the agent lane that decides, records
+and reports: the approval safety model, layered config and project trust,
+role resolution, `kubic doctor`, the audit ledger, spans and the debug
+channel, and the implementations behind the CLI commands. Solo mode has
+no isolation — docs and code must never imply otherwise.
 
 ## Public API (`packages/host/src`)
 
-| Module | Exports |
+| Module | Owns |
 | --- | --- |
-| `approvals.ts` | `CAPABILITIES`, `Capability`, `ApprovalPolicy`, `PolicyValidationError`, `validatePolicy`, `ApprovalRequest`, `ApprovalVerdict`, `ApprovalStore`, `MemoryApprovalStore`, `FileApprovalStore`, `TriggerContext`, `detectTriggers`, `approvalKey`, `summarizeRequest`, `AccessPosture`, `ApprovalAsk`, `createApprovalAsk`, `enableFullAccess`, `ApprovalServiceOptions`, `ApprovalService` |
-| `config/config.ts` | `CONFIG_LAYERS`, `ConfigLayer`, `ConfigError`, `ProjectUntrustedError`, `BudgetKeyError`, `AgentConfig`, `ModelConfig`, `ModesConfig`, `ApprovalsConfig`, `PermissionsConfig`, `JournalConfig`, `RoleConfig`, `OrchestratorConfig`, `UiConfig`, `SessionConfig`, `PolicyConfig`, `AuditTableConfig`, `KubicConfig`, `KNOWN_CONFIG_SECTIONS`, `EXAMPLE_TOML`, `assertNoBudgetKeys`, `parseTomlConfig`, `serializeTomlConfig`, `parseLayerConfig`, `LayerInput`, `MergeResult`, `mergeLayered`, `defaultLayerPaths`, `COMMITTED_CONFIG_FILES`, `GITIGNORE_REQUIRED_ENTRIES`, `isCommittedConfigPath`, `checkGitignoreSplit`, `loadLayered` |
-| `config/runtime.ts` | `loadRuntimeConfig`, `effectiveConfigView`, `renderEffectiveConfig`, `checkWorkspaceIgnoreSplit`, `RuntimeConfig`, `RuntimeConfigInputs`, `ConfigValueSource`, `EffectiveConfigView`, `RuntimeKeyEffect`, `RUNTIME_KEY_EFFECTS`, `RUNTIME_ENV_OVERRIDES`, `RUNTIME_DEFAULTS`, `MS_PER_DAY` — the load the binary actually runs on (#90) |
-| `config/config-cli.ts` | `runConfigCommand`, `ConfigCommandDeps`, `CONFIG_EXIT_OK/FAIL` — `kubic config [--json]` (#90) |
-| `config/config-doctor.ts` | `configDoctorProbe`, `buildConfigDoctorInput`, `CONFIG_DOCTOR_ID` — doctor's config check (#90) |
-| `config/stances.ts` | `McpUnsupportedError`, `assertNoMcpConfig` (+ secrets in `config/secrets.ts`) |
-| `config/role-credentials.ts` | `ProviderKeyEnv`, `ProviderKeyIndex`, `providerOfModelRef`, `resolveWorkerProvider`, `resolveProviderGrant`, `planWorkerCredentials`, `workerCredentialDoctorProbe` — §36.3 provider-credential scoping for orchestrator workers (#200): which provider a role resolves to, exactly which key env vars that provider needs, and when the run must refuse by provider name before any worktree exists (#200) |
-| `doctor.ts` | `DOCTOR_EXIT_OK/FAIL/USAGE/PROVIDER` (0/1/2/6), `DoctorStatus`, `DoctorReason`, `DoctorCheck`, `DoctorReport`, `ProviderProbe`, `DepProbe`, `SessionOverlapProbe`, `DoctorDeps`, `collectDoctorChecks` |
-| `spans.ts` | `SPAN_NAMES`, `SpanName`, `SpanRecord`, `SpanRecorder`, `DEBUG_CLASSES`, `DebugSink`, `ToolPhase`, `DebugLog`, `TranscriptSink`, `createTranscriptSink`, `makeWriteLogSink`. Live on the run path since #98 (see "Spans") |
-| `ops/perf/` | `budgets.ts` (§61 ms constants + p50/p95 `evaluateBudget`), `perf-cli.ts` (`kubic perf`, `--measure` \| `--samples`), `measure.ts` (real spawn/worktree samples, #98), `run-spans.ts` (lane/tool/worker spans on the run paths, #98 + #290) |
-| `ops/cost/` | `cost-cli.ts` (`kubic cost`), `per-agent-cost.ts` (rows + Σ(per-agent) task total), `cache.ts` (§62 lever 2 prefix hit-rate, live since #98) |
-| `worker-manager.ts`, `dispatch.ts`, `root-agent.ts` | Pointer | Supervision state in `@kubic/worker` `lifecycle/registry.ts` (#42); dispatch in `orchestrator/manager.ts` (#40, live since #103); root agent is the solo lane `@kubic/worker` `lane/solo.ts` (#11) |
-| `orchestrator/` | Manager + worker-process orchestration (parallel limits, approval budgets). `orchestrator/manager.ts` is live since #103: `MANAGER_ALLOWLIST` + `registerManagerLane` gate the run's toolset and `buildManagerPlan` authors the per-worker prompts |
-| `roles/` | Role presets and role data |
-| `policy/` | Host-side policy wiring: `enterprise.ts` (`resolveEffectivePolicy`, `layerPolicyFromConfig`, `isToolAllowed`, `isToolAllowedByEnterprise`, `isModelAllowed`, `enterpriseDoctorChecks`), `policy-cli.ts` (`kubic policy`), `audit*.ts` (§60 ledger) |
-| `replay/` | Replay surfaces over trajectory exports |
-| `limits/` | Honest-claims/skip-record guards, solo-warning + orchestrator notices |
-| `run-cli.ts`, `sessions-cli.ts`, `workers-cli.ts`, `journal-cli.ts`, `models-cli.ts`, `git-cli.ts` | Headless/CLI command implementations |
-| `session-read.ts` | `openReadOnlySessionStorage` (lock-free read-only open), `touchesWorkspace` (the project test) — shared by `kubic cost` and the TUI's `/resume` (#251, #461) |
-| `session-summaries.ts` | `SessionSummary`, `summarizeProjectSessions` — this project's sessions with first prompt, turns, cost and age; held or legacy ones listed, never opened (#461) |
-| `provider-key-hints.ts` | `providerKeyHints` — the variable Pi's auth check reads for a keyless provider (`OPENAI_API_KEY`), from a throwaway catalogue with a synthetic auth context (#461) |
-| `sessions-prune.ts` | `SessionsRootError`, `planSessionPrune`, `deleteSessionPruneCandidates`, `SessionPrunePlan`, `SessionPrunePlanArgs`, `SessionPruneCandidate`, `SessionPruneLocked`, `SessionPruneDeleteArgs`, `SessionPruneDeleteOutcome` — session-state retention core (#119): the age/lock/keep rails, the byte count over a session dir tree, and the guarded delete pass (liveness re-checked immediately before each remove) |
-| `credentials.ts` | Pointer | Request-time refs in `config/secrets.ts` (#38); model-layer store in `@kubic/worker` `pi-boundary.ts` |
-| `index.ts` | Pointer | No barrel — import per-module paths |
+| `approvals.ts` | `CAPABILITIES`, `ApprovalPolicy`, `validatePolicy`, `detectTriggers`, `approvalKey`, `summarizeRequest`, `ApprovalStore` (`MemoryApprovalStore`, `FileApprovalStore`), `ApprovalService`, `createApprovalAsk`, `controlPlaneRefusal`, the full-access posture (`enableFullAccess`, `enableSessionFullAccess`, …) and `installSoloPolicy` |
+| `approvals-credentials.ts` | The credential-path detector behind the `credentials` permission class |
+| `approval-display.ts`, `approval-preview.ts` | What an approval dialog shows: the command display and the change an edit or write would make |
+| `config/config.ts` | `CONFIG_LAYERS`, `KubicConfig` and its section types, `parseTomlConfig`, `serializeTomlConfig`, `mergeLayered`, `loadLayered`, the per-key checks, `COMMITTED_CONFIG_FILES`, `GITIGNORE_REQUIRED_ENTRIES`, `checkGitignoreSplit`, `EXAMPLE_TOML` |
+| `config/runtime.ts` | `loadRuntimeConfig` — the load the binary actually runs on — plus `effectiveConfigView`, `renderEffectiveConfig`, `RUNTIME_KEY_EFFECTS`, `RUNTIME_ENV_OVERRIDES`, `RUNTIME_DEFAULTS` |
+| `config/config-cli.ts`, `config/config-doctor.ts` | `kubic config [--json]` and doctor's config check |
+| `config/trust-store.ts` | The per-user project-trust store (`~/.kubic/trust.json`) |
+| `config/secrets.ts`, `config/model-key-audit.ts` | Request-time secret references and the audit record each provider-key use appends |
+| `config/stances.ts` | `assertNoMcpConfig` (`McpUnsupportedError`) and the ACP edge types |
+| `config/toml-model.ts` | The line-based `[model]` update `kubic setup` writes |
+| `doctor.ts`, `doctor-render.ts`, `doctor-full-access.ts` | `collectDoctorChecks`, `runDoctorCommand`, the grouped terminal summary and the live full-access session list |
+| `limits/` | The honest-limit doctor checks and the solo warning every process start prints |
+| `roles/` | `builtin-presets.ts` (the five built-in roles), `resolver.ts` (role documents, layer merge, tool guard), `roles-boot.ts` (loading `.kubic/roles/*.md`) |
+| `skills-boot.ts`, `skills-cli.ts` | The skills boot the lane runs and `kubic skills` |
+| `spans.ts`, `ops/perf/run-spans.ts` | The span recorder, the debug vocabulary and the run/turn span wiring (see below) |
+| `ops/cost/` | `kubic cost`: per-session usage rows and the prompt-cache hit rate |
+| `policy/` | `enterprise.ts` (the effective enterprise policy), `policy-cli.ts` (`kubic policy`), `audit.ts` / `audit-ledger.ts` / `audit-cli.ts` (the audit ledger and `kubic audit`), `syslog-transport.ts` |
+| `presentation/projector.ts` | Folds lane events and approval facts into the `KubicPresentationState` the TUI renders |
+| `replay/` | `kubic replay` over trajectory exports |
+| `trajectory/run-trajectory.ts` | The pure assembler of a run's trajectory record |
+| `verify/verifier.ts` | The `[verify]` gates (tests, build, lint, typecheck) run after `kubic run` settles; their results become the trajectory's `signal:<gate>` labels |
+| `run-cli.ts`, `sessions-cli.ts`, `sessions-prune.ts`, `session-read.ts`, `session-summaries.ts`, `journal-cli.ts`, `models-cli.ts`, `models-render.ts`, `git-cli.ts`, `trust-cli.ts`, `setup-cli.ts` | The command implementations |
+| `cli-io.ts`, `faux-provider.ts`, `project-root.ts`, `provider-key-hints.ts` | Shared command seams, the `KUBIC_PROVIDER=faux` testing provider, project-root discovery and provider key hints |
+| `index.ts` | No barrel — import per-module paths |
 
 ## Contracts
 
-### Spans and the debug channel (`spans.ts` + `ops/perf/run-spans.ts`, §29/§49.3/§50)
+### Spans and the debug channel (`spans.ts`, `ops/perf/run-spans.ts`)
 
-`spans.ts` is the §49.3 recorder (`SpanRecorder` over `SPAN_NAMES`), the
-§50 debug vocabulary (`DEBUG_CLASSES`, eight classes — `[handles]` dropped with the leak count, #246) and the transcript
-sinks. Since issue #98 it is **live on the run path**: `ops/perf/run-spans.ts`
-maps what the lane and the harness actually do onto it and
-`apps/kubic/src/headless-run.ts` drives it, so a real `kubic run` records
-`kubic.agent.run` → `kubic.lane.accept` / `kubic.lane.drive` →
-`pi.tool.execute`, with parent linkage and per-span ms. The two lane span
-labels are kept from 0.87 but name the 1.0 work (#395): `accept` covers
-admitting this run's work (settling a pending turn first) and `drive` the
-durable turn itself (`conversation.submit()` → `submission.wait()` →
-settlement). The tool-span half
-is `runSpanHooks` (#397): the run wiring (#395) installs it as the
-`kubic.spans` extension's `ToolTask` hooks, after `kubic.policy` so a
-blocked call opens no span — `beforeTool` opens the span, `afterTool`
-closes it and returns the result unchanged (the hook never fails a call).
+`spans.ts` is the span recorder (`SpanRecorder` over `SPAN_NAMES`), the
+`--debug` vocabulary (`DEBUG_CLASSES`, seven classes) and the transcript
+sinks. `ops/perf/run-spans.ts` maps what the lane and the harness actually
+do onto it and `apps/kubic/src/headless-run.ts` drives it, so a real
+`kubic run` records `kubic.agent.run` → `kubic.lane.accept` /
+`kubic.lane.drive` → `pi.tool.execute`, with parent linkage and per-span
+ms. `accept` covers admitting this run's work (settling a pending turn
+first) and `drive` the durable turn itself (`conversation.submit()` →
+`submission.wait()` → settlement). The tool spans come from
+`runSpanHooks`, installed as the `kubic.spans` extension's `ToolTask`
+hooks after `kubic.policy`, so a blocked call opens no span —
+`beforeTool` opens the span, `afterTool` closes it and returns the result
+unchanged (the hook never fails a call).
 
-Three destinations, all documented on the
+Two destinations, both documented on the
 [commands page](../cli/commands.md#where-the-spans-go):
 
 1. **stderr, behind `kubic run --debug`** — each span close emits one
-   §50-classed line through the shared `DebugSink`. Off by default, so
-   stdout stays consumable and the exit contract is unchanged. The prod
-   default sink is stderr inside `headless-run.ts` — the composition root
-   wires nothing.
+   classed line through the shared `DebugSink`. Off by default, so stdout
+   stays consumable and the exit contract is unchanged.
 2. **the session artifact** — the same spans are serialized to
-   `spans.jsonl` under the session directory (`<sessionsRoot>/<id>/`),
-   one JSON object per closed span. Evidence only: nothing reads it back
-   yet (aggregation is #95/#96). Since #290 every run surface writes the
-   same file for its own session: `kubic run` the lane accept/drive steps
-   plus one `pi.tool.execute` span per tool call, `kubic tui` one
-   `kubic.agent.run` span per settled turn plus that turn's tool spans
-   (`TurnSpans`, fed by the runner from the committed lane events), and
-   an orchestrator worker child its own session file like a headless run.
-   The manager's own spans go next to the run state instead: one
-   `kubic.worker.start` span per launch with a nested
-   `kubic.worker.startup` span whose duration is the registry's
-   `startupMs`, appended per settled worker to
-   `<repo>/.kubic/orchestrator/<session>.spans.jsonl`. Worker spans carry
-   the worker session id, so manager and worker traces join on it; the
-   startup span never counts toward `toolMsTotal` (it counts
-   `pi.tool.execute` spans only).
+   `spans.jsonl` under the session directory (`<sessionsRoot>/<id>/`), one
+   JSON object per closed span: `kubic run` writes the lane accept/drive
+   steps plus one `pi.tool.execute` span per tool call, and `kubic tui`
+   one `kubic.agent.run` span per settled turn plus that turn's tool spans
+   (`TurnSpans`, fed from the committed lane events).
 
 A tool span whose call never settled before the run ended is closed by
 `endRun` (`error=run ended before the call settled`) instead of being
-serialized with `endMs: null`, and a run with no spans behaves exactly as
-before — the wiring is additive by construction.
+serialized with `endMs: null`.
 
-### Approvals (`approvals.ts`, #48)
+### Approvals (`approvals.ts`)
 
-`CAPABILITIES` (11): `network`, `credentials`, `git-push`,
+`CAPABILITIES` (9): `network`, `credentials`, `git-push`,
 `destructive-shell`, `install`, `deploy`, `outside-write`,
-`budget-overrun`, `spawn-agents`, `privilege-escalation`,
-`kubic-state-write` (always asks; `controlPlaneRefusal` refuses writes into
-`.kubic/journal|orchestrator|sessions` outright — the workspace's, an
-ancestor's such as a worker worktree's repo, or `~/.kubic`'s — plus the
-session root in use, `installSoloPolicy({ home, sessionsRoot })`, issue #324).
+`privilege-escalation`, `kubic-state-write`. `kubic-state-write` always
+asks, and `controlPlaneRefusal` refuses writes into
+`.kubic/journal|audit|sessions` outright — the workspace's, an
+ancestor's or `~/.kubic`'s — plus the session root in use
+(`installSoloPolicy({ home, sessionsRoot })`).
 
 | Interface | Fields |
 | --- | --- |
@@ -110,51 +94,48 @@ session root in use, `installSoloPolicy({ home, sessionsRoot })`, issue #324).
 `ApprovalService` + `createApprovalAsk` serve the lane interception
 point; `detectTriggers` maps tool calls to capabilities via
 `TriggerContext`. The lane awaits the ask inside its pi-durable
-`ToolTask.beforeTool` hook (#397), which runs before the tool's intent is
-committed — so the service's `maxPendingMs` bound still denies a seat that
-never answers, and a crash mid-ask re-raises the ask on resume instead of
-resuming the call unapproved. The bash detectors are literal-pattern
-heuristics with
-two documented shapes: a `tee`/`cp`/`mv`/`install` write target is the
-last argument of the command segment (last-argument heuristic), and
-`sudo` matches by word anywhere in the raw command — deliberately
-over-triggering, since a raised capability becomes an ask, never a silent
-grant. Both heuristics and the remaining bypasses are documented on the
-[configuration](../cli/configuration.md) page.
+`ToolTask.beforeTool` hook, which runs before the tool's intent is
+committed — so the service's `maxPendingMs` bound still denies a seat
+that never answers, and a crash mid-ask re-raises the ask on resume
+instead of resuming the call unapproved. The bash detectors are
+literal-pattern heuristics with two documented shapes: a
+`tee`/`cp`/`mv`/`install` write target is the last argument of the
+command segment, and `sudo` matches by word anywhere in the raw command —
+deliberately over-triggering, since a raised capability becomes an ask,
+never a silent grant. Both heuristics and the remaining bypasses are
+documented on the [configuration](../cli/configuration.md) page.
 
-### Config (`config/`, #38)
+### Config (`config/`)
 
 Layered TOML config (`CONFIG_LAYERS`) parsed by `parseTomlConfig` and
 round-tripped by `serializeTomlConfig`; `mergeLayered` merges
-`LayerInput`s into `MergeResult`; committed-vs-secret split enforced by
-`COMMITTED_CONFIG_FILES`, `GITIGNORE_REQUIRED_ENTRIES`,
-`isCommittedConfigPath`, `checkGitignoreSplit`. Fail-closed stances:
-`assertNoBudgetKeys` (budgets are opt-in, never smuggled via config) and
-`assertNoMcpConfig` (MCP unsupported → `McpUnsupportedError`).
+`LayerInput`s into `MergeResult`; the committed-vs-ignored split is
+enforced by `COMMITTED_CONFIG_FILES`, `GITIGNORE_REQUIRED_ENTRIES`,
+`isCommittedConfigPath` and `checkGitignoreSplit`. An `[mcp]` table fails
+closed (`McpUnsupportedError`).
 
-The ship-vs-ignore split (issue #91; §35, D34/D35) is not hand-kept twice:
+The ship-vs-ignore split is not kept by hand twice:
 `GITIGNORE_REQUIRED_ENTRIES` is derived from `@kubic/exec`
-`runtime-exclude.ts` — the module `kubic run` / `kubic orchestrate`
-actually ship into a user repo's local `.git/info/exclude` under a
-rewritable marker block. `.kubic/` itself is never ignored, so
-`config.toml` + `roles/*.md` stay committable. Pinned by `config.test.ts`
-and gated repo-wide by `scripts/runtime-exclude.test.mjs`.
+`runtime-exclude.ts` — the entries `kubic run` and `kubic tui` write into
+a user repo's local `.git/info/exclude` under a rewritable marker block.
+`.kubic/` itself is never ignored, so `config.toml` and `roles/*.md` stay
+committable. Pinned by `config.test.ts` and gated repo-wide by
+`scripts/runtime-exclude.test.mjs`.
 
 ### Doctor (`doctor.ts`)
 
 Exit codes: 0 ok, 1 fail, 2 usage, 6 provider. `DoctorStatus` is
-`pass|warn|fail|skip`; `collectDoctorChecks` folds `DoctorDeps`
-(provider + dep probes) into a `DoctorReport` of `DoctorCheck`s.
-`probeSessionOverlap` (issue #118) adds the repo-level `session:overlap`
-note: warn when two or more sessions are recorded against the workspace —
-a disclosure of the end-of-run sweep's blind spot, never a block and never
-exit-flipping. `probeStatePermissions` (issue #361) adds `state:permissions`:
-a `warn` naming a group- or world-accessible sessions root (its mode and the
+`pass|warn|fail|skip`; `collectDoctorChecks` folds `DoctorDeps` (provider
+and dep probes) into a `DoctorReport` of `DoctorCheck`s.
+`probeSessionOverlap` adds the repo-level `session:overlap` note: warn
+when two or more sessions are recorded against the workspace — a
+disclosure of the end-of-run sweep's blind spot, never a block and never
+exit-flipping. `probeStatePermissions` adds `state:permissions`: a `warn`
+naming a group- or world-accessible sessions root (its mode and the
 `chmod 700` that closes it), a `pass` when it is private or absent, and
-`state permissions unverified` when the probe itself throws — never
-exit-flipping.
+`state permissions unverified` when the probe itself throws.
 
-### Session retention (`sessions-cli.ts` + `sessions-prune.ts`, #119)
+### Session retention (`sessions-cli.ts`, `sessions-prune.ts`)
 
 `kubic sessions prune` is the only thing that deletes whole session state
 dirs, and it is opt-in twice over: dry-run is the default (deletion needs
@@ -163,30 +144,26 @@ dirs, and it is opt-in twice over: dry-run is the default (deletion needs
 rather than inventing a window (`--keep-days 0` / `retentionDays = 0`
 means retention is off: nothing is pruned, exit 0). `planSessionPrune`
 owns the planning rails: a session holding a live lock is never a
-candidate (worker `sessionLockIsLive`, a read-only view deliberately
-stronger than the steal rule), a session whose state dir mtime is at or
-before the cutoff is a candidate (a recently attached session survives
-even with old inner files), `--keep-session` names are protected, and
+candidate (`sessionLockIsLive`, a read-only view deliberately stronger
+than the steal rule), a session whose state dir mtime is at or before the
+cutoff is a candidate (a recently attached session survives even with old
+inner files), `--keep-session` names are protected, and
 non-session-shaped entries (plain files, a stray `lock.json`, names
-outside `[A-Za-z0-9_-]`, pi's `--<cwd>--` transcript dirs) are never
+outside `[A-Za-z0-9_-]`, Pi's `--<cwd>--` transcript dirs) are never
 touched. A session that cannot be inspected is skipped, never guessed at.
-`deleteSessionPruneCandidates` owns the delete pass: it re-checks
-`sessionLockIsLive` immediately before each `bridge.remove`, so a lock
-acquired between plan and delete is skipped and reported exactly like a
-planning-time lock — never counted as pruned. Scope is
-`<sessions-root>/<id>/` state dirs only — the workspace journal and
-orchestrator worktrees belong to other commands, and the same retention
-window also self-heals session journal entries at read time via
+`deleteSessionPruneCandidates` re-checks `sessionLockIsLive` immediately
+before each `bridge.remove`, so a lock acquired between plan and delete is
+skipped and reported exactly like a planning-time lock — never counted as
+pruned. Scope is `<sessions-root>/<id>/` state dirs only — the workspace
+journal belongs to `kubic undo`/`kubic log`, and the same retention window
+also self-heals session journal entries at read time via
 `kubic log --session`.
 
 ## Dep-direction neighbours
 
 - May import: core, exec, [worker](worker.md), [agents](agents-pkg.md),
   [trajectory](trajectory.md), [eval](eval.md) — never [tui](tui.md).
-- Imported by: `apps/kubic` (composition root wires host + tui).
-- Consumes [worker](worker.md) `AgentResult` and
-  [agents](agents-pkg.md) task/budget shapes; never reaches into tui
-  implementation.
+- Imported by: `apps/kubic` (the composition root wires host + tui).
 
 ```text
 core + exec + agents ──→ worker ──→ @kubic/host ──→ apps/kubic

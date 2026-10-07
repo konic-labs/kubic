@@ -604,7 +604,7 @@ describe('execution env spawn failures (issue #85)', () => {
   it('settles wait() with a named error instead of crashing on a missing binary', async () => {
     // A spawn that cannot start the child emits 'error' (ENOENT) and never
     // 'close'. Without a handler Node re-throws it as an uncaught
-    // exception, so the caller (the orchestrator manager) dies raw: no
+    // exception, so the caller dies raw: no
     // exit code, no §78 code line. wait() must settle with exit 127 and
     // the reason on stderr instead.
     const { env } = makeNodeEnv();

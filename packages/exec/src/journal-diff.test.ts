@@ -10,7 +10,6 @@ import {
   clipContent,
   DEFAULT_MAX_CONTENT_BYTES,
   diffEntries,
-  diffEntriesMany,
   type FileChange,
   renderDiff,
   renderDiffStat,
@@ -351,46 +350,6 @@ describe('HEAD-move markers (issue #378)', () => {
   });
 });
 
-describe('multi-store diff (issue #364)', () => {
-  function storeWith(
-    sessionId: string,
-    agentId: string,
-    path: string,
-    content: string,
-  ): FileJournalStore {
-    const store = new FileJournalStore(tmpRoot());
-    store.append({
-      path,
-      op: 'write',
-      before: null,
-      after: content,
-      bytesDelta: content.length,
-      sessionId,
-      agentId,
-      toolCallId: 't',
-      timestamp: 100,
-    });
-    return store;
-  }
-
-  it('reads blobs from each entry home store and never merges workers paths', () => {
-    const w1 = storeWith('orch-worker-1', 'worker-1', 'same.txt', 'one\n');
-    const w2 = storeWith('orch-worker-2', 'worker-2', 'same.txt', 'two\n');
-    const changes = diffEntriesMany([w1, w2], {});
-    expect(changes).toHaveLength(2);
-    expect(
-      changes.map((c) => [c.sessionId, c.agentId, c.after]).sort(),
-    ).toEqual([
-      ['orch-worker-1', 'worker-1', 'one\n'],
-      ['orch-worker-2', 'worker-2', 'two\n'],
-    ]);
-    // --agent selects one worker's changes across stores.
-    expect(
-      diffEntriesMany([w1, w2], { agent: 'worker-2' }).map((c) => c.path),
-    ).toEqual(['same.txt']);
-  });
-});
-
 describe('diff --stat (issue #335)', () => {
   function change(over: Record<string, unknown>): FileChange {
     return {
@@ -427,42 +386,5 @@ describe('diff --stat (issue #335)', () => {
       'old.txt +3 -2 create',
       'sweep.txt +3 -2 reconciled',
     ]);
-  });
-});
-
-describe('multi-store group readers (issue #364 review)', () => {
-  it("resolves the first entry's blobs through its own store", () => {
-    const first = new FileJournalStore(tmpRoot());
-    first.append({
-      path: 'p.txt',
-      op: 'write',
-      before: 'B1\n',
-      after: 'MID\n',
-      bytesDelta: 1,
-      sessionId: 's',
-      agentId: 'a1',
-      toolCallId: 't1',
-      timestamp: 100,
-    });
-    const second = new FileJournalStore(tmpRoot());
-    second.append({
-      path: 'p.txt',
-      op: 'write',
-      before: 'B2\n',
-      after: 'A2\n',
-      bytesDelta: 1,
-      sessionId: 's',
-      agentId: 'a1',
-      toolCallId: 't2',
-      timestamp: 200,
-    });
-    // Same session+path across two stores (the one-store-per-session
-    // invariant broken on purpose): before must come from the first
-    // entry's home store, after from the last entry's.
-    const changes = diffEntriesMany([first, second], {});
-    expect(changes).toHaveLength(1);
-    expect(changes[0]?.before).toBe('B1\n');
-    expect(changes[0]?.after).toBe('A2\n');
-    expect(changes[0]?.corrupt).toBe(false);
   });
 });

@@ -29,7 +29,6 @@ import {
 import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import { enableSessionFullAccess, FileApprovalStore } from './approvals.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
-import { redactSecretShapes } from './policy/secret-shapes.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
 import {
   deleteSessionPruneCandidates,
@@ -64,8 +63,6 @@ export type SessionsInvocation =
   | {
       readonly command: 'list';
       readonly json?: boolean;
-      // Issue #164 (§23): show only the children of one run.
-      readonly parent?: string;
     }
   | {
       readonly command: 'attach';
@@ -137,22 +134,12 @@ async function runPruneCommand(
   const bridge = createNodeFileBridge(root);
   let plan: SessionPrunePlan;
   try {
-    // Issue #164 (§23): the run tree for the family rule — header reads
-    // only, so a session a live run holds is never opened here.
-    const store = openSessionStore(root, bridge);
-    const parents = new Map<string, string>();
-    for (const entry of await listSessions(store, BACKGROUND_CONTEXT)) {
-      if (entry.meta?.parentSessionId !== undefined) {
-        parents.set(entry.id, entry.meta.parentSessionId);
-      }
-    }
     plan = planSessionPrune({
       root,
       bridge,
       keepDays,
       keep: [...(parsed.keepSession ?? [])],
       ...(deps.now === undefined ? {} : { now: deps.now() }),
-      parentOf: (id) => parents.get(id),
     });
   } catch (error) {
     if (error instanceof SessionsRootError) {
@@ -278,41 +265,7 @@ export async function runSessionsCommand(
     return 0;
   }
   if (invocation.command === 'list') {
-    const listed = await listSessions(store, BACKGROUND_CONTEXT);
-    // Issue #419: the direct API is not commander-validated, so a
-    // `--parent` outside the id class is refused like `cost --session`
-    // (fail-closed echo — the value is caller-controlled and may carry
-    // secret-shaped material), never echoed raw.
-    if (
-      invocation.parent !== undefined &&
-      !SESSION_ID_PATTERN.test(invocation.parent)
-    ) {
-      log.error(
-        `invalid --parent id ${redactSecretShapes(JSON.stringify(invocation.parent))} (use [A-Za-z0-9_-])`,
-      );
-      return 2;
-    }
-    // Review #164: a `--parent` naming no recorded session is a named
-    // refusal (exit 1), not an empty listing — a run id with zero
-    // children still lists (empty) when the run itself is recorded.
-    // SESSION_ID_PATTERN admits sk-shaped strings, so even the
-    // valid-shaped echo is redacted.
-    if (
-      invocation.parent !== undefined &&
-      !listed.some((entry) => entry.id === invocation.parent)
-    ) {
-      log.error(
-        `unknown parent session: ${redactSecretShapes(invocation.parent)}`,
-      );
-      return 1;
-    }
-    // Issue #164 (§23): `--parent <id>` groups one run's children.
-    const sessions =
-      invocation.parent === undefined
-        ? listed
-        : listed.filter(
-            (entry) => entry.meta?.parentSessionId === invocation.parent,
-          );
+    const sessions = await listSessions(store, BACKGROUND_CONTEXT);
     if (invocation.json === true) {
       // Always one JSON array — `[]` when there are no sessions, so a
       // `| jq` consumer never reads an empty stream (§78).
@@ -321,11 +274,6 @@ export async function runSessionsCommand(
           sessions.map((entry) => ({
             id: entry.id,
             cwd: entry.meta?.cwd ?? null,
-            // Ancestry keys appear only when the session has them: a root
-            // carries no parent key at all (never null, never '').
-            ...(entry.meta?.parentSessionId === undefined
-              ? {}
-              : { parentSessionId: entry.meta.parentSessionId }),
             ...(entry.meta?.role === undefined
               ? {}
               : { role: entry.meta.role }),
@@ -351,10 +299,9 @@ export async function runSessionsCommand(
             entry.format === 'legacy'
               ? `${cwd} ${theme.muted('(legacy pi 0.87 — cannot attach)')}`
               : cwd,
-            entry.meta?.parentSessionId ?? theme.muted('—'),
           ];
         }),
-        [{ header: 'SESSION' }, { header: 'CWD' }, { header: 'PARENT' }],
+        [{ header: 'SESSION' }, { header: 'CWD' }],
         { fancy: deps.fancy === true, theme },
       ),
     );
@@ -376,22 +323,6 @@ export async function runSessionsCommand(
     const session = await attachSession(store, id, BACKGROUND_CONTEXT);
     try {
       deps.out(`session ${session.id}  cwd=${session.meta.cwd ?? '(none)'}`);
-      // Issue #164 (§23): the run this session belongs to, when it has one.
-      if (session.meta.parentSessionId !== undefined) {
-        // Review #164: role/agentId ride operator-typed binding values into
-        // metadata, so they go through the same display strip as transcript
-        // text before reaching the operator's terminal.
-        const scoped = [
-          `parent=${session.meta.parentSessionId}`,
-          ...(session.meta.role === undefined
-            ? []
-            : [`role=${oneLine(session.meta.role)}`]),
-          ...(session.meta.agentId === undefined
-            ? []
-            : [`agent=${oneLine(session.meta.agentId)}`]),
-        ].join(' ');
-        deps.out(scoped);
-      }
       const posture = new FileApprovalStore(join(root, id)).loadPosture();
       deps.out(
         posture.fullAccess

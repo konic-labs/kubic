@@ -4,10 +4,10 @@
 // depth none, so snapshots read like the design.
 //
 // Header: `■ KUBIC │ <project> ⎇ <branch> ●<dirty>` on the left, `session
-// <title> │ SOLO approvals on │ HH:MM` on the right, on bg1. As the width
-// shrinks the parts drop right to left — clock, session, approvals, branch —
-// and the project name is cut last. The brand and the mode badge never drop,
-// and neither does `approvals OFF`: full access must stay unmissable.
+// <title> │ approvals on │ HH:MM` on the right, on bg1. As the width shrinks
+// the parts drop right to left — clock, session, approvals, branch — and the
+// project name is cut last. The brand never drops, and neither does
+// `approvals OFF`: full access must stay unmissable.
 
 import { BRANCH, BRAND } from '../../core/src/ui/glyphs.js';
 import type { UiTheme } from '../../core/src/ui/style.js';
@@ -19,7 +19,6 @@ import { badge } from './ui/marks.js';
 import { fillLine } from './ui/surface.js';
 
 export interface HeaderInfo {
-  readonly mode: 'solo' | 'orchestrator';
   readonly approvalsSkipped: boolean;
   /** Basename of the project root. */
   readonly project?: string;
@@ -63,13 +62,7 @@ export function renderHeader(
     info.branch === undefined || info.branch === ''
       ? ''
       : `${ui.fg('fg2')(`  ${BRANCH} `)}${ui.fg('fg1')(info.branch)}${dirty}`;
-  const orchestrator = info.mode === 'orchestrator';
-  const mode = badge(
-    ui,
-    orchestrator ? 'ORCHESTRATOR' : 'SOLO',
-    orchestrator ? 'accent' : 'mode',
-  );
-  const approvals = `${ui.fg('fg2')(' approvals ')}${
+  const approvals = `${ui.fg('fg2')('approvals ')}${
     info.approvalsSkipped
       ? ui.style({ fg: 'err', bold: true })('OFF (full-access)')
       : ui.fg('ok')('on')
@@ -91,7 +84,7 @@ export function renderHeader(
     const parts = [
       waiting,
       rung.session ? session : '',
-      `${mode}${rung.approvals ? approvals : ''}`,
+      rung.approvals ? approvals : '',
       rung.clock ? clock : '',
     ].filter((part) => part !== '');
     return `${parts.join(sep)} `;
@@ -120,7 +113,7 @@ export function renderHeader(
   if (visibleWidth(brand) + 2 + visibleWidth(r) <= w) {
     return fill(leftRight(left(last), r, w));
   }
-  return fill(fitLine(`${brand}${mode}`, w));
+  return fill(fitLine(keepOff ? `${brand}${approvals}` : brand, w));
 }
 
 /** At most this many cells of the first prompt name the session. */
@@ -181,23 +174,13 @@ export type HintContext =
   | 'overlay'
   | 'palette'
   | 'model'
-  | 'blocks'
-  // Issue #465: the orchestrator dashboard, and its `/` filter.
-  | 'dashboard'
-  | 'filter'
-  // Issue #466: the dashboard's dispatch box, messaging or new-worker.
-  | 'dispatch'
-  | 'dispatchNew';
+  | 'blocks';
 
 export interface HintSetOptions {
-  /** Whether a busy turn takes follow-ups (the solo lane's inbox). */
-  readonly queues?: boolean;
   /** Whether `@` completes files (a file source exists). */
   readonly files?: boolean;
   /** The newline key that works on this terminal (`⇧⏎` or `^J`). */
   readonly newline?: string;
-  /** Issue #465: a run exists, so `tab` goes to its dashboard. */
-  readonly dashboard?: boolean;
 }
 
 export interface HintSet {
@@ -270,45 +253,6 @@ export function keyHintSet(
       right: ['esc', 'back'],
     };
   }
-  // Issue #465: the orchestrator dashboard (04-E keys row).
-  if (context === 'dashboard') {
-    return {
-      hints: [
-        ['↑↓', 'select'],
-        ['⏎', 'open'],
-        ['a', 'answer awaiting'],
-        ['m', 'message'],
-        ['^N', 'new worker'],
-        ['x', 'stop'],
-        ['r', 'retry'],
-        ...bound('panel.diff', 'diff'),
-        ['/', 'filter'],
-        ['tab', 'manager'],
-      ],
-      ...quitHint(),
-    };
-  }
-  if (context === 'dispatch' || context === 'dispatchNew') {
-    return {
-      hints: [
-        ['⏎', 'send'],
-        ['↑↓', 'worker'],
-        ...(context === 'dispatchNew'
-          ? [['tab', 'role'] as const, ['^N', 'message instead'] as const]
-          : [['^N', 'new worker instead'] as const]),
-      ],
-      right: ['esc', 'back'],
-    };
-  }
-  if (context === 'filter') {
-    return {
-      hints: [
-        ['type', 'filter workers'],
-        ['⏎', 'keep'],
-      ],
-      right: ['esc', 'clear'],
-    };
-  }
   // Issue #461: the model picker (03-D).
   if (context === 'model') {
     return {
@@ -330,16 +274,13 @@ export function keyHintSet(
     };
   }
   if (context === 'working') {
-    const queues = options.queues !== false;
     return {
       hints: [
         ...bound('app.cancel', 'interrupt'),
-        ...(queues
-          ? [['⏎', 'queue'] as const, ...bound('prompt.steer', 'steer')]
-          : []),
+        ['⏎', 'queue'],
+        ...bound('prompt.steer', 'steer'),
         ...bound('transcript.expand', 'expand output'),
         ...bound('app.palette', 'palette'),
-        ...(options.dashboard === true ? [['tab', 'dashboard'] as const] : []),
       ],
       ...quitHint(),
     };
@@ -353,7 +294,6 @@ export function keyHintSet(
       ...bound('app.palette', 'palette'),
       ...bound('panel.diff', 'diff'),
       ...bound('panel.journal', 'journal'),
-      ...(options.dashboard === true ? [['tab', 'dashboard'] as const] : []),
     ],
     ...quitHint(),
   };

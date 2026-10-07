@@ -28,7 +28,6 @@ const seen: Array<Record<string, unknown> | undefined> = [];
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
-  vi.stubEnv('KUBIC_WORKER_ID', '');
   seen.length = 0;
 });
 

@@ -36,7 +36,7 @@
 // converter, the repo is unreleased (§21).
 
 import { dirname, join } from 'node:path';
-import type { RunMode } from '../../../agents/src/budget.js';
+import type { RunMode } from '../../../agents/src/policy.js';
 import type {
   BridgeFileInfo,
   FileBridge,
@@ -111,11 +111,7 @@ export interface KubicSessionMeta {
   cwd: string;
   createdAt: string;
   workspace?: string;
-  // Issue #164 (§22–§23): the orchestrate run this session belongs to —
-  // the manager session's id for a worker, absent for a root (a solo run,
-  // a manager record itself). Plus the role/agent the run spawned it as.
-  // Linkage only: never a transcript, message history or entry reference.
-  parentSessionId?: string;
+  // The role and agent the session runs as, when the caller records them.
   role?: string;
   agentId?: string;
   // Issue #265 (§22.3): a forked session's lane runs a FORK of the source's
@@ -140,7 +136,6 @@ export const KubicSessionDoc = defineDoc<{
   workspace?: string;
   conversation?: number;
   forkedFrom?: { session: string; at: number };
-  parentSessionId?: string;
   role?: string;
   agentId?: string;
   mode?: RunMode;
@@ -536,12 +531,6 @@ function metaFrom(
   if (cwd === undefined || createdAt === undefined) return undefined;
   const conversation = value.conversation;
   const forkedFrom = value.forkedFrom as Record<string, unknown> | undefined;
-  const parentSessionId =
-    typeof value.parentSessionId === 'string' &&
-    value.parentSessionId !== '' &&
-    isSessionId(value.parentSessionId)
-      ? value.parentSessionId
-      : undefined;
   const role =
     typeof value.role === 'string' && value.role !== ''
       ? value.role
@@ -556,7 +545,6 @@ function metaFrom(
     ...(typeof value.workspace === 'string' && value.workspace !== ''
       ? { workspace: value.workspace }
       : {}),
-    ...(parentSessionId === undefined ? {} : { parentSessionId }),
     ...(role === undefined ? {} : { role }),
     ...(agentId === undefined ? {} : { agentId }),
     // Issue #278 (§19): only the two RunMode spellings survive the read —
@@ -680,12 +668,6 @@ export async function forkSession(
       ...(sourceMeta.workspace === undefined
         ? {}
         : { workspace: sourceMeta.workspace }),
-      // Issue #164: a fork stays in its run's tree — the copied document
-      // already carries the ancestry, and the header must agree with it so
-      // listSessions sees the lineage before the first attach re-syncs.
-      ...(sourceMeta.parentSessionId === undefined
-        ? {}
-        : { parentSessionId: sourceMeta.parentSessionId }),
       ...(sourceMeta.role === undefined ? {} : { role: sourceMeta.role }),
       ...(sourceMeta.agentId === undefined
         ? {}
@@ -780,11 +762,6 @@ function writeSessionHeader(
       cwd: meta.cwd,
       createdAt: meta.createdAt,
       ...(meta.workspace === undefined ? {} : { workspace: meta.workspace }),
-      // Issue #164: the listing projection carries the ancestry, so
-      // listSessions surfaces the tree without opening any storage.
-      ...(meta.parentSessionId === undefined
-        ? {}
-        : { parentSessionId: meta.parentSessionId }),
       ...(meta.role === undefined ? {} : { role: meta.role }),
       ...(meta.agentId === undefined ? {} : { agentId: meta.agentId }),
       ...(meta.mode === undefined ? {} : { mode: meta.mode }),
@@ -878,7 +855,6 @@ export async function createSession(
     id?: string;
     cwd: string;
     workspace?: string;
-    parentSessionId?: string;
     role?: string;
     agentId?: string;
     // Issue #278 (§19): the run's mode, recorded in the creating commit.
@@ -888,14 +864,6 @@ export async function createSession(
 ): Promise<SessionHandle> {
   const sessionId = opts.id ?? uuidv7();
   if (!isSessionId(sessionId)) throw new SessionIdError(sessionId);
-  // Issue #164: the parent link is a session id or nothing — a value that
-  // cannot name a session directory is refused before anything is written.
-  if (
-    opts.parentSessionId !== undefined &&
-    !isSessionId(opts.parentSessionId)
-  ) {
-    throw new SessionIdError(opts.parentSessionId);
-  }
   const sessionDir = sessionDirOf(store, sessionId);
   // Refusals before the lock: a session that already exists is never
   // re-created over (0.87's `Session already exists: <id>`, same message),
@@ -916,9 +884,6 @@ export async function createSession(
       cwd: opts.cwd,
       createdAt: new Date().toISOString(),
       ...(opts.workspace === undefined ? {} : { workspace: opts.workspace }),
-      ...(opts.parentSessionId === undefined
-        ? {}
-        : { parentSessionId: opts.parentSessionId }),
       ...(opts.role === undefined ? {} : { role: opts.role }),
       ...(opts.agentId === undefined ? {} : { agentId: opts.agentId }),
       ...(opts.mode === undefined ? {} : { mode: opts.mode }),
@@ -936,8 +901,6 @@ export async function createSession(
         doc.cwd = meta.cwd;
         doc.createdAt = meta.createdAt;
         if (meta.workspace !== undefined) doc.workspace = meta.workspace;
-        if (meta.parentSessionId !== undefined)
-          doc.parentSessionId = meta.parentSessionId;
         if (meta.role !== undefined) doc.role = meta.role;
         if (meta.agentId !== undefined) doc.agentId = meta.agentId;
         if (meta.mode !== undefined) doc.mode = meta.mode;
@@ -1051,7 +1014,6 @@ export async function attachSession(
         header.cwd !== meta.cwd ||
         header.createdAt !== meta.createdAt ||
         header.workspace !== meta.workspace ||
-        header.parentSessionId !== meta.parentSessionId ||
         header.role !== meta.role ||
         header.agentId !== meta.agentId
       ) {

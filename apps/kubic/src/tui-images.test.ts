@@ -147,19 +147,16 @@ function startSession(
 // One `kubic tui` run over a stub lane: the routing decision (which lane a
 // submit reaches) is what these tests observe, so no provider is involved.
 function startStubSession(
-  mode: 'solo' | 'orchestrator',
   // `hold: true` keeps the first turn in flight until `release()` is called,
   // so a test can act while the lane is busy (the echo still holds its
   // images). The default settles immediately.
   options: { readonly hold?: boolean } = {},
 ): Session & {
   readonly admitted: Array<{ prompt: string; images: number }>;
-  readonly objectives: string[];
   readonly release: () => void;
 } {
   const fake = recordingTerminal();
   const admitted: Array<{ prompt: string; images: number }> = [];
-  const objectives: string[] = [];
   let releaseTurn: (() => void) | undefined;
   const held = new Promise<void>((resolve) => {
     releaseTurn = resolve;
@@ -179,25 +176,17 @@ function startStubSession(
     kills: { track: () => {}, drain: () => [] },
     context: { signal: new AbortController().signal },
   };
-  const drive = {
-    run: async (objective: string) => {
-      objectives.push(objective);
-      return { status: 'completed' as const };
-    },
-  };
   const exit = runTuiCommand(
-    mode === 'orchestrator' ? { orchestrator: true } : {},
+    {},
     {
       out: () => {},
       createTerminal: () => fake.terminal,
       colorLevel: 'none',
-      isGitRepo: () => true,
       bootLane: async (sessionId?: string) =>
         ({
           sessionId: sessionId ?? 's1',
           model: 'faux/test',
           loop,
-          orchestrator: drive,
         }) as unknown as TuiLaneBoot,
     },
   );
@@ -206,7 +195,6 @@ function startStubSession(
     exit,
     boots: [],
     admitted,
-    objectives,
     release: () => releaseTurn?.(),
   };
 }
@@ -367,7 +355,7 @@ describe('kubic tui /image (issue #338)', () => {
     const root = tmpRoot();
     const shot = join(root, 'shot.png');
     writeFileSync(shot, PNG);
-    const { fake, exit, admitted, release } = startStubSession('solo', {
+    const { fake, exit, admitted, release } = startStubSession({
       hold: true,
     });
     await waitFor(() => fake.counts.started === 1);
@@ -396,8 +384,6 @@ describe('kubic tui /image (issue #338)', () => {
     expect(await exit).toBe(0);
   });
 
-  // Issue #338 review: the /model drop and the orchestrator refusal were
-  // claimed by the report and the docs but pinned by no test.
   it('drops pending attachments when /model switches to a text-only model', async () => {
     const root = tmpRoot();
     const shot = join(root, 'shot.png');
@@ -442,43 +428,6 @@ describe('kubic tui /image (issue #338)', () => {
     expect(await exit).toBe(0);
   });
 
-  it('keeps pending attachments when the orchestrator lane refuses them', async () => {
-    const root = tmpRoot();
-    const shot = join(root, 'shot.png');
-    writeFileSync(shot, PNG);
-    const { fake, exit, admitted, objectives } =
-      startStubSession('orchestrator');
-    await waitFor(() => fake.counts.started === 1);
-
-    for (const ch of `/image ${shot}`) fake.feed(ch);
-    fake.feed('\r');
-    await waitFor(() => fake.writes.join('').includes('image attached'));
-
-    for (const ch of 'do it') fake.feed(ch);
-    fake.feed('\r');
-    await waitFor(() =>
-      fake.writes
-        .join('')
-        .includes(
-          'image attachments need the solo lane — switch back with ctrl+g',
-        ),
-    );
-    expect(objectives).toEqual([]);
-    expect(admitted).toEqual([]);
-
-    // Ctrl-G back to solo, then Enter: the draft the refusal handed back
-    // rides with the KEPT attachment — the refusal was "not here", not
-    // "dropped".
-    fake.feed('\x07');
-    fake.feed('\r');
-    await waitFor(() => admitted.length === 1);
-    expect(admitted).toEqual([{ prompt: 'do it', images: 1 }]);
-
-    fake.feed('\x03');
-    fake.feed('\x03');
-    expect(await exit).toBe(0);
-  });
-
   // Issue #338 review: `readFileRange` → `openSync` blocks the event loop
   // forever on a FIFO with no writer (and on device nodes), so the
   // regular-file check must come first — no Ctrl-C could ever run.
@@ -507,7 +456,7 @@ describe('kubic tui /image (issue #338)', () => {
   // Issue #338 review: the payload used to be decoded before the size check,
   // so an oversize paste allocated a second, larger buffer first.
   it('refuses an oversize inline paste without decoding it', async () => {
-    const { fake, exit } = startStubSession('solo');
+    const { fake, exit } = startStubSession();
     await waitFor(() => fake.counts.started === 1);
 
     fake.feed(
@@ -529,7 +478,7 @@ describe('kubic tui /image (issue #338)', () => {
   // An unterminated sequence past the reassembly cap is dropped by the
   // scanner — no payload is ever held — and the operator is still told why.
   it('drops an unterminated oversize paste instead of buffering it', async () => {
-    const { fake, exit } = startStubSession('solo');
+    const { fake, exit } = startStubSession();
     await waitFor(() => fake.counts.started === 1);
 
     // Three calls, like a real pty. The second pushes the held sequence past
@@ -568,7 +517,7 @@ describe('kubic tui /image (issue #338)', () => {
   // Issue #338 review, cycle 2: an unterminated sequence that never completes
   // must not swallow the operator's typing for the rest of the session.
   it('drops an unterminated sequence after a short idle window', async () => {
-    const { fake, exit } = startStubSession('solo');
+    const { fake, exit } = startStubSession();
     await waitFor(() => fake.counts.started === 1);
 
     fake.feed('\x1b]1337;File=name=x;inline=1:AAAA');
@@ -591,7 +540,7 @@ describe('kubic tui /image (issue #338)', () => {
   // that gets you into this state) would otherwise swallow every later
   // keystroke, Ctrl-C included, until stdin closed.
   it('gives input back when an oversize paste never terminates', async () => {
-    const { fake, exit } = startStubSession('solo');
+    const { fake, exit } = startStubSession();
     await waitFor(() => fake.counts.started === 1);
 
     // One call: the sequence is already past the cap when it arrives, so no

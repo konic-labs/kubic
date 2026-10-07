@@ -4,7 +4,7 @@
 // (the binary's standard lane path — the same one `kubic run` drives);
 // the settled lane terminus is mapped into replay's §78 subset
 // (0/1/2/5/6): the four known termini pass through, anything coarser
-// (budget/approval/usage) coarsens to failed with the summary preserved
+// (turn limit/approval/usage) coarsens to failed with the summary preserved
 // — the envelope still says exactly why the re-execution did not
 // complete. A throwing lane maps to failed (never a rejection past the
 // CLI), and an empty objective is refused before the lane is touched.

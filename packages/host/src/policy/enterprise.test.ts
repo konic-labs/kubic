@@ -12,8 +12,8 @@ import {
   resolveEffectivePolicy,
 } from './enterprise.js';
 
-describe('§58 vocabulary bridge (issue #288)', () => {
-  const S58_EXAMPLE = `[policy]
+describe('policy vocabulary bridge', () => {
+  const POLICY_EXAMPLE = `[policy]
 allowed_models = ["claude-sonnet-4-6", "local/*"]
 allowed_providers = ["anthropic", "local"]
 allowed_tools = ["read", "grep", "find", "ls", "bash", "edit", "write", "git_diff"]
@@ -23,18 +23,15 @@ network_policy = "proxy"
 allowed_domains = ["registry.npmjs.org", "github.com"]
 
 filesystem_policy = "workspace-only"
-require_credential_broker = true
-deny_local_credentials = true
 
 data_policy = "no-external-training"
 logging_policy = "full-audit"
-agent_policy = { max_agents = 2, max_cost_usd = 5.0 }
 `;
 
-  it('translates the §58 example into engine leaves', async () => {
+  it('translates the policy example into engine leaves', async () => {
     const mod = await import('./enterprise.js');
     const { parseTomlConfig } = await import('../config/config.js');
-    const layer = mod.layerPolicyFromConfig(parseTomlConfig(S58_EXAMPLE));
+    const layer = mod.layerPolicyFromConfig(parseTomlConfig(POLICY_EXAMPLE));
     expect(layer.tools?.allow).toContain('bash');
     expect(layer.tools?.deny).toEqual(['network_fetch']);
     expect(layer.models?.allowed).toEqual(['claude-sonnet-4-6', 'local/*']);
@@ -48,15 +45,10 @@ agent_policy = { max_agents = 2, max_cost_usd = 5.0 }
     ]);
     // 'workspace-only' is the engine's 'workspace-write' level.
     expect(layer.filesystem?.level).toBe('workspace-write');
-    expect(layer.credentials).toEqual({
-      requireCredentialBroker: true,
-      denyLocalCredentials: true,
-    });
     // Values with no enforceable engine leaf are carried, never dropped —
     // doctor reports them (the §58 "never silent" rule).
     expect(layer.data?.policy).toBe('no-external-training');
     expect(layer.logging?.policy).toBe('full-audit');
-    expect(layer.agent).toEqual({ maxWorkers: 2, maxCostUsd: 5 });
   });
 
   it('returns an empty layer for a config with no [policy] section', async () => {
@@ -295,8 +287,8 @@ describe('list hygiene', () => {
   });
 });
 
-describe('section-58 surface', () => {
-  it('resolves models, filesystem, credentials, data, logging, agent, and audit sinks', async () => {
+describe('policy surface', () => {
+  it('resolves models, filesystem, data, logging and audit sinks', async () => {
     const mod = await import('./enterprise.js');
     const { policy } = mod.resolveEffectivePolicy([
       {
@@ -304,13 +296,8 @@ describe('section-58 surface', () => {
         policy: {
           models: { providers: ['local'], ids: ['llama3'], thinking: 'medium' },
           filesystem: { level: 'read', roots: ['/repo'] },
-          credentials: {
-            requireCredentialBroker: true,
-            denyLocalCredentials: true,
-          },
           data: { retentionDays: 30, redactSecrets: true },
           logging: { level: 'info', destinations: ['audit'] },
-          agent: { maxWorkers: 2, maxCostUsd: 5 },
           audit: { sinks: [{ kind: 'syslog', target: 'local0' }] },
         },
       },
@@ -320,131 +307,23 @@ describe('section-58 surface', () => {
     expect(mod.isModelAllowed(policy, 'local', 'llama3')).toBe(true);
     expect(mod.isModelAllowed(policy, 'local', 'other')).toBe(false);
     expect(policy.filesystem.level).toBe('read');
-    expect(policy.credentials.requireCredentialBroker).toBe(true);
-    expect(policy.agent.maxWorkers).toBe(2);
     expect(policy.audit.sinks[0]?.kind).toBe('syslog');
   });
 
-  it('lower layers cannot lift enterprise filesystem or credential denials', async () => {
+  it('lower layers cannot lift an enterprise filesystem denial', async () => {
     const mod = await import('./enterprise.js');
     const { policy, overriddenAttempts } = mod.resolveEffectivePolicy([
       {
         layer: 'enterprise',
-        policy: {
-          filesystem: { level: 'read' },
-          credentials: { requireCredentialBroker: true },
-        },
+        policy: { filesystem: { level: 'read' } },
       },
       {
         layer: 'project',
-        policy: {
-          filesystem: { level: 'full' },
-          credentials: { requireCredentialBroker: false },
-        },
+        policy: { filesystem: { level: 'full' } },
       },
     ]);
     expect(policy.filesystem.level).toBe('read');
-    expect(policy.credentials.requireCredentialBroker).toBe(true);
     expect(overriddenAttempts.length).toBeGreaterThan(0);
-  });
-});
-
-describe('credential broker', () => {
-  it('broker=true leaves no secret material in worker env or dump', async () => {
-    const mod = await import('./enterprise.js');
-    const fauxA = 'sk-faux-test-key-0001';
-    const fauxB = 'AKIAFAUXTEST00000001';
-    const { policy } = mod.resolveEffectivePolicy([
-      {
-        layer: 'enterprise',
-        policy: { credentials: { requireCredentialBroker: true } },
-      },
-    ]);
-    const built = mod.buildBrokeredWorkerEnv(
-      { API_KEY: fauxA, TOKEN: `prefix-${fauxB}-suffix` },
-      [
-        { ref: '$API_KEY', value: fauxA },
-        { ref: '$TOKEN', value: fauxB },
-      ],
-      policy,
-    );
-    const dump = JSON.stringify(built.env);
-    expect(dump).not.toContain(fauxA);
-    expect(dump).not.toContain(fauxB);
-    expect(() =>
-      mod.assertNoSecretMaterial(built.env, [fauxA, fauxB]),
-    ).not.toThrow();
-    expect(built.env.API_KEY).toContain('broker:');
-  });
-
-  it('denyLocalCredentials refuses local credential keys in worker env', async () => {
-    const mod = await import('./enterprise.js');
-    const { policy } = mod.resolveEffectivePolicy([
-      {
-        layer: 'enterprise',
-        policy: { credentials: { denyLocalCredentials: true } },
-      },
-    ]);
-    expect(() =>
-      mod.assertNoLocalCredentials({ GITHUB_TOKEN: 'ghp_faux0001' }, policy),
-    ).toThrow(mod.PolicyDeniedError);
-  });
-
-  it('broker=true refuses unlisted secret-shaped values (no fail-open passthrough)', async () => {
-    const mod = await import('./enterprise.js');
-    const { policy } = mod.resolveEffectivePolicy([
-      {
-        layer: 'enterprise',
-        policy: { credentials: { requireCredentialBroker: true } },
-      },
-    ]);
-    expect(() =>
-      mod.buildBrokeredWorkerEnv({ EVIL: 'sk-faux-test-key-0001' }, [], policy),
-    ).toThrow(mod.PolicyDeniedError);
-  });
-
-  it('sentinels keep every replaced secret per key', async () => {
-    const mod = await import('./enterprise.js');
-    const fauxA = '«redacted:sk-…»';
-    const fauxB = '«redacted:AKIA…»';
-    const { policy } = mod.resolveEffectivePolicy([
-      {
-        layer: 'enterprise',
-        policy: { credentials: { requireCredentialBroker: true } },
-      },
-    ]);
-    const built = mod.buildBrokeredWorkerEnv(
-      { COMBO: `${fauxA}+${fauxB}` },
-      [
-        { ref: '$A', value: fauxA },
-        { ref: '$B', value: fauxB },
-      ],
-      policy,
-    );
-    expect(built.env.COMBO).toBe('broker:$A+broker:$B');
-    expect(built.sentinels.COMBO).toEqual(['broker:$A', 'broker:$B']);
-  });
-
-  it('denyLocalCredentials refuses secret-shaped values under innocuous keys', async () => {
-    const mod = await import('./enterprise.js');
-    const { policy } = mod.resolveEffectivePolicy([
-      {
-        layer: 'enterprise',
-        policy: { credentials: { denyLocalCredentials: true } },
-      },
-    ]);
-    expect(() =>
-      mod.assertNoLocalCredentials({ CONFIG: 'sk-faux-test-key-0001' }, policy),
-    ).toThrow(mod.PolicyDeniedError);
-    expect(() =>
-      mod.assertNoLocalCredentials(
-        { API_KEY: 'sk-faux-test-key-0001' },
-        policy,
-      ),
-    ).toThrow(mod.PolicyDeniedError);
-    expect(() =>
-      mod.assertNoLocalCredentials({ CONFIG: 'plain-value' }, policy),
-    ).not.toThrow();
   });
 });
 
@@ -506,33 +385,7 @@ describe('enterprise doctor checks', () => {
   });
 });
 
-describe('case-transform bypass (fix cycle 2)', () => {
-  it('broker backstop refuses uppercase SK- values with no inventory', async () => {
-    const mod = await import('./enterprise.js');
-    const { policy } = mod.resolveEffectivePolicy([
-      {
-        layer: 'enterprise',
-        policy: { credentials: { requireCredentialBroker: true } },
-      },
-    ]);
-    expect(() =>
-      mod.buildBrokeredWorkerEnv({ EVIL: 'SK-FAUX-TEST-KEY-0001' }, [], policy),
-    ).toThrow(mod.PolicyDeniedError);
-  });
-
-  it('denyLocalCredentials refuses uppercase SK- values under innocuous keys', async () => {
-    const mod = await import('./enterprise.js');
-    const { policy } = mod.resolveEffectivePolicy([
-      {
-        layer: 'enterprise',
-        policy: { credentials: { denyLocalCredentials: true } },
-      },
-    ]);
-    expect(() =>
-      mod.assertNoLocalCredentials({ CONFIG: 'SK-FAUX-TEST-KEY-0001' }, policy),
-    ).toThrow(mod.PolicyDeniedError);
-  });
-
+describe('secret-shape case transforms', () => {
   it('redactSecretShapes replaces uppercase SK- material', async () => {
     const shapes = await import('./secret-shapes.js');
     expect(shapes.containsSecretShape('SK-FAUX-TEST-KEY-0001')).toBe(true);
@@ -542,43 +395,4 @@ describe('case-transform bypass (fix cycle 2)', () => {
     expect(redacted).not.toContain('SK-FAUX-TEST-KEY-0001');
     expect(redacted).toContain(shapes.REDACTED_SECRET);
   });
-
-  it.each(['BEARER', 'bEaReR', 'BeArEr'])(
-    'broker backstop refuses %s-scheme values with no inventory',
-    async (scheme) => {
-      const mod = await import('./enterprise.js');
-      const { policy } = mod.resolveEffectivePolicy([
-        {
-          layer: 'enterprise',
-          policy: { credentials: { requireCredentialBroker: true } },
-        },
-      ]);
-      expect(() =>
-        mod.buildBrokeredWorkerEnv(
-          { EVIL: `${scheme} faux-token-0001-abcdef` },
-          [],
-          policy,
-        ),
-      ).toThrow(mod.PolicyDeniedError);
-    },
-  );
-
-  it.each(['BEARER', 'bEaReR', 'BeArEr'])(
-    'denyLocalCredentials refuses %s-scheme values under innocuous keys',
-    async (scheme) => {
-      const mod = await import('./enterprise.js');
-      const { policy } = mod.resolveEffectivePolicy([
-        {
-          layer: 'enterprise',
-          policy: { credentials: { denyLocalCredentials: true } },
-        },
-      ]);
-      expect(() =>
-        mod.assertNoLocalCredentials(
-          { CONFIG: `${scheme} faux-token-0001-abcdef` },
-          policy,
-        ),
-      ).toThrow(mod.PolicyDeniedError);
-    },
-  );
 });

@@ -115,7 +115,7 @@ export function requireFailureLabel(
 // workspace, spawn, or provider), so it carries no capability signal —
 // pair builders must exclude (and tag) runs carrying these instead of
 // teaching the model that env breakage is a capability difference.
-// Capability codes (model_*, context_*, budget_*, approval_*,
+// Capability codes (model_*, context_*, run_limit, approval_*,
 // tool_invalid_args) stay eligible.
 export const ENV_FAILURE_CODES = [
   'tool_failed',

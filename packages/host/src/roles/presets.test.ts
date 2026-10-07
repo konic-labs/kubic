@@ -85,8 +85,7 @@ const TABLE: Record<string, Preset> = {
     },
   },
   // §12: full coding set; §12.1: workspace-write, shell true, git
-  // `worktree` — shipped as `workspace` (drift row 23: the level is spelled
-  // `workspace`, and in orchestrator mode the workspace IS the worktree).
+  // `workspace`.
   implementer: {
     tools: [
       'bash',
@@ -115,7 +114,7 @@ const TABLE: Record<string, Preset> = {
   },
   // §12.1: workspace-write, shell true, git false — so the tester runs tests
   // and fixes them, and holds no git tool (read-only or writer): git state
-  // changes are the implementer's or the manager's, never a test run's.
+  // changes are the implementer's, never a test run's.
   tester: {
     tools: ['bash', 'edit', 'find', 'grep', 'ls', 'read', 'write'],
     classes: {

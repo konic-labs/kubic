@@ -160,7 +160,6 @@ function ledger(overrides: Partial<OrgAuditRecord> = {}): OrgAuditRecord {
     permission: { permission: 'shell', approval: 'ask' },
     credential: { sentinel: '' },
     network: { host: '', port: 0, decision: 'allow', bytes: 0 },
-    mode: 'solo',
     posture: 'default',
     result: 'ok',
     reason: 'approved by user',
@@ -174,7 +173,6 @@ function input(
   return {
     sessionId: 'sess-1',
     agentId: 'root',
-    workerId: null,
     role: 'solo',
     prompt: 'read a.txt',
     entries: ENTRIES,
@@ -187,7 +185,7 @@ function input(
     env: { PATH: '/usr/bin' },
     changes: [change()],
     approvals: [ledger()],
-    skills: ['budget'],
+    skills: ['review'],
     startedAt: STARTED,
     endedAt: STARTED + 100,
     outcome: { terminus: 'completed', summary: 'faux: read returned 6 chars' },
@@ -201,9 +199,7 @@ describe('assembleRunTrajectory (issue #383)', () => {
     expect(() =>
       parseTrajectoryExport(JSON.parse(JSON.stringify(exported))),
     ).not.toThrow();
-    // Issue #285: the optional §71 budget block ships as schema v1.2
-    // (wholly optional on read — older records and readers unaffected).
-    expect(exported.schema_version).toBe('1.2');
+    expect(exported.schema_version).toBe('1.3');
   });
 
   it('carries the lane escalation record into model.escalations (issue #210)', () => {
@@ -369,7 +365,6 @@ describe('assembleRunTrajectory (issue #383)', () => {
       LANG: 'C',
       ANTHROPIC_API_KEY: 'sk-live',
       GITHUB_TOKEN: 'ghp_x',
-      KUBIC_ROLE_WRITER_TOKEN: 't',
     };
     const env = toolSpawnEnv(base);
     const exported = assembleRunTrajectory(input({ env }));
@@ -391,7 +386,7 @@ describe('assembleRunTrajectory (issue #383)', () => {
       worktree: '/ws',
       grantRef: 'role:solo',
     });
-    expect(a.resources).toEqual({ skills: ['budget'], promptTemplates: [] });
+    expect(a.resources).toEqual({ skills: ['review'], promptTemplates: [] });
     expect(a.prompt).toEqual({ text: 'read a.txt', constraints: [] });
   });
 
@@ -683,16 +678,16 @@ describe('trajectoryResultFor (issue #383): §78 terminus → §46 status + §52
     [{ terminus: 'completed', summary: 'ok' }, 'completed', null],
     [
       {
-        terminus: 'budget_exhausted',
-        summary: 'turn budget exhausted after 3 turns',
+        terminus: 'turn_limit',
+        summary: 'turn limit reached after 3 turns',
       },
-      'budget_exhausted',
-      'budget_exhausted',
+      'turn_limit',
+      'run_limit',
     ],
     [
       { terminus: 'timeout', summary: 'run timed out after 5ms' },
       'timeout',
-      'budget_exhausted',
+      'run_limit',
     ],
     [
       { terminus: 'cancelled', summary: 'run interrupted by SIGINT' },
@@ -742,7 +737,7 @@ describe('trajectoryResultFor (issue #383): §78 terminus → §46 status + §52
       'process_crashed',
     ],
     [
-      { terminus: 'failed', summary: 'extension startup failed closed' },
+      { terminus: 'failed', summary: 'skill load failed' },
       'failed',
       'process_crashed',
     ],

@@ -1,5 +1,5 @@
-// The one-row header and the key-hint sets (EPIC N, issue #453; docs/ui
-// 01-A, 01-M). Pure renders: plain text at depth none reads like the design.
+// The one-row header and the key-hint sets. Pure renders: plain text at
+// depth none reads like the design.
 import { describe, expect, it } from 'vitest';
 import { createUiTheme } from '../../core/src/ui/style.js';
 import { DARK_PALETTE } from '../../core/src/ui/tokens.js';
@@ -19,7 +19,6 @@ const plain = createUiTheme(DARK_PALETTE, 'none');
 const rich = createUiTheme(DARK_PALETTE, 'truecolor');
 
 const playground: HeaderInfo = {
-  mode: 'solo',
   approvalsSkipped: false,
   project: 'kubic-playground',
   branch: 'main',
@@ -36,29 +35,28 @@ describe('header (01-A)', () => {
     expect(renderHeader(plain, playground, 120)).toBe(
       between(
         ' ■ KUBIC │ kubic-playground  ⎇ main ●1',
-        'session cart-fix │ [SOLO] approvals on │ 14:02 ',
+        'session cart-fix │ approvals on │ 14:02 ',
         120,
       ),
     );
   });
 
-  it('drops the clock at 80 and the session at 60, never the brand or mode', () => {
-    expect(renderHeader(plain, playground, 80)).toBe(
+  it('drops the clock, the session, the posture and the branch in turn, never the brand', () => {
+    expect(renderHeader(plain, playground, 75)).toBe(
       between(
         ' ■ KUBIC │ kubic-playground  ⎇ main ●1',
-        'session cart-fix │ [SOLO] approvals on ',
-        80,
+        'session cart-fix │ approvals on ',
+        75,
       ),
     );
-    expect(renderHeader(plain, playground, 60)).toBe(
-      between(
-        ' ■ KUBIC │ kubic-playground  ⎇ main ●1',
-        '[SOLO] approvals on ',
-        60,
-      ),
+    expect(renderHeader(plain, playground, 70)).toBe(
+      between(' ■ KUBIC │ kubic-playground  ⎇ main ●1', 'approvals on ', 70),
     );
     expect(renderHeader(plain, playground, 40)).toBe(
-      between(' ■ KUBIC │ kubic-playground', '[SOLO] ', 40),
+      between(' ■ KUBIC │ kubic-playground  ⎇ main ●1', ' ', 40),
+    );
+    expect(renderHeader(plain, playground, 35)).toBe(
+      between(' ■ KUBIC │ kubic-playground', ' ', 35),
     );
   });
 
@@ -78,33 +76,19 @@ describe('header (01-A)', () => {
   it('keeps full access unmissable at every width', () => {
     const off = { ...playground, approvalsSkipped: true };
     expect(renderHeader(plain, off, 120)).toContain(
-      '[SOLO] approvals OFF (full-access) │ 14:02 ',
+      'approvals OFF (full-access) │ 14:02 ',
     );
     for (const width of [80, 60, 50]) {
       expect(renderHeader(plain, off, width)).toContain(
-        '[SOLO] approvals OFF (full-access)',
+        'approvals OFF (full-access)',
       );
     }
     // At 50 the project name is cut to make room for the posture.
     expect(renderHeader(plain, off, 50)).toBe(
-      ' ■ KUBIC │ ku… [SOLO] approvals OFF (full-access) ',
+      ' ■ KUBIC │ kubic-pla… approvals OFF (full-access) ',
     );
     expect(renderHeader(rich, off, 120)).toContain(
       rich.style({ fg: 'err', bold: true })('OFF (full-access)'),
-    );
-  });
-
-  it('names the orchestrator mode on an accent badge', () => {
-    const line = renderHeader(
-      plain,
-      { ...playground, mode: 'orchestrator' },
-      120,
-    );
-    expect(line).toContain('[ORCHESTRATOR] approvals on');
-    expect(
-      renderHeader(rich, { ...playground, mode: 'orchestrator' }, 120),
-    ).toContain(
-      rich.style({ fg: 'accent', inverse: true, bold: true })(' ORCHESTRATOR '),
     );
   });
 
@@ -180,7 +164,7 @@ describe('key-hint sets (01-M)', () => {
     ]);
   });
 
-  it('working: interrupt, queue and steer on the solo lane only', () => {
+  it('working: interrupt, queue and steer', () => {
     expect(keyHintSet('working', DEFAULT_KEY_REGISTRY)).toEqual({
       hints: [
         ['esc', 'interrupt'],
@@ -191,14 +175,6 @@ describe('key-hint sets (01-M)', () => {
       ],
       right: ['^C ^C', 'quit'],
     });
-    const orchestrator = keyHintSet('working', DEFAULT_KEY_REGISTRY, {
-      queues: false,
-    });
-    expect(orchestrator.hints.map(([, label]) => label)).toEqual([
-      'interrupt',
-      'expand output',
-      'palette',
-    ]);
   });
 
   it('approval and overlay contexts show the keys that act there', () => {

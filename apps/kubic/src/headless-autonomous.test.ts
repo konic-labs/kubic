@@ -36,7 +36,6 @@ function tmp(prefix: string): string {
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
-  vi.stubEnv('KUBIC_WORKER_ID', '');
 });
 
 afterEach(() => {
@@ -124,7 +123,6 @@ describe('kubic run --autonomous records the §19 mode (issue #278)', () => {
       const rows = readAuditLedger(auditLedgerDirFor(run.cwd));
       const start = rows.find((row) => row.what === 'run:start');
       expect(start).toMatchObject({
-        mode: 'solo',
         result: 'ok',
       });
       expect(start?.reason).toContain(

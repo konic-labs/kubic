@@ -85,7 +85,6 @@ describe('context gauge wiring (issue #347)', () => {
     const app = createTuiApp({
       sessionId: 's1',
       model: 'a/small',
-      mode: 'solo',
       approvalsSkipped: false,
       contextWindow: 1000,
       compactionThreshold: 500,
@@ -113,7 +112,6 @@ describe('context gauge wiring (issue #347)', () => {
     const app = createTuiApp({
       sessionId: 's1',
       model: 'a/small',
-      mode: 'solo',
       approvalsSkipped: false,
       contextWindow: 1000,
       compactionThreshold: 500,

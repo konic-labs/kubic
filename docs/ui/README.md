@@ -16,7 +16,6 @@ note id, for example `01-D` or `06-B`.
 | [01-session.html](01-session.html) | Solo session: transcript blocks, tool cards, inline diff, thinking, receipt, editor, status line, key hints; mid-turn state |
 | [02-approval.html](02-approval.html) | Inline approval cards: shell command, file edit with diff preview |
 | [03-palette.html](03-palette.html) | `^P` command palette and the bare `/model` picker |
-| [04-orchestrator.html](04-orchestrator.html) | Orchestrator dashboard |
 | [05-welcome.html](05-welcome.html) | First launch preflight; the no-key exit |
 | [06-cli.html](06-cli.html) | CLI: help, run, doctor, models, setup, errors |
 | [kubic.css](kubic.css) | Tokens and the character-grid rules the mockups use |
@@ -31,7 +30,7 @@ note id, for example `01-D` or `06-B`.
 - **Every block earns its row.** No permanent banners. Header, status line
   and key hints are one row each; tool output shows the useful slice.
 - **Say the state.** Waiting, working, failed and done each have one glyph
-  and one colour, used the same way in the TUI, the dashboard and the CLI.
+  and one colour, used the same way in the TUI and the CLI.
 - **Keys follow focus.** The hint row shows only what works right now.
   Esc backs out; it never quits.
 - **Plain when piped.** Colour, spinners and boxes are a terminal layer.
@@ -96,7 +95,6 @@ grey reads worse than none) and `bg3` selection uses bright black.
 | `^X` | Expand output, diffs and thinking |
 | `^O` / `^R` | Diff panel / journal panel |
 | `^T` | Tool tree |
-| `^G` | Solo ↔ orchestrator |
 | `Alt+M` / `Alt+T` | Model picker / cycle thinking (on macOS, Option must send Esc+; `/model` and `^P` always work) |
 | `?` | All keys (idle, empty editor) |
 | Block mode | `↑↓`/`jk` move, `⏎` view, `y` copy, `Y` copy command, `x` expand, `esc` back |
@@ -125,9 +123,6 @@ grey reads worse than none) and `bg3` selection uses bright black.
 | 03-D, 03-E pickers | [#461](https://github.com/konic-labs/kubic/issues/461) |
 | 05-A … 05-F preflight | [#462](https://github.com/konic-labs/kubic/issues/462) |
 | Block mode (01-D footer, 01-M) | [#463](https://github.com/konic-labs/kubic/issues/463) |
-| 04 data: activity, run phases, diff stats | [#464](https://github.com/konic-labs/kubic/issues/464) |
-| 04-A, 04-B, 04-C, 04-E dashboard | [#465](https://github.com/konic-labs/kubic/issues/465) |
-| 04-D preview, 04-F dispatch | [#466](https://github.com/konic-labs/kubic/issues/466) |
 | 02-D/E/F richer answers (`e`, `A`, `c`) | [#467](https://github.com/konic-labs/kubic/issues/467) |
 | Light/terminal themes, 256/16 colour, narrow terminals | [#468](https://github.com/konic-labs/kubic/issues/468) |
 

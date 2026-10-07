@@ -17,7 +17,7 @@
 import { redactSecrets } from '../../worker/src/lane/interceptors.js';
 
 // The summary's command budget: summaries are one-line labels (trajectory,
-// audit detail, the orchestrator's blocked indicator). The full command
+// audit detail). The full command
 // travels separately in the request's `command` field.
 export const SUMMARY_COMMAND_LIMIT = 120;
 

@@ -76,7 +76,7 @@ export const HASH_NOTICE_BYTES = 256 * 1024 * 1024;
 export const MAX_SWEEP_CONTENT_BYTES = 4 * 1024 * 1024;
 // Default size bound: the journal can never grow past this without an
 // explicit override. No default age bound — age pruning is opt-in via
-// retention config / `kubic clean` (issue #18's CLI).
+// `journal.retentionDays`.
 export const DEFAULT_JOURNAL_MAX_BYTES = 100 * 1024 * 1024;
 // Issue #350: the share of the kept entries a pass that prunes must drop.
 // The index counts against the bound now, so a store sitting at its cap would

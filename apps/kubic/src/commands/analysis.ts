@@ -1,4 +1,4 @@
-// Analysis surfaces: cost, perf, policy, audit, eval, benchmark, replay,
+// Analysis surfaces: cost, policy, audit, eval, benchmark, replay,
 // export. Registered on the root program by ../dispatch.ts; this module is
 // the one place their commander definitions live.
 //
@@ -6,8 +6,8 @@
 // `--flag=value`, `--`, generated `--help`, and the usage errors (unknown
 // option, missing value, a missing required option, excess operands: exit
 // 2 with one `error: …` line on stderr, core/cli/exit-codes.ts). Values
-// reach the handlers as raw strings: the vocabularies (budget kinds, audit
-// modes, replay tiers, dataset types) and the cross-flag rules stay each
+// reach the handlers as raw strings: the vocabularies (audit modes, replay
+// tiers, dataset types) and the cross-flag rules stay each
 // handler's semantics, so a secret-shaped value is redacted before it is
 // echoed and replay/export/eval keep their `--json` error envelopes.
 
@@ -20,10 +20,6 @@ import {
   type ExportCommandOptions,
 } from '../../../../packages/eval/src/export-cli.js';
 import type { CostOptions } from '../../../../packages/host/src/ops/cost/cost-cli.js';
-import {
-  BUDGET_KINDS,
-  type PerfOptions,
-} from '../../../../packages/host/src/ops/perf/perf-cli.js';
 import type { AuditOptions } from '../../../../packages/host/src/policy/audit-cli.js';
 import type { PolicyOptions } from '../../../../packages/host/src/policy/policy-cli.js';
 import type { ReplayCommandOptions } from '../../../../packages/host/src/replay/replay.js';
@@ -39,7 +35,6 @@ export type AnalysisRunner<Options> = (
 
 export interface AnalysisRunners {
   readonly cost: AnalysisRunner<CostOptions>;
-  readonly perf: AnalysisRunner<PerfOptions>;
   readonly policy: AnalysisRunner<PolicyOptions>;
   readonly audit: AnalysisRunner<AuditOptions>;
   readonly eval: AnalysisRunner<EvalOptions>;
@@ -116,27 +111,6 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
 
   command(
     program,
-    'perf',
-    'evaluate a perf budget over measured or supplied samples (exit 1 on a breach)',
-    [
-      'kubic perf --budget spawn --measure',
-      'kubic perf --budget attach --samples 5,10,12 --json',
-    ],
-  )
-    .requiredOption(
-      '--budget <kind>',
-      `budget to evaluate: ${BUDGET_KINDS.join('|')}`,
-    )
-    .option('--measure', 'measure real cycles on this machine')
-    .option(
-      '--samples <ms,ms,…>',
-      'fallback: comma-separated millisecond samples',
-    )
-    .option('--json', JSON_HELP)
-    .action(async (options) => done(await runners.perf(options, config)));
-
-  command(
-    program,
     'policy',
     'report the installed tool policy decision for one tool (a routing offer, never enforcement)',
     ['kubic policy --tool shell', 'kubic policy --tool network_fetch --json'],
@@ -149,15 +123,11 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     program,
     'audit',
     "query the repo's approval audit ledger (redacted)",
-    ['kubic audit', 'kubic audit --mode solo --result deny --json'],
+    ['kubic audit', 'kubic audit --result deny --json'],
   )
-    .option('--mode <mode>', 'filter on mode: solo|orchestrator')
     .option('--posture <name>', 'filter on posture')
     .option('--result <result>', 'filter on result: ok|deny|error')
-    .option(
-      '--session <id>',
-      'filter on orchestrator session: the run and the workers it spawned',
-    )
+    .option('--session <id>', 'filter on one session')
     .option('--json', JSON_HELP)
     .action(async (options) => done(await runners.audit(options, config)));
 

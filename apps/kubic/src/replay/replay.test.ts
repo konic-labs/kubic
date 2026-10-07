@@ -70,16 +70,16 @@ export function fixtureTrajectory(
       agentId: 'agent-1',
       pid: null,
       generation: 1,
-      worktree: '/repo/.kubic/wt/agent-1',
+      worktree: '/repo',
       model: 'acme/m1',
     },
     environment: {
       capturedFrom: 'used',
-      cwd: '/repo/.kubic/wt/agent-1',
+      cwd: '/repo',
       env: {},
     },
     worktree: {
-      path: '/repo/.kubic/wt/agent-1',
+      path: '/repo',
       baseRevision: 'abc123',
       branch: null,
     },
@@ -435,7 +435,7 @@ describe('replay deterministic (§47 different-model; §47.1 Deterministic)', ()
     const dir = tmpRoot();
     const { traj, lock } = detArgs(dir);
     const termini = [
-      'budget_exhausted',
+      'turn_limit',
       'approval_denied',
       'bogus-terminus',
       undefined,

@@ -1,6 +1,6 @@
-// Run guard (issue #84, follow-up to #81 live smoke G2): a never-settling
-// model terminates within the bound with a §78 budget_exhausted exit and
-// the journal:/usage:/trajectory: ref triple intact. Faux-only, real lane:
+// Run guard: a never-settling model terminates within the bound with a
+// timeout or turn-limit exit and the journal:/usage:/trajectory: ref
+// triple intact. Faux-only, real lane:
 // the wall clock, the turn count and the signal handlers all run for real —
 // zero network.
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -69,13 +69,13 @@ function spinningModels(rounds: number): MutableModels {
   return models;
 }
 
-// Issue #383: the trajectory ref names the written §46 file, and a guard
-// exhaustion is recorded with its §52 category (never a missing one).
-// Issue #280: the wall-clock bound is `timeout`, `--max-turns` stays
-// `budget_exhausted` — the §52 category follows the guard either way.
+// The trajectory ref names the written file, and a guard exhaustion is
+// recorded with its failure category (never a missing one): the wall-clock
+// bound is `timeout`, `--max-turns` is `turn_limit`, and both carry the
+// `run_limit` category.
 function expectGuardTrajectory(
   result: HeadlessRunResult,
-  status: 'timeout' | 'budget_exhausted',
+  status: 'timeout' | 'turn_limit',
 ): void {
   expect(
     result.trajectoryRef.endsWith(join(result.sessionId, 'trajectory.json')),
@@ -84,7 +84,7 @@ function expectGuardTrajectory(
     readFileSync(result.trajectoryRef, 'utf8'),
   );
   expect(exported.result.status).toBe(status);
-  expect(exported.result.failureCategory).toBe('budget_exhausted');
+  expect(exported.result.failureCategory).toBe('run_limit');
 }
 
 function out(): { lines: string[]; write: (line: string) => void } {
@@ -221,8 +221,7 @@ describe('run guard mapping (issue #84)', () => {
         env: new FakeExecutionEnv({}),
       },
     );
-    // Issue #280: the default/user wall clock is a timeout, not a budget
-    // breach — §71 budgets exist only when configured.
+    // The default/user wall clock is a timeout, never a turn limit.
     expect(result.terminus).toBe('timeout');
     expect(mapTerminusToExitCode(result.terminus)).toBe(1);
     expect(result.sessionId).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -238,7 +237,7 @@ describe('run guard mapping (issue #84)', () => {
   }, async () => {
     // The acceptance shape: the real headless runner behind the command's
     // own --timeout wiring, faux provider, real wall clock — the envelope
-    // names `timeout` and the exit code is 1, never the budget code.
+    // names `timeout` and the exit code is 1, never the turn-limit code.
     const o = out();
     const exit = await runRunCommand(
       { prompt: 'think forever', timeoutMs: 60, json: true },
@@ -295,7 +294,7 @@ describe('run guard mapping (issue #84)', () => {
     }
   });
 
-  it('maps a turn-spinning run to budget_exhausted once maxTurns is exceeded', {
+  it('maps a turn-spinning run to turn_limit once maxTurns is exceeded', {
     timeout: 10_000,
   }, async () => {
     const root = tmpRoot();
@@ -308,14 +307,12 @@ describe('run guard mapping (issue #84)', () => {
         env: new FakeExecutionEnv({}),
       },
     );
-    expect(result.terminus).toBe('budget_exhausted');
+    expect(result.terminus).toBe('turn_limit');
     expect(mapTerminusToExitCode(result.terminus)).toBe(3);
     expect(result.journalRef).toBe(`journal:${result.sessionId}`);
     expect(result.usageRef).toBe(`usage:${result.sessionId}`);
-    expectGuardTrajectory(result, 'budget_exhausted');
-    expect(result.error?.message).toMatch(
-      /turn budget exhausted after 3 turns/,
-    );
+    expectGuardTrajectory(result, 'turn_limit');
+    expect(result.error?.message).toMatch(/turn limit reached after 3 turns/);
   });
 
   it.each([{ timeoutMs: -1 }, { timeoutMs: 0 }, { maxTurns: 0 }])(

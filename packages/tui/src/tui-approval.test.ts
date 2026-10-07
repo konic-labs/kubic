@@ -54,7 +54,6 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     const fake = approvalHost();
@@ -85,7 +84,6 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     const fake = approvalHost();
@@ -106,7 +104,6 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     expect(app.handleInput('\u001b')).toEqual({
@@ -121,7 +118,6 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     const fake = approvalHost();
@@ -137,7 +133,6 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     const fake = approvalHost();
@@ -168,7 +163,6 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     const fake = approvalHost();
@@ -186,7 +180,6 @@ describe('the card at every width (issue #96 criterion 2; #459)', () => {
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     const fake = approvalHost();
@@ -209,7 +202,6 @@ describe('the card at every width (issue #96 criterion 2; #459)', () => {
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     const fake = approvalHost();
@@ -230,7 +222,6 @@ describe('the card at every width (issue #96 criterion 2; #459)', () => {
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
-      mode: 'solo',
       approvalsSkipped: false,
     });
     const pending = app.requestApproval(request());

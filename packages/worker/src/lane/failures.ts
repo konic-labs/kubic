@@ -1,11 +1,11 @@
 // §52 failure taxonomy + §53 retry chooser (issue #14, slice C).
 // Dotted codes preserve the distinctions retries depend on: collapsing
-// budget_exhausted into model_failed (or denied into timed_out) produces
+// run_limit into model_failed (or denied into timed_out) produces
 // retries that cannot succeed. The chooser maps a classified failure to
 // one of the six §53 strategies, escalation, or abandon — never a blind
-// repeat. Retry spend lands on RetryBudget, never on the task budget.
+// repeat. Retries are bounded by RetryBudget.
 
-import type { ResultErrorKind } from '../result.js';
+import type { ResultErrorKind } from './settle.js';
 
 export const FAILURE_CODES = [
   'model_failed',
@@ -21,7 +21,7 @@ export const FAILURE_CODES = [
   'workspace_failed',
   'context_overflow',
   'context_polluted',
-  'budget_exhausted',
+  'run_limit',
   'approval_denied',
   'approval_timed_out',
 ] as const;
@@ -32,10 +32,6 @@ export const FAILURE_CODES = [
 // completed-with-failure. This taxonomy covers lane-execution failures.
 
 export type FailureCode = (typeof FAILURE_CODES)[number];
-
-export function isFailureCode(value: unknown): value is FailureCode {
-  return (FAILURE_CODES as readonly string[]).includes(value as string);
-}
 
 export const RETRY_STRATEGIES = [
   'retry_same',
@@ -218,11 +214,11 @@ export function classifyFailure(
         strategy: 'retry_with_new_context',
       };
     }
-    case 'budget': {
+    case 'limit': {
       return {
-        code: 'budget_exhausted',
+        code: 'run_limit',
         remedy:
-          'Budget exhausted; raise the budget or narrow the task. Never retry.',
+          'A run limit stopped the run; raise --max-turns or --timeout, or narrow the task. Never retry.',
         strategy: 'abandon',
       };
     }
@@ -247,38 +243,10 @@ export function classifyFailure(
 export interface RetryHints {
   retryAfterMs?: number;
   now?: number;
-  // Retry spend metered OUTSIDE this budget (issue #209): the caller
-  // reports what retries have cost so far (task spend never counts —
-  // retry spend lands on the retry budget, §53). The orchestrator passes
-  // its BudgetUsage; a solo recovery passes its measured retry cost.
-  // Absent, only the attempts arm binds.
+  // What retries have cost so far, reported by the caller (task spend never
+  // counts — only retry spend lands on the retry budget). A recovery passes
+  // its measured retry cost; absent, only the attempts arm binds.
   costUsd?: number;
-}
-
-// §52 code → the ResultErrorKind it belongs to (issue #155): the inverse of
-// the classifier, for consumers that only see a code (a worker's own
-// report) and must still name the failure's domain.
-const KIND_BY_FAILURE_CODE: Readonly<Record<FailureCode, ResultErrorKind>> = {
-  model_failed: 'model',
-  model_refused: 'model',
-  provider_transient: 'provider',
-  provider_auth: 'provider',
-  tool_failed: 'tool',
-  tool_invalid_args: 'tool',
-  tool_timeout: 'tool',
-  tool_unavailable: 'tool',
-  process_crashed: 'process',
-  process_spawn_failed: 'process',
-  workspace_failed: 'workspace',
-  context_overflow: 'context',
-  context_polluted: 'context',
-  budget_exhausted: 'budget',
-  approval_denied: 'approval',
-  approval_timed_out: 'approval',
-};
-
-export function errorKindForFailureCode(code: FailureCode): ResultErrorKind {
-  return KIND_BY_FAILURE_CODE[code];
 }
 
 export interface RetryDecision {
@@ -287,10 +255,8 @@ export interface RetryDecision {
   reason: string;
 }
 
-// Product-policy retry budget (issue #209): attempts AND cost arms, spent
-// separately from any task budget. Constructed from the orchestrator's
-// RetryBudgetConfig ({maxAttempts, maxCostUsd}) wherever a retry policy
-// runs — same field names, no import (the lane never imports host).
+// Product-policy retry budget: an attempts arm and a cost arm, spent only
+// by retries ({maxAttempts, maxCostUsd}).
 export class RetryBudget {
   private spent = 0;
   readonly maxAttempts: number;

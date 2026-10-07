@@ -29,6 +29,7 @@ import {
   type Storage,
   Type,
 } from '../../worker/src/pi-boundary.js';
+import { TIMEOUT_REASON_MARKER } from './approval-timeout.js';
 import {
   type ApprovalRequest,
   ApprovalService,
@@ -39,7 +40,6 @@ import {
   triggerContextFor,
   validatePolicy,
 } from './approvals.js';
-import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
 
 const COMMAND = 'rm -rf /tmp/x';
 

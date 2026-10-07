@@ -14,7 +14,7 @@ export const AUTO_ESCALATION_TOOL_FAILURES = 3;
 // The execution failures that count (issue #210): the tool ran (or was
 // reached) and failed. tool_invalid_args is deliberately absent — bad
 // arguments are the model's own defect, retryable by correction, never a
-// reason to switch models. Everything else (model, provider, budget,
+// reason to switch models. Everything else (model, provider, run limits,
 // approval, context, aborts, completions) resets the streak.
 const TOOL_FAILURE_CODES: ReadonlySet<string> = new Set([
   'tool_failed',

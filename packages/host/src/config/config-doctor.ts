@@ -37,7 +37,6 @@ export interface ConfigDoctorInput {
   // does not apply (there is no commit path to protect).
   ignoreSplitMissing: string[];
   ignoreSplitApplicable: boolean;
-  budgetsConfigured: boolean;
   // The effective compaction policy line (issue #239), shared with
   // `kubic config` — appended to the passing detail so doctor names the
   // reserve the lanes run with. Absent on older callers (tests).
@@ -103,7 +102,6 @@ export function configDoctorProbe(input: ConfigDoctorInput): DepProbe {
     ok: true,
     detail:
       `${input.effectiveValues ?? 0} effective value(s); ${projectTrustDetail(input)}; ` +
-      `budgets ${input.budgetsConfigured ? 'configured' : 'none (§71: nothing is capped until you configure a limit)'}; ` +
       `runtime ignore split ${input.ignoreSplitApplicable ? 'complete' : 'not applicable (not a git repository)'}` +
       (input.compactionSummary === undefined
         ? ''
@@ -123,7 +121,6 @@ export function buildConfigDoctorInput(
           disposition: string;
         }>;
         projectTrusted: boolean;
-        budgetsConfigured: boolean;
         ignoreSplitMissing: string[];
         ignoreSplitApplicable: boolean;
         projectTrust?: ConfigDoctorInput['projectTrust'];
@@ -145,7 +142,6 @@ export function buildConfigDoctorInput(
       unexplainedKeys: [],
       ignoreSplitMissing: loaded.ignoreSplitMissing,
       ignoreSplitApplicable: loaded.ignoreSplitApplicable,
-      budgetsConfigured: false,
     };
   }
   return {
@@ -160,7 +156,6 @@ export function buildConfigDoctorInput(
       .map((value) => value.key),
     ignoreSplitMissing: loaded.ignoreSplitMissing,
     ignoreSplitApplicable: loaded.ignoreSplitApplicable,
-    budgetsConfigured: loaded.budgetsConfigured,
     ...(loaded.compactionSummary === undefined
       ? {}
       : { compactionSummary: loaded.compactionSummary }),

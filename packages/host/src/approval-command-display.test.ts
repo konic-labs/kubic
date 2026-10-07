@@ -1,10 +1,9 @@
-// Approval dialogs show what will actually run (issue #316; §41.2, §16.4). A
-// model can pad a harmless prefix past any character cap and hide a
-// destructive tail: the request therefore carries the FULL command
-// (control characters neutralized, secrets redacted), the summary never
-// truncates silently, and orchestrator worker asks forward the full command
-// to the manager's seat. Hermetic: temp dirs only, cleaned in afterEach.
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+// Approval dialogs show what will actually run. A model can pad a harmless
+// prefix past any character cap and hide a destructive tail: the request
+// therefore carries the FULL command (control characters neutralized,
+// secrets redacted) and the summary never truncates silently. Hermetic:
+// temp dirs only, cleaned in afterEach.
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -23,19 +22,6 @@ import {
   type TriggerContext,
   validatePolicy,
 } from './approvals.js';
-import {
-  buildOrchestratorRequest,
-  type OrchestratorApprovalRequest,
-} from './orchestrator/approvals/request.js';
-import { createApprovalSigner } from './orchestrator/approvals/seal.js';
-import {
-  ASKS_DIR,
-  answerWorkerAsk,
-  createWorkerAskRouter,
-  createWorkerMailboxSeat,
-  formatWorkerAskQuestion,
-  readPendingWorkerAsks,
-} from './orchestrator/approvals/worker-asks.js';
 
 const made: string[] = [];
 
@@ -61,13 +47,6 @@ function triggerContext(): TriggerContext {
     isNetworkCommand: () => false,
     isOutsideWorkspace: () => false,
   };
-}
-
-async function waitFor(condition: () => boolean): Promise<void> {
-  for (let i = 0; i < 500 && !condition(); i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 2));
-  }
-  expect(condition()).toBe(true);
 }
 
 describe('summaries never truncate silently (issue #316)', () => {
@@ -122,90 +101,6 @@ describe('the request carries the full command (issue #316)', () => {
     expect(request?.command).toBe(PADDED);
     expect(request?.command?.endsWith('; rm -rf ~/work')).toBe(true);
     expect(request?.key).toBe(approvalKey('bash', 'destructive-shell', args));
-  });
-});
-
-describe('orchestrator worker asks forward the full command (issue #316)', () => {
-  it('derives a full command and a marked summary from the args', () => {
-    const request = buildOrchestratorRequest({
-      trigger: 'destructive-shell',
-      toolName: 'bash',
-      args: { command: PADDED },
-      justification: 'clean the build output before rebuilding',
-      sessionId: 's',
-      agentId: 'worker-1',
-      role: 'worker',
-      worktree: '/wt',
-      provenance: { parentSessionId: 'p' },
-    });
-    expect(request.command).toBe(PADDED);
-    expect(request.summary).toMatch(/… \(\+\d+ chars\)$/);
-    expect(formatWorkerAskQuestion(request)).toContain(PADDED);
-  });
-
-  it('a worker ask delivers the full command to the manager seat', async () => {
-    const dir = tmp();
-    mkdirSync(join(dir, ASKS_DIR), { recursive: true });
-    // The manager's sealing authority here; the child seat verifies with its
-    // public half (issue #149).
-    const signer = createApprovalSigner();
-    const childSeat = createWorkerMailboxSeat({
-      dir,
-      maxPendingMs: 5000,
-      pollMs: 2,
-      verifyKey: signer.verifyKey,
-    });
-    const verdict = childSeat({
-      key: 'k',
-      capability: 'destructive-shell',
-      toolName: 'bash',
-      summary: summarizeRequest('bash', 'destructive-shell', {
-        command: PADDED,
-      }),
-      command: PADDED,
-      justification: 'clean the build output before rebuilding',
-    });
-    await waitFor(
-      () =>
-        readPendingWorkerAsks(dir, { verifyKey: signer.verifyKey }).length ===
-        1,
-    );
-    const published = readPendingWorkerAsks(dir, {
-      verifyKey: signer.verifyKey,
-    })[0];
-    if (published === undefined) throw new Error('no ask published');
-    const shown: OrchestratorApprovalRequest[] = [];
-    const router = createWorkerAskRouter({
-      dir,
-      maxPendingMs: 5000,
-      seat: async (request) => {
-        shown.push(request);
-        return { approved: false, reason: 'not now' };
-      },
-    });
-    const { request, args } = published;
-    const outcome = await router.ask({
-      trigger: request.trigger,
-      toolName: request.toolName,
-      args,
-      justification: request.justification,
-      sessionId: request.sessionId,
-      agentId: request.agentId,
-      role: request.role,
-      worktree: request.worktree,
-      provenance: request.provenance,
-    });
-    answerWorkerAsk(
-      dir,
-      published,
-      {
-        approved: false,
-        reason: outcome.approved ? 'unexpected' : outcome.reason,
-      },
-      signer,
-    );
-    await verdict;
-    expect(shown[0]?.command).toBe(PADDED);
   });
 });
 

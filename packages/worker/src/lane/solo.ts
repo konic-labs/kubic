@@ -37,7 +37,6 @@ import {
   type ModelThinkingLevel,
   type Registry,
   section,
-  type ToolRegistration,
 } from '../pi-boundary.js';
 import {
   assembleSystemPrompt,
@@ -128,14 +127,6 @@ export interface SoloPolicyOptions {
   classes?: PermissionClasses;
   interceptors?: PolicyInterceptorOptions;
   contributions?: ToolContribution[];
-  /**
-   * Issue #208: a before_tool gate registered as its own extension BEFORE
-   * the policy interceptors. Pi's before_tool chain stops at the first
-   * block, so a gate that must observe EVERY attempt (the run budget meter)
-   * has to register before the guards that may block it. The hooks land in
-   * the `kubic.budget` extension, which is installed first.
-   */
-  beforePolicyHooks?: () => HookRegistration[];
   /**
    * Issue #98: perf spans for every executed tool, registered as the
    * `kubic.spans` extension between policy and the Kubic extension. The
@@ -286,11 +277,6 @@ export interface SoloBootOptions {
   // extensions, and a caller-supplied selection could uninstall the tools,
   // the prompt and every policy hook silently (review #394 low 3).
   settings?: Omit<HarnessSettings, 'compaction' | 'extensions'>;
-  // Issue #154 (§14.2): tools that ask the HUMAN something (an orchestrator
-  // worker's `ask_user`). They are interactions, not capabilities: offered
-  // beside the base tools and outside the role / class / enterprise gates
-  // (which narrow what the agent may DO), but never under `--no-tools`.
-  interactionTools?: readonly ToolRegistration[];
 }
 
 function resolveStoredModel(
@@ -417,9 +403,7 @@ export async function bootSoloLane(
     // it is pruned with the session and never lands in the workspace.
     spill: createSessionSpillSink(options.session.dir),
   };
-  const interactionTools =
-    options.noTools === true ? [] : [...(options.interactionTools ?? [])];
-  const baseTools = [...kubicToolsToPiTools(toolContext), ...interactionTools];
+  const baseTools = kubicToolsToPiTools(toolContext);
   // §12.1/§40/§58 intersection (issues #99, #143, #288): the tools the
   // conversation offers and the tools the prompt advertises are ONE set —
   // base tools, narrowed by the permission classes when declared, by the
@@ -463,10 +447,6 @@ export async function bootSoloLane(
   effectiveToolNames = effectiveToolNames.filter((tool) =>
     registeredNames.has(tool),
   );
-  for (const tool of interactionTools) {
-    if (!effectiveToolNames.includes(tool.name))
-      effectiveToolNames.push(tool.name);
-  }
   // Without a role or enterprise gate, applyToolPolicy already installs the
   // class-derived allowlist; only the two narrowing paths need their own
   // activation (and their set can never exceed the class-derived one).
@@ -532,17 +512,10 @@ export async function bootSoloLane(
     }),
   };
 
-  // Registry install order = hook order (§20.5, #208): budget observes every
-  // attempt before the policy guards can block it, policy before spans, and
-  // the Kubic extension (tools + prompt) last. Nothing here is stored;
+  // Registry install order = hook order: policy before spans, and the
+  // Kubic extension (tools + prompt) last. Nothing here is stored;
   // conversations store extension names only, so a reopen re-installs them.
   const registry = createRegistry();
-  const budgetHooks = options.policy?.beforePolicyHooks?.();
-  if (budgetHooks !== undefined && budgetHooks.length > 0) {
-    registry.install(
-      defineExtension({ name: 'kubic.budget', hooks: [...budgetHooks] }),
-    );
-  }
   if (options.policy?.interceptors !== undefined) {
     registry.install(
       defineExtension({

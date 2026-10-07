@@ -27,7 +27,6 @@ function tmp(prefix: string): string {
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
   vi.stubEnv('KUBIC_PROVIDER', 'faux');
-  vi.stubEnv('KUBIC_WORKER_ID', '');
 });
 
 afterEach(() => {
@@ -66,25 +65,10 @@ describe('persistRunTrajectory (issue #383)', () => {
     };
   }
 
-  it('reads the worker identity from KUBIC_WORKER_ID / KUBIC_WORKER_GENERATION', () => {
-    const cases: [NodeJS.ProcessEnv, string | null, number][] = [
-      [{}, null, 0],
-      [{ KUBIC_WORKER_ID: '', KUBIC_WORKER_GENERATION: '3' }, null, 0],
-      [{ KUBIC_WORKER_ID: 'w1', KUBIC_WORKER_GENERATION: '3' }, 'w1', 3],
-      [{ KUBIC_WORKER_ID: 'w1', KUBIC_WORKER_GENERATION: '0' }, 'w1', 0],
-      [{ KUBIC_WORKER_ID: 'w1' }, 'w1', 0],
-      [{ KUBIC_WORKER_ID: 'w1', KUBIC_WORKER_GENERATION: '' }, 'w1', 0],
-      [{ KUBIC_WORKER_ID: 'w1', KUBIC_WORKER_GENERATION: 'x' }, 'w1', 0],
-      [{ KUBIC_WORKER_ID: 'w1', KUBIC_WORKER_GENERATION: '-2' }, 'w1', 0],
-      [{ KUBIC_WORKER_ID: 'w1', KUBIC_WORKER_GENERATION: '1.5' }, 'w1', 0],
-    ];
-    for (const [env, workerId, generation] of cases) {
-      const { exported } = persist(env);
-      expect(exported.identity.workerId, JSON.stringify(env)).toBe(workerId);
-      expect(exported.provenance.generation, JSON.stringify(env)).toBe(
-        generation,
-      );
-    }
+  it('records no worker identity and generation 0', () => {
+    const { exported } = persist({});
+    expect(exported.identity.workerId).toBeNull();
+    expect(exported.provenance.generation).toBe(0);
   });
 
   it('records the injected pid, the thinking level, no-vcs outside git and no model as none/none', () => {
@@ -102,31 +86,6 @@ describe('persistRunTrajectory (issue #383)', () => {
     // No journal or ledger yet: empty, never a failed write.
     expect(exported.diff).toEqual({ filesChanged: [], files: [] });
     expect(exported.approvals).toEqual([]);
-  });
-
-  // Issue #285 (§71): a budgeted run carries its limits, measured usage
-  // and breach; an unbounded run carries no block at all.
-  it('records the §71 budget block when the run was budgeted', () => {
-    const { exported } = persist(
-      {},
-      {
-        budget: {
-          limits: { maxToolCalls: 1 },
-          usage: { tokens: 10, costUsd: 0.01 },
-          exhausted: { limit: 'toolCalls', used: 2, max: 1 },
-        },
-      },
-    );
-    expect(exported.budget).toEqual({
-      limits: { maxToolCalls: 1 },
-      usage: { tokens: 10, costUsd: 0.01 },
-      exhausted: { limit: 'toolCalls', used: 2, max: 1 },
-    });
-  });
-
-  it('omits the §71 budget block when the run was unbounded', () => {
-    const { exported } = persist({});
-    expect(exported.budget).toBeUndefined();
   });
 
   it('carries the lane escalation record into model.escalations (issue #210)', () => {
@@ -157,27 +116,10 @@ describe('persistRunTrajectory (issue #383)', () => {
     expect(exported.model.thinking).toBeNull();
   });
 
-  it("names the manager's §67 task when the run was handed one (issue #191)", () => {
-    const { exported } = persist(
-      {},
-      {
-        role: 'implementer',
-        prompt: 'composed prompt',
-        task: {
-          taskId: 'sess-1:alpha',
-          objective: 'Plan step 1 of 1: ship it',
-          role: 'implementer',
-        },
-      },
-    );
-    expect(exported.task).toEqual({
-      taskId: 'sess-1:alpha',
-      objective: 'Plan step 1 of 1: ship it',
-      role: 'implementer',
-    });
-    // Without a task the identity stays the prompt-derived one.
-    const bare = persist({}, { prompt: 'composed prompt' });
-    expect(bare.exported.task.taskId).toMatch(/^prompt:/);
+  it('derives the task identity from the prompt', () => {
+    const { exported } = persist({}, { prompt: 'composed prompt' });
+    expect(exported.task.taskId).toMatch(/^prompt:/);
+    expect(exported.task.objective).toBe('composed prompt');
   });
 });
 

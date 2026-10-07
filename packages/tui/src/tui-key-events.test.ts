@@ -25,7 +25,6 @@ function app(): TuiApp {
   return createTuiApp({
     sessionId: SESSION,
     model: MODEL,
-    mode: 'solo',
     approvalsSkipped: false,
   });
 }

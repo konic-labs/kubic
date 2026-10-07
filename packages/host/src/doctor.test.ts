@@ -196,7 +196,6 @@ describe('runDoctorCommand', () => {
       'license:kubic',
       // Issue #58 honest-limits registration rides the same command.
       'limit:solo-no-isolation',
-      'limit:worktrees-writers-only',
       'limit:no-injection-prevention',
       'limit:policy-offer',
       'limit:journal-not-backup',
@@ -340,87 +339,6 @@ describe('runDoctorCommand', () => {
     );
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('PASS license:kubic (ok)');
-  });
-});
-
-describe('runDoctorCommand extension posture (issue #80)', () => {
-  it('reports loaded/refused counts from the same trust checks', async () => {
-    const lines: string[] = [];
-    const deps = cleanDeps((line: string) => lines.push(line));
-    deps.probeExtensions = () => ({
-      ok: true,
-      loaded: ['kubic/budget'],
-      refusedCount: 2,
-      detail:
-        'loaded 1 (kubic/budget: budget: none configured), refused 2 (owned-path traversal, remote-flag use)',
-    });
-    const code = await runDoctorCommand({}, deps);
-    expect(code).toBe(0);
-    expect(lines.join('\n')).toContain(
-      'PASS extension:bundle (ok): loaded 1 (kubic/budget: budget: none configured), refused 2 (owned-path traversal, remote-flag use)',
-    );
-  });
-
-  it('fails closed with exit 1 when the bundle dir is gone', async () => {
-    const lines: string[] = [];
-    const deps = cleanDeps((line: string) => lines.push(line));
-    deps.probeExtensions = () => ({
-      ok: false,
-      loaded: [],
-      refusedCount: 0,
-      detail:
-        'extension bundle dir missing: "skills/budget" not found (first-party bundle kubic/budget unavailable — refusing startup, not running bare)',
-    });
-    const code = await runDoctorCommand({}, deps);
-    expect(code).toBe(1);
-    expect(lines.join('\n')).toContain(
-      'FAIL extension:bundle (extension-posture): extension bundle dir missing',
-    );
-  });
-
-  it('fails a hand-fed ok with zero refused tripwires (defense in depth)', async () => {
-    const lines: string[] = [];
-    const deps = cleanDeps((line: string) => lines.push(line));
-    deps.probeExtensions = () => ({
-      ok: true,
-      loaded: ['kubic/budget'],
-      refusedCount: 0,
-      detail: 'loaded 1 (kubic/budget: budget: none configured), refused 0',
-    });
-    const code = await runDoctorCommand({}, deps);
-    expect(code).toBe(1);
-    expect(lines.join('\n')).toContain(
-      'FAIL extension:bundle (extension-posture)',
-    );
-  });
-
-  it('fails a hand-fed ok with an empty loaded list', async () => {
-    const lines: string[] = [];
-    const deps = cleanDeps((line: string) => lines.push(line));
-    deps.probeExtensions = () => ({
-      ok: true,
-      loaded: [],
-      refusedCount: 2,
-      detail: 'loaded 0, refused 2 (owned-path traversal, remote-flag use)',
-    });
-    const code = await runDoctorCommand({}, deps);
-    expect(code).toBe(1);
-    expect(lines.join('\n')).toContain(
-      'FAIL extension:bundle (extension-posture)',
-    );
-  });
-
-  it('maps a throwing extension probe to a structured fail', async () => {
-    const lines: string[] = [];
-    const deps = cleanDeps((line: string) => lines.push(line));
-    deps.probeExtensions = () => {
-      throw new Error('bundle disk gone');
-    };
-    const code = await runDoctorCommand({}, deps);
-    expect(code).toBe(1);
-    expect(lines.join('\n')).toContain(
-      'FAIL extension:bundle (extension-posture): bundle disk gone',
-    );
   });
 });
 
@@ -606,49 +524,6 @@ describe('state permissions (issue #361)', () => {
     const check = report.checks.find((c) => c.id === 'state:permissions');
     expect(check?.status).toBe('pass');
     expect(check?.detail).toMatch(/private \(0700\) or absent/);
-  });
-});
-
-describe('resource enforcement posture wiring (§82, issue #163)', () => {
-  it('adds the limit:resources check when the probe is wired', async () => {
-    const lines: string[] = [];
-    const code = await runDoctorCommand(
-      { json: true },
-      {
-        ...cleanDeps((line: string) => lines.push(line)),
-        resourceEnforcement: () => ({
-          platform: 'darwin',
-          memoryProbe: true,
-          diskProbe: true,
-          configured: {},
-        }),
-      },
-    );
-    const report = JSON.parse(lines.join('\n')) as {
-      checks: Array<{ id: string; status: string; detail: string }>;
-    };
-    const resources = report.checks.find(
-      (entry) => entry.id === 'limit:resources',
-    );
-    expect(resources?.status).toBe('warn');
-    expect(resources?.detail).toContain('enforced: wall clock');
-    expect(resources?.detail).toContain('NOT enforced: memory');
-    expect(code).toBe(0);
-  });
-
-  it('leaves the matrix unchanged when the probe is absent (legacy callers)', async () => {
-    const lines: string[] = [];
-    const code = await runDoctorCommand(
-      { json: true },
-      cleanDeps((line: string) => lines.push(line)),
-    );
-    const report = JSON.parse(lines.join('\n')) as {
-      checks: Array<{ id: string }>;
-    };
-    expect(report.checks.map((entry) => entry.id)).not.toContain(
-      'limit:resources',
-    );
-    expect(code).toBe(0);
   });
 });
 

@@ -642,7 +642,6 @@ describe('kubic run: models.json key use is audited (issue #359)', () => {
     expect(uses).toHaveLength(2);
     expect(uses[0]).toMatchObject({
       who: 'agent:root',
-      mode: 'solo',
       agent: { session: sessionId, role: 'root' },
       credential: { sentinel: 'sentinel:$GW_API_KEY' },
       permission: { permission: 'credential:use' },
@@ -721,7 +720,6 @@ describe('kubic run: models.json key use is audited (issue #359)', () => {
     expect(uses).toHaveLength(1);
     expect(uses[0]).toMatchObject({
       who: 'agent:root',
-      mode: 'solo',
       credential: { sentinel: `sentinel:${command}` },
       permission: { permission: 'credential:use' },
       reason: 'model-request:gw',

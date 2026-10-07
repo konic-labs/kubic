@@ -50,9 +50,6 @@ describe('settlement mapping (issue #11, slice C)', () => {
   });
 
   it('classifies harness error codes by keyword', () => {
-    expect(classifyHarnessError('budget_exhausted', 'no money').kind).toBe(
-      'budget',
-    );
     expect(classifyHarnessError('model_unavailable', 'gone').kind).toBe(
       'model',
     );

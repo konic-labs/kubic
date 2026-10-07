@@ -69,11 +69,6 @@ export const KEY_ACTIONS = {
     keys: ['?'],
     description: 'list every key (on an idle, empty editor)',
   },
-  'session.mode': {
-    scope: 'global',
-    keys: ['ctrl+g'],
-    description: 'switch solo / orchestrator between turns',
-  },
   'view.tree': {
     scope: 'global',
     keys: ['ctrl+t'],

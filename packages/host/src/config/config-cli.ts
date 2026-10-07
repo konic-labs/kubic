@@ -1,7 +1,7 @@
-// `kubic config` (issue #90; §35.1, §50, §78): the effective configuration
-// as it will actually run — every value with the layer that owns it, plus
-// the projections the product consumes (model, approvals, permissions,
-// journal retention, modes, budgets). Presentation only: the values arrive
+// `kubic config`: the effective configuration as it will actually run —
+// every value with the layer that owns it, plus the projections the product
+// consumes (model, approvals, permissions, journal retention). Presentation
+// only: the values arrive
 // through the same `loadRuntimeConfig` the composition root calls, so this
 // command can never report a value the runtime does not use.
 //
@@ -40,8 +40,8 @@ export function runConfigCommand(
   try {
     runtime = deps.load();
   } catch (error) {
-    // Fail closed and name the reason (§35.1/§36/§71): unknown keys, a
-    // distrusted project layer, secret refs, and budget keys all land here.
+    // Fail closed and name the reason: unknown keys, a distrusted project
+    // layer and secret refs all land here.
     diagnosticsOf(deps).error(
       redactSecretShapes(
         error instanceof Error ? error.message : String(error),

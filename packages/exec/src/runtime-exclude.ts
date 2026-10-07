@@ -1,12 +1,12 @@
 // Runtime-state exclude rules (issue #91; design §35, D34/D35).
 //
 // The split: `.kubic/config.toml` and `.kubic/roles/*.md` are committed —
-// `.kubic/{sessions,journal,artifacts,wt,orchestrator}/` is runtime state
+// `.kubic/{sessions,journal,artifacts,audit}/` is runtime state
 // and must never reach the commit path. This module ships the runtime
 // half into the repository's LOCAL, uncommitted exclude file
 // (`.git/info/exclude`), so:
 //
-//   * the first `kubic run` / `kubic orchestrate` in a user repo leaves no
+//   * the first `kubic run` in a user repo leaves no
 //     untracked `.kubic/` state behind (`git status --porcelain` stays
 //     clean),
 //   * a user's committed `.gitignore` is never dirtied by the tool, and
@@ -34,16 +34,15 @@ export const RUNTIME_EXCLUDE_ENTRIES = [
   '.kubic/sessions/',
   '.kubic/journal/',
   '.kubic/artifacts/',
-  '.kubic/wt/',
-  '.kubic/orchestrator/',
+  '.kubic/audit/',
 ] as const;
 
 // Managed-block markers. A later run replaces the block in place instead
 // of appending a duplicate, so repeated runs are idempotent and a rule
-// set that grows (this issue added `.kubic/orchestrator/`) re-syncs.
+// set that changes re-syncs.
 export const RUNTIME_EXCLUDE_BEGIN =
-  '# kubic runtime state (issue #91) — local, never committed';
-export const RUNTIME_EXCLUDE_END = '# end kubic runtime state (issue #91)';
+  '# kubic runtime state — local, never committed';
+export const RUNTIME_EXCLUDE_END = '# end kubic runtime state';
 
 export interface RuntimeExcludeText {
   text: string;
@@ -93,8 +92,8 @@ export function hasGitignoreMetacharacters(value: string): boolean {
   return value.startsWith('#') || GITIGNORE_METACHARACTERS.test(value);
 }
 
-// Display-only: strips the same set for a message that quotes a value back
-// (the scheduler's deny reasons). NEVER applied to a value that is written.
+// Display-only: strips the same set for a message that quotes a value back.
+// NEVER applied to a value that is written.
 export function stripUnsafeCharacters(value: string): string {
   return value.replace(UNSAFE_CHARACTERS_ALL, '');
 }
@@ -178,8 +177,8 @@ function git(cwd: string, args: string[]): { code: number; out: string } {
 
 // Idempotent entry point: makes sure the runtime rules are in the
 // repository's local exclude file, writing only when the content would
-// change. One file per repository, so a linked worktree (orchestrate's
-// agent checkout) resolves to the same file the main checkout uses.
+// change. One file per repository, so a linked worktree resolves to the
+// same file the main checkout uses.
 export function ensureRuntimeExcludeRules(
   options: { cwd?: string; entries?: readonly string[] } = {},
 ): RuntimeExcludeOutcome {

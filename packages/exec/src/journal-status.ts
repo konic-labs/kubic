@@ -107,8 +107,7 @@ export interface JournalStatus {
 }
 
 // Issue #126: resolve the repository's HEAD with pure file reads. In a
-// linked worktree — exactly the trees `kubic orchestrate` creates and
-// retains — `.git` is a pointer FILE (`gitdir: <path>`) whose target holds
+// linked worktree `.git` is a pointer FILE (`gitdir: <path>`) whose target holds
 // the real HEAD; reading `.git/HEAD` there would call a live branch
 // `(detached)`. The pointer is followed (absolute, or relative to the
 // worktree root), and an unreadable or malformed pointer is named
@@ -298,9 +297,7 @@ export function reconciliationSummary(store: FileJournalStore): string {
   return reconciliationSummaryFor(store.entries());
 }
 
-// Issue #364: the same line over an already-merged entry list — `log
-// --session <orch>` counts the orchestration's workers together with its
-// own journal instead of reporting the primary store alone.
+// The same line over an entry list.
 export function reconciliationSummaryFor(
   entries: readonly { unattributed?: boolean }[],
 ): string {

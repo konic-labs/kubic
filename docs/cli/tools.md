@@ -5,10 +5,9 @@
 > `packages/worker/src/ops/registry.ts` (schemas) and each operation's
 > `validateArgs` (the authoritative check).
 
-Every solo lane (`kubic run`, `kubic tui`, every orchestrator worker)
-registers the same fifteen tools, narrowed only by permission classes and
-`--role`. Solo mode has no isolation: these tools act on the real
-workspace.
+Every lane (`kubic run`, `kubic tui`) registers the same fifteen tools,
+narrowed only by permission classes and `--role`. Solo mode has no
+isolation: these tools act on the real workspace.
 
 ## Argument contract
 
@@ -229,10 +228,7 @@ restores the CRLF/BOM file exactly as it was.
   stream says so instead.
 - **Scope of the overrides:** the three `KUBIC_BASH_*` variables are read by
   the bash tool from its own process environment, so they apply to
-  `kubic run` and `kubic tui`. They are **not yet forwarded to orchestrator
-  workers** (the worker environment allowlist does not carry them; issue
-  [#201](https://github.com/konic-labs/kubic/issues/201)), so a worker
-  always uses the 120 s / 600 s limits and kills its background jobs.
+  `kubic run` and `kubic tui`.
 - **Output:** each stream keeps its last **64 KiB** and its last **2000
   lines**, whichever is smaller — the tail is where a failure usually ends,
   and the head is one command away (issue #182): a clipped stream is written

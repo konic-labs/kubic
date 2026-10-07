@@ -14,11 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import {
-  createGitSandbox,
-  disposeAllGitSandboxes,
-  type GitSandbox,
-} from '../../../packages/exec/src/test-support/git-sandbox.js';
+import { disposeAllGitSandboxes } from '../../../packages/exec/src/test-support/git-sandbox.js';
 import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
 import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
 import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
@@ -59,7 +55,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  driver = undefined;
   disposeAllGitSandboxes();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -70,15 +65,6 @@ afterEach(() => {
 
 const ENTERPRISE = '/etc/kubic-test/enterprise.toml';
 
-// The test's git driver (issue #420): one injected sandbox per test, so
-// the repo setup and the production git the TUI run shells share the
-// scrubbed view. Workspaces keep their own dirs; only the env is shared.
-let driver: GitSandbox | undefined;
-
-function git(cwd: string, args: string[]): void {
-  driver ??= createGitSandbox({ injectProcessEnv: true });
-  driver.git(args, { cwd });
-}
 const PROJECT = '/nonexistent-cwd/.kubic/config.toml';
 
 // The effective config exactly as the composition root wraps it: a real
@@ -696,45 +682,6 @@ describe('a refused /model switch is named in the footer and the lane keeps its 
   });
 });
 
-describe('the interactive orchestrator refuses a denied role like `kubic orchestrate` (issue #288)', () => {
-  it('a Ctrl-G turn is refused role_refused before anything spawns when an assigned role declares a denied tool', async () => {
-    const workspace = tmpRoot('kubic-tui-orch-roles-');
-    mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
-    writeFileSync(
-      join(workspace, '.kubic', 'roles', 'planner.md'),
-      '---\nrole: planner\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# planner\n\n## Prompt\n\nPlan it.\n',
-    );
-    writeFileSync(
-      join(workspace, '.kubic', 'roles', 'implementer.md'),
-      '---\nrole: implementer\ntools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nBuild it.\n',
-    );
-    git(workspace, ['init', '-q']);
-    const cfg = cliConfig({
-      [ENTERPRISE]: '[policy]\ndenied_tools = ["bash"]\n',
-    });
-    const deps = tuiDepsWithDefaults(
-      prodTuiDeps(IO, cfg),
-      rerooted(
-        workspace,
-        tmpRoot(),
-        providers([{ provider: 'fx', models: ['a'] }]),
-      ),
-    );
-    const boot = await deps.bootLane();
-    const lines: string[] = [];
-    const outcome = await boot.orchestrator?.run('do the thing', (line) =>
-      lines.push(line),
-    );
-    await boot.close?.();
-    expect(outcome?.status).toBe('failed');
-    const report = lines.join('\n');
-    expect(report).toContain('code=role_refused');
-    expect(report).toMatch(
-      /role 'implementer'.*'bash' denied.*enterprise denial holds/,
-    );
-  });
-});
-
 describe('a resumed TUI session never keeps a model the enterprise gate refuses (issue #288)', () => {
   it('boots the resumed session on the gated selection, not its stored provider', async () => {
     const workspace = tmpRoot();
@@ -796,94 +743,5 @@ describe('a resumed TUI session never keeps a model the enterprise gate refuses 
     const live = await loop.model?.(loop.context);
     await resumed.close?.();
     expect(live).toBe('other/m1');
-  });
-});
-
-describe('the interactive orchestrator judges a role after the config layers (issue #288)', () => {
-  it('does not refuse an implementer whose [roles.implementer] layer narrows the denied tool away', async () => {
-    const workspace = tmpRoot('kubic-tui-orch-layers-');
-    mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
-    writeFileSync(
-      join(workspace, '.kubic', 'roles', 'planner.md'),
-      '---\nrole: planner\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# planner\n\n## Prompt\n\nPlan it.\n',
-    );
-    writeFileSync(
-      join(workspace, '.kubic', 'roles', 'implementer.md'),
-      '---\nrole: implementer\ntools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nBuild it.\n',
-    );
-    git(workspace, ['init', '-q']);
-    const cfg = cliConfig({
-      [ENTERPRISE]: '[policy]\ndenied_tools = ["bash"]\n',
-      [PROJECT]: '[roles.implementer]\ntools = ["read"]\n',
-    });
-    const deps = tuiDepsWithDefaults(
-      prodTuiDeps(IO, cfg),
-      rerooted(
-        workspace,
-        tmpRoot(),
-        providers([{ provider: 'fx', models: ['a'] }]),
-      ),
-    );
-    const boot = await deps.bootLane();
-    const lines: string[] = [];
-    await boot.orchestrator?.run('do the thing', (line) => lines.push(line));
-    await boot.close?.();
-    expect(lines.join('\n')).not.toContain('role_refused');
-  });
-});
-
-// §35.1 (issue #295): the interactive orchestrator's workers run the frozen
-// enterprise model too, so its credential preflight follows the pin — not a
-// KUBIC_MODEL the freeze dropped.
-describe('the interactive orchestrator follows a frozen enterprise model (issue #295)', () => {
-  it('does not refuse the run over the provider of a dropped KUBIC_MODEL', async () => {
-    const workspace = tmpRoot('kubic-tui-orch-frozen-');
-    mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
-    writeFileSync(
-      join(workspace, '.kubic', 'roles', 'planner.md'),
-      '---\nrole: planner\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# planner\n\n## Prompt\n\nPlan it.\n',
-    );
-    writeFileSync(
-      join(workspace, '.kubic', 'roles', 'implementer.md'),
-      '---\nrole: implementer\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nBuild it.\n',
-    );
-    writeFileSync(
-      join(workspace, 'models.json'),
-      JSON.stringify({
-        providers: ['gw', 'other'].map((id) => ({
-          id,
-          baseUrl: 'https://models.invalid/v1',
-          api: 'openai-completions',
-          apiKeyEnv: `${id.toUpperCase()}_API_KEY`,
-          models: [{ id: 'm1' }],
-        })),
-      }),
-    );
-    git(workspace, ['init', '-q']);
-    // Only the enterprise model's provider has a key on this host.
-    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
-    vi.stubEnv('GW_API_KEY', 'sk-not-a-real-key');
-    vi.stubEnv('KUBIC_MODEL', 'other/m1');
-    const cfg = cliConfig(
-      {
-        [ENTERPRISE]: '[model]\nprovider = "gw"\nid = "m1"\n',
-      },
-      { env: { KUBIC_MODEL: 'other/m1' } },
-    );
-    const deps = tuiDepsWithDefaults(
-      prodTuiDeps(IO, cfg),
-      rerooted(
-        workspace,
-        tmpRoot(),
-        providers([{ provider: 'gw', models: ['m1'] }]),
-      ),
-    );
-    const boot = await deps.bootLane();
-    const lines: string[] = [];
-    await boot.orchestrator?.run('do the thing', (line) => lines.push(line));
-    await boot.close?.();
-    const report = lines.join('\n');
-    expect(report).not.toContain('credential_unavailable');
-    expect(report).not.toContain("provider 'other'");
   });
 });

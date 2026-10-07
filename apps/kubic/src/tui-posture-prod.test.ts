@@ -23,7 +23,7 @@ import {
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { bootTuiLane, runTuiCommand, type TuiRunDeps } from './tui-run.js';
 
-const WARNING = '[SOLO] approvals OFF (full-access)';
+const WARNING = 'approvals OFF (full-access)';
 const made: string[] = [];
 
 function tmpRoot(): string {
@@ -105,7 +105,7 @@ describe('the TUI indicator follows the installed posture (issue #307)', () => {
 
   it("a fresh session renders 'approvals on'", async () => {
     const frame = await firstFrame(tmpRoot(), tmpRoot());
-    expect(frame).toContain('[SOLO] approvals on');
+    expect(frame).toContain('approvals on');
     expect(frame).not.toContain(WARNING);
   });
 

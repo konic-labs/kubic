@@ -49,7 +49,7 @@ describe('MCP arrival requirements (§33, issue #254)', () => {
   it('records the three settled §33 requirements', () => {
     expect(MCP_ARRIVAL_REQUIREMENTS).toHaveLength(3);
     expect(MCP_ARRIVAL_REQUIREMENTS[0]).toMatch(/tool policy/);
-    expect(MCP_ARRIVAL_REQUIREMENTS[1]).toMatch(/worker process/);
+    expect(MCP_ARRIVAL_REQUIREMENTS[1]).toMatch(/agent process/);
     expect(MCP_ARRIVAL_REQUIREMENTS[2]).toMatch(/policy conflict/);
   });
 

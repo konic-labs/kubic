@@ -1,29 +1,19 @@
-// Prod runner wiring for the analysis surfaces: the runners must read the
-// user's working directory and the SAME installed policy `kubic run` and
-// `kubic doctor` use — not a filesystem root, not an empty policy.
-import { type ChildProcess, spawn } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
-  realpathSync,
   rmSync,
-  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { makeExport } from '../../../packages/eval/src/rl/fixtures.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,
-  type GitSandbox,
 } from '../../../packages/exec/src/test-support/git-sandbox.js';
 import { installedPolicyPosture } from '../../../packages/host/src/approvals.js';
 import {
@@ -31,7 +21,6 @@ import {
   ProjectTrustStore,
   projectTrustStorePath,
 } from '../../../packages/host/src/config/trust-store.js';
-import { approvalsSessionDir } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
 import {
   appendToLedger,
   auditLedgerDir,
@@ -39,20 +28,13 @@ import {
 } from '../../../packages/host/src/policy/audit-ledger.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import { buildTrajectoryExport } from '../../../packages/trajectory/src/export.js';
-import { parseFactLine } from '../../../packages/worker/src/lifecycle/facts.js';
-import {
-  type WorkerRow,
-  writeWorkerRows,
-} from '../../../packages/worker/src/lifecycle/rows.js';
 import type { CliConfigResult } from './config-runtime.js';
 import { loadCliConfig } from './config-runtime.js';
 import { createProdRunners, prodTuiDeps } from './prod-runners.js';
 import { tuiDepsWithDefaults } from './tui-run.js';
 
 const roots: string[] = [];
-let driver: GitSandbox | undefined;
 afterEach(() => {
-  driver = undefined;
   disposeAllGitSandboxes();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -139,7 +121,7 @@ describe('kubic policy (prod wiring)', () => {
 });
 
 describe('kubic audit (prod wiring)', () => {
-  it('reads the repo §60 ledger the approval layers write', async () => {
+  it('reads the repo ledger the approval layers write', async () => {
     const root = mkdtempSync(join(tmpdir(), 'prod-audit-'));
     roots.push(root);
     appendToLedger(
@@ -155,19 +137,19 @@ describe('kubic audit (prod wiring)', () => {
     );
     vi.spyOn(process, 'cwd').mockReturnValue(root);
     const { lines, r } = runners();
-    await r.audit({ mode: 'solo', json: true }, noConfig);
-    const records = JSON.parse(lines.join('\n')) as { mode: string }[];
-    expect(records.map((record) => record.mode)).toEqual(['solo']);
+    await r.audit({ json: true }, noConfig);
+    const records = JSON.parse(lines.join('\n')) as { posture: string }[];
+    expect(records.map((record) => record.posture)).toEqual(['approvals']);
     const text = runners();
-    await text.r.audit({ mode: 'solo' }, noConfig);
+    await text.r.audit({}, noConfig);
     expect(text.lines).toHaveLength(1);
-    expect(text.lines[0]).toMatch(/^WHEN +MODE/);
-    expect(text.lines[0]).toMatch(/ solo +approvals /);
+    expect(text.lines[0]).toMatch(/^WHEN +POSTURE/);
+    expect(text.lines[0]).toMatch(/ approvals +/);
   });
 });
 
 describe('kubic audit from a subdirectory', () => {
-  it('reads the ledger at the repo root, where orchestrate writes it', async () => {
+  it('reads the ledger at the repo root', async () => {
     const root = mkdtempSync(join(tmpdir(), 'prod-audit-sub-'));
     roots.push(root);
     mkdirSync(join(root, '.git'));
@@ -186,175 +168,7 @@ describe('kubic audit from a subdirectory', () => {
     vi.spyOn(process, 'cwd').mockReturnValue(join(root, 'pkg'));
     const { lines, r } = runners();
     await r.audit({ json: true }, noConfig);
-    expect(lines.join('\n')).toContain('"mode": "solo"');
-  });
-});
-
-describe('kubic workers from a subdirectory (issue #281)', () => {
-  const liveRow: WorkerRow = {
-    workerId: 'w1',
-    sessionId: 'sess',
-    generation: 1,
-    status: 'ready',
-    agentStatus: 'running',
-    startedAtMs: Date.now(),
-    ageMs: 0,
-    owner: 'orch:sess',
-    // The test's own pid is alive, so the row reads live either way.
-    pid: process.pid,
-  };
-  function writeRowsAt(repo: string): void {
-    mkdirSync(join(repo, '.kubic', 'orchestrator'), { recursive: true });
-    writeWorkerRows(
-      createNodeFileBridge(join(repo, '.kubic', 'orchestrator')),
-      'workers.json',
-      [liveRow],
-    );
-  }
-
-  it('lists rows orchestrate wrote at the repo root', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'prod-workers-sub-'));
-    roots.push(root);
-    mkdirSync(join(root, '.git'));
-    mkdirSync(join(root, 'a', 'b'), { recursive: true });
-    writeRowsAt(root);
-    vi.spyOn(process, 'cwd').mockReturnValue(join(root, 'a', 'b'));
-    const { lines, r } = runners();
-    await r.workers({ command: 'list', json: true }, noConfig);
-    expect(lines.join('\n')).toContain('"workerId": "w1"');
-  });
-
-  it('outside git the cwd behaviour is unchanged', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'prod-workers-nogit-'));
-    roots.push(dir);
-    writeRowsAt(dir);
-    vi.spyOn(process, 'cwd').mockReturnValue(dir);
-    const { lines, r } = runners();
-    await r.workers({ command: 'list', json: true }, noConfig);
-    expect(lines.join('\n')).toContain('"workerId": "w1"');
-  });
-});
-
-describe('kubic workers inspect/terminate (prod wiring, issue #167)', () => {
-  let child: ChildProcess | undefined;
-  afterEach(() => {
-    // A terminated fixture stays dead; a failed assertion must not leak it.
-    try {
-      child?.kill('SIGKILL');
-    } catch {
-      // Already gone.
-    }
-    child = undefined;
-  });
-
-  function git(cwd: string, args: string[]): void {
-    // Shared sandbox driver (issue #420): the workers path reads git
-    // state, so setup and production share one injected scrubbed view.
-    driver ??= createGitSandbox({ injectProcessEnv: true });
-    driver.git(args, { cwd });
-  }
-
-  it('inspect finds the worktree by branch and reports honest facets', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'prod-inspect-'));
-    roots.push(root);
-    git(root, ['init', '-q']);
-    git(root, ['checkout', '-q', '-b', 'kubic/run-1/alpha']);
-    // §35 keeps runtime state out of the commit path, like a real repo.
-    writeFileSync(join(root, '.gitignore'), '.kubic/\n');
-    git(root, ['add', '.gitignore']);
-    git(root, [
-      '-c',
-      'user.email=test@local',
-      '-c',
-      'user.name=test',
-      'commit',
-      '-qm',
-      'init',
-    ]);
-    mkdirSync(join(root, '.kubic', 'orchestrator'), { recursive: true });
-    writeWorkerRows(
-      createNodeFileBridge(join(root, '.kubic', 'orchestrator')),
-      'workers.json',
-      [
-        {
-          workerId: 'alpha',
-          sessionId: 'run-1-alpha',
-          generation: 1,
-          status: 'ready',
-          agentStatus: 'running',
-          startedAtMs: Date.now(),
-          ageMs: 0,
-          owner: 'orchestrate:run-1',
-          pid: process.pid,
-        },
-      ],
-    );
-    vi.spyOn(process, 'cwd').mockReturnValue(root);
-    const { lines, r } = runners();
-    expect(await r.workers({ command: 'inspect', id: 'alpha' }, noConfig)).toBe(
-      0,
-    );
-    const text = lines.join('\n');
-    expect(text).toContain('alpha');
-    expect(text).toContain(`kubic/run-1/alpha, clean`);
-    expect(text).toContain('budget: none recorded');
-    expect(text).toContain(
-      'usage: accruing (kubic cost --session run-1-alpha)',
-    );
-    expect(text).toContain('approvals: none pending');
-  });
-
-  it('terminate signals a live fixture group and refuses it once gone', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'prod-terminate-'));
-    roots.push(dir);
-    mkdirSync(join(dir, '.kubic', 'orchestrator'), { recursive: true });
-    // A detached sleeper whose command line names the worker session —
-    // the pid-reuse guard's positive case, with no worker lane involved.
-    // (A script file, not `node -e`: node parses `-e` trailing flags as
-    // its own options and dies with `bad option`.)
-    writeFileSync(join(dir, 'sleeper.js'), 'setInterval(() => {}, 500);\n');
-    child = spawn(
-      process.execPath,
-      [join(dir, 'sleeper.js'), '--session', 'run-9-w9'],
-      { detached: true, stdio: 'ignore' },
-    );
-    child.unref();
-    const pid = child.pid ?? 0;
-    expect(pid).toBeGreaterThan(1);
-    const exited = new Promise<void>((resolve) => {
-      child?.once('exit', () => resolve());
-    });
-    writeWorkerRows(
-      createNodeFileBridge(join(dir, '.kubic', 'orchestrator')),
-      'workers.json',
-      [
-        {
-          workerId: 'w9',
-          sessionId: 'run-9-w9',
-          generation: 3,
-          status: 'ready',
-          agentStatus: 'running',
-          startedAtMs: Date.now(),
-          ageMs: 0,
-          owner: 'orchestrate:run-9',
-          pid,
-        },
-      ],
-    );
-    vi.spyOn(process, 'cwd').mockReturnValue(dir);
-    const first = runners();
-    expect(
-      await first.r.workers({ command: 'terminate', id: 'w9' }, noConfig),
-    ).toBe(0);
-    expect(first.lines.join('\n')).toContain(`terminated worker 'w9'`);
-    await exited;
-    // The row still claims live but the pid is gone: refused, never
-    // signalled blind (a second terminate is not a second kill).
-    const second = runners();
-    expect(
-      await second.r.workers({ command: 'terminate', id: 'w9' }, noConfig),
-    ).toBe(1);
-    expect(second.lines).toEqual([]);
+    expect(lines.join('\n')).toContain('"posture": "approvals"');
   });
 });
 
@@ -411,42 +225,6 @@ describe('kubic doctor: enterprise policy and detection-only (issue #289)', () =
     expect(code).toBe(0);
   });
 
-  it('reports the per-agent resource posture honestly (issue #163)', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'prod-doctor-163-'));
-    roots.push(root);
-    providerFixture(root, 9104);
-    vi.stubEnv('GW_API_KEY', 'sk-doctor-163-not-a-real-key');
-    vi.stubEnv('KUBIC_MODEL', 'gw/m1');
-    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
-    vi.spyOn(process, 'cwd').mockReturnValue(root);
-    const config = loadCliConfig({
-      cwd: root,
-      home: root,
-      env: {
-        ...process.env,
-        GW_API_KEY: 'sk-doctor-163-not-a-real-key',
-        KUBIC_MODEL: 'gw/m1',
-        KUBIC_TRUST_PROJECT: '1',
-      },
-    });
-    const { lines, r } = runners();
-    const code = await r.doctor({ json: true }, config);
-    const report = JSON.parse(lines.join('\n')) as {
-      checks: Array<{ id: string; status: string; detail: string }>;
-    };
-    const resources = report.checks.find(
-      (entry) => entry.id === 'limit:resources',
-    );
-    // The prod builder wires the probe (this test fails if the spread is
-    // dropped) — and the line never claims a cap a stock CLI run does not
-    // apply.
-    expect(resources).toBeDefined();
-    expect(resources?.detail).toContain('enforced: wall clock');
-    expect(resources?.detail).toContain('NOT enforced: memory');
-    expect(resources?.detail).toContain('no CLI flag/config key');
-    expect(code).toBe(0);
-  });
-
   it('a configured [policy] runs the enterprise checks in --json', async () => {
     const root = mkdtempSync(join(tmpdir(), 'prod-doctor-289-policy-'));
     roots.push(root);
@@ -494,346 +272,11 @@ describe('kubic doctor: enterprise policy and detection-only (issue #289)', () =
   });
 });
 
-describe('kubic doctor: worker credential posture (issue #200)', () => {
-  it('lists the provider each role gets credentials for, names only', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'prod-doctor-creds-'));
-    roots.push(root);
-    mkdirSync(join(root, '.kubic', 'roles'), { recursive: true });
-    writeFileSync(
-      join(root, '.kubic', 'roles', 'planner.md'),
-      [
-        '---',
-        'role: planner',
-        'tools: [read, ls, find, grep]',
-        'filesystem: read',
-        'shell: false',
-        'network: none',
-        'git: false',
-        'credentials: none',
-        '---',
-        '',
-        '# planner',
-        '',
-        '## Prompt',
-        '',
-        'You are the planner.',
-        '',
-      ].join('\n'),
-    );
-    // The default delegation set is two implementers (issue #178): the
-    // posture describes the roles a bare `kubic orchestrate` assigns.
-    writeFileSync(
-      join(root, '.kubic', 'roles', 'implementer.md'),
-      '---\nrole: implementer\ntools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nBuild it.\n',
-    );
-    writeFileSync(
-      join(root, 'models.json'),
-      JSON.stringify({
-        providers: [
-          {
-            id: 'gw',
-            baseUrl: 'http://127.0.0.1:9100/v1',
-            api: 'openai-completions',
-            apiKeyEnv: 'GW_API_KEY',
-            models: [{ id: 'm1' }],
-          },
-        ],
-      }),
-    );
-    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
-    vi.stubEnv('KUBIC_MODEL', 'gw/m1');
-    vi.stubEnv('GW_API_KEY', 'sk-doctor-200-not-a-real-key');
-    vi.spyOn(process, 'cwd').mockReturnValue(root);
-    const config = loadCliConfig({
-      cwd: root,
-      home: root,
-      env: {
-        ...process.env,
-        KUBIC_TRUST_PROJECT: '1',
-        KUBIC_MODEL: 'gw/m1',
-        GW_API_KEY: 'sk-doctor-200-not-a-real-key',
-      },
-    });
-    const { lines, r } = runners();
-    expect(await r.doctor({ json: true }, config)).toBe(0);
-    const report = JSON.parse(lines.join('\n')) as {
-      checks: { id: string; status: string; detail: string }[];
-    };
-    const check = report.checks.find((entry) =>
-      entry.id.endsWith('credentials:roles'),
-    );
-    expect(check?.status).toBe('pass');
-    expect(check?.detail).toBe('implementer→gw');
-    expect(check?.detail).not.toContain('sk-doctor-200-not-a-real-key');
-  });
-
-  it('fails by provider name when the worker credential cannot be delivered', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'prod-doctor-creds-miss-'));
-    roots.push(root);
-    mkdirSync(join(root, '.kubic', 'roles'), { recursive: true });
-    writeFileSync(
-      join(root, '.kubic', 'roles', 'planner.md'),
-      '---\nrole: planner\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# planner\n\n## Prompt\n\nYou are the planner.\n',
-    );
-    writeFileSync(
-      join(root, '.kubic', 'roles', 'implementer.md'),
-      '---\nrole: implementer\ntools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nBuild it.\n',
-    );
-    writeFileSync(
-      join(root, 'models.json'),
-      JSON.stringify({
-        providers: [
-          {
-            id: 'gw',
-            baseUrl: 'http://127.0.0.1:9101/v1',
-            api: 'openai-completions',
-            apiKeyEnv: 'GW_API_KEY',
-            models: [{ id: 'm1' }],
-          },
-        ],
-      }),
-    );
-    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
-    vi.stubEnv('KUBIC_MODEL', 'gw/m1');
-    const config = loadCliConfig({
-      cwd: root,
-      home: root,
-      env: { ...process.env, KUBIC_TRUST_PROJECT: '1', KUBIC_MODEL: 'gw/m1' },
-    });
-    vi.spyOn(process, 'cwd').mockReturnValue(root);
-    const { lines, r } = runners();
-    const code = await r.doctor({ json: true }, config);
-    const report = JSON.parse(lines.join('\n')) as {
-      checks: { id: string; status: string; detail: string }[];
-    };
-    const check = report.checks.find((entry) =>
-      entry.id.endsWith('credentials:roles'),
-    );
-    expect(check?.status).toBe('fail');
-    expect(check?.detail).toContain("provider 'gw'");
-    // The failing dependency check flips doctor's exit (the orchestrate
-    // preflight is the path that exits 6; doctor's dep matrix exits 1).
-    expect(code).not.toBe(0);
-  });
-});
-
 describe('kubic doctor --session (prod wiring, issue #310)', () => {
   it('refuses a session id that cannot name a session directory', async () => {
     const { errs, r } = runners();
     expect(await r.doctor({ session: '../evil' }, noConfig)).toBe(2);
     expect(errs.join('\n')).toContain('invalid --session id');
-  });
-});
-
-describe('kubic workers list resources (prod wiring, issue #248)', () => {
-  let child: ChildProcess | undefined;
-  afterEach(() => {
-    try {
-      child?.kill('SIGKILL');
-    } catch {
-      // Already gone.
-    }
-    child = undefined;
-  });
-
-  it('shows live rss/cpu for a sleeping fixture child plus settled consumption', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'prod-resources-'));
-    roots.push(dir);
-    mkdirSync(join(dir, '.kubic', 'orchestrator'), { recursive: true });
-    writeFileSync(join(dir, 'sleeper.js'), 'setInterval(() => {}, 500);\n');
-    child = spawn(
-      process.execPath,
-      [join(dir, 'sleeper.js'), '--session', 'run-7-w7'],
-      { detached: true, stdio: 'ignore' },
-    );
-    child.unref();
-    const pid = child.pid ?? 0;
-    expect(pid).toBeGreaterThan(1);
-    // The run's own record carries the settled usage rollup (§68): a
-    // hand-written durable state file, no mocks.
-    writeFileSync(
-      join(dir, '.kubic', 'orchestrator', 'run-7.json'),
-      JSON.stringify({
-        // Issue #285 (§71): the run's stored §71 bound rides the same
-        // record the consumption comes from — no extra reads.
-        budget: { shared: { maxToolCalls: 10, maxCostUsd: 0.5 } },
-        records: [
-          {
-            agentId: 'w7',
-            result: {
-              metrics: {
-                inputTokens: 1200,
-                outputTokens: 300,
-                toolCalls: 5,
-                costUsd: 0.012,
-              },
-            },
-          },
-        ],
-      }),
-    );
-    writeWorkerRows(
-      createNodeFileBridge(join(dir, '.kubic', 'orchestrator')),
-      'workers.json',
-      [
-        {
-          workerId: 'w7',
-          sessionId: 'run-7-w7',
-          generation: 1,
-          status: 'ready',
-          agentStatus: 'running',
-          startedAtMs: Date.now(),
-          ageMs: 0,
-          owner: 'orchestrate:run-7',
-          pid,
-        },
-      ],
-    );
-    vi.spyOn(process, 'cwd').mockReturnValue(dir);
-    const { lines, r } = runners();
-    expect(await r.workers({ command: 'list' }, noConfig)).toBe(0);
-    const text = lines.join('\n');
-    expect(text).toMatch(/rss=\d+(\.\d+)?MB/);
-    expect(text).toMatch(/cpu=\d+(\.\d+)?%/);
-    expect(text).toContain('tok=1.5k');
-    expect(text).toContain('cost=$0.012');
-    // Issue #285: the BUDGET column burns the settled spend down from
-    // the stored bound.
-    expect(text).toContain('tools 5/10');
-    expect(text).toContain('$0.012/$0.50');
-    const json = runners();
-    expect(
-      await json.r.workers({ command: 'list', json: true }, noConfig),
-    ).toBe(0);
-    const doc = JSON.parse(json.lines.join('\n')) as Record<string, unknown>[];
-    expect(doc[0]?.resourceUsage).toMatchObject({
-      cpuPct: expect.any(Number),
-    });
-    expect(doc[0]?.consumption).toMatchObject({ costUsd: 0.012 });
-    expect(doc[0]?.budget).toEqual({
-      limits: { maxToolCalls: 10, maxCostUsd: 0.5 },
-      usage: { tokens: 1500, costUsd: 0.012, toolCalls: 5 },
-    });
-  });
-});
-
-describe('kubic workers refuses owner-derived state paths (issue #437)', () => {
-  function metricsFile(agentId: string): string {
-    return JSON.stringify({
-      records: [
-        {
-          agentId,
-          result: {
-            metrics: { inputTokens: 9999, toolCalls: 2, costUsd: 0.009 },
-          },
-        },
-      ],
-    });
-  }
-
-  function evilRepo(
-    tag: string,
-    owner: string,
-  ): { dir: string; orchDir: string } {
-    const dir = mkdtempSync(join(tmpdir(), tag));
-    roots.push(dir);
-    const orchDir = join(dir, '.kubic', 'orchestrator');
-    mkdirSync(orchDir, { recursive: true });
-    writeWorkerRows(createNodeFileBridge(orchDir), 'workers.json', [
-      {
-        workerId: 'w9',
-        sessionId: 'run-9-w9',
-        generation: 1,
-        status: 'ready',
-        agentStatus: 'running',
-        startedAtMs: Date.now(),
-        ageMs: 0,
-        owner,
-      },
-    ]);
-    vi.spyOn(process, 'cwd').mockReturnValue(dir);
-    return { dir, orchDir };
-  }
-
-  it('list does not read a run state reached by `..` in the owner', async () => {
-    const { dir } = evilRepo('prod-ownerescape-', 'orchestrate:../decoy');
-    // The decoy a traversal would land on: reachable only from outside
-    // the orchestrator dir.
-    writeFileSync(join(dir, '.kubic', 'decoy.json'), metricsFile('w9'));
-    const { lines, r } = runners();
-    expect(await r.workers({ command: 'list' }, noConfig)).toBe(0);
-    expect(lines.join('\n')).not.toContain('tok=');
-  });
-
-  it('inspect reads the task, change summary and tool count from the run record (issue #464)', async () => {
-    const { orchDir } = evilRepo('prod-inspect-464-', 'orchestrate:run-9');
-    writeFileSync(
-      join(orchDir, 'run-9.json'),
-      JSON.stringify({
-        prompt: 'the whole objective',
-        plan: [
-          {
-            agentId: 'w9',
-            step: 1,
-            total: 1,
-            prompt: 'x',
-            task: 'Fix the cart total',
-          },
-        ],
-        records: [
-          {
-            agentId: 'w9',
-            branch: 'kubic/run-9/w9',
-            hunks: [
-              {
-                path: 'src/cart.js',
-                hunk: '--- a/src/cart.js\n+++ b/src/cart.js\n@@ -1 +1,2 @@\n-a\n+b\n+c\n',
-              },
-              { path: 'bad', hunk: 7 },
-            ],
-            result: { metrics: { inputTokens: 10, toolCalls: 4 } },
-          },
-        ],
-      }),
-    );
-    const { lines, r } = runners();
-    expect(await r.workers({ command: 'inspect', id: 'w9' }, noConfig)).toBe(0);
-    const text = lines.join('\n');
-    expect(text).toContain('task: Fix the cart total');
-    expect(text).toContain('changes: 1 file +2 −1');
-    expect(text).toContain('tools: 4 calls');
-  });
-
-  it('inspect does not read it either', async () => {
-    const { dir } = evilRepo('prod-ownerescape-', 'orchestrate:../decoy');
-    writeFileSync(join(dir, '.kubic', 'decoy.json'), metricsFile('w9'));
-    const { lines, r } = runners();
-    expect(await r.workers({ command: 'inspect', id: 'w9' }, noConfig)).toBe(0);
-    const text = lines.join('\n');
-    expect(text).toContain('usage: accruing');
-    expect(text).not.toContain('tok=');
-  });
-
-  it('terminate never consults the owner-derived state', async () => {
-    evilRepo('prod-ownerescape-', 'orchestrate:../decoy');
-    const { lines, errs, r } = runners();
-    expect(await r.workers({ command: 'terminate', id: 'w9' }, noConfig)).toBe(
-      1,
-    );
-    expect(lines.join('\n')).not.toContain('tok=');
-    expect(errs.join('\n')).toMatch(/code=worker_not_running/);
-  });
-
-  it('refuses a run-state symlink pointing outside the run dir', async () => {
-    const { dir, orchDir } = evilRepo(
-      'prod-ownerescape-',
-      'orchestrate:linked',
-    );
-    writeFileSync(join(dir, 'secret.json'), metricsFile('w9'));
-    symlinkSync(join(dir, 'secret.json'), join(orchDir, 'linked.json'));
-    const { lines, r } = runners();
-    expect(await r.workers({ command: 'list' }, noConfig)).toBe(0);
-    expect(lines.join('\n')).not.toContain('tok=');
   });
 });
 
@@ -1050,54 +493,6 @@ describe('kubic run projections (prod wiring)', () => {
     ).toEqual(['in-scope.txt']);
   });
 
-  it('an orchestrator worker reports its tool calls as fact lines on stdout (issue #464)', async () => {
-    const { config, project } = trustedProjectConfig('');
-    vi.stubEnv('KUBIC_PROVIDER', 'faux');
-    vi.stubEnv('KUBIC_NO_NOTICE', '1');
-    vi.stubEnv('KUBIC_WORKER_ID', 'w-464');
-    vi.spyOn(process, 'cwd').mockReturnValue(project);
-    const written: string[] = [];
-    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
-      written.push(String(chunk));
-      return true;
-    });
-    const { r } = runners();
-    const code = await r.run(
-      { prompt: 'faux:tool bash {"command":"echo ok"}', json: true },
-      config,
-    );
-    expect(code).toBe(0);
-    const facts = written
-      .join('')
-      .split('\n')
-      .map((line) => parseFactLine(line))
-      .filter((fact) => fact !== undefined);
-    expect(facts.map((fact) => `${fact.tool}:${fact.state}`)).toEqual([
-      'bash:running',
-      'bash:done',
-    ]);
-    expect(facts[0]?.target).toBe('echo ok');
-  });
-
-  it('a plain run prints no fact lines (issue #464)', async () => {
-    const { config, project } = trustedProjectConfig('');
-    vi.stubEnv('KUBIC_PROVIDER', 'faux');
-    vi.stubEnv('KUBIC_NO_NOTICE', '1');
-    vi.stubEnv('KUBIC_WORKER_ID', '');
-    vi.spyOn(process, 'cwd').mockReturnValue(project);
-    const written: string[] = [];
-    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
-      written.push(String(chunk));
-      return true;
-    });
-    const { r } = runners();
-    await r.run(
-      { prompt: 'faux:tool bash {"command":"echo ok"}', json: true },
-      config,
-    );
-    expect(written.join('')).not.toContain('KUBIC_WORKER_FACT');
-  });
-
   it('attributes the run journal to the configured agent name', async () => {
     const { config, project } = trustedProjectConfig(
       '[agent]\nname = "alice"\n',
@@ -1120,68 +515,10 @@ describe('kubic run projections (prod wiring)', () => {
   });
 });
 
-// The clean wiring through createProdRunners (issue #381): a configured
-// `[orchestrator] root` is the disposal root — a worktree under the
-// custom root is listed by --dry-run and left in place.
-describe('kubic clean (prod wiring)', () => {
-  it('lists a retained worktree under the configured root on --dry-run', async () => {
-    const sandbox = createGitSandbox({ injectProcessEnv: true });
-    const root = sandbox.path;
-    writeFileSync(join(root, 'base.txt'), 'base\n');
-    sandbox.git(['add', '-A']);
-    sandbox.git(['commit', '-qm', 'base']);
-    const custom = join(root, '.kubic-custom', 'wt', 'worker-1');
-    sandbox.git(['worktree', 'add', custom, '-b', 'kubic/worker-1']);
-    mkdirSync(join(root, '.kubic'), { recursive: true });
-    writeFileSync(
-      join(root, '.kubic', 'config.toml'),
-      '[orchestrator]\nroot = ".kubic-custom/wt"\n',
-    );
-    const home = mkdtempSync(join(tmpdir(), 'prod-clean-home-'));
-    roots.push(home);
-    new ProjectTrustStore(projectTrustStorePath(home)).set(root, true);
-    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
-    vi.spyOn(process, 'cwd').mockReturnValue(root);
-    const config = loadCliConfig({
-      cwd: root,
-      home,
-      env: { ...process.env, KUBIC_TRUST_PROJECT: '1' },
-    });
-    expect(config.error).toBeUndefined();
-    expect(config.runtime?.orchestrator.root).toBe('.kubic-custom/wt');
-    const { lines, r } = runners();
-    expect(await r.clean({ dryRun: true }, config)).toBe(0);
-    expect(lines.join('\n')).toContain(`would remove worktree ${custom}`);
-    // Dry-run mutates nothing: the worktree and its branch survive.
-    expect(existsSync(custom)).toBe(true);
-    expect(
-      sandbox.git([
-        'branch',
-        '--list',
-        'kubic/worker-1',
-        '--format=%(refname:short)',
-      ]),
-    ).toContain('kubic/worker-1');
-  });
-});
-
-// The tui wiring through createProdRunners (issue #381): orchestrator
-// mode outside a git repo is refused before the alt-screen opens, and
-// the lane projection the interactive boot consumes names the configured
-// agent — the tui third of the deleted lane-spread pin (the run third is
+// The tui wiring through createProdRunners: the lane projection the
+// interactive boot consumes names the configured agent (the run side is
 // behavioural above; the interactive lane itself boots only on a TTY).
 describe('kubic tui (prod wiring)', () => {
-  it('refuses orchestrator mode outside a git repo, naming solo', async () => {
-    const plain = mkdtempSync(join(tmpdir(), 'prod-tui-plain-'));
-    roots.push(plain);
-    vi.spyOn(process, 'cwd').mockReturnValue(plain);
-    const { lines, errs, r } = runners();
-    expect(await r.tui({ orchestrator: true }, noConfig)).toBe(5);
-    expect([...lines, ...errs].join('\n')).toContain(
-      'orchestrator mode needs a git repository',
-    );
-  });
-
   it('threads the configured agent id to the interactive lane deps', async () => {
     const home = mkdtempSync(join(tmpdir(), 'prod-tui-home-'));
     roots.push(home);
@@ -1295,145 +632,6 @@ describe('remaining runners (prod wiring smokes)', () => {
     expect(await r.cost({}, noConfig)).toBe(0);
     expect(lines.join('\n')).toContain('no cost rows');
   });
-
-  it('perf evaluates supplied samples against the named budget', async () => {
-    const { lines, r } = runners();
-    expect(await r.perf({ budget: 'spawn', samples: '5,6,7' }, noConfig)).toBe(
-      0,
-    );
-    expect(lines.join('\n')).toMatch(/within/);
-  });
-});
-
-// The orchestrate approval bound through createProdRunners (issue #381):
-// with no injected seat and stdin not a TTY, the runner attaches no seat
-// (the deleted orchestrate-run.ts source pin), so a worker's challenged
-// call denies closed on the child's own bound with the named reason.
-describe('kubic orchestrate approvals (prod wiring)', () => {
-  const ASK_MODULE = fileURLToPath(
-    new URL(
-      '../../../packages/host/src/orchestrator/approvals/worker-asks.js',
-      import.meta.url,
-    ),
-  );
-  const ASK_BOUND = `
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + String.fromCharCode(10));
-const dir = process.env.KUBIC_APPROVALS_DIR;
-const verifyKey = process.env.KUBIC_APPROVALS_VERIFY_KEY;
-const agentId = process.env.KUBIC_WORKER_ID ?? 'worker';
-const { publishWorkerAsk, awaitWorkerAskAnswer } = await import(
-  __ASK_MODULE_URL__,
-);
-const published = publishWorkerAsk(dir, {
-  trigger: 'network',
-  toolName: 'bash',
-  args: { command: 'curl https://example.com/release.tgz' },
-  justification: 'the plan step needs the release tarball',
-  sessionId: process.env.KUBIC_WORKER_SESSION ?? 'unknown',
-  agentId,
-  role: 'worker',
-  worktree: process.cwd(),
-  provenance: { parentSessionId: process.env.KUBIC_ORCHESTRATOR_SESSION ?? 'unknown' },
-});
-const answer = await awaitWorkerAskAnswer(dir, published.request.key, {
-  maxPendingMs: 100,
-  pollMs: 10,
-  verifyKey,
-  nonce: published.nonce,
-});
-writeFileSync(
-  join(dir, agentId + '.child.json'),
-  JSON.stringify({ key: published.request.key, answer }),
-);
-process.exit(answer.approved ? 0 : 4);
-`;
-  const ASK_LOADER = `
-import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-export async function resolve(specifier, context, next) {
-  if (specifier.endsWith('.js')) {
-    try {
-      const base = specifier.startsWith('file://')
-        ? specifier
-        : specifier.startsWith('/')
-          ? 'file://' + specifier
-          : context.parentURL === undefined
-            ? undefined
-            : new URL(specifier, context.parentURL).href;
-      if (base !== undefined) {
-        const candidate = new URL(base.slice(0, -3) + '.ts');
-        if (existsSync(fileURLToPath(candidate))) {
-          return next(candidate.href, context);
-        }
-      }
-    } catch { /* fall through */ }
-  }
-  return next(specifier, context);
-}
-`;
-
-  it('a worker ask with no seat denies closed on the bound, exit 4', async () => {
-    const sandbox = createGitSandbox({ injectProcessEnv: true });
-    const root = sandbox.path;
-    writeFileSync(join(root, 'base.txt'), 'base\n');
-    sandbox.git(['add', '-A']);
-    sandbox.git(['commit', '-qm', 'base']);
-    const childDir = mkdtempSync(join(tmpdir(), 'prod-ask-child-'));
-    roots.push(childDir);
-    const fixture = join(childDir, 'worker-child.mjs');
-    writeFileSync(
-      fixture,
-      ASK_BOUND.replace(
-        '__ASK_MODULE_URL__',
-        JSON.stringify(pathToFileURL(ASK_MODULE).href),
-      ),
-    );
-    writeFileSync(join(childDir, 'loader-hook.mjs'), ASK_LOADER);
-    writeFileSync(
-      join(childDir, 'loader-register.mjs'),
-      `import { register } from 'node:module';\nregister('./loader-hook.mjs', import.meta.url);\n`,
-    );
-    vi.stubEnv('KUBIC_PROVIDER', 'faux');
-    vi.spyOn(process, 'cwd').mockReturnValue(root);
-    const { r, lines, errs } = runners();
-    const started = Date.now();
-    // No approvalsSeat injected and stdin is not a TTY under test, so
-    // the runner's TTY default resolves to no seat: nothing answers.
-    const code = await r.orchestrate(
-      { prompt: 'do the work', session: 'orch-381', agents: ['worker-1'] },
-      noConfig,
-      {
-        workerEntry: {
-          cmd: process.execPath,
-          args: [
-            '--experimental-strip-types',
-            '--import',
-            join(childDir, 'loader-register.mjs'),
-            fixture,
-          ],
-        },
-      },
-    );
-    expect(code, [...lines, ...errs].join('\n')).toBe(4);
-    expect(Date.now() - started).toBeLessThan(30_000);
-    const evidence = JSON.parse(
-      readFileSync(
-        join(
-          approvalsSessionDir(
-            join(realpathSync(root), '.kubic', 'orchestrator'),
-            'orch-381',
-          ),
-          'worker-1.child.json',
-        ),
-        'utf8',
-      ),
-    ) as { answer: { approved: boolean; code: string; reason: string } };
-    expect(evidence.answer.approved).toBe(false);
-    expect(evidence.answer.code).toBe('approval_timeout');
-    expect(evidence.answer.reason).toMatch(/timed out after 100ms/);
-  }, 60_000);
 });
 
 // The replay third of the lane projection (issue #381): a deterministic
@@ -1500,16 +698,16 @@ describe('kubic replay lane projection (prod wiring)', () => {
             agentId: 'agent-1',
             pid: null,
             generation: 1,
-            worktree: '/repo/.kubic/wt/agent-1',
+            worktree: '/repo',
             model: 'faux/echo',
           },
           environment: {
             capturedFrom: 'used',
-            cwd: '/repo/.kubic/wt/agent-1',
+            cwd: '/repo',
             env: {},
           },
           worktree: {
-            path: '/repo/.kubic/wt/agent-1',
+            path: '/repo',
             baseRevision: 'abc123',
             branch: null,
           },

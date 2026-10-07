@@ -33,7 +33,9 @@ describe('line fitting', () => {
     expect(leftRight('only', '', 6)).toBe('only  ');
     for (const width of [20, 40, 80]) {
       expect(
-        visibleWidth(leftRight('■ KUBIC │ project', '[SOLO] 14:02', width)),
+        visibleWidth(
+          leftRight('■ KUBIC │ project', 'approvals on │ 14:02', width),
+        ),
       ).toBe(width);
     }
   });
@@ -110,9 +112,9 @@ describe('frames', () => {
 
 describe('marks', () => {
   it('badges are inverse cells, bracketed without colour', () => {
-    expect(badge(plain, 'SOLO', 'mode')).toBe('[SOLO]');
-    expect(badge(rich, 'SOLO', 'mode')).toBe(
-      rich.style({ fg: 'fg0', inverse: true, bold: true })(' SOLO '),
+    expect(badge(plain, 'APPROVAL', 'accent')).toBe('[APPROVAL]');
+    expect(badge(rich, 'APPROVAL', 'accent')).toBe(
+      rich.style({ fg: 'accent', inverse: true, bold: true })(' APPROVAL '),
     );
     expect(badge(rich, 'a', 'key')).toBe(
       rich.style({ fg: 'fg0', bg: 'bg3', bold: true })(' a '),

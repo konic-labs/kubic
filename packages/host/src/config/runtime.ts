@@ -3,15 +3,12 @@
 //
 // One call turns the six config layers into the values the product actually
 // runs on: provider/model selection, approval policy + routes, permission
-// classes, journal retention, modes, and a fail-closed budget posture.
+// classes and journal retention.
 // Precedence: enterprise > global > project (trust-gated) > workspace >
 // session > agent, then the documented env overrides, then an explicit CLI
 // flag. The first layer to set a leaf owns it; every attempt to override a
 // set leaf is reported in `overriddenAttempts`, never applied.
 //
-// §71: budgets are NEVER defaulted — a [budgets] key is refused outright
-// (config.ts owns that key) and an absent budget key yields no limits, which
-// this module reports rather than invents.
 // §36: secrets never appear in config — a `$VAR` / `!command` ref anywhere in
 // the effective config is refused by name, never substituted or echoed.
 //
@@ -43,9 +40,6 @@ import {
   ConfigError,
   type ConfigLayer,
   checkGitignoreSplit,
-  checkOrchestratorManager,
-  checkOrchestratorMaxWorkers,
-  checkOrchestratorRoot,
   checkOutOfScopeEntries,
   checkRoleModelRef,
   checkSessionCompaction,
@@ -84,8 +78,6 @@ export const RUNTIME_ENV_OVERRIDES = {
 
 export const RUNTIME_DEFAULTS = {
   approvalsRoute: 'ask-user',
-  modesSolo: true,
-  modesOrchestrator: false,
 } as const;
 
 // Every documented config key, with the observable effect it has at runtime —
@@ -176,18 +168,10 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
     effect:
       'climbs allowed per run on the escalation ladder (§38.4); unset means the ladder length',
   },
-  'modes.solo': {
-    effect:
-      'selects solo (the architecture) — solo=true with orchestrator=true is refused',
-  },
-  'modes.orchestrator': {
-    effect:
-      'selects orchestrator mode; contradictory [modes] values are refused by name',
-  },
   'approvals.route': { effect: 'approval routing (ask-user | deny) — §41' },
   'approvals.maxPendingMs': {
     effect:
-      'pending-approval bound on the solo lane and the orchestrator; a pending ask denies on timeout',
+      'pending-approval bound on the lane; a pending ask denies on timeout',
   },
   'approvals.autoApprove': {
     effect:
@@ -231,16 +215,6 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
     effect:
       'per-role model/tool/thinking/request-option defaults, requires and the allowed model set, layered under the role document (§12.1, §38.2)',
   },
-  'orchestrator.root': {
-    effect: 'parent directory for orchestrator worktrees',
-  },
-  'orchestrator.maxWorkers': {
-    effect: 'default admission cap for the orchestrator scheduler (§45)',
-  },
-  'orchestrator.manager': {
-    effect:
-      'opt-in driver for `kubic orchestrate`: "lane" routes the run through the model-driven manager lane, "template" (the default) keeps the deterministic plan',
-  },
   'ui.theme': {
     effect:
       'TUI theme: a built-in name (`default`, `dark`, `light`, `terminal`) or a path to a JSON theme file, resolved and validated before the alt-screen opens (a missing or invalid file is a named `error:` line and exit 2)',
@@ -261,15 +235,14 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   'session.autoCompact': {
     effect:
-      'threshold compaction on the solo lane (run, tui, workers): false disables it, true is the automatic default',
+      'threshold compaction on the lane (run, tui): false disables it, true is the automatic default',
   },
   'session.reserveTokens': {
     effect:
-      'reserved-room tokens on the solo lane (run, tui, workers), clamped per model to at most a quarter of its context window',
+      'reserved-room tokens on the lane (run, tui), clamped per model to at most a quarter of its context window',
   },
   'session.keepRecentTokens': {
-    effect:
-      'verbatim recent-context window on the solo lane (run, tui, workers)',
+    effect: 'verbatim recent-context window on the lane (run, tui)',
   },
   'verify.tests': {
     effect:
@@ -292,11 +265,11 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   // §29.2 (issue #237): the top-level `skills` array — NOT a `[skills]`
   // section. Entries resolve against their declaring file at load and
-  // reach `run`, `tui` and orchestrator workers with source 'settings';
-  // project-layer entries apply only for a trusted project.
+  // reach `run` and `tui` with source 'settings'; project-layer entries
+  // apply only for a trusted project.
   skills: {
     effect:
-      'settings skills for `kubic run`, `kubic tui` and orchestrator workers (loaded with source `settings`)',
+      'settings skills for `kubic run` and `kubic tui` (loaded with source `settings`)',
   },
   // §58 enterprise [policy] (issue #288). The allow/deny and model keys reach
   // the live path (lane tool intersection, model selection gate, `kubic
@@ -331,20 +304,11 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   'policy.filesystem_policy': {
     kept: 'resolved into the effective policy but NOT enforced as its own gate: the lane derives filesystem reach from [permissions] classes today',
   },
-  'policy.require_credential_broker': {
-    kept: 'resolved into the effective policy but NOT enforced: the credential broker is not on the worker spawn path yet, so this key protects nothing today (doctor does not report it yet)',
-  },
-  'policy.deny_local_credentials': {
-    kept: 'resolved into the effective policy but NOT enforced: the local-credential check is not on the worker spawn path yet, so this key protects nothing today (doctor does not report it yet)',
-  },
   'policy.data_policy': {
     kept: 'carried and reported; no local mechanism can promise a provider-side training policy, so it is never claimed as enforced',
   },
   'policy.logging_policy': {
     kept: 'carried and reported; the one shipped audit ledger is not (yet) selected by this key',
-  },
-  'policy.agent_policy': {
-    kept: 'max_agents/max_cost_usd resolve into the effective policy but are NOT enforced: the orchestrator cap is a named follow-up (doctor does not report it yet)',
   },
   audit: {
     kept: '[[audit]] sinks are parsed, validated and built: appendToLedger fans every §60 row out to the configured sinks plus the mandatory repo ledger (level = privileged keeps decisions and privileged actions only)',
@@ -439,41 +403,6 @@ export interface RuntimeEscalation {
   maxEscalations: number;
 }
 
-export interface RuntimeModes {
-  solo: boolean;
-  orchestrator: boolean;
-  source: ConfigValueSource;
-}
-
-export interface RuntimeOrchestrator {
-  /**
-   * §35/§44 worktree parent (issue #133): the spawned set lives at
-   * `<root>/<worktreeRoot>/<agent>`. Undefined means the shipped
-   * `.kubic/wt` — never an invented path.
-   */
-  root?: string;
-  /**
-   * §45 worker cap (issue #133): the default the scheduler resolves through
-   * resolveMaxConcurrency. Undefined means no configured cap; an explicit
-   * session/argv cap still wins.
-   */
-  maxWorkers?: number;
-  /**
-   * The delegation driver (issue #431, L-D34): `"lane"` opts the run
-   * into the model-driven manager lane, anything else (including absent)
-   * keeps the deterministic template plan.
-   */
-  manager?: 'lane' | 'template';
-}
-
-export interface RuntimeBudgets {
-  // §71: nothing is capped until the operator configures a limit, and config
-  // cannot express a budget at all — so this is always false today, reported
-  // rather than implied.
-  configured: boolean;
-  detail: string;
-}
-
 export interface ConfigLayerReport {
   layer: ConfigLayer;
   path: string | undefined;
@@ -538,10 +467,7 @@ export interface RuntimeConfig {
   // Undefined when no layer declares `[agent] systemPromptFile` — the
   // lane assembles its prompt unchanged.
   systemPromptFile?: RuntimeSystemPrompt;
-  modes: RuntimeModes;
-  orchestrator: RuntimeOrchestrator;
   verify: RuntimeVerify;
-  budgets: RuntimeBudgets;
   projectTrusted: boolean;
   overriddenAttempts: string[];
   // The cli/env model pins a frozen enterprise `[model]` overrode (also named
@@ -594,8 +520,6 @@ export interface EffectiveConfigView {
   // The effective thinking level with its source (issue #225), so
   // `kubic config --json` reports what the lane boots with.
   thinking: RuntimeThinking | undefined;
-  modes: RuntimeModes;
-  budgets: RuntimeBudgets;
   projectTrusted: boolean;
   overriddenAttempts: string[];
   layers: ConfigLayerReport[];
@@ -882,35 +806,6 @@ function approvalsFrom(
         : { requireJustification: approvals.requireJustification }),
     }),
     source,
-  };
-}
-
-function modesFrom(
-  config: KubicConfig,
-  sources: Record<string, ConfigValueSource>,
-): RuntimeModes {
-  const modes = config.modes ?? {};
-  // Solo is the architecture and delegation is a mode (§3/§10): setting one
-  // flag true selects that mode and turns the other off. Only an explicit
-  // true/false pair is a contradiction and is refused by name.
-  if (modes.solo === true && modes.orchestrator === true) {
-    throw new ConfigError(
-      'modes: at most one of solo/orchestrator may be true — solo is the architecture, delegation is a mode',
-    );
-  }
-  const solo =
-    modes.solo ??
-    (modes.orchestrator === true ? false : RUNTIME_DEFAULTS.modesSolo);
-  const orchestrator =
-    modes.orchestrator ??
-    (modes.solo === true ? false : RUNTIME_DEFAULTS.modesOrchestrator);
-  const set = modes.solo !== undefined || modes.orchestrator !== undefined;
-  return {
-    solo,
-    orchestrator,
-    source: set
-      ? (sources['modes.solo'] ?? sources['modes.orchestrator'] ?? 'defaults')
-      : 'defaults',
   };
 }
 
@@ -1205,22 +1100,6 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     source: compactionSource,
   };
 
-  // §35/§44/§45 orchestrator keys (issue #133): validated here too, because
-  // the programmatic session/agent layers never pass through the TOML
-  // parser — an escaping root or a non-positive cap is refused by name,
-  // never half-applied.
-  const orchestratorRoot = checkOrchestratorRoot(
-    config.orchestrator?.root,
-    'orchestrator',
-  );
-  const orchestratorMaxWorkers = checkOrchestratorMaxWorkers(
-    config.orchestrator?.maxWorkers,
-    'orchestrator',
-  );
-  const orchestratorManager = checkOrchestratorManager(
-    config.orchestrator?.manager,
-    'orchestrator',
-  );
   // §12.1 per-role model pins (issue #133): validated here too, because the
   // programmatic session/agent layers never pass through the TOML parser — a
   // malformed `provider/id` ref is refused by name, never carried to the lane.
@@ -1326,22 +1205,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
       source: systemPromptSource,
       layerPath: systemPromptLayerPath,
     }),
-    modes: modesFrom(config, loaded.sources),
-    orchestrator: {
-      ...(orchestratorRoot === undefined ? {} : { root: orchestratorRoot }),
-      ...(orchestratorMaxWorkers === undefined
-        ? {}
-        : { maxWorkers: orchestratorMaxWorkers }),
-      ...(orchestratorManager === undefined
-        ? {}
-        : { manager: orchestratorManager }),
-    },
     verify,
-    budgets: {
-      configured: false,
-      detail:
-        'no budgets are defaulted by config (§71): nothing is capped until you configure a limit, and [budgets] keys are refused outright',
-    },
     projectTrusted,
     overriddenAttempts: [
       ...merged.overriddenAttempts,
@@ -1424,8 +1288,6 @@ export function effectiveConfigView(
     modelSource: runtime.modelSource,
     thinking:
       runtime.thinking === undefined ? undefined : { ...runtime.thinking },
-    modes: { ...runtime.modes },
-    budgets: { ...runtime.budgets },
     projectTrusted: runtime.projectTrusted,
     overriddenAttempts: [...runtime.overriddenAttempts],
     layers: runtime.layers.map((layer) => ({ ...layer })),
@@ -1530,12 +1392,6 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
       : `journal out-of-scope: ${view.journal.outOfScope.length} path(s) excluded from the baseline and the sweep (self + children): ${view.journal.outOfScope.join(', ')}`,
   );
   lines.push(compactionSummaryLine(view.compaction));
-  lines.push(
-    `modes: solo=${String(view.modes.solo)}, orchestrator=${String(view.modes.orchestrator)} (${view.modes.source})`,
-  );
-  lines.push(
-    `budgets: ${view.budgets.configured ? 'configured' : 'none'} — ${view.budgets.detail}`,
-  );
   lines.push(
     `project layer: ${view.projectTrusted ? 'trusted' : "distrusted (refused pre-trust; run 'kubic trust' to accept this project, or set KUBIC_TRUST_PROJECT=1 for this invocation)"}`,
   );

@@ -440,7 +440,6 @@ describe('the TUI footer names the lane failure (issue #113)', () => {
       presentationSeed: () => ({
         sessionId: 'sess-1',
         model: 'faux/faux-1',
-        mode: 'solo' as const,
         approvalsSkipped: false,
       }),
       setUsage: () => {},
@@ -496,7 +495,6 @@ describe('the TUI footer names the lane failure (issue #113)', () => {
       presentationSeed: () => ({
         sessionId: 'sess-1',
         model: 'faux/faux-1',
-        mode: 'solo' as const,
         approvalsSkipped: false,
       }),
       setUsage: () => {},
@@ -521,7 +519,6 @@ describe('the TUI footer names the lane failure (issue #113)', () => {
       presentationSeed: () => ({
         sessionId: 'sess-1',
         model: 'faux/faux-1',
-        mode: 'solo' as const,
         approvalsSkipped: false,
       }),
       setUsage: () => {},

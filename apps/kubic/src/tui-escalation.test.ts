@@ -339,7 +339,6 @@ describe('configured ladder on the TUI lane (issue #210)', () => {
     const app = createTuiApp({
       sessionId: 's1',
       model: 'local/a',
-      mode: 'solo',
       approvalsSkipped: false,
     });
     const rows = [

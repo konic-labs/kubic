@@ -19,21 +19,12 @@ import { homedir } from 'node:os';
 import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import type { JournalRetention } from '../../../packages/exec/src/journal.js';
-import {
-  gitSync,
-  hasGitignoreMetacharacters,
-  hasUnsafeCharacters,
-  RUNTIME_EXCLUDE_ENTRIES,
-} from '../../../packages/exec/src/runtime-exclude.js';
+import { gitSync } from '../../../packages/exec/src/runtime-exclude.js';
 import type { SoloApprovalConfig } from '../../../packages/host/src/approvals.js';
 import type { RoleModelEntry } from '../../../packages/host/src/config/config.js';
 import {
   CONFIG_LAYERS,
-  ConfigError,
-  checkCommittedConfigHalfRoot,
   checkModelStreamTuning,
-  checkOrchestratorRootNoOp,
-  checkOrchestratorRootShape,
 } from '../../../packages/host/src/config/config.js';
 import {
   buildConfigDoctorInput,
@@ -59,8 +50,6 @@ import {
   projectTrustStorePath,
 } from '../../../packages/host/src/config/trust-store.js';
 import type { DepProbe } from '../../../packages/host/src/doctor.js';
-import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
-import { DEFAULT_WORKTREE_ROOT } from '../../../packages/host/src/orchestrator/worktree/naming.js';
 import {
   type EffectivePolicy,
   hasModelPolicy,
@@ -94,7 +83,7 @@ export interface CliConfigResult {
   // callers never run on invented values.
   runtime: RuntimeConfig | undefined;
   // Named reason the config was refused (unknown/unsupported key, a
-  // distrusted project layer, a budget key, a secret ref in config).
+  // distrusted project layer, a secret ref in config).
   error: string | undefined;
   // The repo's committed-vs-ignored split (§35/D35), reported by
   // `kubic config` and by doctor: the five runtime prefixes must be ignored
@@ -139,71 +128,6 @@ export interface CliConfigOptions {
    * post-load patch.
    */
   thinking?: string;
-}
-
-// The §35/§91 runtime exclude entries for a worktree parent (issue #133):
-// the shipped five prefixes, plus the configured `[orchestrator].root` when
-// it names a parent other than the default. An untracked worktree directory
-// would make the pre-merge clean-tree guard refuse every merge, so the
-// configured root is shipped to the repo's exclude file exactly like
-// `.kubic/wt/` is. One derivation, every consumer (dispatch's run/orchestrate/
-// tui write, and orchestrate's own startup write) — the list cannot drift.
-export function runtimeExcludeEntriesFor(
-  worktreeRoot: string | undefined,
-): readonly string[] {
-  if (worktreeRoot === undefined || worktreeRoot === DEFAULT_WORKTREE_ROOT) {
-    return RUNTIME_EXCLUDE_ENTRIES;
-  }
-  // Path shape re-checked at the derivation too (issue #133 fix-cycle-3): the
-  // config load refuses these first, but a programmatic caller that bypassed
-  // it must not hand the writer an empty or escaping value — same rule, same
-  // named refusal.
-  checkOrchestratorRootShape(worktreeRoot, 'orchestrator');
-  // The derived entry is anchored to the repository root (issue #133
-  // fix-cycle-3): a pattern whose only slash is trailing (`worktrees/`) is
-  // NOT anchored — git matches it at any depth, hiding `deep/worktrees/…`
-  // and `src/worktrees/…` from `git add -A` and the pre-merge clean-tree
-  // guard. The leading slash makes the entry relative to the repository
-  // root, so exactly the named directory (and everything under it) matches.
-  // The shipped five entries already carry a middle slash, so git anchors
-  // them as they are — they stay byte-identical.
-  const entry = `/${worktreeRoot}/`;
-  // Defense in depth (issue #133 review): the config load refuses control
-  // characters in the root by name (checkOrchestratorRoot). If a hostile
-  // value ever reached this seam, the derivation refuses to hand the entry
-  // to the writer — no entry with control characters can be written to
-  // `.git/info/exclude`, where a newline would inject gitignore lines.
-  // The ROOT is what ships (the entry only wraps it in slashes), so the rule
-  // reads the root: a `#`-leading root stays refused here even though the
-  // anchored entry no longer sits at the start of the gitignore line.
-  if (hasUnsafeCharacters(worktreeRoot)) {
-    throw new ConfigError(
-      "'orchestrator': 'root' must not contain control characters — the value is shipped to git's exclude file verbatim",
-    );
-  }
-  // Same rule for the gitignore metacharacters (issue #133 re-review): git
-  // reads the entry as a pattern, so `*`/`?`/`[`/`]` would hide paths other
-  // than the named directory (from `git add -A` and the pre-merge
-  // clean-tree guard), a leading `#` would comment the line out, and a
-  // backslash would escape the next character. Refused, never escaped into
-  // a different rule.
-  if (hasGitignoreMetacharacters(worktreeRoot)) {
-    throw new ConfigError(
-      "'orchestrator': 'root' must not contain gitignore metacharacters — the value is shipped to git's exclude file verbatim",
-    );
-  }
-  // D35 re-checked at the derivation too (issue #133 re-review): the entry
-  // must never ignore the committed half (`.kubic/config.toml`,
-  // `.kubic/roles/*.md`), even when a programmatic caller bypassed the
-  // config load. Same rule, same message as checkOrchestratorRoot's — the
-  // compare is case-insensitive, like git's own pattern folding on a
-  // case-insensitive filesystem (issue #133 fix-cycle-3).
-  checkCommittedConfigHalfRoot(worktreeRoot, 'orchestrator');
-  // No-op roots re-checked here as well (issue #133 fix-cycle-3): a `.`
-  // segment means the derived entry would match nothing, leaving the
-  // worktree set unignored. Same rule, same message as the load's.
-  checkOrchestratorRootNoOp(worktreeRoot, 'orchestrator');
-  return [...RUNTIME_EXCLUDE_ENTRIES, entry];
 }
 
 function message(error: unknown): string {
@@ -412,9 +336,8 @@ const CONFIG_REPORTING_COMMANDS = new Set([
 // under the effective config exactly like `kubic run`, so a refused config
 // must stop them the same way.
 // Exported so the dispatch gate-membership test pins it: a command whose
-// runner reads `result.runtime` must be listed here (issue #242). `clean`
-// reads the orchestrator root, `policy` reports the posture a run would
-// enforce, `attach`/`resume` boot the same lane as `tui`, and
+// runner reads `result.runtime` must be listed here (issue #242). `policy`
+// reports the posture a run would enforce, `attach`/`resume` boot the same lane as `tui`, and
 // `eval`/`benchmark` run agent lanes under the same projections — all fail
 // closed on a refused config instead of proceeding on built-in defaults.
 // The reporting commands (`config`, `doctor`, `trust`) must still run so
@@ -422,12 +345,10 @@ const CONFIG_REPORTING_COMMANDS = new Set([
 // `session.retentionDays` (undefined-safe: no invented window).
 export const CONFIG_CONSUMING_COMMANDS: ReadonlySet<string> = new Set([
   'run',
-  'orchestrate',
   'tui',
   'attach',
   'resume',
   'replay',
-  'clean',
   'policy',
   'eval',
   'benchmark',
@@ -495,17 +416,16 @@ function modelPinOrigin(runtime: RuntimeConfig): string {
 }
 
 // Whether a frozen enterprise `[model]` is the effective pin (issue #295;
-// §35.1): every cli/env pin is dropped, in this process and in every worker
-// child it starts — so the consumers that reason about which model runs
-// (the worker credential preflight, the orchestrate child env, the TUI
-// `/model` switch) follow the pin, never a raw KUBIC_MODEL.
+// §35.1): every cli/env pin is dropped — so the consumers that reason about
+// which model runs (the TUI `/model` switch) follow the pin, never a raw
+// KUBIC_MODEL.
 export function runtimeModelFrozen(result: CliConfigResult): boolean {
   return result.runtime?.modelSource === 'enterprise';
 }
 
 // One stderr line per cli/env model pin a frozen enterprise `[model]`
 // overrode (issue #295; §35.1) — the composition root prints them once at the
-// boot of run/tui/orchestrate, so `kubic run --model x` against an enterprise
+// boot of run/tui, so `kubic run --model x` against an enterprise
 // pin says it ran the pin instead of dropping `x` silently. Empty when
 // nothing was overridden (no freeze, no cli/env pin, or the same pin).
 export function runtimeModelPinNotes(result: CliConfigResult): string[] {
@@ -1016,9 +936,7 @@ export function sessionRetentionDays(
 // The `[agent] systemPromptFile` contents `kubic run` boots with (issue
 // #240): the file text the runtime read at load. Undefined when no layer
 // declares the key (or the load was refused) — the lane assembles its
-// prompt unchanged. Worker children are `kubic run` processes loading the
-// same committed config, so they assemble the same prompt with no extra
-// wiring.
+// prompt unchanged.
 export function runtimeSystemPromptSection(
   result: CliConfigResult,
 ): string | undefined {
@@ -1028,10 +946,7 @@ export function runtimeSystemPromptSection(
 // The lane compaction options `kubic run` boots with (issue #239): the
 // configured `[session]` compaction keys over the SAME load every other
 // consumer uses. Undefined when config sets none (or the load was refused),
-// so the lane defaults apply — never an invented value. Orchestrator worker
-// children are `kubic run` processes in their worktree, loading the same
-// committed config themselves, so this projection IS their inheritance: no
-// extra env travels for it.
+// so the lane defaults apply — never an invented value.
 export function runtimeCompactionDeps(
   result: CliConfigResult,
 ): SoloCompactionOptions | undefined {
@@ -1049,22 +964,6 @@ export function runtimeCompactionDeps(
     ...(enabled === undefined ? {} : { enabled }),
     ...(reserveTokens === undefined ? {} : { reserveTokens }),
     ...(keepRecentTokens === undefined ? {} : { keepRecentTokens }),
-  };
-}
-
-// The manager lane's approval snapshot for the orchestrator path (issue #106,
-// §45.2), over the SAME config load every other consumer uses: a delegated
-// conflict resolver is spawned under exactly this policy, so the `route`,
-// `autoApprove` and `maxPendingMs` here must be the ones in force — never a
-// second default invented at the spawn site. `sessionScoped` and
-// `requireJustification` are lane-local concerns (§41) and are not part of the
-// snapshot the resolver carries.
-export function approvalSnapshotFrom(runtime: RuntimeConfig): ApprovalSnapshot {
-  const policy = runtime.approvals.policy;
-  return {
-    route: policy.route,
-    autoApprove: [...policy.autoApprove],
-    maxPendingMs: policy.maxPendingMs,
   };
 }
 
@@ -1124,7 +1023,6 @@ export function doctorConfigProbe(result: CliConfigResult): DepProbe {
     buildConfigDoctorInput({
       values: view.values,
       projectTrusted: view.projectTrusted,
-      budgetsConfigured: view.budgets.configured,
       // The effective reserve, from the same getter `kubic config` prints
       // (issue #239) — doctor and the command cannot disagree.
       compactionSummary: compactionSummaryLine(view.compaction),

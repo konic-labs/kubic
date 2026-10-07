@@ -263,11 +263,9 @@ export interface SoloOverflowRecovery {
 
 export interface OverflowRecoveryOptions {
   // Product-policy budget for the retry (default: exactly one retry).
-  // Construct from the orchestrator's RetryBudgetConfig ({maxAttempts,
-  // maxCostUsd}) wherever a retry policy runs — same field names.
   retryBudget?: RetryBudget;
-  // Reporting hook: the caller records the decision on its worker result
-  // and trajectory/debug channel (the lane returns it too).
+  // Reporting hook: the caller records the decision on its result and
+  // trajectory/debug channel (the lane returns it too).
   onRetryDecision?: (decision: RetryDecision) => void;
 }
 
@@ -295,10 +293,9 @@ export async function recoverSoloOverflowTurn(
     failed.error ?? failed.reason,
   );
   const budget = recovery.retryBudget ?? new RetryBudget(1);
-  // Review #209: the solo path threads no measured spend ({}), so the
-  // maxCostUsd arm never binds here — correct for a single bounded retry.
-  // The cost arm binds where callers thread real spend (the orchestrator
-  // relaunch, #184); widening this site needs the usage plumbing first.
+  // The lane threads no measured spend ({}), so the maxCostUsd arm never
+  // binds here — correct for a single bounded retry; widening this site
+  // needs the usage plumbing first.
   const decision = chooseRetry(classified, {}, budget);
   recovery.onRetryDecision?.(decision);
   if (decision.decision !== 'retry_with_new_context')

@@ -1,7 +1,6 @@
-// The one secret-key classifier (issue #359; §3.8, §36.1). The worker spawn
-// env (worker/src/lifecycle/env.ts), its debug-log redaction and the
-// trajectory exporter all classify env keys through THIS function, so a key
-// one of them treats as secret can never be written in the clear by another.
+// The secret env-key classifier. The trajectory exporter classifies the
+// environment a run used through this function, so a secret-classified
+// value is never written in the clear.
 
 export const REDACTED_ENV_VALUE = '<redacted>';
 
@@ -24,11 +23,6 @@ const FEDERATION_SECRET_KEYS: ReadonlySet<string> = new Set([
 
 export function isSecretEnvKey(key: string): boolean {
   const upper = key.toUpperCase();
-  // Grant-derived keys are secrets by provenance: every role credential env
-  // output lives under KUBIC_ROLE_<ROLE>_, so the whole namespace is secret
-  // instead of guessing from the suffix (a grant named `session` carries a
-  // secret but matches no SECRET_SUFFIXES entry).
-  if (upper.startsWith('KUBIC_ROLE_')) return true;
   if (FEDERATION_SECRET_KEYS.has(upper)) return true;
   return SECRET_SUFFIXES.some(
     (suffix) => upper === suffix || upper.endsWith(`_${suffix}`),

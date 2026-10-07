@@ -356,55 +356,6 @@ describe('RunSpans per-span cost (issue #243)', () => {
   });
 });
 
-describe('RunSpans worker start/startup (issue #290)', () => {
-  it('nests a startup span under the worker start, tagged by worker session', () => {
-    const spans = new RunSpans(() => 50);
-    const start = spans.startWorker('sess-w1');
-    spans.endWorkerStartup(start, 120);
-    spans.endWorker(start);
-    const flushed = spans.flushWorker(start);
-    expect(flushed.map((span) => span.name)).toEqual([
-      'kubic.worker.start',
-      'kubic.worker.startup',
-    ]);
-    expect(flushed[1]).toMatchObject({ parentId: start });
-    // The startup duration IS the registry's number, not a second
-    // wall-clock read: the span reports the measured value by construction.
-    expect((flushed[1]?.endMs ?? 0) - (flushed[1]?.startMs ?? 0)).toBe(120);
-    for (const span of flushed) expect(span.sessionId).toBe('sess-w1');
-  });
-
-  it('closes a never-ready startup with zero duration, failing the start', () => {
-    const spans = new RunSpans(() => 50);
-    const start = spans.startWorker('sess-w9');
-    spans.endWorkerStartup(start, null);
-    spans.endWorker(start, 'spawn_failed');
-    const flushed = spans.flushWorker(start);
-    expect((flushed[1]?.endMs ?? -1) - (flushed[1]?.startMs ?? -1)).toBe(0);
-    expect(flushed[0]?.error).toBe('spawn_failed');
-  });
-
-  it('serializes the worker session link on the artifact lines', () => {
-    const spans = new RunSpans(() => 0);
-    const start = spans.startWorker('sess-w2');
-    spans.endWorkerStartup(start, 5);
-    spans.endWorker(start);
-    const lines = serializeSpanArtifact(
-      spans.flushWorker(start),
-      start,
-      'sess-w2',
-    )
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as { run: string; sessionId: string });
-    expect(lines).toHaveLength(2);
-    for (const line of lines) {
-      expect(line.run).toBe(start);
-      expect(line.sessionId).toBe('sess-w2');
-    }
-  });
-});
-
 describe('TurnSpans per-turn attribution (issue #290)', () => {
   it('records one run span and one tool span per tool call of the turn', () => {
     const turns = new TurnSpans('sess-t1', () => 0);

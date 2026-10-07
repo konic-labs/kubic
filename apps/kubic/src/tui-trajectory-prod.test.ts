@@ -48,15 +48,12 @@ const app = {
   presentationSeed: () => ({
     sessionId: 'sess-1',
     model: 'faux/faux-1',
-    mode: 'solo' as const,
     approvalsSkipped: false,
   }),
   setUsage: () => {},
 } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
 
-beforeEach(() => {
-  vi.stubEnv('KUBIC_WORKER_ID', '');
-});
+beforeEach(() => {});
 
 afterEach(() => {
   vi.unstubAllEnvs();

@@ -15,7 +15,7 @@ build on.
 
 | Area | Directory | Belongs here | Does NOT belong here |
 | --- | --- | --- | --- |
-| Architecture | [architecture/](architecture/README.md) | Topology and why: solo vs orchestrator, change journal, approvals safety model, package map | API signatures, CLI flags, config keys |
+| Architecture | [architecture/](architecture/README.md) | Topology and why: solo mode, change journal, approvals safety model, package map | API signatures, CLI flags, config keys |
 | Packages | [packages/](packages/README.md) | One page per package: public API, contracts, dep-direction neighbours | Architecture rationale, CLI usage |
 | CLI & operations | [cli/](cli/README.md) | Commands, flags, exit codes, config precedence, `doctor` diagnostics | Package internals |
 | Contributing | [contributing.md](contributing.md) | Workflow (LC0–LC6), Conventional Commits, the docs-update rule | Feature documentation |
@@ -32,7 +32,6 @@ replaces the stub notice with content.
 | --- | --- |
 | [overview.md](architecture/overview.md) | System overview and package map |
 | [solo.md](architecture/solo.md) | Solo mode: single trust zone, no isolation (§59.1) |
-| [orchestrator.md](architecture/orchestrator.md) | Orchestrator mode: manager + workers + worktrees |
 | [journal-and-safety.md](architecture/journal-and-safety.md) | Change journal and approvals safety model |
 
 ### Packages (owner: #63)
@@ -47,7 +46,6 @@ replaces the stub notice with content.
 | `packages/trajectory` | [packages/trajectory.md](packages/trajectory.md) |
 | `packages/eval` | [packages/eval.md](packages/eval.md) |
 | `packages/tui` | [packages/tui.md](packages/tui.md) |
-| `packages/extensions` | [packages/extensions.md](packages/extensions.md) |
 | `apps/kubic` (composition root) | [cli/commands.md](cli/commands.md) |
 
 ### CLI & operations (owner: #64)
@@ -96,5 +94,5 @@ replaces the stub notice with content.
 ## Source material (read-only, do not move)
 
 Package-level contracts live with their code and are quoted — not
-copied — by package pages: `packages/trajectory/CONTRACT.md`,
-`packages/eval/COMMUNITY.md`, `packages/extensions/FACETS.md`.
+copied — by package pages: `packages/trajectory/CONTRACT.md` and
+`packages/eval/COMMUNITY.md`.

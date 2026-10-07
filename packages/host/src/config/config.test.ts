@@ -5,8 +5,6 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import {
-  assertNoBudgetKeys,
-  BudgetKeyError,
   COMMITTED_CONFIG_FILES,
   CONFIG_LAYERS,
   ConfigError,
@@ -137,13 +135,11 @@ describe('canonical TOML example (issue #38)', () => {
     expect(parsed.agent?.name).toBe('kubic');
     expect(parsed.model?.provider).toBe('local');
     expect(parsed.model?.thinking).toBe('medium');
-    expect(parsed.modes?.solo).toBe(true);
     expect(parsed.approvals?.route).toBe('ask-user');
     expect(typeof parsed.approvals?.maxPendingMs).toBe('number');
     expect(parsed.journal?.retentionDays).toBe(30);
     expect(parsed.roles?.reviewer?.tools).toContain('read');
     expect(parsed.roles?.implementer?.model).toBe('local/llama3');
-    expect(parsed.orchestrator?.root).toBe('.kubic/wt');
     expect(parsed.ui?.theme).toBe('dark');
     expect(parsed.session?.store).toBe('jsonl');
   });
@@ -160,22 +156,6 @@ describe('canonical TOML example (issue #38)', () => {
     expect(parseTomlConfig(onDisk)).toEqual(parseTomlConfig(EXAMPLE_TOML));
   });
 
-  it('has no default budget keys', () => {
-    expect(() =>
-      assertNoBudgetKeys(parseTomlConfig(EXAMPLE_TOML)),
-    ).not.toThrow();
-    expect(JSON.stringify(parseTomlConfig(EXAMPLE_TOML))).not.toContain(
-      'budget',
-    );
-  });
-
-  it('rejects budget sections', () => {
-    expect(() =>
-      parseTomlConfig(`${EXAMPLE_TOML}\n[budgets]\ndefault = 100\n`),
-    ).toThrow(BudgetKeyError);
-    expect(() => assertNoBudgetKeys({ budgets: {} })).toThrow(BudgetKeyError);
-  });
-
   it('rejects mcp sections with the unsupported error', () => {
     expect(() =>
       parseTomlConfig(`${EXAMPLE_TOML}\n[mcp]\nenabled = true\n`),
@@ -189,11 +169,11 @@ describe('canonical TOML example (issue #38)', () => {
   });
 });
 
-// §58 Enterprise Policy (issue #288): the documented `[policy]` section and
-// the `[[audit]]` array-of-tables must load verbatim — an admin who pastes
-// the design's example into /etc/kubic/config.toml gets enforcement, not a
-// refusal. Unknown keys stay fail-closed and are named.
-const S58_POLICY_EXAMPLE = `[policy]
+// Enterprise policy: the documented `[policy]` section and the `[[audit]]`
+// array-of-tables must load verbatim — an admin who pastes the documented
+// example into /etc/kubic/config.toml gets enforcement, not a refusal.
+// Unknown keys stay fail-closed and are named.
+const POLICY_EXAMPLE = `[policy]
 allowed_models = ["claude-sonnet-4-6", "local/*"]
 allowed_providers = ["anthropic", "local"]
 allowed_tools = ["read", "grep", "find", "ls", "bash", "edit", "write", "git_diff"]
@@ -203,12 +183,9 @@ network_policy = "proxy"
 allowed_domains = ["registry.npmjs.org", "github.com"]
 
 filesystem_policy = "workspace-only"
-require_credential_broker = true
-deny_local_credentials = true
 
 data_policy = "no-external-training"
 logging_policy = "full-audit"
-agent_policy = { max_agents = 2, max_cost_usd = 5.0 }
 
 [[audit]]
 sink = "syslog"
@@ -276,9 +253,9 @@ describe('§37.4 request options (issue #257)', () => {
   });
 });
 
-describe('§58 [policy] + [[audit]] (issue #288)', () => {
-  it('parses the §58 example verbatim, keys normalized for the policy engine', () => {
-    const parsed = parseTomlConfig(S58_POLICY_EXAMPLE);
+describe('[policy] + [[audit]]', () => {
+  it('parses the documented example verbatim, keys normalized for the policy engine', () => {
+    const parsed = parseTomlConfig(POLICY_EXAMPLE);
     expect(parsed.policy?.allowedModels).toEqual([
       'claude-sonnet-4-6',
       'local/*',
@@ -292,14 +269,8 @@ describe('§58 [policy] + [[audit]] (issue #288)', () => {
       'github.com',
     ]);
     expect(parsed.policy?.filesystemPolicy).toBe('workspace-only');
-    expect(parsed.policy?.requireCredentialBroker).toBe(true);
-    expect(parsed.policy?.denyLocalCredentials).toBe(true);
     expect(parsed.policy?.dataPolicy).toBe('no-external-training');
     expect(parsed.policy?.loggingPolicy).toBe('full-audit');
-    expect(parsed.policy?.agentPolicy).toEqual({
-      maxAgents: 2,
-      maxCostUsd: 5,
-    });
     expect(parsed.audit).toEqual([{ sink: 'syslog', level: 'privileged' }]);
   });
 
@@ -317,17 +288,6 @@ describe('§58 [policy] + [[audit]] (issue #288)', () => {
     );
   });
 
-  it('refuses unknown keys and mistyped values inside agent_policy, by path', () => {
-    expect(() =>
-      parseTomlConfig(
-        '[policy]\nagent_policy = { max_agents = 1, bogus = 2 }\n',
-      ),
-    ).toThrow(/agent_policy.*bogus/);
-    expect(() =>
-      parseTomlConfig('[policy]\nagent_policy = { max_agents = -1 }\n'),
-    ).toThrow(/non-negative/);
-  });
-
   it('refuses unknown network and filesystem policy values by name', () => {
     expect(() => parseTomlConfig('[policy]\nnetwork_policy = "vpn"\n')).toThrow(
       /'policy': 'network_policy' must be one of/,
@@ -341,9 +301,6 @@ describe('§58 [policy] + [[audit]] (issue #288)', () => {
     expect(() =>
       parseTomlConfig('[policy]\nallowed_models = "local/*"\n'),
     ).toThrow(/string array/);
-    expect(() =>
-      parseTomlConfig('[policy]\nrequire_credential_broker = "yes"\n'),
-    ).toThrow(/must be a boolean/);
   });
 
   it('refuses unknown sink kinds, levels and keys in [[audit]], by name', () => {
@@ -396,7 +353,7 @@ describe('§58 [policy] + [[audit]] (issue #288)', () => {
   });
 
   it('round-trips [policy] and [[audit]] through the serializer', () => {
-    const once = parseTomlConfig(S58_POLICY_EXAMPLE);
+    const once = parseTomlConfig(POLICY_EXAMPLE);
     const twice = parseTomlConfig(serializeTomlConfig(once));
     expect(twice).toEqual(once);
   });
@@ -559,13 +516,13 @@ describe('trust-gated project-local config (issue #38)', () => {
 });
 
 describe('committed vs gitignored split (issue #38)', () => {
-  it('commits config + roles, never sessions/journal/artifacts/worktrees', () => {
+  it('commits config + roles, never sessions/journal/artifacts/audit', () => {
     expect(isCommittedConfigPath('config.toml')).toBe(true);
     expect(isCommittedConfigPath('roles/reviewer.md')).toBe(true);
     expect(isCommittedConfigPath('sessions/s1.jsonl')).toBe(false);
     expect(isCommittedConfigPath('journal/2026-01-01.jsonl')).toBe(false);
     expect(isCommittedConfigPath('artifacts/out.txt')).toBe(false);
-    expect(isCommittedConfigPath('wt/agent-1')).toBe(false);
+    expect(isCommittedConfigPath('audit/audit.jsonl')).toBe(false);
   });
 
   it('requires every ignored prefix in .gitignore', () => {
@@ -707,7 +664,7 @@ describe('config validation hardening (issue #69)', () => {
       /unknown key/,
     );
     expect(() =>
-      parseTomlConfig('[modes]\nsolo = true\nturbo = true\n'),
+      parseTomlConfig('[approvals]\nroute = "deny"\nturbo = true\n'),
     ).toThrow(/unknown key/);
     // `maxBytes` is a real key (issue #350); anything else under [journal]
     // is still refused by name.
@@ -718,7 +675,9 @@ describe('config validation hardening (issue #69)', () => {
 
   it('rejects non-table sections', () => {
     expect(() => parseTomlConfig('agent = "x"\n')).toThrow(/must be a table/);
-    expect(() => parseTomlConfig('modes = true\n')).toThrow(/must be a table/);
+    expect(() => parseTomlConfig('approvals = true\n')).toThrow(
+      /must be a table/,
+    );
     expect(() => parseTomlConfig('[roles.a]\nmodel = 42\n')).toThrow(
       /'roles\.a': 'model' must be 'provider\/id'/,
     );
@@ -742,9 +701,9 @@ describe('config validation hardening (issue #69)', () => {
     expect(() => parseTomlConfig('[approvals]\nautoApprove = [1]\n')).toThrow(
       /string array/,
     );
-    expect(() => parseTomlConfig('[modes]\nsolo = "yes"\n')).toThrow(
-      /must be a boolean/,
-    );
+    expect(() =>
+      parseTomlConfig('[approvals]\nsessionScoped = "yes"\n'),
+    ).toThrow(/must be a boolean/);
   });
 
   it('parses [roles.<name>] thinking, refusing unknown levels by name (issue #225)', () => {
@@ -896,193 +855,6 @@ describe('config validation hardening (issue #69)', () => {
       /non-empty string/,
     );
   });
-
-  it('passes non-record values through the budget guard', () => {
-    expect(() => assertNoBudgetKeys(null)).not.toThrow();
-    expect(() => assertNoBudgetKeys([])).not.toThrow();
-    expect(() => assertNoBudgetKeys('budgets')).not.toThrow();
-  });
-});
-
-describe('[orchestrator] manager key (issue #431, L-D34)', () => {
-  it('parses lane and template, leaving the key absent when unset', () => {
-    expect(
-      parseTomlConfig('[orchestrator]\nmanager = "lane"\n').orchestrator
-        ?.manager,
-    ).toBe('lane');
-    expect(
-      parseTomlConfig('[orchestrator]\nmanager = "template"\n').orchestrator
-        ?.manager,
-    ).toBe('template');
-    expect(
-      parseTomlConfig('[orchestrator]\nroot = ".kubic/wt"\n').orchestrator
-        ?.manager,
-    ).toBeUndefined();
-  });
-
-  it('refuses anything but lane or template by name', () => {
-    expect(() =>
-      parseTomlConfig('[orchestrator]\nmanager = "agentic"\n'),
-    ).toThrow(/'orchestrator': 'manager' must be "lane" or "template"/);
-    expect(() => parseTomlConfig('[orchestrator]\nmanager = 7\n')).toThrow(
-      /'orchestrator': 'manager' must be "lane" or "template"/,
-    );
-  });
-});
-
-describe('orchestrator root hardening (issue #133 review)', () => {
-  it('refuses control characters by name, never echoing the value', () => {
-    // The root is shipped verbatim as a git exclude entry, so a newline
-    // injects arbitrary patterns into `.git/info/exclude` — the pre-merge
-    // clean-tree guard and `git add -A` would then silently skip matching
-    // paths. A literal ESC (single-quoted TOML) would reach operator-facing
-    // messages. Both are refused by name at parse time.
-    for (const text of [
-      '[orchestrator]\nroot = "x\\n*.log\\n!keep"\n',
-      '[orchestrator]\nroot = "wt\\rX"\n',
-      "[orchestrator]\nroot = 'wt\u001b[31m'\n",
-      '[orchestrator]\nroot = "wt\u0085X"\n',
-      '[orchestrator]\nroot = "wt\u202eX"\n',
-    ]) {
-      expect(() => parseTomlConfig(text), JSON.stringify(text)).toThrow(
-        /'orchestrator': 'root' must be a workspace-relative path \(control characters are refused/,
-      );
-    }
-    // The refusal never echoes the hostile bytes: an ESC in the message
-    // would reach the operator's terminal.
-    try {
-      parseTomlConfig("[orchestrator]\nroot = 'wt\u001b[31m'\n");
-      expect.unreachable();
-    } catch (error) {
-      expect((error as Error).message).not.toContain('\u001b');
-      expect((error as Error).message).not.toContain('31m');
-    }
-  });
-
-  it('refuses a root whose exclude entry would ignore the committed half', () => {
-    // D35: `.kubic/config.toml` and `.kubic/roles/*.md` are committed. An
-    // exclude entry `.kubic/` (or `.kubic/roles/`) hides them from git, so
-    // the root is refused by name — including equivalent spellings of the
-    // same directory.
-    for (const root of [
-      '.kubic',
-      '.kubic/roles',
-      '.kubic//roles',
-      '.kubic/./roles',
-    ]) {
-      expect(
-        () => parseTomlConfig(`[orchestrator]\nroot = "${root}"\n`),
-        root,
-      ).toThrow(
-        /'orchestrator': 'root' must not cover the committed config half/,
-      );
-    }
-    // The shipped parent, its runtime siblings, and a lookalike name stay
-    // allowed: the check is segment-wise, never a string prefix.
-    for (const root of [
-      '.kubic/wt',
-      '.kubic/orchestrator',
-      'wt',
-      '.kubic/roles-archive',
-      '.kubic/wt/nested',
-    ]) {
-      expect(
-        parseTomlConfig(`[orchestrator]\nroot = "${root}"\n`).orchestrator
-          ?.root,
-        root,
-      ).toBe(root);
-    }
-  });
-
-  it('refuses case variants of the committed half (issue #133 fix-cycle-3)', () => {
-    // git case-folds ignore patterns on a case-insensitive filesystem
-    // (`core.ignorecase=true`, the macOS default), so `.KUBIC/` hides
-    // `.kubic/config.toml` and `.kubic/roles/*.md` exactly like `.kubic/`
-    // does. The segment compare folds with it: a variant that names the same
-    // directory is the same refusal, by name.
-    for (const root of [
-      '.KUBIC',
-      '.Kubic',
-      '.KUBIC/roles',
-      '.kubic/ROLES',
-      '.KUBIC/ROLES',
-      '.KUBIC//roles',
-    ]) {
-      expect(
-        () => parseTomlConfig(`[orchestrator]\nroot = "${root}"\n`),
-        root,
-      ).toThrow(
-        /'orchestrator': 'root' must not cover the committed config half/,
-      );
-    }
-    // Case variants that do not name the committed half stay allowed: the
-    // check is segment-wise, never a case-folded prefix. `.KUBIC/wt` is the
-    // shipped runtime parent's own directory.
-    for (const root of [
-      '.KUBIC/wt',
-      '.Kubic/orchestrator',
-      '.kubic/ROLES-archive',
-    ]) {
-      expect(
-        parseTomlConfig(`[orchestrator]\nroot = "${root}"\n`).orchestrator
-          ?.root,
-        root,
-      ).toBe(root);
-    }
-  });
-
-  it('refuses roots that name the workspace or carry a . segment (issue #133 fix-cycle-3)', () => {
-    // A '.' segment names the directory it sits in: `.` is the workspace
-    // itself, `./` matches nothing at all, and `foo/.` is spelled `foo`. The
-    // derived `<root>/` entry would then ignore nothing — the worktree set
-    // would stay untracked and the pre-merge clean-tree guard would refuse
-    // every merge. Refused by name, never normalized: the value the operator
-    // wrote is the value that would ship.
-    for (const root of ['.', './.', './worktrees', 'foo/.', '././x']) {
-      expect(
-        () => parseTomlConfig(`[orchestrator]\nroot = "${root}"\n`),
-        root,
-      ).toThrow(
-        /'orchestrator': 'root' must not name the workspace or carry a '\.' segment/,
-      );
-    }
-    // A committed-half spelling keeps its own (more specific) refusal: the
-    // no-op rule never masks the rule that protects D35's files.
-    expect(() =>
-      parseTomlConfig('[orchestrator]\nroot = ".kubic/./roles"\n'),
-    ).toThrow(
-      /'orchestrator': 'root' must not cover the committed config half/,
-    );
-  });
-
-  it('refuses gitignore metacharacters by name (issue #133 re-review)', () => {
-    // The root is shipped verbatim as `<root>/` in `.git/info/exclude`, and
-    // git reads that line as a gitignore pattern: `*`/`?`/`[`/`]` make the
-    // entry match paths other than the named directory — hiding files from
-    // `git add -A` and the pre-merge clean-tree guard — a leading `#` turns
-    // it into a comment, and a backslash escapes the next character (a
-    // trailing one leaves an entry that matches nothing at all). Refused by
-    // name, never escaped into a different rule.
-    for (const root of [
-      '*',
-      '**',
-      '.kubic*',
-      '.kubi[c]',
-      '.kubi?',
-      '#x',
-      'x\\',
-      '\\',
-      'a\\b',
-    ]) {
-      expect(
-        () =>
-          parseTomlConfig(`[orchestrator]\nroot = ${JSON.stringify(root)}\n`),
-        root,
-      ).toThrow(
-        /'orchestrator': 'root' must be a workspace-relative path \(gitignore metacharacters are refused/,
-      );
-    }
-  });
 });
 
 describe('layer merge hardening (issue #69)', () => {
@@ -1174,13 +946,13 @@ describe('layered load hardening (issue #69)', () => {
     }
   });
 
-  it('wraps budget violations with the offending layer', () => {
+  it('wraps unknown-section violations with the offending layer', () => {
     const paths = defaultLayerPaths({
       home: '/home/u',
       projectRoot: '/repo',
     });
     const bridge = fakeBridge({
-      '/home/u/.kubic/config.toml': '[budgets]\ndefault = 1\n',
+      '/home/u/.kubic/config.toml': '[telemetry]\nenabled = true\n',
     });
     expect(() => loadLayered(bridge, paths)).toThrow(/layer 'global'/);
   });
@@ -1243,8 +1015,7 @@ describe('config serialization hardening (issue #69)', () => {
     const partial = `.kubic/sessions/\n.kubic/journal/\n`;
     expect(checkGitignoreSplit(partial).missing).toEqual([
       '.kubic/artifacts/',
-      '.kubic/wt/',
-      '.kubic/orchestrator/',
+      '.kubic/audit/',
     ]);
   });
 

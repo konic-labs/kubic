@@ -33,17 +33,15 @@ export interface PreflightInfo {
   };
   /** The project layer: absent when the project has none (row omitted). */
   readonly trust?: 'loaded' | 'untrusted';
-  readonly mode: 'solo' | 'orchestrator';
   /**
-   * The mode's honest isolation statement — the limits module's own line,
-   * verbatim (the composition root's). Empty when the notice is suppressed:
-   * the row then says only `none in solo` / `worktrees`.
+   * The honest isolation statement — the limits module's own line, verbatim
+   * (the composition root's). Empty when the notice is suppressed: the row
+   * then says only `none`.
    */
   readonly isolation: string;
   /** The keys the start row names, as caps (`^P`). */
   readonly keys: {
     readonly palette: string;
-    readonly mode: string;
     readonly help: string;
   };
   readonly recent?: readonly {
@@ -199,11 +197,7 @@ export function renderPreflight(
       w,
       'info',
       'isolation',
-      info.isolation !== ''
-        ? info.isolation
-        : info.mode === 'solo'
-          ? 'none in solo'
-          : 'worktrees',
+      info.isolation !== '' ? info.isolation : 'none',
       undefined,
       '/safety',
     ),
@@ -214,10 +208,6 @@ export function renderPreflight(
       ['/', 'commands'],
       ['@', 'attach a file'],
       [info.keys.palette, 'palette'],
-      [
-        info.keys.mode,
-        info.mode === 'solo' ? 'orchestrator mode' : 'solo mode',
-      ],
       [info.keys.help, 'all keys'],
     ]),
   );

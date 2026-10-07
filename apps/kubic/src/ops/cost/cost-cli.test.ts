@@ -589,122 +589,11 @@ describe('kubic cost durable usage (issue #400)', () => {
     expect(rows[0]?.cacheRead).toBeGreaterThanOrEqual(0);
   });
 
-  it('rolls one orchestrate run up: --session <orch> sums the children (issue #164)', async () => {
-    const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    const parent = await createSession(
-      store,
-      { id: 'orch-1', cwd: '/repo' },
-      BACKGROUND_CONTEXT,
-    );
-    await parent.release(BACKGROUND_CONTEXT);
-    const childTotals: number[] = [];
-    for (const agent of ['aaa', 'bbb']) {
-      const worker = await createSession(
-        store,
-        {
-          id: `orch-1-${agent}`,
-          cwd: `/repo/.kubic/wt/${agent}`,
-          parentSessionId: 'orch-1',
-          role: 'implementer',
-          agentId: agent,
-        },
-        BACKGROUND_CONTEXT,
-      );
-      await fauxRun(worker.adopt());
-      await worker.release(BACKGROUND_CONTEXT);
-      const readable = await attachSession(
-        store,
-        `orch-1-${agent}`,
-        BACKGROUND_CONTEXT,
-      );
-      try {
-        childTotals.push(
-          totalSessionUsage(
-            await readSessionUsage(readable.storage, BACKGROUND_CONTEXT),
-          ).costUsd,
-        );
-      } finally {
-        await readable.release(BACKGROUND_CONTEXT);
-      }
-    }
-    const rows = await loadSessionCostRows(root, 'orch-1');
-    // Per-child rows, keyed by the worker session — never the parent id.
-    expect(rows.map((row) => row.agentId).sort()).toEqual([
-      'orch-1-aaa',
-      'orch-1-bbb',
-    ]);
-    const expected = (childTotals[0] ?? 0) + (childTotals[1] ?? 0);
-    expect(rows.reduce((sum, row) => sum + row.costUsd, 0)).toBeCloseTo(
-      expected,
-    );
-    expect(expected).toBeGreaterThanOrEqual(0);
-  });
-
-  it('a live-locked manager still reports its children (review #164)', async () => {
-    const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    // The manager stays attached: a live run holds the Kubic lock exactly
-    // like this, so the old contract would refuse the whole report.
-    const parent = await createSession(
-      store,
-      { id: 'orch-1', cwd: '/repo' },
-      BACKGROUND_CONTEXT,
-    );
-    try {
-      for (const agent of ['aaa', 'bbb']) {
-        const worker = await createSession(
-          store,
-          {
-            id: `orch-1-${agent}`,
-            cwd: `/repo/.kubic/wt/${agent}`,
-            parentSessionId: 'orch-1',
-            role: 'implementer',
-            agentId: agent,
-          },
-          BACKGROUND_CONTEXT,
-        );
-        await fauxRun(worker.adopt());
-        await worker.release(BACKGROUND_CONTEXT);
-      }
-      const rows = await loadSessionCostRows(root, 'orch-1');
-      expect(rows.map((row) => row.agentId).sort()).toEqual([
-        'orch-1-aaa',
-        'orch-1-bbb',
-      ]);
-    } finally {
-      await parent.release(BACKGROUND_CONTEXT);
-    }
-  });
-
   it('still refuses an unknown explicit --session (exit 1), never a marker row', async () => {
     const root = tmpRoot();
     await expect(loadSessionCostRows(root, 'missing')).rejects.toMatchObject({
       name: 'SessionAttachError',
     });
-  });
-
-  it('an unknown --session with orphaned children names the orphans (#419)', async () => {
-    const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    // Children naming a parent that was never recorded (pruned manager
-    // record, or a hand-made linkage): the loaders see them, the named
-    // attach does not.
-    for (const agent of ['aaa', 'bbb']) {
-      const worker = await createSession(
-        store,
-        {
-          id: `gone-${agent}`,
-          cwd: '/repo',
-          parentSessionId: 'gone',
-        },
-        BACKGROUND_CONTEXT,
-      );
-      await worker.release(BACKGROUND_CONTEXT);
-    }
-    await expect(loadSessionCostRows(root, 'gone')).rejects.toThrow(
-      /orphaned children: gone-aaa, gone-bbb/,
-    );
   });
 
   it('refuses an explicit --session held live, instead of a zero (locked) row', async () => {
@@ -1050,7 +939,6 @@ describe('kubic cost project scope and grouping (issue #250)', () => {
       id: string;
       cwd: string;
       workspace?: string;
-      parentSessionId?: string;
       role?: string;
       agentId?: string;
     },
@@ -1132,36 +1020,19 @@ describe('kubic cost project scope and grouping (issue #250)', () => {
     ]);
   });
 
-  it("names each worker's role and model on an orchestrated run", async () => {
+  it("names a session's recorded role, agent and model", async () => {
     const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    const parent = await createSession(
-      store,
-      { id: 'orch-2', cwd: '/repo' },
-      BACKGROUND_CONTEXT,
-    );
-    await parent.release(BACKGROUND_CONTEXT);
-    for (const agent of ['ccc', 'ddd']) {
-      const worker = await createSession(
-        store,
-        {
-          id: `orch-2-${agent}`,
-          cwd: `/repo/.kubic/wt/${agent}`,
-          workspace: '/repo',
-          parentSessionId: 'orch-2',
-          role: 'implementer',
-          agentId: agent,
-        },
-        BACKGROUND_CONTEXT,
-      );
-      await fauxRun(worker.adopt());
-      await worker.release(BACKGROUND_CONTEXT);
-    }
-    const rows = await loadSessionCostRows(root, 'orch-2');
-    // Listing order is newest-first, so the assertion sorts like #164's.
-    expect(rows.map((row) => row.agent).sort()).toEqual(['ccc', 'ddd']);
-    expect(rows.map((row) => row.role)).toEqual(['implementer', 'implementer']);
-    expect(rows.map((row) => row.model)).toEqual([MODEL_REF, MODEL_REF]);
+    await storedRun(root, {
+      id: 's-role',
+      cwd: '/repo',
+      workspace: '/repo',
+      role: 'implementer',
+      agentId: 'ccc',
+    });
+    const rows = await loadSessionCostRows(root, 's-role');
+    expect(rows.map((row) => row.agent)).toEqual(['ccc']);
+    expect(rows.map((row) => row.role)).toEqual(['implementer']);
+    expect(rows.map((row) => row.model)).toEqual([MODEL_REF]);
   });
 
   it('aggregates to one row per session with --by session', async () => {

@@ -50,8 +50,8 @@ export type {
 // --- #154 additions ---
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-tui Input (the single-line text field)
-//   used by: packages/tui/src/question-view.ts (a worker's free-text
-//     question, §14.2, answered in the TUI's orchestrator mode)
+//   used by: packages/tui/src/palette-view.ts and picker-view.ts (the
+//     palette and picker query fields)
 //   why Pi has no alternative: Input is Pi's own line editor (cursor, kill
 //     ring, bracketed paste, undo); a Kubic copy would fork key handling
 //   review: issue #154

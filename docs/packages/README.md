@@ -13,7 +13,6 @@ neighbours — no architecture rationale, no CLI usage.
 - [trajectory.md](trajectory.md) — `packages/trajectory`
 - [eval.md](eval.md) — `packages/eval`
 - [tui.md](tui.md) — `packages/tui`
-- [extensions.md](extensions.md) — `packages/extensions`
 
 ## Import direction (matches `scripts/dep-lint.mjs`)
 
@@ -25,24 +24,15 @@ cross-checks these neighbour lists against the lint's edge set so drift
 fails CI.
 
 ```text
-@kubic/core                      ← imports nothing internal; imported by all
-  ↑                ↑
-@kubic/exec  @kubic/trajectory   ← core only
-  ↑
-@kubic/agents                    ← core, exec (FileBridge for memory/skills)
-  ↑    ↑          ↑                ↑
-  │    └──────────┼────────────────┼──→ @kubic/worker   ← core, exec, agents (+ snapshots)
-  │               │                │         ↑
-  │               │                │   @kubic/host      ← core, exec, worker, agents, trajectory, eval
-  │               │                │         ↑
-  │               │                └──→ @kubic/eval     ← core, agents, trajectory
-  │               │
-  │               └──→ @kubic/extensions  ← core, exec, agents, trajectory, eval
-  │                        (never worker/host/tui implementation, never apps/kubic)
-  │
-@kubic/tui  ← core only (never host/worker implementation)
-
-apps/kubic  ← composition root: wires host + tui together
+@kubic/core         ← imports nothing internal; imported by all
+@kubic/exec         ← core
+@kubic/trajectory   ← core
+@kubic/agents       ← core, exec
+@kubic/eval         ← core, agents, trajectory
+@kubic/worker       ← core, exec, agents, trajectory, eval
+@kubic/host         ← core, exec, worker, agents, trajectory, eval
+@kubic/tui          ← core only (never host/worker implementation)
+apps/kubic          ← composition root: wires host + tui together
 ```
 
 I/O confinement (design §7 component split; enforced by

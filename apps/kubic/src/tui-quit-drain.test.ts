@@ -39,7 +39,6 @@ import {
   bootTuiLane,
   runTuiCommand,
   type TuiLaneBoot,
-  TuiOrchestratorTurn,
   type TuiRunDeps,
 } from './tui-run.js';
 
@@ -559,31 +558,6 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
       expect(await settled(exit)).toBe(0);
       expect(fake.counts.stopped).toBe(1);
     });
-  });
-
-  it('an orchestrator drive whose abort never settles is still released by the bound', async () => {
-    let releaseBound: () => void = () => {};
-    const bound = new Promise<void>((resolve) => {
-      releaseBound = resolve;
-    });
-    const turn = new TuiOrchestratorTurn(
-      {
-        run: () => new Promise(() => {}),
-        abort: () => new Promise<void>(() => {}),
-      },
-      () => {},
-    );
-    void turn.run('objective');
-    expect(turn.isRunning()).toBe(true);
-    let drained = false;
-    const draining = turn.drainForQuit(bound).then(() => {
-      drained = true;
-    });
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(drained).toBe(false);
-    releaseBound();
-    await draining;
-    expect(drained).toBe(true);
   });
 
   // Issue #311: the settlement sweep is for a session that goes on. A quit

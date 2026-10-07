@@ -7,7 +7,6 @@ import { FAUX_ENV, fauxSmoke, TOOL_PROMPT } from './faux-smoke.mjs';
 const SESSIONS = '/home/.kubic/sessions';
 const CWD = '/repo';
 const TOOL_TRAJECTORY = `${SESSIONS}/tool-1/trajectory.json`;
-const WORKER_TRAJECTORY = `${SESSIONS}/orch-w1/trajectory.json`;
 
 function envelope(status, summary, extra = {}) {
   return JSON.stringify({
@@ -35,28 +34,15 @@ function trajectory(overrides = {}) {
   };
 }
 
-// The canned sessions root: the tool run's trajectory and one worker's.
+// The canned sessions root: the tool run's trajectory.
 function healthyFiles() {
   return {
     [TOOL_TRAJECTORY]: JSON.stringify(trajectory()),
-    [WORKER_TRAJECTORY]: JSON.stringify(
-      trajectory({
-        identity: { sessionId: 'orch-w1', agentId: 'w1', workerId: 'w1' },
-        provenance: {
-          sessionId: 'orch-w1',
-          agentId: 'w1',
-          pid: 77,
-          generation: 1,
-          worktree: `${CWD}/.kubic/worktrees/w1`,
-          model: 'faux/echo',
-        },
-      }),
-    ),
   };
 }
 
 // A binary that behaves: echo, a tool round-trip with its trajectory, the
-// analysis surfaces over it, text mode, the refusal, orchestrate + workers.
+// analysis surfaces over it, text mode and the refusal.
 function healthy(overrides = {}) {
   return (args, opts = {}) => {
     const key = `${args[0]}|${opts.env?.KUBIC_PROVIDER ?? ''}`;
@@ -72,9 +58,6 @@ function healthy(overrides = {}) {
         ),
         stderr: '',
       };
-    }
-    if (args[0] === 'orchestrate') {
-      return { code: 0, stdout: envelope('completed', 'done'), stderr: '' };
     }
     if (args[0] === 'benchmark') {
       // Issue #262: seven executable fixtures, one live-PTY stub.
@@ -109,15 +92,6 @@ function healthy(overrides = {}) {
     if (['replay', 'eval', 'export'].includes(args[0])) {
       return { code: 0, stdout: '{}', stderr: '' };
     }
-    if (args[0] === 'workers') {
-      return {
-        code: 0,
-        stdout: JSON.stringify([
-          { workerId: 'w1', sessionId: 'orch-w1', generation: 1, pid: 77 },
-        ]),
-        stderr: '',
-      };
-    }
     if (args.includes(TOOL_PROMPT)) {
       return {
         code: 0,
@@ -151,7 +125,6 @@ function smoke(overrides = {}, files = healthyFiles()) {
       if (text === undefined) throw new Error(`ENOENT: ${path}`);
       return text;
     },
-    sessionsRoot: SESSIONS,
     cwd: CWD,
   });
 }
@@ -167,7 +140,6 @@ describe('faux smoke checker', () => {
         return run(args, opts);
       },
       readFile: (path) => files[path],
-      sessionsRoot: SESSIONS,
       cwd: CWD,
     });
     assert.deepEqual(result.problems, []);
@@ -252,36 +224,6 @@ describe('faux smoke checker', () => {
       ),
     );
   });
-
-  it('names a failed orchestration', () => {
-    const { problems } = smoke({
-      'orchestrate -p say hi --yes --json|faux': {
-        code: 1,
-        stdout: envelope('failed', 'x', {
-          error: { message: 'worker exited 6' },
-        }),
-        stderr: '',
-      },
-    });
-    assert.ok(
-      problems.some(
-        (p) => p.includes('faux orchestrate') && p.includes('worker exited 6'),
-      ),
-    );
-  });
-
-  // `--json` stdout is exactly one document, which the formatter indents
-  // with two spaces (orchestrate's envelope spans many lines).
-  it('reads an indented multi-line --json envelope', () => {
-    const { problems } = smoke({
-      'orchestrate -p say hi --yes --json|faux': {
-        code: 0,
-        stdout: `${JSON.stringify({ ok: true, status: 'completed' }, null, 2)}\n`,
-        stderr: '',
-      },
-    });
-    assert.deepEqual(problems, []);
-  });
 });
 
 describe('faux smoke checker: run-produced trajectories (issue #383)', () => {
@@ -304,7 +246,7 @@ describe('faux smoke checker: run-produced trajectories (issue #383)', () => {
   });
 
   it('names an unreadable or non-§46 trajectory file', () => {
-    const missing = smoke({}, { [WORKER_TRAJECTORY]: '{}' });
+    const missing = smoke({}, {});
     assert.ok(
       missing.problems.some(
         (p) =>
@@ -382,57 +324,5 @@ describe('faux smoke checker: run-produced trajectories (issue #383)', () => {
         label,
       );
     }
-  });
-
-  it('names worker trajectories that do not match their kubic workers row', () => {
-    const { problems } = smoke(
-      {},
-      {
-        ...healthyFiles(),
-        [WORKER_TRAJECTORY]: JSON.stringify(
-          trajectory({
-            identity: { sessionId: 'orch-w1', agentId: 'w1', workerId: 'w9' },
-            provenance: {
-              sessionId: 'orch-w1',
-              agentId: 'w1',
-              pid: 78,
-              generation: 2,
-              worktree: CWD,
-              model: 'faux/echo',
-            },
-          }),
-        ),
-      },
-    );
-    for (const fragment of [
-      'worker w1 trajectory: workerId "w9", row "w1"',
-      'worker w1 trajectory: generation 2, row 1',
-      'worker w1 trajectory: pid 78, row 77',
-      "is not the worker's own worktree",
-    ]) {
-      assert.ok(
-        problems.some((p) => p.includes(fragment)),
-        fragment,
-      );
-    }
-  });
-
-  it('names a worker row without a trajectory, and no rows at all', () => {
-    const files = healthyFiles();
-    delete files[WORKER_TRAJECTORY];
-    const missing = smoke({}, files);
-    assert.ok(
-      missing.problems.some((p) =>
-        p.startsWith('worker w1 trajectory: cannot read'),
-      ),
-    );
-    const none = smoke({
-      'workers|faux': { code: 0, stdout: '[]', stderr: '' },
-    });
-    assert.ok(
-      none.problems.includes(
-        'kubic workers --json: no worker rows after orchestrate',
-      ),
-    );
   });
 });

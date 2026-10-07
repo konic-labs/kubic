@@ -1,6 +1,6 @@
 // Run → §46 trajectory (issue #383; design §46, §74, §84).
-// Every settled run (solo `kubic run`, each orchestrator worker child, each
-// TUI turn) persists one trajectory next to its session:
+// Every settled run (`kubic run`, each TUI turn) persists one trajectory
+// next to its session:
 // <sessions-root>/<id>/trajectory.json. This module is the pure half: the
 // run's own evidence in — session entries (actions, observations, usage),
 // journal changes (the diff), ledger records (approvals), the USED spawn env
@@ -27,7 +27,6 @@ import type {
   JsonValue,
   TrajectoryAction,
   TrajectoryApproval,
-  TrajectoryBudget,
   TrajectoryEscalation,
   TrajectoryExport,
   TrajectoryFailureCode,
@@ -67,21 +66,15 @@ export interface RunOutcome {
 export interface RunTrajectoryInput {
   sessionId: string;
   agentId: string;
-  // The orchestrator worker id (KUBIC_WORKER_ID); null on a solo run.
-  workerId: string | null;
   // The role the lane ran as: 'solo', or the `--role` name.
   role: string;
   prompt: string;
-  // §67 (issue #191): the manager's task, when this run was handed one. Its
-  // identity replaces the prompt-derived one, so a worker's trajectory names
-  // the task the manager composed instead of a digest of the composed prompt.
-  task?: { taskId: string; objective: string; role: string };
   // The session's durable entries (any order; older runs filtered here).
   entries: readonly unknown[];
   model: { provider: string; id: string; thinking: string | null };
   pid: number | null;
   generation: number;
-  // The workspace the run executed in (a worker's worktree), absolute.
+  // The workspace the run executed in, absolute.
   cwd: string;
   baseRevision: string;
   branch: string | null;
@@ -100,10 +93,6 @@ export interface RunTrajectoryInput {
   // run recorded, oldest first. Absent means no climb — never an empty
   // array from a lane that cannot climb.
   escalations?: TrajectoryEscalation[];
-  // The §71 budget block (issue #285): the limits the run started with,
-  // the measured spend and the breach. Absent means the run was
-  // unbounded — never an empty object.
-  budget?: TrajectoryBudget;
 }
 
 // Two runs of one prompt answer the same task, so they can form a §74
@@ -307,15 +296,15 @@ export function trajectoryResultFor(outcome: RunOutcome): TrajectoryResult {
   let status: TrajectoryResultStatus = 'failed';
   let category: TrajectoryFailureCode;
   switch (terminus) {
-    case 'budget_exhausted':
-      status = 'budget_exhausted';
-      category = 'budget_exhausted';
+    case 'turn_limit':
+      status = 'turn_limit';
+      category = 'run_limit';
       break;
     case 'timeout':
-      // Issue #280: a wall-clock bound is its own terminus. The §52
-      // taxonomy has no timeout code, so the category stays the guard's.
+      // A wall-clock bound is its own terminus; its category is the
+      // guard's, like the turn limit.
       status = 'timeout';
-      category = 'budget_exhausted';
+      category = 'run_limit';
       break;
     case 'cancelled':
       status = 'cancelled';
@@ -377,19 +366,19 @@ export function assembleRunTrajectory(
   const entries = runEntries(input.entries, input.startedAt);
   const items = entriesToTranscript(entries);
   const { actions, observations } = actionsAndObservations(items);
-  const taskId = input.task?.taskId ?? taskIdForPrompt(input.prompt);
+  const taskId = taskIdForPrompt(input.prompt);
   const modelRef = `${input.model.provider}/${input.model.id}`;
   const result = trajectoryResultFor(input.outcome);
   return buildTrajectoryExport({
     task: {
       taskId,
-      objective: input.task?.objective ?? input.prompt,
-      role: input.task?.role ?? input.role,
+      objective: input.prompt,
+      role: input.role,
     },
     identity: {
       sessionId: input.sessionId,
       agentId: input.agentId,
-      workerId: input.workerId,
+      workerId: null,
     },
     model: {
       provider: input.model.provider,
@@ -426,7 +415,6 @@ export function assembleRunTrajectory(
       endedAt: new Date(input.endedAt).toISOString(),
     },
     usage: usageOf(items),
-    ...(input.budget === undefined ? {} : { budget: input.budget }),
     result,
     eval: {
       suite: null,

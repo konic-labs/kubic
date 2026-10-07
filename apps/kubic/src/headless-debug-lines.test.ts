@@ -71,7 +71,6 @@ describe('headless --debug order (issue #246 acceptance)', () => {
 
   beforeEach(() => {
     vi.stubEnv('KUBIC_NO_NOTICE', '1');
-    vi.stubEnv('KUBIC_WORKER_ID', '');
   });
 
   afterEach(() => {
@@ -121,14 +120,11 @@ describe('headless --debug order (issue #246 acceptance)', () => {
     const first = (cls: string): number =>
       debugLines.findIndex((line) => line.includes(cls));
     // The stock run resolves no role document but still names its
-    // default role; the fresh session has no parent.
+    // default role.
     expect(debugLines).toContain('[policy] role=solo (default)');
-    expect(
-      debugLines.some(
-        (line) =>
-          line.startsWith('[session] id=') && line.includes('parent=none'),
-      ),
-    ).toBe(true);
+    expect(debugLines.some((line) => line.startsWith('[session] id='))).toBe(
+      true,
+    );
     for (const cls of ['[policy]', '[session]', '[model]', '[agent]']) {
       expect(first(cls)).toBeGreaterThanOrEqual(0);
     }

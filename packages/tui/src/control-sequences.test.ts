@@ -22,7 +22,6 @@ function frameWith(text: string): string {
   const app = createTuiApp({
     sessionId: 's',
     model: 'm',
-    mode: 'solo',
     approvalsSkipped: false,
   });
   app.applyLaneEntries([
@@ -42,7 +41,7 @@ function presentation(
   over: Partial<LaneSnapshot> = {},
 ): KubicPresentationState {
   return {
-    session: { sessionId: 's', mode: 'solo', approvalsSkipped: false },
+    session: { sessionId: 's', approvalsSkipped: false },
     agents: new Map(),
     lanes: new Map([
       [
@@ -58,7 +57,6 @@ function presentation(
         },
       ],
     ]),
-    workers: new Map(),
     approvals: [],
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     connection: { status: 'connected' },
@@ -83,7 +81,6 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'm',
-      mode: 'solo',
       approvalsSkipped: false,
     });
     app.applyLaneEntries([
@@ -109,7 +106,6 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'm',
-      mode: 'solo',
       approvalsSkipped: false,
     });
     app.applyLaneEntries([
@@ -142,7 +138,6 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'm',
-      mode: 'solo',
       approvalsSkipped: false,
     });
     app.applyLaneEntries([
@@ -169,7 +164,6 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'm',
-      mode: 'solo',
       approvalsSkipped: false,
     });
     app.applyPresentation(
@@ -203,7 +197,6 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'm',
-      mode: 'solo',
       approvalsSkipped: false,
     });
     app.setEditorFooter(

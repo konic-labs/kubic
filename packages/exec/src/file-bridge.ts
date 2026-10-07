@@ -469,8 +469,8 @@ export function liveLockHolder(lockPath: string): number | undefined {
   }
 }
 
-// Atomic, serialized update of one small state file (orchestrator
-// workers.json): an O_EXCL lockfile (stale after `staleMs`, so a crashed
+// Atomic, serialized update of one small state file (the trust store): an
+// O_EXCL lockfile (stale after `staleMs`, so a crashed
 // holder never wedges the next run) guards a read → update → tmp+rename
 // write. The update sees the file as it is AT WRITE TIME, never a snapshot
 // taken before an await. `current` is undefined only when the file is absent.

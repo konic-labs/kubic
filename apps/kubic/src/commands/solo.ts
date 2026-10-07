@@ -18,7 +18,6 @@ import {
   parseRunMaxTurns,
   parseRunTimeout,
   parseSessionIdArg,
-  parseSoloBudget,
 } from '../../../../packages/host/src/run-cli.js';
 import {
   parseModelFlag,
@@ -160,11 +159,6 @@ function registerRun(program: Command, ctx: CommandContext): void {
       'turn bound (positive integer)',
       rule(parseRunMaxTurns),
     )
-    .option(
-      '--budget <dims>',
-      'opt-in §71 budget (e.g. maxToolCalls=10,maxCostUsd=0.5,maxRuntimeMs=60000); a breach ends the run budget_exhausted',
-      rule(parseSoloBudget),
-    )
     .option('--model <provider/id>', MODEL_FLAG_HELP, rule(parseModelFlag))
     .option('--thinking <level>', THINKING_FLAG_HELP, rule(parseThinkingFlag))
     .option('--role <name>', 'boot as the role in .kubic/roles/<name>.md')
@@ -251,7 +245,6 @@ function registerRun(program: Command, ctx: CommandContext): void {
             ...(opts.session === undefined ? {} : { session: opts.session }),
             ...(opts.timeout === undefined ? {} : { timeoutMs: opts.timeout }),
             ...(opts.maxTurns === undefined ? {} : { maxTurns: opts.maxTurns }),
-            ...(opts.budget === undefined ? {} : { budget: opts.budget }),
             ...(opts.role === undefined ? {} : { role: opts.role }),
             ...(opts.skill.length === 0 ? {} : { skills: opts.skill }),
             // Issue #183 (§29.4): the explicit skill invocation travels to
@@ -295,15 +288,6 @@ function registerTui(program: Command, ctx: CommandContext): void {
     )
     .option('--no-skills', 'disable layered skill discovery')
     .option(
-      '--budget <dims>',
-      'opt-in §71 budget (e.g. maxToolCalls=10,maxCostUsd=0.5,maxRuntimeMs=60000); a breach ends the run budget_exhausted',
-      rule(parseSoloBudget),
-    )
-    .option(
-      '--orchestrator',
-      'start in orchestrator mode (delegation is opt-in; needs a git repository)',
-    )
-    .option(
       '--dangerously-skip-approvals',
       'enable full access (no approval asks) for THIS session only — recorded in posture.json and the audit ledger, never in config',
     )
@@ -333,9 +317,7 @@ function registerTui(program: Command, ctx: CommandContext): void {
             ...(opts.role === undefined ? {} : { role: opts.role }),
             ...(opts.skill.length === 0 ? {} : { skills: opts.skill }),
             ...(opts.skills === false ? { noSkills: true } : {}),
-            ...(opts.budget === undefined ? {} : { budget: opts.budget }),
             ...(opts.model === undefined ? {} : { model: opts.model }),
-            ...(opts.orchestrator === true ? { orchestrator: true } : {}),
             ...(opts.dangerouslySkipApprovals === true
               ? { dangerouslySkipApprovals: true }
               : {}),
@@ -583,16 +565,10 @@ function registerSessions(program: Command, ctx: CommandContext): void {
     .command('list')
     .description('list the recorded sessions')
     .option('--json', 'print one JSON array')
-    .option(
-      '--parent <id>',
-      'show only the children of one orchestrate run',
-      rule(parseSessionIdArg),
-    )
     .action(async (opts) => {
       await run({
         command: 'list',
         ...(opts.json === true ? { json: true } : {}),
-        ...(opts.parent === undefined ? {} : { parent: opts.parent }),
       });
     });
   sessions

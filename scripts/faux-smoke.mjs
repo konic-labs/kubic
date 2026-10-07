@@ -21,15 +21,9 @@
 //   - `benchmark --model faux/echo --worktree <scratch> --generation 0
 //     --size smoke --json`: the built-in fixture suites (issue #262) run
 //     through the real lane in a temp workspace, every executed row is
-//     `success: true` with `determinism: "live"`, and the matrix exits 0;
-//   - `orchestrate -p … --yes --json` in a scratch git repo: the manager
-//     delegates, every worker process answers from the faux provider (the
-//     switch crosses the §3.8 spawn allowlist), and the run completes; each
-//     `kubic workers` row's session holds a trajectory whose worker id,
-//     generation and pid match the row, recorded in the worker's own
-//     worktree.
+//     `success: true` with `determinism: "live"`, and the matrix exits 0.
 //
-// The checks are pure (`fauxSmoke({ run, readFile, sessionsRoot, cwd })`)
+// The checks are pure (`fauxSmoke({ run, readFile, cwd })`)
 // so scripts/faux-smoke.test.mjs pins them with canned probes; the real
 // runner spawns bin/kubic.js.
 
@@ -150,51 +144,7 @@ function consumeTrajectory(run, path, readFile, problems) {
   }
 }
 
-// Each worker row's own trajectory (issue #383, §74): written by the worker
-// child into its session, with the row's identity as provenance.
-function checkWorkerTrajectories(run, readFile, sessionsRoot, cwd, problems) {
-  const workers = run(['workers', '--json'], { env: FAUX_ENV });
-  const rows = envelopeOf('kubic workers --json', workers, problems);
-  if (!Array.isArray(rows) || rows.length === 0) {
-    problems.push('kubic workers --json: no worker rows after orchestrate');
-    return;
-  }
-  for (const row of rows) {
-    const label = `worker ${row.workerId} trajectory`;
-    const trajectory = trajectoryAt(
-      label,
-      `${sessionsRoot}/${row.sessionId}/trajectory.json`,
-      readFile,
-      problems,
-    );
-    if (trajectory === undefined) continue;
-    if (trajectory.identity?.workerId !== row.workerId) {
-      problems.push(
-        `${label}: workerId ${JSON.stringify(trajectory.identity?.workerId)}, row ${JSON.stringify(row.workerId)}`,
-      );
-    }
-    if (trajectory.provenance.generation !== row.generation) {
-      problems.push(
-        `${label}: generation ${trajectory.provenance.generation}, row ${row.generation}`,
-      );
-    }
-    if (row.pid !== undefined && trajectory.provenance.pid !== row.pid) {
-      problems.push(
-        `${label}: pid ${trajectory.provenance.pid}, row ${row.pid}`,
-      );
-    }
-    if (
-      typeof trajectory.provenance.worktree !== 'string' ||
-      trajectory.provenance.worktree === cwd
-    ) {
-      problems.push(
-        `${label}: worktree ${JSON.stringify(trajectory.provenance.worktree)} is not the worker's own worktree`,
-      );
-    }
-  }
-}
-
-export function fauxSmoke({ run, readFile, sessionsRoot, cwd }) {
+export function fauxSmoke({ run, readFile, cwd }) {
   const problems = [];
 
   const echo = run(['run', '-p', 'hello', '--json'], { env: FAUX_ENV });
@@ -316,22 +266,11 @@ export function fauxSmoke({ run, readFile, sessionsRoot, cwd }) {
       `unknown KUBIC_PROVIDER: exit ${bogus.code}, want 6 with the named refusal`,
     );
   }
-  const orchestrate = run(['orchestrate', '-p', 'say hi', '--yes', '--json'], {
-    env: FAUX_ENV,
-  });
-  const orchestrated = envelopeOf('faux orchestrate', orchestrate, problems);
-  if (orchestrate.code !== 0 || orchestrated?.status !== 'completed') {
-    problems.push(
-      `faux orchestrate: exit ${orchestrate.code} status ${JSON.stringify(orchestrated?.status)}, want 0/completed (${JSON.stringify(orchestrated?.error?.message ?? orchestrate.stderr.trim().slice(-300))})`,
-    );
-  } else {
-    checkWorkerTrajectories(run, readFile, sessionsRoot, cwd, problems);
-  }
   return { problems };
 }
 
-// Git identity for the scratch repo and the orchestrator's merges: the
-// hermetic HOME has no global git config.
+// Git identity for the scratch repo: the hermetic HOME has no global git
+// config.
 const GIT_IDENTITY = {
   GIT_AUTHOR_NAME: 'kubic-smoke',
   GIT_AUTHOR_EMAIL: 'smoke@kubic.invalid',
@@ -366,8 +305,7 @@ function realRunner(root, { cwd, home }) {
   };
 }
 
-// The scratch cwd is a one-commit git repo, so `orchestrate` has a base to
-// branch its worker worktrees from.
+// The scratch cwd is a one-commit git repo, like a user's project.
 function initRepo(cwd, home) {
   for (const args of [
     ['init', '-q'],
@@ -398,7 +336,6 @@ if (import.meta.main) {
     const { problems } = fauxSmoke({
       run: realRunner(root, { cwd, home }),
       readFile: (path) => readFileSync(path, 'utf8'),
-      sessionsRoot: join(home, '.kubic', 'sessions'),
       cwd,
     });
     if (problems.length > 0) {
@@ -406,7 +343,7 @@ if (import.meta.main) {
       process.exitCode = 1;
     } else {
       console.log(
-        'faux smoke OK: KUBIC_PROVIDER=faux run --json completed (echo + ls tool call), its trajectory.json read by replay/eval/export, text result block, unknown provider refused (exit 6), benchmark ran the 7 fixture suites through the lane (all success, live tier), orchestrate --yes completed across worker processes, each worker trajectory matching its kubic workers row',
+        'faux smoke OK: KUBIC_PROVIDER=faux run --json completed (echo + ls tool call), its trajectory.json read by replay/eval/export, text result block, unknown provider refused (exit 6), benchmark ran the 7 fixture suites through the lane (all success, live tier)',
       );
     }
   } finally {

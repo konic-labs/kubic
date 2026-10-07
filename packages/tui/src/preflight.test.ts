@@ -22,10 +22,9 @@ const BASE: PreflightInfo = {
   },
   project: { path: '~/Desktop/kubic-playground', branch: 'main', dirty: 0 },
   trust: 'loaded',
-  mode: 'solo',
   isolation:
     'solo: no isolation - in-process with your authority; controls: approvals + journal',
-  keys: { palette: '^P', mode: '^G', help: '?' },
+  keys: { palette: '^P', help: '?' },
 };
 
 const trimmed = (lines: readonly string[]): string[] =>
@@ -47,7 +46,7 @@ describe('preflight (issue #462; 05-A … E)', () => {
       '',
       '  START',
       '  ⏎  describe a task below        e.g. "run npm test and fix the failing test"',
-      '  /  commands     @  attach a file     ^P palette     ^G orchestrator mode     ?  all keys',
+      '  /  commands     @  attach a file     ^P palette     ?  all keys',
     ]);
   });
 
@@ -87,26 +86,10 @@ describe('preflight (issue #462; 05-A … E)', () => {
     ).toBe(false);
   });
 
-  it('names the orchestrator isolation and the solo key instead', () => {
-    const lines = trimmed(
-      renderPreflight(
-        plain,
-        {
-          ...BASE,
-          mode: 'orchestrator',
-          isolation: 'each worker runs in its own git worktree',
-        },
-        110,
-      ),
-    );
-    expect(lines).toContain(
-      '  ○ isolation    each worker runs in its own git worktree  /safety',
-    );
-    // A suppressed notice still leaves the honest minimum.
+  it('keeps the honest minimum when the notice is suppressed', () => {
     expect(
       trimmed(renderPreflight(plain, { ...BASE, isolation: '' }, 110)),
-    ).toContain('  ○ isolation    none in solo  /safety');
-    expect(lines.join('\n')).toContain('^G solo mode');
+    ).toContain('  ○ isolation    none  /safety');
   });
 
   it('lists recent sessions with the way back to them', () => {

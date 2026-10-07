@@ -227,59 +227,6 @@ describe('sessions CLI (issue #14, slice F)', () => {
     expect(listing.lines).toEqual(['[]']);
   });
 
-  it('list --parent refuses an invalid id without echoing it raw (#419)', async () => {
-    const root = tmpRoot();
-    // Secret-shaped material is scrubbed; the remainder echoes quoted +
-    // structured (the cost --session fail-closed shape), never raw.
-    const nasty = 'sk-live-abc ../../etc/passwd';
-    const o = out();
-    const e = out();
-    const code = await runSessionsCommand(
-      { command: 'list', parent: nasty },
-      {
-        sessionsRoot: root,
-        out: o.write,
-        logger: createLineLogger(e.write),
-      },
-    );
-    expect(code).toBe(2);
-    const diagnostics = e.lines.join('\n');
-    expect(diagnostics).not.toContain(nasty);
-    expect(diagnostics).not.toContain('sk-live-abc');
-    expect(diagnostics).toContain('invalid --parent id');
-    // A plain path traversal: refused, quoted, no secret to scrub.
-    const o2 = out();
-    const e2 = out();
-    expect(
-      await runSessionsCommand(
-        { command: 'list', parent: '../../etc' },
-        {
-          sessionsRoot: root,
-          out: o2.write,
-          logger: createLineLogger(e2.write),
-        },
-      ),
-    ).toBe(2);
-    expect(e2.lines.join('\n')).toContain('"../../etc"');
-  });
-
-  it('list --parent redacts even a valid-shaped unknown id (#419)', async () => {
-    const root = tmpRoot();
-    const keyShaped = 'sk-live-abcdefghij1234';
-    const o = out();
-    const e = out();
-    const code = await runSessionsCommand(
-      { command: 'list', parent: keyShaped },
-      {
-        sessionsRoot: root,
-        out: o.write,
-        logger: createLineLogger(e.write),
-      },
-    );
-    expect(code).toBe(1);
-    expect(e.lines.join('\n')).not.toContain(keyShaped);
-  });
-
   it('list --json prints [] when there are no sessions', async () => {
     const o = out();
     const code = await runSessionsCommand(
@@ -320,95 +267,6 @@ describe('sessions CLI (issue #14, slice F)', () => {
     expect(o.lines.join('\n')).toContain('(legacy pi 0.87');
   });
 
-  it('list --json carries the parent linkage of a worker session (issue #164)', async () => {
-    const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    const parent = await createSession(
-      store,
-      { id: 'orch-1', cwd: '/repo' },
-      BACKGROUND_CONTEXT,
-    );
-    await parent.release(BACKGROUND_CONTEXT);
-    const worker = await createSession(
-      store,
-      {
-        id: 'orch-1-aaa',
-        cwd: '/repo/.kubic/wt/aaa',
-        parentSessionId: 'orch-1',
-        role: 'implementer',
-        agentId: 'aaa',
-      },
-      BACKGROUND_CONTEXT,
-    );
-    await worker.release(BACKGROUND_CONTEXT);
-    const listing = out();
-    const code = await runSessionsCommand(
-      { command: 'list', json: true },
-      { sessionsRoot: root, out: listing.write },
-    );
-    expect(code).toBe(0);
-    const rows = JSON.parse(listing.lines.join('\n')) as Record<
-      string,
-      unknown
-    >[];
-    const child = rows.find((row) => row.id === 'orch-1-aaa');
-    expect(child).toMatchObject({
-      parentSessionId: 'orch-1',
-      role: 'implementer',
-      agentId: 'aaa',
-    });
-    // A root carries no parent key at all (never null, never '').
-    expect(rows.find((row) => row.id === 'orch-1')).not.toHaveProperty(
-      'parentSessionId',
-    );
-  });
-
-  it("list --parent shows only that run's children (issue #164)", async () => {
-    const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    for (const id of ['orch-1', 'orch-1-aaa', 'orch-1-bbb', 'solo-9']) {
-      const session = await createSession(
-        store,
-        {
-          id,
-          cwd: '/repo',
-          ...(id.startsWith('orch-1-')
-            ? { parentSessionId: 'orch-1', agentId: id.slice(7) }
-            : {}),
-        },
-        BACKGROUND_CONTEXT,
-      );
-      await session.release(BACKGROUND_CONTEXT);
-    }
-    const listing = out();
-    const code = await runSessionsCommand(
-      { command: 'list', json: true, parent: 'orch-1' },
-      { sessionsRoot: root, out: listing.write },
-    );
-    expect(code).toBe(0);
-    const rows = JSON.parse(listing.lines.join('\n')) as { id: string }[];
-    expect(rows.map((row) => row.id).sort()).toEqual([
-      'orch-1-aaa',
-      'orch-1-bbb',
-    ]);
-  });
-
-  it('list --parent on an unknown run names the filter (review #164)', async () => {
-    const root = tmpRoot();
-    const o = out();
-    const e = out();
-    const code = await runSessionsCommand(
-      { command: 'list', parent: 'nope' },
-      {
-        sessionsRoot: root,
-        out: o.write,
-        logger: createLineLogger(e.write),
-      },
-    );
-    expect(code).toBe(1);
-    expect(e.lines.join('\n')).toContain('nope');
-  });
-
   it('list --json emits one {id, cwd} object per session', async () => {
     const root = tmpRoot();
     const work = join(root, 'work');
@@ -432,35 +290,6 @@ describe('sessions CLI (issue #14, slice F)', () => {
     expect(JSON.parse(listing.lines.join('\n'))).toEqual([
       { id: o.lines[0], cwd: work },
     ]);
-  });
-
-  it('attach strips control sequences from the parent/role/agent line (review #164)', async () => {
-    const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    const worker = await createSession(
-      store,
-      {
-        id: 'orch-1-aaa',
-        cwd: '/repo/.kubic/wt/aaa',
-        parentSessionId: 'orch-1',
-        role: 'impl\u001b[2Jementer',
-        agentId: 'a\u0007aa',
-      },
-      BACKGROUND_CONTEXT,
-    );
-    await worker.release(BACKGROUND_CONTEXT);
-    const o = out();
-    const code = await runSessionsCommand(
-      { command: 'attach', id: 'orch-1-aaa' },
-      { sessionsRoot: root, out: o.write },
-    );
-    expect(code).toBe(0);
-    const text = o.lines.join('\n');
-    expect(text).toContain('parent=orch-1');
-    // No control-character regex (biome noControlCharactersInRegex):
-    // ESC and BEL are asserted absent by code point instead.
-    expect(text.includes(String.fromCharCode(27))).toBe(false);
-    expect(text.includes(String.fromCharCode(7))).toBe(false);
   });
 
   it('attaches and shows the transcript tail as readable turn lines', async () => {
@@ -765,7 +594,6 @@ describe('sessions CLI approvals posture (issue #16, slice D)', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.what).toBe('posture:full-access');
     expect(rows[0]?.posture).toBe('full-access');
-    expect(rows[0]?.mode).toBe('solo');
   });
 
   it('defaults to approvals enforced and rejects bad ids', async () => {

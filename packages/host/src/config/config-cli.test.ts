@@ -45,13 +45,7 @@ function runtime(): RuntimeConfig {
       maxAgeMs: 30 * 86_400_000,
       source: 'project',
     },
-    modes: { solo: true, orchestrator: false, source: 'defaults' },
-    orchestrator: {},
     verify: { commands: {} },
-    budgets: {
-      configured: false,
-      detail: 'no budgets are defaulted by config (§71)',
-    },
     projectTrusted: true,
     overriddenAttempts: [],
     modelPinOverrides: [],
@@ -87,7 +81,6 @@ describe('kubic config (issue #90)', () => {
     expect(text).toContain('model.provider = "local" (global, consumed)');
     expect(text).toContain('approvals: route=deny (project)');
     expect(text).toContain('journal retention: 30 day(s)');
-    expect(text).toContain('budgets: none');
   });
 
   it("renders a role's allowed set with its layer (issue #255)", () => {
@@ -116,8 +109,6 @@ describe('kubic config (issue #90)', () => {
     expect(view.approvals).toMatchObject({ route: 'deny', source: 'project' });
     expect(view.permissions).toMatchObject({ source: 'defaults' });
     expect(view.journal).toMatchObject({ retentionDays: 30 });
-    expect(view.modes).toMatchObject({ solo: true });
-    expect(view.budgets).toMatchObject({ configured: false });
     expect(view.projectTrusted).toBe(true);
     expect(Array.isArray(view.values)).toBe(true);
   });

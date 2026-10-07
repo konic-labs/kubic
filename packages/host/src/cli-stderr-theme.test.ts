@@ -7,13 +7,9 @@ import { stripVTControlCharacters } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { createCliTheme } from '../../core/src/cli/theme.js';
 import { runCostCommand } from './ops/cost/cost-cli.js';
-import { runPerfCommand } from './ops/perf/perf-cli.js';
-import { runOrchestrateCommand } from './orchestrate-cli.js';
-import { runCleanCommand } from './orchestrator/worktree/clean.js';
 import { runAuditCommand } from './policy/audit-cli.js';
 import { runPolicyCommand } from './policy/policy-cli.js';
 import { runReplayCommand } from './replay/replay.js';
-import { runWorkersCommand } from './workers-cli.js';
 
 const COLOUR = createCliTheme('truecolor');
 const PLAIN = createCliTheme('none');
@@ -30,7 +26,6 @@ const HANDLERS: readonly (readonly [string, Run])[] = [
     'cost',
     (io) => runCostCommand({ session: 'a b' }, { ...io, loadRows: () => [] }),
   ],
-  ['perf', (io) => runPerfCommand({}, io)],
   [
     'policy',
     (io) =>
@@ -45,7 +40,7 @@ const HANDLERS: readonly (readonly [string, Run])[] = [
     'audit',
     (io) =>
       runAuditCommand(
-        { mode: 'bogus' } as Parameters<typeof runAuditCommand>[0],
+        { result: 'bogus' } as Parameters<typeof runAuditCommand>[0],
         {
           ...io,
           loadRecords: () => [],
@@ -63,23 +58,6 @@ const HANDLERS: readonly (readonly [string, Run])[] = [
         } as Parameters<typeof runReplayCommand>[1],
       ),
   ],
-  [
-    'orchestrate',
-    (io) =>
-      runOrchestrateCommand(
-        { resume: true } as Parameters<typeof runOrchestrateCommand>[0],
-        io as unknown as Parameters<typeof runOrchestrateCommand>[1],
-      ),
-  ],
-  [
-    'clean',
-    (io) =>
-      runCleanCommand(
-        { sessionId: 'a b' } as Parameters<typeof runCleanCommand>[0],
-        io as unknown as Parameters<typeof runCleanCommand>[1],
-      ),
-  ],
-  ['workers', (io) => runWorkersCommand({}, { ...io, list: () => [] })],
 ];
 
 describe('stderr diagnostics take their colour from errTheme', () => {

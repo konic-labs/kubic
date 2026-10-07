@@ -23,7 +23,7 @@ describe('doctor config section (issue #90)', () => {
     expect(probe.detail).toMatch(/no defaults applied/);
   });
 
-  it('reports budgets, trust and the ignore split on a healthy load', () => {
+  it('reports trust and the ignore split on a healthy load', () => {
     const probe = configDoctorProbe(
       buildConfigDoctorInput({
         values: [
@@ -41,7 +41,6 @@ describe('doctor config section (issue #90)', () => {
           },
         ],
         projectTrusted: true,
-        budgetsConfigured: false,
         ignoreSplitMissing: [],
         ignoreSplitApplicable: true,
       }),
@@ -49,7 +48,7 @@ describe('doctor config section (issue #90)', () => {
     expect(probe.ok).toBe(true);
     expect(probe.detail).toMatch(/2 effective value\(s\)/);
     expect(probe.detail).toMatch(/project layer trusted/);
-    expect(probe.detail).toMatch(/budgets none/);
+    expect(probe.detail).toMatch(/runtime ignore split complete/);
   });
 
   it('fails when runtime state is not ignored in this repo', () => {
@@ -57,14 +56,13 @@ describe('doctor config section (issue #90)', () => {
       buildConfigDoctorInput({
         values: [],
         projectTrusted: false,
-        budgetsConfigured: false,
-        ignoreSplitMissing: ['.kubic/journal/', '.kubic/wt/'],
+        ignoreSplitMissing: ['.kubic/journal/', '.kubic/audit/'],
         ignoreSplitApplicable: true,
       }),
     );
     expect(probe.ok).toBe(false);
     expect(probe.detail).toMatch(/\.kubic\/journal\//);
-    expect(probe.detail).toMatch(/\.kubic\/wt\//);
+    expect(probe.detail).toMatch(/\.kubic\/audit\//);
   });
 
   it('flags an accepted key with no effect row at all (issue #133)', () => {
@@ -85,7 +83,6 @@ describe('doctor config section (issue #90)', () => {
           },
         ],
         projectTrusted: true,
-        budgetsConfigured: false,
         ignoreSplitMissing: [],
         ignoreSplitApplicable: true,
       }),
@@ -103,7 +100,6 @@ describe('doctor config section (issue #90)', () => {
       buildConfigDoctorInput({
         values: [],
         projectTrusted: false,
-        budgetsConfigured: false,
         ignoreSplitMissing: [],
         ignoreSplitApplicable: true,
       }),
@@ -122,7 +118,6 @@ describe('doctor config section (issue #90)', () => {
           envTrust: false,
           storePath: '/home/u/.kubic/trust.json',
         },
-        budgetsConfigured: false,
         ignoreSplitMissing: [],
         ignoreSplitApplicable: true,
       }),
@@ -143,7 +138,6 @@ describe('doctor config section (issue #90)', () => {
           envTrust: false,
           storePath: '/home/u/.kubic/trust.json',
         },
-        budgetsConfigured: false,
         ignoreSplitMissing: [],
         ignoreSplitApplicable: true,
       }),
@@ -161,7 +155,6 @@ describe('doctor config section (issue #90)', () => {
           envTrust: false,
           storePath: '/home/u/.kubic/trust.json',
         },
-        budgetsConfigured: false,
         ignoreSplitMissing: [],
         ignoreSplitApplicable: true,
       }),
@@ -183,7 +176,6 @@ describe('doctor config section (issue #90)', () => {
           storeError:
             'trust store /home/u/.kubic/trust.json is not valid JSON: bad',
         },
-        budgetsConfigured: false,
         ignoreSplitMissing: [],
         ignoreSplitApplicable: true,
       }),

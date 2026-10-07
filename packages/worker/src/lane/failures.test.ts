@@ -11,8 +11,8 @@ describe('failure taxonomy (issue #14, slice C)', () => {
       'process_crashed',
     );
     expect(classifyFailure('tool', 'exit 1', '').code).toBe('tool_failed');
-    expect(classifyFailure('budget', 'tokens exhausted', '').code).toBe(
-      'budget_exhausted',
+    expect(classifyFailure('limit', 'turns exhausted', '').code).toBe(
+      'run_limit',
     );
     expect(classifyFailure('model', 'tokens exhausted', '').code).toBe(
       'model_failed',
@@ -142,10 +142,10 @@ describe('failure taxonomy (issue #14, slice C)', () => {
       'retry_with_new_context',
     ],
     [
-      'budget',
+      'limit',
       'spent',
-      'budget_exhausted',
-      'Budget exhausted; raise the budget or narrow the task. Never retry.',
+      'run_limit',
+      'A run limit stopped the run; raise --max-turns or --timeout, or narrow the task. Never retry.',
       'abandon',
     ],
     [
@@ -193,13 +193,13 @@ describe('failure taxonomy (issue #14, slice C)', () => {
     expect(budget.remaining).toBe(3);
   });
 
-  it('abandons on budget exhaustion and denied approvals', () => {
-    const budget = chooseRetry(
-      classifyFailure('budget', 'spent', ''),
+  it('abandons on a run limit and denied approvals', () => {
+    const limited = chooseRetry(
+      classifyFailure('limit', 'spent', ''),
       {},
       new RetryBudget(3),
     );
-    expect(budget.decision).toBe('abandon');
+    expect(limited.decision).toBe('abandon');
     const denied = chooseRetry(
       classifyFailure('approval', 'denied', ''),
       {},
@@ -208,7 +208,7 @@ describe('failure taxonomy (issue #14, slice C)', () => {
     expect(denied.decision).toBe('abandon');
   });
 
-  it('spends retry budget separately from task budget', () => {
+  it('abandons once the retry budget is spent', () => {
     const retries = new RetryBudget(1);
     const failure = classifyFailure('provider', '500 upstream', '');
     const first = chooseRetry(failure, {}, retries);

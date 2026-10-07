@@ -38,8 +38,6 @@ const REASONS: Readonly<Record<string, readonly [string, string]>> = {
   install: ['install', 'it installs packages'],
   deploy: ['deploy', 'it deploys'],
   'outside-write': ['outside', 'it writes outside the workspace'],
-  'budget-overrun': ['budget', 'it goes past the session budget'],
-  'spawn-agents': ['agents', 'it starts more agents'],
   'privilege-escalation': ['privilege', 'it runs with elevated privileges'],
   'kubic-state-write': [
     'kubic state',

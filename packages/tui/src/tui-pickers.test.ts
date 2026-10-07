@@ -11,7 +11,6 @@ function setup() {
   const app = createTuiApp({
     sessionId: 'sess-461',
     model: 'anthropic/sonnet',
-    mode: 'solo',
     approvalsSkipped: false,
     approvalSurface: createApprovalSurface({ armingMs: 0 }),
   });

@@ -1,18 +1,17 @@
-// `kubic audit` CLI tests (issue #79; §60, 14 fields, sentinel-only
-// credentials). RED first: audit-cli.ts lands after this file. Records
-// are injected; the command redacts before printing. Faux-only —
-// shape-matching values below carry a FAUX marker and stay inert.
+// `kubic audit` CLI tests: the record fields, sentinel-only credentials,
+// the filters and redaction. Records are injected; the command redacts
+// before printing. Faux-only — shape-matching values below carry a FAUX
+// marker and stay inert.
 import { describe, expect, it } from 'vitest';
 import {
   AUDIT_FIELDS,
-  FLOW_AUDIT_FIXTURE,
+  EXAMPLE_AUDIT_RECORD,
   type OrgAuditRecord,
 } from '../../../../packages/host/src/policy/audit.js';
 import { runAuditCommand } from '../../../../packages/host/src/policy/audit-cli.js';
 import {
+  fullAccessEnabledAudit,
   undoRestoreAudit,
-  workerSpawnAudit,
-  workerTerminateAudit,
 } from '../../../../packages/host/src/policy/audit-ledger.js';
 import {
   containsSecretShape,
@@ -27,14 +26,14 @@ const FAUX_LISTED = 'faux-inventory-token-0001';
 function seeded(): OrgAuditRecord[] {
   return [
     {
-      ...FLOW_AUDIT_FIXTURE,
-      agent: { ...FLOW_AUDIT_FIXTURE.agent },
-      model: { ...FLOW_AUDIT_FIXTURE.model },
-      worker: { ...FLOW_AUDIT_FIXTURE.worker },
-      workspace: { ...FLOW_AUDIT_FIXTURE.workspace },
-      permission: { ...FLOW_AUDIT_FIXTURE.permission },
-      credential: { ...FLOW_AUDIT_FIXTURE.credential },
-      network: { ...FLOW_AUDIT_FIXTURE.network },
+      ...EXAMPLE_AUDIT_RECORD,
+      agent: { ...EXAMPLE_AUDIT_RECORD.agent },
+      model: { ...EXAMPLE_AUDIT_RECORD.model },
+      worker: { ...EXAMPLE_AUDIT_RECORD.worker },
+      workspace: { ...EXAMPLE_AUDIT_RECORD.workspace },
+      permission: { ...EXAMPLE_AUDIT_RECORD.permission },
+      credential: { ...EXAMPLE_AUDIT_RECORD.credential },
+      network: { ...EXAMPLE_AUDIT_RECORD.network },
       reason: `policy allow (saw ${FAUX_SHAPED} and ${FAUX_LISTED} on the wire)`,
     },
   ];
@@ -114,33 +113,32 @@ describe('kubic audit secret backstop (issue #79)', () => {
     const head = parsed[0];
     if (head === undefined) throw new Error('missing audit record');
     expect(head.credential).toEqual({
-      sentinel: FLOW_AUDIT_FIXTURE.credential.sentinel,
+      sentinel: EXAMPLE_AUDIT_RECORD.credential.sentinel,
     });
   });
 });
 
 describe('kubic audit query (issue #79)', () => {
   const TWO: OrgAuditRecord[] = [
-    FLOW_AUDIT_FIXTURE,
+    EXAMPLE_AUDIT_RECORD,
     {
-      ...FLOW_AUDIT_FIXTURE,
-      agent: { ...FLOW_AUDIT_FIXTURE.agent },
-      model: { ...FLOW_AUDIT_FIXTURE.model },
-      worker: { ...FLOW_AUDIT_FIXTURE.worker },
-      workspace: { ...FLOW_AUDIT_FIXTURE.workspace },
-      permission: { ...FLOW_AUDIT_FIXTURE.permission },
-      credential: { ...FLOW_AUDIT_FIXTURE.credential },
-      network: { ...FLOW_AUDIT_FIXTURE.network },
-      mode: 'solo',
+      ...EXAMPLE_AUDIT_RECORD,
+      agent: { ...EXAMPLE_AUDIT_RECORD.agent },
+      model: { ...EXAMPLE_AUDIT_RECORD.model },
+      worker: { ...EXAMPLE_AUDIT_RECORD.worker },
+      workspace: { ...EXAMPLE_AUDIT_RECORD.workspace },
+      permission: { ...EXAMPLE_AUDIT_RECORD.permission },
+      credential: { ...EXAMPLE_AUDIT_RECORD.credential },
+      network: { ...EXAMPLE_AUDIT_RECORD.network },
       posture: 'full-access',
       result: 'deny',
     },
   ];
 
-  it('filters on mode, posture, and result', async () => {
+  it('filters on posture and result', async () => {
     const cap = capture();
     const code = await runAuditCommand(
-      { mode: 'solo', posture: 'full-access', result: 'deny' },
+      { posture: 'full-access', result: 'deny' },
       { loadRecords: () => TWO, out: cap.out, err: cap.err },
     );
     expect(code).toBe(0);
@@ -148,49 +146,38 @@ describe('kubic audit query (issue #79)', () => {
     expect(cap.lines).toHaveLength(1);
     const rows = (cap.lines[0] ?? '').split('\n');
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatch(/^WHEN +MODE +POSTURE +RESULT +WHAT/);
-    expect(rows[1]).toMatch(/ solo +full-access +deny +tool\.call /);
+    expect(rows[0]).toMatch(/^WHEN +POSTURE +RESULT +WHAT/);
+    expect(rows[1]).toMatch(/ full-access +deny +tool\.call /);
   });
 
-  // Issue #159: `--session <orch>` reads one orchestration run's decisions —
-  // the manager's own rows (agent.session = the run) and every worker ask it
-  // spawned (agent.session = `<orch>-<agent>`, agent.parent = the run).
-  it('filters on the orchestrator session: the run and the workers it spawned', async () => {
+  it("filters on one session's rows", async () => {
     const rows: OrgAuditRecord[] = [
       {
-        ...FLOW_AUDIT_FIXTURE,
-        agent: { session: 'orch-9', role: 'manager' },
-        what: 'merge:kubic/orch-9/worker-1',
-      },
-      {
-        ...FLOW_AUDIT_FIXTURE,
-        agent: {
-          session: 'orch-9-worker-1',
-          role: 'implementer',
-          parent: 'orch-9',
-        },
+        ...EXAMPLE_AUDIT_RECORD,
+        agent: { session: 's-1', role: 'root' },
         what: 'tool:bash',
       },
       {
-        ...FLOW_AUDIT_FIXTURE,
-        agent: {
-          session: 'orch-8-worker-1',
-          role: 'implementer',
-          parent: 'orch-8',
-        },
-        what: 'tool:bash',
+        ...EXAMPLE_AUDIT_RECORD,
+        agent: { session: 's-2', role: 'root' },
+        what: 'tool:write',
+      },
+      {
+        ...EXAMPLE_AUDIT_RECORD,
+        agent: { session: 's-1', role: 'user' },
+        what: 'undo-restore',
       },
     ];
     const cap = capture();
     const code = await runAuditCommand(
-      { session: 'orch-9', json: true },
+      { session: 's-1', json: true },
       { loadRecords: () => rows, out: cap.out, err: cap.err },
     );
     expect(code).toBe(0);
     const printed = JSON.parse(cap.lines[0] ?? '[]') as OrgAuditRecord[];
     expect(printed.map((record) => record.what)).toEqual([
-      'merge:kubic/orch-9/worker-1',
       'tool:bash',
+      'undo-restore',
     ]);
   });
 
@@ -219,32 +206,14 @@ describe('kubic audit query (issue #79)', () => {
   });
 });
 
-it('returns the privileged-action rows under --json with all 14 fields (issue #284)', async () => {
+it('returns the privileged-action rows under --json with every field', async () => {
   const when = '2023-11-14T22:13:20.000Z';
-  const spawned = workerSpawnAudit({
-    sessionId: 'orch',
-    agentId: 'worker-1',
-    role: 'implementer',
-    pid: 4242,
-    generation: 1,
-    worktree: '/repo/.kubic/wt/worker-1',
-    base: 'abc123',
-    posture: 'approvals',
-  });
   const records: OrgAuditRecord[] = [
-    { ...spawned, when },
     {
-      ...workerTerminateAudit({
-        sessionId: 'orch',
-        agentId: 'worker-1',
-        role: 'implementer',
-        pid: 4242,
-        generation: 1,
-        worktree: '/repo/.kubic/wt/worker-1',
-        base: 'abc123',
-        posture: 'approvals',
-        reason: 'ok',
-        result: 'ok',
+      ...fullAccessEnabledAudit({
+        sessionId: 'sess',
+        command: 'kubic run --dangerously-skip-approvals',
+        workspace: '/repo',
       }),
       when,
     },
@@ -267,8 +236,7 @@ it('returns the privileged-action rows under --json with all 14 fields (issue #2
   expect(code).toBe(0);
   const parsed = JSON.parse(cap.lines.join('\n')) as OrgAuditRecord[];
   expect(parsed.map((row) => row.what)).toEqual([
-    'worker-spawn:worker-1',
-    'worker-terminate:worker-1',
+    'posture:full-access',
     'undo-restore',
   ]);
   for (const row of parsed) {
@@ -276,25 +244,8 @@ it('returns the privileged-action rows under --json with all 14 fields (issue #2
   }
 });
 
-describe('kubic audit usage (issue #79, §78)', () => {
-  it('exits 2 on an unknown mode', async () => {
-    const cap = capture();
-    const code = await runAuditCommand(
-      { mode: 'turbo' },
-      {
-        loadRecords: seeded,
-        out: cap.out,
-        err: cap.err,
-      },
-    );
-    expect(code).toBe(2);
-    expect(cap.lines).toEqual([]);
-    expect(cap.errs).toEqual([
-      'error: unknown mode "turbo" (want solo|orchestrator)',
-    ]);
-  });
-
-  it('exits 2 on an unknown result', async () => {
+describe('kubic audit usage', () => {
+  it('exits 2 on an unknown result, naming the choices', async () => {
     const cap = capture();
     const code = await runAuditCommand(
       { result: 'maybe' },
@@ -305,6 +256,10 @@ describe('kubic audit usage (issue #79, §78)', () => {
       },
     );
     expect(code).toBe(2);
+    expect(cap.lines).toEqual([]);
+    expect(cap.errs).toEqual([
+      'error: unknown result "maybe" (want ok|deny|error)',
+    ]);
   });
 
   // Argv syntax (a filter without a value, unknown flags, --help) is
@@ -332,7 +287,7 @@ describe('kubic audit prod secrets wiring (issue #79 fix cycle 1)', () => {
   it('redacts secret-shaped material in unknown filter-value errors', async () => {
     const cap = capture();
     const code = await runAuditCommand(
-      { mode: FAUX_SHAPED },
+      { result: FAUX_SHAPED },
       {
         loadRecords: seeded,
         out: cap.out,

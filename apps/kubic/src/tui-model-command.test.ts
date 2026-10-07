@@ -50,7 +50,6 @@ describe('TuiTurnRunner model switch (issue #227)', () => {
         presentationSeed: () => ({
           sessionId: 's',
           model: 'faux/faux-1',
-          mode: 'solo' as const,
           approvalsSkipped: false,
         }),
       } as unknown as TuiApp,

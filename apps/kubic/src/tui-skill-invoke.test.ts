@@ -188,7 +188,6 @@ describe('kubic tui /skill: over a stub lane (issue #183)', () => {
         out: () => {},
         createTerminal: () => fake.terminal,
         colorLevel: 'none',
-        isGitRepo: () => true,
         bootLane: async (sessionId?: string) =>
           ({
             sessionId: sessionId ?? 's1',

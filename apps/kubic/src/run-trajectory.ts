@@ -1,10 +1,9 @@
 // Composition-root half of the §46 trajectory (issue #383): gathers the I/O
 // evidence a settled run left behind — the git base, the session journal,
-// the audit ledger, the used tool env and this process's worker identity —
-// and hands it to the pure assembler (packages/host/src/trajectory/
+// the audit ledger and the used tool env — and hands it to the pure
+// assembler (packages/host/src/trajectory/
 // run-trajectory.ts), which the fail-closed exporter backs. Called once per
-// settled `kubic run` (solo, or an orchestrator worker child) and per TUI
-// turn; the file lands at <sessions-root>/<id>/trajectory.json.
+// settled `kubic run` and per TUI turn; the file lands at <sessions-root>/<id>/trajectory.json.
 
 import { join } from 'node:path';
 import { toolSpawnEnv } from '../../../packages/exec/src/env.js';
@@ -27,10 +26,7 @@ import {
   TRAJECTORY_FILE,
   writeRunTrajectory,
 } from '../../../packages/host/src/trajectory/run-trajectory.js';
-import type {
-  TrajectoryBudget,
-  TrajectoryEscalation,
-} from '../../../packages/trajectory/src/schema.js';
+import type { TrajectoryEscalation } from '../../../packages/trajectory/src/schema.js';
 
 // Recorded when the workspace is not a git checkout: the journal, not git,
 // is Kubic's change record (§42), so there is no revision to pin — named,
@@ -48,8 +44,6 @@ export interface PersistRunTrajectoryInput {
   agentId: string;
   role: string;
   prompt: string;
-  // §67 (issue #191): the manager's task, when the run was handed one.
-  task?: { taskId: string; objective: string; role: string };
   entries: readonly unknown[];
   model?: { provider: string; id: string };
   thinking?: string | null;
@@ -69,9 +63,6 @@ export interface PersistRunTrajectoryInput {
   // The lane's escalation record (issue #210): every model climb this
   // run recorded, oldest first. Absent means no climb.
   escalations?: TrajectoryEscalation[];
-  // The §71 budget block (issue #285): limits, measured spend, breach.
-  // Absent means the run was unbounded — never an empty object.
-  budget?: TrajectoryBudget;
 }
 
 function gitBase(
@@ -101,24 +92,6 @@ function ledger(cwd: string): OrgAuditRecord[] {
   } catch {
     return [];
   }
-}
-
-// The orchestrator's lifecycle layer hands each worker child its id and
-// generation (KUBIC_WORKER_ID / KUBIC_WORKER_GENERATION, §3.8 allowlist);
-// a solo run is generation 0 with no worker id.
-function workerIdentity(env: NodeJS.ProcessEnv): {
-  workerId: string | null;
-  generation: number;
-} {
-  const workerId =
-    env.KUBIC_WORKER_ID === undefined || env.KUBIC_WORKER_ID === ''
-      ? null
-      : env.KUBIC_WORKER_ID;
-  const raw = env.KUBIC_WORKER_GENERATION;
-  const parsed = raw === undefined || raw === '' ? Number.NaN : Number(raw);
-  const generation =
-    workerId !== null && Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
-  return { workerId, generation };
 }
 
 // `--session <id>` on export/replay (issue #383): the session's trajectory
@@ -155,21 +128,18 @@ export function resolveSessionTrajectory<
 // or written — the caller reports that without changing the run's result.
 export function persistRunTrajectory(input: PersistRunTrajectoryInput): string {
   const processEnv = input.processEnv ?? process.env;
-  const { workerId, generation } = workerIdentity(processEnv);
   const exported = assembleRunTrajectory({
     sessionId: input.sessionId,
     agentId: input.agentId,
-    workerId,
     role: input.role,
     prompt: input.prompt,
-    ...(input.task === undefined ? {} : { task: input.task }),
     entries: input.entries,
     model: {
       ...(input.model ?? NO_MODEL),
       thinking: input.thinking ?? null,
     },
     pid: input.pid ?? process.pid,
-    generation,
+    generation: 0,
     cwd: input.cwd,
     ...gitBase(input.cwd, input.base),
     env: toolSpawnEnv(processEnv),
@@ -180,7 +150,6 @@ export function persistRunTrajectory(input: PersistRunTrajectoryInput): string {
     endedAt: input.endedAt,
     outcome: input.outcome,
     evalLabels: input.evalLabels ?? {},
-    ...(input.budget === undefined ? {} : { budget: input.budget }),
     ...(input.escalations === undefined
       ? {}
       : { escalations: input.escalations }),

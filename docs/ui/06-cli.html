@@ -8,7 +8,7 @@
 </head>
 <body>
 <div class="page">
-  <nav class="nav"><a href="index.html">← system</a><a href="01-session.html">01 session</a><a href="02-approval.html">02 approval</a><a href="03-palette.html">03 palette</a><a href="04-orchestrator.html">04 orchestrator</a><a href="05-welcome.html">05 first launch</a><a class="on" href="06-cli.html">06 cli</a></nav>
+  <nav class="nav"><a href="index.html">← system</a><a href="01-session.html">01 session</a><a href="02-approval.html">02 approval</a><a href="03-palette.html">03 palette</a><a href="05-welcome.html">05 first launch</a><a class="on" href="06-cli.html">06 cli</a></nav>
   <h1><b>06</b> CLI</h1>
   <p class="sub">The same tokens and glyphs, printed into the normal terminal (no full screen). With a pipe, <code>--json</code> or <code>NO_COLOR</code> all of this collapses to plain, stable text — the binary contract does not change.</p>
 
@@ -25,13 +25,12 @@
     <div class="l"> </div>
     <div class="l"><span class="f2 sb"> SESSION    </span><span class="f0">run</span><span class="f2"> · </span><span class="f0">tui</span><span class="f2"> · </span><span class="f0">resume</span><span class="f2"> · </span><span class="f0">attach</span><span class="f2"> · </span><span class="f0">sessions</span><span class="f2">        work with the agent</span></div>
     <div class="l"><span class="f2 sb"> CHANGES    </span><span class="f0">diff</span><span class="f2"> · </span><span class="f0">undo</span><span class="f2"> · </span><span class="f0">log</span><span class="f2"> · </span><span class="f0">status</span><span class="f2"> · </span><span class="f0">commit</span><span class="f2"> · </span><span class="f0">git</span><span class="f2">   review and revert what it did</span></div>
-    <div class="l"><span class="f2 sb"> DELEGATE   </span><span class="f0">orchestrate</span><span class="f2"> · </span><span class="f0">workers</span><span class="f2"> · </span><span class="f0">clean</span><span class="f2">             manager + workers in worktrees</span></div>
     <div class="l"><span class="f2 sb"> SETUP      </span><span class="f0">setup</span><span class="f2"> · </span><span class="f0">models</span><span class="f2"> · </span><span class="f0">config</span><span class="f2"> · </span><span class="f0">trust</span><span class="f2"> · </span><span class="f0">doctor</span><span class="f2"> · </span><span class="f0">skills</span><span class="f2">    providers, project, health</span></div>
-    <div class="l"><span class="f2 sb"> ANALYSIS   </span><span class="f1">cost · eval · benchmark · replay · export · perf · policy · audit</span></div>
+    <div class="l"><span class="f2 sb"> ANALYSIS   </span><span class="f1">cost · eval · benchmark · replay · export · policy · audit</span></div>
     <div class="l"> </div>
     <div class="l"><span class="f2 sb"> EXAMPLES   </span><span class="f1">kubic "fix the failing test"</span></div>
     <div class="l"><span class="f2">            </span><span class="f1">kubic run -p "add tests for titleCase" --json</span></div>
-    <div class="l"><span class="f2">            </span><span class="f1">kubic orchestrate -p "split cart.js into modules"</span></div>
+    <div class="l"><span class="f2">            </span><span class="f1">kubic diff &amp;&amp; kubic undo</span></div>
     <div class="l"> </div>
     <div class="l"><span class="f2"> kubic &lt;command&gt; --help for options · </span><span class="info ul">docs/cli</span></div>
   </div></div>

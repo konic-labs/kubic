@@ -5,9 +5,8 @@
 > repository.
 
 Kubic is Konic's open-source terminal coding agent: model-agnostic,
-with a VCS-independent change journal and an opt-in orchestrator mode.
-Solo mode is the architecture; delegation is a mode — solo has no
-isolation, never imply otherwise in code, docs, or CLI text.
+with a VCS-independent change journal. Solo mode has no isolation —
+never imply otherwise in code, docs, or CLI text.
 
 ## Workflow (LC0–LC6)
 
@@ -266,11 +265,11 @@ per-mutant statuses (0 differences), at seconds instead of hours. Scores
 before this fix were artifacts of the bug; the first nightly report is the
 real baseline.
 
-Tests that scan **source text** (e.g. `clean-docs`, `tui-keys-doc`) cannot
+Tests that scan **source text** (e.g. `tui-keys-doc`) cannot
 run under Stryker — every literal is instrumented — and kill no mutants, so
 they skip when `STRYKER_MUTATOR_WORKER` is set; plain `vitest` still runs
 them. Tests that list repo files must not rely on `git ls-files` alone:
-Stryker's sandbox is a gitignored copy (see `orchestrate-roles-docs`).
+Stryker's sandbox is a gitignored copy.
 
 ## What new suites owe the gate
 

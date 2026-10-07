@@ -27,9 +27,8 @@ Each command group owns one module under `apps/kubic/src/commands/`:
 | Module | Commands |
 | --- | --- |
 | `solo.ts` | run, tui, doctor, models, config, sessions |
-| `orchestrator.ts` | orchestrate, clean, workers |
 | `journal.ts` | diff, undo, log, status, git |
-| `analysis.ts` | cost, perf, policy, audit, eval, benchmark, replay, export |
+| `analysis.ts` | cost, policy, audit, eval, benchmark, replay, export |
 
 A module exports `register<Group>Commands: CommandRegistrar`, i.e.
 `(program: KubicProgram, ctx: CommandContext) => void`. The context carries
@@ -101,7 +100,7 @@ new literals.
   (`createLineLogger(err, { debug, theme })` over the stderr line channel),
   which writes every level to stderr as `<level>: <message>`. `debug`
   shows only under `KUBIC_DEBUG=1`, or a command's own `--debug` where it
-  declares one (`run`, `workers`) — there is no global `--debug`
+  declares one (`run`) — there is no global `--debug`
   (`debugEnabled`). Refusals such as a broken config are diagnostics too.
 - **Diagnostics colour follows stderr**: the logger's theme comes from
   `themeFor(process.stderr)` (a handler's `errTheme`), never from the

@@ -14,7 +14,6 @@ function setup(clipboard?: (text: string) => boolean) {
   const app = createTuiApp({
     sessionId: 'sess-463',
     model: 'faux/m',
-    mode: 'solo',
     approvalsSkipped: false,
     approvalSurface: createApprovalSurface({ armingMs: 0 }),
     ...(clipboard === undefined ? {} : { clipboard }),

@@ -23,16 +23,16 @@ function fixtureTrajectory(objective = 'Fix the widget'): TrajectoryExport {
       agentId: 'agent-1',
       pid: null,
       generation: 1,
-      worktree: '/repo/.kubic/wt/agent-1',
+      worktree: '/repo',
       model: 'acme/m1',
     },
     environment: {
       capturedFrom: 'used',
-      cwd: '/repo/.kubic/wt/agent-1',
+      cwd: '/repo',
       env: {},
     },
     worktree: {
-      path: '/repo/.kubic/wt/agent-1',
+      path: '/repo',
       baseRevision: 'abc123',
       branch: null,
     },
@@ -64,7 +64,7 @@ function request(): ReplayRunRequest {
     tier: 'deterministic',
     trajectory: 't.json',
     model: 'acme/m1',
-    worktree: '/repo/.kubic/wt/agent-1',
+    worktree: '/repo',
     lockfile: 'pins.json',
     roleConfig: null,
     role: null,
@@ -107,7 +107,7 @@ describe('prod replay runner (issue #78)', () => {
 
   it('coarsens non-subset lane termini to failed with the summary preserved', async () => {
     for (const terminus of [
-      'budget_exhausted',
+      'turn_limit',
       'approval_denied',
       'approval_timed_out',
       'usage',

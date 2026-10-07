@@ -1,16 +1,11 @@
-// Typed telemetry spans (issue #29; §49.3, §61): nesting
-// kubic.agent.run→pi.harness.hook→pi.tool.execute→kubic.worker.start→rpc
-// with the kubic.worker.startup span isolated from tool ms. Host-side
-// recorder only — Pi owns its own telemetry; this module never imports
-// worker implementation or Pi modules.
+// Typed telemetry spans: nesting kubic.agent.run→pi.harness.hook→
+// pi.tool.execute. Host-side recorder only — Pi owns its own telemetry;
+// this module never imports worker implementation or Pi modules.
 
 export const SPAN_NAMES = [
   'kubic.agent.run',
   'pi.harness.hook',
   'pi.tool.execute',
-  'kubic.worker.start',
-  'kubic.worker.startup',
-  'rpc',
 ] as const;
 
 export type SpanName = (typeof SPAN_NAMES)[number] | string;
@@ -59,16 +54,6 @@ export class SpanRecorder {
     if (error !== undefined) span.error = error;
   }
 
-  // Issue #290: close a span at a measured-elsewhere end time. The
-  // manager-side startup span reports the registry's startupMs, not a
-  // second wall-clock read, so the artifact duration equals it exactly.
-  endAt(id: string, endMs: number, error?: string): void {
-    const span = this.byId.get(id);
-    if (span === undefined) throw new Error(`unknown span ${id}`);
-    span.endMs = endMs;
-    if (error !== undefined) span.error = error;
-  }
-
   // Issue #243: read one span without copying the trace. The copy keeps
   // the ledger tamper-proof: a reader mutating the return never rewrites
   // a stored record (pinned by test).
@@ -85,16 +70,7 @@ export class SpanRecorder {
     return span.endMs === null ? 0 : span.endMs - span.startMs;
   }
 
-  // §61: worker startup is reported apart — never folded into tool ms.
-  startupMs(): number | null {
-    const startup = this.spans.find(
-      (span) => span.name === 'kubic.worker.startup',
-    );
-    if (startup === undefined || startup.endMs === null) return null;
-    return this.durationMs(startup);
-  }
-
-  // Per-tool time only: pi.tool.execute spans, startup excluded.
+  // Per-tool time only: pi.tool.execute spans.
   toolMsTotal(): number {
     return this.spans
       .filter((span) => span.name === 'pi.tool.execute')
@@ -102,16 +78,14 @@ export class SpanRecorder {
   }
 }
 
-// --debug stderr vocabulary (§50): exactly 8 line classes —
-// [policy]/[worker]/[session]/[tool]/[model]/[agent] + [exit] +
-// handler_error. Tool lines carry the in/out/cached phase;
+// --debug stderr vocabulary: exactly 7 line classes —
+// [policy]/[session]/[tool]/[model]/[agent] + [exit] + handler_error. Tool lines carry the in/out/cached phase;
 // model lines carry in/out/cached token counts. Constructed with a sink
 // (stderr in prod, an array in tests) so TUI code never touches io here.
 // Issue #246: the `[handles]` class is dropped — nothing ever measured a
 // leak count, so the vocabulary carries no leak line.
 export const DEBUG_CLASSES = [
   '[policy]',
-  '[worker]',
   '[session]',
   '[tool]',
   '[model]',
@@ -152,10 +126,6 @@ export class DebugLog {
     this.sink(`[policy] ${detail}`);
   }
 
-  worker(detail: string): void {
-    this.sink(`[worker] ${detail}`);
-  }
-
   session(detail: string): void {
     this.sink(`[session] ${detail}`);
   }
@@ -182,8 +152,7 @@ export class DebugLog {
 }
 
 // Headless debug transcript (no VirtualTerminal in Pi 0.85.1): an
-// array-backed sink the caller renders headlessly. The transcript must
-// contain the [policy] and [worker] … exited lines (§50 acceptance).
+// array-backed sink the caller renders headlessly.
 export interface TranscriptSink {
   sink: DebugSink;
   lines: string[];

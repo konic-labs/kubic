@@ -44,7 +44,7 @@ const COMMANDS: PaletteItem[] = [
     group: 'commands',
     value: '/mode',
     text: '/mode',
-    detail: 'switch solo ↔ orchestrator',
+    detail: 'switch the input mode',
     meta: '^G',
   },
   {
@@ -244,7 +244,7 @@ describe('palette render (issue #460; 03-A … C)', () => {
       '│ › mod                                                              5 results │',
       '├──────────────────────────────────────────────────────────────────────────────┤',
       '│ COMMANDS                                                                     │',
-      '│▌ /mode    switch solo ↔ orchestrator                                      ^G │',
+      '│▌ /mode    switch the input mode                                           ^G │',
       '│  /model   switch the model for this session                            alt+m │',
       "│  /models  browse every provider's catalogue                                  │",
       '│                                                                              │',
@@ -306,7 +306,7 @@ describe('palette render (issue #460; 03-A … C)', () => {
 
   it('opens a details footer with the whole row', () => {
     const lines = render(togglePaletteDetails(query('mod')), 40);
-    expect(lines.at(-2)).toBe('│ /mode — switch solo ↔ orchestrator   │');
+    expect(lines.at(-2)).toBe('│ /mode — switch the input mode        │');
     expect(lines.at(-3)?.startsWith('├')).toBe(true);
   });
 

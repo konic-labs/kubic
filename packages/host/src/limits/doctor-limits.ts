@@ -14,7 +14,6 @@ import {
   EXIT_OK,
   EXIT_PROVIDER,
 } from '../../../core/src/cli/exit-codes.js';
-import { enforcedLimits } from '../../../worker/src/lifecycle/resources.js';
 import { alwaysAskAutoApprove, validatePolicy } from '../approvals.js';
 import { mcpRefusalMessage } from '../config/stances.js';
 import type { DoctorCheck } from '../doctor.js';
@@ -53,14 +52,6 @@ export function staticLimitChecks(): DoctorCheck[] {
         'honest limit (not enforced): solo runs in-process with your user authority (files, network, credentials) — no isolation, no containment; controls are approvals + journal (§59.1, §3.7)',
     },
     {
-      id: 'limit:worktrees-writers-only',
-      label: 'limit worktrees writers-only',
-      status: 'warn',
-      reason: 'ok',
-      detail:
-        'honest limit (not enforced): orchestrator worktrees separate concurrent writers only — they are not isolation or containment (§59.1)',
-    },
-    {
       id: 'limit:no-injection-prevention',
       label: 'limit no injection prevention',
       status: 'warn',
@@ -93,72 +84,6 @@ export function staticLimitChecks(): DoctorCheck[] {
         'honest limit (not enforced): v1 has no third-party tools or MCP servers — requests for them are refused (§59.1, §33)',
     },
   ];
-}
-
-// §82 per-agent resource enforcement (issue #163): which limits this build
-// can actually enforce on this platform, and which of those are CONFIGURED.
-// A probe is availability, not enforcement: a stock CLI run configures
-// neither limit (no flag, no config key), so the line reports them as
-// available-but-not-configured instead of claiming protection the run does
-// not deliver. Warnings are informational and never exit-flipping.
-export interface ResourceEnforcementProbe {
-  platform: string;
-  /** The memory probe (RSS sampling + the child's heap bound) is available. */
-  memoryProbe: boolean;
-  /** The worktree disk probe is available. */
-  diskProbe: boolean;
-  /** The limits a run in this build actually configures, in MB. */
-  configured?: { memoryLimitMb?: number; diskQuotaMb?: number };
-}
-
-export function resourceEnforcementCheck(
-  probe: ResourceEnforcementProbe,
-): DoctorCheck {
-  const enforced = enforcedLimits(
-    {
-      ...(probe.memoryProbe ? { memoryMb: () => 0 } : {}),
-      ...(probe.diskProbe ? { diskMb: () => 0 } : {}),
-    },
-    {
-      ...(probe.configured?.memoryLimitMb === undefined
-        ? {}
-        : { memMb: probe.configured.memoryLimitMb }),
-      ...(probe.configured?.diskQuotaMb === undefined
-        ? {}
-        : { diskMb: probe.configured.diskQuotaMb }),
-    },
-  );
-  const active: string[] = ['wall clock (per-worker --timeout)'];
-  const inactive: string[] = [];
-  if (enforced.memory) {
-    active.push(
-      `memory (RSS sampling + --max-old-space-size ${probe.configured?.memoryLimitMb}MB)`,
-    );
-  } else if (probe.memoryProbe) {
-    inactive.push(
-      `memory (RSS sampling + --max-old-space-size available; no CLI flag/config key sets a cap)`,
-    );
-  } else {
-    inactive.push(`memory (no RSS probe on ${probe.platform})`);
-  }
-  if (enforced.disk) {
-    active.push(`disk (per-worktree quota ${probe.configured?.diskQuotaMb}MB)`);
-  } else if (probe.diskProbe) {
-    inactive.push(
-      'disk (per-worktree quota available; no CLI flag/config key sets a quota)',
-    );
-  } else {
-    inactive.push(`disk (no worktree probe on ${probe.platform})`);
-  }
-  return {
-    id: 'limit:resources',
-    label: 'limit resources',
-    status: inactive.length === 0 ? 'pass' : 'warn',
-    reason: 'ok',
-    detail: `per-agent limits — enforced: ${active.join(', ')}${
-      inactive.length === 0 ? '' : `; NOT enforced: ${inactive.join(', ')}`
-    }`,
-  };
 }
 
 // Missing provider (§78): no provider is configured, which is a different

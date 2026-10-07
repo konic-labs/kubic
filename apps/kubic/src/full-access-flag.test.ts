@@ -1,6 +1,6 @@
 // Session-scoped `--dangerously-skip-approvals` on run, tui and bare kubic,
-// one enable path shared with `sessions create` and orchestrate (issue #308;
-// §41.4, §78, §80). Enabling full access writes the session's posture.json,
+// one enable path shared with `sessions create` (issue #308; §41.4, §78,
+// §80). Enabling full access writes the session's posture.json,
 // appends ONE §60 audit row naming the session and the originating command,
 // and warns on stderr; a headless run on a full-access session warns and
 // reports the posture in its --json envelope. Nothing reaches config.
@@ -336,8 +336,9 @@ describe('kubic run --dangerously-skip-approvals (issue #308)', () => {
     );
     // The two config directories hold exactly what they held: the only new
     // entries are the run's own runtime state (the session store under the
-    // home, the §60 ledger under the workspace) — never a config-shaped file.
-    const RUNTIME_STATE = new Set(['sessions', 'orchestrator']);
+    // home, the audit ledger under the workspace) — never a config-shaped
+    // file.
+    const RUNTIME_STATE = new Set(['sessions', 'audit']);
     for (const dir of [join(home, '.kubic'), join(workspace, '.kubic')]) {
       expect(
         readdirSync(dir)

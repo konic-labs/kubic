@@ -135,7 +135,6 @@ describe('approval card command display (issue #316)', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'm',
-      mode: 'solo',
       approvalsSkipped: false,
       approvalSurface: surface,
     });
@@ -156,7 +155,6 @@ describe('approval card command display (issue #316)', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'm',
-      mode: 'solo',
       approvalsSkipped: false,
       approvalSurface: surface,
     });
@@ -267,7 +265,6 @@ describe('a terminal too short to show the command cannot allow it (issue #316)'
     const app = createTuiApp({
       sessionId: 's',
       model: 'm',
-      mode: 'solo',
       approvalsSkipped: false,
       approvalSurface: surface,
     });
